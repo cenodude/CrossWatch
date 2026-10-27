@@ -11,6 +11,7 @@ from typing import Any
 from cw_platform.provider_instances import normalize_instance_id
 from providers.auth._auth_SILO import SiloError, is_configured as auth_is_configured, provider_block
 from providers.sync._mod_common import build_op_result, build_session, dedup_keys
+from providers.sync.silo import _collection as feat_collection
 from providers.sync.silo import _history as feat_history
 from providers.sync.silo import _playlists as feat_playlists
 from providers.sync.silo import _progress as feat_progress
@@ -19,7 +20,7 @@ from providers.sync.silo import _watchlist as feat_watchlist
 from providers.sync.silo._common import label_silo, problem_of, shared_limiter, silo_request
 
 __VERSION__ = "0.1"
-__all__ = ["get_manifest", "SILOModule", "OPS", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
+__all__ = ["get_manifest", "SILOModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
     class _NullCtx:
@@ -29,12 +30,13 @@ if "ctx" not in globals():
     ctx = _NullCtx()  # type: ignore[assignment]
 
 
-_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True}
+_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}
 _FEATURE_MODULES = {
     "watchlist": feat_watchlist,
     "ratings": feat_ratings,
     "history": feat_history,
     "progress": feat_progress,
+    "collection": feat_collection,
 }
 _ACCEPTED_IDS = ["tmdb", "imdb", "tvdb"]
 _PLAYLIST_CAPABILITIES: dict[str, Any] = {
@@ -132,6 +134,17 @@ def get_manifest() -> Mapping[str, Any]:
                 "provides_ids": ["tmdb", "tvdb"],
                 "requires_duration": False,
                 "verify_after_write": True,
+            },
+            "collection": {
+                "read": True,
+                "write": False,
+                "index_semantics": "present",
+                "observed_deletes": True,
+                "types": {"movies": True, "shows": True, "seasons": False, "episodes": True},
+                "upsert": False,
+                "remove": False,
+                "accepted_ids": list(_ACCEPTED_IDS),
+                "provides_ids": ["tmdb", "tvdb"],
             },
             "playlists": dict(_PLAYLIST_CAPABILITIES),
         },

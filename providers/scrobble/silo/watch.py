@@ -25,7 +25,7 @@ from providers.scrobble.currently_watching import update_from_payload as _cw_upd
 from providers.scrobble.routes import watch_poll_seconds
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent, ScrobbleSink, mask_account
 from providers.scrobble.sources import source_enabled
-from providers.sync.silo._common import as_int, ids_from_content_id, item_detail, item_ids, safe_json, series_id_of, silo_request
+from providers.sync.silo._common import as_int, ids_from_content_id, item_detail, item_ids, library, safe_json, selected_libraries, series_id_of, silo_request
 
 BASE_POLL_SECONDS = 10.0
 MIN_POLL_SECONDS = 2.0
@@ -104,6 +104,7 @@ class SiloWatchService:
         self._bg: threading.Thread | None = None
         self._sessions: dict[str, dict[str, Any]] = {}
         self._missing: dict[str, int] = {}
+        self._skipped: set[str] = set()
         self._idle_poll = self._base_poll
         self._last_error: tuple[str, float] = ("", 0.0)
         self._quiet_startup = bool(quiet_startup)
@@ -259,7 +260,20 @@ class SiloWatchService:
                 pass
         return accepted
 
+    def _outside_whitelist(self, content_id: str) -> bool:
+        allowed = selected_libraries(self, "scrobble")
+        if not allowed:
+            return False
+        lib = library(self, libraries=allowed)
+        return content_id not in lib.movies and content_id not in lib.episodes
+
     def _create_session(self, row: Mapping[str, Any], source_key: str) -> dict[str, Any] | None:
+        cid = str(row.get("content_id") or "").strip()
+        if cid and self._outside_whitelist(cid):
+            if source_key not in self._skipped:
+                self._skipped.add(source_key)
+                _log(f"Silo session outside whitelisted libraries skipped content={cid}", "DEBUG")
+            return None
         meta = self._metadata(row)
         if not meta:
             return None
@@ -385,6 +399,7 @@ class SiloWatchService:
                 self._maybe_dispatch_progress(session, row)
             except Exception as exc:
                 self._log_error_limited(f"{type(exc).__name__}:{source_key}", f"Silo session poll failed: {exc}")
+        self._skipped &= seen
         for source_key in list(self._sessions.keys()):
             if source_key in seen:
                 continue

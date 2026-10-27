@@ -88,7 +88,7 @@ def test_manifest_registration_and_ops(silo: Any) -> None:
     assert MODULES["SYNC"]["_mod_SILO"] == "providers.sync._mod_SILO"
     ops = load_sync_ops("SILO")
     assert ops.name() == "SILO" and provider_display_label("SILO") == "Silo"
-    assert dict(ops.features()) == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True}
+    assert dict(ops.features()) == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}
     assert sync_provider_supports_feature("SILO", "history") is True
     caps = ops.capabilities()
     assert caps["ratings"]["types"]["episodes"] is False

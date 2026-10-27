@@ -106,7 +106,9 @@ const isKodi = (v) => same(v, "kodi");
 const isCrossWatch = (v) => same(v, "crosswatch");
 function hasPlex(state){ return isPlex(state?.src) || isPlex(state?.dst) }
 function hasKodi(state){ return isKodi(state?.src) || isKodi(state?.dst) }
-const isMedia = (v) => isPlex(v) || isEmby(v) || isJelly(v);
+const isSilo = (v) => same(v, "silo");
+function hasSilo(state){ return isSilo(state?.src) || isSilo(state?.dst) }
+const isMedia = (v) => isPlex(v) || isEmby(v) || isJelly(v) || isSilo(v);
 function providerSupportsProgress(state, name){ return !!(byName(state, name)?.features || {}).progress }
 function isProgressPair(state){ return providerSupportsProgress(state, state?.src) && providerSupportsProgress(state, state?.dst) }
 function hasSimkl(state){return isSimkl(state?.src)||isSimkl(state?.dst)}
@@ -115,7 +117,7 @@ function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function hasMDBList(state){return isMDBList(state?.src)||isMDBList(state?.dst)}
 function hasPublicMetaDB(state){return isPublicMetaDB(state?.src)||isPublicMetaDB(state?.dst)}
 function hasFloppy(state){return isFloppy(state?.src)||isFloppy(state?.dst)}
-function hasProviderControls(state){return hasPlex(state)||hasJelly(state)||hasEmby(state)||hasKodi(state)}
+function hasProviderControls(state){return hasPlex(state)||hasJelly(state)||hasEmby(state)||hasKodi(state)||hasSilo(state)}
 function floppyAnimeLibraryOn(state){const pair=state?.pairProviders?.floppy;return pair&&"anime_library" in pair?!!pair.anime_library:!!state?.cfgRaw?.floppy?.anime_library}
 function hasScrob(state){return isScrob(state?.src)||isScrob(state?.dst)}
 function hasStremio(state){return isStremio(state?.src)||isStremio(state?.dst)}
@@ -889,6 +891,7 @@ const {
   hasJelly,
   hasEmby,
   hasKodi,
+  hasSilo,
   getOpts,
   onLibrariesChanged: (state) => refreshProviderCardSummaries(state),
   instanceFor: (state, kind) => pairInstanceForKind(state, kind),
@@ -1190,6 +1193,9 @@ function getProviderOverrideCount(state, providerKey){
   if (providerKey === "kodi") {
     return countProviderLibraries(state, "KODI");
   }
+  if (providerKey === "silo") {
+    return countProviderLibraries(state, "SILO");
+  }
   return 0;
 }
 
@@ -1201,7 +1207,7 @@ function getProviderSummaryText(state, providerKey){
 }
 
 function refreshProviderCardSummaries(state){
-  [["plex","prov-plex-summary"],["jellyfin","prov-jelly-summary"],["emby","prov-emby-summary"],["kodi","prov-kodi-summary"]].forEach(([key, id]) => {
+  [["plex","prov-plex-summary"],["jellyfin","prov-jelly-summary"],["emby","prov-emby-summary"],["kodi","prov-kodi-summary"],["silo","prov-silo-summary"]].forEach(([key, id]) => {
     const el = ID(id);
     if (el) el.textContent = getProviderSummaryText(state, key);
   });
@@ -1228,6 +1234,7 @@ function renderFeaturePanel(state){
       if (providerKey === "plex") return "Tune Plex retries, workers, and pair library scope";
       if (providerKey === "jellyfin") return "Tune Jellyfin lookup, timeouts and pair library scope.";
       if (providerKey === "kodi") return "Tune Kodi pair library scope.";
+      if (providerKey === "silo") return "Tune Silo pair library scope.";
       return "Tune Emby timeouts and pair library scope.";
     };
 
@@ -1399,6 +1406,46 @@ function renderFeaturePanel(state){
               <div class="chip-row" id="kodi-prog-libs"></div>
             </div>
             <button type="button" class="cx-btn small" id="kodi-libs-load">Load libraries</button>
+          </div>
+        </div>
+      </details>`);
+
+    if (hasSilo(state)) providerCards.push(`
+      <details class="mods fold provider-card provider-silo" id="prov-silo">
+        <summary class="fold-head provider-card-head">
+          <span class="provider-card-main">
+            <span class="provider-card-badge">Silo</span>
+            <span class="provider-card-copy">
+              <span class="provider-card-title">Silo</span>
+              <span class="provider-card-sub" id="prov-silo-summary">${getProviderSummaryText(state, "silo")}</span>
+            </span>
+          </span>
+          <span class="provider-card-meta">
+            <span class="provider-card-hint">${providerHintText("silo")}</span>
+            <span class="chev">expand_more</span>
+          </span>
+        </summary>
+        <div class="fold-body provider-card-body">
+          <div class="prov-box" id="silo-pair-libs">
+            <div class="panel-title small">Pair library whitelist</div>
+            <div class="muted">Empty = use connection-level whitelist.</div>
+            <div class="opt-row">
+              <div class="field-label">History</div>
+              <div class="chip-row" id="silo-hist-libs"></div>
+            </div>
+            <div class="opt-row">
+              <div class="field-label">Ratings</div>
+              <div class="chip-row" id="silo-rate-libs"></div>
+            </div>
+            <div class="opt-row">
+              <div class="field-label">Progress</div>
+              <div class="chip-row" id="silo-prog-libs"></div>
+            </div>
+            <div class="opt-row">
+              <div class="field-label">Collections</div>
+              <div class="chip-row" id="silo-coll-libs"></div>
+            </div>
+            <button type="button" class="cx-btn small" id="silo-libs-load">Load libraries</button>
           </div>
         </div>
       </details>`);
@@ -2176,7 +2223,7 @@ left.innerHTML = `
   if (state.feature === "collection") {
     const co = getOpts(state, "collection");
     const hasType=t=>Array.isArray(co.types)&&co.types.includes(t);
-    const mediaRead=["plex","emby","jellyfin"].some(p=>same(state.src,p));
+    const mediaRead=["plex","emby","jellyfin","silo"].some(p=>same(state.src,p));
     const mediaUpdates=["trakt","floppy","crosswatch","flicklist"].some(p=>same(state.dst,p));
     left.innerHTML = `<div class="panel-title">Collections | Basics</div>
       <div class="opt-row">

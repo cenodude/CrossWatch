@@ -20,6 +20,7 @@ const COLLECTION_TYPES = {
   PLEX: ["movies", "shows", "seasons", "episodes"],
   EMBY: ["movies", "shows", "seasons", "episodes"],
   JELLYFIN: ["movies", "shows", "seasons", "episodes"],
+  SILO: ["movies", "shows", "episodes"],
   KODI: ["movies", "episodes"],
   TRAKT: ["movies", "shows", "seasons", "episodes"],
   MDBLIST: ["movies", "shows", "seasons", "episodes"],
@@ -32,7 +33,7 @@ const COLLECTION_TYPES = {
 const COLLECTION_WRITE_TYPES = {
   FLOPPY: ["movies", "episodes"],
 };
-const COLLECTION_SOURCES = new Set(["PLEX", "EMBY", "JELLYFIN", "KODI", "TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST"]);
+const COLLECTION_SOURCES = new Set(["PLEX", "EMBY", "JELLYFIN", "SILO", "KODI", "TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST"]);
 const COLLECTION_TARGETS = new Set(["TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST"]);
 const COLLECTION_ORDER = ["movies", "shows", "seasons", "episodes"];
 

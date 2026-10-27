@@ -755,7 +755,7 @@ DEFAULT_CFG: dict[str, Any] = {
 
     "silo": {
         "server_url": "",
-        "verify_ssl": True,
+        "verify_ssl": False,
         "access_token": "",
         "refresh_token": "",
         "expires_at": 0,

@@ -43,7 +43,7 @@ def in_progress_rows(adapter: Any) -> dict[str, dict[str, Any]]:
 
 
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
-    lib = library(adapter)
+    lib = library(adapter, feature=FEATURE)
     rows = in_progress_rows(adapter)
     collected: dict[str, dict[str, Any]] = {}
     unmatched = 0
@@ -69,7 +69,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
-    lib = library(adapter)
+    lib = library(adapter, feature=FEATURE)
     unresolved: list[dict[str, Any]] = []
     entries: list[dict[str, Any]] = []
     wanted: dict[str, tuple[str, int]] = {}
@@ -132,7 +132,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
-    lib = library(adapter)
+    lib = library(adapter, feature=FEATURE)
     confirmed: list[str] = []
     unresolved: list[dict[str, Any]] = []
     for item in items or []:

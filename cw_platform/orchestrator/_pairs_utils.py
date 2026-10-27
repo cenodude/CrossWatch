@@ -26,6 +26,7 @@ LIBRARY_PROVIDER_KEYS = {
     "JELLYFIN": "jellyfin",
     "EMBY": "emby",
     "KODI": "kodi",
+    "SILO": "silo",
 }
 
 

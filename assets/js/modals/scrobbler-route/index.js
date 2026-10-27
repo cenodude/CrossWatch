@@ -4,7 +4,7 @@ const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: 
 const sources = ["plex", "jellyfin", "emby", "kodi", "scrob", "stremio", "silo"];
 const sinks = ["myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob", "silo"];
 const ratingSinks = ["kitsu", "myanimelist", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob", "silo"];
-const mediaSinks = ["plex", "jellyfin", "emby", "kodi"];
+const mediaSinks = ["plex", "jellyfin", "emby", "kodi", "silo"];
 
 function flashCopied(btn) {
   if (!btn) return;
@@ -475,7 +475,7 @@ function librariesPanel(r) {
         <div><strong>${esc(label(r.sink))} libraries</strong><p>Only update items in the selected libraries. Leave empty to use the Whitelist libraries of ${esc(label(r.sink))} connection.</p></div>
       </div>
       <div id="scr-destination-libraries"></div>
-      <label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">library_add_check</span><span><strong>Update all copies</strong><small>When the same title exists more than once, for example in a regular and a 4K library, update every copy instead of skipping.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-update-all-copies" ${dest.update_all_copies === false ? "" : "checked"}><span class="scrm-switch-track"></span></span></label>
+      ${r.sink === "silo" ? "" : `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">library_add_check</span><span><strong>Update all copies</strong><small>When the same title exists more than once, for example in a regular and a 4K library, update every copy instead of skipping.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-update-all-copies" ${dest.update_all_copies === false ? "" : "checked"}><span class="scrm-switch-track"></span></span></label>`}
     </section>
   `;
 }

@@ -26,6 +26,11 @@
   let profiles = [];
   let poller = null;
   let expiryTimer = null;
+  const LIB_FEATURES = { hist: "history", rate: "ratings", prog: "progress", coll: "collection", scr: "scrobble" };
+  const libSets = { hist: new Set(), rate: new Set(), prog: new Set(), coll: new Set(), scr: new Set() };
+  let libraries = [];
+  let librariesHydrated = false;
+  let wlHandle = null;
 
   function api(path) {
     return profile.api(path);
@@ -149,7 +154,7 @@
     const url = el("silo_server_url");
     if (url && (txt(data?.server_url) || !url.value)) url.value = txt(data?.server_url);
     const ssl = el("silo_verify_ssl");
-    if (ssl) ssl.checked = data?.verify_ssl !== false;
+    if (ssl) ssl.checked = data?.verify_ssl === true;
     syncServerUI();
   }
 
@@ -406,6 +411,9 @@
   function ensureInstanceUI() {
     profile.ensureUI(() => {
       stopPendingLogin(true);
+      librariesHydrated = false;
+      libraries = [];
+      wlHandle = null;
       void refresh();
     });
   }
@@ -442,12 +450,74 @@
     try { window.CW?.SyncUsers?.mount(host, "silo", profile.getInstance ? profile.getInstance() : "default"); } catch {}
   }
 
+  function cfgBlock(cfg) {
+    return profile.cfgBlock ? profile.cfgBlock(cfg, true) : {};
+  }
+
+  function hydrateLibraries(cfg) {
+    const block = cfgBlock(cfg || window.__cfg || {});
+    Object.entries(LIB_FEATURES).forEach(([fk, feature]) => {
+      libSets[fk] = new Set(((block[feature] || {}).libraries || []).map(String));
+    });
+    librariesHydrated = true;
+  }
+
+  async function loadLibraries() {
+    const r = await fetchJSON(api("/api/silo/libraries"), { cache: "no-store" });
+    libraries = r.ok && r.data?.ok && Array.isArray(r.data.libraries) ? r.data.libraries : [];
+    wlHandle?.render?.();
+  }
+
+  async function mountWhitelist() {
+    const host = el("silo_lib_matrix");
+    if (!host) return;
+    if (!connected) {
+      wlHandle = null;
+      host.innerHTML = '<div class="cw-wl"><div class="cw-wl-empty">Connect Silo and choose a profile before whitelisting libraries.</div></div>';
+      return;
+    }
+    if (!librariesHydrated) {
+      let cfg = window.__cfg && Object.keys(window.__cfg).length ? window.__cfg : null;
+      if (!cfg) {
+        const r = await fetchJSON("/api/config", { cache: "no-store" });
+        cfg = r.ok ? (r.data || {}) : {};
+      }
+      hydrateLibraries(cfg);
+    }
+    if (!window.cwWhitelistTable) return;
+    if (!wlHandle || !host.childElementCount) {
+      host.innerHTML = "";
+      wlHandle = window.cwWhitelistTable.mount({
+        host,
+        features: [{ key: "hist", label: "History" }, { key: "rate", label: "Ratings" }, { key: "prog", label: "Progress" }, { key: "coll", label: "Collections" }, { key: "scr", label: "Scrobble", title: "Libraries the watcher reads from. Scrobble destinations use History and Progress, or the libraries set on the route." }],
+        getLibs: () => libraries,
+        isOn: (fk, id) => libSets[fk].has(String(id)),
+        selectedIds: () => Object.values(libSets).flatMap((set) => [...set]),
+        setOn: (fk, id, on) => { if (on) libSets[fk].add(String(id)); else libSets[fk].delete(String(id)); },
+        commit: () => {},
+        load: loadLibraries,
+      });
+    }
+    if (!libraries.length) await loadLibraries();
+  }
+
+  function mergeSiloIntoCfg(cfg) {
+    cfg = cfg || (window.__cfg ||= {});
+    if (!librariesHydrated) return cfg;
+    const block = cfgBlock(cfg);
+    Object.entries(LIB_FEATURES).forEach(([fk, feature]) => {
+      block[feature] = Object.assign({}, block[feature] || {}, { libraries: Array.from(libSets[fk]) });
+    });
+    return cfg;
+  }
+
   function wireDelegates() {
     if (wireDelegates.done) return;
     wireDelegates.done = true;
     document.addEventListener("click", (ev) => {
-      const tab = ev.target?.closest?.('.cw-subtile[data-sub="users"]');
-      if (tab && tab.closest?.("#sec-silo, .cw-connection-modal-panel[data-cw-connection-provider='silo']")) setTimeout(mountUsers, 0);
+      const tab = ev.target?.closest?.('.cw-subtile[data-sub="users"], .cw-subtile[data-sub="whitelist"]');
+      if (!tab || !tab.closest?.("#sec-silo, .cw-connection-modal-panel[data-cw-connection-provider='silo']")) return;
+      setTimeout(tab.dataset.sub === "users" ? mountUsers : mountWhitelist, 0);
     });
     document.addEventListener("click", (ev) => {
       const btn = ev.target?.closest?.("#silo_connect, #silo_cancel, #silo_disconnect");
@@ -492,5 +562,8 @@
   window.initSiloAuthUI = boot;
   window.cwAuth = window.cwAuth || {};
   window.cwAuth.silo = { init: boot, rehydrate: refresh, saveSelectedProfile };
+  window.mergeSiloIntoCfg = mergeSiloIntoCfg;
+  window.registerSettingsCollector?.(mergeSiloIntoCfg);
+  document.addEventListener("settings-collect", (e) => { try { mergeSiloIntoCfg(e?.detail?.cfg || (window.__cfg ||= {})); } catch {} }, true);
   boot();
 })();

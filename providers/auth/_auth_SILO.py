@@ -130,7 +130,7 @@ def normalize_server_url(value: Any) -> str:
 
 def verify_ssl_of(block: Mapping[str, Any] | None) -> bool:
     raw = (block or {}).get("verify_ssl")
-    return True if raw is None else bool(raw)
+    return False if raw is None else bool(raw)
 
 
 def provider_block(cfg: Mapping[str, Any] | None, instance_id: Any = None) -> dict[str, Any]:
@@ -399,7 +399,7 @@ def api_url(server_url: str, path: str) -> str:
     return f"{base}{p}"
 
 
-def check_server(server_url: Any, *, verify_ssl: bool = True, session: requests.Session | None = None, timeout: float = HTTP_TIMEOUT) -> dict[str, Any]:
+def check_server(server_url: Any, *, verify_ssl: bool = False, session: requests.Session | None = None, timeout: float = HTTP_TIMEOUT) -> dict[str, Any]:
     base = normalize_server_url(server_url)
     if not base:
         raise SiloServerError("invalid_url")
@@ -982,6 +982,7 @@ def html() -> str:
         </div>
         <div class="cw-subtiles" style="margin-top:2px">
           <button type="button" class="cw-subtile active" data-sub="auth">Authentication</button>
+          <button type="button" class="cw-subtile" data-sub="whitelist">Whitelisting</button>
           <button type="button" class="cw-subtile" data-sub="users">Users</button>
         </div>
         <div class="cw-subpanels">
@@ -997,7 +998,7 @@ def html() -> str:
                 <label for="silo_server_url">Server URL</label>
                 <input id="silo_server_url" type="text" placeholder="http://192.168.1.10:8090" autocomplete="off" spellcheck="false" autocapitalize="off">
               </div>
-              <label class="silo-ssl" for="silo_verify_ssl"><input id="silo_verify_ssl" type="checkbox" checked> Verify SSL</label>
+              <label class="silo-ssl" for="silo_verify_ssl"><input id="silo_verify_ssl" type="checkbox"> Verify SSL</label>
             </div>
             <div class="silo-actions">
               <button id="silo_connect" class="btn" type="button">Connect Silo</button>
@@ -1031,6 +1032,11 @@ def html() -> str:
                 <label for="silo_profile_pin">Profile PIN</label>
                 <input id="silo_profile_pin" type="password" inputmode="numeric" autocomplete="off">
               </div>
+            </div>
+          </div>
+          <div class="cw-subpanel" data-sub="whitelist">
+            <div style="width:100%;max-width:none">
+              <div id="silo_lib_matrix"></div>
             </div>
           </div>
           <div class="cw-subpanel" data-sub="users">

@@ -8,6 +8,7 @@ export function createLibraryController({
   hasJelly,
   hasEmby,
   hasKodi,
+  hasSilo,
   getOpts,
   onLibrariesChanged,
   instanceFor,
@@ -44,6 +45,7 @@ export function createLibraryController({
     if (kind === "JELLYFIN") return "jellyfin";
     if (kind === "EMBY") return "emby";
     if (kind === "KODI") return "kodi";
+    if (kind === "SILO") return "silo";
     return "";
   }
 
@@ -121,6 +123,10 @@ export function createLibraryController({
     else if (kind === "KODI" && feature === "ratings") hostId = "kodi-rate-libs";
     else if (kind === "KODI" && feature === "progress") hostId = "kodi-prog-libs";
     else if (kind === "KODI" && feature === "collection") hostId = "kodi-coll-libs";
+    else if (kind === "SILO" && feature === "history") hostId = "silo-hist-libs";
+    else if (kind === "SILO" && feature === "ratings") hostId = "silo-rate-libs";
+    else if (kind === "SILO" && feature === "progress") hostId = "silo-prog-libs";
+    else if (kind === "SILO" && feature === "collection") hostId = "silo-coll-libs";
     const host = ID(hostId);
     if (!host) return;
     host.innerHTML = "";
@@ -186,7 +192,8 @@ export function createLibraryController({
       kind === "PLEX" ? "plx-libs-load" :
       kind === "JELLYFIN" ? "jf-libs-load" :
       kind === "EMBY" ? "em-libs-load" :
-      kind === "KODI" ? "kodi-libs-load" : "";
+      kind === "KODI" ? "kodi-libs-load" :
+      kind === "SILO" ? "silo-libs-load" : "";
     const btn = ID(btnId);
     if (!btn) return;
     const load = () => {
@@ -228,6 +235,7 @@ export function createLibraryController({
     const hasJF = hasJelly(state);
     const hasEM = hasEmby(state);
     const hasKO = hasKodi(state);
+    const hasSI = hasSilo(state);
     const plBox = ID("plx-pair-libs");
     const jfBox = ID("jf-pair-libs");
     const emBox = ID("em-pair-libs");
@@ -236,6 +244,8 @@ export function createLibraryController({
     if (jfBox) jfBox.style.display = hasJF ? "" : "none";
     if (emBox) emBox.style.display = hasEM ? "" : "none";
     if (koBox) koBox.style.display = hasKO ? "" : "none";
+    const siBox = ID("silo-pair-libs");
+    if (siBox) siBox.style.display = hasSI ? "" : "none";
 
     if (hasPL) wireProviderLibraries(state, "PLEX");
     else if (ID("plx-libs-load")) ID("plx-libs-load").disabled = true;
@@ -248,6 +258,9 @@ export function createLibraryController({
 
     if (hasKO) wireProviderLibraries(state, "KODI");
     else if (ID("kodi-libs-load")) ID("kodi-libs-load").disabled = true;
+
+    if (hasSI) wireProviderLibraries(state, "SILO");
+    else if (ID("silo-libs-load")) ID("silo-libs-load").disabled = true;
   }
 
   return {
