@@ -302,6 +302,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "remove": True,
+                "media_updates": True,
             },
             "playlists": _PLAYLIST_CAPABILITIES,
         },
@@ -947,6 +948,7 @@ class _MDBLISTOPS:
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "remove": True,
+                "media_updates": True,
             },
             "playlists": _PLAYLIST_CAPABILITIES,
         }
