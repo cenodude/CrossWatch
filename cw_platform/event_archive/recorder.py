@@ -202,6 +202,7 @@ class RunRecorder:
         self._started = False
         self._pair_id = ""
         self._scope = ""
+        self._sync_user = ""
         self._pair_stats: dict[tuple[str, str, str], dict[str, Any]] = {}
 
     def emit(self, event: str, **fields: Any):
@@ -241,6 +242,10 @@ class RunRecorder:
         kw.setdefault("feature", self._feature or None)
         kw.setdefault("pair_key", self._pair or None)
         kw.setdefault("source_kind", "runtime")
+        if self._sync_user:
+            detail = kw.get("detail")
+            if detail is None or isinstance(detail, Mapping):
+                kw["detail"] = {**(detail or {}), "sync_user": self._sync_user}
         self._buf.append(make_event(hash_extra=len(self._buf), **kw))
 
     def _capture_pair_scope(self) -> None:
@@ -307,7 +312,12 @@ class RunRecorder:
             self._add(event_type="sync_run_started", operation="run", detail=dict(f))
             return
 
+        if event == "run:pair":
+            self._sync_user = str(f.get("sync_user") or "").strip()
+            return
+
         if event == "run:done":
+            self._sync_user = ""
             self._add(event_type="sync_run_finished", operation="run", detail=dict(f))
             self._flush(force=True)
             if self._pair_stats:

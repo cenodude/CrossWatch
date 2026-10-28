@@ -72,6 +72,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     dated: list[dict[str, Any]] = []
     undated: list[tuple[str, str]] = []
     keys_by_cid: dict[str, str] = {}
+    items_by_cid: dict[str, Mapping[str, Any]] = {}
 
     for item in items or []:
         key = key_of(item)
@@ -90,6 +91,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             if item.get("_cw_watched_state") is True or item.get("watched") is True:
                 undated.append((cid, key))
                 keys_by_cid[cid] = key
+                items_by_cid[cid] = item
             else:
                 unresolved.append(unresolved_entry(key, "missing_watched_at", item))
             continue
@@ -100,6 +102,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             continue
         dated.append({"client_ref": key[:120], "media_item_id": cid, "position_ms": duration * 1000, "duration_ms": duration * 1000, "updated_at": watched})
         keys_by_cid[cid] = key
+        items_by_cid[cid] = item
 
     _dbg(FEATURE, "write_prepare", action="add", dated=len(dated), undated=len(undated), unresolved=len(unresolved))
     failed: set[str] = set()
@@ -130,9 +133,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             if cid in after and cid not in failed:
                 confirmed.append(key)
             elif cid in failed:
-                unresolved.append(unresolved_entry(key, "write_failed"))
+                unresolved.append(unresolved_entry(key, "write_failed", items_by_cid.get(cid)))
             else:
-                unresolved.append(unresolved_entry(key, "ignored_by_server"))
+                unresolved.append(unresolved_entry(key, "ignored_by_server", items_by_cid.get(cid)))
                 _dbg(FEATURE, "write_ignored", key=key, reason="older_than_unwatch")
     _info(FEATURE, "write_done", action="add", confirmed=len(confirmed), unresolved=len(unresolved))
     return {"ok": True, "confirmed_keys": confirmed, "unresolved_keys": [u["key"] for u in unresolved], "unresolved": unresolved}

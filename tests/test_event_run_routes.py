@@ -45,6 +45,28 @@ def test_errors_keep_routes():
     assert _summarize("failed", events, "", "", "", "") == "Sync run completed with errors, 2 errors, PLEX → TRAKT"
 
 
+def test_sync_users_shown_by_name():
+    carmen = {**_plan("PLEX", "SILO", si="default~176467484", di="default~62310e3f", feature="history"), "detail": {"sync_user": "Carmen"}}
+    owner = {**_plan("PLEX", "SILO", si="default~1", di="default~4b5eadfa", feature="history"), "detail": {"sync_user": "Owner"}}
+    assert _summarize("completed", _run(carmen, owner), "", "", "", "") == (
+        "Sync run completed successfully, PLEX → SILO (Carmen, Owner) (History)"
+    )
+
+
+def test_recorder_tags_pair_events_with_sync_user():
+    from cw_platform.event_archive.recorder import RunRecorder
+
+    rec = RunRecorder(lambda *a, **k: None, run_id="r1")
+    rec.emit("run:pair", src="PLEX", dst="SILO", sync_user="Carmen")
+    rec.emit("feature:start", src="PLEX", dst="SILO", feature="history")
+    rec.emit("one:plan", adds=1)
+    rec.emit("run:pair", src="PLEX", dst="TRAKT")
+    rec.emit("one:plan", adds=0)
+    plans = [r for r in rec._buf if r["event_type"] == "plan_created"]
+    assert '"sync_user": "Carmen"' in plans[0]["detail"]
+    assert "sync_user" not in plans[1]["detail"]
+
+
 def test_refresh_run_summaries_once(tmp_path):
     from cw_platform.event_archive.db import connect
     from cw_platform.event_archive.groups import correlate, refresh_run_summaries
