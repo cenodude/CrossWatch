@@ -243,7 +243,7 @@
   function syncUsersNote(provider, selected) {
     const labels = syncUserLabels[providerKey(provider)] || {};
     const names = [...selected].filter((id) => id.includes("~")).map((id) => labels[id] || id.split("~").slice(1).join("~"));
-    return names.length ? `<div class="sub">Synced users: ${esc(names.join(", "))}. Managed in the connection's Users tab.</div>` : "";
+    return names.length ? `<div class="sub">Identities: ${esc(names.join(", "))}. Managed in the connection's Identities tab.</div>` : "";
   }
 
   function renderInstanceChecks() {

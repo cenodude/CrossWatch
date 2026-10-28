@@ -1,4 +1,5 @@
 /* CrossWatch - Scrobbler Route Modal */
+import { createIdentityMap, identityMapSupported } from "../core/identity-map.js";
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", anilist: "AniList", myanimelist: "MyAnimeList", kitsu: "Kitsu", scrob: "Scrob", stremio: "Stremio", silo: "Silo" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
 const sources = ["plex", "jellyfin", "emby", "kodi", "scrob", "stremio", "silo"];
@@ -32,6 +33,7 @@ const lastTab = {};
 let boundRoot = null;
 let clickHandler = null;
 let changeHandler = null;
+let identityMap = null;
 let userProfiles = [];
 let selectedUserProfileId = "";
 const destinationLibraries = new Map();
@@ -392,6 +394,7 @@ function routePanel(r) {
           </div>
         </div>
       </div>
+      ${matchUsersSupported(r) ? `<div id="scr-identities" class="scrm-identities"></div>` : ""}
     </section>
   `;
 }
@@ -427,8 +430,27 @@ function filterRow(o) {
 }
 
 function matchUsersSupported(r) {
-  const media = ["plex", "emby", "jellyfin", "silo"];
-  return media.includes(String(r?.provider || "").toLowerCase()) && media.includes(String(r?.sink || "").toLowerCase());
+  return identityMapSupported(r?.provider, r?.provider_instance, r?.sink, r?.sink_instance);
+}
+
+function mountIdentityMap(r) {
+  const host = root?.querySelector("#scr-identities");
+  identityMap = host ? createIdentityMap(host, {
+    source: r.provider,
+    sourceInstance: r.provider_instance,
+    target: r.sink,
+    targetInstance: r.sink_instance,
+    exclude: props.mode !== "create" && r.id ? `route:${r.id}` : "",
+    intro: `Send each person's plays to their own identity on ${label(r.sink)}.`,
+    note: "Linked identities replace the user filter of this route.",
+    enabled: !!r.match_users,
+    mapping: r.user_matches || {},
+    onChange: (v) => {
+      const d = ensureDraft();
+      d.match_users = v.enabled;
+      d.user_matches = v.mapping;
+    },
+  }) : null;
 }
 
 function filtersPanel(r, f) {
@@ -446,7 +468,6 @@ function filtersPanel(r, f) {
     isStremio ? "" : `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">movie_filter</span><span><strong>Ignore Agregarr placeholder trailers</strong><small>Skip files marked as Trailer editions or stored beside .comingsoon markers.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-agregarr" ${f.ignore_agregarr_trailers ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
     `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">star</span><span><strong>Ignore specials (Season 0)</strong><small>Skip scrobbles for Season 0 / specials episodes.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-specials" ${f.ignore_specials ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
   ];
-  if (matchUsersSupported(r)) toggles.unshift(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">group</span><span><strong>Sync all matched users</strong><small>Send each play to the user with the same name on ${esc(label(r.sink))}. Tick users in each connection's Users tab. Media servers only.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-match-users" ${r.match_users ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
   if (isPlex) toggles.push(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>Ignore Plex Live TV &amp; DVR</strong><small>Skip scrobbles from live channels and DVR recordings.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
   return `
     <section class="scrm-panel ${activeTab === "filters" ? "active" : ""}" data-panel="filters">
@@ -689,6 +710,7 @@ function render(errors = []) {
   ensureVisiblePanel();
   enableSelectedUnavailableRatingTargets();
   mountDestinationTable();
+  mountIdentityMap(r);
 }
 
 function collect() {
@@ -746,7 +768,8 @@ function collect() {
     sink: sinkEl ? sinkEl.value : draft.sink || "",
     sink_instance: sinkInstanceEl ? sinkInstanceEl.value : draft.sink_instance || "",
     profile_id: selectedUserProfileId || draft.profile_id || "",
-    ...(root.querySelector("#scr-match-users")?.checked ? { match_users: true } : {}),
+    match_users: !!identityMap?.value.enabled,
+    user_matches: identityMap?.value.enabled ? identityMap.value.mapping : {},
     filters,
     options: {
       auto_remove_watchlist: root.querySelector("#scr-auto")?.value || "inherit",

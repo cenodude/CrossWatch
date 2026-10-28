@@ -96,15 +96,21 @@
       </span></div>`;
   }
 
-  function routeFilterSummary(filters = {}) {
-    const parts = [];
+  function linkedSummary(on, mapping) {
+    if (!on) return "";
+    const n = Object.keys(mapping && typeof mapping === "object" ? mapping : {}).length;
+    return n ? `${n} ${n === 1 ? "person" : "people"} linked` : "No people linked";
+  }
+
+  function routeFilterSummary(filters = {}, linked = "", replaceUsers = false) {
+    const parts = linked ? [linked] : [];
     const users = Array.isArray(filters.username_whitelist) ? filters.username_whitelist : [];
     const allow = Array.isArray(filters.server_uuid_whitelist) ? filters.server_uuid_whitelist : [];
     const block = Array.isArray(filters.server_uuid_blacklist) ? filters.server_uuid_blacklist : [];
     const paths = Array.isArray(filters.ignored_path_prefixes) ? filters.ignored_path_prefixes : [];
     const patterns = Array.isArray(filters.ignored_filename_patterns) ? filters.ignored_filename_patterns : [];
     const editions = Array.isArray(filters.ignored_editions) ? filters.ignored_editions : [];
-    if (users.length) parts.push(`${users.length} user${users.length === 1 ? "" : "s"}`);
+    if (users.length && !replaceUsers) parts.push(`${users.length} user${users.length === 1 ? "" : "s"}`);
     if (allow.length || filters.server_uuid) parts.push(`${allow.length || 1} UUID allow`);
     if (block.length) parts.push(`${block.length} UUID block`);
     if (filters.ignore_agregarr_trailers) parts.push("Agregarr ignored");
@@ -120,7 +126,8 @@
     const provider = String(row.provider || "").toLowerCase();
     const key = provider === "plex" ? "filters_plex" : provider === "jellyfin" ? "filters_jellyfin" : "filters_emby";
     const settings = row.effective_settings || {};
-    return routeFilterSummary(settings[key] || {});
+    const sink = String(row.sink || "").toLowerCase();
+    return routeFilterSummary(settings[key] || {}, linkedSummary(settings.match_users?.[sink] === true, settings.user_matches?.[sink]));
   }
 
   function renderHeader(o) {
@@ -214,7 +221,7 @@
               <div class="sc2-route-meta">
                 <span class="sc2-route-type"><span class="material-symbols-rounded">sensors</span>Watcher</span>
                 <span class="sc2-route-id">${esc(r.id || "Route")}</span>
-                <span class="sc2-route-filters sc2-muted">${esc(routeFilterSummary(r.filters))}</span>
+                <span class="sc2-route-filters sc2-muted">${esc(routeFilterSummary(r.filters, linkedSummary(r.match_users === true, r.user_matches), r.match_users === true))}</span>
                 ${r.needs_account_filter ? `<span class="sc2-route-warn" title="This route is assigned to a user profile but has no account whitelist, so play events are blocked."><span class="material-symbols-rounded">warning</span>No account filter</span>` : ""}
               </div>
               <div class="sc2-route-actions">

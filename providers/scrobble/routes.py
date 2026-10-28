@@ -3,17 +3,15 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 from typing import Any
-from cw_platform.account_match import exact_media_account_name, media_account_allowed
+from cw_platform.account_match import exact_media_account_name
 from cw_platform.provider_instances import (
     get_instance_block,
     get_provider_block,
     is_sync_user_instance,
-    list_sync_user_ids,
     normalize_instance_id,
     normalize_user_profile_id,
-    split_sync_user_id,
-    sync_user_match_name,
 )
+from cw_platform.identity_links import clean_identity_map, mapped_identities
 
 
 
@@ -66,11 +64,6 @@ def sync_user_endpoints_supported(provider: Any, provider_instance: Any, sink: A
     return not same_scrobble_endpoint(prov, provider_instance, snk, sink_instance)
 
 
-def _sync_user_name(cfg: dict[str, Any], provider: str, instance: str) -> str:
-    entry = get_instance_block(cfg, provider, instance)
-    return str(entry.get("username") or entry.get("user") or "").strip()
-
-
 def _sync_user_account_ids(cfg: dict[str, Any], provider: str, instance: str, key: str) -> list[str]:
     entry = get_instance_block(cfg, provider, instance)
     ids = [key]
@@ -81,32 +74,15 @@ def _sync_user_account_ids(cfg: dict[str, Any], provider: str, instance: str, ke
     return ids
 
 
-def _unique_by_match_name(cfg: dict[str, Any], provider: str, instances: list[str]) -> dict[str, str]:
-    names = {inst: sync_user_match_name(cfg, provider, inst).casefold() for inst in instances}
-    counts: dict[str, int] = {}
-    for match in names.values():
-        if match:
-            counts[match] = counts.get(match, 0) + 1
-    return {match: inst for inst, match in names.items() if match and counts[match] == 1}
-
-
-def sync_user_matches(cfg: dict[str, Any], provider: Any, provider_instance: Any, sink: Any, sink_instance: Any) -> list[dict[str, Any]]:
+def sync_user_matches(cfg: dict[str, Any], provider: Any, provider_instance: Any, sink: Any, sink_instance: Any, mapping: Any) -> list[dict[str, Any]]:
     if not sync_user_endpoints_supported(provider, provider_instance, sink, sink_instance):
         return []
     prov = str(provider).strip().lower()
     snk = str(sink).strip().lower()
-    dst_by_name = _unique_by_match_name(cfg, snk, list_sync_user_ids(cfg, snk, normalize_instance_id(sink_instance)))
-    src_ids = list_sync_user_ids(cfg, prov, normalize_instance_id(provider_instance))
-    src_unique = _unique_by_match_name(cfg, prov, src_ids)
-    out: list[dict[str, Any]] = []
-    for inst in src_ids:
-        ref = split_sync_user_id(inst)
-        name = _sync_user_name(cfg, prov, inst)
-        match = sync_user_match_name(cfg, prov, inst).casefold()
-        dst = dst_by_name.get(match) if match and src_unique.get(match) == inst else None
-        if ref is not None and dst:
-            out.append({"key": ref[1], "username": name, "sink_instance": dst, "ids": _sync_user_account_ids(cfg, prov, inst, ref[1])})
-    return out
+    return [
+        {"key": row["key"], "username": row["username"], "sink_instance": row["target_instance"], "ids": _sync_user_account_ids(cfg, prov, row["source_instance"], row["key"])}
+        for row in mapped_identities(cfg, prov, provider_instance, snk, sink_instance, mapping)
+    ]
 
 
 def sync_user_whitelist(match: dict[str, Any]) -> list[str]:
@@ -130,11 +106,8 @@ def expand_sync_user_route(cfg: dict[str, Any], route: dict[str, Any]) -> list[d
         return [route]
     raw_filters = route.get("filters")
     filters: dict[str, Any] = raw_filters if isinstance(raw_filters, dict) else {}
-    allowed = filters.get("username_whitelist") or []
     out: list[dict[str, Any]] = []
-    for match in sync_user_matches(cfg, route.get("provider"), route.get("provider_instance"), route.get("sink"), route.get("sink_instance")):
-        if allowed and not media_account_allowed(allowed, match["username"], account_id=match["key"], user_id=match["key"], default_allow=False):
-            continue
+    for match in sync_user_matches(cfg, route.get("provider"), route.get("provider_instance"), route.get("sink"), route.get("sink_instance"), route.get("user_matches")):
         derived = dict(route)
         derived["id"] = f"{route.get('id')}~{match['key']}"
         derived["sink_instance"] = match["sink_instance"]
@@ -332,6 +305,9 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
         out["profile_id"] = profile_id
     if r.get("match_users") is True or str(r.get("match_users") or "").strip().lower() in {"1", "true", "yes", "on"}:
         out["match_users"] = True
+        mapping = clean_identity_map(r.get("user_matches"))
+        if mapping:
+            out["user_matches"] = mapping
     return out
 
 
@@ -433,6 +409,8 @@ def route_needs_account_filter(cfg: dict[str, Any], route: dict[str, Any]) -> bo
         return False
     provider = str((route or {}).get("provider") or "").strip().lower()
     if provider in ROUTE_SINGLE_ACCOUNT_PROVIDERS or provider in ROUTE_PROFILE_NAME_PROVIDERS:
+        return False
+    if (route or {}).get("match_users") is True:
         return False
     filters = (route or {}).get("filters")
     raw = filters.get("username_whitelist") if isinstance(filters, dict) else None

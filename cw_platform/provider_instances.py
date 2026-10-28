@@ -59,11 +59,6 @@ def is_sync_user_instance(instance_id: Any) -> bool:
     return split_sync_user_id(instance_id) is not None
 
 
-def sync_user_match_name(cfg: Mapping[str, Any], provider_name: str, instance_id: Any) -> str:
-    entry = get_instance_block(cfg, provider_name, instance_id)
-    return " ".join(str(entry.get("match_as") or entry.get("username") or entry.get("user") or "").split())
-
-
 def sync_user_instance_id(parent_instance: Any, user_key: Any) -> str:
     return f"{normalize_instance_id(parent_instance)}{_SYNC_USER_SEP}{str(user_key or '').strip()}"
 
