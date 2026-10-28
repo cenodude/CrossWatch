@@ -452,7 +452,8 @@
     if (floatingModal) closeModal();
   }
 
-  function openProfile(id) {
+  async function openProfile(id) {
+    await load(true);
     modalProfileId = txt(id);
     modalDraft = makeDraft(modalProfile());
     openResourceSections = new Set();
@@ -666,7 +667,7 @@
       Promise.resolve()
         .then(() => {
           if (action === "refresh") return load(true);
-          if (action === "new-profile") return openNewProfile();
+          if (action === "new-profile") return load(true).then(() => openNewProfile());
           if (action === "edit-profile") return openProfile(actionNode.dataset.profileId);
           if (action === "close-modal") return closeModal();
           if (action === "save-profile") return saveProfile();
