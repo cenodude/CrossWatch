@@ -242,9 +242,9 @@ def _invoke(args: list[str], state: Ctx | None = None) -> int:
     reporter = state.out if state is not None else Output()
     try:
         if state is None:
-            app(args=args, prog_name=PROG, standalone_mode=False)
+            code = app(args=args, prog_name=PROG, standalone_mode=False)
         else:
-            app(args=args, prog_name=PROG, standalone_mode=False, obj=state)
+            code = app(args=args, prog_name=PROG, standalone_mode=False, obj=state)
     except CLIError as err:
         reporter.error(err.message, err.hint)
         return err.exit_code
@@ -255,7 +255,7 @@ def _invoke(args: list[str], state: Ctx | None = None) -> int:
         return 130
     except BrokenPipeError:
         return 0
-    return 0
+    return code if isinstance(code, int) and not isinstance(code, bool) else 0
 
 
 def main(argv: list[str] | None = None) -> int:
