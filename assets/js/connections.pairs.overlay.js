@@ -277,6 +277,41 @@
   }
   window.deletePairCard = deletePairCard;
 
+  const PAIR_DELETE_ICON = '<path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path>';
+  const PAIR_DELETE_WARN_ICON = '<path d="M12 3 2 20h20L12 3z"></path><path d="M12 10v4"></path><path d="M12 17h.01"></path>';
+  let _pairDelBtn = null;
+  let _pairDelTimer = 0;
+
+  function resetPairDelete() {
+    if (_pairDelTimer) clearTimeout(_pairDelTimer);
+    _pairDelTimer = 0;
+    const btn = _pairDelBtn;
+    _pairDelBtn = null;
+    if (btn && btn.isConnected) {
+      btn.classList.remove("is-confirming");
+      btn.setAttribute("data-tip", "Delete");
+      const ico = btn.querySelector("svg.ico");
+      if (ico) ico.innerHTML = PAIR_DELETE_ICON;
+    }
+  }
+
+  function pairDeleteClick(btn, id) {
+    if (!btn) return;
+    if (_pairDelBtn !== btn) {
+      resetPairDelete();
+      _pairDelBtn = btn;
+      btn.classList.add("is-confirming");
+      btn.setAttribute("data-tip", "Click again to delete");
+      const ico = btn.querySelector("svg.ico");
+      if (ico) ico.innerHTML = PAIR_DELETE_WARN_ICON;
+      _pairDelTimer = setTimeout(resetPairDelete, 4200);
+      return;
+    }
+    resetPairDelete();
+    deletePairCard(id);
+  }
+  window.cxPairsDeleteClick = pairDeleteClick;
+
   async function openPlaylistMappingsForPair(pairId, trigger) {
     const id = String(pairId || "").trim();
     if (!id) return;
@@ -291,6 +326,56 @@
     }
   }
   window.cxOpenPlaylistMappingsForPair = openPlaylistMappingsForPair;
+
+  const PERSON_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 21a8 8 0 0 1 16 0"></path></svg>';
+  const PEOPLE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20a6.5 6.5 0 0 1 13 0"></path><path d="M16 4.5a3.5 3.5 0 0 1 0 7"></path><path d="M18.5 14a6 6 0 0 1 3 6"></path></svg>';
+  let _identityLabels = {};
+  let _identityLabelsAt = 0;
+
+  function pairProfileLabel(pr) {
+    return String(pr?.profile_label || pr?.profile_id || "").trim();
+  }
+
+  function identityName(provider, instance, key) {
+    const labels = _identityLabels[String(provider || "").toUpperCase()] || {};
+    return labels[`${String(instance || "default").trim() || "default"}~${key}`] || key;
+  }
+
+  function pairModeTip(pr, modeLabel) {
+    const lines = [modeLabel];
+    const profile = pairProfileLabel(pr);
+    if (profile) lines.push(`Belongs to user profile: ${profile}`);
+    if (pr?.match_users) {
+      const links = Object.entries(pr.user_matches && typeof pr.user_matches === "object" ? pr.user_matches : {});
+      if (!links.length) lines.push("Identities on, but nobody linked yet");
+      else {
+        lines.push(`Syncs ${links.length} ${links.length === 1 ? "person" : "people"}, each with their own history:`);
+        links.forEach(([src, dst]) => lines.push(`  ${identityName(pr.source, pr.source_instance, src)} → ${identityName(pr.target, pr.target_instance, dst)}`));
+      }
+    }
+    return lines.join("\n");
+  }
+
+  function pairWhoBadge(pr) {
+    const icons = (pairProfileLabel(pr) ? PERSON_ICON : "") + (pr?.match_users ? PEOPLE_ICON : "");
+    return icons ? `<span class="pair-people" aria-hidden="true">${icons}</span>` : "";
+  }
+
+  function refreshIdentityTips(board, pairs) {
+    if (!pairs.some((pr) => pr?.match_users) || Date.now() - _identityLabelsAt < 30000) return;
+    _identityLabelsAt = Date.now();
+    fetch("/api/sync-user-labels", { cache: "no-store", credentials: "same-origin" })
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((data) => {
+        _identityLabels = data && typeof data === "object" ? data : {};
+        board.querySelectorAll(".pair-card[data-id]").forEach((el) => {
+          const pr = pairs.find((p) => String(p.id) === el.dataset.id);
+          const pill = el.querySelector(".pair-pill.mode[data-pair-who]");
+          if (pr && pill) pill.setAttribute("data-tip", pairModeTip(pr, el.dataset.mode || ""));
+        });
+      })
+      .catch(() => {});
+  }
 
   function renderPairsOverlay() {
     const containers = ensureHost(); if (!containers) return;
@@ -325,7 +410,6 @@
       const f = pr.features || {};
       const srcTone = brandTone(src);
       const dstTone = brandTone(dst);
-      const profileLabel = String(pr.profile_label || pr.profile_id || "").trim();
 
       return `
         <div class="pair-card brand-${brandKey(src)} dst-${brandKey(dst)} ${enabled ? "" : "pair-disabled"}" data-id="${pr.id || ""}" data-source="${src}" data-target="${dst}" data-mode="${modeLabel}" style="--src-solid:${srcTone.solid};--src-rgb:${srcTone.rgb};--dst-solid:${dstTone.solid};--dst-rgb:${dstTone.rgb};--accent:${srcTone.solid};--accent-rgb:${srcTone.rgb}">
@@ -335,8 +419,7 @@
               ${pill(src, srcInst, "src")}
               <span class="arrow" data-tip="${modeLabel}">${arrow}</span>
               ${pill(dst, dstInst, "dst")}
-              <span class="pair-pill mode" data-tip="${modeLabel}">${modeLabel}</span>
-              ${profileLabel ? `<span class="pair-pill mode profile" data-tip="Assigned profile">${esc(profileLabel)}</span>` : ""}
+              <span class="pair-pill mode" data-pair-who data-tip="${esc(pairModeTip(pr, modeLabel))}">${modeLabel}${pairWhoBadge(pr)}</span>
             </div>
             <div class="pair-actions">
               <div class="pair-feature-summary">
@@ -375,8 +458,8 @@
               <button type="button" class="icon-btn" data-tip="Edit" onclick="window.cxPairsEditClick(this)" aria-label="Edit">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"></path><path d="M14.06 4.94l3.75 3.75"></path></svg><span class="pair-action-label">Edit</span>
               </button>
-              <button type="button" class="icon-btn danger" data-tip="Delete" onclick="window.deletePairCard('${pr.id}')" aria-label="Delete">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M6 6l1 14h10l1-14"></path></svg><span class="pair-action-label">Delete</span>
+              <button type="button" class="icon-btn danger cw-danger-confirm" data-tip="Delete" onclick="window.cxPairsDeleteClick(this, '${pr.id}')" aria-label="Delete">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">${PAIR_DELETE_ICON}</svg><span class="pair-action-label">Delete</span>
               </button>
               </div>
             </div>
@@ -385,6 +468,7 @@
     };
 
     board.innerHTML = pairs.map((pair, index) => renderPairCard(pair, index + 1)).join("");
+    refreshIdentityTips(board, pairs);
     scheduleViewportLimit(0);
     installTooltip(host);
     refreshBadges(board);

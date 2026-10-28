@@ -1,4 +1,5 @@
 /* CrossWatch - Scrobbler Webhook Modal */
+import { createIdentityMap, identityMapSupported } from "../core/identity-map.js";
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const label = (v) => window.CW?.ProviderMeta?.label?.(v) || ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", anilist: "AniList", myanimelist: "MyAnimeList", kitsu: "Kitsu", scrob: "Scrob" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
 const sinks = ["myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob", "silo"];
@@ -7,8 +8,52 @@ const webhookSources = new Set(["plex", "jellyfin", "emby"]);
 const animeMappingSinks = new Set(["crosswatch", "simkl"]);
 const mediaSinks = new Set(["plex", "jellyfin", "emby", "kodi"]);
 const matchUserServers = new Set(["plex", "jellyfin", "emby"]);
-function webhookMatchUsersSupported(sink) {
-  return matchUserServers.has(String(sink || "").toLowerCase()) && matchUserServers.has(String(currentSource()?.provider || "").toLowerCase());
+function webhookMatchUsersSupported(sink, sinkInst) {
+  const src = currentSource();
+  return matchUserServers.has(String(sink || "").toLowerCase()) && matchUserServers.has(String(src?.provider || "").toLowerCase()) && identityMapSupported(src.provider, src.instance, sink, sinkInst);
+}
+
+let identityMap = null;
+const identityDrafts = new Map();
+
+function identityDraftKey(sink, sinkInst) {
+  const src = currentSource();
+  return `${String(src.provider || "").toLowerCase()}:${normInst(src.instance)}:${String(sink || "").toLowerCase()}:${normInst(sinkInst)}`;
+}
+
+function identityDraft(sink, sinkInst) {
+  const key = identityDraftKey(sink, sinkInst);
+  if (!identityDrafts.has(key)) {
+    const s = settings();
+    const cur = selectedWebhook();
+    const same = String(cur.sink || "").toLowerCase() === sink && normInst(cur.sink_instance) === normInst(sinkInst);
+    const on = same && s.match_users && typeof s.match_users === "object" ? s.match_users[sink] === true : false;
+    const map = same && s.user_matches && typeof s.user_matches === "object" ? s.user_matches[sink] || {} : {};
+    identityDrafts.set(key, { enabled: on, mapping: { ...map } });
+  }
+  return identityDrafts.get(key);
+}
+
+function mountIdentityMap() {
+  const host = root?.querySelector("#scw-identities");
+  if (!host) { identityMap = null; return; }
+  const src = currentSource();
+  const sink = selectedSinkKey();
+  const sinkInst = selectedSinkInstance(sink);
+  const d = identityDraft(sink, sinkInst);
+  const users = splitValues(root.querySelector("#scw-users")?.value);
+  identityMap = createIdentityMap(host, {
+    source: src.provider,
+    sourceInstance: src.instance,
+    target: sink,
+    targetInstance: sinkInst,
+    exclude: props.mode === "edit" ? `webhook:${String(src.provider || "").toLowerCase()}:${normInst(src.instance)}:${sink}` : "",
+    intro: `Send each person's plays to their own identity on ${label(sink)}.`,
+    note: users.length ? "The user filter on the Filters tab still applies, so add these people there or leave it empty." : "",
+    enabled: d.enabled,
+    mapping: d.mapping,
+    onChange: (v) => { d.enabled = v.enabled; d.mapping = v.mapping; },
+  });
 }
 
 function flashCopied(btn) {
@@ -456,6 +501,7 @@ function sourcePanel(current) {
           </div>
         </div>
       </div>
+      ${webhookMatchUsersSupported(sink, sinkInst) ? `<div id="scw-identities" class="scrm-identities"></div>` : ""}
       ${endpointBlock(current)}
     </section>
   `;
@@ -568,7 +614,6 @@ function optionsPanel() {
         ${field("Suppress start", `<input class="input" id="scw-suppress" type="number" min="0" max="3600" value="${esc(settings().suppress_start_at ?? "")}" placeholder="Inherited">`)}
       </div>
       ${animeMapping}
-      ${webhookMatchUsersSupported(sink) ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">group</span><span><strong>Sync all matched users</strong><small>Send each play to the user with the same name on the destination media server. Tick users in each connection's Users tab. Applies to all media server destinations of this webhook, not to trackers.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-match-users" ${settings().match_users === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>` : ""}
       ${sink === "simkl" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>Track rewatches</strong><small>Allow repeat watches for this destination. Requires SIMKL Pro or VIP. SIMKL applies a 48-hour gap per movie or episode. Your watched threshold still applies, with a minimum of 80%.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scw-simkl-rewatches" ${settings().simkl_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>` : ""}
     </section>
   `;
@@ -722,6 +767,7 @@ function render(errs = []) {
   `;
   ensureVisiblePanel();
   mountDestinationTable();
+  mountIdentityMap();
 }
 
 function setBusy(flag) {
@@ -765,7 +811,12 @@ function payload() {
   }
   if (animeMappingSinks.has(sink)) body[`anime_mapping_${sink}`] = !!root.querySelector("#scw-anime-mapping")?.checked;
   if (sink === "simkl") body.simkl_rewatches = !!root.querySelector("#scw-simkl-rewatches")?.checked;
-  if (webhookMatchUsersSupported(sink)) body.match_users = !!root.querySelector("#scw-match-users")?.checked;
+  const sinkInstValue = (body.sink_instances || {})[sink] || "default";
+  if (webhookMatchUsersSupported(sink, sinkInstValue) && identityMap) {
+    const v = identityMap.value;
+    body.match_users = { [sink]: v.enabled };
+    body.user_matches = { [sink]: v.enabled ? v.mapping : {} };
+  }
   if (mediaSinks.has(sink)) {
     const dest = destinationFor(sink);
     const copiesEl = root.querySelector("#scw-update-all-copies");
@@ -917,6 +968,8 @@ export async function mount(shell, incoming = {}) {
   selectedUserProfileId = "";
   destinationState = null;
   destinationLibraries.clear();
+  identityMap = null;
+  identityDrafts.clear();
   modalKey = String(props.mode === "create" ? "__new__" : `${props.webhook?.provider || ""}:${props.webhook?.provider_instance || ""}`);
   activeTab = normalizeActiveTab("source");
   if (root) root.dataset.scrmTab = activeTab;
@@ -1054,6 +1107,8 @@ export function unmount() {
   userProfiles = [];
   selectedUserProfileId = "";
   activeTab = "source";
+  identityMap = null;
+  identityDrafts.clear();
 }
 
 export default { mount, unmount };

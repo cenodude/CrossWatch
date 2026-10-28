@@ -1,5 +1,5 @@
 /* assets/auth/auth.sync-users.js */
-/* CrossWatch - Users tab for media server connections (Plex, Emby, Jellyfin, Silo) */
+/* CrossWatch - Identities tab for media server connections (Plex, Emby, Jellyfin, Silo) */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
   if (w.CW?.SyncUsers) return;
@@ -57,11 +57,10 @@
     const code = txt(err?.message);
     if (code === "sync_user_limit_reached") {
       const max = err?.data?.limit || limit;
-      return `You can sync up to ${max} users per connection. Raise max_sync_users_per_connection in config.json if you need more.`;
+      return `You can add up to ${max} identities per connection. Raise max_sync_users_per_connection in config.json if you need more.`;
     }
-    if (code === "match_as_too_long") return "Match as can be at most 40 characters.";
     if (code === "not_found") return "This connection profile no longer exists.";
-    if (code === "unsupported_provider") return `${LABELS[provider] || provider} does not support user syncing.`;
+    if (code === "unsupported_provider") return `${LABELS[provider] || provider} does not support identities.`;
     if (code === "invalid_pin") return "A profile PIN was not accepted.";
     if (code === "pin_locked") return "Too many incorrect PINs. Try again later.";
     if (code === "silo_unavailable") return "Could not reach the Silo server.";
@@ -86,13 +85,15 @@
     const pin = (state.provider === "plex" || state.provider === "silo") && u.home
       ? `<input type="password" class="cw-su-pin" inputmode="numeric" maxlength="8" autocomplete="off" data-pin="${esc(u.key)}" placeholder="${savedPin ? "PIN saved" : state.provider === "silo" ? "Profile PIN" : "PIN if needed"}" ${on ? "" : "hidden"} data-lpignore="true" data-1p-ignore="true" data-bwignore="true">`
       : "";
-    const match = `<input type="text" class="cw-su-match" maxlength="40" autocomplete="off" spellcheck="false" data-match="${esc(u.key)}" list="cw-su-names-${state.provider}" placeholder="Match as (optional)" title="Name used to match this user on your other servers. Pick a name from the list or type one. Leave empty to use ${esc(u.username || u.key)}." ${on ? "" : "hidden"}>`;
+    const usedIn = state.saved.find((s) => s.key === u.key)?.used_in || [];
+    const usage = state.saved.some((s) => s.key === u.key)
+      ? `<span class="cw-su-usage ${usedIn.length ? "is-used" : ""}" title="${esc(usedIn.join(", "))}">${usedIn.length ? `Linked in ${esc(usedIn.join(", "))}` : "Not linked anywhere yet"}</span>`
+      : "";
     return `
       <label class="cw-wl-row cw-su-row ${on ? "is-on" : ""}" for="${id}" data-row="${esc(u.key)}" data-search="${esc(u.username.toLowerCase())}">
         <span class="cw-wl-ic cw-su-avatar" aria-hidden="true">${initial}</span>
-        <span class="cw-su-copy"><span class="cw-wl-name">${esc(u.username || u.key)}</span>${tag}</span>
+        <span class="cw-su-copy"><span class="cw-wl-name">${esc(u.username || u.key)}</span>${tag}${usage}</span>
         ${pin}
-        ${match}
         <span class="cw-wl-check cw-wl-scr"><input type="checkbox" id="${id}" data-key="${esc(u.key)}" data-name="${esc(u.username)}" ${on ? "checked" : ""} ${u.disabled && !on ? "disabled" : ""}><span class="cw-wl-box"></span></span>
       </label>`;
   }
@@ -102,75 +103,57 @@
     const list = rows(state);
     state.root.innerHTML = `
       <div class="cw-wl cw-su">
-        <div class="cw-wl-note"><strong>Optional.</strong> Only needed when you want to sync several users of this ${esc(label)} server, each with their own history. Leave everything unticked to keep syncing just the account of this connection, as before.</div>
-        <details class="cw-su-help">
-          <summary><span class="material-symbols-rounded" aria-hidden="true">help</span>How it works</summary>
-          <ol>
-            <li>Tick the users to include here, and do the same on the other media server.</li>
-            <li>Turn on <strong>Sync all matched users</strong> in a sync pair, watcher route or webhook between the two servers.</li>
-            <li>Each ticked user syncs with the user of the same name on the other server, each with their own history. Different names, like Carmen on Plex and carmii on Jellyfin? Tick carmii and set her <strong>Match as</strong> to Carmen.</li>
-            <li>Ticked users join the user profile with the same name. Use <strong>Create user profiles</strong> below to make the missing ones, so each person sees only their own data.</li>
-          </ol>
-          <p><strong>Media servers only.</strong> This works between Plex, Emby, Jellyfin and Silo. Trackers such as Trakt or SIMKL need every person to sign in with their own account, so for those create a connection profile per person (pick the user in Settings) and a normal sync pair to that person's tracker profile.</p>
-        </details>
+        <div class="cw-wl-note"><strong>Optional.</strong> Tick the people of this ${esc(label)} server who can be synced. You link them to people on another media server inside a sync pair, watcher route or webhook.</div>
         ${state.loadError ? `<div class="cw-wl-empty">Could not load users from ${esc(label)}: ${esc(state.loadError)}</div>` : ""}
         <div class="cw-su-tools">
-          <span class="cw-su-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input type="search" data-role="search" placeholder="Search users" autocomplete="off" value="${esc(state.query)}"></span>
+          <span class="cw-su-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input type="search" data-role="search" placeholder="Search people" autocomplete="off" value="${esc(state.query)}"></span>
           <span class="cw-su-count" data-role="count"></span>
           <button type="button" class="cw-wl-load" data-act="all"><span class="material-symbols-rounded" aria-hidden="true">done_all</span>Select all</button>
           <button type="button" class="cw-wl-load" data-act="none"><span class="material-symbols-rounded" aria-hidden="true">remove_done</span>Clear</button>
         </div>
-        <datalist id="cw-su-names-${state.provider}">${state.suggestions.map((name) => `<option value="${esc(name)}"></option>`).join("")}</datalist>
         <div class="cw-wl-scroll">
-          <div class="cw-wl-rows">${list.length ? list.map((u, idx) => rowHTML(state, u, idx)).join("") : `<div class="cw-wl-empty">No users found on this server.</div>`}</div>
+          <div class="cw-wl-rows">${list.length ? list.map((u, idx) => rowHTML(state, u, idx)).join("") : `<div class="cw-wl-empty">No people found on this server.</div>`}</div>
         </div>
         <div class="cw-wl-foot">
           <div class="cw-wl-note" data-role="status" aria-live="polite"></div>
-          <button type="button" class="cw-wl-load" data-act="profiles"><span class="material-symbols-rounded" aria-hidden="true">person_add</span>Create user profiles</button>
         </div>
+        <details class="cw-su-more">
+          <summary><span class="material-symbols-rounded" aria-hidden="true">person_add</span>Optional: user profiles</summary>
+          <p>Not needed for syncing. A user profile gives a person their own CrossWatch view with only their data. This creates one for each saved identity that has none yet, using its name.</p>
+          <button type="button" class="cw-wl-load" data-act="profiles"><span class="material-symbols-rounded" aria-hidden="true">person_add</span>Create user profiles</button>
+        </details>
       </div>`;
     state.root.querySelectorAll("input[data-pin]").forEach((box) => { box.value = state.pins.get(box.dataset.pin) || ""; });
-    state.root.querySelectorAll("input[data-match]").forEach((box) => { box.value = matchValue(state, box.dataset.match); });
     applySearch(state);
     refresh(state);
-  }
-
-  function savedMatch(state, key) {
-    return txt(state.saved.find((s) => s.key === key)?.match_as);
-  }
-
-  function matchValue(state, key) {
-    return state.matches.has(key) ? state.matches.get(key) : savedMatch(state, key);
   }
 
   function dirty(state) {
     const saved = new Set(state.saved.map((s) => s.key));
     if (saved.size !== state.selected.size || [...state.selected].some((k) => !saved.has(k))) return true;
-    if ([...state.matches.entries()].some(([key, value]) => state.selected.has(key) && txt(value) !== savedMatch(state, key))) return true;
     return [...state.pins.values()].some((v) => txt(v));
   }
 
   function refresh(state) {
     const count = state.root.querySelector('[data-role="count"]');
-    if (count) count.textContent = `${state.selected.size} of ${state.limit} selected`;
+    if (count) count.textContent = `${state.selected.size} of ${state.limit} identities`;
     const make = state.root.querySelector('[data-act="profiles"]');
     if (make) {
       make.disabled = state.busy || dirty(state) || !state.saved.length;
-      make.title = dirty(state) ? "Save changes first" : !state.saved.length ? "Tick and save users first" : "Create a user profile for each ticked user that has none yet";
+      make.title = dirty(state) ? "Save changes first" : !state.saved.length ? "Tick and save identities first" : "Create a user profile for each identity that has none yet";
     }
     state.root.querySelectorAll(".cw-su-row[data-row]").forEach((row) => {
       const on = state.selected.has(row.dataset.row);
       row.classList.toggle("is-on", on);
       const pin = row.querySelector("input[data-pin]");
       if (pin) pin.hidden = !on;
-      const matchBox = row.querySelector("input[data-match]");
-      if (matchBox) matchBox.hidden = !on;
     });
     if (state.message) return setStatus(state, state.message, state.messageOk);
     const removed = state.saved.filter((s) => !state.selected.has(s.key));
     if (removed.length) {
-      const who = removed.length === 1 ? removed[0].username : `${removed.length} users`;
-      setStatus(state, `${who} will stop syncing when you save. If added again later, CrossWatch starts fresh for them.`, false);
+      const who = removed.length === 1 ? removed[0].username : `${removed.length} people`;
+      const where = [...new Set(removed.flatMap((r) => r.used_in || []))];
+      setStatus(state, `${who} will stop syncing when you save.${where.length ? ` This breaks their links in ${where.join(", ")}.` : ""} If added again later, CrossWatch starts fresh for them.`, false);
     } else {
       setStatus(state, dirty(state) ? "Unsaved changes. Click Save changes to apply." : "", true);
     }
@@ -198,7 +181,6 @@
       const pin = txt(state.pins.get(key));
       if (pin) row.home_pin = pin;
       if (cloudIds.has(key)) row.cloud_account_id = cloudIds.get(key);
-      row.match_as = txt(matchValue(state, key));
       return row;
     });
     const current = () => state.root.__cwSyncUsersState === state;
@@ -209,8 +191,7 @@
       state.selected = new Set(state.saved.map((s) => s.key));
       state.limit = res.limit || state.limit;
       state.pins.clear();
-      state.matches.clear();
-      state.message = state.saved.length ? `Saved. ${state.saved.length} user${state.saved.length === 1 ? "" : "s"} selected for syncing.` : "Saved. No users selected.";
+      state.message = state.saved.length ? `Saved. ${state.saved.length} ${state.saved.length === 1 ? "identity" : "identities"} available. Link them in a sync pair, watcher route or webhook.` : "Saved. No identities selected.";
       state.messageOk = true;
       render(state);
       state.message = "";
@@ -229,10 +210,10 @@
       if (!current()) return;
       const created = res.created | 0, linked = res.linked | 0, skipped = res.skipped | 0;
       const done = created || linked
-        ? `Created ${created} user profile${created === 1 ? "" : "s"} and linked ${linked} user${linked === 1 ? "" : "s"}.`
-        : "Every ticked user already has a user profile.";
+        ? `Created ${created} user profile${created === 1 ? "" : "s"} and added ${linked} ${linked === 1 ? "identity" : "identities"} to them.`
+        : "Every identity already has a user profile.";
       state.message = skipped
-        ? `${done} Skipped ${skipped} user${skipped === 1 ? "" : "s"}: name longer than 40 characters, or the same Match as name used by more than one user on this server.`
+        ? `${done} Skipped ${skipped}: name longer than 40 characters, or the same name used by more than one identity on this server.`
         : done;
       state.messageOk = true;
     } catch (err) {
@@ -258,7 +239,7 @@
           state.message = text;
           state.messageOk = false;
           const visible = root.__cwSyncUsersState;
-          if (visible && visible !== state) setStatus(visible, `Users for connection profile "${connectionName(state.instance)}" were not saved: ${text}`, false);
+          if (visible && visible !== state) setStatus(visible, `Identities for connection profile "${connectionName(state.instance)}" were not saved: ${text}`, false);
           throw err;
         }
         pending.delete(pendingKey(state.provider, state.instance));
@@ -283,8 +264,6 @@
       if (!state) return;
       const pin = ev.target?.closest?.("input[data-pin]");
       if (pin) { state.message = ""; state.pins.set(pin.dataset.pin, pin.value); refresh(state); return; }
-      const matchBox = ev.target?.closest?.("input[data-match]");
-      if (matchBox) { state.message = ""; state.matches.set(matchBox.dataset.match, matchBox.value); refresh(state); return; }
       if (ev.target?.matches?.('[data-role="search"]')) { state.query = ev.target.value || ""; applySearch(state); }
     });
     root.addEventListener("change", (ev) => {
@@ -328,10 +307,10 @@
       render(kept);
       return;
     }
-    const state = { root, provider: p, instance: inst(instance), server: [], saved: [], selected: new Set(), pins: new Map(), matches: new Map(), suggestions: [], limit: 25, loadError: "", query: "", message: "", messageOk: true, ready: false, busy: false };
+    const state = { root, provider: p, instance: inst(instance), server: [], saved: [], selected: new Set(), pins: new Map(), limit: 25, loadError: "", query: "", message: "", messageOk: true, ready: false, busy: false };
     root.__cwSyncUsersState = state;
     wire(root);
-    root.innerHTML = `<div class="cw-wl cw-su"><div class="cw-wl-empty">Loading users…</div></div>`;
+    root.innerHTML = `<div class="cw-wl cw-su"><div class="cw-wl-empty">Loading people…</div></div>`;
     const [serverRes, savedRes] = await Promise.allSettled([
       getJSON(serverUsersUrl(p, state.instance)),
       getJSON(syncUsersUrl(p, state.instance)),
@@ -343,7 +322,6 @@
     }
     state.saved = Array.isArray(savedRes.value?.users) ? savedRes.value.users.map((s) => ({ ...s, key: txt(s.key), username: txt(s.username) })) : [];
     state.limit = savedRes.value?.limit || state.limit;
-    state.suggestions = Array.isArray(savedRes.value?.suggestions) ? savedRes.value.suggestions.map(txt).filter(Boolean) : [];
     state.selected = new Set(state.saved.map((s) => s.key));
     if (serverRes.status === "fulfilled") {
       const raw = Array.isArray(serverRes.value?.users) ? serverRes.value.users : [];

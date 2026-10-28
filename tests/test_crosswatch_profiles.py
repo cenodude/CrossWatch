@@ -2991,7 +2991,7 @@ def test_scrobbler_cards_summarize_media_ignore_filters() -> None:
     assert "ignored_editions" in js
     assert "function webhookFilterSummary(row = {})" in js
     assert "${esc(webhookFilterSummary(x))}" in webhooks
-    assert "${esc(routeFilterSummary(r.filters))}" in routes
+    assert "${esc(routeFilterSummary(r.filters, linkedSummary(r.match_users === true, r.user_matches), r.match_users === true))}" in routes
 
 
 def test_pair_config_profile_display_sits_before_mode_control() -> None:

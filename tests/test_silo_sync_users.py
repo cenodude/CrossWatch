@@ -123,18 +123,18 @@ def test_sync_users_api_entry_verifies_pin_and_never_stores_it(monkeypatch: pyte
     assert api._silo_prepare_sync_users(_cfg(), "default", {"p-x": {"key": "p-x", "username": "X"}}) == "not_found"
 
 
-def test_pairs_and_routes_match_silo_users_by_name() -> None:
+def test_pairs_and_routes_link_silo_identities() -> None:
     from cw_platform.orchestrator._pairs import _expand_sync_user_pair
     from providers.scrobble.routes import sync_user_endpoints_supported, sync_user_matches
 
     cfg = _cfg()
     cfg["jellyfin"] = {"server": "http://jf", "access_token": "t", "user_id": "admin",
                        "sync_users": {"u-kid": {"user_id": "u-kid", "username": "kid", "user": "kid"}}}
-    pairs = _expand_sync_user_pair(cfg, {"id": "P1", "source": "SILO", "target": "JELLYFIN", "match_users": True})
+    pairs = _expand_sync_user_pair(cfg, {"id": "P1", "source": "SILO", "target": "JELLYFIN", "match_users": True, "user_matches": {"p-kid": "u-kid"}})
     assert [(p["source_instance"], p["target_instance"]) for p in pairs] == [("default~p-kid", "default~u-kid")]
 
     assert sync_user_endpoints_supported("silo", "default", "jellyfin", "default")
-    matches = sync_user_matches(cfg, "silo", "default", "jellyfin", "default")
+    matches = sync_user_matches(cfg, "silo", "default", "jellyfin", "default", {"p-kid": "u-kid"})
     assert matches == [{"key": "p-kid", "username": "Kid", "sink_instance": "default~u-kid", "ids": ["p-kid"]}]
 
 

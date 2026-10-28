@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from cw_platform.access_policy import managed_profile_id, profile_label_for_id, request_user, route_effective_profile_id, valid_user_profile_id, webhook_effective_profile_id
 from cw_platform.config_base import load_config, save_config
+from cw_platform.identity_links import WEBHOOK_IDENTITY_PROVIDERS, clean_identity_map
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, list_user_profiles, normalize_instance_id, normalize_user_profile_id, sanitize_instance_label
 from cw_platform.user_profile_resources import webhook_assigned_profile_id, webhook_resource_id
 from cw_platform.provider_usage import WEBHOOK_SOURCE_PROVIDERS, provider_label, webhook_source_enabled
@@ -87,6 +88,7 @@ WEBHOOK_SETTING_KEYS = {
     "destination_libraries",
     "update_all_copies",
     "match_users",
+    "user_matches",
 }
 
 
@@ -309,6 +311,19 @@ def _webhook_sink_map(value: Any, field: str, convert: Any) -> dict[str, Any]:
     return out
 
 
+def _prune_webhook_identities(node: dict[str, Any]) -> None:
+    on = {k for k, v in _dict(node.get("match_users")).items() if v is True}
+    maps = {k: v for k, v in _dict(node.get("user_matches")).items() if k in on and isinstance(v, dict) and v}
+    if on:
+        node["match_users"] = {k: True for k in sorted(on)}
+    else:
+        node.pop("match_users", None)
+    if maps:
+        node["user_matches"] = maps
+    else:
+        node.pop("user_matches", None)
+
+
 def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Mapping[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     allowed = WEBHOOK_SETTING_KEYS | {"filters"}
@@ -350,7 +365,23 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
     if "simkl_rewatches" in body:
         out["simkl_rewatches"] = body.get("simkl_rewatches") is True and "simkl" in selected_sinks
     if "match_users" in body:
-        out["match_users"] = body.get("match_users") is True and provider in {"plex", "emby", "jellyfin"}
+        raw_on = body.get("match_users")
+        if not isinstance(raw_on, Mapping):
+            raise ValidationFailure([_err("match_users", "invalid_structure", "Value must be an object keyed by destination")])
+        out["match_users"] = {
+            str(k).strip().lower(): v is True and provider in WEBHOOK_IDENTITY_PROVIDERS
+            for k, v in raw_on.items()
+            if str(k).strip().lower() in WEBHOOK_IDENTITY_PROVIDERS
+        }
+    if "user_matches" in body:
+        raw_maps = body.get("user_matches")
+        if not isinstance(raw_maps, Mapping):
+            raise ValidationFailure([_err("user_matches", "invalid_structure", "Value must be an object keyed by destination")])
+        out["user_matches"] = {
+            str(k).strip().lower(): clean_identity_map(v)
+            for k, v in raw_maps.items()
+            if str(k).strip().lower() in WEBHOOK_IDENTITY_PROVIDERS
+        }
     for sink in ("crosswatch", "simkl"):
         key = f"anime_mapping_{sink}"
         if key in body:
@@ -756,6 +787,7 @@ def _validate_route(cfg: Mapping[str, Any], route: dict[str, Any]) -> dict[str, 
     normalized["options"] = normalize_route_options(normalized.get("options"))
     if not sync_user_endpoints_supported(provider, normalized.get("provider_instance"), sink, normalized.get("sink_instance")):
         normalized.pop("match_users", None)
+        normalized.pop("user_matches", None)
     if sink == "simkl" and normalized["options"]["watch"].get("simkl_rewatches") is True:
         _require_simkl_rewatches(cfg, normalized.get("sink_instance"), "options.watch.simkl_rewatches")
     profile_id = _normalize_route_profile_id(cfg, route.get("profile_id") or route.get("profileId") or normalized.get("profile_id"))
@@ -857,15 +889,14 @@ def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(..
             if prev_sink == "simkl" and prev_sink not in sinks_now:
                 node.pop("simkl_rewatches", None)
             if prev_sink and prev_sink not in sinks_now:
-                for key in ("destination_libraries", "update_all_copies"):
+                for key in ("destination_libraries", "update_all_copies", "match_users", "user_matches"):
                     if isinstance(node.get(key), dict):
                         node[key].pop(prev_sink, None)
-        for key in ("destination_libraries", "update_all_copies"):
+        for key in ("destination_libraries", "update_all_copies", "match_users", "user_matches"):
             if key in settings:
                 node[key] = {**_dict(node.get(key)), **settings.pop(key)}
         node.update(settings)
-        if node.get("match_users") is not True:
-            node.pop("match_users", None)
+        _prune_webhook_identities(node)
         effective = webhook_settings(after, provider, instance)
         for sink in webhook_sinks(after, provider, instance):
             if same_scrobble_endpoint(provider, instance, sink, webhook_sink_instance(effective, sink)):
@@ -898,6 +929,10 @@ def api_profile_webhook_disable(request: Request, payload: dict[str, Any] = Body
                     node["sink_instances"] = {s: webhook_sink_instance(settings, s) for s in remaining}
                     if sink in {"crosswatch", "simkl"}:
                         node.pop(f"anime_mapping_{sink}", None)
+                    for key in ("match_users", "user_matches"):
+                        if isinstance(node.get(key), dict):
+                            node[key].pop(sink, None)
+                    _prune_webhook_identities(node)
                 else:
                     _profile_override_remove(after, provider, instance)
                     if webhook_sinks(after, provider, instance):

@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, sync_provider_supports_feature
 from cw_platform.access_policy import filter_pairs_for_user, managed_profile_id, managed_profile_instances, pair_ids_for_user, request_user, user_can_access_pair
+from cw_platform.identity_links import clean_identity_map
 from cw_platform.provider_instances import list_user_profiles, normalize_user_profile_id
 from cw_platform.local_db.legacy_files import LAST_SYNC_JSON
 from cw_platform.memory_release import clear_caches, release_memory
@@ -2301,8 +2302,7 @@ def _apply_pair_user_matching(pair: dict[str, Any], upd: dict[str, Any]) -> None
         else:
             pair.pop("match_users", None)
     if "user_matches" in upd:
-        raw = upd.pop("user_matches")
-        clean = {str(k).strip(): str(v or "").strip() for k, v in raw.items() if str(k).strip()} if isinstance(raw, dict) else {}
+        clean = clean_identity_map(upd.pop("user_matches"))
         if clean:
             pair["user_matches"] = clean
         else:

@@ -7,6 +7,7 @@ import copy
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from cw_platform.identity_links import webhook_identity_map, webhook_identity_sinks
 from cw_platform.provider_instances import normalize_instance_id
 from cw_platform.access_policy import webhook_effective_profile_id
 from cw_platform.user_profile_resources import webhook_assigned_profile_id, webhook_resource_id
@@ -298,10 +299,10 @@ def dispatch_scrobble(
     dispatched: list[str] = []
     for sink in sinks:
         inst = webhook_sink_instance(wh, sink)
-        if wh.get("match_users") is True and sync_user_endpoints_supported(provider_lc, provider_inst, sink, inst):
+        if sink in webhook_identity_sinks(wh) and sync_user_endpoints_supported(provider_lc, provider_inst, sink, inst):
             account, user_id, acc_id, acc_uuid, aliases = _event_identity(ev)
             match = sync_user_match_for_account(
-                sync_user_matches(cfg, provider_lc, provider_inst, sink, inst),
+                sync_user_matches(cfg, provider_lc, provider_inst, sink, inst, webhook_identity_map(wh, sink)),
                 [account, *aliases],
                 account_id=acc_id,
                 account_uuid=acc_uuid,

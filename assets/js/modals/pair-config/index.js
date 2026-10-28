@@ -8,6 +8,7 @@ import { createLibraryController } from "./libraries.js";
 import { providerLogoHTML, providerToneRgb, sharedFeatureOrder, sharedFeatureLabel } from "./meta.js";
 import { ensurePairConfigStyles } from "./styles.js";
 import { createTabsController } from "./tabs.js";
+import { createIdentityMap } from "../core/identity-map.js";
 import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, hasCumulativeAnimeHistory, ratingsDisabledForPair, sanitizeFeaturesForPair, sourceWatchStatusAllowed, undatedAsTodayAllowed } from "./custom-rules.js";
 
 const TWO_WAY_WARNING =
@@ -29,65 +30,19 @@ const isEmby = v => same(v, "emby");
 function getPairMarkedWatchedValue(state){ return !!(state?.pairProviders?.plex?.history?.include_marked_watched ?? state?.cfgRaw?.plex?.history?.include_marked_watched ?? true) }
 function supportsPathMatching(state){ return [state?.src,state?.dst].every(p=>["PLEX","JELLYFIN","EMBY","SILO"].includes(String(p||"").toUpperCase())) }
 function supportsMatchUsers(state){ return [state?.src,state?.dst].every(p=>["PLEX","JELLYFIN","EMBY","SILO"].includes(String(p||"").toUpperCase())) }
-const MU_LABELS={PLEX:"Plex",EMBY:"Emby",JELLYFIN:"Jellyfin",SILO:"Silo"};
-const muEsc=(v)=>String(v??"").replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-const muLabel=(p)=>MU_LABELS[String(p||"").toUpperCase()]||String(p||"");
 function renderMatchUsersCard(state){
-  if(!supportsMatchUsers(state)) return "";
-  return `<div class="provider-card mu-card">
-    <div class="provider-card-head">
-      <div class="providers-intro-copy">
-        <div class="providers-intro-title">Sync all matched users</div>
-        <div class="providers-intro-sub">Optional. Syncs every ticked user on ${muEsc(muLabel(state.src))} with the same user on ${muEsc(muLabel(state.dst))}, each with their own history. Tick users in each connection's Users tab. Media servers only.</div>
-      </div>
-      <label class="switch" aria-label="Sync all matched users"><input id="pair-match-users" type="checkbox" ${state.match_users?"checked":""}><span class="slider"></span></label>
-    </div>
-    <div class="provider-card-body" id="pair-match-users-list" ${state.match_users?"":"hidden"}></div>
-  </div>`;
+  return supportsMatchUsers(state)?`<div id="pair-identities"></div>`:"";
 }
-async function loadMatchUsersPreview(state){
-  const host=ID("pair-match-users-list");
-  if(!host||!state.match_users||!supportsMatchUsers(state)) return;
-  const url=(p,i)=>`/api/provider-instances/${encodeURIComponent(String(p||"").toLowerCase())}/${encodeURIComponent(String(i||"default"))}/sync-users`;
-  const token=(state.__muToken=(state.__muToken||0)+1);
-  host.innerHTML=`<div class="muted">Loading users…</div>`;
-  let src=[],dst=[];
-  try{
-    const [a,b]=await Promise.all([url(state.src,state.src_instance),url(state.dst,state.dst_instance)].map((u)=>fetch(u,{cache:"no-store",credentials:"same-origin"}).then((r)=>r.json())));
-    src=Array.isArray(a?.users)?a.users:[];dst=Array.isArray(b?.users)?b.users:[];
-  }catch{
-    if(token===state.__muToken) host.innerHTML=`<div class="muted">Could not load the users of this pair.</div>`;
-    return;
-  }
-  if(token!==state.__muToken) return;
-  if(!src.length||!dst.length){
-    const missing=!src.length?muLabel(state.src):muLabel(state.dst);
-    host.innerHTML=`<div class="muted">No users ticked on ${muEsc(missing)} yet. Open the ${muEsc(missing)} connection and use the Users tab.</div>`;
-    return;
-  }
-  const overrides=state.user_matches||{};
-  const matchName=(u)=>String(u.match_key??(u.match_as||u.username||"").toLowerCase());
-  const tally=(list)=>list.reduce((acc,u)=>{acc.set(matchName(u),(acc.get(matchName(u))||0)+1);return acc;},new Map());
-  const dstCount=tally(dst), srcCount=tally(src);
-  const byName=new Map(dst.filter((u)=>dstCount.get(matchName(u))===1).map((u)=>[matchName(u),u]));
-  let matched=0, skipped=0;
-  const rows=src.map((u)=>{
-    const key=String(u.key);
-    const ambiguous=srcCount.get(matchName(u))>1||dstCount.get(matchName(u))>1;
-    const auto=ambiguous?null:byName.get(matchName(u));
-    const has=Object.prototype.hasOwnProperty.call(overrides,key);
-    const pick=has?overrides[key]:"__auto";
-    const target=pick==="__auto"?auto:dst.find((d)=>String(d.key)===String(pick));
-    if(target) matched+=1;
-    if(pick==="") skipped+=1;
-    const explicit=pick!=="__auto"&&pick!=="";
-    const others=dst.filter((d)=>!auto||String(d.key)!==String(auto.key)||(explicit&&String(pick)===String(d.key)));
-    const opts=[`<option value="__auto" ${pick==="__auto"?"selected":""}>${auto?`Automatic: ${muEsc(auto.username)}`:ambiguous?"Automatic: more than one user, pick one":"Automatic: no match"}</option>`,`<option value="" ${pick===""?"selected":""}>Do not sync</option>`]
-      .concat(others.map((d)=>`<option value="${muEsc(d.key)}" ${explicit&&String(pick)===String(d.key)?"selected":""}>Sync with: ${muEsc(d.username)}</option>`)).join("");
-    const status=target?`<span class="mu-status is-ok">Matched</span>`:pick===""?`<span class="mu-status">Skipped</span>`:`<span class="mu-status is-warn">No match</span>`;
-    return `<div class="mu-row"><span class="mu-name">${muEsc(u.username)}</span>${status}<select class="input pair-user-match" data-src-key="${muEsc(key)}" aria-label="Match for ${muEsc(u.username)}">${opts}</select></div>`;
-  }).join("");
-  host.innerHTML=`<div class="mu-summary"><span class="providers-intro-badge">${matched} of ${src.length} matched${skipped?`, ${skipped} skipped`:""}</span><span class="mu-hint">Your own account only syncs if it is ticked too.</span></div><div class="mu-rows">${rows}</div>`;
+function mountMatchUsersCard(state){
+  const host=ID("pair-identities");
+  if(!host) return;
+  createIdentityMap(host,{
+    source:state.src,sourceInstance:state.src_instance,target:state.dst,targetInstance:state.dst_instance,
+    exclude:state.editing_pair_id?`pair:${state.editing_pair_id}`:"",
+    intro:"Sync several people of these servers, each with their own history.",
+    enabled:!!state.match_users,mapping:state.user_matches||{},
+    onChange:(v)=>{state.match_users=v.enabled;state.user_matches=v.mapping;},
+  });
 }
 function hasEmby(state){ return isEmby(state?.src) || isEmby(state?.dst) }
 
@@ -1447,25 +1402,25 @@ function renderFeaturePanel(state){
         </div>
       </details>`);
 
-    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Providers</div>
+    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Media servers</div>
       ${renderMatchUsersCard(state)}
       <div class="providers-intro">
         <div class="providers-intro-copy">
-          <div class="providers-intro-title">Advanced provider tuning</div>
-          <div class="providers-intro-sub">Open a provider only if you want different retry behavior or pair-specific library scope.</div>
+          <div class="providers-intro-title">Advanced media server tuning</div>
+          <div class="providers-intro-sub">Open a media server only if you want different retry behavior or pair-specific library scope.</div>
         </div>
-        <div class="providers-intro-badge">${providerCards.length} ${providerCards.length === 1 ? "provider" : "providers"} in this pair</div>
+        <div class="providers-intro-badge">${providerCards.length} ${providerCards.length === 1 ? "media server" : "media servers"} in this pair</div>
       </div>
-      <div class="provider-card-list">${providerCards.length ? providerCards.join("") : `<div class="providers-empty">This connection does not include a provider with provider-specific controls.</div>`}</div>
+      <div class="provider-card-list">${providerCards.length ? providerCards.join("") : `<div class="providers-empty">This connection does not include a media server with extra controls.</div>`}</div>
       <div class="providers-note" role="note" aria-live="polite">
         <div class="providers-note-title"><span class="material-symbols-rounded">info</span>Optional advanced controls</div>
-        <div class="providers-note-body">Library whitelists only appear for providers that support pair-specific library scope and are actually part of this pair.</div>
+        <div class="providers-note-body">Library whitelists only appear for media servers in this pair that support pair-specific library scope.</div>
       </div>`;
 
     right.innerHTML = "";
     initPairLibraryUIController(state);
     QA(".fold").forEach(f=>{f.classList.remove("open")});
-    loadMatchUsersPreview(state);
+    mountMatchUsersCard(state);
     return;
   }
 
@@ -2152,21 +2107,7 @@ function bindChangeHandlers(state,root){
       return;
     }
     if(id==="pair-path-matching") state.path_matching=!!el.checked;
-    if(id==="pair-match-users"){
-      state.match_users=!!el.checked;
-      const host=ID("pair-match-users-list");
-      if(host) host.hidden=!state.match_users;
-      loadMatchUsersPreview(state);
-      return;
-    }
-    if(el.classList?.contains("pair-user-match")){
-      const key=String(el.dataset.srcKey||"");
-      state.user_matches={...(state.user_matches||{})};
-      if(el.value==="__auto") delete state.user_matches[key];
-      else state.user_matches[key]=el.value;
-      loadMatchUsersPreview(state);
-      return;
-    }
+    if(el.closest?.("#pair-identities")) return;
     if(id==="plx-strict-ids"||id==="jf-strict-ids"||id==="em-strict-ids"||id==="silo-strict-ids"||id==="jf-targeted-lookup"){
       state.pairProviders=state.pairProviders||{};
       if(id==="plx-strict-ids") state.pairProviders.plex=Object.assign({},state.pairProviders.plex||{}, {strict_id_matching:!!el.checked});
@@ -2865,6 +2806,7 @@ export default{
       state.path_matching = !!pair.path_matching;
       state.match_users = !!pair.match_users;
       state.user_matches = pair.user_matches && typeof pair.user_matches === "object" ? { ...pair.user_matches } : {};
+      state.editing_pair_id = pair?.id ? String(pair.id) : "";
       state.selected_user_profile_id=String(pair.profile_id||"").trim();
       wrap.dataset.editingId=pair?.id?String(pair.id):"";
     }

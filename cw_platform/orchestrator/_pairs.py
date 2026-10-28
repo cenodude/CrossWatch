@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from ..path_matching import pair_enabled
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any
 from contextlib import contextmanager
 import copy
@@ -25,13 +25,11 @@ from ..provider_instances import (
     _config_key_for,
     build_pair_config_view,
     build_provider_config_view,
-    get_instance_block,
     is_sync_user_instance,
-    list_sync_user_ids,
     normalize_instance_id,
     split_sync_user_id,
-    sync_user_match_name,
 )
+from ..identity_links import mapped_identities
 from ._pairs_oneway import run_one_way_feature
 from ._pairs_twoway import run_two_way_feature
 from ._pairs_playlists import run_playlist_mappings
@@ -355,25 +353,6 @@ def _pair_scope_ids(ctx) -> set[str]:
 _SYNC_USER_PROVIDERS = frozenset({"PLEX", "EMBY", "JELLYFIN", "SILO"})
 
 
-def _sync_users_by_key(cfg: Mapping[str, Any], provider: str, parent: str) -> dict[str, tuple[str, str, str]]:
-    out: dict[str, tuple[str, str, str]] = {}
-    for inst in list_sync_user_ids(cfg, provider, parent):
-        ref = split_sync_user_id(inst)
-        entry = get_instance_block(cfg, provider, inst)
-        name = str(entry.get("username") or entry.get("user") or "").strip()
-        match = sync_user_match_name(cfg, provider, inst)
-        if ref is not None and name and match:
-            out[ref[1]] = (inst, name, match)
-    return out
-
-
-def _unique_match_names(users: Mapping[str, tuple[str, str, str]]) -> dict[str, str]:
-    counts: dict[str, int] = {}
-    for _inst, _name, match in users.values():
-        counts[match.casefold()] = counts.get(match.casefold(), 0) + 1
-    return {match.casefold(): key for key, (_inst, _name, match) in users.items() if counts[match.casefold()] == 1}
-
-
 def _expand_sync_user_pair(cfg: Mapping[str, Any], pair: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     if not coerce_bool(pair.get("match_users", False), False):
         return [pair]
@@ -385,24 +364,12 @@ def _expand_sync_user_pair(cfg: Mapping[str, Any], pair: Mapping[str, Any]) -> l
         return [pair]
     if is_sync_user_instance(src_parent) or is_sync_user_instance(dst_parent):
         return [pair]
-    src_users = _sync_users_by_key(cfg, src, src_parent)
-    dst_users = _sync_users_by_key(cfg, dst, dst_parent)
-    dst_by_name = _unique_match_names(dst_users)
-    src_unique = _unique_match_names(src_users)
-    raw_overrides = pair.get("user_matches")
-    overrides = {str(k): str(v or "").strip() for k, v in raw_overrides.items()} if isinstance(raw_overrides, Mapping) else {}
     out: list[Mapping[str, Any]] = []
-    for src_key, (src_inst, name, match) in sorted(src_users.items(), key=lambda row: row[1][1].casefold()):
-        if src_key in overrides:
-            dst_key = overrides[src_key]
-        else:
-            dst_key = dst_by_name.get(match.casefold(), "") if src_unique.get(match.casefold()) == src_key else ""
-        if not dst_key or dst_key not in dst_users:
-            continue
+    for row in mapped_identities(cfg, src, src_parent, dst, dst_parent, pair.get("user_matches")):
         derived = {k: v for k, v in pair.items() if k not in ("src_instance", "dst_instance")}
-        derived["source_instance"] = src_inst
-        derived["target_instance"] = dst_users[dst_key][0]
-        derived["_cw_sync_user"] = name
+        derived["source_instance"] = row["source_instance"]
+        derived["target_instance"] = row["target_instance"]
+        derived["_cw_sync_user"] = row["username"]
         out.append(derived)
     return out
 
@@ -460,7 +427,7 @@ def _pair_scope_key(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode
 
 
 @contextmanager
-def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str, feature: str, scope: str | None = None):
+def _pair_env(pair: Mapping[str, Any], *, i: int, src: str, dst: str, mode: str, feature: str, scope: str | None = None) -> Iterator[None]:
     key = scope or _pair_scope_key(pair, i=i, src=src, dst=dst, mode=mode)
     src_inst = normalize_instance_id(pair.get("source_instance"))
     dst_inst = normalize_instance_id(pair.get("target_instance"))

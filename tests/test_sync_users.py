@@ -154,6 +154,9 @@ def test_plex_helper_returns_read_only_merged_view() -> None:
     assert "default~716" not in (cfg["plex"].get("instances") or {})
 
 
+LINKS = {"u3": "j3", "u1": "j1"}
+
+
 def _pair_cfg(**pair_extra: Any) -> dict[str, Any]:
     cfg = _cfg()
     cfg["emby"]["sync_users"]["u3"] = {"user_id": "u3", "username": "Carmen"}
@@ -178,10 +181,10 @@ def test_pair_without_match_users_is_untouched() -> None:
     assert pairs == cfg["pairs"] and pairs[0] is cfg["pairs"][0]
 
 
-def test_match_users_expands_per_matched_username() -> None:
+def test_match_users_expands_per_linked_identity() -> None:
     from cw_platform.orchestrator._pairs import _pairs_for_run
 
-    cfg = _pair_cfg(match_users=True)
+    cfg = _pair_cfg(match_users=True, user_matches=LINKS)
     pairs = _pairs_for_run(_ctx([]), cfg)
     assert [(p["source_instance"], p["target_instance"], p["_cw_sync_user"]) for p in pairs] == [
         ("default~u3", "default~j3", "Carmen"),
@@ -189,6 +192,28 @@ def test_match_users_expands_per_matched_username() -> None:
     ]
     assert all(p["id"] == "p1" for p in pairs)
     assert "_cw_sync_user" not in cfg["pairs"][0]
+
+
+def test_identities_never_link_by_name_alone() -> None:
+    from cw_platform.orchestrator._pairs import _pairs_for_run
+
+    events: list[tuple[str, dict[str, Any]]] = []
+    assert _pairs_for_run(_ctx(events), _pair_cfg(match_users=True)) == []
+    assert events[0][1]["reason"] == "no_matched_users"
+
+
+def test_links_to_removed_identities_are_skipped() -> None:
+    from cw_platform.orchestrator._pairs import _pairs_for_run
+
+    cfg = _pair_cfg(match_users=True, user_matches={"u3": "j3", "u1": "gone", "u7": "j4"})
+    assert [(p["source_instance"], p["target_instance"]) for p in _pairs_for_run(_ctx([]), cfg)] == [("default~u3", "default~j3")]
+
+
+def test_identity_map_cleaning() -> None:
+    from cw_platform.identity_links import clean_identity_map
+
+    assert clean_identity_map({"u1": "j1", "u2": "", " ": "j2", "u3": "j1", "a~b": "j5", "u4": "x~y", "u5": " j5 "}) == {"u1": "j1", "u5": "j5"}
+    assert clean_identity_map(None) == {} and clean_identity_map(["u1"]) == {}
 
 
 def test_manual_user_matches_override_and_exclude() -> None:
@@ -221,7 +246,7 @@ def test_each_user_gets_its_own_state_scope_and_parent_scope_is_stable() -> None
     from cw_platform.orchestrator._pairs import _pairs_for_run
     from cw_platform.pair_scope import pair_feature_scope
 
-    cfg = _pair_cfg(match_users=True)
+    cfg = _pair_cfg(match_users=True, user_matches=LINKS)
     scopes = {pair_feature_scope(cfg, p, "history") for p in _pairs_for_run(_ctx([]), cfg)}
     assert len(scopes) == 2
     parent = dict(cfg["pairs"][0], match_users=False)
@@ -382,31 +407,33 @@ def test_route_without_match_users_is_unchanged() -> None:
     assert expand_sync_user_route(cfg, route) == [route]
 
 
-def test_route_expands_per_matched_user_with_identity_filter() -> None:
+def test_route_expands_per_linked_identity_with_identity_filter() -> None:
     from providers.scrobble.routes import expand_sync_user_route, normalize_routes
 
-    cfg = _scrobble_cfg(match_users=True)
+    cfg = _scrobble_cfg(match_users=True, user_matches=LINKS)
     route = normalize_routes(cfg)[0]
+    assert route["user_matches"] == LINKS
     derived = expand_sync_user_route(cfg, route)
     assert [(d["id"], d["sink_instance"], d["filters"]["username_whitelist"]) for d in derived] == [
-        ("R1~u1", "default~j1", ["id:u1"]),
         ("R1~u3", "default~j3", ["id:u3"]),
+        ("R1~u1", "default~j1", ["id:u1"]),
     ]
     assert all(d["provider_instance"] == "default" and d["_cw_parent_route_id"] == "R1" for d in derived)
 
 
-def test_route_existing_whitelist_limits_users() -> None:
-    from providers.scrobble.routes import expand_sync_user_route, normalize_routes
+def test_route_links_replace_the_user_filter() -> None:
+    from providers.scrobble.routes import expand_sync_user_route, normalize_routes, route_needs_account_filter
 
-    cfg = _scrobble_cfg(match_users=True, filters={"username_whitelist": ["carmen"]})
-    derived = expand_sync_user_route(cfg, normalize_routes(cfg)[0])
-    assert [d["id"] for d in derived] == ["R1~u3"]
+    cfg = _scrobble_cfg(match_users=True, user_matches=LINKS, filters={"username_whitelist": ["carmen"]})
+    route = normalize_routes(cfg)[0]
+    assert [d["id"] for d in expand_sync_user_route(cfg, route)] == ["R1~u3", "R1~u1"]
+    assert route_needs_account_filter(cfg, {**route, "filters": {}, "profile_id": "p"}) is False
 
 
 def test_find_route_resolves_per_user_ids() -> None:
     from providers.scrobble.routes import build_route_cfg_by_id, find_route
 
-    cfg = _scrobble_cfg(match_users=True)
+    cfg = _scrobble_cfg(match_users=True, user_matches=LINKS)
     route = find_route(cfg, "R1~u3")
     assert route is not None and route["sink_instance"] == "default~j3"
     assert find_route(cfg, "R1~nobody") is None
@@ -442,8 +469,8 @@ def test_route_validation_drops_match_users_for_trackers() -> None:
     cfg["trakt"] = {"access_token": "t"}
     media = _validate_route(cfg, {"id": "R9", "provider": "emby", "provider_instance": "default", "sink": "jellyfin", "sink_instance": "default", "match_users": True})
     assert media["match_users"] is True
-    tracker = _validate_route(cfg, {"id": "R9", "provider": "emby", "provider_instance": "default", "sink": "trakt", "sink_instance": "default", "match_users": True})
-    assert "match_users" not in tracker
+    tracker = _validate_route(cfg, {"id": "R9", "provider": "emby", "provider_instance": "default", "sink": "trakt", "sink_instance": "default", "match_users": True, "user_matches": LINKS})
+    assert "match_users" not in tracker and "user_matches" not in tracker
 
 
 def _webhook_dispatch(monkeypatch, cfg: dict[str, Any], account: str) -> tuple[Any, list[str]]:
@@ -474,7 +501,7 @@ def _webhook_cfg(match_users: bool) -> dict[str, Any]:
     cfg = _pair_cfg()
     cfg["scrobble"] = {"webhook": {"profiles": {"emby": {"default": {"enabled": True, "sinks": ["jellyfin"],
                                                                      "sink_instances": {"jellyfin": "default"},
-                                                                     **({"match_users": True} if match_users else {})}}}}}
+                                                                     **({"match_users": {"jellyfin": True}, "user_matches": {"jellyfin": LINKS}} if match_users else {})}}}}}
     return cfg
 
 
@@ -493,6 +520,25 @@ def test_webhook_skips_unmatched_user(monkeypatch) -> None:
 def test_webhook_without_match_users_is_unchanged(monkeypatch) -> None:
     _res, sent = _webhook_dispatch(monkeypatch, _webhook_cfg(False), "carmen")
     assert sent == ["default"]
+
+
+def test_webhook_identities_are_per_destination(monkeypatch) -> None:
+    cfg = _webhook_cfg(True)
+    node = cfg["scrobble"]["webhook"]["profiles"]["emby"]["default"]
+    node["match_users"] = {"plex": True}
+    _res, sent = _webhook_dispatch(monkeypatch, cfg, "carmen")
+    assert sent == ["default"]
+
+
+def test_webhook_identity_settings_are_pruned() -> None:
+    from api.scrobblerManagementAPI import _prune_webhook_identities
+
+    node: dict[str, Any] = {"match_users": {"jellyfin": True, "emby": False}, "user_matches": {"jellyfin": {"u1": "j1"}, "emby": {"u3": "e3"}}}
+    _prune_webhook_identities(node)
+    assert node == {"match_users": {"jellyfin": True}, "user_matches": {"jellyfin": {"u1": "j1"}}}
+    node["match_users"] = {"jellyfin": False}
+    _prune_webhook_identities(node)
+    assert node == {}
 
 
 def _seed_state(tmp_path) -> Any:
@@ -585,7 +631,7 @@ def test_ticked_users_join_the_user_profile_with_the_same_name(monkeypatch) -> N
 def test_analyzer_sees_per_user_pairs(monkeypatch) -> None:
     import services.analyzer as analyzer
 
-    cfg = _pair_cfg(match_users=True)
+    cfg = _pair_cfg(match_users=True, user_matches=LINKS)
     monkeypatch.setattr(analyzer, "load_config", lambda: cfg)
     pairs = analyzer._cfg()["pairs"]
     assert [(p["id"], p["source_instance"], p["target_instance"]) for p in pairs] == [
@@ -600,7 +646,7 @@ def test_analyzer_sees_per_user_pairs(monkeypatch) -> None:
 def test_analyzer_state_page_for_a_per_user_pair(monkeypatch, tmp_path) -> None:
     import services.analyzer as analyzer
 
-    cfg = _pair_cfg(match_users=True)
+    cfg = _pair_cfg(match_users=True, user_matches=LINKS)
     monkeypatch.setattr(analyzer, "load_config", lambda: cfg)
     monkeypatch.setattr(analyzer, "CONFIG_DIR", tmp_path)
     analyzer._SCOPED_ROWS_CACHE.clear()
@@ -644,7 +690,7 @@ def test_plex_users_keep_their_plex_tv_id_for_matching(monkeypatch) -> None:
     api = _api_store(monkeypatch, store)
     api.api_provider_sync_users_update("plex", "default", {"users": [{"key": "12", "username": "friend", "cloud_account_id": "716210920"}]})
     assert store["plex"]["sync_users"]["12"]["cloud_account_id"] == "716210920"
-    match = sync_user_matches(store, "plex", "default", "emby", "default")[0]
+    match = sync_user_matches(store, "plex", "default", "emby", "default", {"12": "e1"})[0]
     assert match["ids"] == ["12", "716210920"]
 
 
@@ -690,84 +736,56 @@ def test_create_profiles_skips_users_that_already_have_one(monkeypatch) -> None:
     assert [row["label"] for row in pi.list_user_profiles(store)] == ["Family"]
 
 
-def test_match_as_is_stored_only_when_it_differs(monkeypatch) -> None:
+def test_match_as_is_no_longer_stored(monkeypatch) -> None:
     store = _api_cfg()
     api = _api_store(monkeypatch, store)
-    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u3", "username": "carmii", "match_as": " Carmen "}, {"key": "u4", "username": "Xavier", "match_as": "xavier"}]})
-    users = store["emby"]["sync_users"]
-    assert users["u3"]["match_as"] == "Carmen"
-    assert "match_as" not in users["u4"]
-    rows = {r["key"]: r["match_as"] for r in api.api_provider_sync_users("emby", "default")["users"]}
-    assert rows == {"u3": "Carmen", "u4": ""}
-    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u3", "username": "carmii"}]})
-    assert store["emby"]["sync_users"]["u3"]["match_as"] == "Carmen"
-    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u3", "username": "carmii", "match_as": ""}]})
+    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u3", "username": "carmii", "match_as": "Carmen"}]})
     assert "match_as" not in store["emby"]["sync_users"]["u3"]
-
-
-def test_match_as_links_different_names_everywhere(monkeypatch) -> None:
-    from cw_platform.orchestrator._pairs import _pairs_for_run
-    from providers.scrobble.routes import sync_user_matches
-
-    cfg = _pair_cfg(match_users=True)
-    cfg["jellyfin"]["sync_users"] = {"j9": {"user_id": "j9", "username": "carmii", "match_as": "Carmen"}}
-    pairs = _pairs_for_run(_ctx([]), cfg)
-    assert [(p["source_instance"], p["target_instance"], p["_cw_sync_user"]) for p in pairs] == [("default~u3", "default~j9", "Carmen")]
-    assert [(m["key"], m["sink_instance"], m["username"]) for m in sync_user_matches(cfg, "emby", "default", "jellyfin", "default")] == [("u3", "default~j9", "Carmen")]
-
-    store = _api_cfg()
-    store["jellyfin"] = {"server": "http://jf", "access_token": "jf", "sync_users": {"j9": {"user_id": "j9", "username": "carmii", "match_as": "Carmen"}}}
-    api = _api_store(monkeypatch, store)
-    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u3", "username": "Carmen"}]})
-    assert api.api_provider_sync_users_create_profiles("emby", "default") == {"ok": True, "created": 1, "linked": 2, "skipped": 0}
-    carmen = next(row for row in pi.list_user_profiles(store) if row["label"] == "Carmen")
-    assert carmen["instances"] == {"EMBY": ["default~u3"], "JELLYFIN": ["default~j9"]}
-
-
-def test_duplicate_match_names_need_an_explicit_choice() -> None:
-    from cw_platform.orchestrator._pairs import _pairs_for_run
-    from providers.scrobble.routes import sync_user_matches
-
-    cfg = _pair_cfg(match_users=True)
-    cfg["jellyfin"]["sync_users"] = {
-        "j3": {"user_id": "j3", "username": "carmen"},
-        "j8": {"user_id": "j8", "username": "carmii", "match_as": "Carmen"},
-        "j1": {"user_id": "j1", "username": "user1"},
-    }
-    pairs = _pairs_for_run(_ctx([]), cfg)
-    assert [(p["source_instance"], p["target_instance"]) for p in pairs] == [("default~u1", "default~j1")]
-    assert [m["key"] for m in sync_user_matches(cfg, "emby", "default", "jellyfin", "default")] == ["u1"]
-    cfg["pairs"][0]["user_matches"] = {"u3": "j8"}
-    pairs = _pairs_for_run(_ctx([]), cfg)
-    assert ("default~u3", "default~j8") in [(p["source_instance"], p["target_instance"]) for p in pairs]
-    cfg["emby"]["sync_users"]["u9"] = {"user_id": "u9", "username": "other", "match_as": "user1"}
-    assert [m["key"] for m in sync_user_matches(cfg, "emby", "default", "jellyfin", "default")] == []
+    assert "match_as" not in api.api_provider_sync_users("emby", "default")["users"][0]
 
 
 def test_long_or_shared_names_are_skipped_for_profiles(monkeypatch) -> None:
     store = _api_cfg()
     api = _api_store(monkeypatch, store)
-    long_name = "A" * 41
-    rejected = api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u4", "username": "Solo", "match_as": "B" * 41}]})
-    assert rejected == {"ok": False, "error": "match_as_too_long"}
-    assert "sync_users" not in store["emby"]
     api.api_provider_sync_users_update("emby", "default", {"users": [
-        {"key": "u1", "username": long_name},
+        {"key": "u1", "username": "A" * 41},
         {"key": "u2", "username": "Twin"},
-        {"key": "u3", "username": "twin2", "match_as": "twin"},
-        {"key": "u4", "username": "Solo", "match_as": "B" * 40},
+        {"key": "u3", "username": "twin"},
+        {"key": "u4", "username": "Solo"},
     ]})
     res = api.api_provider_sync_users_create_profiles("emby", "default")
     assert res == {"ok": True, "created": 1, "linked": 1, "skipped": 3}
-    assert [row["label"] for row in pi.list_user_profiles(store)] == ["B" * 40]
+    assert [row["label"] for row in pi.list_user_profiles(store)] == ["Solo"]
 
 
-def test_rows_carry_the_backend_match_key(monkeypatch) -> None:
-    store = _api_cfg()
-    api = _api_store(monkeypatch, store)
-    api.api_provider_sync_users_update("emby", "default", {"users": [{"key": "u1", "username": "Straße"}, {"key": "u2", "username": "x", "match_as": "STRASSE"}]})
-    keys = {r["key"]: r["match_key"] for r in api.api_provider_sync_users("emby", "default")["users"]}
-    assert keys == {"u1": "strasse", "u2": "strasse"}
+def _linked_store() -> dict[str, Any]:
+    store = _pair_cfg(match_users=True, user_matches={"u3": "j4"})
+    store["emby"]["sync_users"]["u5"] = {"user_id": "u5", "username": "Nobody"}
+    store["scrobble"] = {"watch": {"routes": [{"id": "R2", "enabled": True, "provider": "jellyfin", "provider_instance": "default",
+                                               "sink": "emby", "sink_instance": "default", "match_users": True, "user_matches": {"j1": "u1"}}]}}
+    return store
+
+
+def test_rows_show_where_identities_are_linked(monkeypatch) -> None:
+    api = _api_store(monkeypatch, _linked_store())
+    rows = {r["key"]: r["used_in"] for r in api.api_provider_sync_users("emby", "default")["users"]}
+    assert rows == {"u1": ["Watcher route R2"], "u3": ["Sync pair 1"], "u5": []}
+
+
+def test_suggestions_prefer_existing_links_then_same_name(monkeypatch) -> None:
+    api = _api_store(monkeypatch, _linked_store())
+    res = api.api_identity_suggestions(source="emby", source_instance="default", target="jellyfin", target_instance="default")
+    assert [r["username"] for r in res["source"]["identities"]] == ["Carmen", "Nobody", "user1"]
+    assert [r["key"] for r in res["target"]["identities"]] == ["j3", "j4", "j1"]
+    assert res["suggestions"] == {
+        "u3": {"key": "j4", "reason": "linked", "where": "Sync pair 1"},
+        "u1": {"key": "j1", "reason": "linked", "where": "Watcher route R2"},
+    }
+    own = api.api_identity_suggestions(source="emby", target="jellyfin", exclude="pair:p1")
+    assert own["suggestions"]["u3"] == {"key": "j3", "reason": "same_name", "where": ""}
+    reverse = api.api_identity_suggestions(source="jellyfin", target="emby")
+    assert reverse["suggestions"]["j4"] == {"key": "u3", "reason": "linked", "where": "Sync pair 1"}
+    assert api.api_identity_suggestions(source="trakt", target="emby")["source"]["identities"] == []
 
 
 def test_dashboard_totals_count_sync_users(tmp_path) -> None:
@@ -785,12 +803,3 @@ def test_dashboard_totals_follow_the_selected_profile(tmp_path) -> None:
     assert _feature_library_totals(tmp_path, {"history"}, {"EMBY": ["default"]}) == {"history": 1}
     assert _feature_library_totals(tmp_path, {"history"}, {"__NONE__": ["__NONE__"]}) == {"history": 0}
     assert _feature_library_totals(tmp_path, {"history"}, {}) == {"history": 2}
-
-
-def test_match_name_suggestions_come_from_other_servers_and_profiles(monkeypatch) -> None:
-    store = _api_cfg()
-    store["jellyfin"] = {"server": "http://jf", "access_token": "jf", "sync_users": {"j9": {"user_id": "j9", "username": "carmii", "match_as": "Carmen"}}}
-    store["emby"]["sync_users"] = {"u1": {"user_id": "u1", "username": "own"}}
-    pi.upsert_user_profile(store, "family", label="Family", instances={})
-    api = _api_store(monkeypatch, store)
-    assert api.api_provider_sync_users("emby", "default")["suggestions"] == ["Carmen", "Family"]

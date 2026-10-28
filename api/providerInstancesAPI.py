@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 
 from api.provider_guard import usage_conflict_response
 from cw_platform.config_base import load_config, save_config, update_config
+from cw_platform.identity_links import IDENTITY_PROVIDERS, identities_by_key, identity_links
 from cw_platform.provider_instances import (
     assign_instance_to_user_profile,
     assign_instance_to_user_profile_id,
@@ -27,7 +28,6 @@ from cw_platform.provider_instances import (
     list_sync_user_ids,
     split_sync_user_id,
     sync_user_instance_id,
-    sync_user_match_name,
     list_user_profiles,
     normalize_instance_id,
     normalize_user_profile_id,
@@ -484,14 +484,25 @@ def api_provider_instances_update(provider: str, instance_id: str, payload: dict
     return {"ok": True, "id": inst, "uid": uid, "user_profile": owners[0] if owners else None, "user_profiles": owners}
 
 
+def _identity_usage(cfg: Mapping[str, Any]) -> dict[tuple[str, str, str], list[str]]:
+    usage: dict[tuple[str, str, str], list[str]] = {}
+    for link in identity_links(cfg):
+        for end in (link["source"], link["target"]):
+            labels = usage.setdefault((end["provider"], end["instance"], end["key"]), [])
+            if link["label"] not in labels:
+                labels.append(link["label"])
+    return usage
+
+
 def _sync_user_rows(cfg: Mapping[str, Any], provider: str, inst: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    usage = _identity_usage(cfg)
     for user_inst in list_sync_user_ids(cfg, provider, inst):
         ref = split_sync_user_id(user_inst)
         entry = get_instance_block(cfg, provider, user_inst)
         if ref is None:
             continue
-        row: dict[str, Any] = {"key": ref[1], "id": user_inst, "username": str(entry.get("username") or ""), "match_as": str(entry.get("match_as") or ""), "match_key": sync_user_match_name(cfg, provider, user_inst).casefold(), "added_at": entry.get("added_at")}
+        row: dict[str, Any] = {"key": ref[1], "id": user_inst, "username": str(entry.get("username") or ""), "added_at": entry.get("added_at"), "used_in": usage.get((provider, inst, ref[1]), [])}
         if provider == "plex":
             row["has_pin"] = bool(str(entry.get("home_pin") or "").strip())
         if provider == "silo":
@@ -519,12 +530,6 @@ def _build_sync_user_entry(provider: str, key: str, raw: Mapping[str, Any], exis
         entry["profile_token_expires_at"] = int(raw.get("profile_token_expires_at") or existing.get("profile_token_expires_at") or 0) if token else 0
     else:
         entry = {"user_id": key, "username": name, "user": name}
-    source = raw.get("match_as") if "match_as" in raw else existing.get("match_as")
-    match_as = " ".join(str(source or "").split())
-    if len(match_as) > 40:
-        raise ValueError("match_as_too_long")
-    if match_as and match_as.casefold() != name.casefold():
-        entry["match_as"] = match_as
     entry["added_at"] = existing.get("added_at") or now
     return entry
 
@@ -556,7 +561,8 @@ def _silo_prepare_sync_users(cfg: Mapping[str, Any], inst: str, wanted: dict[str
 
 
 def _profile_identity(cfg: Mapping[str, Any], provider: str, user_inst: str) -> tuple[str, str]:
-    full = sync_user_match_name(cfg, provider, user_inst)
+    entry = get_instance_block(cfg, provider, user_inst)
+    full = " ".join(str(entry.get("username") or entry.get("user") or "").split())
     label = sanitize_user_profile_label(full)
     if not label or label != full:
         return "", ""
@@ -568,7 +574,6 @@ _SYNC_USER_ERRORS: dict[str, str] = {
     "unsupported_provider": "unsupported_provider",
     "invalid_instance_id": "invalid_instance_id",
     "sync_user_limit_reached": "sync_user_limit_reached",
-    "match_as_too_long": "match_as_too_long",
     "invalid_user_profile": "invalid_user_profile",
     "duplicate_user_profile_label": "duplicate_user_profile_label",
 }
@@ -577,23 +582,6 @@ _SYNC_USER_ERRORS: dict[str, str] = {
 def _sync_user_error(exc: Exception) -> str:
     raw = str(exc.args[0] if exc.args else "").split(":", 1)[0].strip()
     return _SYNC_USER_ERRORS.get(raw, "sync_users_failed")
-
-
-def _match_name_suggestions(cfg: Mapping[str, Any], provider: str, inst: str) -> list[str]:
-    names: dict[str, str] = {}
-    for other in sorted(_SYNC_USER_PROVIDERS):
-        for user_inst in list_sync_user_ids(cfg, other):
-            ref = split_sync_user_id(user_inst)
-            if ref is None or (other == provider and ref[0] == inst):
-                continue
-            name = sync_user_match_name(cfg, other, user_inst)
-            if name and len(name) <= 40:
-                names.setdefault(name.casefold(), name)
-    for row in list_user_profiles(cfg):
-        label = str(row.get("label") or "").strip()
-        if label:
-            names.setdefault(label.casefold(), label)
-    return sorted(names.values(), key=str.casefold)
 
 
 def _sync_users_target(cfg: Mapping[str, Any], provider: str, inst: str) -> tuple[str, str | None]:
@@ -635,7 +623,63 @@ def api_provider_sync_users(provider: str, instance_id: str, request: Request = 
     if error:
         return {"ok": False, "error": error}
     rows = _sync_user_rows(cfg, prov, inst)
-    return {"ok": True, "users": rows, "count": len(rows), "limit": _max_sync_users_per_connection(cfg), "suggestions": _match_name_suggestions(cfg, prov, inst)}
+    return {"ok": True, "users": rows, "count": len(rows), "limit": _max_sync_users_per_connection(cfg)}
+
+
+def _identity_side(cfg: Mapping[str, Any], provider: Any, instance: Any) -> tuple[str, str, list[dict[str, str]]]:
+    prov = str(provider or "").strip().lower()
+    inst = normalize_instance_id(instance)
+    if prov not in IDENTITY_PROVIDERS or is_sync_user_instance(inst):
+        return prov, inst, []
+    rows = [{"key": key, "username": row["username"]} for key, row in identities_by_key(cfg, prov, inst).items()]
+    rows.sort(key=lambda row: row["username"].casefold())
+    return prov, inst, rows
+
+
+@router.get("/identities/suggestions")
+def api_identity_suggestions(
+    source: str = "",
+    source_instance: str = "default",
+    target: str = "",
+    target_instance: str = "default",
+    exclude: str = "",
+    request: Request = cast(Request, None),
+) -> Any:
+    cfg = dict(load_config() or {})
+    blocked = _admin_required_response(request, cfg)
+    if blocked is not None:
+        return blocked
+    src, src_inst, src_rows = _identity_side(cfg, source, source_instance)
+    dst, dst_inst, dst_rows = _identity_side(cfg, target, target_instance)
+    dst_keys = {row["key"] for row in dst_rows}
+    linked: dict[str, dict[str, str]] = {}
+    for link in identity_links(cfg):
+        if f"{link['kind']}:{link['id']}" == exclude:
+            continue
+        for a, b in ((link["source"], link["target"]), (link["target"], link["source"])):
+            if (a["provider"], a["instance"]) == (src, src_inst) and (b["provider"], b["instance"]) == (dst, dst_inst) and b["key"] in dst_keys:
+                linked.setdefault(a["key"], {"key": b["key"], "reason": "linked", "where": link["label"]})
+    def _folded(rows: list[dict[str, str]]) -> dict[str, list[str]]:
+        names: dict[str, list[str]] = {}
+        for row in rows:
+            names.setdefault(row["username"].casefold(), []).append(row["key"])
+        return names
+    src_names = _folded(src_rows)
+    dst_names = _folded(dst_rows)
+    suggestions: dict[str, dict[str, str]] = {}
+    for row in src_rows:
+        if row["key"] in linked:
+            suggestions[row["key"]] = linked[row["key"]]
+            continue
+        folded = row["username"].casefold()
+        if len(src_names.get(folded, [])) == 1 and len(dst_names.get(folded, [])) == 1:
+            suggestions[row["key"]] = {"key": dst_names[folded][0], "reason": "same_name", "where": ""}
+    return {
+        "ok": True,
+        "source": {"provider": src, "instance": src_inst, "identities": src_rows},
+        "target": {"provider": dst, "instance": dst_inst, "identities": dst_rows},
+        "suggestions": suggestions,
+    }
 
 
 @router.put("/provider-instances/{provider}/{instance_id}/sync-users")

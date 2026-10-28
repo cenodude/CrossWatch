@@ -396,7 +396,7 @@ def html() -> str:
           <button type="button" class="cw-subtile active" data-sub="auth">Authentication</button>
           <button type="button" class="cw-subtile" data-sub="settings">Settings</button>
           <button type="button" class="cw-subtile" data-sub="whitelist">Whitelisting</button>
-          <button type="button" class="cw-subtile" data-sub="users">Users</button>
+          <button type="button" class="cw-subtile" data-sub="users">Identities</button>
         </div>
 
         <div class="cw-subpanels">
