@@ -809,6 +809,10 @@ async function save(regenerate = false) {
       ? await request("/api/scrobbler/routes", "POST", body)
       : await request(`/api/scrobbler/routes/${encodeURIComponent(draft.id)}`, "PUT", body);
     props.onSaved?.(data);
+    if (!regenerate) {
+      window.cxCloseModal?.();
+      return;
+    }
     if (data && Array.isArray(data.routes)) props.overview = data;
     props.mode = "edit";
     busy(false);

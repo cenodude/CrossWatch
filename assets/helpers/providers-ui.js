@@ -1831,10 +1831,9 @@
       });
       footer.querySelector(".cw-connection-footer-save")?.addEventListener("click", async () => {
         resetConnectionDeleteConfirm(footer.querySelector(".cw-connection-footer-delete"));
-        const keepOpen = ["PLEX", "JELLYFIN", "EMBY"].includes(info.key);
         if (!await runConnectionSave(panel, info, footer)) return;
         loadConfig(true).then((cfg) => syncConnectionSuccessState(panel, info, cfg)).catch(() => {});
-        if (!keepOpen) setTimeout(closeAuthProviderOverlay, 1100);
+        setTimeout(closeAuthProviderOverlay, 1100);
       });
     }
     const deleteBtn = panel.querySelector(".cw-connection-footer-delete");
