@@ -1567,6 +1567,27 @@ def test_sync_once_filters_selected_pairs_and_returns_exit_code(monkeypatch: pyt
     assert seen["kwargs"]["write_state_json"] is True
 
 
+def test_sync_once_exit_code_reaches_the_process(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    import cw_platform.config_base as config_base
+    import cw_platform.orchestrator as orchestrator
+    from cli._app import run_isolated
+
+    class FakeOrchestrator:
+        def __init__(self, cfg: dict[str, Any]) -> None:
+            pass
+
+        def run(self, **kwargs: Any) -> dict[str, Any]:
+            return {"ok": False, "pairs": 1, "updated": 0, "added": 0, "removed": 0, "skipped": 0, "unresolved": 0, "errors": 1}
+
+    monkeypatch.setattr(config_base, "load_config", lambda: {
+        "pairs": [{"id": "a", "source": "JELLYFIN", "target": "TRAKT", "enabled": True}],
+    })
+    monkeypatch.setattr(orchestrator, "Orchestrator", FakeOrchestrator)
+
+    assert run_isolated(_ctx(http=FakeTransport()), ["sync", "once", "a", "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["exit_code"] == 1
+
+
 def test_sync_once_feature_filter_and_strict_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
     import typer
     import cw_platform.config_base as config_base

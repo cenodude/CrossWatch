@@ -627,8 +627,10 @@ def run_pairs(ctx) -> dict[str, Any]:
 
         ss = health_status(health_map.get(f"{src}#{_health_instance(src_inst)}") or health_map.get(src) or {})
         sd = health_status(health_map.get(f"{dst}#{_health_instance(dst_inst)}") or health_map.get(dst) or {})
-        if ss == "auth_failed" or sd == "auth_failed":
-            emit("pair:skip", pair_id=str(pair.get('id') or ''), src=src, dst=dst, reason="auth_failed", src_status=ss, dst_status=sd)
+        if {"auth_failed", "down"} & {ss, sd}:
+            reason = "auth_failed" if "auth_failed" in (ss, sd) else "provider_down"
+            emit("pair:skip", pair_id=str(pair.get('id') or ''), src=src, dst=dst, reason=reason, src_status=ss, dst_status=sd)
+            errors_total += 1
             continue
 
         injected = False
