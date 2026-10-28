@@ -237,7 +237,6 @@ class TRAKTConfig:
     progress_per_page: int = 250
     history_max_pages: int = 10000
     history_chunk_size: int = 100
-    history_number_fallback: bool = False
     history_collection: bool = False
     history_collection_types: list[str] | None = None
     collection_batch_size: int = 100
@@ -430,7 +429,6 @@ class TRAKTModule:
             progress_per_page=int(t.get("progress_per_page", 250) or 250),
             history_max_pages=int(t.get("history_max_pages", 10000) or 10000),
             history_chunk_size=int(t.get("history_chunk_size", 100) or 100),
-            history_number_fallback=bool(t.get("history_number_fallback")),
             history_collection=bool(t.get("history_collection")),
             history_collection_types=types or None,
             collection_batch_size=int(t.get("collection_batch_size", t.get("watchlist_batch_size", 100)) or 100),

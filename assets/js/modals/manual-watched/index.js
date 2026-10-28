@@ -2,7 +2,7 @@
 /* Manual watched item modal */
 
 const STORAGE_KEY = "cw.manualWatched.providers";
-const MEDIA_SERVER_PROVIDERS = new Set(["PLEX", "JELLYFIN", "EMBY"]);
+const MEDIA_SERVER_PROVIDERS = new Set(["PLEX", "JELLYFIN", "EMBY", "SILO"]);
 const ACTIONS = [
   ["history", "History", "history", "Mark the item as watched", "history_enabled"],
   ["watchlist", "Watchlist", "bookmark_add", "Add the item to watchlists", "watchlist_enabled"],

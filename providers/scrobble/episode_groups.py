@@ -73,11 +73,11 @@ def _completed(ev, cfg):
     scrobble = cfg.get("scrobble") or {}
     watch = scrobble.get("watch") or {}
     sink = str(watch.get("route_sink") or "").lower()
-    shared_threshold = sink in {"myanimelist", "kitsu", "wetrakr", "plex", "jellyfin", "emby", "kodi"}
+    shared_threshold = sink in {"myanimelist", "kitsu", "wetrakr", "plex", "jellyfin", "emby", "kodi", "silo"}
     threshold = None if shared_threshold else (scrobble.get(sink) or {}).get("watched_at")
     if threshold is None:
         threshold = (scrobble.get("trakt") or {}).get("watched_at", 90)
-    if sink in {"plex", "jellyfin", "emby", "kodi"}:
+    if sink in {"plex", "jellyfin", "emby", "kodi", "silo"}:
         threshold = ((watch.get("route_options") or {}).get("scrobble") or {}).get("watched_at", threshold)
     progress, threshold = float(ev.progress), float(threshold)
     minimum = 0

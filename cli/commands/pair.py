@@ -20,7 +20,7 @@ SETTING_KEYS = (*BOOL_KEYS, "remove_mode", "libraries")
 REMOVE_MODES = {"source_deletes": "source_deletes", "source": "source_deletes", "mirror": "mirror"}
 REMOVE_MODE_FEATURES = ("watchlist", "ratings", "history", "progress", "collection")
 LIBRARY_FEATURES = ("history", "ratings", "progress", "collection")
-LIBRARY_PROVIDERS = ("PLEX", "JELLYFIN", "EMBY", "KODI")
+LIBRARY_PROVIDERS = ("PLEX", "JELLYFIN", "EMBY", "SILO", "KODI")
 
 
 def _pairs(state: Ctx) -> list[dict[str, Any]]:

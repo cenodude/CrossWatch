@@ -188,9 +188,9 @@ def test_playlists_initial_load_uses_page_shell_and_section_skeletons():
 def test_playlists_provider_banner():
     js = (REPO / "assets" / "js" / "playlists.js").read_text(encoding="utf-8")
     assert "PLAYLIST_COMPATIBLE_PROVIDERS" in js
-    assert '["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "TMDB", "FLICKLIST", "CROSSWATCH"]' in js
+    assert '["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "TMDB", "FLICKLIST", "SILO", "CROSSWATCH"]' in js
     assert "Playlists need at least one compatible provider" in js
-    assert "Plex, Trakt, MDBList, Jellyfin, Emby, PublicMetaDB, SIMKL, TMDb, FlickList or CrossWatch" in js
+    assert "Plex, Trakt, MDBList, Jellyfin, Emby, Silo, PublicMetaDB, SIMKL, TMDb, FlickList or CrossWatch" in js
     assert "Playlists are highly experimental and cause issues" not in js
     assert "SIMKL custom lists are read only and need SIMKL PRO or VIP" in js
     assert "pl-ep-simkl-warning" in js

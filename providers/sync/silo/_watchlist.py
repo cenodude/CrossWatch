@@ -28,6 +28,7 @@ from ._common import (
 
 FEATURE = "watchlist"
 STATE_NAME = "watchlist_series"
+TITLES_STATE = "watchlist_titles"
 
 
 def _title_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -90,11 +91,20 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     write_state(STATE_NAME, scope, {"series": sorted(seen_series)})
 
     titles = pages(adapter, "/watchlist/titles", feature=FEATURE, allow_disabled=True)
-    for row in titles or []:
-        item = _title_minimal(row)
-        key = key_of(item) if item else ""
-        if item and key:
-            collected.setdefault(key, item)
+    if titles is None:
+        title_items = dict(read_state(TITLES_STATE, scope).get("items") or {})
+        if title_items:
+            _warn(FEATURE, "titles_unavailable_kept_last_known", count=len(title_items))
+    else:
+        title_items = {}
+        for row in titles:
+            item = _title_minimal(row)
+            key = key_of(item) if item else ""
+            if item and key:
+                title_items[key] = item
+        write_state(TITLES_STATE, scope, {"items": title_items})
+    for key, item in title_items.items():
+        collected.setdefault(key, dict(item))
 
     _info(FEATURE, "index_done", count=len(collected), library=len(rows), titles=len(titles or []), titles_enabled=titles is not None, kept_finished_series=kept, unmatched=unmatched)
     return collected

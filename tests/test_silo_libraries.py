@@ -151,3 +151,10 @@ def test_pair_libraries_override_reaches_named_instance(server: FakeServer) -> N
 
     assert sorted(SILOModule(view).build_index("history")) == ["tmdb:100", "tmdb:200"]
     assert sorted(SILOModule(scoped).build_index("history")) == ["tmdb:200"]
+
+
+def test_missing_whitelisted_library_fails_instead_of_empty_scope(server: FakeServer) -> None:
+    with pytest.raises(Exception, match="silo_whitelisted_library_missing"):
+        _adapter(history=["1", "9"]).build_index("history")
+    with pytest.raises(Exception, match="silo_whitelisted_library_missing"):
+        _adapter(collection=["9"]).build_index("collection")

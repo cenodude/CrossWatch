@@ -9,7 +9,7 @@
   let _limitTries = 0;
 
   const key = (s) => String(s || "").trim().toUpperCase();
-  const brandKey = (k) => ({ PLEX: "plex", SIMKL: "simkl", TRAKT: "trakt", JELLYFIN: "jellyfin", CROSSWATCH: "crosswatch", EMBY: "emby" }[key(k)] || "x");
+  const brandKey = (k) => key(k).toLowerCase().replace(/[^a-z0-9]/g, "") || "x";
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
   const providerMeta = () => window.CW?.ProviderMeta || null;
   const providerLabel = (provider) => providerMeta()?.label?.(provider) || key(provider) || "Provider";

@@ -11,7 +11,7 @@ from typing import Any
 from .value_coercion import coerce_bool
 from .id_map import canonical_key
 
-PROVIDERS = frozenset({"PLEX", "JELLYFIN", "EMBY"})
+PROVIDERS = frozenset({"PLEX", "JELLYFIN", "EMBY", "SILO"})
 EXTERNAL_IDS = ("imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
 
 

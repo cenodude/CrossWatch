@@ -139,47 +139,11 @@ const decorateProviderCard = (card) => {
   if (logo) card?.style.setProperty("--provider-wm", `url(${JSON.stringify(logo)})`);
 };
 
-const pathGet = (obj, path) => (path || []).reduce((acc, key) => (acc && typeof acc === "object" ? acc[key] : undefined), obj);
-const hasValue = (v) => typeof v === "string" ? v.trim().length > 0 : !!v;
-const hasAnyConfigValue = (root, keys = []) => {
-  if (!root || typeof root !== "object") return false;
-  if (keys.some((key) => hasValue(root[key]))) return true;
-  const inst = root.instances;
-  return !!(inst && typeof inst === "object" && Object.values(inst).some((row) => row && typeof row === "object" && keys.some((key) => hasValue(row[key]))));
-};
-const hasTmdbConfig = (root) => {
-  const match = (block) => !!(block && typeof block === "object" && ((hasValue(block.api_key) && hasValue(block.session_id)) || hasValue(block.account_id)));
-  if (match(root)) return true;
-  const inst = root?.instances;
-  return !!(inst && typeof inst === "object" && Object.values(inst).some(match));
-};
-const hasNuvioConfig = (root) => {
-  const match = (block) => !!(block && typeof block === "object" && hasValue(block.profile_id) && (hasValue(block.access_token) || hasValue(block.refresh_token)));
-  if (match(root)) return true;
-  const inst = root?.instances;
-  return !!(inst && typeof inst === "object" && Object.values(inst).some(match));
-};
 const getAllowedProviders = (cfg = window._cfgCache || {}) => {
   try {
     if (typeof window.getConfiguredProviders === "function") return new Set(Array.from(window.getConfiguredProviders(cfg) || []).map(canonProv).filter(Boolean));
   } catch {}
-  const set = new Set(), checks = [
-    { key: "PLEX", paths: [["plex"]], keys: ["account_token", "token"] },
-    { key: "SIMKL", paths: [["simkl"], ["auth", "simkl"]], keys: ["access_token"] },
-    { key: "TRAKT", paths: [["trakt"], ["auth", "trakt"]], keys: ["access_token"] },
-    { key: "ANILIST", paths: [["anilist"], ["auth", "anilist"]], keys: ["access_token", "token"] },
-    { key: "JELLYFIN", paths: [["jellyfin"], ["auth", "jellyfin"]], keys: ["access_token"] },
-    { key: "EMBY", paths: [["emby"], ["auth", "emby"]], keys: ["access_token", "api_key", "token"] },
-    { key: "MDBLIST", paths: [["mdblist"], ["auth", "mdblist"]], keys: ["api_key", "access_token"] },
-    { key: "PUBLICMETADB", paths: [["publicmetadb"], ["auth", "publicmetadb"]], keys: ["api_key"] },
-  ];
-  for (const def of checks) if (def.paths.some((path) => hasAnyConfigValue(pathGet(cfg, path), def.keys))) set.add(def.key);
-  if ([cfg?.nuvio, cfg?.auth?.nuvio].some(hasNuvioConfig)) set.add("NUVIO");
-  if ([cfg?.tmdb_sync, cfg?.tmdb, cfg?.auth?.tmdb_sync].some(hasTmdbConfig)) set.add("TMDB");
-  if ([cfg?.tautulli, cfg?.auth?.tautulli].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TAUTULLI");
-  if ([cfg?.tracearr, cfg?.auth?.tracearr].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TRACEARR");
-  if ((cfg?.crosswatch || cfg?.CrossWatch || {}).enabled !== false) set.add("CROSSWATCH");
-  return set;
+  return new Set(["CROSSWATCH"]);
 };
 
 const buildProviders = async () => {

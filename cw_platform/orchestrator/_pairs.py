@@ -580,7 +580,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                     pair_cfg_view[k] = blk
                 if isinstance(pv, Mapping):
                     _deep_merge_provider_overrides(blk, pv)
-                elif pv is not None and k in {"plex", "jellyfin", "emby"}:
+                elif pv is not None and k in {"plex", "jellyfin", "emby", "silo"}:
                     blk["strict_id_matching"] = coerce_bool(pv)
 
         feat_map = dict(pair.get("features") or {})
@@ -658,7 +658,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                         override = next((value for key, value in pair_prov.items() if str(key).strip().upper() == src), {}) if isinstance(pair_prov, Mapping) else {}
                         if isinstance(override, Mapping):
                             _deep_merge_provider_overrides(block, override)
-                        elif override is not None and src in {"PLEX", "JELLYFIN", "EMBY"}:
+                        elif override is not None and src in {"PLEX", "JELLYFIN", "EMBY", "SILO"}:
                             block["strict_id_matching"] = coerce_bool(override)
                         endpoint_cfg = _config_with_pair_feature_options(endpoint_cfg, fcfg, (src, dst), feature)
                         endpoint_blocks[instance] = endpoint_cfg[config_key]

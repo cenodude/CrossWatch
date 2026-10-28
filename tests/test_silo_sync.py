@@ -342,3 +342,110 @@ def test_interactive_sync_search_uses_silo_catalog(silo: Any) -> None:
 
     assert seen[0] == {"q": "Gam", "type": "series", "limit": 20, "skip_total": "true"}
     assert rows == [{"title": "Gamma", "year": 2020, "ids": {"tvdb": "300", "tmdb": "77", "imdb": "tt77"}}]
+
+
+def test_disabled_titles_keep_last_known_titles_instead_of_dropping_them(silo: Any) -> None:
+    from providers.sync.silo import _watchlist
+
+    adapter, server = silo
+    server.on("GET", "/watchlist", lambda kw: _page([]))
+    server.on("GET", "/watchlist/titles", lambda kw: _page([{"tmdb_id": 555, "media_type": "movie", "title": "Remote"}]))
+    assert sorted(_watchlist.build_index(adapter)) == ["tmdb:555"]
+
+    server.on("GET", "/watchlist/titles", lambda kw: ResponseStub(409, {"type": PROBLEM + "capability_disabled"}))
+    assert sorted(_watchlist.build_index(adapter)) == ["tmdb:555"]
+
+    server.on("GET", "/watchlist/titles", lambda kw: _page([]))
+    assert _watchlist.build_index(adapter) == {}
+
+
+def test_unexpected_extra_pages_raise_for_unpaged_lists(silo: Any) -> None:
+    from providers.sync.silo import _common, _playlists
+
+    adapter, server = silo
+    server.on("GET", "/collections", lambda kw: ResponseStub(200, {"items": [], "page": {"has_more": True, "next_cursor": "x"}}))
+    with pytest.raises(_common.SiloSyncError, match="unexpected_pages"):
+        _playlists.list_resources(adapter)
+    server.on("GET", "/user/libraries", lambda kw: ResponseStub(200, {"items": [], "page": {"has_more": True, "next_cursor": "x"}}))
+    with pytest.raises(_common.SiloSyncError, match="unexpected_pages"):
+        _common.list_libraries(adapter)
+
+
+def test_library_presence_matches_the_write_resolver(silo: Any) -> None:
+    from cw_platform import library_presence as lp
+    from providers.sync._mod_SILO import OPS, get_manifest
+
+    adapter, server = silo
+    assert get_manifest()["capabilities"]["library_presence"] == {"features": ["history", "ratings", "progress"]}
+    assert lp.supported(OPS, "history") and lp.supported(OPS, "ratings") and not lp.supported(OPS, "watchlist")
+    items = [
+        {"type": "movie", "ids": {"tmdb": "100"}},
+        {"type": "movie", "ids": {"tmdb": "999"}},
+        {"type": "movie", "ids": {"simkl": "1"}},
+        {"type": "episode", "show_ids": {"tvdb": "300"}, "season": 1, "episode": 1},
+        {"type": "episode", "show_ids": {"tvdb": "300"}, "season": 9, "episode": 9},
+        {"type": "show", "ids": {"tvdb": "300"}},
+    ]
+    res = OPS.library_presence(adapter.config, items, feature="history")
+    assert [r["status"] for r in res] == ["present", "absent", "absent", "present", "absent", "unknown"]
+    assert res[0]["item_id"] == "movie-tmdb-100" and res[3]["item_id"] == "episode-tvdb-300-1-1"
+    rated = OPS.library_presence(adapter.config, [items[5], items[3]], feature="ratings")
+    assert [r["status"] for r in rated] == ["present", "unknown"]
+
+
+def test_library_presence_fails_open_when_the_library_cannot_be_read(silo: Any) -> None:
+    from providers.sync._mod_SILO import OPS
+    from providers.sync.silo import _common
+
+    adapter, server = silo
+    _common._LIBRARIES.clear()
+    server.on("GET", "/catalog", lambda kw: ResponseStub(502, {}))
+    res = OPS.library_presence(adapter.config, [{"type": "movie", "ids": {"tmdb": "999"}}], feature="history")
+    assert res == [{"status": "unknown", "reason": "index_unavailable"}]
+
+
+def test_strict_id_matching_is_on_by_default_and_title_matching_needs_it_off(silo: Any) -> None:
+    from providers.sync._mod_SILO import SILOModule
+    from providers.sync.silo import _common
+
+    adapter, server = silo
+    lib = _common.library(adapter)
+    movie = {"type": "movie", "ids": {"simkl": "1"}, "title": "alpha", "year": 2025}
+    assert _common.strict_ids(adapter) is True
+    assert _common.resolve_item(adapter, lib, movie, feature="history") == ("", "movie")
+
+    loose = SILOModule({**adapter.config, "silo": {**adapter.config["silo"], "strict_id_matching": False}})
+    assert _common.strict_ids(loose) is False
+    assert _common.resolve_item(loose, lib, movie, feature="history") == ("movie-tmdb-100", "movie")
+    assert _common.resolve_item(loose, lib, {**movie, "year": 2027}, feature="history")[0] == ""
+    assert _common.resolve_item(loose, lib, {**movie, "ids": {"tmdb": "999"}}, feature="history")[0] == ""
+    assert _common.resolve_item(loose, lib, {"type": "show", "ids": {}, "title": "Gamma"}, feature="watchlist") == ("series-tvdb-300", "show")
+    episode = {"type": "episode", "show_ids": {"simkl": "5"}, "series_title": "GAMMA", "season": 1, "episode": 1}
+    assert _common.resolve_item(loose, lib, episode, feature="history") == ("episode-tvdb-300-1-1", "episode")
+    assert _common.resolve_item(adapter, lib, episode, feature="history") == ("", "episode")
+
+
+def test_title_matching_skips_ambiguous_titles(silo: Any) -> None:
+    from providers.sync._mod_SILO import SILOModule
+    from providers.sync.silo import _common
+
+    adapter, server = silo
+    MOVIES.append({"content_id": "movie-tmdb-101", "type": "movie", "title": "Alpha", "year": 2024, "runtime": 100})
+    try:
+        _common._LIBRARIES.clear()
+        loose = SILOModule({**adapter.config, "silo": {**adapter.config["silo"], "strict_id_matching": False}})
+        lib = _common.library(loose)
+        assert _common.resolve_item(loose, lib, {"type": "movie", "ids": {}, "title": "Alpha", "year": 2024}, feature="history")[0] == ""
+    finally:
+        MOVIES.pop()
+
+
+def test_pair_strict_override_reaches_silo_and_presence_follows_it(silo: Any) -> None:
+    from providers.sync._mod_SILO import OPS
+
+    adapter, server = silo
+    item = {"type": "movie", "ids": {"simkl": "1"}, "title": "Alpha", "year": 2024}
+    strict = OPS.library_presence(adapter.config, [item], feature="history")
+    loose = OPS.library_presence({**adapter.config, "silo": {**adapter.config["silo"], "strict_id_matching": False}}, [item], feature="history")
+    assert strict[0]["status"] == "absent"
+    assert loose[0] == {"status": "present", "item_id": "movie-tmdb-100"}

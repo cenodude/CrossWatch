@@ -1100,10 +1100,6 @@ def _apply_simkl_resolution(adapter: Any, items: list[Mapping[str, Any]]) -> tup
     )
     return out, unresolved
 
-def _history_number_fallback_enabled(adapter: Any) -> bool:
-    return True if not RESOLVE_ENABLE else bool(_cfg_get(adapter, "history_number_fallback", False))
-
-
 def _history_collection_enabled(adapter: Any) -> bool:
     return bool(_cfg_get(adapter, "history_collection", False))
 

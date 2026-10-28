@@ -12,6 +12,7 @@ from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PLAYLIST_KIND_SMART, Pl
 from ._common import (
     SiloSyncError,
     cfg_section,
+    has_more_pages,
     library,
     minimal_for,
     pages,
@@ -83,6 +84,8 @@ def _collections(adapter: Any) -> list[dict[str, Any]]:
     data = safe_json(resp)
     if not isinstance(data, Mapping) or not isinstance(data.get("items"), list):
         raise SiloSyncError("silo_playlists_invalid_response")
+    if has_more_pages(data):
+        raise SiloSyncError("silo_playlists_unexpected_pages")
     return [dict(r) for r in data["items"] if isinstance(r, Mapping)]
 
 

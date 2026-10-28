@@ -78,7 +78,7 @@ register_cache("analyzer", _clear_analyzer_caches)
 
 _LOG = logging.getLogger("crosswatch.analyzer")
 _TRACKER_PROVIDER_BASES = {"CROSSWATCH", "TRAKT", "SIMKL", "MDBLIST", "ANILIST", "KITSU", "MYANIMELIST", "WETRAKR"}
-_MEDIA_SERVER_PROVIDER_BASES = {"PLEX", "EMBY", "JELLYFIN"}
+_MEDIA_SERVER_PROVIDER_BASES = {"PLEX", "EMBY", "JELLYFIN", "SILO"}
 _STRICT_PAIRS_PREFIX = "__cw_strict_pairs__:"
 
 
@@ -2028,7 +2028,7 @@ def _history_rewatch_pair_set(cfg: dict[str, Any]) -> set[tuple[str, str]]:
 
 def _supports_pair_libs(prov: str) -> bool:
     base, _ = _split_prov_token(prov)
-    return base in ("PLEX", "EMBY", "JELLYFIN")
+    return base in ("PLEX", "EMBY", "JELLYFIN", "SILO")
 
 
 _TYPE_TOKEN_MAP: dict[str, str] = {

@@ -10,12 +10,15 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 from urllib.parse import quote
 
 import requests
 
+from cw_platform.collection_media import stream_media_info
 from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.path_matching import PathIndex, ids_conflict, path_keys
+from cw_platform.value_coercion import coerce_bool
 from providers.auth._auth_SILO import api_url, normalize_server_url, provider_block, request_with_auth
 
 from .._log import log as cw_log
@@ -36,6 +39,7 @@ DEFAULT_GET_PER_SEC = 20.0
 DEFAULT_POST_PER_SEC = 10.0
 LIBRARY_TTL_SEC = 600.0
 DETAIL_TTL_SEC = 30 * 86400
+FILES_STATE = "files"
 
 _MOVIE_RE = re.compile(r"^movie-(tmdb|imdb|tvdb)-([a-z0-9]+)$")
 _SERIES_RE = re.compile(r"^series-(tvdb|tmdb|imdb)-([a-z0-9]+)$")
@@ -197,6 +201,11 @@ def silo_request(adapter: Any, method: str, path: str, *, params: Mapping[str, A
     )
 
 
+def has_more_pages(data: Mapping[str, Any]) -> bool:
+    page = data.get("page")
+    return bool(page.get("has_more")) if isinstance(page, Mapping) else False
+
+
 def safe_json(resp: requests.Response) -> Any:
     try:
         if not (resp.text or "").strip():
@@ -278,6 +287,9 @@ class Library:
         self.detail_passes: set[str] = set()
         self.scoped = False
         self.library_of: dict[str, str] | None = None
+        self.library_ids: set[str] = set()
+        self.path_index: Any = None
+        self.title_index: dict[tuple[str, str], list[str]] | None = None
         self.views: dict[frozenset[str], "Library"] = {}
 
     def subset(self, keep: set[str]) -> "Library":
@@ -372,6 +384,8 @@ def list_libraries(adapter: Any) -> list[dict[str, str]]:
     rows = data.get("items") if isinstance(data, Mapping) else None
     if not isinstance(rows, list):
         raise SiloSyncError("silo_libraries_invalid_response")
+    if has_more_pages(data):
+        raise SiloSyncError("silo_libraries_unexpected_pages")
     out: list[dict[str, str]] = []
     for row in rows:
         lid = str(row.get("id") or "").strip() if isinstance(row, Mapping) else ""
@@ -383,7 +397,9 @@ def list_libraries(adapter: Any) -> list[dict[str, str]]:
 def _membership(adapter: Any, lib: Library) -> dict[str, str]:
     if lib.library_of is None:
         found: dict[str, str] = {}
-        for row in list_libraries(adapter):
+        rows = list_libraries(adapter)
+        lib.library_ids = {row["key"] for row in rows}
+        for row in rows:
             for typ in ("movie", "series", "episode"):
                 params = {"type": typ, "skip_total": "true", "library_id": row["key"]}
                 for item in pages(adapter, "/catalog", feature="library", params=params) or []:
@@ -403,6 +419,10 @@ def library(adapter: Any, *, refresh: bool = False, feature: str | None = None, 
     view = full.views.get(allowed)
     if view is None:
         membership = _membership(adapter, full)
+        missing = sorted(allowed - full.library_ids)
+        if missing:
+            _warn("library", "whitelisted_library_missing", scope_feature=feature, missing=missing)
+            raise SiloSyncError("silo_whitelisted_library_missing")
         view = full.subset({cid for cid, lid in membership.items() if lid in allowed})
         full.views[allowed] = view
     return view
@@ -564,20 +584,182 @@ def resolve_movie(adapter: Any, lib: Library, ids_in: Mapping[str, Any] | None, 
     return _lookup(lib.movie_by_id, ids, ("tmdb", "imdb", "tvdb"))
 
 
+def _streams(version: Mapping[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for v in version.get("video_tracks") or []:
+        if isinstance(v, Mapping):
+            out.append({"Type": "Video", "Width": v.get("width"), "Height": v.get("height"), "IsInterlaced": bool(v.get("interlaced")),
+                        "VideoRangeType": "HDR10Plus" if v.get("hdr10_plus") else v.get("video_range_type"), "ColorTransfer": v.get("color_transfer")})
+    for a in version.get("audio_tracks") or []:
+        if isinstance(a, Mapping):
+            out.append({"Type": "Audio", "Codec": a.get("codec"), "Profile": a.get("profile"), "Title": a.get("title"), "Language": a.get("language"),
+                        "Channels": a.get("channels"), "ChannelLayout": a.get("layout"), "BitRate": a.get("bitrate"), "IsDefault": a.get("default") is True})
+    return out
+
+
+def media_info_of(detail: Mapping[str, Any]) -> dict[str, Any]:
+    versions = [v for v in detail.get("versions") or [] if isinstance(v, Mapping)]
+    if not versions:
+        return {}
+    best = max(versions, key=lambda v: (max((int(t.get("width") or 0) for t in v.get("video_tracks") or [] if isinstance(t, Mapping)), default=0),
+                                         int(v.get("bitrate") or 0)))
+    return stream_media_info({"MediaStreams": _streams(best)})
+
+
+def paths_of(detail: Mapping[str, Any]) -> list[str]:
+    found = {str(v.get("file_path") or "").strip() for v in detail.get("versions") or [] if isinstance(v, Mapping)}
+    return sorted(p for p in found if p)
+
+
+def file_details(adapter: Any, rows: Iterable[tuple[str, str | None]], *, feature: str, strict: bool) -> dict[str, dict[str, Any]]:
+    scope = server_scope(adapter)
+    cache = read_state(FILES_STATE, scope)
+    now = int(time.time())
+    fetched = failed = 0
+    out: dict[str, dict[str, Any]] = {}
+    for cid, stamp in rows:
+        rec = cache.get(cid)
+        if isinstance(rec, Mapping) and rec.get("stamp") == stamp and now - int(rec.get("at") or 0) < DETAIL_TTL_SEC:
+            out[cid] = dict(rec)
+            continue
+        detail = item_detail(adapter, cid, feature=feature)
+        if not detail:
+            failed += 1
+            if isinstance(rec, Mapping):
+                out[cid] = dict(rec)
+            elif strict:
+                if fetched:
+                    write_state(FILES_STATE, scope, cache)
+                raise SiloSyncError(f"silo_{feature}_file_details_failed")
+            continue
+        cache[cid] = {"stamp": stamp, "at": now, "media": media_info_of(detail), "paths": paths_of(detail)}
+        out[cid] = dict(cache[cid])
+        fetched += 1
+    if fetched:
+        write_state(FILES_STATE, scope, cache)
+        _dbg(feature, "file_details_fetched", fetched=fetched)
+    if failed:
+        _warn(feature, "file_details_lookup_failed", count=failed)
+    return out
+
+
+def _stamp(lib: Library, cid: str) -> str | None:
+    rec = lib.movies.get(cid) or lib.episodes.get(cid) or {}
+    return rec.get("added_at")
+
+
+def attach_paths(adapter: Any, lib: Library, rows: Iterable[tuple[str, dict[str, Any]]], *, feature: str) -> None:
+    playable = [(cid, item) for cid, item in rows if item.get("type") in ("movie", "episode")]
+    if not playable:
+        return
+    details = file_details(adapter, [(cid, _stamp(lib, cid)) for cid, _item in playable], feature=feature, strict=True)
+    for cid, item in playable:
+        paths = (details.get(cid) or {}).get("paths") or []
+        if paths:
+            item["media_paths"] = list(paths)
+
+
+def path_index(adapter: Any, lib: Library, *, feature: str) -> PathIndex:
+    cached = getattr(lib, "path_index", None)
+    if cached is not None:
+        return cached
+    for name, pending in (("series", [c for c, rec in lib.series.items() if not ({"tmdb", "imdb"} & set(rec["ids"]))]),
+                          ("movies", [c for c in lib.movies if c.startswith(("movie-imdb-", "movie-tvdb-"))])):
+        if name not in lib.detail_passes:
+            lib.detail_passes.add(name)
+            if pending:
+                ensure_details(adapter, lib, pending, feature=feature)
+    cids = list(lib.movies) + list(lib.episodes)
+    details = file_details(adapter, [(cid, _stamp(lib, cid)) for cid in cids], feature=feature, strict=True)
+    rows: list[tuple[str, Mapping[str, Any]]] = []
+    for cid in cids:
+        item = minimal_for(lib, cid)
+        paths = (details.get(cid) or {}).get("paths") or []
+        if item and paths:
+            rows.append((cid, {**item, "media_paths": list(paths)}))
+    index = PathIndex(rows)
+    lib.path_index = index
+    _info(feature, "path_index_done", items=len(rows))
+    return index
+
+
+def resolve_by_path(adapter: Any, lib: Library, item: Mapping[str, Any], *, feature: str) -> tuple[str, str]:
+    if not getattr(adapter, "path_matching", False) or not path_keys(item):
+        return "", "path_not_found"
+    cid, reason = path_index(adapter, lib, feature=feature).resolve(item)
+    if reason != "path_not_found":
+        (_info if cid else _warn)(feature, reason, resolution_method="file_path", item_id=cid, title=item.get("title"))
+    return cid or "", reason
+
+
+def _by_path(adapter: Any, lib: Library, item: Mapping[str, Any], feature: str) -> str:
+    if not getattr(adapter, "path_matching", False):
+        return ""
+    return resolve_by_path(adapter, lib, item, feature=feature)[0]
+
+
+def strict_ids(adapter: Any) -> bool:
+    return coerce_bool(cfg_section(adapter).get("strict_id_matching", True), True)
+
+
+def _norm_title(value: Any) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def _title_index(lib: Library) -> dict[tuple[str, str], list[str]]:
+    if lib.title_index is None:
+        index: dict[tuple[str, str], list[str]] = {}
+        for kind, table in (("movie", lib.movies), ("show", lib.series)):
+            for cid, rec in table.items():
+                title = _norm_title(rec.get("title"))
+                if title:
+                    index.setdefault((kind, title), []).append(cid)
+        lib.title_index = index
+    return lib.title_index
+
+
+def _by_title(adapter: Any, lib: Library, kind: str, title: Any, year: Any, ids: Any, *, feature: str) -> str:
+    name = _norm_title(title)
+    if not name or strict_ids(adapter):
+        return ""
+    want = as_int(year)
+    table = lib.movies if kind == "movie" else lib.series
+    found = []
+    for cid in _title_index(lib).get((kind, name), []):
+        have = as_int(table[cid].get("year"))
+        if want and not (have and abs(have - want) <= 1):
+            continue
+        if ids_conflict({"ids": ids_of_value(ids if isinstance(ids, Mapping) else {})}, {"ids": table[cid]["ids"]}):
+            continue
+        found.append(cid)
+    if len(found) == 1:
+        _dbg(feature, "resolve_hit", kind=kind, method="title", title=title, year=want, item_id=found[0])
+        return found[0]
+    if found:
+        _dbg(feature, "resolve_miss", kind=kind, method="title_ambiguous", title=title, year=want, candidates=len(found))
+    return ""
+
+
 def resolve_item(adapter: Any, lib: Library, item: Mapping[str, Any], *, feature: str) -> tuple[str, str]:
     typ = _norm_type(item)
+    ids = item.get("ids") if isinstance(item.get("ids"), Mapping) else {}
     if typ == "movie":
-        return resolve_movie(adapter, lib, item.get("ids") if isinstance(item.get("ids"), Mapping) else {}, feature=feature), "movie"
+        cid = resolve_movie(adapter, lib, ids, feature=feature)
+        return cid or _by_path(adapter, lib, item, feature) or _by_title(adapter, lib, "movie", item.get("title"), item.get("year"), ids, feature=feature), "movie"
     if typ == "episode":
         show_ids = item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else {}
-        sid = resolve_series(adapter, lib, show_ids, feature=feature)
         s, e = as_int(item.get("season")), as_int(item.get("episode"))
-        if not sid or s is None or e is None:
-            return "", "episode"
-        return lib.episode_by_coord.get((sid, s, e), ""), "episode"
+        sid = resolve_series(adapter, lib, show_ids, feature=feature)
+        cid = lib.episode_by_coord.get((sid, s, e), "") if sid and s is not None and e is not None else ""
+        if not cid:
+            cid = _by_path(adapter, lib, item, feature)
+        if not cid and s is not None and e is not None:
+            show = _by_title(adapter, lib, "show", item.get("series_title") or item.get("show_title"), item.get("show_year"), show_ids, feature=feature)
+            cid = lib.episode_by_coord.get((show, s, e), "") if show else ""
+        return cid, "episode"
     if typ == "season":
         return "", "season"
-    return resolve_series(adapter, lib, item.get("ids") if isinstance(item.get("ids"), Mapping) else {}, feature=feature), "show"
+    return resolve_series(adapter, lib, ids, feature=feature) or _by_title(adapter, lib, "show", item.get("title"), item.get("year"), ids, feature=feature), "show"
 
 
 def minimal_for(lib: Library, content_id: str) -> dict[str, Any] | None:

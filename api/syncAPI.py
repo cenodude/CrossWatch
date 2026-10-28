@@ -252,10 +252,16 @@ def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
     if not sync_provider_supports_feature(src, "ratings") or not sync_provider_supports_feature(dst, "ratings"):
         feats.pop("ratings", None)
     if "collection" in feats:
-        collection_sources = {"PLEX", "EMBY", "JELLYFIN", "KODI", "TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST"}
+        collection_sources = {"PLEX", "EMBY", "JELLYFIN", "SILO", "KODI", "TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST"}
         collection_targets = {"TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST"}
         if src not in collection_sources or dst not in collection_targets or str(pair.get("mode") or "").strip().lower().startswith("two"):
             feats.pop("collection", None)
+    raw_providers = pair.get("providers")
+    providers: Mapping[str, Any] = raw_providers if isinstance(raw_providers, Mapping) else {}
+    plex = next((v for k, v in providers.items() if str(k).strip().lower() == "plex"), None)
+    plex_history = plex.get("history") if isinstance(plex, Mapping) else None
+    if isinstance(plex_history, Mapping) and plex_history.get("discover_fallback") is True and isinstance(feats.get("history"), dict):
+        feats["history"]["library_only"] = False
 
 _DROPPED_SHOW_PROVIDERS = frozenset({"trakt", "mdblist", "simkl", "wetrakr", "flicklist"})
 
@@ -2462,6 +2468,20 @@ def api_pairs_list(request: Request = cast(Request, None)) -> JSONResponse:
             pass
         return JSONResponse({"ok": False, "error": _public_error("pairs_list_failed")}, status_code=500)
 
+def _default_pair_library_only(item: dict[str, Any]) -> None:
+    from cw_platform import library_presence
+    from cw_platform.modules_registry import load_sync_ops
+
+    sides = [item.get("target")] + ([item.get("source")] if str(item.get("mode") or "").lower().startswith("two") else [])
+    ops = [o for o in (load_sync_ops(str(name or "").upper()) for name in sides) if o is not None]
+    raw = item.get("features")
+    features: dict[str, Any] = raw if isinstance(raw, dict) else {}
+    for feature in ("history", "ratings", "progress", "watchlist"):
+        block = features.get(feature)
+        if isinstance(block, dict) and "library_only" not in block and any(library_presence.supported(o, feature) for o in ops):
+            block["library_only"] = True
+
+
 def _default_pair_anime_mapping(cfg: Mapping[str, Any], item: dict[str, Any]) -> None:
     source = str(item.get("source") or "").strip().lower()
     target = str(item.get("target") or "").strip().lower()
@@ -2500,6 +2520,7 @@ def api_pairs_add(payload: PairIn = Body(...), request: Request = cast(Request, 
         item["features"] = _normalize_features(item.get("features") or {"watchlist": True})
         _apply_pair_profile_scope(cfg, request, item)
         _default_pair_anime_mapping(cfg, item)
+        _default_pair_library_only(item)
         _enforce_pair_feature_constraints(item)
         if _managed_pair_blocked(cfg, request, item):
             return {"ok": False, "error": "profile_scope_denied"}

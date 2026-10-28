@@ -135,3 +135,14 @@ def test_pair_media_info_option_reaches_named_instance() -> None:
     assert provider_block(out, "SILO-P01")["collection"] == {"media_info": True}
     same = _config_with_pair_feature_options(view, {"enable": True, "media_info": True}, ("SILO", "TRAKT"), "history")
     assert same is view
+
+
+def test_failed_media_lookup_keeps_cached_media_info(server: FakeServer) -> None:
+    from providers.sync.silo import _common
+
+    first = _adapter(media_info=True).build_index("collection")
+    _common._LIBRARIES.clear()
+    server.pages["movie"][0]["added_at"] = "2026-10-28T09:00:00Z"
+    del server.details["movie-tmdb-100"]
+    again = _adapter(media_info=True).build_index("collection")
+    assert again["tmdb:100"]["media_info"] == first["tmdb:100"]["media_info"]
