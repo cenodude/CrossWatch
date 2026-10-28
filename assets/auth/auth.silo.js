@@ -411,6 +411,7 @@
   function ensureInstanceUI() {
     profile.ensureUI(() => {
       stopPendingLogin(true);
+      if (el("silo_server_url")) el("silo_server_url").value = "";
       librariesHydrated = false;
       libraries = [];
       wlHandle = null;
