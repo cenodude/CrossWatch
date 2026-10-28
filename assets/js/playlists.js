@@ -27,7 +27,7 @@
   const EMPTY_PROVIDER_RETRIES = 2;
   const EMPTY_PROVIDER_RETRY_MS = 300;
   const SAFE_NAME_CHARS = " _.'-&()";
-  const PLAYLIST_COMPATIBLE_PROVIDERS = new Set(["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "TMDB", "FLICKLIST", "CROSSWATCH"]);
+  const PLAYLIST_COMPATIBLE_PROVIDERS = new Set(["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "TMDB", "FLICKLIST", "SILO", "CROSSWATCH"]);
   const SIMKL_PLAYLIST_WARNING = "SIMKL status buckets are not true playlists. Changes may move or remove items from your SIMKL library. Use with caution. SIMKL custom lists are read only and need SIMKL PRO or VIP.";
   const RULESET_PRESETS = {
     direct: {
@@ -240,7 +240,7 @@
     const providerGate = state.loaded && !hasCompatiblePlaylistProvider() ? `
       <div class="pl-banner warn">
         <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-        <span>Playlists need at least one compatible provider (Plex, Trakt, MDBList, Jellyfin, Emby, PublicMetaDB, SIMKL, TMDb, FlickList or CrossWatch). Configure one in Connections to enable playlist endpoints and mappings.</span>
+        <span>Playlists need at least one compatible provider (Plex, Trakt, MDBList, Jellyfin, Emby, Silo, PublicMetaDB, SIMKL, TMDb, FlickList or CrossWatch). Configure one in Connections to enable playlist endpoints and mappings.</span>
         <button type="button" class="pl-btn small" data-action="open-connections">Open Connections</button>
       </div>
     ` : "";

@@ -45,6 +45,11 @@ _MEDIA_SERVER_LIBRARY_MESSAGES = {
     "not_found": "The media server could not find a matching library item.",
 }
 
+_SILO_MESSAGES = {
+    "ignored_by_server": "Silo ignored this watch because the title was unwatched in Silo after this watch date.",
+    "missing_duration": "Silo has no runtime for this item, so the watch cannot be written.",
+}
+
 _SIMKL_HISTORY_MESSAGES = {
     "simkl_not_found:episodes": "SIMKL could not find this episode with the normal history payload.",
     "simkl_not_found:anime:episodes": "SIMKL could not find this episode with the native anime history payload.",
@@ -64,6 +69,8 @@ _DIRECT_LABELS = {
     "path_id_conflict": "File path matches but IDs disagree",
     "not_in_plex_catalog": "Not in library",
     "not_in_library": "Not in library",
+    "ignored_by_server": "Ignored by server",
+    "missing_duration": "Missing runtime",
     "not_in_catalog": "Not in library",
     "plex_discover_date_pending": "Plex cloud date pending",
     "plex_discover_manual_review": "Plex cloud play needs manual review",
@@ -153,8 +160,10 @@ def reason_message(raw: Any, *, provider: Any = None, feature: Any = None) -> st
         if low == "not_in_plex_catalog":
             return f"{msg} {TRACKER_TO_MEDIA_SERVER_MESSAGE}"
         return msg
-    if provider_base in {"PLEX", "EMBY", "JELLYFIN", "KODI"} and low in _MEDIA_SERVER_LIBRARY_MESSAGES:
+    if provider_base in {"PLEX", "EMBY", "JELLYFIN", "KODI", "SILO"} and low in _MEDIA_SERVER_LIBRARY_MESSAGES:
         return _MEDIA_SERVER_LIBRARY_MESSAGES[low]
+    if provider_base == "SILO" and low in _SILO_MESSAGES:
+        return _SILO_MESSAGES[low]
     if provider_base == "SIMKL" and feature_key == "history":
         if low in _SIMKL_HISTORY_MESSAGES:
             return _SIMKL_HISTORY_MESSAGES[low]

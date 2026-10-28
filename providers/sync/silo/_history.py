@@ -9,6 +9,7 @@ from urllib.parse import quote
 from ._common import (
     SiloSyncError,
     as_int,
+    attach_paths,
     chunks,
     iso_z,
     key_of,
@@ -38,6 +39,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     lib = library(adapter, feature=FEATURE)
     rows = completed_rows(adapter)
     collected: dict[str, dict[str, Any]] = {}
+    by_cid: list[tuple[str, dict[str, Any]]] = []
     unmatched = 0
     for cid, row in rows.items():
         item = minimal_for(lib, cid)
@@ -50,6 +52,9 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         key = key_of(item)
         if key:
             collected[key] = item
+            by_cid.append((cid, item))
+    if getattr(adapter, "path_matching", False):
+        attach_paths(adapter, lib, by_cid, feature=FEATURE)
     _info(FEATURE, "index_done", count=len(collected), rows=len(rows), unmatched=unmatched)
     return collected
 

@@ -615,7 +615,6 @@ DEFAULT_CFG: dict[str, Any] = {
         "watchlist_shadow_ttl_hours": 168,              # Refresh ETag baseline weekly even if 304s keep coming
         "watchlist_batch_size": 100,                    # Chunk size for add/remove to avoid 429/rate spikes
         "watchlist_log_rate_limits": True,              # Log X-RateLimit-* and Retry-After when present
-        "watchlist_freeze_details": True,               # Persist last status & ids in freeze store for debugging
 
         # Ratings
         "ratings_per_page": 250,                        # Items per page when indexing (10–250; clamped to 250)
@@ -626,8 +625,6 @@ DEFAULT_CFG: dict[str, Any] = {
         "history_per_page": 250,
         "history_max_pages": 10000,                     # Safety cap for huge libraries; lower to bound runtime
         "history_chunk_size": 100,                      # Batch size for history add/remove writes
-        "history_unresolved": False,                    # bool, default false (enable the freeze file)
-        "history_number_fallback": False,               # episode number fallback (no S/E-based resolution when episode IDs are missing)
 
         "_pending_device": {
             "user_code": "",                            # Temporary device code state for PIN login

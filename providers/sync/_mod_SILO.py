@@ -9,11 +9,13 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.value_coercion import coerce_bool
 from providers.auth._auth_SILO import SiloError, is_configured as auth_is_configured, provider_block
 from providers.sync._mod_common import build_op_result, build_session, dedup_keys
 from providers.sync.silo import _collection as feat_collection
 from providers.sync.silo import _history as feat_history
 from providers.sync.silo import _playlists as feat_playlists
+from providers.sync.silo import _presence as feat_presence
 from providers.sync.silo import _progress as feat_progress
 from providers.sync.silo import _ratings as feat_ratings
 from providers.sync.silo import _watchlist as feat_watchlist
@@ -147,6 +149,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "provides_ids": ["tmdb", "tvdb"],
             },
             "playlists": dict(_PLAYLIST_CAPABILITIES),
+            "library_presence": {"features": list(feat_presence.FEATURES)},
         },
     }
 
@@ -177,6 +180,7 @@ class SILOModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.config = cfg or {}
         self.instance_id = _current_instance_id(cfg)
+        self.path_matching = coerce_bool((cfg or {}).get("_cw_path_matching", False))
         session = build_session("SILO", ctx, feature_label=label_silo)
         try:
             session._rate_limiter = shared_limiter(self)
@@ -262,6 +266,9 @@ class SILOModule:
             return build_op_result(ok=True, count=len(lst), dry_run=True)
         return _result_from(mod.remove(self, lst))
 
+    def library_presence(self, feature: str, items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+        return feat_presence.presence(self, items, feature=feature)
+
 
 class _SILOOPS:
     def name(self) -> str:
@@ -296,6 +303,9 @@ class _SILOOPS:
 
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> dict[str, Any]:
         return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
+
+    def library_presence(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str) -> list[dict[str, Any]]:
+        return self._adapter(cfg).library_presence(feature, items)
 
     def _playlist_adapter(self, cfg: Mapping[str, Any], instance: str | None) -> SILOModule:
         inst = normalize_instance_id(instance) if instance is not None else _current_instance_id(cfg)

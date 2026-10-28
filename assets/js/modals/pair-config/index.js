@@ -27,7 +27,7 @@ const isManagedPlaylistPair=(pair)=>String(playlistBlockOf(pair).managed_by||"")
 
 const isEmby = v => same(v, "emby");
 function getPairMarkedWatchedValue(state){ return !!(state?.pairProviders?.plex?.history?.include_marked_watched ?? state?.cfgRaw?.plex?.history?.include_marked_watched ?? true) }
-function supportsPathMatching(state){ return [state?.src,state?.dst].every(p=>["PLEX","JELLYFIN","EMBY"].includes(String(p||"").toUpperCase())) }
+function supportsPathMatching(state){ return [state?.src,state?.dst].every(p=>["PLEX","JELLYFIN","EMBY","SILO"].includes(String(p||"").toUpperCase())) }
 function supportsMatchUsers(state){ return [state?.src,state?.dst].every(p=>["PLEX","JELLYFIN","EMBY","SILO"].includes(String(p||"").toUpperCase())) }
 const MU_LABELS={PLEX:"Plex",EMBY:"Emby",JELLYFIN:"Jellyfin",SILO:"Silo"};
 const muEsc=(v)=>String(v??"").replace(/[&<>"']/g,(c)=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -525,7 +525,7 @@ function normalizePairProviders(p){
 
 function defaultStrictIdForProvider(providerKey){
   const key=String(providerKey||"").trim().toLowerCase();
-  return key==="plex" || key==="jellyfin" || key==="emby";
+  return key==="plex" || key==="jellyfin" || key==="emby" || key==="silo";
 }
 
 function getPairProviderStrictValue(state, providerKey){
@@ -1094,21 +1094,18 @@ function applySubDisable(feature){
     watchlist: [
       "#cx-wl-add","#cx-wl-remove","#cx-wl-library-only",
       "#cx-wl-anime-map","#cx-wl-anime-only",
-      "#plx-wl-pms","#plx-wl-limit","#plx-wl-delay","#plx-wl-title","#plx-wl-meta","#plx-wl-guid",
+      "#plx-wl-pms","#plx-wl-title",
       "#cx-jf-wl-mode-fav","#cx-jf-wl-mode-pl","#cx-jf-wl-mode-col","#cx-jf-wl-pl-name",
       "#cx-em-wl-mode-fav","#cx-em-wl-mode-pl","#cx-em-wl-mode-col","#cx-em-wl-pl-name",
       "#cx-floppy-wl-name",
       "#cx-scrob-wl-name",
-      "#cx-wl-q","#cx-wl-delay","#cx-wl-guid",
-      "#tr-wl-etag","#tr-wl-ttl","#tr-wl-batch","#tr-wl-log","#tr-wl-freeze",
-      "#cx-pmdb-wl-name","#sm-wl-batch","#md-wl-batch"
+      "#cx-pmdb-wl-name"
     ],
     ratings: [
       "#cx-rt-add","#cx-rt-remove","#cx-rt-library-only","#cx-rt-anime-map","#cx-rt-anime-only","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date","#cx-rt-specials",
-      "#tr-rt-perpage","#tr-rt-maxpages","#tr-rt-chunk",
-      "#sm-rt-chunk","#st-rt-liked-min","#st-rt-loved-min","#md-rt-perpage","#md-rt-maxpages","#md-rt-chunk"
+      "#st-rt-liked-min","#st-rt-loved-min"
     ],
-    history: ["#plx-marked-watched", "#plx-cloud-read", "#plx-discover-fallback", "#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-undated-today", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-numfb", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-hs-dropped","#cx-tr-hs-unres", "#tr-hs-perpage", "#tr-hs-maxpages", "#tr-hs-chunk", "#sm-hs-chunk", "#md-hs-perpage", "#md-hs-maxpages", "#md-hs-chunk", "#cx-em-hs-limit", "#cx-em-hs-delay", "#cx-em-hs-guid"],
+    history: ["#plx-marked-watched", "#plx-cloud-read", "#plx-discover-fallback", "#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-undated-today", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-hs-dropped"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-library-only","#cx-pr-anime-map"],
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes","#cx-co-media","#cx-co-media-upd"]
@@ -1512,10 +1509,11 @@ function renderFeaturePanel(state){
       </div>`;
     right.innerHTML=`<div class="panel-title small">Pair safety</div>
       ${removeModeRow}
-      ${hasPlex(state)||hasJelly(state)||hasEmby(state)||hasFloppy(state)?`<div class="panel-title small">Matching</div>`:""}
+      ${hasPlex(state)||hasJelly(state)||hasEmby(state)||hasSilo(state)||hasFloppy(state)?`<div class="panel-title small">Matching</div>`:""}
       ${hasPlex(state)?`<div class="opt-row"><label for="plx-strict-ids">Plex: Strict ID matching</label><label class="switch"><input id="plx-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "plex")?"checked":""}><span class="slider"></span></label></div>`:""}
       ${hasJelly(state)?`<div class="opt-row"><label for="jf-strict-ids">Jellyfin: Strict ID matching</label><label class="switch"><input id="jf-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "jellyfin")?"checked":""}><span class="slider"></span></label></div>`:""}
       ${hasEmby(state)?`<div class="opt-row"><label for="em-strict-ids">Emby: Strict ID matching</label><label class="switch"><input id="em-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "emby")?"checked":""}><span class="slider"></span></label></div>`:""}
+      ${hasSilo(state)?`<div class="opt-row"><label for="silo-strict-ids">Silo: Strict ID matching</label><label class="switch"><input id="silo-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "silo")?"checked":""}><span class="slider"></span></label></div>`:""}
       ${hasFloppy(state)?`<div class="opt-row"><label for="floppy-anime-library" data-tip-id="floppy-anime-library">Floppy: Send new anime to the Anime library</label><label class="switch"><input id="floppy-anime-library" type="checkbox" ${floppyAnimeLibraryOn(state)?"checked":""}><span class="slider"></span></label></div>`:""}
       ${supportsPathMatching(state)?`<div class="opt-row"><label for="pair-path-matching">Match by file path</label><label class="switch"><input id="pair-path-matching" type="checkbox" ${state.path_matching?"checked":""}><span class="slider"></span></label></div><div class="muted">When IDs cannot resolve an item, try matching its file path across the media servers in this pair. Supports movie and episode history, ratings and progress in both directions, including with Strict ID matching enabled.</div>`:""}
       <div class="panel-title" style="margin-top:10px">Advanced (shared) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
@@ -1654,7 +1652,6 @@ function renderFeaturePanel(state){
     
     if (hasPlex(state)) {
       const plex = (state.cfgRaw?.plex) || {};
-      const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">Plex</div>
         <details id="cx-plx-wl">
@@ -1665,109 +1662,8 @@ function renderFeaturePanel(state){
               <label class="switch"><input id="plx-wl-pms" type="checkbox" ${plex.watchlist_allow_pms_fallback ? "checked" : ""}><span class="slider"></span></label>
             </div>
             <div class="opt-row">
-              <label for="plx-wl-limit">Query limit</label>
-              <input id="plx-wl-limit" class="input small" type="number" min="1" max="1000" value="${Number.isFinite(plex.watchlist_query_limit)?plex.watchlist_query_limit:25}">
-            </div>
-            <div class="opt-row">
-              <label for="plx-wl-delay">Write delay (ms)</label>
-              <input id="plx-wl-delay" class="input small" type="number" min="0" max="5000" value="${Number.isFinite(plex.watchlist_write_delay_ms)?plex.watchlist_write_delay_ms:0}">
-            </div>
-            <div class="opt-row">
               <label for="plx-wl-title">Title text search</label>
               <label class="switch"><input id="plx-wl-title" type="checkbox" ${plex.watchlist_title_query !== false ? "checked" : ""}><span class="slider"></span></label>
-            </div>
-            <div class="opt-row">
-              <label for="plx-wl-meta">Use METADATA.matches</label>
-              <label class="switch"><input id="plx-wl-meta" type="checkbox" ${plex.watchlist_use_metadata_match !== false ? "checked" : ""}><span class="slider"></span></label>
-            </div>
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="plx-wl-guid">GUID priority</label>
-              <input id="plx-wl-guid" class="input" type="text" value="${(Array.isArray(plex.watchlist_guid_priority)&&plex.watchlist_guid_priority.length?plex.watchlist_guid_priority:defPri).join(", ")}">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
-    if (hasEmby(state)) {
-      const emAdv = (state.cfgRaw?.emby?.watchlist) || {};
-      const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">Emby</div>
-        <details id="cx-em-wl">
-          <summary class="muted" style="margin-bottom:10px;">Emby watchlist controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row">
-              <label for="cx-wl-q">Query limit</label>
-              <input id="cx-wl-q" class="input small" type="number" min="5" max="1000" value="${emAdv.watchlist_query_limit ?? 25}">
-            </div>
-            <div class="opt-row">
-              <label for="cx-wl-delay">Write delay (ms)</label>
-              <input id="cx-wl-delay" class="input small" type="number" min="0" max="5000" value="${emAdv.watchlist_write_delay_ms ?? 0}">
-            </div>
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="cx-wl-guid">GUID priority</label>
-              <input id="cx-wl-guid" class="input" type="text" value="${(emAdv.watchlist_guid_priority || defPri).join(", ")}">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
-    if (hasTrakt(state)) {
-      const tr = (state.cfgRaw?.trakt) || {};
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">Trakt</div>
-        <details id="cx-tr-wl">
-          <summary class="muted" style="margin-bottom:10px;">Trakt watchlist controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row"><label for="tr-wl-etag">Use ETag</label>
-              <label class="switch"><input id="tr-wl-etag" type="checkbox" ${tr.watchlist_use_etag!==false?"checked":""}><span class="slider"></span></label>
-            </div>
-            <div class="opt-row"><label for="tr-wl-batch">Batch size</label>
-              <input id="tr-wl-batch" class="input small" type="number" min="10" max="500" value="${tr.watchlist_batch_size ?? 100}">
-            </div>
-            <div class="opt-row"><label for="tr-wl-log">Log rate limits</label>
-              <label class="switch"><input id="tr-wl-log" type="checkbox" ${tr.watchlist_log_rate_limits?"checked":""}><span class="slider"></span></label>
-            </div>
-            <div class="opt-row"><label for="tr-wl-freeze">Freeze details</label>
-              <label class="switch"><input id="tr-wl-freeze" type="checkbox" ${tr.watchlist_freeze_details!==false?"checked":""}><span class="slider"></span></label>
-            </div>
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="tr-wl-ttl">Shadow TTL (hours)</label>
-              <input id="tr-wl-ttl" class="input small" type="number" min="1" max="9999" value="${tr.watchlist_shadow_ttl_hours ?? 168}">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
-    if (hasSimkl(state)) {
-      const sm = (state.cfgRaw?.simkl) || {};
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">SIMKL</div>
-        <details id="cx-sm-wl">
-          <summary class="muted" style="margin-bottom:10px;">SIMKL watchlist controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="sm-wl-batch">Batch size</label>
-              <input id="sm-wl-batch" class="input small" type="number" min="1" max="1000" value="${sm.watchlist_batch_size ?? 500}">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
-    if (hasMDBList(state)) {
-      const md = (state.cfgRaw?.mdblist) || {};
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">MDBList</div>
-        <details id="cx-md-wl">
-          <summary class="muted" style="margin-bottom:10px;">MDBList watchlist controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="md-wl-batch">Batch size</label>
-              <input id="md-wl-batch" class="input small" type="number" min="1" max="1000" value="${md.watchlist_batch_size ?? 500}">
             </div>
           </div>
         </details>
@@ -1828,46 +1724,6 @@ function renderFeaturePanel(state){
         <div class="hint">All is everything or “From a date”.</div>
       </details>`];
 
-    if (hasTrakt(state)) {
-      const tr = (state.cfgRaw?.trakt) || {};
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">Trakt</div>
-        <details id="cx-tr-rt">
-          <summary class="muted" style="margin-bottom:10px;">Trakt ratings controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row">
-              <label for="tr-rt-perpage">Items per page</label>
-              <input id="tr-rt-perpage" class="input small" type="number" min="1" max="500" value="${tr.ratings_per_page ?? 100}">
-            </div>
-            <div class="opt-row">
-              <label for="tr-rt-maxpages">Max pages</label>
-              <input id="tr-rt-maxpages" class="input small" type="number" min="1" max="1000" value="${tr.ratings_max_pages ?? 50}">
-            </div>
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="tr-rt-chunk">Write chunk size</label>
-              <input id="tr-rt-chunk" class="input small" type="number" min="1" max="1000" value="${tr.ratings_chunk_size ?? 100}">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
-    if (hasSimkl(state)) {
-      const sm = (state.cfgRaw?.simkl) || {};
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">SIMKL</div>
-        <details id="cx-sm-rt">
-          <summary class="muted" style="margin-bottom:10px;">SIMKL ratings controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="sm-rt-chunk">Write chunk size</label>
-              <input id="sm-rt-chunk" class="input small" type="number" min="1" max="1000" value="${sm.ratings_chunk_size ?? 500}">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
     if (hasStremio(state)) {
       const sr = ((state.cfgRaw?.stremio) || {}).ratings || {};
       parts.push(`
@@ -1889,34 +1745,6 @@ function renderFeaturePanel(state){
       `);
     }
 
-    if (hasMDBList(state)) {
-      const md = (state.cfgRaw?.mdblist) || {};
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">MDBList</div>
-        <details id="cx-md-rt">
-          <summary class="muted" style="margin-bottom:10px;">MDBList ratings controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row">
-              <label for="md-rt-perpage">Items per page</label>
-              <input id="md-rt-perpage" class="input small" type="number" min="1" max="1000" value="${md.ratings_per_page ?? 1000}">
-            </div>
-            <div class="opt-row">
-              <label for="md-rt-maxpages">Max pages</label>
-              <input id="md-rt-maxpages" class="input small" type="number" min="1" max="2000" value="${md.ratings_max_pages ?? 50}">
-            </div>
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="md-rt-chunk">Write chunk size</label>
-              <input id="md-rt-chunk" class="input small" type="number" min="1" max="1000" value="${md.ratings_chunk_size ?? 500}">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
-    if (hasSimkl(state)) {
-      parts.push(`<div class="simkl-alert" role="note" aria-live="polite"><div class="title"><span class="ic">⚠</span> Simkl heads-up for Ratings</div><div class="body"><ul class="bul"><li><b>Movies:</b> Rating auto-marks as <i>Completed</i> on Simkl.</li><li>Can appear under <i>Recently watched</i> and <i>My List</i>.</li></ul><div class="mini">Tip: Prefer small windows when backfilling.</div></div></div>`);
-    }
-
     right.innerHTML = parts.join("");
     try{updateRtSummary()}catch{}
     applySubDisable("ratings");
@@ -1928,8 +1756,6 @@ function renderFeaturePanel(state){
     const hs = getOpts(state, "history");
     const rwSupported = pairSupportsHistoryRewatches(state);
     const libSupported = pairSupportsLibraryOnly(state);
-    const trCfg = (state.cfgRaw?.trakt) || {};
-    const emCfg = (state.cfgRaw?.emby?.history) || {};
 
     const trPair = (state.pairProviders?.trakt) || {};
     const trColOn = !!trPair.history_collection;
@@ -2075,102 +1901,13 @@ left.innerHTML = `
 
     if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex</div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${getPairMarkedWatchedValue(state)?"checked":""}><span class="slider"></span></label></div><div class="muted">Include manually marked watched items from Plex. Applies only to this pair.</div>`);
     if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex cloud history</div>`);
-    if (same(state.src,"plex") || (isTwoWayMode(state) && same(state.dst,"plex"))) parts.push(`<div class="opt-row"><label for="plx-cloud-read" data-tip-id="plx-cloud-read">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? "Read cloud history" : "Include Plex cloud history"}</label><label class="switch"><input id="plx-cloud-read" type="checkbox" ${state.pairProviders?.plex?.history?.read_cloud_history === true ? "checked" : ""}><span class="slider"></span></label></div><div class="muted">Include the connected account's watched movies and episodes, including titles outside your server libraries. Watch dates and rewatches are preserved where the destination supports them. Managed or switched users are not supported. History removals are disabled for this pair while cloud reads are enabled, including in two-way mode.</div>`);
-    if (same(state.dst,"plex") || (isTwoWayMode(state) && same(state.src,"plex"))) parts.push(`<div class="opt-row"><label for="plx-discover-fallback" data-tip-id="plx-discover-fallback">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? "Write cloud fallback" : "Include Plex cloud history"}</label><label class="switch"><input id="plx-discover-fallback" type="checkbox" ${state.pairProviders?.plex?.history?.discover_fallback === true ? "checked" : ""}><span class="slider"></span></label></div><div class="muted">Opt in for this pair: mark missing movies and episodes watched in the connected Plex account, then restore their original watch dates. Applies to additions only; existing cloud plays are left unchanged. Managed users are not supported. Rate-limited or unfinished date updates remain unresolved for retry. Enabling this turns off “Only items in destination library” for this pair.</div>`);
+    if (same(state.src,"plex") || (isTwoWayMode(state) && same(state.dst,"plex"))) parts.push(`<div class="opt-row"><label for="plx-cloud-read" data-tip-id="plx-cloud-read">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? "Read cloud history" : "Include Plex cloud history"}</label><label class="switch"><input id="plx-cloud-read" type="checkbox" ${state.pairProviders?.plex?.history?.read_cloud_history === true ? "checked" : ""}><span class="slider"></span></label></div>`);
+    if (same(state.dst,"plex") || (isTwoWayMode(state) && same(state.src,"plex"))) parts.push(`<div class="opt-row"><label for="plx-discover-fallback" data-tip-id="plx-discover-fallback">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? "Write cloud fallback" : "Include Plex cloud history"}</label><label class="switch"><input id="plx-discover-fallback" type="checkbox" ${state.pairProviders?.plex?.history?.discover_fallback === true ? "checked" : ""}><span class="slider"></span></label></div>`);
 
     if (hasTrakt(state)) {
       parts.push(`
         <div class="panel-title small" style="margin-top:6px">Trakt</div>
         <div class="grid2 compact">${trColRow}</div>
-        <details id="cx-tr-hs">
-          <summary class="muted" style="margin-bottom:10px;">Trakt history controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row">
-              <label for="cx-tr-hs-numfb">Number Fallback</label>
-              <label class="switch"><input id="cx-tr-hs-numfb" type="checkbox" ${trCfg.history_number_fallback ? "checked" : ""}><span class="slider"></span></label>
-            </div>
-            <div class="opt-row">
-              <label for="cx-tr-hs-unres">Unresolved Freeze</label>
-              <label class="switch"><input id="cx-tr-hs-unres" type="checkbox" ${trCfg.history_unresolved ? "checked" : ""}><span class="slider"></span></label>
-            </div>
-            <div class="opt-row">
-              <label for="tr-hs-perpage">Items per page</label>
-              <input id="tr-hs-perpage" class="input small" type="number" min="1" max="500" value="${trCfg.history_per_page ?? 100}">
-            </div>
-            <div class="opt-row">
-              <label for="tr-hs-maxpages">Max pages</label>
-              <input id="tr-hs-maxpages" class="input small" type="number" min="1" max="100000" value="${trCfg.history_max_pages ?? 10000}">
-            </div>
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="tr-hs-chunk">Write chunk size</label>
-              <input id="tr-hs-chunk" class="input small" type="number" min="1" max="1000" value="${trCfg.history_chunk_size ?? 100}">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
-    if (hasSimkl(state)) {
-      const sm = (state.cfgRaw?.simkl) || {};
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">SIMKL</div>
-        <details id="cx-sm-hs">
-          <summary class="muted" style="margin-bottom:10px;">SIMKL history controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="sm-hs-chunk">Write chunk size</label>
-              <input id="sm-hs-chunk" class="input small" type="number" min="1" max="1000" value="${sm.history_chunk_size ?? 500}">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
-    if (hasMDBList(state)) {
-      const md = (state.cfgRaw?.mdblist) || {};
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">MDBList</div>
-        <details id="cx-md-hs">
-          <summary class="muted" style="margin-bottom:10px;">MDBList history controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row">
-              <label for="md-hs-perpage">Items per page</label>
-              <input id="md-hs-perpage" class="input small" type="number" min="1" max="1000" value="${md.history_per_page ?? 1000}">
-            </div>
-            <div class="opt-row">
-              <label for="md-hs-maxpages">Max pages</label>
-              <input id="md-hs-maxpages" class="input small" type="number" min="1" max="2000" value="${md.history_max_pages ?? 250}">
-            </div>
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="md-hs-chunk">Write chunk size</label>
-              <input id="md-hs-chunk" class="input small" type="number" min="1" max="1000" value="${md.history_chunk_size ?? 500}">
-            </div>
-          </div>
-        </details>
-      `);
-    }
-
-    if (hasEmby(state)) {
-      const defPri = ["tmdb","imdb","tvdb","agent:themoviedb:en","agent:themoviedb","agent:imdb"];
-      parts.push(`
-        <div class="panel-title small" style="margin-top:6px">Emby</div>
-        <details id="cx-em-hs">
-          <summary class="muted" style="margin-bottom:10px;">Emby history controls</summary>
-          <div class="grid2 compact">
-            <div class="opt-row">
-              <label for="cx-em-hs-limit">Query limit</label>
-              <input id="cx-em-hs-limit" class="input small" type="number" min="1" max="1000" value="${Number.isFinite(emCfg.history_query_limit)?emCfg.history_query_limit:25}">
-            </div>
-            <div class="opt-row">
-              <label for="cx-em-hs-delay">Write delay (ms)</label>
-              <input id="cx-em-hs-delay" class="input small" type="number" min="0" max="5000" value="${Number.isFinite(emCfg.history_write_delay_ms)?emCfg.history_write_delay_ms:0}">
-            </div>
-            <div class="opt-row" style="grid-column:1/-1">
-              <label for="cx-em-hs-guid">GUID priority</label>
-              <input id="cx-em-hs-guid" class="input" type="text" value="${(Array.isArray(emCfg.history_guid_priority)&&emCfg.history_guid_priority.length?emCfg.history_guid_priority:defPri).join(", ")}">
-            </div>
-          </div>
-        </details>
       `);
     }
 
@@ -2430,12 +2167,13 @@ function bindChangeHandlers(state,root){
       loadMatchUsersPreview(state);
       return;
     }
-    if(id==="plx-strict-ids"||id==="jf-strict-ids"||id==="em-strict-ids"||id==="jf-targeted-lookup"){
+    if(id==="plx-strict-ids"||id==="jf-strict-ids"||id==="em-strict-ids"||id==="silo-strict-ids"||id==="jf-targeted-lookup"){
       state.pairProviders=state.pairProviders||{};
       if(id==="plx-strict-ids") state.pairProviders.plex=Object.assign({},state.pairProviders.plex||{}, {strict_id_matching:!!el.checked});
       if(id==="jf-strict-ids") state.pairProviders.jellyfin=Object.assign({},state.pairProviders.jellyfin||{}, {strict_id_matching:!!el.checked});
       if(id==="jf-targeted-lookup") state.pairProviders.jellyfin=Object.assign({},state.pairProviders.jellyfin||{}, {targeted_lookup:!!el.checked});
       if(id==="em-strict-ids") state.pairProviders.emby=Object.assign({},state.pairProviders.emby||{}, {strict_id_matching:!!el.checked});
+      if(id==="silo-strict-ids") state.pairProviders.silo=Object.assign({},state.pairProviders.silo||{}, {strict_id_matching:!!el.checked});
       return;
     }
     if(id==="floppy-anime-library"){
@@ -2768,24 +2506,18 @@ function bindChangeHandlers(state,root){
       }
     }
 
-    if(id==="cx-jf-wl-mode-fav"||id==="cx-jf-wl-mode-pl"||id==="cx-jf-wl-mode-col"||id==="cx-jf-wl-pl-name"||id==="cx-wl-q"||id==="cx-wl-delay"||id==="cx-wl-guid"){
+    if(id==="cx-jf-wl-mode-fav"||id==="cx-jf-wl-mode-pl"||id==="cx-jf-wl-mode-col"||id==="cx-jf-wl-pl-name"){
       const jf=state.jellyfin||(state.jellyfin={});
       const mode=ID("cx-jf-wl-mode-pl")?.checked?"playlist":ID("cx-jf-wl-mode-col")?.checked?"collection":"favorites";
       const name=(ID("cx-jf-wl-pl-name")?.value||"").trim()||"Watchlist";
-      const q=parseInt(ID("cx-wl-q")?.value||"25",10)||25;
-      const d=parseInt(ID("cx-wl-delay")?.value||"0",10)||0;
-      const gp=(ID("cx-wl-guid")?.value||"").split(",").map(s=>s.trim()).filter(Boolean);
-      jf.watchlist={mode,playlist_name:name,watchlist_query_limit:q,watchlist_write_delay_ms:d,watchlist_guid_priority:gp.length?gp:undefined};
+      jf.watchlist={mode,playlist_name:name};
     }
 
-    if(id==="cx-em-wl-mode-fav"||id==="cx-em-wl-mode-pl"||id==="cx-em-wl-mode-col"||id==="cx-em-wl-pl-name"||id==="cx-wl-q"||id==="cx-wl-delay"||id==="cx-wl-guid"){
+    if(id==="cx-em-wl-mode-fav"||id==="cx-em-wl-mode-pl"||id==="cx-em-wl-mode-col"||id==="cx-em-wl-pl-name"){
       const em=state.emby||(state.emby={});
       const mode=ID("cx-em-wl-mode-pl")?.checked?"playlist":ID("cx-em-wl-mode-col")?.checked?"collection":"favorites";
       const name=(ID("cx-em-wl-pl-name")?.value||"").trim()||"Watchlist";
-      const q=parseInt(ID("cx-wl-q")?.value||"25",10)||25;
-      const d=parseInt(ID("cx-wl-delay")?.value||"0",10)||0;
-      const gp=(ID("cx-wl-guid")?.value||"").split(",").map(s=>s.trim()).filter(Boolean);
-      em.watchlist={mode,playlist_name:name,watchlist_query_limit:q,watchlist_write_delay_ms:d,watchlist_guid_priority:gp.length?gp:undefined};
+      em.watchlist={mode,playlist_name:name};
     }
 
     if(id==="cx-pmdb-wl-name"){
@@ -2876,17 +2608,7 @@ async function saveConfigBits(state){
         plex.max_retries = Number.isFinite(rv) ? Math.max(0, rv) : (plex.max_retries ?? 3);
       }
       if (ID("plx-wl-pms"))          plex.watchlist_allow_pms_fallback = !!ID("plx-wl-pms").checked;
-      if (ID("plx-wl-limit"))        plex.watchlist_query_limit        = num("plx-wl-limit", 1, plex.watchlist_query_limit ?? 25);
-      if (ID("plx-wl-delay")) {
-        const dv = n("plx-wl-delay");
-        plex.watchlist_write_delay_ms = Number.isFinite(dv) ? Math.max(0, dv) : (plex.watchlist_write_delay_ms ?? 0);
-      }
-      if (ID("plx-wl-guid")) {
-        plex.watchlist_guid_priority = (ID("plx-wl-guid").value || "")
-          .split(",").map(s=>s.trim()).filter(Boolean);
-      }
       if (ID("plx-wl-title"))        plex.watchlist_title_query        = !!ID("plx-wl-title").checked;
-      if (ID("plx-wl-meta"))         plex.watchlist_use_metadata_match = !!ID("plx-wl-meta").checked;
 
       cfg.plex = plex;
     }
@@ -2923,40 +2645,12 @@ async function saveConfigBits(state){
       cfg.jellyfin=jf;
     }
 
-    if(ID("tr-wl-etag")){
-      cfg.trakt = Object.assign({}, cfg.trakt||{}, {
-        watchlist_use_etag: !!ID("tr-wl-etag")?.checked,
-        watchlist_shadow_ttl_hours: Math.max(1, parseInt(ID("tr-wl-ttl")?.value||"168",10)||168),
-        watchlist_batch_size: Math.max(1, parseInt(ID("tr-wl-batch")?.value||"100",10)||100),
-        watchlist_log_rate_limits: !!ID("tr-wl-log")?.checked,
-        watchlist_freeze_details: !!ID("tr-wl-freeze")?.checked
-      });
-    }
-
-    if(ID("sm-wl-batch")){
-      cfg.simkl = Object.assign({}, cfg.simkl||{}, {
-        watchlist_batch_size: Math.max(1, parseInt(ID("sm-wl-batch")?.value||"500",10)||500)
-      });
-    }
-
-    if(ID("md-wl-batch")){
-      cfg.mdblist = Object.assign({}, cfg.mdblist||{}, {
-        watchlist_batch_size: Math.max(1, parseInt(ID("md-wl-batch")?.value||"500",10)||500)
-      });
-    }
-
     const hasJF=String(state.src||"").toUpperCase()==="JELLYFIN"||String(state.dst||"").toUpperCase()==="JELLYFIN";
     if(hasJF){
       const jf=Object.assign({},cfg.jellyfin||{});
       const mode=ID("cx-jf-wl-mode-pl")?.checked?"playlist":ID("cx-jf-wl-mode-col")?.checked?"collection":ID("cx-jf-wl-mode-fav")?.checked?"favorites":(state.jellyfin?.watchlist?.mode||"favorites");
       const name=(ID("cx-jf-wl-pl-name")?.value||state.jellyfin?.watchlist?.playlist_name||"Watchlist").trim()||"Watchlist";
-      const q= parseInt(ID("cx-wl-q")?.value||"25",10)||undefined;
-      const d= parseInt(ID("cx-wl-delay")?.value||"0",10)||undefined;
-      const gp=(ID("cx-wl-guid")?.value||"").split(",").map(s=>s.trim()).filter(Boolean);
       jf.watchlist=Object.assign({},jf.watchlist||{},{mode,playlist_name:name});
-      if(Number.isFinite(q)) jf.watchlist.watchlist_query_limit=q;
-      if(Number.isFinite(d)) jf.watchlist.watchlist_write_delay_ms=d;
-      if(gp.length) jf.watchlist.watchlist_guid_priority=gp;
       cfg.jellyfin=jf;
     }
 
@@ -2965,63 +2659,9 @@ async function saveConfigBits(state){
       const em = Object.assign({}, cfg.emby || {});
       const mode = ID("cx-em-wl-mode-pl")?.checked ? "playlist" : ID("cx-em-wl-mode-col")?.checked ? "collection" : ID("cx-em-wl-mode-fav")?.checked ? "favorites" : (state.emby?.watchlist?.mode || "favorites");
       const name = (ID("cx-em-wl-pl-name")?.value || state.emby?.watchlist?.playlist_name || "Watchlist").trim() || "Watchlist";
-      const q = parseInt(ID("cx-wl-q")?.value||"25",10)||undefined;
-      const d = parseInt(ID("cx-wl-delay")?.value||"0",10)||undefined;
-      const gp = (ID("cx-wl-guid")?.value||"").split(",").map(s=>s.trim()).filter(Boolean);
       em.watchlist = Object.assign({}, em.watchlist||{}, { mode, playlist_name:name });
-      if(Number.isFinite(q)) em.watchlist.watchlist_query_limit = q;
-      if(Number.isFinite(d)) em.watchlist.watchlist_write_delay_ms = d;
-      if(gp.length) em.watchlist.watchlist_guid_priority = gp;
-
-      const hq = parseInt(ID("cx-em-hs-limit")?.value||"",10);
-      const hd = parseInt(ID("cx-em-hs-delay")?.value||"",10);
-      const hg = (ID("cx-em-hs-guid")?.value||"").split(",").map(s=>s.trim()).filter(Boolean);
-      em.history = Object.assign({}, em.history || {});
-      if (Number.isFinite(hq)) em.history.history_query_limit = Math.max(1, hq);
-      if (Number.isFinite(hd)) em.history.history_write_delay_ms = Math.max(0, hd);
-      if (hg.length) em.history.history_guid_priority = hg;
 
       cfg.emby = em;
-    }
-
-    const hasTR = String(state.src||"").toUpperCase()==="TRAKT" || String(state.dst||"").toUpperCase()==="TRAKT";
-    if(hasTR){
-      const tr=Object.assign({},cfg.trakt||{});
-      const numfb=ID("cx-tr-hs-numfb");
-      const unres=ID("cx-tr-hs-unres");
-      if(numfb) tr.history_number_fallback = !!numfb.checked; 
-      if(unres) tr.history_unresolved       = !!unres.checked;
-
-      const n = x => parseInt((ID(x)?.value||"").trim(), 10);
-      const clamp = (v,min,max)=>Math.min(max,Math.max(min,Number.isFinite(v)?v:min));
-
-      const perEl   = ID("tr-rt-perpage") || ID("tr-rt-page");
-      const pagesEl = ID("tr-rt-maxpages")|| ID("tr-rt-pages");
-      const chunkEl = ID("tr-rt-chunk");
-      const hsPerEl = ID("tr-hs-perpage");
-      const hsPagesEl = ID("tr-hs-maxpages");
-      const hsChunkEl = ID("tr-hs-chunk");
-
-      if (perEl)   tr.ratings_per_page   = clamp(n(perEl.id), 10, 500);
-      if (pagesEl) tr.ratings_max_pages  = clamp(n(pagesEl.id), 1, 1000);
-      if (chunkEl) tr.ratings_chunk_size = clamp(n(chunkEl.id), 10, 1000);
-      if (hsPerEl)   tr.history_per_page   = clamp(n(hsPerEl.id), 1, 500);
-      if (hsPagesEl) tr.history_max_pages  = clamp(n(hsPagesEl.id), 1, 100000);
-      if (hsChunkEl) tr.history_chunk_size = clamp(n(hsChunkEl.id), 1, 1000);
-
-      cfg.trakt=tr;
-    }
-
-    const hasSM = String(state.src||"").toUpperCase()==="SIMKL" || String(state.dst||"").toUpperCase()==="SIMKL";
-    if(hasSM){
-      const sm = Object.assign({}, cfg.simkl||{});
-      const wlBatchEl = ID("sm-wl-batch");
-      const rtChunkEl = ID("sm-rt-chunk");
-      const hsChunkEl = ID("sm-hs-chunk");
-      if (wlBatchEl) sm.watchlist_batch_size = Math.max(1, parseInt(wlBatchEl.value||"500", 10) || 500);
-      if (rtChunkEl) sm.ratings_chunk_size = Math.max(1, parseInt(rtChunkEl.value||"500", 10) || 500);
-      if (hsChunkEl) sm.history_chunk_size = Math.max(1, parseInt(hsChunkEl.value||"500", 10) || 500);
-      cfg.simkl = sm;
     }
 
     const hasST = String(state.src||"").toUpperCase()==="STREMIO" || String(state.dst||"").toUpperCase()==="STREMIO";
@@ -3041,28 +2681,6 @@ async function saveConfigBits(state){
         st.ratings = ratings;
         cfg.stremio = st;
       }
-    }
-
-    const hasMD = String(state.src||"").toUpperCase()==="MDBLIST" || String(state.dst||"").toUpperCase()==="MDBLIST";
-    if(hasMD){
-      const md = Object.assign({}, cfg.mdblist||{});
-      const n = x => parseInt((ID(x)?.value||"").trim(), 10);
-      const clamp = (v,min,max)=>Math.min(max,Math.max(min,Number.isFinite(v)?v:min));
-      const wlBatchEl = ID("md-wl-batch");
-      const rtPerEl = ID("md-rt-perpage");
-      const rtPagesEl = ID("md-rt-maxpages");
-      const rtChunkEl = ID("md-rt-chunk");
-      const hsPerEl = ID("md-hs-perpage");
-      const hsPagesEl = ID("md-hs-maxpages");
-      const hsChunkEl = ID("md-hs-chunk");
-      if (wlBatchEl) md.watchlist_batch_size = clamp(n(wlBatchEl.id), 1, 1000);
-      if (rtPerEl) md.ratings_per_page = clamp(n(rtPerEl.id), 1, 1000);
-      if (rtPagesEl) md.ratings_max_pages = clamp(n(rtPagesEl.id), 1, 2000);
-      if (rtChunkEl) md.ratings_chunk_size = clamp(n(rtChunkEl.id), 1, 1000);
-      if (hsPerEl) md.history_per_page = clamp(n(hsPerEl.id), 1, 1000);
-      if (hsPagesEl) md.history_max_pages = clamp(n(hsPagesEl.id), 1, 2000);
-      if (hsChunkEl) md.history_chunk_size = clamp(n(hsChunkEl.id), 1, 1000);
-      cfg.mdblist = md;
     }
 
     const res=await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(cfg)});
@@ -3129,6 +2747,7 @@ function buildPayload(state,wrap){
   const usePlex=(String(src).toUpperCase()==="PLEX"||String(dst).toUpperCase()==="PLEX");
   const useJf=(String(src).toUpperCase()==="JELLYFIN"||String(dst).toUpperCase()==="JELLYFIN");
   const useEm=(String(src).toUpperCase()==="EMBY"||String(dst).toUpperCase()==="EMBY");
+  const useSilo=(String(src).toUpperCase()==="SILO"||String(dst).toUpperCase()==="SILO");
   const useTr=(String(src).toUpperCase()==="TRAKT"||String(dst).toUpperCase()==="TRAKT");
   const usePmdb=(String(src).toUpperCase()==="PUBLICMETADB"||String(dst).toUpperCase()==="PUBLICMETADB");
   const useFloppy=(String(src).toUpperCase()==="FLOPPY"||String(dst).toUpperCase()==="FLOPPY");
@@ -3139,6 +2758,7 @@ function buildPayload(state,wrap){
   }
   if(useJf) prov.jellyfin={strict_id_matching:getPairProviderStrictValue(state, "jellyfin"),targeted_lookup:getPairProviderTargetedLookupValue(state)};
   if(useEm) prov.emby={strict_id_matching:getPairProviderStrictValue(state, "emby")};
+  if(useSilo) prov.silo={strict_id_matching:getPairProviderStrictValue(state, "silo")};
   if(usePmdb){
     const pmSrc=pp.publicmetadb||{};
     const name=(ID("cx-pmdb-wl-name")?.value||pmSrc.watchlist_name||state.cfgRaw?.publicmetadb?.watchlist_name||"Watchlist").trim()||"Watchlist";

@@ -14,7 +14,7 @@ from .._util import is_log_control, strip_ansi
 
 logs_app = typer.Typer(help="Read the CrossWatch log stream.", no_args_is_help=True)
 
-COMMON_TAGS = ("SYNC", "SCHED", "WATCH", "WATCHM", "SCROBBLE", "WEBHOOK", "TRAKT", "SIMKL", "PLEX", "JELLYFIN", "EMBY", "TRBL")
+COMMON_TAGS = ("SYNC", "SCHED", "WATCH", "WATCHM", "SCROBBLE", "WEBHOOK", "TRAKT", "SIMKL", "PLEX", "JELLYFIN", "EMBY", "SILO", "TRBL")
 
 
 @logs_app.command("tail")
