@@ -135,9 +135,13 @@ def verify_ssl_of(block: Mapping[str, Any] | None) -> bool:
 
 def provider_block(cfg: Mapping[str, Any] | None, instance_id: Any = None) -> dict[str, Any]:
     inst = normalize_instance_id(instance_id)
+    base = (cfg or {}).get("silo") if isinstance(cfg, Mapping) else None
     if is_sync_user_instance(inst):
-        base = (cfg or {}).get("silo") if isinstance(cfg, Mapping) else None
         return resolve_sync_user_block(base, inst) if isinstance(base, Mapping) else {}
+    insts = base.get("instances") if isinstance(base, Mapping) else None
+    if inst != "default" and isinstance(insts, Mapping):
+        own = insts.get(inst)
+        return dict(own) if isinstance(own, Mapping) else {}
     return resolve_provider_block(cfg or {}, "silo", inst)
 
 
@@ -211,10 +215,9 @@ def set_active_method(block: MutableMapping[str, Any], method: str = "device_cod
 
 def clear_oauth(block: MutableMapping[str, Any]) -> None:
     for key in _SESSION_KEYS:
-        if key in block:
-            block[key] = 0 if key in {"expires_at", "profile_token_expires_at", "session_refreshed_at"} else (False if key == "profile_has_pin" else "")
+        block[key] = 0 if key in {"expires_at", "profile_token_expires_at", "session_refreshed_at"} else (False if key == "profile_has_pin" else "")
     block.pop("_pending_device", None)
-    block.pop("auth_error", None)
+    block["auth_error"] = ""
 
 
 def about_to_expire(block: Mapping[str, Any], skew_sec: int = REFRESH_SKEW_SEC) -> bool:
@@ -319,7 +322,7 @@ def _apply_tokens(block: MutableMapping[str, Any], tok: Mapping[str, Any]) -> No
     block["session_refreshed_at"] = now()
     block["auth_method"] = "device_code"
     if needs_reconnect(block):
-        block.pop("auth_error", None)
+        block["auth_error"] = ""
     user = tok.get("user")
     if isinstance(user, Mapping):
         _apply_user(block, user)
@@ -554,11 +557,10 @@ class SiloClient:
             return {"ok": False, "status": "pending", "opened": bool(data.get("opened")), "interval": interval, "expires_at": new_exp or expires_at, "instance": self.instance_id}
         tokens = data.get("tokens")
         if status == "approved" and isinstance(tokens, Mapping):
-            for key in ("profile_id", "profile_name", "profile_token", "profile_has_pin", "profile_token_expires_at"):
-                block.pop(key, None)
+            block.update({"profile_id": "", "profile_name": "", "profile_token": "", "profile_has_pin": False, "profile_token_expires_at": 0})
             _apply_tokens(block, tokens)
             block.pop("_pending_device", None)
-            block.pop("auth_error", None)
+            block["auth_error"] = ""
             save_config(cfg)
             self.cfg = cfg
             log(f"SILO: device login approved (instance={self.instance_id})", level="SUCCESS")
@@ -740,7 +742,7 @@ class SiloClient:
         block["profile_token"] = str(token or "")
         block["profile_token_expires_at"] = int(token_expires_at or 0)
         if needs_profile_pin(block):
-            block.pop("auth_error", None)
+            block["auth_error"] = ""
         save_config(cfg)
         self.cfg = cfg
         log(f"SILO: profile selected (instance={self.instance_id})", level="INFO")

@@ -507,3 +507,44 @@ def test_verify_ssl_defaults_off_for_self_signed_servers() -> None:
     assert silo.verify_ssl_of({}) is False and silo.verify_ssl_of({"verify_ssl": True}) is True
     assert DEFAULT_CFG["silo"]["verify_ssl"] is False
     assert 'id="silo_verify_ssl" type="checkbox">' in silo.html()
+
+
+def test_new_named_profile_does_not_borrow_default_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    from cw_platform.provider_instances import build_provider_config_view
+    from providers.auth import _auth_SILO as silo
+
+    cfg = _connected(profile_has_pin=True, profile_token="owner-pin-token", history={"libraries": ["1"]})
+    cfg["silo"]["instances"] = {"SILO-P01": {"label": "Kids server"}}
+    _store(monkeypatch, cfg)
+
+    block = silo.provider_block(cfg, "SILO-P01")
+    assert block == {"label": "Kids server"}
+    assert silo.status_for_block(block)["connected"] is False
+    session = FakeSession([ResponseStub(200, {"state": "available", "protocol_versions": [2]})])
+    res = silo.SiloClient(cfg, instance_id="SILO-P01", session=session).configure_server(cfg, "http://other:8090")
+    assert res["ok"] is True and cfg["silo"]["instances"]["SILO-P01"]["server_url"] == "http://other:8090"
+    assert cfg["silo"]["server_url"] == SERVER
+
+    pending = cfg["silo"]["instances"]["SILO-P01"]
+    pending["_pending_device"] = {"device_code": "dc", "user_code": "1234-5678", "expires_at": 4_000_000_000, "interval": 3}
+    poll = FakeSession([
+        ResponseStub(200, {"status": "approved", "tokens": {"access_token": "a2", "refresh_token": "r2", "expires_in": 3600}}),
+        ResponseStub(200, {"items": [{"id": "p-9", "name": "Kid", "has_pin": False}, {"id": "p-8", "name": "Other", "has_pin": False}]}),
+    ])
+    silo.SiloClient(cfg, instance_id="SILO-P01", session=poll).poll_device_login(cfg)
+    view = silo.provider_block(build_provider_config_view(cfg, "silo", "SILO-P01"), "SILO-P01")
+    assert view["access_token"] == "a2" and view["profile_id"] == "" and view["profile_token"] == ""
+    assert silo.is_configured(view) is False
+
+
+
+def test_named_profile_reads_its_own_block() -> None:
+    from providers.auth import _auth_SILO as silo
+
+    cfg = _connected(history={"libraries": ["1"]}, timeout=60)
+    cfg["silo"]["instances"] = {"SILO-P01": {"server_url": "http://other:8090", "access_token": "a2", "refresh_token": "r2", "profile_id": "p-9"}}
+
+    own = silo.provider_block(cfg, "SILO-P01")
+    assert own == cfg["silo"]["instances"]["SILO-P01"]
+    assert silo.provider_block(cfg, "SILO-P02") == {}
+    assert silo.provider_block(cfg, "default")["access_token"] == "access-1"
