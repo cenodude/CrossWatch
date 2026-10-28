@@ -299,27 +299,43 @@ def _endpoint(provider: Any, instance: Any) -> str:
     return f"{p} {i}" if p and i != "default" else p
 
 
+def _parent_instance(instance: Any) -> Any:
+    try:
+        from ..provider_instances import split_sync_user_id
+        ref = split_sync_user_id(instance)
+    except Exception:
+        ref = None
+    return ref[0] if ref else instance
+
+
 def _run_routes(plan_events: list[dict[str, Any]]) -> str:
     seen: dict[frozenset[str], list[Any]] = {}
     for e in plan_events:
-        a = _endpoint(e.get("source_provider"), e.get("source_instance"))
-        b = _endpoint(e.get("destination_provider"), e.get("destination_instance"))
+        user = str(_detail(e).get("sync_user") or "").strip()
+        si, di = e.get("source_instance"), e.get("destination_instance")
+        if user:
+            si, di = _parent_instance(si), _parent_instance(di)
+        a = _endpoint(e.get("source_provider"), si)
+        b = _endpoint(e.get("destination_provider"), di)
         if not a or not b:
             continue
         key = frozenset((a, b))
         if key in seen:
             if seen[key][0] == b and seen[key][1] == a:
                 seen[key][2] = True
+            if user and user not in seen[key][3]:
+                seen[key][3].append(user)
             continue
-        seen[key] = [a, b, False]
+        seen[key] = [a, b, False, [user] if user else []]
     if not seen:
         return ""
     segments: dict[str, list[str]] = {}
-    for a, b, both in seen.values():
+    for a, b, both, users in seen.values():
+        who = f" ({', '.join(users)})" if users else ""
         if both:
-            segments[f"{a} ⇄ {b}"] = []
+            segments[f"{a} ⇄ {b}{who}"] = []
         else:
-            segments.setdefault(f"{a} →", []).append(b)
+            segments.setdefault(f"{a} →", []).append(f"{b}{who}")
     parts = [f"{head} {', '.join(dsts[:_ROUTES_SHOWN])}" + (f" +{len(dsts) - _ROUTES_SHOWN} more" if len(dsts) > _ROUTES_SHOWN else "")
              if dsts else head for head, dsts in segments.items()]
     more = len(parts) - _ROUTES_SHOWN

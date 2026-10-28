@@ -491,7 +491,8 @@ def _load_state_at(path: Path) -> dict[str, Any]:
 
 def _analysis_pair_ids(pairs_raw: str | None) -> list[str]:
     cfg = _config_for_pairs(_cfg(), pairs_raw)
-    return [_pair_id(pair) for pair in cfg.get("pairs") or [] if isinstance(pair, Mapping) and _pair_id(pair) and pair.get("enabled") is not False]
+    ids = [_pair_id(pair) for pair in cfg.get("pairs") or [] if isinstance(pair, Mapping) and _pair_id(pair) and pair.get("enabled") is not False]
+    return list(dict.fromkeys(ids))
 
 
 def _load_state_handles(pairs_raw: str | None, features: Iterable[str] | None = None) -> list[dict[str, Any]]:

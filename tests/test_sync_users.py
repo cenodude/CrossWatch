@@ -597,6 +597,18 @@ def test_analyzer_sees_per_user_pairs(monkeypatch) -> None:
     assert analyzer._cfg() is plain
 
 
+def test_analyzer_state_page_for_a_per_user_pair(monkeypatch, tmp_path) -> None:
+    import services.analyzer as analyzer
+
+    cfg = _pair_cfg(match_users=True)
+    monkeypatch.setattr(analyzer, "load_config", lambda: cfg)
+    monkeypatch.setattr(analyzer, "CONFIG_DIR", tmp_path)
+    analyzer._SCOPED_ROWS_CACHE.clear()
+    assert analyzer._analysis_pair_ids("p1") == ["p1"]
+    page = analyzer._build_state_page("p1", offset=0, limit=0, q="", feature="", sort="", direction="asc")
+    assert page["total"] == 0
+
+
 def test_unknown_sync_user_never_falls_back_to_the_admin() -> None:
     from providers.sync._mod_EMBY import _merge_instance_block as emby_merge
     from providers.sync._mod_JELLYFIN import _merge_instance_block as jf_merge
