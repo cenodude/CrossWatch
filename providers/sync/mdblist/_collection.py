@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
+from cw_platform.collection_media import combine_media, from_trakt_metadata, to_trakt_metadata
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from .._log import log as cw_log
@@ -39,6 +40,7 @@ from ._common import (
 BASE = "https://api.mdblist.com"
 URL_LIST = f"{BASE}/sync/collection"
 URL_REMOVE = f"{BASE}/sync/collection/remove"
+SHADOW_VERSION = 2
 
 _cfg = cfg_section
 _cfg_int = cfg_int
@@ -151,7 +153,7 @@ def _shadow_path() -> Path:
 
 def _shadow_load() -> dict[str, Any]:
     doc = read_json(_shadow_path())
-    if not isinstance(doc, dict):
+    if not isinstance(doc, dict) or doc.get("v") != SHADOW_VERSION:
         return {"ts": 0, "items": {}}
     doc.setdefault("ts", 0)
     if not isinstance(doc.get("items"), dict):
@@ -162,7 +164,7 @@ def _shadow_load() -> dict[str, Any]:
 def _shadow_save(items: Mapping[str, Any]) -> None:
     if _is_capture_mode() or _pair_scope() is None:
         return
-    write_json(_shadow_path(), {"ts": int(time.time()), "items": dict(items)}, indent=None, sort_keys=False)
+    write_json(_shadow_path(), {"v": SHADOW_VERSION, "ts": int(time.time()), "items": dict(items)}, indent=None, sort_keys=False)
 
 
 def _shadow_bust() -> None:
@@ -297,6 +299,45 @@ def _item_media_type(item: Mapping[str, Any]) -> str:
     return "movie"
 
 
+def _with_media(item: dict[str, Any], entries: Iterable[tuple[Any, Any]]) -> dict[str, Any]:
+    fmt, media = combine_media(entries)
+    if fmt:
+        item["format"] = fmt
+    if media:
+        item["media_info"] = media
+    return item
+
+
+def _copies(row: Mapping[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    raw = row.get("media")
+    return [from_trakt_metadata(copy) for copy in raw if isinstance(copy, Mapping)] if isinstance(raw, list) else []
+
+
+def _show_ref(item: Mapping[str, Any]) -> str:
+    ids = item.get("ids") if item.get("type") == "show" else item.get("show_ids")
+    if not isinstance(ids, Mapping):
+        return ""
+    return next((f"{k}:{ids[k]}" for k in ("tmdb", "imdb", "tvdb", "trakt", "mdblist") if ids.get(k)), "")
+
+
+def _media_from_episodes(items: Mapping[str, dict[str, Any]]) -> None:
+    groups: dict[tuple[str, Any], list[tuple[Any, Any]]] = {}
+    for item in items.values():
+        ref = _show_ref(item)
+        if item.get("type") != "episode" or not ref or not (item.get("format") or item.get("media_info")):
+            continue
+        entry = (item.get("format"), item.get("media_info"))
+        groups.setdefault((ref, None), []).append(entry)
+        groups.setdefault((ref, item.get("season")), []).append(entry)
+    for item in items.values():
+        typ = item.get("type")
+        if typ not in ("show", "season"):
+            continue
+        entries = groups.get((_show_ref(item), item.get("season") if typ == "season" else None))
+        if entries:
+            _with_media(item, entries)
+
+
 def _movie_from_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
     movie = row.get("movie") if isinstance(row.get("movie"), Mapping) else row
     if not isinstance(movie, Mapping):
@@ -305,7 +346,7 @@ def _movie_from_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
     collected_at = row.get("collected_at")
     if collected_at:
         item["collected_at"] = str(collected_at)
-    return item
+    return _with_media(item, _copies(row))
 
 
 def _show_base(row: Mapping[str, Any]) -> dict[str, Any] | None:
@@ -380,7 +421,7 @@ def _episode_from_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
     collected_at = episode.get("collected_at") or row.get("collected_at")
     if collected_at:
         item["collected_at"] = str(collected_at)
-    return item
+    return _with_media(item, _copies(row))
 
 
 def _items_from_row(row: Mapping[str, Any], bucket: str) -> list[dict[str, Any]]:
@@ -500,7 +541,14 @@ def build_index(adapter: Any, *, per_page: int = 1000, max_pages: int = 250) -> 
     total_tick = 0
 
     while True:
-        r = mdblist_request(adapter, "GET", URL_LIST, params={"apikey": apikey, **pager.params()}, timeout=timeout, max_retries=retries)
+        r = mdblist_request(
+            adapter,
+            "GET",
+            URL_LIST,
+            params={"apikey": apikey, "append_to_response": "media", **pager.params()},
+            timeout=timeout,
+            max_retries=retries,
+        )
         if r.status_code != 200:
             _warn("http_failed", op="index", status=r.status_code, page=pager.pages + 1)
             raise MDBListFetchError("MDBList collection read failed")
@@ -530,6 +578,7 @@ def build_index(adapter: Any, *, per_page: int = 1000, max_pages: int = 250) -> 
         if not more:
             break
 
+    _media_from_episodes(out)
     if out:
         _shadow_save(out)
     if acts_ts:
@@ -559,7 +608,7 @@ def _batch_payload(items: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, A
         if not ids:
             rejected.append({"item": m, "hint": "missing_ids"})
             continue
-        entry = {"type": typ, "ids": ids, "collected_at": m.get("collected_at")}
+        entry = {"type": typ, "ids": ids, "collected_at": m.get("collected_at"), "media": to_trakt_metadata(m)}
         if typ in ("season", "episode"):
             entry["season"] = m.get("season") if m.get("season") is not None else m.get("number")
         if typ == "episode":
@@ -614,7 +663,7 @@ def _with_unresolved_keys(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, A
     return out
 
 
-def _payload_from_accepted(items: list[dict[str, Any]], *, include_dates: bool) -> dict[str, Any]:
+def _payload_from_accepted(items: list[dict[str, Any]], *, include_dates: bool, include_media: bool = False) -> dict[str, Any]:
     body: dict[str, Any] = {}
     shows_by_key: dict[str, dict[str, Any]] = {}
 
@@ -625,14 +674,15 @@ def _payload_from_accepted(items: list[dict[str, Any]], *, include_dates: bool) 
         typ = str(item.get("type") or "").lower()
         ids = dict(item.get("ids") or {})
         collected_at = item.get("collected_at")
+        media = dict(item.get("media") or {}) if include_media else {}
         if typ == "movie":
-            entry: dict[str, Any] = {"ids": ids}
+            entry: dict[str, Any] = {"ids": ids, **media}
             if include_dates and collected_at:
                 entry["collected_at"] = str(collected_at)
             body.setdefault("movies", []).append(entry)
             continue
         if typ == "show":
-            entry: dict[str, Any] = {"ids": ids}
+            entry: dict[str, Any] = {"ids": ids, **media}
             if include_dates and collected_at:
                 entry["collected_at"] = str(collected_at)
             body.setdefault("shows", []).append(entry)
@@ -650,6 +700,8 @@ def _payload_from_accepted(items: list[dict[str, Any]], *, include_dates: bool) 
         season_entry = show_entry["seasons"].setdefault(season_i, {"number": season_i})
         if include_dates and collected_at:
             season_entry.setdefault("collected_at", str(collected_at))
+        if typ == "season":
+            season_entry.update(media)
         if typ == "episode":
             episode_raw = item.get("episode")
             if episode_raw is None:
@@ -658,7 +710,7 @@ def _payload_from_accepted(items: list[dict[str, Any]], *, include_dates: bool) 
                 episode_i = int(episode_raw)
             except Exception:
                 continue
-            ep_entry: dict[str, Any] = {"number": episode_i}
+            ep_entry: dict[str, Any] = {"number": episode_i, **media}
             if include_dates and collected_at:
                 ep_entry["collected_at"] = str(collected_at)
             season_entry.setdefault("episodes", []).append(ep_entry)
@@ -696,7 +748,7 @@ def _write(adapter: Any, op: str, items: Iterable[Mapping[str, Any]]) -> dict[st
     max_backoff_ms = _cfg_int(cfg, "collection_max_backoff_ms", 8000)
     url = URL_LIST if op == "add" else URL_REMOVE
     ok = 0
-    body = _payload_from_accepted(accepted, include_dates=(op == "add"))
+    body = _payload_from_accepted(accepted, include_dates=(op == "add"), include_media=(op == "add"))
     if not body:
         _info("write_skipped", op=op, reason="empty_payload", unresolved=len(unresolved))
         return 0, unresolved
@@ -738,6 +790,9 @@ def _write(adapter: Any, op: str, items: Iterable[Mapping[str, Any]]) -> dict[st
                         except Exception:
                             body_any = {}
                     if isinstance(body_any, Mapping):
+                        media_errors = [e for e in body_any.get("errors") or [] if isinstance(e, Mapping) and e.get("field")]
+                        if media_errors:
+                            _warn("media_rejected", op=op, bucket=bucket, count=len(media_errors), sample=dict(media_errors[0]))
                         chunk_ok = _count_result(
                             body_any.get("updated")
                             or body_any.get("added")
