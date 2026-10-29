@@ -260,7 +260,7 @@ def usage_conflict_payload(
     subject = _label(prov, inst)
     message = (
         f"Cannot delete {subject} because it is used by {', '.join(details)}. "
-        "Remove this profile from Sync pairs, Watcher, or Webhooks first."
+        "Remove this instance from Sync pairs, Watcher, or Webhooks first."
         if details
         else f"Cannot delete {subject}."
     )

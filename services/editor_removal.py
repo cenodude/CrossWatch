@@ -554,7 +554,7 @@ def remove_selected(payload, request=None):
             raise HTTPException(409, "The removal targets changed. Check the selection again.")
         requested = payload.get("providers")
         if not isinstance(requested, list) or not requested:
-            raise HTTPException(400, "Select at least one provider profile")
+            raise HTTPException(400, "Select at least one provider instance")
         target_map = {(t["provider"], t["instance"]): t for t in targets}
         identities = []
         for row in requested:
@@ -562,7 +562,7 @@ def remove_selected(payload, request=None):
                 raise HTTPException(400, "Invalid provider selection")
             identity = (str(row.get("provider") or "").upper(), normalize_instance_id(row.get("instance")))
             if identity not in target_map:
-                raise HTTPException(400, "Selected provider profile has no matching synced records")
+                raise HTTPException(400, "Selected provider instance has no matching synced records")
             if identity not in identities:
                 identities.append(identity)
         results = []

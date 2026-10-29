@@ -149,7 +149,7 @@ const OPS = [
     extra: `
       <div class="action-options tracker-archive-options">
         <label class="tracker-profile-control">
-          <span>Profile</span>
+          <span>Instance</span>
           <select id="cxm-cw-profile" class="input"><option value="default">Default</option></select>
         </label>
         <label class="tracker-archive-check"><input type="checkbox" id="cxm-cw-state" checked><span>Tracker state files</span></label>
@@ -368,7 +368,7 @@ const MaintenancePage = {
         <div class="maint-categories">${[GROUPS.slice(0,4), GROUPS.slice(4,-1)].map(groups => `<div class="maint-category-column">${groups.map(renderCategory).join("")}</div>`).join("")}${renderCategory(GROUPS.at(-1))}</div>
         <p id="cxm-empty" hidden>No maintenance tasks match these filters.</p><p id="cxm-range" class="maint-range"></p>
         <section id="cxm-archive-panel" class="archive-panel" aria-labelledby="cxm-archive-title" hidden>
-          <div class="archive-panel-heading"><span class="action-icon">${icon("inventory_2")}</span><div><h2 id="cxm-archive-title" tabindex="-1">CW tracker archive</h2><p>Choose a profile to manage its local tracker data.</p></div><button type="button" id="cxm-archive-close" aria-label="Close archive options">${icon("close")}</button></div>
+          <div class="archive-panel-heading"><span class="action-icon">${icon("inventory_2")}</span><div><h2 id="cxm-archive-title" tabindex="-1">CW tracker archive</h2><p>Choose an instance to manage its local tracker data.</p></div><button type="button" id="cxm-archive-close" aria-label="Close archive options">${icon("close")}</button></div>
           ${OPS_BY_KEY.tracker.extra}
           <div class="archive-panel-footer">${OPS_BY_KEY.tracker.sideActions}<button type="button" class="run-btn archive-clear" id="cxm-cw-clear" data-kind="tracker" data-label="CW tracker archive" data-idle-label="Clear selected">${icon("delete_sweep")}Clear selected</button></div>
           <div id="cxm-archive-status" class="status-message" role="status" hidden></div>

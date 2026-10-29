@@ -1867,6 +1867,122 @@ def _managed_user_response(user_id: str, raw: dict[str, Any]) -> dict[str, Any]:
     return public
 
 
+def _new_managed_user(a: dict[str, Any], username: str, password: str, profile_id: str, payload: dict[str, Any] | None) -> tuple[str, dict[str, Any]]:
+    users = _cfg_users(a, create=True)
+    user_id = _generate_app_user_id(a)
+    users[user_id] = {
+        "username": username,
+        "enabled": bool((payload or {}).get("enabled", True)),
+        "role": "user",
+        "profile_id": profile_id,
+        "permissions": _clean_create_permissions((payload or {}).get("permissions")),
+        "password": _password_hash(password),
+        "created_at": _now(),
+    }
+    return user_id, users[user_id]
+
+
+def _apply_managed_user_changes(latest: dict[str, Any], uid: str, raw: dict[str, Any], payload: dict[str, Any], password: str) -> dict[str, Any]:
+    latest_a = _cfg_auth(latest)
+    if "username" in payload or "label" in payload:
+        username = _clean_username(payload.get("username") if "username" in payload else payload.get("label"))
+        if not username:
+            raise ValueError("Username is required")
+        if _username_in_use(latest_a, username, exclude_id=uid):
+            raise RuntimeError("Username already exists")
+        raw["username"] = username
+    if "enabled" in payload:
+        raw["enabled"] = bool(payload.get("enabled"))
+        if not raw["enabled"]:
+            _clear_user_sessions(latest, uid)
+    if "profile_id" in payload:
+        profile_id = normalize_user_profile_id(payload.get("profile_id"))
+        if not _profile_id_valid(latest, profile_id):
+            raise ValueError("Profile is required")
+        raw["profile_id"] = profile_id
+    if "permissions" in payload:
+        raw["permissions"] = _clean_permissions(payload.get("permissions"))
+        if raw["permissions"].get("monitor"):
+            _clear_user_sessions(latest, uid)
+    if password:
+        raw["password"] = _password_hash(password)
+        _clear_user_sessions(latest, uid)
+    raw["role"] = "user"
+    return raw
+
+
+class ProfileLoginError(Exception):
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.message = message
+        self.status_code = status_code
+
+
+def apply_profile_login(latest: dict[str, Any], profile_id: Any, login: dict[str, Any]) -> tuple[str, dict[str, Any], bool, bool]:
+    if not auth_required(latest):
+        raise ProfileLoginError("Authentication is not configured", 403)
+    pid = normalize_user_profile_id(profile_id)
+    if not _profile_id_valid(latest, pid):
+        raise ProfileLoginError("Profile is required", 400)
+    password = str(login.get("password") or "")
+    if password and len(password) < MIN_PASSWORD_LENGTH:
+        raise ProfileLoginError(f"Password must be at least {MIN_PASSWORD_LENGTH} characters", 400)
+    a = _cfg_auth(latest)
+    users = _cfg_users(a)
+    linked = [uid for uid, raw in users.items() if isinstance(raw, dict) and normalize_user_profile_id(raw.get("profile_id")) == pid]
+    requested = _normalize_app_user_id(login.get("user_id"))
+    if requested and requested not in linked:
+        raise ProfileLoginError("Login not found", 404)
+    if not requested and len(linked) > 1:
+        raise ProfileLoginError("This profile has more than one login, pick the one to change", 409)
+    uid = requested or (linked[0] if linked else "")
+    if not uid:
+        username = _clean_username(login.get("username"))
+        if not username:
+            raise ProfileLoginError("Username is required", 400)
+        if not password:
+            raise ProfileLoginError("Password is required", 400)
+        if _username_in_use(a, username):
+            raise ProfileLoginError("Username already exists", 409)
+        uid, raw = _new_managed_user(a, username, password, pid, login)
+        return uid, raw, True, True
+    changes = {key: login[key] for key in ("username", "enabled", "permissions") if key in login}
+    try:
+        raw = _apply_managed_user_changes(latest, uid, users[uid], changes, password)
+    except RuntimeError:
+        raise ProfileLoginError("Username already exists", 409) from None
+    except ValueError:
+        raise ProfileLoginError("Username is required", 400) from None
+    return uid, raw, False, bool(password)
+
+
+def finish_profile_login(request: Request, cfg: dict[str, Any], result: tuple[str, dict[str, Any], bool, bool]) -> dict[str, Any]:
+    user_id, raw, created, password_changed = result
+    actor = _admin_api_token_user(request, cfg) or current_user(cfg, request.cookies.get(COOKIE_NAME))
+    username = raw.get("username") or user_id
+    if created:
+        _audit(
+            request,
+            "user_created",
+            actor=actor,
+            target_type="managed_user",
+            target_id=user_id,
+            message=f"Managed user {username} was created",
+            fields={"username": username, "profile_id": raw.get("profile_id"), "enabled": raw.get("enabled"), "write": bool(raw["permissions"].get("write")), "monitor": bool(raw["permissions"].get("monitor"))},
+        )
+    else:
+        _audit(
+            request,
+            "user_updated",
+            actor=actor,
+            target_type="managed_user",
+            target_id=user_id,
+            message=f"Managed user {username} was updated",
+            fields={"username": username, "profile_id": raw.get("profile_id"), "enabled": raw.get("enabled"), "password_changed": password_changed},
+        )
+    return _managed_user_response(user_id, raw)
+
+
 @router.get("/users")
 def api_users_all(request: Request) -> JSONResponse:
     cfg = load_config()
@@ -1902,26 +2018,15 @@ def api_users_create(request: Request, payload: dict[str, Any] = Body(default_fa
     if len(password) < MIN_PASSWORD_LENGTH:
         return JSONResponse({"ok": False, "error": f"Password must be at least {MIN_PASSWORD_LENGTH} characters"}, status_code=400, headers={"Cache-Control": "no-store"})
     if not _profile_id_valid(cfg, profile_id):
-        return JSONResponse({"ok": False, "error": "User profile is required"}, status_code=400, headers={"Cache-Control": "no-store"})
+        return JSONResponse({"ok": False, "error": "Profile is required"}, status_code=400, headers={"Cache-Control": "no-store"})
 
     def _mutate(latest: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         latest_a = _cfg_auth(latest)
         if _username_in_use(latest_a, username):
             raise ValueError("Username already exists")
         if not _profile_id_valid(latest, profile_id):
-            raise KeyError("User profile is required")
-        users = _cfg_users(latest_a, create=True)
-        user_id = _generate_app_user_id(latest_a)
-        users[user_id] = {
-            "username": username,
-            "enabled": bool((payload or {}).get("enabled", True)),
-            "role": "user",
-            "profile_id": profile_id,
-            "permissions": _clean_create_permissions((payload or {}).get("permissions")),
-            "password": _password_hash(password),
-            "created_at": _now(),
-        }
-        return user_id, users[user_id]
+            raise KeyError("Profile is required")
+        return _new_managed_user(latest_a, username, password, profile_id, payload)
 
     try:
         cfg, created = _update_config(_mutate)
@@ -1968,31 +2073,7 @@ def api_users_update(request: Request, user_id: str, payload: dict[str, Any] = B
         raw = users.get(uid)
         if not uid or not isinstance(raw, dict):
             raise KeyError("Not found")
-        if "username" in payload or "label" in payload:
-            username = _clean_username(payload.get("username") if "username" in payload else payload.get("label"))
-            if not username:
-                raise ValueError("Username is required")
-            if _username_in_use(latest_a, username, exclude_id=uid):
-                raise RuntimeError("Username already exists")
-            raw["username"] = username
-        if "enabled" in payload:
-            raw["enabled"] = bool(payload.get("enabled"))
-            if not raw["enabled"]:
-                _clear_user_sessions(latest, uid)
-        if "profile_id" in payload:
-            profile_id = normalize_user_profile_id(payload.get("profile_id"))
-            if not _profile_id_valid(latest, profile_id):
-                raise ValueError("User profile is required")
-            raw["profile_id"] = profile_id
-        if "permissions" in payload:
-            raw["permissions"] = _clean_permissions(payload.get("permissions"))
-            if raw["permissions"].get("monitor"):
-                _clear_user_sessions(latest, uid)
-        if password:
-            raw["password"] = _password_hash(password)
-            _clear_user_sessions(latest, uid)
-        raw["role"] = "user"
-        return raw
+        return _apply_managed_user_changes(latest, uid, raw, payload, password)
 
     try:
         cfg, raw = _update_config(_mutate)

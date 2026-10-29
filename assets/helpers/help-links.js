@@ -31,7 +31,7 @@
     tracearr: "crosswatch/settings/connections/others/tracearr",
     "tmdb-metadata": "crosswatch/settings/connections/metadata/tmdb-metadata",
     "anime-mapping": "crosswatch/settings/connections/metadata/anime-id-mapping",
-    "connection-profiles": "crosswatch/settings/connections/profiles",
+    "connection-instances": "crosswatch/settings/connections/instances",
     "scrobbler-watcher": "crosswatch/settings/scrobbler/watcher",
     "scrobbler-webhooks": "crosswatch/settings/scrobbler/webhooks",
     "scrobbler-filters": "crosswatch/settings/scrobbler/filters",

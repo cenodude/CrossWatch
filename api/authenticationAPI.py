@@ -709,7 +709,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
                 "instance": inst,
                 "ok": False,
                 "reason": "token_required",
-                "message": "Connect this Plex profile first.",
+                "message": "Connect this Plex instance first.",
             }
 
         norm = lambda s: (s or "").strip().lower()

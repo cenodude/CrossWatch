@@ -40,7 +40,7 @@ export async function navigateToMapping(mapping, ctx) {
     ctx.syncSourceUI();
     await ctx.loadSnapshots();
     if (state.snapshot !== mapping.provider || state.instance !== mapping.instance) {
-      throw new Error("This mapping’s provider or profile is no longer available in the Editor.");
+      throw new Error("This mapping’s provider or instance is no longer available in the Editor.");
     }
     await ctx.loadState();
     if (state.loadError) throw new Error("Could not open this mapping. Refresh and try again.");
@@ -136,9 +136,9 @@ export function open(trigger, editor) {
   root.setAttribute("aria-labelledby", "sm-title");
   root.innerHTML = `<div class="sm-head"><div><h2 id="sm-title">Mappings & blocks</h2><p>Shared and pair-specific rules across all accessible accounts.</p></div><button type="button" data-close aria-label="Close mappings and blocks">${icon("close")}</button></div>
     <div class="sm-toolbar"><div class="sm-tabs" role="group" aria-label="Saved rules"><button type="button" data-view="mapping" aria-pressed="true">${icon("link")}Mappings</button><button type="button" data-view="block" aria-pressed="false">${icon("block")}Blocked items</button></div><div class="sm-transfer"><button type="button" data-import>${icon("upload")}Import</button><button type="button" data-export title="Export mappings, blocks and episode groups for the selected scope, source and feature">${icon("download")}Export</button><input type="file" data-import-file accept=".json,application/json" hidden></div></div>
-    <div class="sm-filters"><label>Search<input type="search" placeholder="Title, ID, provider or episode…" data-search></label><label>Source and profile<select data-source aria-label="Source and profile" data-cw-sort="alphabetical"><option value="">All sources</option></select></label><label>Feature<select data-feature aria-label="Feature"><option value="">All features</option>${["watchlist","history","ratings","progress","collection"].map(f=>`<option value="${f}">${f[0].toUpperCase()+f.slice(1)}</option>`).join("")}</select></label><button type="button" data-refresh>${icon("refresh")}Refresh</button></div>
+    <div class="sm-filters"><label>Search<input type="search" placeholder="Title, ID, provider or episode…" data-search></label><label>Source and instance<select data-source aria-label="Source and instance" data-cw-sort="alphabetical"><option value="">All sources</option></select></label><label>Feature<select data-feature aria-label="Feature"><option value="">All features</option>${["watchlist","history","ratings","progress","collection"].map(f=>`<option value="${f}">${f[0].toUpperCase()+f.slice(1)}</option>`).join("")}</select></label><button type="button" data-refresh>${icon("refresh")}Refresh</button></div>
     <p class="sm-note">Pair corrections override shared mappings for that pair. All pairs means every sync using that source instance. Use the pencil to edit a mapping in the Editor, then save your changes.</p>
-    <form class="sm-add-block" hidden><label>Item key<input data-block-key required maxlength="1024" placeholder="For example: tmdb:123 or tmdb:123#s01e02"></label><button type="submit">${icon("block")}Block item</button><small>Select a source, profile and feature above. New blocks apply to every sync using that account.</small></form>
+    <form class="sm-add-block" hidden><label>Item key<input data-block-key required maxlength="1024" placeholder="For example: tmdb:123 or tmdb:123#s01e02"></label><button type="submit">${icon("block")}Block item</button><small>Select a source, instance and feature above. New blocks apply to every sync using that account.</small></form>
     <p class="sm-edit-error" role="alert"></p><p class="sm-action-status" role="status"></p><div class="sm-results" aria-live="polite"></div><footer><span data-count></span><div><button type="button" data-prev>Previous</button><button type="button" data-next>Next</button></div></footer>`;
   document.body.append(root);
   const $ = selector => root.querySelector(selector);
@@ -305,7 +305,7 @@ export function open(trigger, editor) {
   $(".sm-add-block").onsubmit = event => {
     event.preventDefault();
     const source = $("[data-source]").value, feature = $("[data-feature]").value;
-    if (!source || !feature) { $(".sm-edit-error").textContent = "Select a source, profile and feature for this block."; return; }
+    if (!source || !feature) { $(".sm-edit-error").textContent = "Select a source, instance and feature for this block."; return; }
     const [provider,instance] = JSON.parse(source);
     changeBlock({provider, instance, feature, key:$("[data-block-key]").value, pair_id:""}, true);
   };

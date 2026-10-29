@@ -675,7 +675,7 @@
     const viewed = viewingAs();
     $("#profile-display-name").textContent = viewed ? (viewAsState.label || viewAsState.id) : display;
     $("#profile-username").textContent = viewed ? `Opened by @${profile.username || ""}` : `@${profile.username || ""}`;
-    $("#profile-role").textContent = viewed ? "User profile" : (profile.is_admin ? "Administrator" : "Managed User");
+    $("#profile-role").textContent = viewed ? "Profile" : (profile.is_admin ? "Administrator" : "Managed User");
     $("#profile-display-input").value = display;
     renderTwoFactor(!!profile.totp_enabled);
     setAvatar(profile.avatar_url || "");

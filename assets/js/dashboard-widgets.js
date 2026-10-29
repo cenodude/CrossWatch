@@ -1085,7 +1085,7 @@
     const tone = providerMeta().tone?.(provider) || {};
     const rgb = String(tone?.rgb || "124,92,255");
     const label = providerShort(provider);
-    const description = `${providerName} source profile: ${profile}`;
+    const description = `${providerName} source instance: ${profile}`;
     return `<span class="cw-scrobble-source-pill" style="--cw-source-rgb:${esc(rgb)}" title="${esc(description)}" aria-label="${esc(description)}">${providerIcon}<span>${esc(label)}</span></span>`;
   }
 

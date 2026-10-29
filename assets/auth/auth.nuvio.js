@@ -50,7 +50,7 @@
     save.disabled = !canSave;
     save.classList.toggle("is-disabled", !canSave);
     if (canSave) save.removeAttribute("title");
-    else save.title = "Connect this profile before saving.";
+    else save.title = "Connect this instance before saving.";
   }
 
   function syncConnectLocked() {

@@ -59,7 +59,7 @@
       const max = err?.data?.limit || limit;
       return `You can add up to ${max} identities per connection. Raise max_sync_users_per_connection in config.json if you need more.`;
     }
-    if (code === "not_found") return "This connection profile no longer exists.";
+    if (code === "not_found") return "This connection instance no longer exists.";
     if (code === "unsupported_provider") return `${LABELS[provider] || provider} does not support identities.`;
     if (code === "invalid_pin") return "A profile PIN was not accepted.";
     if (code === "pin_locked") return "Too many incorrect PINs. Try again later.";
@@ -118,9 +118,9 @@
           <div class="cw-wl-note" data-role="status" aria-live="polite"></div>
         </div>
         <details class="cw-su-more">
-          <summary><span class="material-symbols-rounded" aria-hidden="true">person_add</span>Optional: user profiles</summary>
-          <p>Not needed for syncing. A user profile gives a person their own CrossWatch view with only their data. This creates one for each saved identity that has none yet, using its name.</p>
-          <button type="button" class="cw-wl-load" data-act="profiles"><span class="material-symbols-rounded" aria-hidden="true">person_add</span>Create user profiles</button>
+          <summary><span class="material-symbols-rounded" aria-hidden="true">person_add</span>Optional: profiles</summary>
+          <p>Not needed for syncing. A profile gives a person their own CrossWatch view with only their data. This creates one for each saved identity that has none yet, using its name.</p>
+          <button type="button" class="cw-wl-load" data-act="profiles"><span class="material-symbols-rounded" aria-hidden="true">person_add</span>Create profiles</button>
         </details>
       </div>`;
     state.root.querySelectorAll("input[data-pin]").forEach((box) => { box.value = state.pins.get(box.dataset.pin) || ""; });
@@ -140,7 +140,7 @@
     const make = state.root.querySelector('[data-act="profiles"]');
     if (make) {
       make.disabled = state.busy || dirty(state) || !state.saved.length;
-      make.title = dirty(state) ? "Save changes first" : !state.saved.length ? "Tick and save identities first" : "Create a user profile for each identity that has none yet";
+      make.title = dirty(state) ? "Save changes first" : !state.saved.length ? "Tick and save identities first" : "Create a profile for each identity that has none yet";
     }
     state.root.querySelectorAll(".cw-su-row[data-row]").forEach((row) => {
       const on = state.selected.has(row.dataset.row);
@@ -210,8 +210,8 @@
       if (!current()) return;
       const created = res.created | 0, linked = res.linked | 0, skipped = res.skipped | 0;
       const done = created || linked
-        ? `Created ${created} user profile${created === 1 ? "" : "s"} and added ${linked} ${linked === 1 ? "identity" : "identities"} to them.`
-        : "Every identity already has a user profile.";
+        ? `Created ${created} profile${created === 1 ? "" : "s"} and added ${linked} ${linked === 1 ? "identity" : "identities"} to them.`
+        : "Every identity already has a profile.";
       state.message = skipped
         ? `${done} Skipped ${skipped}: name longer than 40 characters, or the same name used by more than one identity on this server.`
         : done;
@@ -239,7 +239,7 @@
           state.message = text;
           state.messageOk = false;
           const visible = root.__cwSyncUsersState;
-          if (visible && visible !== state) setStatus(visible, `Identities for connection profile "${connectionName(state.instance)}" were not saved: ${text}`, false);
+          if (visible && visible !== state) setStatus(visible, `Identities for connection instance "${connectionName(state.instance)}" were not saved: ${text}`, false);
           throw err;
         }
         pending.delete(pendingKey(state.provider, state.instance));

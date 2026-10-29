@@ -271,7 +271,7 @@ function sourceProfiles(provider) {
 function sourceProviderSelect(current) {
   const provs = sourceProviders().sort((a, b) => label(a).localeCompare(label(b), undefined, { sensitivity: "base", numeric: true }));
   const dis = props.mode === "edit" ? "disabled" : "";
-  if (!provs.length) return `<select class="input" id="scw-source-provider" disabled><option value="">No configured media profile</option></select>`;
+  if (!provs.length) return `<select class="input" id="scw-source-provider" disabled><option value="">No configured media instance</option></select>`;
   return `<select class="input" id="scw-source-provider" ${dis}>${provs.map((p) => `<option value="${esc(p)}" ${p === current.provider ? "selected" : ""}>${esc(label(p))}</option>`).join("")}</select>`;
 }
 
@@ -304,7 +304,7 @@ function userProfileField() {
   if (!current) return "";
   const profile = userProfiles.find((p) => p.id === current);
   if (!profile || !profileCanOwnWebhook(profile, selectedWebhook())) return "";
-  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "Assigned profile", `<div class="scrm-profile-display" aria-label="Assigned user profile"><span>${esc(profile.label)}</span></div>`)}</div>`;
+  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "Assigned profile", `<div class="scrm-profile-display" aria-label="Assigned profile"><span>${esc(profile.label)}</span></div>`)}</div>`;
 }
 
 function profileInstanceValues(profile, provider) {
@@ -444,7 +444,7 @@ function sinkSelect(current) {
 
 function sinkProfileSelect(sink, currentInst) {
   const profiles = sinkProfiles(sink).sort((a, b) => profileOptionLabel(a).localeCompare(profileOptionLabel(b), undefined, { sensitivity: "base", numeric: true }));
-  if (!profiles.length) return `<option value="" selected disabled>No configured profile</option>`;
+  if (!profiles.length) return `<option value="" selected disabled>No configured instance</option>`;
   const cur = String(currentInst || "default");
   return profiles.map((p) => `<option value="${esc(p.instance)}" title="${esc(p.instance)}" ${p.instance === cur ? "selected" : ""}>${esc(profileOptionLabel(p))}</option>`).join("");
 }
@@ -454,7 +454,7 @@ function endpointBlock(current) {
     <div class="scrm-provider-card scwm-endpoint-card">
       <div class="scrm-card-head"><span class="scrm-provider-mark"><span class="material-symbols-rounded">link</span></span><div><strong>Endpoint URL</strong><small>Use this URL in ${esc(label(current.provider))}</small></div></div>
       <div class="scrm-endpoint scwm-endpoint">
-        <code title="${esc(current.endpoint_url || "")}">${esc(current.endpoint_url || "Saved profile will receive a URL")}</code>
+        <code title="${esc(current.endpoint_url || "")}">${esc(current.endpoint_url || "Saved instance will receive a URL")}</code>
         <button type="button" class="btn small sc2-icon-btn material-symbols-rounded" data-copy="${esc(current.endpoint_url || "")}" title="Copy URL">content_copy</button>
         <button type="button" class="btn small danger sc2-icon-btn cw-danger-confirm" data-regenerate title="Regeneration is destructive for the old endpoint URL."><span class="material-symbols-rounded">sync_lock</span></button>
       </div>
@@ -480,7 +480,7 @@ function sourcePanel(current) {
     <section class="scrm-panel ${activeTab === "source" ? "active" : ""}" data-panel="source">
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">webhook</span>
-        <div><strong>Attach a webhook to a media profile</strong><p>Forward inbound Plex, Jellyfin, or Emby webhook events to one tracker.</p></div>
+        <div><strong>Attach a webhook to a media instance</strong><p>Forward inbound Plex, Jellyfin, or Emby webhook events to one tracker.</p></div>
         ${journeyHelp("scrobbler-webhooks")}
       </div>
       ${userProfileField()}
@@ -571,7 +571,7 @@ function ratingsPanel(provider, ratingsTargets) {
   const targets = visibleRatingSinks(ratingsTargets);
   const globalTargets = globalRatingTargets();
   const globalWarn = globalTargets.length
-    ? `<div class="scrm-note is-warn"><span class="material-symbols-rounded">warning</span><span>Global Plex ratings is on and already forwarding to <strong>${esc(globalTargets.map(label).join(", "))}</strong>. This webhook sends ratings <em>in addition</em> to the global one — only enable trackers here if this profile needs different destinations.</span></div>`
+    ? `<div class="scrm-note is-warn"><span class="material-symbols-rounded">warning</span><span>Global Plex ratings is on and already forwarding to <strong>${esc(globalTargets.map(label).join(", "))}</strong>. This webhook sends ratings <em>in addition</em> to the global one — only enable trackers here if this instance needs different destinations.</span></div>`
     : "";
   return `
     <section class="scrm-panel ${activeTab === "ratings" ? "active" : ""}" data-panel="ratings">
@@ -606,9 +606,9 @@ function optionsPanel() {
       ${anilistHint}
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">tune</span>
-        <div><strong>Profile webhook options</strong><p>These values remain inherited unless you enable this override for the profile.</p></div>
+        <div><strong>Instance webhook options</strong><p>These values remain inherited unless you enable this override for the instance.</p></div>
       </div>
-      <label class="scrm-check"><input type="checkbox" id="scw-override-options" ${["pause_debounce_seconds", "suppress_start_at"].some(explicitHas) ? "checked" : ""}> <span>Override profile options</span></label>
+      <label class="scrm-check"><input type="checkbox" id="scw-override-options" ${["pause_debounce_seconds", "suppress_start_at"].some(explicitHas) ? "checked" : ""}> <span>Override instance options</span></label>
       <div class="scrm-fields two">
         ${field("Pause debounce", `<input class="input" id="scw-pause" type="number" min="0" max="3600" value="${esc(settings().pause_debounce_seconds ?? "")}" placeholder="Inherited">`)}
         ${field("Suppress start", `<input class="input" id="scw-suppress" type="number" min="0" max="3600" value="${esc(settings().suppress_start_at ?? "")}" placeholder="Inherited">`)}
@@ -740,7 +740,7 @@ function render(errs = []) {
       <div class="scrm-body">
         <div class="scrm-panel-shell" data-scrm-provider="${esc(provider)}">
           <nav class="cw-subtiles scrm-nav" aria-label="Webhook sections">
-            ${navButton("source", "webhook", "Source", "Profile, destinations, URL")}
+            ${navButton("source", "webhook", "Source", "Instance, destinations, URL")}
             ${navButton("filters", "filter_alt", "Filters", "Users and media")}
             ${navButton("options", "tune", "Options", "Thresholds")}
             ${mediaSinks.has(selectedSinkKey()) ? navButton("libraries", "video_library", "Libraries", "Destination scope") : ""}
@@ -757,7 +757,7 @@ function render(errs = []) {
             ${props.mode === "edit" ? `<button type="button" class="btn danger cw-connection-footer-delete cw-danger-confirm" data-delete-webhook><span class="material-symbols-rounded">delete</span><span>Delete webhook</span></button>` : `<span></span>`}
             ${errs.length
               ? `<span class="scrm-footer-error" role="alert" aria-live="polite"><span class="material-symbols-rounded">warning</span><span class="scrm-footer-error-text">${errs.map((x) => esc(x.message || x.code || x.field)).join(" ")}</span></span>`
-              : dup ? `<span class="scrm-footer-warn"><span class="material-symbols-rounded">warning</span>This media profile already has a webhook</span>` : `<span></span>`}
+              : dup ? `<span class="scrm-footer-warn"><span class="material-symbols-rounded">warning</span>This media instance already has a webhook</span>` : `<span></span>`}
             <button type="button" class="btn cw-connection-footer-cancel" data-close>Cancel</button>
             <button type="button" class="btn primary cw-connection-footer-save" data-save ${dup ? "disabled" : ""}>${saving ? "Saving..." : "Save changes"}</button>
           </div>

@@ -156,35 +156,35 @@ def html() -> str:
                   <div>
                     <div class="cw-field-label-row">
                       <label for="cw_tracker_restore_watchlist">Watchlist snapshot</label>
-                      <button type="button" class="cw-field-help material-symbols-rounded" title="Watchlist snapshot: Snapshot used when restoring or reading this local tracker profile's watchlist. Latest follows the newest snapshot." aria-label="Local tracker watchlist restore help">help</button>
+                      <button type="button" class="cw-field-help material-symbols-rounded" title="Watchlist snapshot: Snapshot used when restoring or reading this local tracker instance's watchlist. Latest follows the newest snapshot." aria-label="Local tracker watchlist restore help">help</button>
                     </div>
                     <select id="cw_tracker_restore_watchlist" name="cw_tracker_restore_watchlist" autocomplete="off"></select>
                   </div>
                   <div>
                     <div class="cw-field-label-row">
                       <label for="cw_tracker_restore_history">History snapshot</label>
-                      <button type="button" class="cw-field-help material-symbols-rounded" title="History snapshot: Snapshot used when restoring or reading this local tracker profile's history. Latest follows the newest snapshot." aria-label="Local tracker history restore help">help</button>
+                      <button type="button" class="cw-field-help material-symbols-rounded" title="History snapshot: Snapshot used when restoring or reading this local tracker instance's history. Latest follows the newest snapshot." aria-label="Local tracker history restore help">help</button>
                     </div>
                     <select id="cw_tracker_restore_history" name="cw_tracker_restore_history" autocomplete="off"></select>
                   </div>
                   <div>
                     <div class="cw-field-label-row">
                       <label for="cw_tracker_restore_ratings">Ratings snapshot</label>
-                      <button type="button" class="cw-field-help material-symbols-rounded" title="Ratings snapshot: Snapshot used when restoring or reading this local tracker profile's ratings. Latest follows the newest snapshot." aria-label="Local tracker ratings restore help">help</button>
+                      <button type="button" class="cw-field-help material-symbols-rounded" title="Ratings snapshot: Snapshot used when restoring or reading this local tracker instance's ratings. Latest follows the newest snapshot." aria-label="Local tracker ratings restore help">help</button>
                     </div>
                     <select id="cw_tracker_restore_ratings" name="cw_tracker_restore_ratings" autocomplete="off"></select>
                   </div>
                   <div>
                     <div class="cw-field-label-row">
                       <label for="cw_tracker_restore_progress">Progress snapshot</label>
-                      <button type="button" class="cw-field-help material-symbols-rounded" title="Progress snapshot: Snapshot used when restoring or reading this local tracker profile's playback progress. Latest follows the newest snapshot." aria-label="Local tracker progress restore help">help</button>
+                      <button type="button" class="cw-field-help material-symbols-rounded" title="Progress snapshot: Snapshot used when restoring or reading this local tracker instance's playback progress. Latest follows the newest snapshot." aria-label="Local tracker progress restore help">help</button>
                     </div>
                     <select id="cw_tracker_restore_progress" name="cw_tracker_restore_progress" autocomplete="off"></select>
                   </div>
                   <div>
                     <div class="cw-field-label-row">
                       <label for="cw_tracker_restore_collection">Collection snapshot</label>
-                      <button type="button" class="cw-field-help material-symbols-rounded" title="Collection snapshot: Snapshot used when restoring or reading this local tracker profile's collection. Latest follows the newest snapshot." aria-label="Local tracker collection restore help">help</button>
+                      <button type="button" class="cw-field-help material-symbols-rounded" title="Collection snapshot: Snapshot used when restoring or reading this local tracker instance's collection. Latest follows the newest snapshot." aria-label="Local tracker collection restore help">help</button>
                     </div>
                     <select id="cw_tracker_restore_collection" name="cw_tracker_restore_collection" autocomplete="off"></select>
                   </div>

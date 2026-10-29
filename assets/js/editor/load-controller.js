@@ -57,7 +57,7 @@
     const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     el.innerHTML =
       `<span class="material-symbols-rounded" aria-hidden="true">group</span>` +
-      `<span>Shared profile. Blocks and manual entries here apply to every user of this instance: ` +
+      `<span>Shared instance. Blocks and manual entries here apply to every user of this instance: ` +
       `<strong>${owners.map(esc).join(", ")}</strong>.</span>`;
     el.style.display = "";
   }

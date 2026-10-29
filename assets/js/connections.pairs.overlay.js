@@ -344,7 +344,7 @@
   function pairModeTip(pr, modeLabel) {
     const lines = [modeLabel];
     const profile = pairProfileLabel(pr);
-    if (profile) lines.push(`Belongs to user profile: ${profile}`);
+    if (profile) lines.push(`Belongs to profile: ${profile}`);
     if (pr?.match_users) {
       const links = Object.entries(pr.user_matches && typeof pr.user_matches === "object" ? pr.user_matches : {});
       if (!links.length) lines.push("Identities on, but nobody linked yet");

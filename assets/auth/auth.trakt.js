@@ -313,7 +313,7 @@
   async function flushTraktCreds() {
     try {
       await traktDeleteToken();
-      _notify('Trakt cleared for this profile');
+      _notify('Trakt cleared for this instance');
     } catch (e) {
       console.warn("flushTraktCreds failed", e);
       _notify("Wissen mislukt");

@@ -107,14 +107,14 @@
   }
 
   function formatSendRunning(targetCount, operation = "add") {
-    if (operation === "remove") return '<div class="cw-editor-send-progress active"><strong>Removing selected records</strong><p>Checking the selected provider profiles and verifying removals…</p><div class="cw-editor-send-progress-bar"><span style="width:24%"></span></div></div>';
+    if (operation === "remove") return '<div class="cw-editor-send-progress active"><strong>Removing selected records</strong><p>Checking the selected provider instances and verifying removals…</p><div class="cw-editor-send-progress-bar"><span style="width:24%"></span></div></div>';
     return `<div class="cw-editor-send-progress active">
       <div class="cw-editor-send-progress-head">
         <div><strong>Sending selected rows</strong><span>${Number(targetCount || 0)} provider target${Number(targetCount || 0) === 1 ? "" : "s"} queued</span></div>
         <span class="material-symbols-rounded" aria-hidden="true">sync</span>
       </div>
       <div class="cw-editor-send-progress-bar" aria-hidden="true"><span style="width:24%"></span></div>
-      <div class="cw-editor-send-progress-message">Sending selected rows to the chosen provider profile${Number(targetCount || 0) === 1 ? "" : "s"}...</div>
+      <div class="cw-editor-send-progress-message">Sending selected rows to the chosen provider instance${Number(targetCount || 0) === 1 ? "" : "s"}...</div>
     </div>`;
   }
 
@@ -256,7 +256,7 @@
       shell.querySelector(".cw-editor-send-sub").textContent = `${rows.length} selected ${kindLabel} rows`;
       shell.querySelector(".cw-editor-send-data-card h3").textContent = removing ? "Data to remove" : "Data to send";
       shell.querySelector(".cw-editor-send-data-card p").textContent = removing
-        ? "Only matching records from your CrossWatch sync pairs are available. Each profile shows its matching selection."
+        ? "Only matching records from your CrossWatch sync pairs are available. Each instance shows its matching selection."
         : `${rows.length} selected ${kindLabel} row${rows.length === 1 ? "" : "s"} will be sent to selected provider profiles.`;
       const summary = shell.querySelectorAll(".cw-editor-send-data-grid b");
       summary[1].textContent = String(rows.length);
@@ -312,7 +312,7 @@
       }).join("") : `<div class="cw-editor-send-empty">${operation === "remove"
         ? (removalEmptyReason === "pair_baseline_unavailable"
           ? "CrossWatch has no saved baseline for one or more current sync pairs. Existing records may still be present on your providers. Run those pairs to establish their sync baselines, then reopen this dialog."
-          : "No provider profiles have matching synced records with removal support.")
+          : "No provider instances have matching synced records with removal support.")
         : `No other configured provider supports ${esc(kind)} sends.`}</div>`;
       syncButtons();
     };

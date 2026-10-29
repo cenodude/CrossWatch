@@ -164,7 +164,7 @@ function optionsForProfiles(provider, selected, kind) {
   const selectedExists = list.some((p) => p.instance === current);
   const missing = current && !selectedExists ? `<option value="${esc(current)}" selected disabled>${esc(profileLabel(provider, current, kind))} (not configured)</option>` : "";
   const options = list.map((p) => `<option value="${esc(p.instance)}" title="${esc(p.instance)}" ${p.instance === current ? "selected" : ""}>${esc(profileOptionLabel(p))}</option>`).join("");
-  return missing + options || `<option value="">No configured profile</option>`;
+  return missing + options || `<option value="">No configured instance</option>`;
 }
 
 function optionsForProviders(kind, selected, source = "") {
@@ -202,7 +202,7 @@ function userProfileField() {
   if (!current) return "";
   const profile = userProfiles.find((p) => p.id === current);
   if (!profile || !profileCanOwnRoute(profile, draft || {})) return "";
-  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "Assigned profile", `<div class="scrm-profile-display" aria-label="Assigned user profile"><span>${esc(profile.label)}</span></div>`)}</div>`;
+  return `<div class="scrm-profile-row">${fieldIcon("account_circle", "Assigned profile", `<div class="scrm-profile-display" aria-label="Assigned profile"><span>${esc(profile.label)}</span></div>`)}</div>`;
 }
 
 function profileInstanceValues(profile, provider) {
@@ -373,7 +373,7 @@ function routePanel(r) {
     <section class="scrm-panel ${activeTab === "route" ? "active" : ""}" data-panel="route">
       <div class="scrm-journey">
         <span class="material-symbols-rounded scrm-journey-icon">route</span>
-        <div><strong>Choose the source, then send it to a tracker</strong><p>Watcher routes listen to one configured media profile and forward matching play events to one configured destination profile.</p></div>
+        <div><strong>Choose the source, then send it to a tracker</strong><p>Watcher routes listen to one configured media instance and forward matching play events to one configured destination instance.</p></div>
         ${journeyHelp("scrobbler-watcher")}
       </div>
       ${userProfileField()}
@@ -473,7 +473,7 @@ function filtersPanel(r, f) {
     <section class="scrm-panel ${activeTab === "filters" ? "active" : ""}" data-panel="filters">
       <div class="scrm-journey scrm-journey-compact">
         <span class="material-symbols-rounded scrm-journey-icon">filter_alt</span>
-        <div><strong>Only scrobble the activity you want</strong><p>${isStremio ? "The Stremio add-on reports one account, so there is no user filter." : "Leave filters empty to accept every matching event from this source profile."}</p></div>
+        <div><strong>Only scrobble the activity you want</strong><p>${isStremio ? "The Stremio add-on reports one account, so there is no user filter." : "Leave filters empty to accept every matching event from this source instance."}</p></div>
         ${journeyHelp("scrobbler-filters")}
       </div>
       <div class="scrm-filter-rows">${rows.join("")}</div>
@@ -794,7 +794,7 @@ async function save(regenerate = false) {
   if (saving) return;
   syncDraftFromDom();
   if (draft.provider === draft.sink && normInst(draft.provider_instance) === normInst(draft.sink_instance)) {
-    render([{ message: "Source and destination must use different providers or profiles" }]);
+    render([{ message: "Source and destination must use different providers or instances" }]);
     return;
   }
   if (duplicateRoute(ensureDraft())) {

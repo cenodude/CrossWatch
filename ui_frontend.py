@@ -756,6 +756,7 @@ def _get_index_html_static() -> str:
 <link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
 <link id="cw-notifications-css" rel="stylesheet" href="/assets/css/notifications.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/app-users.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/user-profile-wizard.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/ai-settings.css?v=__CW_VERSION__">
 <link rel="stylesheet" href="/assets/css/topology.css?v=__CW_VERSION__">
 <script>
@@ -1843,16 +1844,11 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                       <div class="cw-app-card-head">
                         <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">group</span>
                         <div>
-                          <div class="cw-settings-block-title">User manager</div>
-                          <div class="sub">Create user accounts and connect each account to a user profile.</div>
+                          <div class="cw-settings-block-title">User logins</div>
+                          <div class="sub">People who can sign in. Logins are created and changed on their profile.</div>
                         </div>
+                        <button class="btn primary cw-app-user-add" type="button" id="btn-app-user-profile-create"><span class="material-symbols-rounded" aria-hidden="true">person_add</span><span>Add profile</span></button>
                       </div>
-                      <form class="cw-app-user-create" id="app_user_create_form" autocomplete="off" onsubmit="return false">
-                        <input id="app_user_username" type="text" autocomplete="username" placeholder="Username">
-                        <input id="app_user_password" type="password" autocomplete="new-password" placeholder="Password">
-                        <select id="app_user_profile"></select>
-                        <button class="btn primary" type="button" id="btn-app-user-create">Add user</button>
-                      </form>
                       <div class="cw-app-user-list" id="app_users_list"></div>
                     </div>
 
@@ -2266,7 +2262,7 @@ __CW_ASSET_BLOCK__
     setText("cw-settings-stat-automation-copy", scheduleOn && scrobOn ? "Scheduling and scrobbler are on" : scheduleOn ? "Scheduling is on" : scrobOn ? "Scrobbler is on" : "Scheduling and scrobbler are off");
     setStep("auth", {
       status: steps.auth ? "Connected" : "Needs setup",
-      copy: steps.auth ? `${plural(authCount, "provider profile")} connected` : "Connect provider profiles first",
+      copy: steps.auth ? `${plural(authCount, "provider profile")} connected` : "Connect provider instances first",
       detail: steps.auth ? `${plural(authCount, "provider")} connected` : "No providers connected",
       link: "Manage",
       done: steps.auth,
