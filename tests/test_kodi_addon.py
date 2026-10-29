@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import ipaddress
 import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -511,6 +512,23 @@ def test_pair_webhook_rate_limits_wrong_codes(monkeypatch) -> None:
         assert client.post("/webhook/kodiwatcher/pair", json={"code": "ZZZZZZ"}).status_code == 401
     limited = client.post("/webhook/kodiwatcher/pair", json={"code": "ZZZZZZ"})
     assert limited.status_code == 429 and limited.json()["error"] == "rate_limited"
+
+
+def test_pair_webhook_rate_limits_per_forwarded_client(monkeypatch) -> None:
+    from api import appAuthAPI
+
+    monkeypatch.setitem(appAuthAPI._TRUSTED_PROXY_CACHE, "at", time.time())
+    monkeypatch.setitem(appAuthAPI._TRUSTED_PROXY_CACHE, "nets", [ipaddress.ip_network("172.16.0.0/12")])
+    client = TestClient(_webhook_client(monkeypatch, make_cfg()).app, client=("172.19.0.1", 50000))
+    attacker = {"x-forwarded-for": "203.0.113.9"}
+
+    for _ in range(addon.PAIR_MAX_FAILURES):
+        assert client.post("/webhook/kodiwatcher/pair", json={"code": "ZZZZZZ"}, headers=attacker).status_code == 401
+    assert client.post("/webhook/kodiwatcher/pair", json={"code": "ZZZZZZ"}, headers=attacker).status_code == 429
+
+    code, _ = addon.create_pair_code("bedroom")
+    ok = client.post("/webhook/kodiwatcher/pair", json={"code": code}, headers={"x-forwarded-for": "198.51.100.4"})
+    assert ok.status_code == 200 and ok.json()["instance"] == "bedroom"
 
 
 def test_pair_api_turns_the_addon_on_and_returns_a_code(monkeypatch) -> None:

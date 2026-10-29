@@ -1907,7 +1907,9 @@ async def webhook_kodiwatcher_pair(request: Request) -> JSONResponse:
     proto = str(request.headers.get("x-forwarded-proto") or "").split(",", 1)[0].strip().lower()
     if proto == "https" and base.startswith("http://"):
         base = "https://" + base[7:]
-    client = request.client.host if request.client else "-"
+    from api.appAuthAPI import _effective_client_ip
+
+    client = _effective_client_ip(request) if request.client else "-"
     status_code, body = kodi_addon.pair(cfg, code, base, client)
     if status_code != 200 and BASE_LOG:
         try:

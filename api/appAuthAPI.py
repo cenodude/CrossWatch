@@ -1056,7 +1056,7 @@ def _issue_session(cfg: dict[str, Any], request: Request, user: dict[str, Any] |
     exp = _now() + _session_ttl_sec(a)
 
     sessions = _prune_sessions(_iter_sessions(a))
-    ip = getattr(getattr(request, "client", None), "host", "") or ""
+    ip = _effective_client_ip(request)
     ua = str(request.headers.get("user-agent") or "")[:240]
     now = _now()
     ident = user or _admin_identity(a)
