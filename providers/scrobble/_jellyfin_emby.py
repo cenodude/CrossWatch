@@ -9,6 +9,7 @@ from typing import Any
 from urllib.parse import quote
 
 from providers.scrobble._media_server import DeliveryError, MediaServerSink, PUBLIC_IDS, combine_results, identical_copies, ids_match
+from providers.scrobble.scrobble import _log
 from providers.sync.jellyfin import _routes as jf_routes
 from providers.sync.jellyfin._common import _ids_from_provider_ids
 
@@ -187,6 +188,7 @@ class JellyfinEmbySink(MediaServerSink):
             self._body(adapter.client.post(path, params={**params, "DatePlayed": date_played}), read=False)
             data = self._fetch(adapter, row["Id"]).get("UserData") or {}
             marked = True
+            _log(f"{self.name} marked watched id={row['Id']} date={date_played}", "DEBUG")
         elif not complete and watched:
             return {"ok": True, "skipped": True, "reason": "destination_already_watched"}
         if complete:
@@ -210,4 +212,7 @@ class JellyfinEmbySink(MediaServerSink):
                 payload = {**{k: data[k] for k in ("Played", "PlayCount", "IsFavorite", "LastPlayedDate", "Rating") if k in data}, **payload}
             path, params = self._path(adapter, row["Id"], "data")
             self._body(adapter.client.post(path, params=params, json=payload), read=False)
+            _log(f"{self.name} resume written id={row['Id']} ticks={ticks} previous_ticks={int(data.get('PlaybackPositionTicks') or 0)}", "DEBUG")
+        else:
+            _log(f"{self.name} resume unchanged id={row['Id']} ticks={ticks}", "DEBUG")
         return {"ok": True}

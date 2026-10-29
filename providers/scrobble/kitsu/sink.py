@@ -9,7 +9,7 @@ from cw_platform.event_archive import record_watch
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
 from providers.scrobble._watched_gate import resolve_stop_action
 from providers.scrobble.anime_mapping import _event_item
-from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink
+from providers.scrobble.scrobble import ScrobbleEvent, ScrobbleSink, _log
 from providers.sync._mod_KITSU import KITSUModule, OPS
 from services.activity import record_scrobble_event
 
@@ -44,9 +44,11 @@ class KitsuSink(ScrobbleSink):
         unresolved = result.get("unresolved") or []
         if unresolved:
             reason = str(unresolved[0].get("reason") or "request_failed")
+            _log(f"kitsu watched write not applied '{ev.title or ''}' season={ev.season} episode={ev.number} reason={reason}", "DEBUG")
             if reason.startswith("request_failed"):
                 return {"ok": False, "error": reason, "retryable": "KitsuAuthError" not in reason}
             return {"ok": True, "skipped": True, "reason": reason}
+        _log(f"kitsu marked watched '{ev.title or ''}' season={ev.season} episode={ev.number} inst={self._instance_id}", "DEBUG")
         watch = scrobble.get("watch") or {}
         source = str(watch.get("route_provider") or "watcher")
         source_instance = str(watch.get("route_provider_instance") or "default")

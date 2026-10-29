@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from providers.scrobble._media_server import DeliveryError, MediaServerSink, combine_results, identical_copies, ids_match
+from providers.scrobble.scrobble import _log
 from providers.sync.kodi._common import _path_matches, normalize_uniqueids, path_allowed, watched_at_to_kodi
 
 _PROPS = {
@@ -162,6 +163,11 @@ class KodiSink(MediaServerSink):
         if self._profile(adapter) != profile:
             raise DeliveryError("destination_profile_changed")
         method = adapter.client.set_movie if item["type"] == "movie" else adapter.client.set_episode
-        if method(int(row[_ID[row["_kind"]]]), payload) != "OK":
+        kodi_id = int(row[_ID[row["_kind"]]])
+        if method(kodi_id, payload) != "OK":
             raise DeliveryError("kodi_write_not_acknowledged")
+        if complete:
+            _log(f"kodi {'marked watched' if not watched else 'already watched, resume cleared'} {row['_kind']} id={kodi_id} profile={profile}", "DEBUG")
+        else:
+            _log(f"kodi resume written {row['_kind']} id={kodi_id} position_s={payload['resume']['position']:.0f} total_s={total:.0f} profile={profile}", "DEBUG")
         return {"ok": True}

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from providers.scrobble._media_server import DeliveryError, MediaServerSink
+from providers.scrobble.scrobble import _log
 from providers.sync._mod_SILO import SILOModule
 from providers.sync.silo._common import as_int, cfg_section, item_detail, library, resolve_item, safe_json, selected_libraries, silo_request
 
@@ -69,5 +70,9 @@ class SiloSink(MediaServerSink):
             check = item_detail(adapter, cid, feature="scrobble")
             check_state = check.get("user_state")
             if not (isinstance(check_state, dict) and check_state.get("played")):
+                _log(f"silo watched write ignored by server content={cid} updated_at={entry.get('updated_at') or 'now'}", "DEBUG")
                 return {"ok": True, "skipped": True, "reason": "ignored_by_server"}
+            _log(f"silo marked watched content={cid} updated_at={entry.get('updated_at') or 'now'}", "DEBUG")
+        else:
+            _log(f"silo resume written content={cid} position_ms={entry['position_ms']} duration_ms={duration_ms}", "DEBUG")
         return {"ok": True}

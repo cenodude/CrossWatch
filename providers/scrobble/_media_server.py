@@ -228,6 +228,9 @@ class MediaServerSink:
                         reason = "duplicate" if progress == sent[2] else "progress_step_not_reached"
                         return {"ok": True, "skipped": True, "reason": reason}
                 result = self._deliver(adapter, item, complete, progress, route_destination(cfg), _played_at(event))
+                outcome = f"skipped reason={result.get('reason') or result.get('error')}" if result.get("skipped") or not result.get("ok") else "written"
+                _log(f"{self.name} delivery {'watched' if complete else 'progress'} {item.get('type')} '{event.title or ''}' "
+                     f"p={progress:.1f} inst={self._instance_id} -> {outcome}", "DEBUG")
                 if not result.get("ok") or result.get("skipped"):
                     return result
                 self._sent[session] = (now, "complete" if complete else event.action, progress)
