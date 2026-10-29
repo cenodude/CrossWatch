@@ -83,6 +83,18 @@ def progress_of(row: Mapping[str, Any]) -> tuple[float, int | None, int | None]:
     return percent, position_ms, duration_ms
 
 
+def _session_kind(content_id: str, row: Mapping[str, Any]) -> str:
+    if series_id_of(content_id):
+        return "episode"
+    kind, _ids = ids_from_content_id(content_id)
+    if kind == "movie":
+        return "movie"
+    media_type = str(row.get("media_type") or "").strip().lower()
+    if media_type in ("series", "show", "tv") and as_int(row.get("season_number")) is not None and as_int(row.get("episode_number")) is not None:
+        return "episode"
+    return media_type
+
+
 class SiloWatchService:
     def __init__(
         self,
@@ -116,6 +128,17 @@ class SiloWatchService:
             self.session.headers["User-Agent"] = http_user_agent("Watcher", override_env="CW_SILO_UA")
         except Exception:
             pass
+        lvl = "DEBUG" if self._quiet_startup else "INFO"
+        _log(f"Ensuring Watcher is running; inst={self._instance_id} | wired sinks: {self.sinks_count()}", lvl)
+
+    def sinks_count(self) -> int:
+        try:
+            sc = getattr(self._dispatch, "sinks_count", None)
+            if callable(sc):
+                return int(sc())
+            return len(getattr(self._dispatch, "_dispatchers", None) or getattr(self._dispatch, "_sinks", None) or [])
+        except Exception:
+            return 0
 
     @property
     def config(self) -> dict[str, Any]:
@@ -172,7 +195,7 @@ class SiloWatchService:
 
     def _metadata(self, row: Mapping[str, Any]) -> dict[str, Any] | None:
         cid = str(row.get("content_id") or "").strip()
-        media_type = str(row.get("media_type") or "").strip().lower()
+        media_type = _session_kind(cid, row)
         if not cid or media_type not in ("movie", "episode"):
             return None
         if media_type == "movie":
@@ -276,6 +299,9 @@ class SiloWatchService:
             return None
         meta = self._metadata(row)
         if not meta:
+            if source_key not in self._skipped:
+                self._skipped.add(source_key)
+                _log(f"Silo session skipped content={cid} media_type={row.get('media_type')}: no usable ids or episode numbers", "DEBUG")
             return None
         server = str(self._block(self._active_cfg()).get("server_url") or "")
         percent, position_ms, duration_ms = progress_of(row)
@@ -420,6 +446,7 @@ class SiloWatchService:
                 _log("Silo is not connected; watcher not started.", "WARNING")
             return
         self._stop.clear()
+        _log(f"Watcher connected; inst={self._instance_id}", "DEBUG" if self._quiet_startup else "INFO")
         while not self._stop.is_set():
             active = self._tick()
             if self._offline:

@@ -137,6 +137,21 @@ def test_watcher_episode_with_legacy_id_uses_detail_series(monkeypatch: pytest.M
     assert ev.ids == {"tvdb_show": "365700", "tmdb_show": "117031", "imdb_show": "tt12", "tmdb_episode": "2241240", "tvdb_episode": "7243495"}
 
 
+@pytest.mark.parametrize("content_id", ["episode-tvdb-477711-1-5", "149382054478429163"])
+def test_watcher_episode_reported_as_series(monkeypatch: pytest.MonkeyPatch, server: FakeServer, content_id: str) -> None:
+    rows = [_session(content_id=content_id, media_type="series", media_title="Line of Fire (2026)", series_name="Line of Fire (2026)", episode_name="Cul-De-Sac", season_number=1, episode_number=5)]
+    server.on("GET", "/profiles/household/sessions", lambda kw: ResponseStub(200, {"items": rows}))
+    server.on("GET", f"/catalog/items/{content_id}", lambda kw: ResponseStub(200, {"content_id": content_id, "series_id": "series-tvdb-477711", "tvdb_id": "9001"}))
+    server.on("GET", "/catalog/items/series-tvdb-477711", lambda kw: ResponseStub(200, {"content_id": "series-tvdb-477711", "tvdb_id": "477711", "tmdb_id": "300"}))
+    svc, got = _watcher(monkeypatch)
+
+    svc._tick()
+
+    ev = got.events[0]
+    assert ev.action == "start" and ev.media_type == "episode" and ev.season == 1 and ev.number == 5
+    assert ev.title == "Line of Fire (2026)" and ev.ids["tvdb_show"] == "477711" and ev.ids["tvdb_episode"] == "9001"
+
+
 def test_watcher_marks_offline_on_server_error(monkeypatch: pytest.MonkeyPatch, server: FakeServer) -> None:
     server.on("GET", "/profiles/household/sessions", lambda kw: ResponseStub(403, {"type": "x/permission_denied"}))
     svc, got = _watcher(monkeypatch)
