@@ -65,6 +65,7 @@ class Server:
                 raise RuntimeError("failed")
             if path == "/:/scrobble":
                 self.items[str(params["key"])].viewCount = 1
+                self.items[str(params["key"])].viewOffset = 0
             if path == "/:/timeline":
                 self.items[str(params["ratingKey"])].viewOffset = params["time"]
             return Element("MediaContainer")
@@ -124,13 +125,14 @@ def test_completion_writes_put_once_and_never_uses_source_rating_key(harness):
 
 def test_resume_uses_destination_duration_stopped_timeline_and_throttles(harness):
     server, _, _ = harness
+    server.items["10"].duration = 1_000_000
     dest = plex.PlexSink()
     assert dest.send(event(action="start", progress=30, duration_ms=200_000), config())["ok"]
     assert dest.send(event(action="start", progress=30), config())["reason"] == "duplicate"
     assert dest.send(event(action="start", progress=31), config())["reason"] == "progress_step_not_reached"
     assert dest.send(event(action="pause", progress=32), config())["ok"]
     writes = [x for x in server.calls if x[1]]
-    assert [x[2]["time"] for x in writes] == [30_000, 32_000]
+    assert [x[2]["time"] for x in writes] == [300_000, 320_000]
     assert all(x[0] == "/:/timeline" and x[1] == "POST" and x[2]["state"] == "stopped" for x in writes)
 
 
@@ -146,6 +148,15 @@ def test_completion_clears_resume_without_unwatching(harness):
     assert plex.PlexSink().send(event(), config())["ok"]
     assert server.items["10"].viewOffset == 0
     assert server.items["10"].viewCount == 1
+    assert not any(x[0] == "/:/timeline" for x in server.calls)
+
+
+def test_resume_at_or_below_plex_minimum_is_skipped(harness):
+    server, _, _ = harness
+    server.items["10"].duration = 2_644_350
+    result = plex.PlexSink().send(event(action="pause", progress=2.2), config())
+    assert result == {"ok": True, "skipped": True, "reason": "below_plex_resume_minimum"}
+    assert not any(x[0] == "/:/timeline" for x in server.calls)
 
 
 @pytest.mark.parametrize("source,target,allowed", [("default", "default", False), ("P01", "P01", False), ("default", "P01", True), ("P01", "default", True)])
@@ -299,6 +310,7 @@ def test_episode_matches_show_ids_and_coordinates(harness):
 def test_episode_conflicting_id_accepts_verified_show_and_coordinates(harness, season, action, progress):
     server, _, _ = harness
     episode = media("20", "episode", {"imdb": "tt0000999", "tvdb": "456"}, parentIndex=season, index=2, grandparentRatingKey="30")
+    episode.duration = 1_000_000
     show = media("30", "show", {"tmdb": "42"}, episodes=lambda **kw: [episode])
     server.items = {"20": episode, "30": show}
     ev = event(action=action, progress=progress, media_type="episode", ids={"imdb": "tt0000111", "tvdb": "456", "tmdb_show": "42"}, season=season, number=2)
