@@ -100,6 +100,7 @@
     if (!managed) return true;
     const perms = auth?.permissions || {};
     if (normalized === "main") return perms.dashboard !== false;
+    if (normalized === "settings") return perms.write === true && !!document.getElementById("page-settings");
     if (["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync"].includes(normalized)) return perms.write === true;
     return false;
   }
@@ -982,7 +983,7 @@
       const perms = auth?.permissions || {};
       const dashboardAllowed = perms.dashboard !== false;
       const writeAllowed = perms.write === true;
-      if (!(tab === "main" && dashboardAllowed) && !(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export"].includes(tab) && writeAllowed)) tab = allowedRouteTab(tab);
+      if (!(tab === "main" && dashboardAllowed) && !(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export"].includes(tab) && writeAllowed) && !(tab === "settings" && writeAllowed && byId("page-settings"))) tab = allowedRouteTab(tab);
     }
     writeRouteHash(tab);
 

@@ -558,7 +558,7 @@
 
   function setAvatar(url) {
     const normalized = window.CW?.AccountMenu?.normalizeAvatarUrl?.(url) || String(url || "").trim();
-    const nodes = [viewingAs() ? null : $("#profile-avatar-button"), $("#cw-nav-profile-avatar"), $("#profile-settings-avatar")].filter(Boolean);
+    const nodes = [viewingAs() ? null : $("#profile-avatar-button"), viewingAs() ? null : $("#cw-nav-profile-avatar"), $("#profile-settings-avatar")].filter(Boolean);
     for (const node of nodes) {
       if (window.CW?.AccountMenu?.setAvatarNode) {
         window.CW.AccountMenu.setAvatarNode(node, normalized);

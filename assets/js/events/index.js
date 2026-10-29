@@ -751,8 +751,9 @@ export default {
     Q("#ev-mode", root).appendChild(modeSeg.el);
     ddCategory.el.style.display = (mode === "grouped") ? "" : "none";
 
+    const canAudit = isAdmin && !String(window.CW?.OverviewProfile?.id || "").trim();
     let view = initialDomain && ["sync", "scrobble", "audit"].includes(initialDomain) ? initialDomain : ls("cw.events.view", domain === "scrobble" ? "scrobble" : "sync");
-    if (view === "audit" && !isAdmin) view = "sync";
+    if (view === "audit" && !canAudit) view = "sync";
     if (view === "sync" || view === "scrobble" || view === "audit") domain = view;
     let statsRange = ls("cw.events.stats.range", "30d");
 
@@ -778,7 +779,7 @@ export default {
     const VIEW_TABS = [
       { value: "sync", label: "Sync", icon: "sync" },
       { value: "scrobble", label: "Scrobble", icon: "play_circle" },
-      ...(isAdmin ? [{ value: "audit", label: "Audits", icon: "admin_panel_settings" }] : []),
+      ...(canAudit ? [{ value: "audit", label: "Audits", icon: "admin_panel_settings" }] : []),
       { value: "statistics", label: "Statistics", icon: "bar_chart" },
     ];
     const RANGE_TABS = [["24h", "24H"], ["7d", "7D"], ["30d", "30D"], ["90d", "90D"]];

@@ -38,16 +38,98 @@ MONITOR_GET_PREFIXES = ("/api/events/groups/", "/api/events/item/", "/api/events
 MONITOR_POST_PATHS = frozenset({"/api/mcp"})
 
 
+SETTINGS_PERMISSION_KEYS = ("pairs", "scrobbler", "schedule", "connections")
+
+RECONNECT_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
+    "plex": (("POST", "/api/plex/pin/new"),),
+    "trakt": (("POST", "/api/trakt/pin/new"),),
+    "simkl": (("POST", "/api/simkl/authorize"), ("POST", "/api/simkl/pin/start"), ("POST", "/api/simkl/pin/poll"), ("POST", "/api/simkl/pin/cancel")),
+    "anilist": (("POST", "/api/anilist/authorize"), ("GET", "/api/anilist/status")),
+    "jellyfin": (("POST", "/api/jellyfin/login"), ("GET", "/api/jellyfin/status"), ("GET", "/api/jellyfin/quickconnect/available"), ("POST", "/api/jellyfin/quickconnect/start"), ("GET", "/api/jellyfin/quickconnect/poll"), ("POST", "/api/jellyfin/quickconnect/cancel")),
+    "emby": (("POST", "/api/emby/login"), ("GET", "/api/emby/status")),
+    "kitsu": (("POST", "/api/kitsu/connect"), ("GET", "/api/kitsu/status")),
+    "stremio": (("POST", "/api/stremio/connect"), ("GET", "/api/stremio/status")),
+    "mdblist": (("POST", "/api/mdblist/device/start"), ("POST", "/api/mdblist/device/poll"), ("POST", "/api/mdblist/refresh"), ("GET", "/api/mdblist/status")),
+    "myanimelist": (("POST", "/api/myanimelist/oauth/start"), ("POST", "/api/myanimelist/oauth/poll"), ("POST", "/api/myanimelist/oauth/cancel"), ("POST", "/api/myanimelist/refresh"), ("GET", "/api/myanimelist/status")),
+    "wetrakr": (("POST", "/api/wetrakr/oauth/start"), ("POST", "/api/wetrakr/oauth/finish"), ("POST", "/api/wetrakr/oauth/cancel"), ("POST", "/api/wetrakr/refresh"), ("GET", "/api/wetrakr/status")),
+    "punchplay": (("POST", "/api/punchplay/device/start"), ("POST", "/api/punchplay/device/poll"), ("POST", "/api/punchplay/device/cancel"), ("POST", "/api/punchplay/refresh"), ("GET", "/api/punchplay/status")),
+    "bingebase": (("POST", "/api/bingebase/device/start"), ("POST", "/api/bingebase/device/poll"), ("POST", "/api/bingebase/device/cancel"), ("GET", "/api/bingebase/status")),
+    "flicklist": (("POST", "/api/flicklist/device/start"), ("POST", "/api/flicklist/device/poll"), ("POST", "/api/flicklist/device/cancel"), ("POST", "/api/flicklist/refresh"), ("GET", "/api/flicklist/status")),
+    "nuvio": (("POST", "/api/nuvio/device/start"), ("POST", "/api/nuvio/device/poll"), ("POST", "/api/nuvio/device/finish"), ("POST", "/api/nuvio/refresh"), ("GET", "/api/nuvio/status"), ("GET", "/api/nuvio/profiles"), ("POST", "/api/nuvio/profile/select")),
+    "silo": (("POST", "/api/silo/device/start"), ("POST", "/api/silo/device/poll"), ("POST", "/api/silo/device/cancel"), ("POST", "/api/silo/refresh"), ("GET", "/api/silo/status"), ("GET", "/api/silo/profiles"), ("POST", "/api/silo/profile/select")),
+    "tmdb_sync": (("POST", "/api/tmdb_sync/connect/start"), ("POST", "/api/tmdb_sync/connect/finish"), ("GET", "/api/tmdb_sync/verify")),
+    "crosswatch": (("POST", "/api/crosswatch/connect"),),
+}
+_RECONNECT_INDEX = {(method, path): provider for provider, routes in RECONNECT_ROUTES.items() for method, path in routes}
+RECONNECT_LOCKED_FIELDS: dict[str, frozenset[str]] = {
+    "/api/trakt/pin/new": frozenset({"client_id", "client_secret"}),
+    "/api/jellyfin/login": frozenset({"server", "verify_ssl"}),
+    "/api/jellyfin/quickconnect/start": frozenset({"server", "verify_ssl"}),
+    "/api/emby/login": frozenset({"server", "verify_ssl", "timeout"}),
+    "/api/silo/device/start": frozenset({"server_url", "verify_ssl"}),
+    "/api/flicklist/device/start": frozenset({"client_id"}),
+    "/api/tmdb_sync/connect/start": frozenset({"api_key", "read_token"}),
+    "/api/tmdb_sync/connect/finish": frozenset({"api_key"}),
+}
+
+
+def reconnect_connection_keys() -> list[str]:
+    return sorted({"TMDB" if provider == "tmdb_sync" else provider.upper() for provider in RECONNECT_ROUTES})
+
+
+def reconnect_route_provider(path: Any, method: Any) -> str:
+    return _RECONNECT_INDEX.get((str(method or "GET").upper(), str(path or "").split("?", 1)[0]), "")
+
+
+def managed_request(request: Any) -> bool:
+    try:
+        user = getattr(request.state, "cw_user", None)
+    except Exception:
+        return False
+    return isinstance(user, Mapping) and not bool(user.get("is_admin"))
+
+
+def reconnect_payload(request: Any, path: str, payload: Any) -> Any:
+    locked = RECONNECT_LOCKED_FIELDS.get(path)
+    if not locked or not isinstance(payload, dict) or not managed_request(request):
+        return payload
+    return {key: value for key, value in payload.items() if key not in locked}
+
+
 def clean_managed_permissions(raw: Any) -> dict[str, bool]:
     src = raw if isinstance(raw, Mapping) else {}
     monitor = src.get("monitor") is True
-    return {
+    write = not monitor and bool(src.get("write"))
+    out = {
         "dashboard": not monitor and src.get("dashboard") is not False,
         "watchlist": not monitor and src.get("watchlist") is not False,
         "playback": not monitor and src.get("playback") is not False,
-        "write": not monitor and bool(src.get("write")),
+        "write": write,
         "monitor": monitor,
     }
+    for key in SETTINGS_PERMISSION_KEYS:
+        out[key] = write and src.get(key) is not False
+    return out
+
+
+def managed_reconnect_allowed(cfg: Mapping[str, Any], user: Mapping[str, Any] | None, provider: str, instance: Any) -> bool:
+    if not isinstance(user, Mapping) or bool(user.get("is_admin")) or not provider:
+        return False
+    if not clean_managed_permissions(user.get("permissions"))["connections"]:
+        return False
+    if not str(instance or "").strip():
+        return False
+    inst = normalize_instance_id(instance)
+    if inst == "default" or not user_can_access_instance(cfg, user, provider, inst):
+        return False
+    return sole_instance_owner_profile_id(cfg, provider, inst) == managed_profile_id(user)
+
+
+def managed_settings_access(user: Mapping[str, Any] | None) -> bool:
+    if not isinstance(user, Mapping) or bool(user.get("is_admin")):
+        return False
+    perms = clean_managed_permissions(user.get("permissions"))
+    return any(perms[key] for key in SETTINGS_PERMISSION_KEYS)
 
 
 def is_monitor_user(user: Mapping[str, Any] | None) -> bool:
@@ -163,9 +245,34 @@ def profile_allows_instance(profile_instances: Mapping[str, list[str]], provider
 
 
 VIEW_AS_HEADER = "x-cw-view-as"
+ASSIGN_PROFILE_HEADER = "x-cw-assign-profile"
 
 
 VIEW_AS_ALL = {"all", "__all__"}
+
+
+def _signed_in_admin(request: Any) -> bool:
+    try:
+        user = getattr(getattr(request, "state", None), "cw_user", None)
+    except Exception:
+        return False
+    return isinstance(user, Mapping) and bool(user.get("is_admin")) and not bool(user.get("monitor_view"))
+
+
+def view_as_scope_profile(cfg: Mapping[str, Any], request: Any) -> str:
+    if not _signed_in_admin(request):
+        return ""
+    return valid_user_profile_id(cfg, requested_view_as_profile(request))
+
+
+def requested_assign_profile(cfg: Mapping[str, Any], request: Any) -> str:
+    if not _signed_in_admin(request):
+        return ""
+    try:
+        raw = request.headers.get(ASSIGN_PROFILE_HEADER) or ""
+    except Exception:
+        return ""
+    return valid_user_profile_id(cfg, raw)
 
 
 def requested_view_as_profile(request: Any) -> str:

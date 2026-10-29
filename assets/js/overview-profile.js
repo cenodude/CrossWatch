@@ -101,22 +101,80 @@
     return window.CW?.AccountMenu?.normalizeAvatarUrl?.(value) || String(value || "").trim();
   }
 
-  function renderProfileLink() {
-    const link = $("#cw-nav-profile-link");
-    const avatar = $("#cw-nav-profile-avatar");
-    if (!link || !avatar) return;
-    link.classList.remove("hidden");
-    const fallback = authUser?.is_admin ? "Administrator" : "Profile";
-    const label = String(authUser?.display_name || authUser?.label || authUser?.username || fallback).trim();
-    link.title = label ? `Open ${label} menu` : "Open profile menu";
-    link.setAttribute("aria-label", link.title);
-    const url = currentAvatarUrl(authUser?.avatar_url);
+  function initialsFor(name) {
+    const words = String(name || "").trim().split(" ").filter(Boolean);
+    if (!words.length) return "";
+    return (words.length === 1 ? words[0].slice(0, 2) : words[0][0] + words[1][0]).toUpperCase();
+  }
+
+  function setNavAvatar(avatar, url) {
     if (window.CW?.AccountMenu?.setAvatarNode) window.CW.AccountMenu.setAvatarNode(avatar, url);
     else {
       avatar.innerHTML = url ? `<img src="${esc(url)}" alt="">` : "person";
       avatar.classList.toggle("material-symbols-rounded", !url);
     }
   }
+
+  function renderViewAsMenu(viewed) {
+    const menu = $("#cw-profile-menu");
+    if (!menu) return;
+    let block = menu.querySelector(":scope > [data-cw-nav-view-as]");
+    if (!viewed) {
+      block?.remove();
+      return;
+    }
+    if (!block) {
+      block = document.createElement("div");
+      block.className = "cw-menu-view-as";
+      block.dataset.cwNavViewAs = "1";
+      menu.prepend(block);
+    }
+    block.innerHTML = `
+      <div class="cw-menu-view-as-head"><span class="material-symbols-rounded" aria-hidden="true">visibility</span><span><small>Viewing as</small><strong>${esc(viewed.label)}</strong></span></div>
+      <button class="cw-menu-item" type="button" role="menuitem" data-cw-nav-view-as-stop><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">visibility_off</span><span>Stop viewing as</span></button>
+      <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>`;
+  }
+
+  function renderProfileLink() {
+    const link = $("#cw-nav-profile-link");
+    const avatar = $("#cw-nav-profile-avatar");
+    if (!link || !avatar) return;
+    link.classList.remove("hidden");
+    const viewed = isAdmin && activeId ? activeProfile() : null;
+    link.classList.toggle("is-viewing-as", !!viewed);
+    let badge = link.querySelector(":scope > .cw-nav-view-as-badge");
+    if (viewed && !badge) {
+      badge = document.createElement("span");
+      badge.className = "cw-nav-view-as-badge material-symbols-rounded";
+      badge.setAttribute("aria-hidden", "true");
+      badge.textContent = "visibility";
+      avatar.after(badge);
+    } else if (!viewed) badge?.remove();
+    renderViewAsMenu(viewed);
+    if (viewed) {
+      link.title = `Viewing as ${viewed.label}`;
+      link.setAttribute("aria-label", `${link.title}. Open menu`);
+      if (viewed.avatar_url) setNavAvatar(avatar, viewed.avatar_url);
+      else {
+        avatar.classList.remove("material-symbols-rounded");
+        avatar.dataset.cwAvatarUrl = "";
+        avatar.innerHTML = `<span class="cw-nav-view-as-initials">${esc(initialsFor(viewed.label)) || "?"}</span>`;
+      }
+      return;
+    }
+    const fallback = authUser?.is_admin ? "Administrator" : "Profile";
+    const label = String(authUser?.display_name || authUser?.label || authUser?.username || fallback).trim();
+    link.title = label ? `Open ${label} menu` : "Open profile menu";
+    link.setAttribute("aria-label", link.title);
+    setNavAvatar(avatar, currentAvatarUrl(authUser?.avatar_url));
+  }
+
+  document.addEventListener("click", (event) => {
+    if (!event.target?.closest?.("[data-cw-nav-view-as-stop]")) return;
+    $("#cw-profile-menu")?.classList.add("hidden");
+    $("#cw-nav-profile-link")?.setAttribute("aria-expanded", "false");
+    setActive("");
+  });
 
   function setActive(id) {
     if (!isAdmin) return false;
@@ -214,6 +272,7 @@
           .map((row) => ({
             id: String(row?.id || "").trim(),
             label: String(row?.label || row?.id || "").trim(),
+            avatar_url: String(row?.avatar_url || "").trim(),
             instances: normalizeInstances(row?.instances || {}),
           }))
           .filter((row) => row.id && row.label);

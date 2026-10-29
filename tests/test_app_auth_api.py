@@ -902,7 +902,7 @@ def test_created_managed_user_defaults_to_full_access(monkeypatch) -> None:
     restricted_perms = _json_body(restricted)["user"]["permissions"]
 
     assert created.status_code == 200
-    assert created_perms == {"dashboard": True, "watchlist": True, "playback": True, "write": True, "monitor": False}
+    assert created_perms == {"dashboard": True, "watchlist": True, "playback": True, "write": True, "monitor": False, "pairs": True, "scrobbler": True, "schedule": True, "connections": True}
     assert restricted.status_code == 200
     assert restricted_perms["write"] is False
     assert restricted_perms["dashboard"] is True

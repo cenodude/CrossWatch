@@ -123,6 +123,7 @@
       const r = await request;
       if (current !== generation || instance !== profile.getInstance()) return;
       if (!r.ok || !r.data?.ok) throw new Error(r.data?.error || "Kitsu connection failed");
+      if (r.data.saved) { pending.delete(instance); setConn(true); return; }
       pending.set(instance, r.data.connection);
       setConn(true, "Connected - save settings to apply");
     } catch (error) {

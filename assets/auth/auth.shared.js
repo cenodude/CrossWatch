@@ -477,12 +477,14 @@
           option.dataset.friendlyLabel = txt(meta?.friendly_label);
           sel.appendChild(option);
         };
+        const scope = w.CW?.SettingsScope?.active?.() ? w.CW.SettingsScope : null;
+        const allowed = (id) => !scope || scope.allowsInstance(apiProvider, id);
         const defaultRow = opts.find((item) => item && item.id === "default") || {};
-        addOpt("default", defaultRow.display_label || defaultRow.label || "Default", defaultRow);
+        if (allowed("default")) addOpt("default", defaultRow.display_label || defaultRow.label || "Default", defaultRow);
         opts.forEach((item) => {
-          if (item && item.id && item.id !== "default") addOpt(item.id, item.display_label || item.label || item.id, item);
+          if (item && item.id && item.id !== "default" && allowed(item.id)) addOpt(item.id, item.display_label || item.label || item.id, item);
         });
-        if (!Array.from(sel.options).some((option) => option.value === want)) want = "default";
+        if (!Array.from(sel.options).some((option) => option.value === want)) want = allowed("default") ? "default" : (sel.options[0]?.value || "default");
         if (want === "default" && defaultRow.configured === false) {
           const firstReady = opts.find((item) => item && item.id && item.id !== "default" && item.configured);
           if (firstReady) want = String(firstReady.id);

@@ -10,11 +10,11 @@ from typing import Any
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import JSONResponse
 
-from cw_platform.access_policy import managed_profile_id, profile_label_for_id, request_user, route_effective_profile_id, valid_user_profile_id, webhook_effective_profile_id
+from cw_platform.access_policy import managed_profile_id, profile_label_for_id, request_user, requested_assign_profile, route_effective_profile_id, sole_instance_owner_profile_id, user_can_access_instance, valid_user_profile_id, webhook_effective_profile_id
 from cw_platform.config_base import load_config, save_config
 from cw_platform.identity_links import WEBHOOK_IDENTITY_PROVIDERS, clean_identity_map
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, list_user_profiles, normalize_instance_id, normalize_user_profile_id, sanitize_instance_label
-from cw_platform.user_profile_resources import webhook_assigned_profile_id, webhook_resource_id
+from cw_platform.user_profile_resources import webhook_assigned_profile_id, webhook_assignment_root, webhook_resource_id
 from cw_platform.provider_usage import WEBHOOK_SOURCE_PROVIDERS, provider_label, webhook_source_enabled
 from providers.auth import runtime as auth_runtime
 from providers.scrobble.routes import (
@@ -620,10 +620,12 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
     runtime = _runtime_status(request, cfg)
     routes = _normalized_routes(cfg, request, runtime)
     user = request_user(request)
-    if isinstance(user, Mapping) and not bool(user.get("is_admin")):
+    managed = isinstance(user, Mapping) and not bool(user.get("is_admin"))
+    if managed:
         pid = managed_profile_id(user)
         webhooks = [row for row in webhooks if pid and webhook_effective_profile_id(cfg, row) == pid]
         routes = [row for row in routes if _user_can_access_route(cfg, user, row)]
+        runtime = _scoped_runtime(runtime, {str(row.get("id") or "") for row in routes})
     sc = _dict(cfg.get("scrobble"))
     watch = _dict(sc.get("watch"))
     wh = _dict(sc.get("webhook"))
@@ -665,7 +667,7 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
             "myanimelist": bool(watch.get("plex_myanimelist_ratings")),
             "scrob": bool(watch.get("plex_scrob_ratings")),
             "silo": bool(watch.get("plex_silo_ratings")),
-            "endpoint_url": _global_plex_ratings_url(request, cfg),
+            "endpoint_url": "" if managed else _global_plex_ratings_url(request, cfg),
         },
     }
     sec = _dict(cfg.get("security"))
@@ -678,8 +680,8 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
     return {
         "ok": True,
         "source_state": global_settings,
-        "eligible_sources": _eligible_sources(cfg),
-        "destination_availability": _destination_availability(cfg),
+        "eligible_sources": _scoped_profile_groups(cfg, user, _eligible_sources(cfg)),
+        "destination_availability": _scoped_profile_groups(cfg, user, _destination_availability(cfg)),
         "webhooks": webhooks,
         "routes": routes,
         "watcher_runtime": runtime,
@@ -687,6 +689,40 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
         "hybrid_warning": bool(sources.get("webhook") and sources.get("watcher")),
         "legacy_webhooks": legacy_webhooks,
     }
+
+
+def _scoped_runtime(runtime: Mapping[str, Any], route_ids: set[str]) -> dict[str, Any]:
+    routes = [r for r in runtime.get("routes") or [] if isinstance(r, Mapping) and str(r.get("id") or "") in route_ids]
+    groups = []
+    for group in runtime.get("groups") or []:
+        if not isinstance(group, Mapping):
+            continue
+        own = [rid for rid in group.get("routes") or [] if str(rid or "") in route_ids]
+        if own:
+            groups.append({**group, "routes": own})
+    running_routes = [r for r in routes if r.get("running")]
+    return {
+        **runtime,
+        "groups": groups,
+        "routes": routes,
+        "running_route_count": len(running_routes),
+        "configured_route_count": len(route_ids),
+        "active_source_providers": sorted({str(g.get("provider") or "").strip().lower() for g in groups if g.get("running") and g.get("provider")}),
+        "active_sinks": sorted({str(r.get("sink") or "").strip().lower() for r in running_routes if r.get("sink")}),
+    }
+
+
+def _scoped_profile_groups(cfg: Mapping[str, Any], user: Any, groups: Any) -> Any:
+    if not isinstance(user, Mapping) or bool(user.get("is_admin")) or not isinstance(groups, list):
+        return groups
+    out = []
+    for group in groups:
+        if not isinstance(group, Mapping):
+            continue
+        row = dict(group)
+        row["profiles"] = [p for p in (group.get("profiles") or []) if isinstance(p, Mapping) and user_can_access_instance(cfg, user, group.get("provider"), p.get("instance"))]
+        out.append(row)
+    return out
 
 
 def _sync_derived_sources(cfg: dict[str, Any]) -> None:
@@ -854,6 +890,40 @@ def api_scrobbler_overview(request: Request) -> JSONResponse:
     return JSONResponse(build_overview(cfg, request), headers={"Cache-Control": "no-store"})
 
 
+def _managed_user(request: Request) -> Mapping[str, Any] | None:
+    user = request_user(request)
+    return user if isinstance(user, Mapping) and not bool(user.get("is_admin")) else None
+
+
+def _require_own_instance(cfg: Mapping[str, Any], user: Mapping[str, Any] | None, provider: Any, instance: Any, field: str) -> None:
+    if user is not None and not user_can_access_instance(cfg, user, provider, instance):
+        raise ValidationFailure([_err(field, "profile_scope_denied", "This instance is not part of your profile")])
+
+
+def _require_own_webhook_source(cfg: Mapping[str, Any], user: Mapping[str, Any] | None, provider: Any, instance: Any) -> None:
+    if user is None:
+        return
+    _require_own_instance(cfg, user, provider, instance, "provider_instance")
+    if sole_instance_owner_profile_id(cfg, provider, instance) != managed_profile_id(user):
+        raise ValidationFailure([_err("provider_instance", "profile_scope_denied", "This media instance is shared with another profile, so only the admin can change its webhook")])
+
+
+def _require_route_scope(cfg: Mapping[str, Any], user: Mapping[str, Any] | None, route: Mapping[str, Any]) -> None:
+    _require_own_instance(cfg, user, route.get("provider"), route.get("provider_instance"), "provider_instance")
+    _require_own_instance(cfg, user, route.get("sink"), route.get("sink_instance"), "sink_instance")
+
+
+def _assign_webhook_sinks(cfg: dict[str, Any], pid: str, provider: str, instance: str, sinks: Any, *, force: bool = False) -> None:
+    if not pid or not sinks:
+        return
+    effective = webhook_settings(cfg, provider, instance)
+    assignments = webhook_assignment_root(cfg, create=True)
+    for sink in sinks:
+        rid = webhook_resource_id(provider, instance, sink, webhook_sink_instance(effective, sink))
+        if rid and (force or not valid_user_profile_id(cfg, assignments.get(rid))):
+            assignments[rid] = pid
+
+
 @router.post("/webhooks/profile")
 def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResponse:
     try:
@@ -862,6 +932,8 @@ def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(..
         provider = _source_provider(payload.get("provider"))
         instance = normalize_instance_id(payload.get("provider_instance"))
         _require_source_profile(after, provider, instance)
+        user = _managed_user(request)
+        _require_own_webhook_source(after, user, provider, instance)
         settings = _normalize_webhook_settings(after, provider, payload)
         if settings.get("simkl_rewatches") is True:
             effective = {**webhook_settings(after, provider, instance), **settings}
@@ -905,6 +977,13 @@ def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(..
             node.pop("anime_mapping", None)
         if "enabled" not in node:
             node["enabled"] = True
+        if user is not None:
+            sinks_now = webhook_sinks(after, provider, instance)
+            for sink in sinks_now:
+                _require_own_instance(after, user, sink, webhook_sink_instance(effective, sink), f"sink_instances.{sink}")
+            _assign_webhook_sinks(after, managed_profile_id(user), provider, instance, sinks_now, force=True)
+        else:
+            _assign_webhook_sinks(after, requested_assign_profile(after, request), provider, instance, add_sinks)
         _ensure_media_profile_webhook_ids(after, regenerate=bool(payload.get("regenerate")))
         return JSONResponse(_save_and_runtime(request, before, after), headers={"Cache-Control": "no-store"})
     except ValidationFailure as exc:
@@ -918,6 +997,7 @@ def api_profile_webhook_disable(request: Request, payload: dict[str, Any] = Body
         after = _clone(before)
         provider = _source_provider(payload.get("provider"))
         instance = normalize_instance_id(payload.get("provider_instance"))
+        _require_own_webhook_source(after, _managed_user(request), provider, instance)
         sink = str(payload.get("sink") or "").strip().lower()
         if bool(payload.get("remove")):
             if sink:
@@ -958,6 +1038,7 @@ def api_profile_webhook_regenerate(request: Request, payload: dict[str, Any] = B
         provider = _source_provider(payload.get("provider"))
         instance = normalize_instance_id(payload.get("provider_instance"))
         _require_source_profile(after, provider, instance)
+        _require_own_webhook_source(after, _managed_user(request), provider, instance)
         sec = after.setdefault("security", {})
         ids = sec.setdefault("webhook_ids", {})
         ids[f"profile:{provider}:{instance}"] = _gen_webhook_id()
@@ -1000,8 +1081,16 @@ def api_route_create(request: Request, payload: dict[str, Any] = Body(...)) -> J
         routes = _routes_node(after)
         route_body = dict(payload or {})
         route_body["id"] = str(route_body.get("id") or _next_route_id(routes)).strip()
+        user = _managed_user(request)
+        if user is not None:
+            route_body["profile_id"] = managed_profile_id(user)
+        elif not str(route_body.get("profile_id") or "").strip():
+            assign_pid = requested_assign_profile(after, request)
+            if assign_pid:
+                route_body["profile_id"] = assign_pid
         _set_plex_unresolved_user_fallback_default(route_body, False)
         route = _validate_route(after, route_body)
+        _require_route_scope(after, user, route)
         next_routes = [normalize_route(r, f"R{i + 1}") for i, r in enumerate(routes) if isinstance(r, dict)]
         next_routes.append(route)
         _validate_routes_unique(next_routes)
@@ -1018,16 +1107,20 @@ def api_route_update(request: Request, route_id: str, payload: dict[str, Any] = 
         before = load_config() or {}
         after = _clone(before)
         routes = _routes_node(after)
+        user = _managed_user(request)
         found = False
         next_routes: list[dict[str, Any]] = []
         for i, raw in enumerate(routes):
             if not isinstance(raw, dict):
                 continue
             current = normalize_route(raw, f"R{i + 1}")
-            if str(current.get("id") or "") == str(route_id or "").strip():
+            if str(current.get("id") or "") == str(route_id or "").strip() and _user_can_access_route(after, user, current):
                 merged = {**current, **dict(payload or {})}
                 merged["id"] = str(route_id or "").strip()
+                if user is not None:
+                    merged["profile_id"] = managed_profile_id(user)
                 current = _validate_route(after, merged)
+                _require_route_scope(after, user, current)
                 found = True
             next_routes.append(current)
         if not found:
@@ -1047,10 +1140,11 @@ def api_route_delete(request: Request, route_id: str) -> JSONResponse:
         after = _clone(before)
         routes = _routes_node(after)
         rid = str(route_id or "").strip()
+        user = _managed_user(request)
         next_routes = [
             normalize_route(r, f"R{i + 1}")
             for i, r in enumerate(routes)
-            if isinstance(r, dict) and str(normalize_route(r, f"R{i + 1}").get("id") or "") != rid
+            if isinstance(r, dict) and not (str(normalize_route(r, f"R{i + 1}").get("id") or "") == rid and _user_can_access_route(after, user, normalize_route(r, f"R{i + 1}")))
         ]
         if len(next_routes) == len([r for r in routes if isinstance(r, dict)]):
             raise ValidationFailure([_err("id", "route_not_found", "Route was not found")])

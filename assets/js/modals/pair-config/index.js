@@ -1435,7 +1435,9 @@ function renderFeaturePanel(state){
     const minPrevVal = Number.isFinite(rt.suspect_min_prev)?rt.suspect_min_prev:20;
     const guardInputType = window.matchMedia('(max-width:760px)').matches ? 'number' : 'range';
 
-    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>General <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-main">help</button></div>
+    const managedUser = document.documentElement.dataset.cwRole === "user";
+    if (managedUser) left.innerHTML = `<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>General</div><div class="muted">Shared safety settings such as dry run, drop guard and blackbox are managed by the admin.</div>`;
+    else left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">tune</span>General <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-main">help</button></div>
       <div class="muted">Shared application safety settings. Pair-specific controls are labelled separately.</div>
       <div class="opt-row"><label for="gl-dry">Dry run</label><label class="switch"><input id="gl-dry" type="checkbox" ${g.dry_run?"checked":""}><span class="slider"></span></label></div>
       <div class="opt-row"><label for="gl-verify">Verify after write</label><label class="switch"><input id="gl-verify" type="checkbox" ${g.verify_after_write?"checked":""}><span class="slider"></span></label></div>
@@ -1471,7 +1473,7 @@ function renderFeaturePanel(state){
       ${hasSilo(state)?`<div class="opt-row"><label for="silo-strict-ids">Silo: Strict ID matching</label><label class="switch"><input id="silo-strict-ids" type="checkbox" ${getPairProviderStrictValue(state, "silo")?"checked":""}><span class="slider"></span></label></div>`:""}
       ${hasFloppy(state)?`<div class="opt-row"><label for="floppy-anime-library" data-tip-id="floppy-anime-library">Floppy: Send new anime to the Anime library</label><label class="switch"><input id="floppy-anime-library" type="checkbox" ${floppyAnimeLibraryOn(state)?"checked":""}><span class="slider"></span></label></div>`:""}
       ${supportsPathMatching(state)?`<div class="opt-row"><label for="pair-path-matching">Match by file path</label><label class="switch"><input id="pair-path-matching" type="checkbox" ${state.path_matching?"checked":""}><span class="slider"></span></label></div><div class="muted">When IDs cannot resolve an item, try matching its file path across the media servers in this pair. Supports movie and episode history, ratings and progress in both directions, including with Strict ID matching enabled.</div>`:""}
-      <div class="panel-title" style="margin-top:10px">Advanced (shared) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
+      ${managedUser ? "" : `      <div class="panel-title" style="margin-top:10px">Advanced (shared) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-section-advanced">help</button></div>
       <div class="opt-row"><label for="gl-ttl">Tombstone TTL (days)</label><input id="gl-ttl" class="input" type="number" min="0" step="1" value="${g.tombstone_ttl_days??30}"></div><div class="muted">Keep delete markers to avoid re-adding.</div>
       <div class="opt-row"><label for="gl-observed">Include observed deletes</label><label class="switch"><input id="gl-observed" type="checkbox" ${g.include_observed_deletes?"checked":""}><span class="slider"></span></label></div>
       <div class="panel-title small" style="margin-top:10px">Blackbox (shared) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-bb-section">help</button></div>
@@ -1481,7 +1483,7 @@ function renderFeaturePanel(state){
         <div class="opt-row"><label for="gl-bb-promote">Promote after (failed writes) <button type="button" class="cx-help material-symbols-rounded" data-tip-id="gl-bb-promote">help</button></label><input id="gl-bb-promote" class="input small" type="number" min="0" max="365" step="1" value="${bb.promote_after??3}"></div>
         <div class="opt-row"><label for="gl-bb-cooldown">Cooldown days</label><input id="gl-bb-cooldown" class="input small" type="number" min="0" max="365" step="1" value="${bb.cooldown_days??30}"></div>
       </div>
-      <div class="muted">Unresolved is a reporting state: failed writes are logged and retried every sync. Blackbox is the quarantine state: after this many failed writes an item is blackboxed and only then stops being planned.</div>`;
+      <div class="muted">Unresolved is a reporting state: failed writes are logged and retried every sync. Blackbox is the quarantine state: after this many failed writes an item is blackboxed and only then stops being planned.</div>`}`;
     return;
   }
 
@@ -2494,6 +2496,7 @@ function bindChangeHandlers(state,root){
 
 // Save config bits
 async function saveConfigBits(state){
+  if(document.documentElement.dataset.cwRole === "user") return;
   try{
     const cur=await fetch("/api/config",{cache:"no-store"}).then(r=>r.ok?r.json():{});
     const cfg=typeof structuredClone==="function"?structuredClone(cur||{}):jclone(cur||{});
