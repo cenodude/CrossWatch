@@ -59,12 +59,23 @@ def _actor(user: Mapping[str, Any] | None) -> dict[str, Any]:
     return out
 
 
+def _client_ip(request: Any) -> str:
+    host = getattr(getattr(request, "client", None), "host", "") or ""
+    if not host:
+        return ""
+    try:
+        from api.appAuthAPI import _effective_client_ip
+
+        return _effective_client_ip(request)
+    except Exception:
+        return host
+
+
 def _request_meta(request: Any) -> dict[str, Any]:
     if request is None:
         return {}
-    client = getattr(request, "client", None)
     return {
-        "ip": _text(getattr(client, "host", "") or "", 80),
+        "ip": _text(_client_ip(request), 80),
         "user_agent": _text(getattr(getattr(request, "headers", {}), "get", lambda *_: "")("user-agent") or "", 240),
         "method": _text(getattr(request, "method", "") or "", 16),
         "path": _text(getattr(getattr(request, "url", None), "path", "") or "", 240),

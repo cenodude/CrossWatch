@@ -282,6 +282,20 @@ def test_effective_client_ip_ignores_forwarded_from_untrusted_peer(monkeypatch) 
     assert auth._effective_client_ip(req) == "198.51.100.4"
 
 
+def test_session_and_audit_record_forwarded_client_ip(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+    from cw_platform.event_archive import audit
+
+    monkeypatch.setattr(auth, "load_config", lambda: {"security": {"trusted_proxies": ["172.16.0.0/12"]}})
+    auth._TRUSTED_PROXY_CACHE["at"] = 0.0
+
+    req = _request("/api/app-auth/login", headers={"x-forwarded-for": "203.0.113.9"}, client=("172.19.0.1", 1234))
+    cfg: dict[str, Any] = {"app_auth": {}}
+    auth._issue_session(cfg, req)
+    assert cfg["app_auth"]["sessions"][-1]["ip"] == "203.0.113.9"
+    assert audit._request_meta(req)["ip"] == "203.0.113.9"
+
+
 def test_login_fail_table_prunes_stale_entries(monkeypatch) -> None:
     from api import appAuthAPI as auth
 
