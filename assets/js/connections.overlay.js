@@ -204,7 +204,9 @@
     const host = document.getElementById("providers_list");
     if (!host) return;
     wireEvents(host);
-    renderCards(Array.isArray(window.cx?.providers) ? window.cx.providers : []);
+    const providers = Array.isArray(window.cx?.providers) ? window.cx.providers : [];
+    const scope = window.CW?.SettingsScope?.active?.() ? window.CW.SettingsScope : null;
+    renderCards(scope ? providers.filter((item) => scope.hasProvider(item?.key || item?.name || item?.label)) : providers);
   }
 
   async function renderOrEnhance(force = false) {
@@ -223,6 +225,7 @@
     if (String(ev?.detail?.pane || "").toLowerCase() === "sync") renderOrEnhance(true);
   });
   document.addEventListener("cx-state-change", renderConnections);
+  window.addEventListener("cw:settings-scope-changed", renderConnections);
   window.addEventListener("cx:pairs:changed", resetPick);
 
   window.renderConnections = renderConnections;

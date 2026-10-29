@@ -16,7 +16,7 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, sync_provider_supports_feature
-from cw_platform.access_policy import filter_pairs_for_user, managed_profile_id, managed_profile_instances, pair_ids_for_user, request_user, user_can_access_pair
+from cw_platform.access_policy import filter_pairs_for_user, managed_profile_id, managed_profile_instances, pair_ids_for_user, request_user, requested_assign_profile, user_can_access_pair
 from cw_platform.identity_links import clean_identity_map
 from cw_platform.provider_instances import list_user_profiles, normalize_user_profile_id
 from cw_platform.local_db.legacy_files import LAST_SYNC_JSON
@@ -2411,7 +2411,7 @@ def _apply_pair_profile_scope(cfg: dict[str, Any], request: Request | None, item
     if user and not user.get("is_admin"):
         item["profile_id"] = managed_profile_id(user)
         return
-    pid = _normalize_pair_profile_id(cfg, item.get("profile_id"))
+    pid = _normalize_pair_profile_id(cfg, item.get("profile_id")) or requested_assign_profile(cfg, request)
     if pid:
         item["profile_id"] = pid
     else:
@@ -2899,12 +2899,35 @@ def _provider_counts_fast(*, max_age: int = 30, force: bool = False) -> dict:
     _PROVIDER_COUNTS_CACHE["data"] = counts
     return counts
 
+def _provider_counts_for_user(cfg: Mapping[str, Any], user: Mapping[str, Any]) -> dict[str, int]:
+    instances = managed_profile_instances(cfg, user)
+    out = _provider_count_defaults()
+    if not instances:
+        return out
+    try:
+        from cw_platform.config_base import CONFIG
+        from cw_platform.orchestrator._state_store import StateStore
+
+        counts = StateStore(CONFIG).provider_feature_counts("watchlist", instances=instances) or {}
+    except Exception:
+        return out
+    for key, value in counts.items():
+        name = str(key or "").strip().upper()
+        if name:
+            out[name] = int(value or 0)
+    return out
+
+
 @router.get("/sync/providers/counts")
 def api_provider_counts(
     max_age: int = 30,
     force: bool = False,
     source: str = "state",
+    request: Request = cast(Request, None),
 ) -> dict:
+    user = _request_user(request)
+    if user and not user.get("is_admin"):
+        return _provider_counts_for_user(_env()[0]() or {}, user)
     src = (source or "state").lower().strip()
     if src in ("state", "auto"):
         return _provider_counts_current()
@@ -2978,6 +3001,11 @@ def api_run_sync(payload: dict | None = Body(None), request: Request = cast(Requ
         user = _request_user(request)
         if user and not user.get("is_admin"):
             pairs = filter_pairs_for_user(cfg, user, pairs)
+        requested_scope = (payload or {}).get("pair_scope_ids") if isinstance(payload, dict) else None
+        scheduler_scope = isinstance(requested_scope, list) and str((payload or {}).get("source") or "").strip().lower() == "scheduler"
+        if scheduler_scope:
+            wanted = {str(value or "").strip() for value in (requested_scope or []) if str(value or "").strip()}
+            pairs = [p for p in pairs if str(p.get("id") or "") in wanted]
 
         pair_id = ""
         try:
@@ -3013,7 +3041,7 @@ def api_run_sync(payload: dict | None = Body(None), request: Request = cast(Requ
         }
         if pair_id:
             overrides["pair_id"] = pair_id
-        if user and not user.get("is_admin"):
+        if (user and not user.get("is_admin")) or scheduler_scope:
             overrides["pair_scope_ids"] = [str(pair.get("id") or "") for pair in pairs if str(pair.get("id") or "")]
         th = threading.Thread(
             target=_run_pairs_thread_entry,

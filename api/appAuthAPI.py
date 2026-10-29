@@ -648,11 +648,20 @@ def _session_identity(a: dict[str, Any], session: dict[str, Any] | None) -> dict
     return public if public["enabled"] and not _token_only_user(public) else None
 
 
+def _with_profile_avatar(cfg: dict[str, Any], user: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not user or user.get("is_admin") or user.get("avatar_url"):
+        return user
+    from cw_platform.user_profile_avatars import profile_avatar_url
+
+    fallback = profile_avatar_url(cfg, user.get("profile_id"))
+    return {**user, "avatar_url": fallback} if fallback else user
+
+
 def current_user(cfg: dict[str, Any], token: str | None) -> dict[str, Any] | None:
     if not auth_required(cfg):
         return None
     a = _cfg_auth(cfg)
-    return _session_identity(a, _find_session(a, token))
+    return _with_profile_avatar(cfg, _session_identity(a, _find_session(a, token)))
 
 
 def is_admin_authenticated(cfg: dict[str, Any], token: str | None) -> bool:
@@ -736,6 +745,18 @@ def non_admin_api_allowed(path: Any, method: Any) -> bool:
         return m in {"GET", "POST", "PUT", "DELETE"}
     if p == "/api/sync/providers" or p == "/api/sync/providers/counts":
         return m == "GET"
+    if p in {"/api/auth/providers", "/api/auth/providers/html"}:
+        return m == "GET"
+    if p == "/api/scrobbler/overview":
+        return m == "GET"
+    if p in {"/api/scrobbler/webhooks/profile", "/api/scrobbler/webhooks/profile/disable", "/api/scrobbler/webhooks/profile/regenerate", "/api/scrobbler/routes"}:
+        return m == "POST"
+    if p.startswith("/api/scrobbler/routes/"):
+        return m in {"PUT", "DELETE"}
+    if p == "/api/scheduling/profiles":
+        return m == "GET"
+    if p.startswith("/api/scheduling/profiles/"):
+        return m in {"GET", "POST"}
     if p.startswith("/api/playback_progress/actions/"):
         return m == "POST"
     if p == "/api/playlists/activity" and m == "DELETE":
@@ -1651,7 +1672,7 @@ def api_status(request: Request) -> JSONResponse:
     active = auth_required(cfg)
     token = request.cookies.get(COOKIE_NAME)
     s = _find_session(a, token)
-    user = _session_identity(a, s)
+    user = _with_profile_avatar(cfg, _session_identity(a, s))
     current_session, other_sessions = _public_session_state(a, token)
     return JSONResponse(
         {
@@ -1954,6 +1975,29 @@ def apply_profile_login(latest: dict[str, Any], profile_id: Any, login: dict[str
     except ValueError:
         raise ProfileLoginError("Username is required", 400) from None
     return uid, raw, False, bool(password)
+
+
+def remove_profile_logins(latest: dict[str, Any], profile_id: Any) -> list[tuple[str, str]]:
+    pid = normalize_user_profile_id(profile_id)
+    if not pid:
+        return []
+    users = _cfg_users(_cfg_auth(latest))
+    removed: list[tuple[str, str]] = []
+    for uid, raw in list(users.items()):
+        if uid == ADMIN_USER_ID or not isinstance(raw, dict) or normalize_user_profile_id(raw.get("profile_id")) != pid:
+            continue
+        users.pop(uid, None)
+        _clear_user_sessions(latest, uid)
+        removed.append((uid, str(raw.get("username") or uid)))
+    return removed
+
+
+def audit_removed_logins(request: Request, cfg: dict[str, Any], removed: list[tuple[str, str]]) -> None:
+    if not removed:
+        return
+    actor = _admin_api_token_user(request, cfg) or current_user(cfg, request.cookies.get(COOKIE_NAME))
+    for uid, username in removed:
+        _audit(request, "user_deleted", actor=actor, target_type="managed_user", target_id=uid, message=f"Managed user {username} was deleted", fields={"username": username})
 
 
 def finish_profile_login(request: Request, cfg: dict[str, Any], result: tuple[str, dict[str, Any], bool, bool]) -> dict[str, Any]:

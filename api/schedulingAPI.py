@@ -7,9 +7,11 @@ import time
 from typing import Any, Callable, cast
 
 from fastapi import APIRouter, Body, Request
+from fastapi.responses import JSONResponse
 
-from cw_platform.access_policy import request_is_monitor
+from cw_platform.access_policy import managed_profile_id, request_is_monitor, request_user
 from services.scheduler_webhooks import payload_format_label, scheduler_webhooks_configured, send_test_webhook
+from services.scheduling import normalize_profile_schedule, profile_pair_ids, profile_schedules, scheduler_should_run
 
 router = APIRouter(prefix="/api/scheduling", tags=["scheduling"])
 
@@ -250,7 +252,7 @@ def replan_now() -> dict[str, Any]:
     load_config, _, scheduler, hint, compute_next, log = _env()
     cfg = load_config() or {}
     scfg = (cfg.get("scheduling") or {}) or {}
-    effective_enabled = bool((scfg or {}).get("enabled") or ((scfg or {}).get("advanced") or {}).get("enabled"))
+    effective_enabled = scheduler_should_run(cfg)
 
     try:
         nxt = int(compute_next(scfg) or 0)
@@ -376,7 +378,10 @@ def sched_post(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     load_config, save_config, scheduler, hint, compute_next, log = _env()
     cfg = load_config() or {}
     prev_scfg = _as_dict(cfg.get("scheduling"))
-    cfg["scheduling"] = (payload or {}) or {}
+    next_scfg = dict((payload or {}) or {})
+    if "profiles" not in next_scfg and isinstance(prev_scfg.get("profiles"), dict):
+        next_scfg["profiles"] = prev_scfg["profiles"]
+    cfg["scheduling"] = next_scfg
     save_config(cfg)
 
     scfg = cfg["scheduling"] or {}
@@ -389,7 +394,7 @@ def sched_post(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
         nxt = 0
 
     try:
-        effective_enabled = bool((scfg or {}).get("enabled") or ((scfg or {}).get("advanced") or {}).get("enabled"))
+        effective_enabled = scheduler_should_run(cfg)
 
         if effective_enabled:
             if hasattr(scheduler, "start"):
@@ -430,6 +435,96 @@ def sched_status(request: Request = cast(Request, None)) -> dict[str, Any]:
         pass
 
     return st
+
+def _profile_schedule_rows(cfg: dict[str, Any], scheduler: Any) -> list[dict[str, Any]]:
+    from cw_platform.provider_instances import list_user_profiles
+
+    try:
+        live = _as_dict(scheduler.status().get("profiles"))
+    except Exception:
+        live = {}
+    saved = profile_schedules(cfg)
+    rows: list[dict[str, Any]] = []
+    for profile in list_user_profiles(cfg):
+        pid = str(profile.get("id") or "")
+        state = _as_dict(live.get(pid))
+        rows.append({
+            "id": pid,
+            "label": str(profile.get("label") or pid),
+            "schedule": saved.get(pid) or normalize_profile_schedule({}),
+            "pair_count": len(profile_pair_ids(cfg, pid)),
+            "next_run_at": int(state.get("next_run_at") or 0),
+            "next_run_iso": str(state.get("next_run_iso") or ""),
+            "last_run_at": int(state.get("last_run_at") or 0),
+            "last_run_ok": state.get("last_run_ok"),
+        })
+    return rows
+
+
+def _own_profile_only(request: Request | None) -> str | None:
+    user = request_user(request)
+    if isinstance(user, dict) and not bool(user.get("is_admin")):
+        return str(managed_profile_id(user) or "")
+    return None
+
+
+@router.get("/profiles")
+def sched_profiles(request: Request = cast(Request, None)) -> dict[str, Any]:
+    load_config, _, scheduler, *_ = _env()
+    rows = _profile_schedule_rows(load_config() or {}, scheduler)
+    own = _own_profile_only(request)
+    if own is not None:
+        rows = [row for row in rows if row["id"] == own]
+    return {"ok": True, "items": rows}
+
+
+@router.get("/profiles/{profile_id}")
+def sched_profile_get(profile_id: str, request: Request = cast(Request, None)) -> Any:
+    load_config, _, scheduler, *_ = _env()
+    pid = str(profile_id or "").strip().lower()
+    own = _own_profile_only(request)
+    if own is not None and own != pid:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    row = next((item for item in _profile_schedule_rows(load_config() or {}, scheduler) if item["id"] == pid), None)
+    if row is None:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    return {"ok": True, **row}
+
+
+@router.post("/profiles/{profile_id}")
+def sched_profile_save(profile_id: str, payload: dict[str, Any] = Body(default_factory=dict), request: Request = cast(Request, None)) -> Any:
+    from cw_platform.provider_instances import list_user_profiles, normalize_user_profile_id
+
+    load_config, save_config, scheduler, _, _, log = _env()
+    cfg = load_config() or {}
+    pid = normalize_user_profile_id(profile_id)
+    own = _own_profile_only(request)
+    if own is not None and own != pid:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    if not pid or not any(normalize_user_profile_id(row.get("id")) == pid for row in list_user_profiles(cfg)):
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    scfg = _as_dict(cfg.get("scheduling"))
+    profiles = dict(_as_dict(scfg.get("profiles")))
+    profiles[pid] = normalize_profile_schedule(payload)
+    cfg["scheduling"] = {**scfg, "profiles": profiles}
+    save_config(cfg)
+    try:
+        log("SYNC", "SCHED")(f"profile schedule saved for {pid}: {'on' if profiles[pid]['enabled'] else 'off'}", level="INFO")
+    except Exception:
+        pass
+    try:
+        if scheduler_should_run(cfg):
+            if hasattr(scheduler, "start"):
+                scheduler.start()
+            if hasattr(scheduler, "refresh"):
+                scheduler.refresh()
+        elif hasattr(scheduler, "stop"):
+            scheduler.stop()
+    except Exception:
+        pass
+    row = next((item for item in _profile_schedule_rows(cfg, scheduler) if item["id"] == pid), None)
+    return {"ok": True, **(row or {})}
+
 
 @router.get("/next")
 def sched_next() -> dict[str, Any]:

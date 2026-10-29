@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import html as html_lib
+from html.parser import HTMLParser
 import logging
+import re
 from pathlib import Path
 import time
 
@@ -12,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from starlette.staticfiles import StaticFiles
 from api.versionAPI import CURRENT_VERSION
-from cw_platform.access_policy import clean_managed_permissions
+from cw_platform.access_policy import clean_managed_permissions, managed_settings_access, reconnect_connection_keys
 
 __all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
 
@@ -136,7 +138,7 @@ _HELPER_SCRIPTS = (
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
-    "syncbar.js", "run-summary-stream.js", "overview-profile.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js",
+    "syncbar.js", "run-summary-stream.js", "overview-profile.js", "settings-scope.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js", "scheduler-profiles.js",
     "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
     "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js", "assistant-settings.js",
 )
@@ -216,8 +218,60 @@ _ASSISTANT_MENU_ITEM = (
 )
 
 
-def _assert_admin_shell_stripped(html: str) -> None:
-    leaked = [label for marker, label in _ADMIN_ONLY_MARKERS if marker in html]
+_SETTINGS_PANE_STARTS: tuple[tuple[str, str], ...] = (
+    ("overview", '        <section id="cw-settings-overview" class="cw-settings-pane active" data-pane="overview">'),
+    ("providers", '        <section class="cw-settings-pane" data-pane="providers">'),
+    ("sync", '        <section class="cw-settings-pane" data-pane="sync">'),
+    ("scheduling", '        <section class="cw-settings-pane" data-pane="scheduling">'),
+    ("scrobbler", '        <section class="cw-settings-pane" data-pane="scrobbler">'),
+    ("app", '        <section class="cw-settings-pane cw-app-settings-pane" data-pane="app">'),
+    ("maintenance", '        <section class="cw-settings-pane" data-pane="maintenance">'),
+)
+_SETTINGS_LEFT_END = "      </div>\n    </div>\n  </section>\n\n\n</main>"
+_MANAGED_SETTINGS_PANES = (("connections", "providers"), ("pairs", "sync"), ("schedule", "scheduling"), ("scrobbler", "scrobbler"))
+_SETTINGS_PANE_CLASSES = frozenset({"cw-settings-pane", "cw-settings-nav-btn"})
+_SETTINGS_NAV_BUTTON = re.compile(r'          <button type="button" class="cw-settings-nav-btn(?: active)?" data-pane="(?P<pane>[a-z]+)"[^\n]*\n.*?          </button>\n', re.S)
+
+
+def _managed_settings_panes(user: dict | None) -> set[str]:
+    perms = _managed_user_permissions(user)
+    return {pane for key, pane in _MANAGED_SETTINGS_PANES if perms.get(key)}
+
+
+def _strip_settings_panes(html: str, keep: set[str]) -> str:
+    for index, (pane, start) in enumerate(_SETTINGS_PANE_STARTS):
+        if pane in keep:
+            continue
+        end = _SETTINGS_PANE_STARTS[index + 1][1] if index + 1 < len(_SETTINGS_PANE_STARTS) else _SETTINGS_LEFT_END
+        html = _remove_html_range(html, start, end)
+    return _SETTINGS_NAV_BUTTON.sub(lambda m: m.group(0) if m.group("pane") in keep else "", html)
+
+
+class _SettingsPaneScanner(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.panes: set[str] = set()
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        values = {name.lower(): value or "" for name, value in attrs}
+        if "data-pane" in values:
+            self.panes.add(values["data-pane"].strip().lower())
+        elif _SETTINGS_PANE_CLASSES.intersection(values.get("class", "").split()):
+            self.panes.add("")
+
+
+def _remaining_settings_panes(html: str) -> set[str]:
+    scanner = _SettingsPaneScanner()
+    scanner.feed(html)
+    scanner.close()
+    return scanner.panes
+
+
+def _assert_admin_shell_stripped(html: str, *, settings_panes: set[str] | None = None) -> None:
+    allowed = settings_panes or set()
+    leaked = [label for marker, label in _ADMIN_ONLY_MARKERS if marker in html and not (allowed and marker == 'id="page-settings"')]
+    if allowed:
+        leaked += [f"settings pane {pane or '?'}" for pane in sorted(_remaining_settings_panes(html) - allowed)]
     if not leaked:
         return
     _LOG.error(
@@ -553,12 +607,14 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
     perms = _managed_user_permissions(user)
     write_allowed = bool(perms.get("write"))
     dashboard_allowed = bool(perms.get("dashboard")) and write_allowed
+    settings_panes = _managed_settings_panes(user) if write_allowed else set()
     if write_allowed:
         tabs = [
             '    <button id="tab-main" class="tab active" type="button" onclick="showTab(\'main\')">Main</button>',
             '    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">Captures</button>',
             '    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>',
             '    <button id="tab-editor" class="tab" type="button" onclick="showTab(\'editor\')">Editor</button>',
+            *(['    <button id="tab-settings" class="tab" type="button" onclick="showTab(\'settings\')">Settings</button>'] if settings_panes else []),
             _nav_profile_link(user),
         ]
         html = _replace_html_range(
@@ -605,13 +661,18 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
         '    <div class="cw-tabmenu" id="tab-settings-menu">',
         '    <div class="cw-tabmenu" id="tab-about-menu">',
     )
-    html = _remove_html_range(
-        html,
-        '  <section id="page-settings" class="card hidden">',
-        "\n\n</main>",
-    )
+    if settings_panes:
+        html = _strip_settings_panes(html, settings_panes)
+        html = _remove_line(html, '<div id="save-frost" class="hidden" aria-hidden="true"></div>')
+        html = _remove_line(html, '<div id="save-fab" class="hidden" role="toolbar" aria-label="Sticky save"><button id="save-fab-btn" class="btn" onclick="saveSettings(this)"><span class="btn-label">SAVE</span></button></div>')
+    else:
+        html = _remove_html_range(
+            html,
+            '  <section id="page-settings" class="card hidden">',
+            "\n\n</main>",
+        )
     html = _remove_line(html, _ASSISTANT_MENU_ITEM)
-    _assert_admin_shell_stripped(html)
+    _assert_admin_shell_stripped(html, settings_panes=settings_panes)
     return html
 
 
@@ -619,6 +680,23 @@ def _asset_block(include_admin: bool = True, user: dict | None = None) -> str:
     full_user = not include_admin and bool(_managed_user_permissions(user).get("write"))
     helper_scripts = _HELPER_SCRIPTS if include_admin else (_FULL_USER_HELPER_SCRIPTS if full_user else _USER_HELPER_SCRIPTS)
     app_scripts = _APP_SCRIPTS if include_admin else (_FULL_USER_APP_SCRIPTS if full_user else _USER_APP_SCRIPTS)
+    managed_auth_tags: tuple[str, ...] = ()
+    if full_user and managed_settings_access(user):
+        panes = _managed_settings_panes(user)
+        if panes & {"providers", "sync"}:
+            helper_scripts = (*helper_scripts, "providers-ui.js")
+        if "providers" in panes:
+            managed_auth_tags = (
+                '<script src="/assets/auth/auth.shared.js?v=__CW_VERSION__" defer></script>',
+                '<script src="/assets/auth/auth_loader.js?v=__CW_VERSION__" defer></script>',
+            )
+        app_scripts = (
+            *app_scripts,
+            "settings-scope.js",
+            *(("connections.overlay.js", "connections.pairs.overlay.js") if "sync" in panes else ()),
+            *(("scrobbler.js",) if "scrobbler" in panes else ()),
+            *(("scheduler-profiles.js",) if "scheduling" in panes else ()),
+        )
     helper_tags = "\n".join(f'<script src="/assets/helpers/{name}?v=__CW_VERSION__" defer></script>' for name in helper_scripts)
     app_tags = "\n".join(f'<script src="/assets/js/{name}?v=__CW_VERSION__" defer></script>' for name in app_scripts)
     admin_only_tags = (
@@ -636,6 +714,7 @@ def _asset_block(include_admin: bool = True, user: dict | None = None) -> str:
         '<script src="/assets/crosswatch.js?v=__CW_VERSION__" defer></script>',
         app_tags,
         *admin_only_tags,
+        *managed_auth_tags,
         '<script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>',
     ))
 
@@ -2125,7 +2204,7 @@ __CW_ASSET_BLOCK__
 <script>(()=>{const list=p=>[...p.querySelectorAll(':scope>.section')].filter(s=>s.dataset.accordion!=='off'),set=(s,on)=>{s.classList.toggle('open',!!on);s.querySelector('.head')?.setAttribute('aria-expanded',String(!!on));const c=s.querySelector('.chev');if(c)c.textContent=''},siblings=s=>s?.parentElement?list(s.parentElement):[];window.toggleSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;const on=!s.classList.contains('open');siblings(s).forEach(x=>set(x,x===s&&on))};window.openSection=id=>{const s=document.getElementById(id);if(!s||s.dataset.accordion==='off')return;siblings(s).forEach(x=>set(x,x===s))};document.addEventListener('click',e=>{const h=e.target?.closest?.('[data-toggle-section]');if(!h)return;e.preventDefault();window.toggleSection?.(h.dataset.toggleSection)},true);document.addEventListener('DOMContentLoaded',()=>[...new Set([...document.querySelectorAll('.section')].map(s=>s.parentElement).filter(Boolean))].forEach(p=>{const open=list(p).find(s=>s.classList.contains('open'));list(p).forEach(s=>set(s,s===open))}),{once:true})})();</script>
 
 
-<script>(()=>{const panes='#page-settings .cw-settings-pane',nav='#cw-settings-nav .cw-settings-nav-btn',norm=v=>String(v||'overview').trim().toLowerCase(),apply=p=>{const name=norm(p);let found=false;document.querySelectorAll(panes).forEach(n=>{const on=norm(n.dataset.pane)===name;n.classList.toggle('active',on);found=found||on});if(!found&&name!=='overview')return apply('overview');document.querySelectorAll(nav).forEach(b=>{const on=norm(b.dataset.pane)===name;b.classList.toggle('active',on);b.setAttribute('aria-current',on?'page':'false')});window.__cwSettingsPane=name;delete document.documentElement.dataset.cwInitialPane;document.dispatchEvent(new CustomEvent('cw-settings-pane-changed',{detail:{pane:name}}))};window.cwSettingsSelect=p=>{apply(p);const main=document.getElementById('cw-settings-left');if(main&&window.innerWidth<1200)main.scrollIntoView({behavior:'smooth',block:'start'})};apply(window.__cwSettingsPane||'overview');document.addEventListener('DOMContentLoaded',()=>apply(window.__cwSettingsPane||'overview'),{once:true});document.addEventListener('tab-changed',e=>((e?.detail?.id||e?.detail?.tab)==='settings')&&setTimeout(()=>apply(window.__cwSettingsPane||'overview'),0))})();</script>
+<script>(()=>{const panes='#page-settings .cw-settings-pane',nav='#cw-settings-nav .cw-settings-nav-btn',norm=v=>String(v||'overview').trim().toLowerCase(),apply=p=>{const name=norm(p);let found=false;document.querySelectorAll(panes).forEach(n=>{const on=norm(n.dataset.pane)===name;n.classList.toggle('active',on);found=found||on});if(!found){const first=norm(document.querySelector(panes)?.dataset?.pane);if(first&&first!==name)return apply(first)}document.querySelectorAll(nav).forEach(b=>{const on=norm(b.dataset.pane)===name;b.classList.toggle('active',on);b.setAttribute('aria-current',on?'page':'false')});window.__cwSettingsPane=name;delete document.documentElement.dataset.cwInitialPane;document.dispatchEvent(new CustomEvent('cw-settings-pane-changed',{detail:{pane:name}}))};window.cwSettingsSelect=p=>{apply(p);const main=document.getElementById('cw-settings-left');if(main&&window.innerWidth<1200)main.scrollIntoView({behavior:'smooth',block:'start'})};apply(window.__cwSettingsPane||'overview');document.addEventListener('DOMContentLoaded',()=>apply(window.__cwSettingsPane||'overview'),{once:true});document.addEventListener('tab-changed',e=>((e?.detail?.id||e?.detail?.tab)==='settings')&&setTimeout(()=>apply(window.__cwSettingsPane||'overview'),0))})();</script>
 <script>(()=>{const sync=e=>{const pane=String(e?.detail?.pane||window.__cwSettingsPane||'overview').toLowerCase();document.querySelectorAll('#cw-settings-menu .cw-menu-item[data-settings-pane]').forEach(item=>{const active=item.dataset.settingsPane===pane;item.classList.toggle('active',active);if(active)item.setAttribute('aria-current','page');else item.removeAttribute('aria-current')})};document.addEventListener('cw-settings-pane-changed',sync);document.addEventListener('DOMContentLoaded',sync,{once:true})})();</script>
 
 <script>(()=>{const ready=()=>{const input=document.querySelector('#cw-settings-nav .cw-settings-search input'),items=[...document.querySelectorAll('#cw-settings-nav .cw-settings-nav-btn')];if(!input||!items.length)return;const apply=()=>{const q=input.value.trim().toLowerCase();items.forEach(btn=>{btn.hidden=!!q&&!btn.textContent.toLowerCase().includes(q)})};input.addEventListener('input',apply);document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&String(e.key).toLowerCase()==='k'){e.preventDefault();window.showTab?.('settings');setTimeout(()=>input.focus(),0)}})};document.readyState==='loading'?document.addEventListener('DOMContentLoaded',ready,{once:true}):ready()})();</script>
@@ -2329,6 +2408,7 @@ def _seed_media_card_style(html: str, user: dict | None = None) -> str:
 
 def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:
     html = _get_index_html_static().replace("__CW_ASSET_BLOCK__", _asset_block(include_admin=include_admin, user=user))
+    html = html.replace('<html lang="en"', f'<html lang="en" data-cw-reconnect="{" ".join(reconnect_connection_keys())}"', 1)
     if not include_admin:
         perms = _managed_user_permissions(user)
         profile_id = html_lib.escape(str((user or {}).get("profile_id") or ""), quote=True) if isinstance(user, dict) else ""

@@ -5,15 +5,17 @@ from __future__ import annotations
 
 import copy
 import re
+import secrets
 import time
 from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any, cast
 
 from fastapi import APIRouter, Body, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from api.provider_guard import usage_conflict_response
+from cw_platform.access_policy import view_as_scope_profile
 from cw_platform.config_base import load_config, save_config, update_config
 from cw_platform.identity_links import IDENTITY_PROVIDERS, identities_by_key, identity_links
 from cw_platform.provider_instances import (
@@ -40,8 +42,10 @@ from cw_platform.provider_instances import (
     sanitize_user_profile_label,
     upsert_user_profile,
     user_profiles_for_instance,
+    user_profiles_root,
 )
 from cw_platform.tracker_storage import remove_crosswatch_storage
+from cw_platform.user_profile_avatars import avatar_dir, profile_avatar, profile_avatar_url, remove_avatar_file
 from cw_platform.user_profile_resources import (
     apply_profile_resource_assignments,
     clear_profile_resource_assignments,
@@ -287,9 +291,14 @@ def _authenticated_request_user(cfg: dict[str, Any], request: Request | None) ->
 
 def _managed_user_instance_scope(cfg: dict[str, Any], request: Request | None) -> dict[str, set[str]] | None:
     user = _authenticated_request_user(cfg, request)
-    if not isinstance(user, Mapping) or user.get("is_admin"):
+    if not isinstance(user, Mapping):
         return None
-    pid = normalize_user_profile_id(user.get("profile_id"))
+    if user.get("is_admin"):
+        pid = view_as_scope_profile(cfg, request)
+        if not pid:
+            return None
+    else:
+        pid = normalize_user_profile_id(user.get("profile_id"))
     if not pid:
         return {}
     for row in list_user_profiles(cfg):
@@ -324,6 +333,7 @@ def _decorate_user_profile_rows(cfg: dict[str, Any], rows: list[dict[str, Any]])
         pid = normalize_user_profile_id(item.get("id"))
         item["resources"] = profile_resource_ids_for_profile(cfg, pid)
         item["resource_counts"] = resource_counts_for_profile(cfg, pid)
+        item["avatar_url"] = profile_avatar_url(cfg, pid)
         out.append(item)
     return out
 
@@ -1012,49 +1022,98 @@ def api_user_profiles_update(profile_id: str, payload: dict[str, Any] = Body(def
     return _profile_saved_response(request, saved_cfg, profile, login_result)
 
 
-def _managed_usernames_for_profile(cfg: dict[str, Any], profile_id: str) -> list[str]:
+@router.get("/user-profiles/{profile_id}/avatar")
+def api_user_profile_avatar(profile_id: str, request: Request = cast(Request, None)) -> Any:
+    from api.appAuthAPI import auth_required
+
+    cfg = dict(load_config() or {})
     pid = normalize_user_profile_id(profile_id)
-    app_auth = cfg.get("app_auth")
-    if not isinstance(app_auth, dict):
-        return []
-    users = app_auth.get("users")
-    if not isinstance(users, dict):
-        return []
-    names: list[str] = []
-    for raw in users.values():
-        if not isinstance(raw, dict):
-            continue
-        if normalize_user_profile_id(raw.get("profile_id")) != pid:
-            continue
-        username = str(raw.get("username") or "").strip()
-        names.append(username or "Unnamed user")
-    return names
+    if request is not None and auth_required(cfg):
+        user = _authenticated_request_user(cfg, request)
+        if user is None:
+            return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401)
+        if not user.get("is_admin") and normalize_user_profile_id(user.get("profile_id")) != pid:
+            return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    avatar = profile_avatar(cfg, pid)
+    if avatar is None:
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    return FileResponse(avatar["path"], media_type=str(avatar.get("content_type") or "image/png"), headers={"Cache-Control": "private, max-age=31536000, immutable"})
+
+
+@router.post("/user-profiles/{profile_id}/avatar")
+def api_user_profile_avatar_save(profile_id: str, payload: dict[str, Any] = Body(default_factory=dict), request: Request = cast(Request, None)) -> Any:
+    from api.profileAPI import AVATAR_TYPES, _decode_avatar
+
+    cfg = dict(load_config() or {})
+    blocked = _admin_required_response(request, cfg)
+    if blocked is not None:
+        return blocked
+    pid = normalize_user_profile_id(profile_id)
+    decoded = _decode_avatar(payload or {})
+    if isinstance(decoded, JSONResponse):
+        return decoded
+    data, content_type = decoded
+    filename = f"{secrets.token_hex(16)}{AVATAR_TYPES[content_type][0]}"
+    path = avatar_dir() / filename
+    path.write_bytes(data)
+
+    def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
+        block = user_profiles_root(latest).get(pid) if pid else None
+        if not isinstance(block, dict):
+            return {"missing": True}
+        old = block.get("avatar")
+        block["avatar"] = {"file": filename, "content_type": content_type, "updated_at": int(time.time() * 1000)}
+        return {"old": old}
+
+    saved, result = update_config(_mutate)
+    if result.get("missing"):
+        path.unlink(missing_ok=True)
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    remove_avatar_file(result.get("old"))
+    return {"ok": True, "avatar_url": profile_avatar_url(saved, pid)}
+
+
+@router.delete("/user-profiles/{profile_id}/avatar")
+def api_user_profile_avatar_delete(profile_id: str, request: Request = cast(Request, None)) -> Any:
+    cfg = dict(load_config() or {})
+    blocked = _admin_required_response(request, cfg)
+    if blocked is not None:
+        return blocked
+    pid = normalize_user_profile_id(profile_id)
+
+    def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
+        block = user_profiles_root(latest).get(pid) if pid else None
+        if not isinstance(block, dict):
+            return {"missing": True}
+        return {"old": block.pop("avatar", None)}
+
+    _, result = update_config(_mutate)
+    if result.get("missing"):
+        return JSONResponse({"ok": False, "error": "not_found"}, status_code=404)
+    remove_avatar_file(result.get("old"))
+    return {"ok": True, "avatar_url": ""}
 
 
 @router.delete("/user-profiles/{profile_id}")
 def api_user_profiles_delete(profile_id: str, request: Request = cast(Request, None)) -> Any:
+    from api.appAuthAPI import audit_removed_logins, remove_profile_logins
+
     cfg = dict(load_config() or {})
     blocked = _admin_required_response(request, cfg)
     if blocked is not None:
         return blocked
 
     def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
-        linked_users = _managed_usernames_for_profile(latest, profile_id)
-        if linked_users:
-            return {"conflict": linked_users}
+        block = user_profiles_root(latest).get(normalize_user_profile_id(profile_id))
+        avatar = block.get("avatar") if isinstance(block, dict) else None
+        removed = remove_profile_logins(latest, profile_id)
         clear_profile_resource_assignments(latest, profile_id)
-        return {"deleted": delete_user_profile(latest, profile_id)}
+        return {"deleted": delete_user_profile(latest, profile_id), "removed_logins": removed, "avatar": avatar}
 
-    _, result = update_config(_mutate)
-    linked_users = result.get("conflict") if isinstance(result, dict) else None
-    if isinstance(linked_users, list) and linked_users:
-        label = ", ".join(linked_users[:3])
-        if len(linked_users) > 3:
-            label = f"{label} and {len(linked_users) - 3} more"
-        plural = "accounts" if len(linked_users) != 1 else "account"
-        return JSONResponse(
-            {"ok": False, "error": f"Cannot delete this profile because it is assigned to user {plural}: {label}. Reassign or delete the user first."},
-            status_code=409,
-        )
+    saved, result = update_config(_mutate)
+    if isinstance(result, dict) and result.get("deleted"):
+        remove_avatar_file(result.get("avatar"))
+    removed = result.get("removed_logins") if isinstance(result, dict) else []
+    audit_removed_logins(request, saved if isinstance(saved, dict) else cfg, removed or [])
     deleted = bool(result.get("deleted")) if isinstance(result, dict) else False
-    return {"ok": True, "deleted": deleted}
+    return {"ok": True, "deleted": deleted, "removed_logins": [username for _, username in removed or []]}

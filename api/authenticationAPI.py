@@ -22,6 +22,7 @@ from fastapi import Body, Request, HTTPException, Response, Query
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 
 from api.provider_guard import usage_conflict_response
+from cw_platform.access_policy import managed_request, reconnect_payload
 from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import DEFAULT_CFG, load_config, save_config
 from cw_platform.provider_instances import apply_instance_defaults, ensure_instance_block, ensure_provider_block, normalize_instance_id
@@ -399,14 +400,15 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return HTMLResponse(auth_providers_html())
 
     @app.post("/api/crosswatch/connect", tags=["auth"])
-    def api_crosswatch_connect(instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_crosswatch_connect(request: Request, instance: str | None = Query(None)) -> dict[str, Any]:
         try:
             cfg = load_config() or {}
             if not isinstance(cfg, dict):
                 cfg = dict(cfg)
             inst = normalize_instance_id(instance)
             base = ensure_provider_block(cfg, "crosswatch")
-            base["connected"] = True
+            if inst == "default" or not managed_request(request):
+                base["connected"] = True
             base.setdefault("root_dir", "/config/.cw_provider")
             base.setdefault("retention_days", 30)
             base.setdefault("auto_snapshot", True)
@@ -896,9 +898,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
     # JELLYFIN
     @app.post("/api/jellyfin/login", tags=["auth"])
-    def api_jellyfin_login(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> JSONResponse:
+    def api_jellyfin_login(request: Request, payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> JSONResponse:
         if not isinstance(payload, dict):
             return JSONResponse({"ok": False, "error": "Malformed request"}, 400)
+        payload = reconnect_payload(request, "/api/jellyfin/login", payload)
 
         inst = normalize_instance_id(instance)
         cfg = load_config()
@@ -991,7 +994,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return JSONResponse({**result, "instance": inst}, 200)
 
     @app.post("/api/jellyfin/quickconnect/start", tags=["auth"])
-    def api_jellyfin_qc_start(payload: dict[str, Any] = Body(default={}), instance: str | None = Query(None)) -> JSONResponse:
+    def api_jellyfin_qc_start(request: Request, payload: dict[str, Any] = Body(default={}), instance: str | None = Query(None)) -> JSONResponse:
+        payload = reconnect_payload(request, "/api/jellyfin/quickconnect/start", payload)
         inst = normalize_instance_id(instance)
         cfg = load_config()
         ensure_provider_block(cfg, "jellyfin")
@@ -1146,9 +1150,10 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
 
     # EMBY
     @app.post("/api/emby/login", tags=["auth"])
-    def api_emby_login(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> JSONResponse:
+    def api_emby_login(request: Request, payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> JSONResponse:
         if not isinstance(payload, dict):
             return JSONResponse({"ok": False, "error": "Malformed request"}, 400)
+        payload = reconnect_payload(request, "/api/emby/login", payload)
 
         inst = normalize_instance_id(instance)
         cfg = load_config()
@@ -2036,19 +2041,20 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return _tmdb_v3_api_key_error(api_key)
 
     @app.post("/api/tmdb_sync/connect/start", tags=["auth"])
-    def api_tmdb_sync_connect_start(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_tmdb_sync_connect_start(request: Request, payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
         inst = normalize_instance_id(instance)
+        managed = managed_request(request)
         try:
             cfg = load_config()
             tm = ensure_instance_block(cfg, "tmdb_sync", inst)
             key = str((payload or {}).get("api_key") or "").strip()
-            if _looks_masked_secret(key):
+            if managed or _looks_masked_secret(key):
                 key = str((tm or {}).get("api_key") or "").strip()
             key_error = _tmdb_sync_key_error(key)
             if key_error:
                 return {"ok": False, "error": key_error}
             read_token = str((payload or {}).get("read_token") or "").strip()
-            if _looks_masked_secret(read_token):
+            if managed or _looks_masked_secret(read_token):
                 read_token = str((tm or {}).get("read_token") or "").strip()
             read_error = _tmdb_read_token_error(read_token, key)
             if read_error:
@@ -2090,7 +2096,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": err}
 
     @app.post("/api/tmdb_sync/connect/finish", tags=["auth"])
-    def api_tmdb_sync_connect_finish(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_tmdb_sync_connect_finish(request: Request, payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:
+        payload = reconnect_payload(request, "/api/tmdb_sync/connect/finish", payload)
         inst = normalize_instance_id(instance)
         try:
             cfg = load_config()
@@ -2632,7 +2639,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": "internal", "instance": inst}
 
     @app.post("/api/flicklist/device/start", tags=["auth"])
-    def api_flicklist_device_start(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_flicklist_device_start(request: Request, payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        payload = reconnect_payload(request, "/api/flicklist/device/start", payload)
         inst = normalize_instance_id(instance)
         try:
             raw = payload or {}
@@ -3019,7 +3027,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": _silo_error(e), "instance": inst}
 
     @app.post("/api/silo/device/start", tags=["auth"])
-    def api_silo_device_start(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_silo_device_start(request: Request, payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        payload = reconnect_payload(request, "/api/silo/device/start", payload)
         inst = normalize_instance_id(instance)
         try:
             cfg = load_config()
@@ -3701,7 +3710,8 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return None
 
     @app.post("/api/trakt/pin/new", tags=["auth"])
-    def api_trakt_pin_new(payload: Optional[dict[str, Any]] = Body(None), instance: str = Query("default")) -> dict[str, Any]:
+    def api_trakt_pin_new(request: Request, payload: Optional[dict[str, Any]] = Body(None), instance: str = Query("default")) -> dict[str, Any]:
+        payload = reconnect_payload(request, "/api/trakt/pin/new", payload)
         try:
             inst = normalize_instance_id(instance)
             method = str((payload or {}).get("auth_method") or "").strip().lower()
@@ -3795,13 +3805,21 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": "internal"}
 
     @app.post("/api/kitsu/connect", tags=["auth"])
-    def api_kitsu_connect(payload: dict[str, Any] = Body(...), instance: str = Query("default")) -> Any:
+    def api_kitsu_connect(request: Request, payload: dict[str, Any] = Body(...), instance: str = Query("default")) -> Any:
         from providers.auth import _auth_KITSU as kitsu
 
         try:
             username = str(payload.pop("username", ""))
             password = str(payload.pop("password", ""))
             connection = kitsu.login(username, password)
+            if managed_request(request):
+                cfg = load_config()
+                block = ensure_instance_block(cfg, "kitsu", normalize_instance_id(instance))
+                block.update(connection)
+                block.pop("password", None)
+                save_config(cfg)
+                _probe_bust("kitsu")
+                return JSONResponse({"ok": True, "saved": True}, headers={"Cache-Control": "no-store"})
             return JSONResponse({"ok": True, "connection": connection}, headers={"Cache-Control": "no-store"})
         except kitsu.KitsuAuthError as exc:
             message = "Kitsu rejected the login" if str(exc) == "invalid_grant" else "Kitsu connection failed"

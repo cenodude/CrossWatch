@@ -57,6 +57,7 @@ from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config, update_co
 from cw_platform.id_map import canonical_key
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.profile_preferences import display_timezone
+from cw_platform.user_profile_avatars import profile_avatar_url
 from cw_platform.provider_instances import instances_for_user_profile, list_user_profiles, normalize_instance_id, provider_display_key
 from api.dashboardAPI import _dashboard_widgets_version
 from api.watchlistAPI import _item_for_user_filter as _watchlist_item_for_user_filter
@@ -280,7 +281,7 @@ def _public_profile(cfg: dict[str, Any], a: dict[str, Any], uid: str, raw: dict[
     user = _admin_identity(a) if uid == ADMIN_USER_ID else _public_user(uid, raw)
     user["display_name"] = str(raw.get("display_name") or user.get("display_name") or user.get("username") or "").strip()
     user["label"] = user["display_name"] or str(user.get("username") or "")
-    user["avatar_url"] = _avatar_url(raw, uid)
+    user["avatar_url"] = _avatar_url(raw, uid) or ("" if uid == ADMIN_USER_ID else profile_avatar_url(cfg, user.get("profile_id")))
     user["profile_label"] = "Administrator" if uid == ADMIN_USER_ID else _profile_label(cfg, user.get("profile_id"))
     current_session, other_sessions = _public_session_state(a, token)
     other_sessions = [

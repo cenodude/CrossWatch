@@ -37,6 +37,12 @@
   const ACCESS_LABELS = { full: "Full access", readonly: "Read-only", monitor: "Monitor" };
   const ACCESS_NOTES = { full: "Can view and change their own data.", readonly: "Can look around, but not change anything.", monitor: "Status screens only." };
   const ACCESS_ICONS = { full: "edit_square", readonly: "visibility", monitor: "monitor_heart" };
+  const SETTINGS_GRANTS = [
+    ["pairs", "Sync pairs", "Add, change and run their own pairs."],
+    ["scrobbler", "Scrobbler", "Their own watcher routes and webhooks."],
+    ["schedule", "Schedule", "When their own pairs run."],
+    ["connections", "Reconnect", "Sign in again to their own accounts."],
+  ];
   const NAME_IDEAS = ["Me", "Partner", "Kids", "Guests", "Living room"];
   const STRENGTH_LABELS = ["", "Too short", "Okay", "Good", "Strong"];
   const MIN_PASSWORD = 8;
@@ -92,9 +98,17 @@
     return (words[0][0] + words[1][0]).toUpperCase();
   }
 
-  function avatar(name, size = "") {
+  function avatar(name, size = "", url = "") {
     const letters = initialsFor(name);
-    return `<span class="cw-upw-avatar${size ? ` is-${size}` : ""}" data-upw-avatar style="--h:${hueFor(name)}">${letters ? esc(letters) : icon("person")}</span>`;
+    const inner = url ? `<img src="${esc(url)}" alt="">` : (letters ? esc(letters) : icon("person"));
+    return `<span class="cw-upw-avatar${size ? ` is-${size}` : ""}${url ? " has-image" : ""}" data-upw-avatar style="--h:${hueFor(name)}">${inner}</span>`;
+  }
+
+  function draftAvatarUrl() {
+    const change = modalDraft?.avatarChange;
+    if (change === "remove") return "";
+    if (change && typeof change === "object") return change.data;
+    return txt(modalDraft?.avatarUrl);
   }
 
   function profileById(id) {
@@ -152,9 +166,28 @@
     return raw.write === true ? "full" : "readonly";
   }
 
-  function accessPermissions(mode) {
+  function settingsGrants(user) {
+    const raw = user?.permissions && typeof user.permissions === "object" ? user.permissions : {};
+    return Object.fromEntries(SETTINGS_GRANTS.map(([key]) => [key, raw[key] !== false]));
+  }
+
+  function accessPermissions(mode, grants) {
     if (mode === "monitor") return { dashboard: false, watchlist: false, playback: false, write: false, monitor: true };
-    return { dashboard: true, watchlist: true, playback: true, write: mode === "full", monitor: false };
+    const full = mode === "full";
+    return {
+      dashboard: true,
+      watchlist: true,
+      playback: true,
+      write: full,
+      monitor: false,
+      ...Object.fromEntries(SETTINGS_GRANTS.map(([key]) => [key, full && grants?.[key] !== false])),
+    };
+  }
+
+  function grantsSummary(login) {
+    if (login.access !== "full") return "";
+    const on = SETTINGS_GRANTS.filter(([key]) => login.grants?.[key] !== false).map(([, label]) => label);
+    return on.length ? `Settings: ${on.join(", ")}` : "No settings access";
   }
 
   function makeLoginDraft(profile) {
@@ -169,6 +202,8 @@
       initialAccess: user ? accessMode(user) : "full",
       enabled: user ? user.enabled !== false : true,
       initialEnabled: user ? user.enabled !== false : true,
+      grants: settingsGrants(user),
+      initialGrants: settingsGrants(user),
       totp: !!user?.totp_enabled,
       adminUsername: "admin",
       adminPassword: "",
@@ -182,6 +217,8 @@
       instances: JSON.parse(JSON.stringify(manual || {})),
       resources: resourceMap(profile),
       login: makeLoginDraft(profile),
+      avatarUrl: txt(profile?.avatar_url),
+      avatarChange: undefined,
       suggested: !!profile,
       visited: profile ? STEPS.length : 0,
     };
@@ -296,7 +333,7 @@
     const canLogin = profileLogins(profile.id).length > 0;
     return `
       <button type="button" class="cw-auth-service-card cw-upm-profile-card" data-action="edit-profile" data-profile-id="${esc(profile.id)}">
-        <span class="cw-auth-provider-mark cw-upm-card-icon"><span class="material-symbols-rounded cw-auth-provider-icon" aria-hidden="true">${canLogin ? "how_to_reg" : "person"}</span></span>
+        <span class="cw-auth-provider-mark cw-upm-card-icon${profile.avatar_url ? " has-image" : ""}">${profile.avatar_url ? `<img src="${esc(profile.avatar_url)}" alt="">` : `<span class="material-symbols-rounded cw-auth-provider-icon" aria-hidden="true">${canLogin ? "how_to_reg" : "person"}</span>`}</span>
         <span class="cw-auth-service-copy cw-upm-card-copy">
           <strong>${esc(profile.label || profile.id)}</strong>
           <small>${esc(assignedUserSummary(profile))}</small>
@@ -405,7 +442,7 @@
     const login = modalDraft?.login || {};
     return `
       <div class="cw-upw-preview">
-        ${avatar(name, "lg")}
+        ${avatar(name, "lg", draftAvatarUrl())}
         <div class="cw-upw-preview-text">
           <strong data-upw-name>${esc(name || "New profile")}</strong>
           <small>${esc(loginSummary())}</small>
@@ -453,7 +490,13 @@
     return `
       ${paneHead(editing ? "Profile name" : "Who is this profile for?", "Give it a name you will recognise. You can always view CrossWatch as any profile.")}
       <div class="cw-upw-name">
-        ${avatar(name, "xl")}
+        <div class="cw-upw-photo">
+          ${avatar(name, "xl", draftAvatarUrl())}
+          <div class="cw-upw-photo-actions">
+            <label class="cw-upw-btn is-photo">${icon("add_a_photo")}<span>${draftAvatarUrl() ? "Change" : "Add picture"}</span><input type="file" accept="image/png,image/jpeg,image/webp" data-upw-photo hidden></label>
+            ${draftAvatarUrl() ? `<button type="button" class="cw-upw-btn is-photo" data-action="remove-photo" title="Remove picture" aria-label="Remove picture">${icon("delete")}</button>` : ""}
+          </div>
+        </div>
         <div class="cw-upw-name-field">
           <input class="cw-upw-input is-xl" id="cw-upm-modal-label" type="text" maxlength="40" value="${esc(name)}" placeholder="Type a name" autocomplete="off" spellcheck="false" aria-label="Profile name">
           ${editing ? "" : `<div class="cw-upw-ideas"><span>Ideas</span>${NAME_IDEAS.map((idea) => `<button type="button" class="cw-upw-chip" data-action="name-idea" data-value="${esc(idea)}">${esc(idea)}</button>`).join("")}</div>`}
@@ -600,7 +643,20 @@
               <span><strong>${esc(ACCESS_LABELS[mode])}</strong><small>${esc(ACCESS_NOTES[mode])}</small></span>
             </button>`).join("")}
         </div>
-      </div>`;
+      </div>
+      ${login.access === "full" ? `
+        <div class="cw-upw-field">
+          <span class="cw-upw-label">Settings they can manage</span>
+          <div class="cw-upw-grants">
+            ${SETTINGS_GRANTS.map(([key, label, note]) => `
+              <label class="cw-upw-grant">
+                <input class="cw-upw-check" type="checkbox" data-upw-grant="${key}" ${login.grants?.[key] !== false ? "checked" : ""}>
+                <span class="cw-upw-toggle-track" aria-hidden="true"></span>
+                <span><strong>${esc(label)}</strong><small>${esc(note)}</small></span>
+              </label>`).join("")}
+          </div>
+          <p class="cw-upw-note">${icon("info")}Only their own accounts, pairs, routes and schedule. Adding accounts, provider settings and global settings stay with you.</p>
+        </div>` : ""}`;
   }
 
   function renderAuthSetup(login) {
@@ -703,13 +759,13 @@
         }).join("")}</ul>`
       : none("Nothing switched on");
     const loginBody = login.wanted
-      ? `<ul class="cw-upw-list"><li>${icon("alternate_email")}<span><strong>${esc(login.username)}</strong><small>${esc(ACCESS_LABELS[login.access] || "")}</small></span></li></ul>`
+      ? `<ul class="cw-upw-list"><li>${icon("alternate_email")}<span><strong>${esc(login.username)}</strong><small>${esc([ACCESS_LABELS[login.access] || "", grantsSummary(login)].filter(Boolean).join(" · "))}</small></span></li></ul>`
       : none("No login, view only");
     return `
       ${paneHead("Ready to create", "Have a last look. You can change all of this later.")}
       <div class="cw-upw-summary">
         <div class="cw-upw-summary-hero">
-          ${avatar(modalDraft?.label, "lg")}
+          ${avatar(modalDraft?.label, "lg", draftAvatarUrl())}
           <div><strong>${esc(modalDraft?.label || "")}</strong><small>New profile</small></div>
         </div>
         <div class="cw-upw-review">
@@ -732,7 +788,7 @@
     return `
       <div class="cw-upw-done">
         <div class="cw-upw-done-mark">
-          ${avatar(done.label, "xl")}
+          ${avatar(done.label, "xl", done.avatarUrl)}
           <span class="cw-upw-done-check"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
         </div>
         <h2>${esc(done.label)} is ready</h2>
@@ -797,7 +853,6 @@
             </div>
             ${renderPreview()}
             ${renderRailSteps()}
-            <div class="cw-upw-rail-foot"><kbd>Esc</kbd> to close${editing ? "" : " · <kbd>Enter</kbd> to continue"}</div>
           </aside>
           <section class="cw-upw-main">
             <div class="cw-upw-top">
@@ -867,7 +922,7 @@
     const root = d.querySelector("[data-upw-root]");
     if (!root || !modalDraft) return;
     const name = txt(modalDraft.label);
-    root.querySelectorAll(".cw-upw-preview [data-upw-avatar], .cw-upw-name [data-upw-avatar]").forEach((node) => {
+    root.querySelectorAll(".cw-upw-preview [data-upw-avatar]:not(.has-image), .cw-upw-name [data-upw-avatar]:not(.has-image)").forEach((node) => {
       node.style.setProperty("--h", String(hueFor(name)));
       node.innerHTML = initialsFor(name) ? esc(initialsFor(name)) : icon("person");
     });
@@ -907,9 +962,9 @@
     render();
     try {
       const [instances, profiles, syncLabels] = await Promise.all([
-        json(`/api/provider-instances?configured_only=true&ts=${Date.now()}`),
+        json(`/api/provider-instances?configured_only=true&user_profile=all&ts=${Date.now()}`),
         json(`/api/user-profiles?ts=${Date.now()}`),
-        json(`/api/sync-user-labels?ts=${Date.now()}`).catch(() => ({})),
+        json(`/api/sync-user-labels?user_profile=all&ts=${Date.now()}`).catch(() => ({})),
       ]);
       providerInstances = instances && typeof instances === "object" ? instances : {};
       syncUserLabels = syncLabels && typeof syncLabels === "object" ? syncLabels : {};
@@ -921,6 +976,7 @@
         manual_instances: row?.manual_instances && typeof row.manual_instances === "object" ? row.manual_instances : {},
         resources: row?.resources && typeof row.resources === "object" ? row.resources : {},
         resource_counts: row?.resource_counts && typeof row.resource_counts === "object" ? row.resource_counts : {},
+        avatar_url: txt(row?.avatar_url),
       })).filter((row) => row.id && row.label) : [];
       await loadLogins();
       loadedOnce = true;
@@ -1050,6 +1106,9 @@
     if (field("cw-upm-login-enabled")) login.enabled = !!field("cw-upm-login-enabled").checked;
     if (field("cw-upm-admin-username")) login.adminUsername = txt(field("cw-upm-admin-username").value);
     if (field("cw-upm-admin-password")) login.adminPassword = String(field("cw-upm-admin-password").value || "");
+    root.querySelectorAll("input[data-upw-grant]").forEach((input) => {
+      login.grants = { ...(login.grants || {}), [input.dataset.upwGrant]: !!input.checked };
+    });
   }
 
   function syncDraftFromDom() {
@@ -1112,11 +1171,12 @@
   function loginPayload() {
     const login = modalDraft?.login || {};
     if (!login.wanted || !authActive) return null;
-    if (!login.user_id) return { username: txt(login.username), password: login.password, permissions: accessPermissions(login.access) };
+    if (!login.user_id) return { username: txt(login.username), password: login.password, permissions: accessPermissions(login.access, login.grants) };
     const out = {};
     if (txt(login.username) !== login.initialUsername) out.username = txt(login.username);
     if (login.password) out.password = login.password;
-    if (login.access !== login.initialAccess) out.permissions = accessPermissions(login.access);
+    const grantsChanged = SETTINGS_GRANTS.some(([key]) => (login.grants?.[key] !== false) !== (login.initialGrants?.[key] !== false));
+    if (login.access !== login.initialAccess || (login.access === "full" && grantsChanged)) out.permissions = accessPermissions(login.access, login.grants);
     if (!!login.enabled !== login.initialEnabled) out.enabled = !!login.enabled;
     return Object.keys(out).length ? { user_id: login.user_id, ...out } : null;
   }
@@ -1278,6 +1338,46 @@
     toast("Login removed", true);
   }
 
+  async function saveAvatar(profileId) {
+    const change = modalDraft?.avatarChange;
+    const fallback = txt(modalDraft?.avatarUrl);
+    if (!profileId || change === undefined) return fallback;
+    const url = `/api/user-profiles/${encodeURIComponent(profileId)}/avatar`;
+    try {
+      if (change === "remove") {
+        await json(url, { method: "DELETE" });
+        return "";
+      }
+      const saved = await json(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data: change.data, content_type: change.type }) });
+      return txt(saved?.avatar_url);
+    } catch (e) {
+      toast(`Picture not saved: ${e?.message || e}`, false);
+      return fallback;
+    }
+  }
+
+  function readPhoto(input) {
+    const file = input?.files?.[0];
+    input.value = "";
+    if (!file || !modalDraft) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      toast("Use a PNG, JPG or WebP image", false);
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast("The picture must be 5 MB or smaller", false);
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (!modalDraft) return;
+      syncDraftFromDom();
+      modalDraft.avatarChange = { data: String(reader.result || ""), type: file.type };
+      render();
+    };
+    reader.readAsDataURL(file);
+  }
+
   async function saveProfile() {
     if (!d.querySelector("[data-upw-root]") || modalDone) return;
     clearDeleteWarning();
@@ -1298,6 +1398,7 @@
       headers: { "Content-Type": "application/json" },
       body,
     });
+    const avatarUrl = await saveAvatar(profile ? profile.id : txt(saved?.profile?.id));
     if (profile) {
       modalProfileId = null;
       modalDraft = null;
@@ -1307,6 +1408,7 @@
     modalDone = {
       id: txt(saved?.profile?.id),
       label,
+      avatarUrl,
       username: login ? txt(saved?.login?.username || login.username) : "",
       password: login ? login.password : "",
     };
@@ -1346,7 +1448,8 @@
     if (!btn) return;
     btn.dataset.cwConfirmDelete = "1";
     btn.classList.add("is-confirming");
-    btn.innerHTML = `${icon("warning")}<span>Confirm delete</span>`;
+    const hasLogin = profileLogins(modalProfile()?.id).length > 0;
+    btn.innerHTML = `${icon("warning")}<span>${hasLogin ? "Delete profile and login" : "Confirm delete"}</span>`;
     invalidateHostHtml();
     if (deleteConfirmTimer) clearTimeout(deleteConfirmTimer);
     deleteConfirmTimer = setTimeout(() => resetDeleteConfirm(btn), 4200);
@@ -1383,10 +1486,11 @@
     }
     resetDeleteConfirm(btn);
     try {
-      await json(`/api/user-profiles/${encodeURIComponent(profile.id)}`, { method: "DELETE" });
+      const result = await json(`/api/user-profiles/${encodeURIComponent(profile.id)}`, { method: "DELETE" });
       modalProfileId = null;
       modalDraft = null;
-      await afterSave("Profile deleted");
+      const removed = Array.isArray(result?.removed_logins) ? result.removed_logins : [];
+      await afterSave(removed.length ? `Profile and login ${removed.join(", ")} deleted` : "Profile deleted");
     } catch (e) {
       showDeleteWarning(String(e?.message || e || "Could not delete profile"));
     }
@@ -1421,6 +1525,11 @@
           if (action === "prev-step") return setStep(wizardStep - 1);
           if (action === "go-step") return setStep(actionNode.dataset.step);
           if (action === "name-idea") return chooseNameIdea(actionNode.dataset.value);
+          if (action === "remove-photo") {
+            syncDraftFromDom();
+            modalDraft.avatarChange = modalDraft.avatarUrl ? "remove" : undefined;
+            return render();
+          }
           if (action === "login-choice") return chooseLogin(actionNode.dataset.value === "yes");
           if (action === "access-choice") return chooseAccess(actionNode.dataset.value);
           if (action === "toggle-password") return togglePassword(false);
@@ -1455,6 +1564,7 @@
     });
     host.addEventListener("change", (event) => {
       if (!modalDraft || !event.target?.closest?.("[data-upw-root]")) return;
+      if (event.target?.matches?.("input[data-upw-photo]")) return readPhoto(event.target);
       clearDeleteWarning();
       syncDraftFromDom();
       if (event.target?.matches?.(".cw-upw-tile input, input[data-resource-key], #cw-upm-login-enabled")) render();

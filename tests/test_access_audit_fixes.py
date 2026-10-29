@@ -491,11 +491,15 @@ def test_managed_shell_strips_admin_markup() -> None:
     src = ui_frontend._get_index_html_static()
     for perms in (
         {"write": True, "dashboard": True, "watchlist": True, "playback": True},
+        {"write": True, "dashboard": True, "pairs": False, "scrobbler": False, "schedule": False, "connections": False},
         {"write": False, "dashboard": True, "watchlist": True, "playback": True},
         {"write": False, "dashboard": False, "watchlist": False, "playback": False},
     ):
         html = ui_frontend._managed_user_shell(src, {"permissions": perms})
+        settings_allowed = bool(ui_frontend._managed_settings_panes({"permissions": perms})) and perms["write"]
         for marker, _label in ui_frontend._ADMIN_ONLY_MARKERS:
+            if settings_allowed and marker == 'id="page-settings"':
+                continue
             assert marker not in html
 
 
@@ -508,7 +512,14 @@ def test_managed_shell_refuses_to_render_when_markers_drift() -> None:
         1,
     )
     with pytest.raises(RuntimeError, match="managed_user_shell_strip_failed"):
-        ui_frontend._managed_user_shell(drifted, {"permissions": {"write": True, "dashboard": True}})
+        ui_frontend._managed_user_shell(drifted, {"permissions": {"write": True, "dashboard": True, "pairs": False, "scrobbler": False, "schedule": False, "connections": False}})
+    drifted_pane = ui_frontend._get_index_html_static().replace(
+        '        <section class="cw-settings-pane cw-app-settings-pane" data-pane="app">',
+        '        <section  class="cw-settings-pane cw-app-settings-pane" data-pane="app">',
+        1,
+    )
+    with pytest.raises(RuntimeError, match="managed_user_shell_strip_failed"):
+        ui_frontend._managed_user_shell(drifted_pane, {"permissions": {"write": True, "dashboard": True}})
 
 
 # L5 - config/meta withholds UI state while a credential reset is pending
@@ -583,7 +594,8 @@ def test_admin_gate_is_bypassed_entirely_for_admins() -> None:
 
     src = inspect.getsource(crosswatch.app_auth_gate)
     assert 'if not user.get("is_admin"):' in src
-    assert "app_non_admin_api_allowed" in src
+    assert "_managed_api_allowed" in src
+    assert "app_non_admin_api_allowed" in inspect.getsource(crosswatch._managed_api_allowed)
 
 
 def test_editor_metadata_tools_follow_the_editor_tab() -> None:

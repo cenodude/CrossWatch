@@ -227,7 +227,7 @@ def test_user_profile_crud_api(monkeypatch) -> None:
     assert listed["items"][0]["label"] == "Bobby"
     assert listed["items"][0]["instances"] == {"SCROB": ["SCROB-P02"]}
     assert len(listed["items"][0]["instance_uids"]) == 1
-    assert deleted == {"ok": True, "deleted": True}
+    assert deleted == {"ok": True, "deleted": True, "removed_logins": []}
 
 
 def test_user_profile_validation_errors_do_not_expose_exception_text(monkeypatch) -> None:
@@ -248,31 +248,34 @@ def test_user_profile_validation_errors_do_not_expose_exception_text(monkeypatch
     assert updated == {"ok": False, "error": "invalid_user_profile"}
 
 
-def test_user_profile_delete_blocks_when_assigned_to_user(monkeypatch) -> None:
+def test_user_profile_delete_also_removes_its_login(monkeypatch) -> None:
+    import api.appAuthAPI as app_auth_api
+
     store: dict[str, Any] = {
-        "user_profiles": {BOB_PROFILE_ID: {"label": "Bob", "instances": {"PLEX": ["PLEX-P01"]}}},
+        "user_profiles": {
+            BOB_PROFILE_ID: {"label": "Bob", "instances": {"PLEX": ["PLEX-P01"]}},
+            ALICE_PROFILE_ID: {"label": "Alice", "instances": {}},
+        },
         "app_auth": {
             "users": {
-                "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa": {
-                    "username": "pascal",
-                    "profile_id": BOB_PROFILE_ID,
-                }
-            }
+                "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa": {"username": "pascal", "profile_id": BOB_PROFILE_ID},
+                "bbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb": {"username": "alice", "profile_id": ALICE_PROFILE_ID},
+            },
         },
     }
+    audited: list[str] = []
 
     monkeypatch.setattr(provider_api, "load_config", lambda: json.loads(json.dumps(store)))
     monkeypatch.setattr(provider_api, "save_config", lambda cfg: store.update(cfg))
     monkeypatch.setattr(provider_api, "update_config", _fake_update(provider_api.load_config, lambda cfg: store.update(cfg)))
+    monkeypatch.setattr(app_auth_api, "audit_removed_logins", lambda request, cfg, removed: audited.extend(name for _, name in removed))
 
     response = provider_api.api_user_profiles_delete(BOB_PROFILE_ID, request=_admin_req())
 
-    assert response.status_code == 409
-    assert _loads_body(response.body) == {
-        "ok": False,
-        "error": "Cannot delete this profile because it is assigned to user account: pascal. Reassign or delete the user first.",
-    }
-    assert BOB_PROFILE_ID in store["user_profiles"]
+    assert response == {"ok": True, "deleted": True, "removed_logins": ["pascal"]}
+    assert BOB_PROFILE_ID not in store["user_profiles"]
+    assert list(store["app_auth"]["users"]) == ["bbbbbbbbbbbb4bbb8bbbbbbbbbbbbbbb"]
+    assert audited == ["pascal"]
 
 
 def test_user_profile_delete_clears_resource_assignments(monkeypatch) -> None:
@@ -298,7 +301,7 @@ def test_user_profile_delete_clears_resource_assignments(monkeypatch) -> None:
 
     deleted = provider_api.api_user_profiles_delete(ALICE_PROFILE_ID, request=_admin_req())
 
-    assert deleted == {"ok": True, "deleted": True}
+    assert deleted == {"ok": True, "deleted": True, "removed_logins": []}
     assert "profile_id" not in store["pairs"][0]
     assert "profile_id" not in store["scrobble"]["watch"]["routes"][0]
     assert "user_profile_assignments" not in store["scrobble"]["webhook"]
@@ -873,9 +876,9 @@ def test_user_profile_manager_screen_is_mounted() -> None:
     assert "flex:0 0 36px;width:36px;height:36px" in css
     assert ".cw-upm-add-mark .material-symbols-rounded{font-size:24px" in css
     assert "/assets/css/user-profile-wizard.css" in settings_html
-    assert ".cw-upw-overlay {" in wizard_css
-    assert ".cw-upw-overlay .cw-upw-check {" in wizard_css
-    assert "@media (prefers-reduced-motion: reduce)" in wizard_css
+    assert ".cw-upw-overlay{" in wizard_css
+    assert ".cw-upw-overlay .cw-upw-check{" in wizard_css
+    assert "@media(prefers-reduced-motion:reduce){" in wizard_css
     assert "btn-app-user-profile-create" in app_users_js
     assert "w.cwUserProfilesOpenNew?.({ login: true });" in app_users_js
     assert 'w.cwUserProfilesOpen?.(target.dataset.profileId, { step: "login" });' in app_users_js
@@ -906,8 +909,9 @@ def test_events_modal_has_admin_only_audits_tab() -> None:
     assert 'value: "audit", label: "Audits"' in js
     assert 'value: "statistics", label: "Statistics"' in js
     assert js.index('value: "scrobble", label: "Scrobble"') < js.index('value: "audit", label: "Audits"') < js.index('value: "statistics", label: "Statistics"')
-    assert "...(isAdmin ? [{ value: \"audit\", label: \"Audits\", icon: \"admin_panel_settings\" }] : [])" in js
-    assert 'if (view === "audit" && !isAdmin) view = "sync"' in js
+    assert 'const canAudit = isAdmin && !String(window.CW?.OverviewProfile?.id || "").trim();' in js
+    assert "...(canAudit ? [{ value: \"audit\", label: \"Audits\", icon: \"admin_panel_settings\" }] : [])" in js
+    assert 'if (view === "audit" && !canAudit) view = "sync"' in js
     assert 'domain === "audit"' in js
 
 

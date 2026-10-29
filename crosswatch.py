@@ -52,7 +52,7 @@ from api.apiTokensAPI import (
     touch_api_token as app_touch_api_token,
     register_api_tokens,
 )
-from cw_platform.access_policy import clean_managed_permissions, is_monitor_user, monitor_api_allowed, monitor_identity
+from cw_platform.access_policy import clean_managed_permissions, is_monitor_user, managed_reconnect_allowed, monitor_api_allowed, monitor_identity, reconnect_route_provider
 from cw_platform.event_archive.audit import record_audit
 
 from _logging import log as LOG, BLUE, GREEN, DIM, RED, YELLOW, RESET  # type: ignore
@@ -422,6 +422,13 @@ app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 
 from api.scrobbleAPI import WebhookAuthError
 
+def _managed_api_allowed(cfg: dict, user: dict, request: Request, path: str) -> bool:
+    provider = reconnect_route_provider(path, request.method)
+    if provider:
+        return managed_reconnect_allowed(cfg, user, provider, request.query_params.get("instance"))
+    return app_non_admin_api_allowed(path, request.method) and _non_admin_permission_allowed(user, path, request.method)
+
+
 def _non_admin_permission_allowed(user: dict, path: str, method: str = "GET") -> bool:
     if not path.startswith("/api/"):
         return True
@@ -434,9 +441,17 @@ def _non_admin_permission_allowed(user: dict, path: str, method: str = "GET") ->
         return bool(perms.get("dashboard") or perms.get("watchlist") or perms.get("playback"))
     if path in {"/api/metadata/search", "/api/metadata/resolve"}:
         return write
+    if path in {"/api/auth/providers", "/api/auth/providers/html"}:
+        return bool(perms.get("connections"))
+    if path.startswith("/api/scrobbler/"):
+        return bool(perms.get("scrobbler"))
+    if path == "/api/scheduling/profiles" or path.startswith("/api/scheduling/profiles/"):
+        return bool(perms.get("schedule"))
     if m in {"POST", "PUT", "PATCH", "DELETE"}:
         if not write:
             return False
+        if path == "/api/pairs" or path.startswith("/api/pairs/"):
+            return bool(perms.get("pairs"))
         if path.startswith("/api/watchlist"):
             return bool(perms.get("watchlist"))
         if path.startswith("/api/playback_progress/"):
@@ -454,8 +469,10 @@ def _non_admin_permission_allowed(user: dict, path: str, method: str = "GET") ->
         return bool(perms.get("dashboard"))
     if path == "/api/events/feed":
         return bool(perms.get("dashboard"))
-    if path in {"/api/status", "/api/sync/providers", "/api/sync/providers/counts"}:
+    if path == "/api/status":
         return bool(perms.get("dashboard"))
+    if path in {"/api/sync/providers", "/api/sync/providers/counts"}:
+        return bool(perms.get("dashboard") or perms.get("pairs"))
     if path == "/api/logs/stream":
         return write
     if path == "/api/logs/archive" or path.startswith("/api/logs/archive/"):
@@ -463,7 +480,7 @@ def _non_admin_permission_allowed(user: dict, path: str, method: str = "GET") ->
     if path == "/api/logs/watcher":
         return False
     if path == "/api/pairs":
-        return bool(perms.get("dashboard"))
+        return bool(perms.get("dashboard") or perms.get("pairs"))
     if path.startswith("/api/pairs/") or path.startswith("/api/run"):
         return write
     for prefix in (
@@ -677,7 +694,7 @@ async def app_auth_gate(request: Request, call_next):
         if not api_user.get("is_admin"):
             if _apply_monitor_view(request, api_user, path):
                 pass
-            elif is_monitor_user(api_user) or not app_non_admin_api_allowed(path, request.method) or not _non_admin_permission_allowed(api_user, path, request.method):
+            elif is_monitor_user(api_user) or not _managed_api_allowed(cfg, api_user, request, path):
                 return JSONResponse({"ok": False, "error": "Administrator access required"}, status_code=403, headers={"Cache-Control": "no-store"})
         app_touch_api_token(str(api_user.get("api_token_id") or ""))
         response = await call_next(request)
@@ -698,7 +715,7 @@ async def app_auth_gate(request: Request, call_next):
         except Exception:
             pass
         if not user.get("is_admin"):
-            if not app_non_admin_api_allowed(path, request.method) or not _non_admin_permission_allowed(user, path, request.method):
+            if not _managed_api_allowed(cfg, user, request, path):
                 if path.startswith("/api/"):
                     return JSONResponse({"ok": False, "error": "Administrator access required"}, status_code=403, headers={"Cache-Control": "no-store"})
                 if path != "/profile":
@@ -1062,10 +1079,9 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
     try:
         global scheduler
         if scheduler is not None:
-            cfg_sched = (load_config() or {}).get("scheduling") or {}
-            effective_enabled = bool(
-                cfg_sched.get("enabled") or ((cfg_sched.get("advanced") or {}).get("enabled"))
-            )
+            from services.scheduling import scheduler_should_run
+
+            effective_enabled = scheduler_should_run(load_config() or {})
             if effective_enabled:
                 scheduler.start()
                 if hasattr(scheduler, "refresh"):

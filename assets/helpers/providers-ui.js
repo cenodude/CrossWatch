@@ -113,7 +113,34 @@
     return !profileConfigured("stremio", source, cfg);
   }
 
+  let managedInstances = {};
+
+  function managedUser() {
+    return document.documentElement.dataset.cwRole === "user";
+  }
+
+  async function loadManagedInstances() {
+    if (!managedUser()) return;
+    try { await window.__cwAuthBootstrapPromise; } catch {}
+    try {
+      const res = await fetch(`/api/provider-instances?configured_only=true&ts=${Date.now()}`, { cache: "no-store", credentials: "same-origin" });
+      const data = res.ok ? await res.json() : {};
+      managedInstances = data && typeof data === "object" ? data : {};
+    } catch {
+      managedInstances = {};
+    }
+  }
+
+  function managedInstanceIds(provider) {
+    const key = String(provider || "").toUpperCase() === "TMDB_SYNC" ? "TMDB" : String(provider || "").toUpperCase();
+    const rows = Array.isArray(managedInstances[key]) ? managedInstances[key] : [];
+    return rows.filter((row) => row && row.id && row.id !== "default" && row.configured !== false).map((row) => String(row.id));
+  }
+
   function configuredProviderKeys(cfg = getCachedConfig()) {
+    if (managedUser()) {
+      return new Set(Object.keys(managedInstances).filter((key) => managedInstanceIds(key).length).map((key) => authProviderInfo(key).key).filter(Boolean));
+    }
     let set = new Set();
     try {
       if (typeof window.getConfiguredProviders === "function") {
@@ -158,6 +185,16 @@
     return found ? inst[found] : null;
   }
 
+  function settingsScope() {
+    const scope = window.CW?.SettingsScope;
+    return scope && typeof scope.active === "function" && scope.active() ? scope : null;
+  }
+
+  function scopedProfileIds(provider, ids) {
+    const scope = settingsScope();
+    return scope ? ids.filter((id) => scope.allowsInstance(provider, id)) : ids;
+  }
+
   function authProfileIds(cfg, provider, data = null, connected = false) {
     const ids = configuredProfileIds(cfg, provider, connected);
     const inst = data?.instances;
@@ -166,7 +203,7 @@
         if (String(id || "").trim()) ids.push(String(id));
       });
     }
-    return sortProfileIds(ids);
+    return scopedProfileIds(provider, sortProfileIds(ids));
   }
 
   function authProfileState(cfg, provider, id, data = statusProviderData(provider), connected = false) {
@@ -275,6 +312,7 @@
   }
 
   function configuredProfileIds(cfg, provider, connected = false) {
+    if (managedUser()) return scopedProfileIds(provider, sortProfileIds(managedInstanceIds(provider)));
     const block = providerConfigBlock(cfg, provider);
     const out = [];
     if (profileConfigured(provider, block, cfg)) out.push("default");
@@ -286,11 +324,16 @@
     }
     if (String(provider || "").toLowerCase() === "stremio") out.push(...stremioAddonIds(cfg));
     if (!out.length && connected) out.push("default");
-    return sortProfileIds(out);
+    return scopedProfileIds(provider, sortProfileIds(out));
   }
 
   function profileFriendlyName(cfg, provider, id) {
     const raw = String(id || "").trim();
+    if (managedUser()) {
+      const key = String(provider || "").toUpperCase() === "TMDB_SYNC" ? "TMDB" : String(provider || "").toUpperCase();
+      const row = (Array.isArray(managedInstances[key]) ? managedInstances[key] : []).find((item) => String(item?.id) === raw);
+      return String(row?.display_label || row?.label || profileDisplayName(raw));
+    }
     const isDefault = raw.toLowerCase() === "default";
     const block = providerConfigBlock(cfg, provider);
     const instances = block?.instances;
@@ -516,17 +559,18 @@
       "sec-auth-metadata": "database",
       "sec-user-profiles": "groups",
     };
+    const scope = settingsScope();
     const groupData = AUTH_GROUPS.map((group) => {
       const supported = group.keys.filter((key) => !!authProviderInfo(key).sectionId);
-      const visible = supported.filter((key) => configured.has(key));
+      const visible = supported.filter((key) => configured.has(key) && (!scope || scope.hasProvider(key)));
       const cards = visible.map((key) => {
         const info = authProviderInfo(key);
         const status = authStatusFor(key, configured.has(key), cfg);
         return { type: "provider", key: info.key, provider: String(info.key || "").toLowerCase(), label: info.label, status, logo: authProviderLogo(info.key) };
       });
       const okCount = cards.filter((card) => card.status.ok).length;
-      return { ...group, supported, cards, okCount, total: supported.length, copy: sectionCopy[group.id] || "" };
-    }).filter((group) => group.id !== "sec-auth-others" || group.cards.length);
+      return { ...group, supported, cards, okCount, total: scope ? cards.length : supported.length, copy: sectionCopy[group.id] || "" };
+    }).filter((group) => (group.id !== "sec-auth-others" && !scope) || group.cards.length);
     const metadataVisible = META_GROUP.keys.filter((key) => metadataConfigured(key, cfg));
     const metadataCards = metadataVisible.map((key) => {
       const info = metadataProviderInfo(key);
@@ -1841,6 +1885,28 @@
     deleteBtn?.classList.toggle("hidden", !info.deleteSelector);
   }
 
+  function applyConnectionMirror(overlay, panel, info) {
+    const root = document.documentElement;
+    const mirror = root.dataset.cwRole === "user" || root.dataset.cwViewAs === "1";
+    const keys = String(root.dataset.cwReconnect || "").split(" ").filter(Boolean);
+    const state = mirror ? (keys.includes(info.key) ? "reconnect" : "locked") : "";
+    if (state) overlay.dataset.cwMirror = state;
+    else delete overlay.dataset.cwMirror;
+    let note = panel.querySelector(":scope > .cw-connection-locked-note");
+    if (state !== "locked") {
+      note?.remove();
+      return;
+    }
+    if (!note) {
+      note = document.createElement("p");
+      note.className = "cw-connection-locked-note";
+      note.textContent = "Only the administrator can change this connection.";
+      const anchor = panel.querySelector(":scope > .cw-subpanels") || panel.querySelector(":scope > .auth-card");
+      if (anchor) anchor.before(note);
+      else panel.appendChild(note);
+    }
+  }
+
   function enhanceConnectionModal(section, overlay, key) {
     const info = connectionInfoForKey(key);
     const panel = connectionPanelFor(section, info);
@@ -1863,6 +1929,7 @@
     applyConnectionModalOrder(panel, info);
     normalizeConnectionModalActions(panel, info);
     ensureConnectionModalFooter(panel, info);
+    applyConnectionMirror(overlay, panel, info);
     if (["PLEX", "JELLYFIN", "EMBY", "KODI"].includes(info.key)) selectConnectionModalSub(panel, info, "auth", overlay);
     syncConnectionModalCopy(panel, info, overlay);
     panel.__cwConnectionProfileSeen = connectionModalProfileId(panel);
@@ -2136,12 +2203,16 @@
   let authHtml = "";
   let authInflight = null;
   async function mountAuthProviders(force = false) {
-    if (authSetupPending()) return;
+    if (authSetupPending()) {
+      try { await window.__cwAuthBootstrapPromise; } catch {}
+      if (authSetupPending()) return;
+    }
     if (authInflight) return authInflight;
     authInflight = (async () => {
       try {
         const slot = document.getElementById("auth-providers");
         if (!slot) return;
+        await loadManagedInstances();
         if (!authHtml || force) authHtml = await apiText("/api/auth/providers/html");
         const main = slot.querySelector(":scope > .cw-auth-main");
         if (main && slot.__cwAuthSourceHtml === authHtml) {
@@ -2330,7 +2401,10 @@
   }
 
   async function ensureProvidersPaneReady(force = false) {
-    if (authSetupPending()) return;
+    if (authSetupPending()) {
+      try { await window.__cwAuthBootstrapPromise; } catch {}
+      if (authSetupPending()) return;
+    }
     const page = document.getElementById("page-settings");
     const settingsVisible = !!(page && !page.classList.contains("hidden"));
     const pane = currentSettingsPane();
@@ -2363,6 +2437,12 @@
   document.addEventListener("cw-settings-pane-changed", (ev) => {
     if (!["providers", "sync"].includes(String(ev?.detail?.pane || "").toLowerCase())) return;
     try { ensureProvidersPaneReady(); } catch {}
+  });
+
+  window.addEventListener("cw:settings-scope-changed", () => {
+    const slot = document.getElementById("auth-providers");
+    if (!slot?.querySelector(".cw-auth-dashboard")) return;
+    try { renderAuthCards(slot, getCachedConfig()); } catch {}
   });
 
   document.addEventListener("tab-changed", (ev) => {

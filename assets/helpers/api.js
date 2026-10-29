@@ -9,6 +9,8 @@
   const canManagedWrite = () => document.documentElement?.dataset?.cwPermWrite === "on";
   const VIEW_AS_HEADER = "X-CW-View-As";
   const VIEW_AS_WRITE_PATHS = ["/api/run", "/api/export", "/api/import"];
+  const ASSIGN_PROFILE_HEADER = "X-CW-Assign-Profile";
+  const ASSIGN_PROFILE_PATHS = ["/api/pairs", "/api/scrobbler/routes", "/api/scrobbler/webhooks/profile"];
   const viewAsProfile = () => (isManagedUser() ? "" : String(window.CW?.OverviewProfile?.id || "").trim());
 
   function viewAsAllowed(method, pathname){
@@ -43,6 +45,10 @@
           if (url.origin === location.origin && url.pathname.startsWith("/api/") && viewAsAllowed(method, url.pathname)) {
             const headers = new Headers(init?.headers || (typeof resource === "string" ? undefined : resource?.headers) || {});
             headers.set(VIEW_AS_HEADER, profile);
+            init = { ...(init || {}), headers };
+          } else if (url.origin === location.origin && method === "POST" && ASSIGN_PROFILE_PATHS.includes(url.pathname)) {
+            const headers = new Headers(init?.headers || (typeof resource === "string" ? undefined : resource?.headers) || {});
+            headers.set(ASSIGN_PROFILE_HEADER, profile);
             init = { ...(init || {}), headers };
           }
         } catch {}

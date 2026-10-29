@@ -190,8 +190,9 @@
     const keyState = readSecretField(keyEl);
     const apiKey = keyState.value;
     const hasKey = keyState.hasValue;
+    const managed = document.documentElement.dataset.cwRole === "user";
 
-    if (!hasKey) {
+    if (!hasKey && !managed) {
       setConn(false, "Enter your API key first.");
       el("tmdb_sync_hint")?.classList.remove("hidden");
       return;
@@ -204,7 +205,7 @@
       const r = await fetchJSON(tmdbApi(API.start), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ api_key: keyState.masked ? "********" : apiKey, read_token: readToken || "" }),
+        body: JSON.stringify(managed ? {} : { api_key: keyState.masked ? "********" : apiKey, read_token: readToken || "" }),
       });
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error(r.data?.error || "connect_failed");
       const j = r.data || {};

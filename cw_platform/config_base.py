@@ -2917,6 +2917,7 @@ def _normalize_app_auth(cfg: dict[str, Any]) -> None:
                     "playback": perms.get("monitor") is not True and bool(perms.get("playback", True)),
                     "write": perms.get("monitor") is not True and bool(perms.get("write", False)),
                     "monitor": perms.get("monitor") is True,
+                    **{key: False for key in ("pairs", "scrobbler", "schedule", "connections") if perms.get(key) is False},
                 },
                 "password": upwd,
                 "totp": clean_totp,

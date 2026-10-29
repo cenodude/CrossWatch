@@ -380,3 +380,9 @@ def clear_profile_resource_assignments(cfg: dict[str, Any], profile_id: Any) -> 
             wh = sc.get("webhook") if isinstance(sc, dict) else None
             if isinstance(wh, dict):
                 wh.pop("user_profile_assignments", None)
+    sch = cfg.get("scheduling")
+    schedules = sch.get("profiles") if isinstance(sch, dict) else None
+    if isinstance(schedules, dict):
+        for key in list(schedules.keys()):
+            if normalize_user_profile_id(key) == pid:
+                schedules.pop(key, None)

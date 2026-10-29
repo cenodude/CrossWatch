@@ -353,6 +353,7 @@ def test_profile_reads_resolve_api_token_identity(tokens_env) -> None:
 MONITOR_ID = "c" * 32
 MONITOR_PROFILE = "cccccccccccc4ccc8ccccccccccccccc"
 MONITOR_ONLY = {"dashboard": False, "watchlist": False, "playback": False, "write": False, "monitor": True}
+MONITOR_CLEAN = {**MONITOR_ONLY, "pairs": False, "scrobbler": False, "schedule": False, "connections": False}
 
 
 def _seed_monitor_user(permissions: dict[str, bool]) -> None:
@@ -524,7 +525,7 @@ def test_monitor_excludes_every_other_permission(tokens_env) -> None:
 
     _seed_monitor_user({"dashboard": True, "watchlist": True, "playback": True, "write": True, "monitor": True})
     assert load_config()["app_auth"]["users"][MONITOR_ID]["permissions"] == MONITOR_ONLY
-    assert clean_managed_permissions({"monitor": True, "write": True}) == MONITOR_ONLY
+    assert clean_managed_permissions({"monitor": True, "write": True}) == MONITOR_CLEAN
 
     admin_raw, _entry = mod.issue_api_token(load_config(), name="cli")
     request = _request("/api/app-auth/users", method="POST", headers={mod.TOKEN_HEADER: admin_raw})
@@ -533,7 +534,7 @@ def test_monitor_excludes_every_other_permission(tokens_env) -> None:
         {"username": "mon2", "password": "secrett9", "profile_id": MONITOR_PROFILE, "permissions": {"monitor": True}},
     )
     assert created.status_code == 200
-    assert json.loads(created.body)["user"]["permissions"] == MONITOR_ONLY
+    assert json.loads(created.body)["user"]["permissions"] == MONITOR_CLEAN
 
 
 def test_monitor_sessions_and_sso_logins_do_not_authenticate(tokens_env, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -799,7 +800,7 @@ def test_admin_token_manages_users_and_other_tokens_cannot(tokens_env, monkeypat
     created = auth.api_users_create(_req("/api/app-auth/users", "POST", admin_raw), dict(payload))
     assert created.status_code == 200
     new_user = json.loads(created.body)["user"]
-    assert new_user["permissions"] == MONITOR_ONLY
+    assert new_user["permissions"] == MONITOR_CLEAN
     assert audited[-1]["action"] == "user_created"
     assert audited[-1]["actor"]["api_token_id"] == admin_entry["id"]
 

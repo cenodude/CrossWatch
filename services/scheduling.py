@@ -249,6 +249,72 @@ def compute_next_run(now: datetime, sch: dict[str, Any]) -> datetime:
 
     return _now_local_naive() + timedelta(days=365 * 100)
 
+
+PROFILE_SCHEDULE_MODES = ("hourly", "every_n_hours", "daily_time", "custom_interval")
+PROFILE_MIN_INTERVAL_MINUTES = 60
+
+
+def normalize_profile_schedule(raw: Any) -> dict[str, Any]:
+    src = raw if isinstance(raw, dict) else {}
+    mode = str(src.get("mode") or "every_n_hours").strip().lower()
+    daily = str(src.get("daily_time") or "03:30").strip()
+    return {
+        "enabled": _as_bool(src.get("enabled"), False),
+        "mode": mode if mode in PROFILE_SCHEDULE_MODES else "every_n_hours",
+        "every_n_hours": _as_int(src.get("every_n_hours"), 12, minimum=1, maximum=168),
+        "daily_time": daily if _parse_hhmm(daily) else "03:30",
+        "custom_interval_minutes": _as_int(src.get("custom_interval_minutes"), 120, minimum=PROFILE_MIN_INTERVAL_MINUTES, maximum=10080),
+    }
+
+
+def profile_schedules(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    from cw_platform.provider_instances import list_user_profiles, normalize_user_profile_id
+
+    sch_raw = cfg.get("scheduling")
+    sch: dict[str, Any] = sch_raw if isinstance(sch_raw, dict) else {}
+    profiles_raw = sch.get("profiles")
+    raw: dict[str, Any] = profiles_raw if isinstance(profiles_raw, dict) else {}
+    valid = {normalize_user_profile_id(row.get("id")) for row in list_user_profiles(cfg)}
+    out: dict[str, dict[str, Any]] = {}
+    for key, value in raw.items():
+        pid = normalize_user_profile_id(key)
+        if pid and pid in valid:
+            out[pid] = normalize_profile_schedule(value)
+    return out
+
+
+def enabled_profile_schedules(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {pid: s for pid, s in profile_schedules(cfg).items() if s["enabled"]}
+
+
+def profile_pair_ids(cfg: dict[str, Any], profile_id: str) -> list[str]:
+    from cw_platform.provider_instances import normalize_user_profile_id
+
+    pid = normalize_user_profile_id(profile_id)
+    pairs_raw = cfg.get("pairs")
+    pairs: list[Any] = pairs_raw if isinstance(pairs_raw, list) else []
+    return [
+        str(p.get("id") or "").strip()
+        for p in pairs
+        if isinstance(p, dict) and str(p.get("id") or "").strip() and pid and normalize_user_profile_id(p.get("profile_id")) == pid
+    ]
+
+
+def profile_scheduled_pair_ids(cfg: dict[str, Any]) -> set[str]:
+    out: set[str] = set()
+    for pid in enabled_profile_schedules(cfg):
+        out.update(profile_pair_ids(cfg, pid))
+    return out
+
+
+def scheduler_should_run(cfg: dict[str, Any]) -> bool:
+    sch_raw = cfg.get("scheduling")
+    sch: dict[str, Any] = sch_raw if isinstance(sch_raw, dict) else {}
+    adv_raw = sch.get("advanced")
+    adv: dict[str, Any] = adv_raw if isinstance(adv_raw, dict) else {}
+    return bool(sch.get("enabled") or adv.get("enabled") or enabled_profile_schedules(cfg))
+
+
 def _normalize_job(j: dict[str, Any]) -> dict[str, Any]:
     days = j.get("days")
     if not isinstance(days, list):
@@ -729,6 +795,8 @@ class SyncScheduler:
 
         self._std_next_ts: int = 0
         self._std_cfg_key: str = ""
+        self._prof_next: dict[str, tuple[int, str]] = {}
+        self._prof_status: dict[str, dict[str, Any]] = {}
 
     def _log(self, msg: str, *, level: str = "INFO") -> None:
         if not self.log_fn:
@@ -909,9 +977,18 @@ class SyncScheduler:
     def status(self) -> dict[str, Any]:
         with self._lock:
             st = dict(self._status)
+            prof_next = dict(self._prof_next)
+            prof_status = {pid: dict(row) for pid, row in self._prof_status.items()}
         cfg = self._get_sched_cfg()
         st["config"] = cfg
         st["effective"] = self._effective(cfg)
+        profiles: dict[str, Any] = {}
+        for pid, schedule in profile_schedules(self.load_config_cb() or {}).items():
+            row = dict(prof_status.get(pid) or {})
+            next_ts = int(prof_next.get(pid, (0, ""))[0] or 0) if schedule["enabled"] else 0
+            row.update({"enabled": schedule["enabled"], "next_run_at": next_ts, "next_run_iso": _format_display_datetime(next_ts, cfg) if next_ts else ""})
+            profiles[pid] = row
+        st["profiles"] = profiles
         return st
 
     def _event_match(self, rule: dict[str, Any], event: dict[str, Any]) -> bool:
@@ -1587,7 +1664,18 @@ class SyncScheduler:
         return ok_all
 
     def _std_run_due(self) -> bool:
-        payload = {"source": "scheduler", "scheduler_mode": "standard"}
+        payload: dict[str, Any] = {"source": "scheduler", "scheduler_mode": "standard"}
+        cfg = self.load_config_cb() or {}
+        skipped = profile_scheduled_pair_ids(cfg)
+        if skipped:
+            pairs_raw = cfg.get("pairs")
+            pairs: list[Any] = pairs_raw if isinstance(pairs_raw, list) else []
+            scope = [str(p.get("id") or "").strip() for p in pairs if isinstance(p, dict) and str(p.get("id") or "").strip() and str(p.get("id") or "").strip() not in skipped]
+            if not scope:
+                self._log("standard: every pair runs on a profile schedule; nothing to run", level="INFO")
+                return True
+            payload["pair_scope_ids"] = scope
+            self._log(f"standard: skipping {len(skipped)} pair(s) that run on profile schedules", level="INFO")
         self._log("standard: triggering sync run", level="INFO")
         ok = self._run_sync(payload)
         if not ok:
@@ -1620,6 +1708,10 @@ class SyncScheduler:
                 sch = self._get_sched_cfg()
                 eff = self._effective(sch)
                 tz = _tz_from_cfg(sch)
+
+                if self._profiles_tick(sch, tz):
+                    self._sleep_or_poke(0.5)
+                    continue
 
                 if not eff["enabled"]:
                     self._update_next(None, effective_mode="disabled")
@@ -1713,6 +1805,50 @@ class SyncScheduler:
         finally:
             with self._lock:
                 self._status["running"] = False
+
+    def _profiles_tick(self, sch: dict[str, Any], tz: Any | None) -> bool:
+        cfg = self.load_config_cb() or {}
+        schedules = enabled_profile_schedules(cfg)
+        with self._lock:
+            for pid in list(self._prof_next):
+                if pid not in schedules:
+                    self._prof_next.pop(pid, None)
+        now_ts = _now_ts()
+        for pid, schedule in schedules.items():
+            timer = {**sch, **schedule}
+            key = repr(sorted(schedule.items())) + f"|{sch.get('timezone') or ''}|{sch.get('jitter_seconds') or ''}"
+            with self._lock:
+                next_ts, cached_key = self._prof_next.get(pid, (0, ""))
+            if not next_ts or cached_key != key:
+                next_ts = int(compute_next_run(_as_now_in_tz(tz), timer).timestamp())
+                with self._lock:
+                    self._prof_next[pid] = (next_ts, key)
+            if now_ts < next_ts:
+                continue
+            if self.is_sync_running_fn():
+                self._log(f"profile {pid}: sync is busy; delaying scheduled run", level="INFO")
+                return False
+            after = int(compute_next_run(_as_now_in_tz(tz), timer).timestamp())
+            with self._lock:
+                self._prof_next[pid] = (after, key)
+            pair_ids = profile_pair_ids(cfg, pid)
+            if not pair_ids:
+                self._log(f"profile {pid}: no pairs assigned; skipping scheduled run", level="INFO")
+                continue
+            payload = {"source": "scheduler", "scheduler_mode": "profile", "profile_id": pid, "pair_scope_ids": pair_ids}
+            self._log(f"profile {pid}: triggering sync run for {len(pair_ids)} pair(s)", level="INFO")
+            self._set_busy(True)
+            try:
+                ok = self._run_sync(payload)
+            finally:
+                self._set_busy(False)
+            if not ok:
+                self._notify_sync_start_rejected(payload, "profile run failed")
+            with self._lock:
+                self._prof_status[pid] = {"last_run_at": _now_ts(), "last_run_ok": ok}
+            self._log(f"profile {pid}: run ok" if ok else f"profile {pid}: run failed", level="INFO" if ok else "ERROR")
+            return True
+        return False
 
     def _set_busy(self, busy: bool) -> None:
         with self._lock:
