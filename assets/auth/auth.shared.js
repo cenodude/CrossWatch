@@ -121,9 +121,9 @@
     if (!usages.length) return txt(data?.message) || "This connection is still in use.";
     const inst = txt(data?.instance) || "default";
     const name = providerLabel(data?.provider);
-    const subject = inst === "default" ? `${name} connection` : `${name} profile ${inst}`;
+    const subject = inst === "default" ? `${name} connection` : `${name} instance ${inst}`;
     const details = usages.map(describeUsage).join(", ");
-    return `Cannot delete ${subject} because it is used by ${details}. Remove this profile from Sync pairs, Watcher, or Webhooks first.`;
+    return `Cannot delete ${subject} because it is used by ${details}. Remove this instance from Sync pairs, Watcher, or Webhooks first.`;
   }
 
   const CONNECTION_WARN_VISIBLE_MS = 10000;
@@ -236,7 +236,7 @@
           if (node.dataset.cwConnectOriginalLabel === undefined) node.dataset.cwConnectOriginalLabel = node.innerHTML;
           if (node.textContent !== "Reconnect") node.textContent = "Reconnect";
         }
-        node.setAttribute("title", "Reconnect this connection profile");
+        node.setAttribute("title", "Reconnect this connection instance");
       } else {
         if (node.dataset.cwConnectOriginalLabel !== undefined) {
           node.innerHTML = node.dataset.cwConnectOriginalLabel;
@@ -255,7 +255,7 @@
   async function captureAuthCompletion(profile) {
     const instance = profile.getInstance();
     const response = await fetchJSON("/api/config?ts=" + Date.now(), { cache: "no-store" });
-    if (!response.ok || !response.data || profile.getInstance() !== instance) throw new Error("Could not load the connection profile");
+    if (!response.ok || !response.data || profile.getInstance() !== instance) throw new Error("Could not load the connection instance");
     const before = profile.cfgBlock(response.data, false)?.auth_completed_at;
     return (current) => {
       if (profile.getInstance() !== instance) return false;
@@ -320,7 +320,7 @@
       if (disabled) btn.setAttribute("aria-disabled", "true");
       else btn.removeAttribute("aria-disabled");
       if (disabled) {
-        btn.title = sub === "settings" ? "Connect or configure this profile first." : sub === "users" ? "Connect this profile before choosing users." : "Connect this profile before whitelisting libraries.";
+        btn.title = sub === "settings" ? "Connect or configure this instance first." : sub === "users" ? "Connect this instance before choosing users." : "Connect this instance before whitelisting libraries.";
       } else {
         btn.removeAttribute("title");
       }
@@ -403,7 +403,7 @@
     const sectionId = txt(opts.sectionId || `sec-${provider}`);
     const panelSelector = opts.panelSelector || `#${sectionId} .cw-meta-provider-panel`;
     const apiProvider = txt(opts.instanceProvider || provider);
-    const title = txt(opts.title || `Select which ${label} profile this config applies to.`);
+    const title = txt(opts.title || `Select which ${label} instance this config applies to.`);
     let uiObserver = null;
 
     function addDefaultOption(sel) {
@@ -530,7 +530,7 @@
         try { w.dispatchEvent(new CustomEvent("cw-user-profiles-changed")); } catch {}
         try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch {}
       } catch (e) {
-        notify("Could not save profile label: " + (e && e.message ? e.message : e));
+        notify("Could not save instance label: " + (e && e.message ? e.message : e));
       }
     }
 
@@ -574,7 +574,7 @@
       const lab = d.createElement("span");
       lab.className = "muted";
       lab.dataset.cwProfileLabel = "true";
-      lab.textContent = "Profile";
+      lab.textContent = "Instance";
 
       const sel = d.createElement("select");
       sel.id = selectId;
@@ -659,14 +659,14 @@
           try { panel.dispatchEvent(new CustomEvent("cw-auth-profile-created", { bubbles: true, detail: { provider: apiProvider, instance: id } })); } catch (_) {}
           try { Promise.resolve(onChange?.()).catch(() => {}); } catch (_) {}
         } catch (e) {
-          const message = e && e.message === "profile_limit_reached" ? `Maximum ${e.limit || 10} profiles reached.` : (e && e.message ? e.message : e);
-          notify("Could not create profile: " + message);
+          const message = e && e.message === "profile_limit_reached" ? `Maximum ${e.limit || 10} instances reached.` : (e && e.message ? e.message : e);
+          notify("Could not create instance: " + message);
         }
       });
       btnDel.addEventListener("click", async () => {
         const id = getInstance();
-        if (id === "default") return notify("Default profile cannot be deleted.");
-        if (!confirm(`Delete ${label} profile "${id}"?`)) return;
+        if (id === "default") return notify("Default instance cannot be deleted.");
+        if (!confirm(`Delete ${label} instance "${id}"?`)) return;
         try {
           const r = await fetchJSON(`/api/provider-instances/${encodeURIComponent(apiProvider)}/${encodeURIComponent(id)}`, { method: "DELETE", cache: "no-store" });
           if (reportProviderUsage(r)) return;
@@ -680,7 +680,7 @@
           try { w.dispatchEvent(new CustomEvent("auth-changed")); } catch (_) {}
           try { Promise.resolve(onChange?.()).catch(() => {}); } catch (_) {}
         } catch (e) {
-          notify("Could not delete profile: " + (e && e.message ? e.message : e));
+          notify("Could not delete instance: " + (e && e.message ? e.message : e));
         }
       });
     }

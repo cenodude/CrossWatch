@@ -357,6 +357,32 @@ def _profile_value_error(exc: ValueError) -> str:
     return "invalid_user_profile"
 
 
+def _profile_login_payload(payload: Any) -> dict[str, Any] | None:
+    raw = payload.get("login") if isinstance(payload, Mapping) else None
+    return dict(raw) if isinstance(raw, Mapping) else None
+
+
+def _apply_profile_login(latest: dict[str, Any], profile: Mapping[str, Any], login: dict[str, Any] | None) -> Any:
+    if login is None:
+        return None
+    from api.appAuthAPI import apply_profile_login
+
+    return apply_profile_login(latest, profile.get("id"), login)
+
+
+def _profile_login_error(exc: Any) -> JSONResponse:
+    return JSONResponse({"ok": False, "error": exc.message}, status_code=exc.status_code, headers={"Cache-Control": "no-store"})
+
+
+def _profile_saved_response(request: Request, cfg: dict[str, Any], profile: dict[str, Any], login_result: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {"ok": True, "profile": profile}
+    if login_result is not None:
+        from api.appAuthAPI import finish_profile_login
+
+        out["login"] = finish_profile_login(request, cfg, login_result)
+    return out
+
+
 @router.get("/provider-instances")
 def api_provider_instances_all(request: Request = cast(Request, None), configured_only: bool = False) -> JSONResponse:
     cfg = dict(load_config() or {})
@@ -894,8 +920,15 @@ def api_user_profiles_create(payload: dict[str, Any] = Body(default_factory=dict
     label = sanitize_user_profile_label((payload or {}).get("label") or (payload or {}).get("name"))
     if not label:
         return {"ok": False, "error": "invalid_user_profile"}
+    from api.appAuthAPI import ProfileLoginError
 
-    def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
+    login = _profile_login_payload(payload)
+
+    def _mutate(latest: dict[str, Any]) -> tuple[dict[str, Any], Any]:
+        profile = _save(latest)
+        return profile, _apply_profile_login(latest, profile, login)
+
+    def _save(latest: dict[str, Any]) -> dict[str, Any]:
         profile_id = generate_user_profile_id(latest)
         resource_payload = payload or {}
         raw_instances = resource_payload.get("instances")
@@ -920,10 +953,12 @@ def api_user_profiles_create(payload: dict[str, Any] = Body(default_factory=dict
         )
 
     try:
-        _, profile = update_config(_mutate)
+        saved_cfg, (profile, login_result) = update_config(_mutate)
+    except ProfileLoginError as exc:
+        return _profile_login_error(exc)
     except ValueError as exc:
         return {"ok": False, "error": _profile_value_error(exc)}
-    return {"ok": True, "profile": profile}
+    return _profile_saved_response(request, saved_cfg, profile, login_result)
 
 
 @router.put("/user-profiles/{profile_id}")
@@ -933,8 +968,15 @@ def api_user_profiles_update(profile_id: str, payload: dict[str, Any] = Body(def
     if blocked is not None:
         return blocked
     pid = normalize_user_profile_id(profile_id)
+    from api.appAuthAPI import ProfileLoginError
 
-    def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
+    login = _profile_login_payload(payload)
+
+    def _mutate(latest: dict[str, Any]) -> tuple[dict[str, Any], Any]:
+        profile = _save(latest)
+        return profile, _apply_profile_login(latest, profile, login)
+
+    def _save(latest: dict[str, Any]) -> dict[str, Any]:
         if not pid or not any(row.get("id") == pid for row in list_user_profiles(latest)):
             raise KeyError("not_found")
         resource_payload = payload or {}
@@ -960,12 +1002,14 @@ def api_user_profiles_update(profile_id: str, payload: dict[str, Any] = Body(def
         )
 
     try:
-        _, profile = update_config(_mutate)
+        saved_cfg, (profile, login_result) = update_config(_mutate)
+    except ProfileLoginError as exc:
+        return _profile_login_error(exc)
     except KeyError:
         return {"ok": False, "error": "not_found"}
     except ValueError as exc:
         return {"ok": False, "error": _profile_value_error(exc)}
-    return {"ok": True, "profile": profile}
+    return _profile_saved_response(request, saved_cfg, profile, login_result)
 
 
 def _managed_usernames_for_profile(cfg: dict[str, Any], profile_id: str) -> list[str]:

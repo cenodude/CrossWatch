@@ -257,10 +257,10 @@
     const lines = [`Profiles: ${profileIds.map(pretty).join(", ")}`];
     if (Number.isFinite(total) && total > 1) {
       lines.push(Number.isFinite(probed) && probed > 0 && probed < total
-        ? `Checked profiles: ${ok}/${probed}, ${total} total`
+        ? `Checked instances: ${ok}/${probed}, ${total} total`
         : Number.isFinite(ok)
-        ? `Connected profiles: ${ok}/${total}`
-        : `Profile count: ${total}`);
+        ? `Connected instances: ${ok}/${total}`
+        : `Instance count: ${total}`);
     }
     const used = Array.isArray(sum?.used) ? sum.used : [];
     if (used.length) {
@@ -457,7 +457,7 @@
         const detail = [
           `Provider: ${name}`,
           `Status: ${data?.connected ? "Connected" : "Not connected"}`,
-          instancesDetail(data) || "Profiles: Not reported",
+          instancesDetail(data) || "Instances: Not reported",
           providerProfileDetail(key, data),
           meta.detail,
           usageDetail(data),

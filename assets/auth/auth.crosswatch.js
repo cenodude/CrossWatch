@@ -26,7 +26,7 @@
     selectId: "crosswatch_instance",
     storageKey: "cw.ui.crosswatch.auth.instance.v1",
     instanceProvider: "crosswatch",
-    title: "Select which CrossWatch Local Tracker profile this config applies to.",
+    title: "Select which CrossWatch Local Tracker instance this config applies to.",
   });
 
   function selectedInstance() {
@@ -201,7 +201,7 @@
       del.__cwTrackerWired = true;
       del.addEventListener("click", async () => {
         if (selectedInstance() !== "default") {
-          Shared.showConnectionWarning?.("Use the profile trash button to delete CrossWatch profiles.");
+          Shared.showConnectionWarning?.("Use the instance trash button to delete CrossWatch instances.");
           return;
         }
         try {
@@ -209,7 +209,7 @@
           const data = await res.json().catch(() => ({}));
           if (!res.ok || data?.ok === false) {
             const msg = data?.error === "profiles_exist"
-              ? "Remove the additional profiles before deleting the main connection."
+              ? "Remove the additional instances before deleting the main connection."
               : data?.message || data?.error || "Could not delete CrossWatch connection.";
             Shared.showConnectionWarning?.(msg);
             return;

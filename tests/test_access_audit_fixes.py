@@ -773,8 +773,9 @@ def test_managed_user_creation_stamps_created_at() -> None:
     from api import appAuthAPI as auth
     import inspect
 
-    src = inspect.getsource(auth.api_users_create)
+    src = inspect.getsource(auth._new_managed_user)
     assert '"created_at": _now(),' in src
+    assert "_new_managed_user(" in inspect.getsource(auth.api_users_create)
 
 
 def test_admin_credentials_stamp_created_at_once() -> None:

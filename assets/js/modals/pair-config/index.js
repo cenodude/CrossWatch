@@ -1016,7 +1016,7 @@ function renderPairUserProfileControl(state){
   const show=!!profile;
   slot.classList.toggle("hidden",!show);
   row.classList.toggle("hidden",!show);
-  row.innerHTML=show?`<div class="cx-user-profile-display" aria-label="Assigned user profile"><span class="material-symbols-rounded" aria-hidden="true">account_circle</span><span>${escHTML(profile.label)}</span></div>`:"";
+  row.innerHTML=show?`<div class="cx-user-profile-display" aria-label="Assigned profile"><span class="material-symbols-rounded" aria-hidden="true">account_circle</span><span>${escHTML(profile.label)}</span></div>`:"";
 }
 
 // Fold toggles (works with draggable modals)

@@ -798,8 +798,8 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     try { localStorage.setItem(CW_SNAPSHOT_PROFILE_KEY, inst); } catch {}
 
     body.innerHTML = `${profiles.length > 1
-      ? `<label class="cw-snap-profile"><span>Profile</span><select class="cw-snap-profile-select" data-cw-sort="alphabetical">${profiles.map(p => `<option value="${esc(p.id || "default")}"${String(p.id || "default") === inst ? " selected" : ""}>${esc(p.label || p.id || "Default")}</option>`).join("")}</select></label>`
-      : `<div class="cw-snap-profile is-single"><span>Profile</span><strong>${esc(profile.label || inst)}</strong></div>`}<div class="cw-snap-list"><div class="cw-snap-empty muted">Loading snapshots...</div></div>`;
+      ? `<label class="cw-snap-profile"><span>Instance</span><select class="cw-snap-profile-select" data-cw-sort="alphabetical">${profiles.map(p => `<option value="${esc(p.id || "default")}"${String(p.id || "default") === inst ? " selected" : ""}>${esc(p.label || p.id || "Default")}</option>`).join("")}</select></label>`
+      : `<div class="cw-snap-profile is-single"><span>Instance</span><strong>${esc(profile.label || inst)}</strong></div>`}<div class="cw-snap-list"><div class="cw-snap-empty muted">Loading snapshots...</div></div>`;
     const list = $(".cw-snap-list", body);
 
     try {

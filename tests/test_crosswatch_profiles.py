@@ -837,33 +837,20 @@ def test_user_profile_manager_screen_is_mounted() -> None:
     assert "cw-upm-instance-user" not in manager_js
     assert "cw-upm-table" not in manager_js
     assert "cw-upm-service-grid" in manager_js
-    assert "cw-upm-overlay" in manager_js
+    assert "cw-upw-overlay" in manager_js
     assert "cw-auth-provider-mark cw-upm-card-icon" in manager_js
     assert "cw-auth-add-mark cw-upm-add-mark" in manager_js
     assert "cw-auth-service-copy cw-upm-card-copy" in manager_js
     assert "providerMark(provider)" in manager_js
-    assert "cw-upm-provider-logo" in manager_js
-    assert "cw-upm-provider-head" in manager_js
-    assert "cw-upm-provider-grid" in manager_js
-    assert "cw-upm-instance-box" not in manager_js
-    assert "permissions: { dashboard: true, watchlist: true, playback: true, write: true }" in app_users_js
-    assert "permissions: { dashboard: true, watchlist: true, playback: true, write: false }" not in app_users_js
-    assert "#page-settings .cw-app-user-create .cw-icon-select-btn" in app_users_css
-    assert "#page-settings .cw-app-user-create.has-no-profiles .cw-icon-select" in app_users_css
-    assert "cw-app-user-profile-select-wrap-hidden" in app_users_js
-    assert "function createProfileWrap(profileSelect)" in app_users_js
-    assert "function normalizeCreateProfileWrap(profileSelect)" in app_users_js
-    assert "function enhanceCreateProfileSelect(profileSelect)" in app_users_js
-    assert "(profileWrap || profileSelect).insertAdjacentElement(\"afterend\", addBtn);" in app_users_js
-    assert "profileWrap = enhanceCreateProfileSelect(profileSelect);" in app_users_js
+    assert "cw-upw-providers" in manager_js
+    assert "cw-upw-routes" in manager_js
+    assert "cw-upm-dialog" not in manager_js
+    assert "/api/app-auth/users\", {" not in app_users_js
+    assert "cw-app-user-create" not in app_users_js
+    assert "cw-app-user-create" not in app_users_css
+    assert "cw-app-user-create" not in Path("assets/ui-shell.css").read_text("utf-8")
     assert "setTimeout(() => refresh(), 160);" in app_users_js
-    assert "profileWrap.hidden = true;" in app_users_js
-    assert "height: 44px !important;" in app_users_css
-    assert "max-height: 44px !important;" in app_users_css
     assert '#page-settings #app_auth_fields :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, .cw-icon-select, .cw-icon-select-btn)' in app_users_css
-    assert "#page-settings .cw-app-user-controls .cw-icon-select-btn" in app_users_css
-    assert "height: 42px !important;" in app_users_css
-    assert "max-height: 42px !important;" in app_users_css
     assert "#page-settings #app_auth_fields .cw-auth-totp-field" in app_users_css
     assert "#page-settings #app_auth_fields .cw-auth-plex-field" in app_users_css
     assert "#page-settings #app_auth_fields .cw-auth-totp-field > .cw-settings-inline-action" in app_users_css
@@ -871,7 +858,7 @@ def test_user_profile_manager_screen_is_mounted() -> None:
     assert "#page-settings #app_auth_fields :is(.cw-auth-totp-field, .cw-auth-plex-field) > .sub" in app_users_css
     assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in app_users_css
     assert "grid-template-columns: repeat(2, minmax(0, 1fr)) !important;" in app_users_css
-    assert "cw-danger-confirm" in manager_js
+    wizard_css = Path("assets/css/user-profile-wizard.css").read_text("utf-8")
     assert "Confirm delete" in manager_js
     assert "cwUserProfilesOpenNew" in manager_js
     assert "cw-upm-floating-host" in manager_js
@@ -879,28 +866,27 @@ def test_user_profile_manager_screen_is_mounted() -> None:
     assert "manage_accounts" not in manager_js
     assert 'type="radio"' not in manager_js
     assert 'type="checkbox" name="cw-upm-provider-${esc(provider)}"' in manager_js
-    assert 'style="position:absolute;opacity:0;pointer-events:none"' in manager_js
     assert "input:checked" in manager_js
     assert ".cw-user-profile-manager" in css
     assert ".cw-upm-service-grid" in css
-    assert ".cw-upm-dialog" in css
+    assert ".cw-upm-dialog" not in css
     assert "flex:0 0 36px;width:36px;height:36px" in css
     assert ".cw-upm-add-mark .material-symbols-rounded{font-size:24px" in css
-    assert ".cw-upm-provider-mark" in css
-    assert ".cw-upm-provider-grid" in css
-    assert "grid-template-columns:repeat(auto-fit,minmax(280px,1fr))" in css
-    assert "grid-template-columns:repeat(auto-fill,minmax(178px,1fr))" in css
-    assert ".cw-upm-instance-box" in css
-    assert "function createReady()" in app_users_js
+    assert "/assets/css/user-profile-wizard.css" in settings_html
+    assert ".cw-upw-overlay {" in wizard_css
+    assert ".cw-upw-overlay .cw-upw-check {" in wizard_css
+    assert "@media (prefers-reduced-motion: reduce)" in wizard_css
     assert "btn-app-user-profile-create" in app_users_js
-    assert "w.cwUserProfilesOpenNew?.({ stay: true });" in app_users_js
+    assert "w.cwUserProfilesOpenNew?.({ login: true });" in app_users_js
+    assert 'w.cwUserProfilesOpen?.(target.dataset.profileId, { step: "login" });' in app_users_js
+    assert "w.cwUserProfilesOpen = async function cwUserProfilesOpen(id, opts)" in manager_js
     assert "cwAppUsersSavePending" in app_users_js
     assert 'data-user-action="save"' not in app_users_js
-    assert 'id="app_user_create_form"' in settings_html
+    assert 'id="app_user_create_form"' not in settings_html
+    assert 'id="btn-app-user-profile-create"' in settings_html
     assert 'autocomplete="username"' in settings_html
     assert "cwAppUsersSavePending" in Path("assets/helpers/settings-save.js").read_text("utf-8")
-    assert "#page-settings .cw-app-user-add-profile" in app_users_css
-    assert ".cw-app-user-delete.is-confirming" in app_users_css
+    assert "#page-settings .cw-app-card-head .cw-app-user-add" in app_users_css
 
 
 def test_events_audit_domain_is_admin_only_for_managed_users(monkeypatch) -> None:
@@ -1362,7 +1348,7 @@ def test_crosswatch_tracker_settings_live_only_in_connection_modal() -> None:
     assert 'restore: ["restore_page"' not in providers_ui
     assert "Local Tracker Restore" not in providers_ui
     assert "Storage and restore" in providers_ui
-    assert "Use profiles when you want separate local watchlist, ratings, history, progress or collection data." in providers_ui
+    assert "Use instances when you want separate local watchlist, ratings, history, progress or collection data." in providers_ui
     assert 'introSubs: ["auth"]' in providers_ui
     assert 'introSubs: ["auth", "settings"]' not in providers_ui
     assert "cw_crosswatch_disconnect" in auth_html
@@ -2726,7 +2712,7 @@ def test_connection_cards_show_default_and_friendly_profile_names() -> None:
     assert "function profileFriendlyName(cfg, provider, id)" in ui
     assert "function authProfileSummary(card, cfg)" in ui
     assert "PROFILE_NAME_LIMIT" in ui
-    assert "${names.length} profiles" in ui
+    assert "${names.length} instances" in ui
     assert "const onlyDefault = names.length === 1" in ui
     assert "cw-auth-profile-pill" not in ui
     assert "cw-auth-profile-strip" not in ui

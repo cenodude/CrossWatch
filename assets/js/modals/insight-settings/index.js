@@ -60,7 +60,7 @@ const HTML = `
     <div class="head-left">
       <div class="head-copy">
         <div class="head-title">Insights settings</div>
-        <div class="head-sub">Choose which features and profiles shape the statistics panel.</div>
+        <div class="head-sub">Choose which features and instances shape the statistics panel.</div>
       </div>
     </div>
     <div class="head-actions">

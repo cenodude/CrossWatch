@@ -356,7 +356,7 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     time_after: "After:\nOptional dependency.\nUse this to run the step only after another earlier step has completed.",
     workflow_recurrence: "Recurrence:\nChoose how often the full ordered workflow runs.",
     workflow_steps: "Sync steps:\nEach step runs one configured source-to-target sync pair.",
-    capture_target: "Provider:\nChoose the provider profile to capture from.\nOnly configured snapshot-capable profiles are listed.",
+    capture_target: "Provider:\nChoose the provider instance to capture from.\nOnly configured snapshot-capable instances are listed.",
     capture_feature: "Feature:\nPick one feature or All to store a full provider capture bundle.",
     capture_label: "Label template:\nOptional template for automated capture labels.\nUse placeholders like {provider}, {instance}, {feature}, {date}, {time}, {datetime}, or {stamp}.",
     capture_retention_days: "Keep captures for days:\nDelete scheduled captures older than this many days.\nLeave empty or 0 to keep by age forever.",
@@ -380,7 +380,7 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     webhook_success: "Success callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync finishes successfully.\nThis overrides the compatible base URL for success events.",
     webhook_failure: "Failure callback URL:\nOptional explicit http:// or https:// POST destination when a scheduled sync fails.\nThis overrides the compatible base URL for failure events.",
     webhook_alert_watcher: "Alert when the watcher stops:\nSends watcher_stopped when an enabled watcher route is not running, and watcher_recovered when it runs again.\nEach change is sent once. This includes a watcher that was stopped by hand or never started. Turning the watcher source or the route off does not send an alert.\nCrossWatch JSON sends these to the All events URL.",
-    webhook_alert_provider_auth: "Alert when a provider sign-in is lost:\nSends provider_auth_lost when a provider profile used by an enabled sync pair, watcher route or scrobble webhook needs a new sign-in, and provider_auth_recovered when it works again.\nEach change is sent once. A provider that is only unreachable does not send an alert.\nCrossWatch JSON sends these to the All events URL.",
+    webhook_alert_provider_auth: "Alert when a provider sign-in is lost:\nSends provider_auth_lost when a provider instance used by an enabled sync pair, watcher route or scrobble webhook needs a new sign-in, and provider_auth_recovered when it works again.\nEach change is sent once. A provider that is only unreachable does not send an alert.\nCrossWatch JSON sends these to the All events URL.",
     webhook_test: "Send test notification:\nSends one test message with the saved webhook settings.\nSave your changes first.",
     webhook_alert_unresolved: "Alert on unresolved items:\nOff means only a crashed or aborted run sends the failure callback.\nOn also sends failure when a run finishes with unresolved items or provider errors, such as a destination rejecting a write. The run itself still counts as successful in CrossWatch."
   };
@@ -1354,7 +1354,7 @@ const ensureStdEnabledToggle = () => {
       .replace(/^Step (\d+): select a time\.$/i, "Next: set a time for Step $1")
       .replace(/^Capture schedule (\d+): select a provider\.$/i, "Next: choose a provider for Capture schedule $1")
       .replace(/^Capture schedule (\d+): choose a configured provider\.$/i, "Pick a configured provider for Capture schedule $1")
-      .replace(/^Capture schedule (\d+): choose a configured provider profile\.$/i, "Pick a configured profile for Capture schedule $1")
+      .replace(/^Capture schedule (\d+): choose a configured provider profile\.$/i, "Pick a configured instance for Capture schedule $1")
       .replace(/^Capture schedule (\d+): select a feature\.$/i, "Next: choose a feature for Capture schedule $1")
       .replace(/^Capture schedule (\d+): feature (.+) is not supported for (.+)\.$/i, "Capture schedule $1: $2 is not available for $3")
       .replace(/^Capture schedule (\d+): select a time\.$/i, "Next: set a time for Capture schedule $1")
@@ -1564,7 +1564,7 @@ const ensureStdEnabledToggle = () => {
     if (!provider) return `${rowName}: select a provider.`;
     if (!meta || !meta.configured) return `${rowName}: choose a configured provider.`;
     const instMeta = Array.isArray(meta.instances) ? meta.instances.find((row) => String(row?.id || "") === instance) : null;
-    if (instMeta && instMeta.configured === false) return `${rowName}: choose a configured provider profile.`;
+    if (instMeta && instMeta.configured === false) return `${rowName}: choose a configured provider instance.`;
     if (!feature) return `${rowName}: select a feature.`;
     if (feature !== "all" && !(meta.features || []).includes(feature)) return `${rowName}: feature ${feature} is not supported for ${provider}.`;
     if (!time) return `${rowName}: select a time.`;

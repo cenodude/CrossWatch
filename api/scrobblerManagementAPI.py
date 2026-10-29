@@ -172,9 +172,9 @@ def _scrobble_source_connected(cfg: Mapping[str, Any], provider: str, instance: 
 def _require_source_profile(cfg: Mapping[str, Any], provider: str, instance: str) -> None:
     errors: list[dict[str, str]] = []
     if not _profile_exists(cfg, provider, instance):
-        errors.append(_err("provider_instance", "profile_not_found", "Source profile does not exist"))
+        errors.append(_err("provider_instance", "profile_not_found", "Source instance does not exist"))
     elif not _scrobble_source_connected(cfg, provider, instance):
-        errors.append(_err("provider_instance", "profile_not_configured", "Source profile is not configured"))
+        errors.append(_err("provider_instance", "profile_not_configured", "Source instance is not configured"))
     if errors:
         raise ValidationFailure(errors)
 
@@ -182,9 +182,9 @@ def _require_source_profile(cfg: Mapping[str, Any], provider: str, instance: str
 def _require_sink_profile(cfg: Mapping[str, Any], sink: str, instance: str, field: str = "sink_instance") -> None:
     errors: list[dict[str, str]] = []
     if not _profile_exists(cfg, sink, instance):
-        errors.append(_err(field, "profile_not_found", "Destination profile does not exist"))
+        errors.append(_err(field, "profile_not_found", "Destination instance does not exist"))
     elif not sink_configured(cfg, sink, instance):
-        errors.append(_err(field, "profile_not_configured", "Destination profile is not configured"))
+        errors.append(_err(field, "profile_not_configured", "Destination instance is not configured"))
     if errors:
         raise ValidationFailure(errors)
 
@@ -343,7 +343,7 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
     if "sink_instances" in body:
         raw = body.get("sink_instances")
         if not isinstance(raw, Mapping):
-            raise ValidationFailure([_err("sink_instances", "invalid_structure", "Destination profiles must be an object")])
+            raise ValidationFailure([_err("sink_instances", "invalid_structure", "Destination instances must be an object")])
         instances: dict[str, str] = {}
         for sink, inst_raw in raw.items():
             key = _sink_provider(sink, f"sink_instances.{sink}")
@@ -780,7 +780,7 @@ def _validate_route(cfg: Mapping[str, Any], route: dict[str, Any]) -> dict[str, 
     if sink not in ROUTE_SINKS:
         raise ValidationFailure([_err("sink", "unsupported_provider", "Unsupported destination provider")])
     if same_scrobble_endpoint(provider, normalized.get("provider_instance"), sink, normalized.get("sink_instance")):
-        raise ValidationFailure([_err("sink_instance", "same_source_destination", "Source and destination must use different providers or profiles")])
+        raise ValidationFailure([_err("sink_instance", "same_source_destination", "Source and destination must use different providers or instances")])
     _require_source_profile(cfg, provider, str(normalized.get("provider_instance") or "default"))
     _require_sink_profile(cfg, sink, str(normalized.get("sink_instance") or "default"))
     normalized["filters"] = _normalize_filters(normalized.get("filters"), provider, "filters")
@@ -900,7 +900,7 @@ def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(..
         effective = webhook_settings(after, provider, instance)
         for sink in webhook_sinks(after, provider, instance):
             if same_scrobble_endpoint(provider, instance, sink, webhook_sink_instance(effective, sink)):
-                raise ValidationFailure([_err(f"sink_instances.{sink}", "same_source_destination", "Source and destination must use different providers or profiles")])
+                raise ValidationFailure([_err(f"sink_instances.{sink}", "same_source_destination", "Source and destination must use different providers or instances")])
         if any(k in settings for k in ("anime_mapping_crosswatch", "anime_mapping_simkl")):
             node.pop("anime_mapping", None)
         if "enabled" not in node:

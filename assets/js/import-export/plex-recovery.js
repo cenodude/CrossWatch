@@ -11,7 +11,7 @@ const field = (id, title) => `<label class="ie-field" for="${id}"><span id="${id
 export function mountPlexRecovery(host) {
   host.innerHTML = `<section class="ie-panel cw-page-panel">
     <div class="ie-section-heading"><div><h2>Recover Plex history</h2><p>Recover watched movies and episodes removed from Plex into your CW tracker.</p></div></div>
-    <div class="ie-fields">${field("pr-kind","History source")}${field("pr-db","Database")}${field("pr-tautulli","Tautulli instance")}${field("pr-tracearr","Tracearr instance")}${field("pr-source","Plex instance")}${field("pr-db-account","Plex account in the database")}${field("pr-target","CrossWatch tracker profile")}</div>
+    <div class="ie-fields">${field("pr-kind","History source")}${field("pr-db","Database")}${field("pr-tautulli","Tautulli instance")}${field("pr-tracearr","Tracearr instance")}${field("pr-source","Plex instance")}${field("pr-db-account","Plex account in the database")}${field("pr-target","CrossWatch tracker instance")}</div>
     <div class="ie-export-extras"><label id="pr-live-wrap" hidden><input id="pr-live" type="checkbox" checked>Ignore Plex Live TV</label></div>
     <p id="pr-access">Plex server owner access required.</p>
     <div class="pr-actions"><button class="ie-button" id="pr-browse" hidden>Choose database file</button><input id="pr-file" type="file" hidden><button class="ie-button ie-primary" id="pr-start">Scan older history</button><button class="ie-button" id="pr-cancel" hidden>Cancel scan</button><button class="ie-button" id="pr-close" hidden>Close recovery</button></div>

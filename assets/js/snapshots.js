@@ -425,7 +425,7 @@ function bundleKey(s) {
               </div>
               <div class="ss-create-fields">
                 <label>Provider<div class="ss-field"><select id="ss-prov"></select></div></label>
-                <label>Profile<div class="ss-field"><select id="ss-prov-inst" class="input grow"></select></div></label>
+                <label>Instance<div class="ss-field"><select id="ss-prov-inst" class="input grow"></select></div></label>
                 <label>Capture type<div class="ss-field"><select id="ss-feature"></select></div></label>
                 <label>Optional label<div class="ss-field"><input id="ss-label" maxlength="12" placeholder="e.g. Maint" /></div><small>Max 12 characters</small></label>
               </div>
@@ -491,7 +491,7 @@ function bundleKey(s) {
               </div>
             </div>
             <div id="ss-selected" class="ss-selected-card ss-selected-empty">Pick a capture from the browser.</div>
-            <div class="ss-target-label">Target profile</div>
+            <div class="ss-target-label">Target instance</div>
             <div class="ss-row"><select id="ss-restore-inst" class="input grow"></select></div>
             <div class="ss-restore-modebar">
               <div class="ss-restore-modes">
@@ -553,7 +553,7 @@ function bundleKey(s) {
           <div class="ss-capture-progress-line"><span id="ss-capture-percent">0%</span><b id="ss-capture-stage">Starting</b></div>
           <div class="ss-capture-grid">
             <div><span>Provider</span><b id="ss-capture-provider">-</b></div>
-            <div><span>Profile</span><b id="ss-capture-instance">default</b></div>
+            <div><span>Instance</span><b id="ss-capture-instance">default</b></div>
             <div><span>Feature</span><b id="ss-capture-feature">-</b></div>
             <div><span>Items</span><b id="ss-capture-items">-</b></div>
           </div>
@@ -1048,7 +1048,7 @@ function bundleKey(s) {
     const instOk = instMeta ? !!instMeta.configured : true;
 
     b.disabled = state.busy || !state.selectedPath || !instOk;
-    b.title = !state.selectedPath ? "Select a snapshot first" : (!instOk ? "Target profile not configured" : "");
+    b.title = !state.selectedPath ? "Select a snapshot first" : (!instOk ? "Target instance not configured" : "");
     if (d) {
       d.disabled = state.busy || !state.selectedPath;
       d.title = state.selectedPath ? "" : "Select a snapshot first";
@@ -1520,7 +1520,7 @@ repopDiffSelects();
               <th class="ss-col-type">Type</th>
               <th class="ss-col-label">Label</th>
               <th class="ss-col-created">Created</th>
-              <th class="ss-col-profile">Profile</th>
+              <th class="ss-col-profile">Instance</th>
               <th class="ss-col-menu"></th>
             </tr>
           </thead>

@@ -3,11 +3,11 @@
 
 const REQUEST_TIMEOUT_MS = 30_000;
 const FEATURES = [
-  { key: "watchlist", icon: "bookmark_remove", title: "Watchlist", desc: "Remove saved watchlist items from the selected profile." },
-  { key: "ratings", icon: "star", title: "Ratings", desc: "Remove ratings from the selected profile." },
-  { key: "history", icon: "history", title: "History", desc: "Remove watched history from the selected profile." },
-  { key: "progress", icon: "resume", title: "Progress", desc: "Remove playback progress from the selected profile." },
-  { key: "collection", icon: "inventory_2", title: "Collections", desc: "Remove collection items from the selected profile." },
+  { key: "watchlist", icon: "bookmark_remove", title: "Watchlist", desc: "Remove saved watchlist items from the selected instance." },
+  { key: "ratings", icon: "star", title: "Ratings", desc: "Remove ratings from the selected instance." },
+  { key: "history", icon: "history", title: "History", desc: "Remove watched history from the selected instance." },
+  { key: "progress", icon: "resume", title: "Progress", desc: "Remove playback progress from the selected instance." },
+  { key: "collection", icon: "inventory_2", title: "Collections", desc: "Remove collection items from the selected instance." },
 ];
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -139,7 +139,7 @@ export default {
             <div class="cc-head-icon"><span class="material-symbols-rounded" aria-hidden="true">cleaning_services</span></div>
             <div>
               <div class="cc-title">Provider cleanup</div>
-              <div class="cc-sub">Clear provider data by profile without leaving Maintenance.</div>
+              <div class="cc-sub">Clear provider data by instance without leaving Maintenance.</div>
             </div>
           </div>
           <button type="button" class="cc-close" id="ccc-close" title="Close" aria-label="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
@@ -150,7 +150,7 @@ export default {
               <span class="material-symbols-rounded" aria-hidden="true">target</span>
               <div>
                 <h3>Provider target</h3>
-                <p>Choose a configured provider and profile, then select which data to clear.</p>
+                <p>Choose a configured provider and instance, then select which data to clear.</p>
               </div>
             </div>
             <div class="cc-target-grid">
@@ -161,7 +161,7 @@ export default {
                 </div>
               </label>
               <label>
-                <span>Profile</span>
+                <span>Instance</span>
                 <div class="cc-provider-picker" id="ccc-instance-picker">
                   <select id="ccc-instance" class="cc-profile-native" data-cw-profile-kind="profile"></select>
                 </div>
@@ -174,7 +174,7 @@ export default {
               <span class="material-symbols-rounded" aria-hidden="true">checklist</span>
               <div>
                 <h3>Data to clear</h3>
-                <p>Select the data you want to remove from the selected provider profile.</p>
+                <p>Select the data you want to remove from the selected provider instance.</p>
               </div>
             </div>
             <div class="cc-feature-grid" id="ccc-features">
@@ -196,7 +196,7 @@ export default {
           <section class="cc-run-card">
             <div class="cc-warning">
               <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-              <div>This clears data on the selected provider profile.</div>
+              <div>This clears data on the selected provider instance.</div>
             </div>
             <div class="cc-actions">
               <button type="button" class="cc-btn danger cw-danger-confirm" id="ccc-clear-selected">
@@ -216,7 +216,7 @@ export default {
               <div class="cc-progress-bar" aria-hidden="true"><span id="ccc-progress-fill"></span></div>
               <div class="cc-progress-grid">
                 <div><span>Provider</span><b id="ccc-progress-provider">-</b></div>
-                <div><span>Profile</span><b id="ccc-progress-instance">default</b></div>
+                <div><span>Instance</span><b id="ccc-progress-instance">default</b></div>
                 <div><span>Feature</span><b id="ccc-progress-feature">-</b></div>
                 <div><span>Removed</span><b id="ccc-progress-items">-</b></div>
               </div>

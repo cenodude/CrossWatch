@@ -44,7 +44,7 @@ const template = `
         <div id="ie-file-info" class="ie-file-info" hidden></div>
       </div>
       <div class="ie-panel ie-destination"><span class="ie-eyebrow">IMPORT DESTINATION</span><h2>Your CrossWatch tracker</h2><p>Preview the file, choose what to keep, then import. Your sync pairs can send these items to other providers afterward.</p>
-        <div class="ie-fields">${select("ie-target", "Target profile")}${select("ie-source", "File source")}</div>
+        <div class="ie-fields">${select("ie-target", "Target instance")}${select("ie-source", "File source")}</div>
         <details class="ie-guide"><summary>How do I get an export file?</summary><div id="ie-guide"></div></details>
       </div>
     </section>
@@ -266,7 +266,7 @@ const ImportExport = {
       file=chosen;
       invalidatePreview();
       if (!importOptions?.targets?.find(target => target.id === $("#ie-target").value)?.connected) {
-        notice("Connect a CrossWatch tracker before importing.","error","Choose a connected target profile, or connect one in Settings → Connections."); return;
+        notice("Connect a CrossWatch tracker before importing.","error","Choose a connected target instance, or connect one in Settings → Connections."); return;
       }
       notice();
       progress("Reading and checking your file", "Uploading, detecting the format and checking for existing items. Large files can take a little longer. Nothing is imported during preview.");
@@ -412,7 +412,7 @@ const ImportExport = {
       if (busy) scopeChanged=true;
       else { ImportExport.unmount(); ImportExport.mount(host); }
     });
-    progress("Loading import and export options", "Checking available profiles and saved provider data.");
+    progress("Loading import and export options", "Checking available instances and saved provider data.");
     try {
       [importOptions,exportOptions]=await Promise.all([json("/api/import/options",{signal:lifetime.signal}),json("/api/export/options",{signal:lifetime.signal})]);
       if (lifetime.signal.aborted) return;

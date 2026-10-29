@@ -104,7 +104,7 @@
     const logo = providerLogo(provider);
     const img = logo ? `<img src="${esc(logo)}" alt="" aria-hidden="true">` : `<span>${esc(label.slice(0, 2).toUpperCase())}</span>`;
     return `
-      <span class="activity-endpoint" title="${esc(`${label} profile: ${profile}`)}" aria-label="${esc(`${label} profile: ${profile}`)}">
+      <span class="activity-endpoint" title="${esc(`${label} instance: ${profile}`)}" aria-label="${esc(`${label} instance: ${profile}`)}">
         <span class="activity-provider-icon">${img}</span>
       </span>
     `;
@@ -283,7 +283,7 @@
           <button type="button" class="activity-close">Close</button>
         </div>
         <div class="activity-filters">
-          <input id="activity-q" type="search" placeholder="Search title, provider or profile">
+          <input id="activity-q" type="search" placeholder="Search title, provider or instance">
           <select id="activity-media"><option value="all">All media</option><option value="movie">Movies</option><option value="episode">Episodes</option></select>
           <select id="activity-status"><option value="all">All statuses</option><option value="ok">Scrobbled</option><option value="failed">Failed</option></select>
         </div>

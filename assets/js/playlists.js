@@ -664,7 +664,7 @@
     return `
       <div class="pl-table-wrap cw-page-table">
         <table class="pl-endpoints-table">
-          <thead><tr><th>Endpoint</th><th>Provider</th><th>Profile</th><th>Selected playlist</th><th>Type</th><th>Status</th><th>Last refresh</th><th aria-label="Actions">Actions</th></tr></thead>
+          <thead><tr><th>Endpoint</th><th>Provider</th><th>Instance</th><th>Selected playlist</th><th>Type</th><th>Status</th><th>Last refresh</th><th aria-label="Actions">Actions</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>
@@ -1576,10 +1576,10 @@
           </div>
         </section>
         <section class="pl-endpoint-step" id="pl-ep-instance-step">
-          <div class="pl-step-head"><span class="pl-step-index">2</span><div>${simple ? "<b>Profile</b><span>The account that owns the list.</span>" : "<b>Provider profile</b><span>Use the profile that owns the provider playlists.</span>"}</div></div>
+          <div class="pl-step-head"><span class="pl-step-index">2</span><div>${simple ? "<b>Instance</b><span>The account that owns the list.</span>" : "<b>Provider instance</b><span>Use the instance that owns the provider playlists.</span>"}</div></div>
           <div class="pl-form">
             <div class="pl-field full">
-              <label for="pl-ep-instance">Provider profile <span aria-hidden="true">*</span></label>
+              <label for="pl-ep-instance">Provider instance <span aria-hidden="true">*</span></label>
               <select id="pl-ep-instance">${selectOptions(instances.map((x) => ({ value: x, label: x })), instance)}</select>
             </div>
           </div>
@@ -1793,7 +1793,7 @@
       root.__plEndpointResources = resources;
       if (!resources.length) {
         select.innerHTML = `<option value="">No playlists found</option>`;
-        help.textContent = "No readable provider playlists were returned for this profile.";
+        help.textContent = "No readable provider playlists were returned for this instance.";
         refreshEndpointResourceSelection(root, root.__plEndpointCtx);
         return;
       }
@@ -2162,7 +2162,7 @@
           <div id="pl-wz-new-toggle-row"><button type="button" class="pl-link" id="pl-wz-new-toggle">+ Create a new list</button><span class="pl-muted" id="pl-wz-new-none"></span></div>
           <div class="pl-warning" id="pl-wz-simkl-warning" hidden>${esc(SIMKL_PLAYLIST_WARNING)}</div>
           <div class="pl-wizard-row" id="pl-wz-new-row">
-            ${cwAccounts.length > 1 ? `<div class="pl-field" id="pl-wz-cw-wrap"><label for="pl-wz-cw-account">CrossWatch profile</label><select id="pl-wz-cw-account">${accountOptions(cwAccounts)}</select></div>` : ""}
+            ${cwAccounts.length > 1 ? `<div class="pl-field" id="pl-wz-cw-wrap"><label for="pl-wz-cw-account">CrossWatch instance</label><select id="pl-wz-cw-account">${accountOptions(cwAccounts)}</select></div>` : ""}
             <div class="pl-field"><label for="pl-wz-new-name">Name of the new list</label><input id="pl-wz-new-name" maxlength="${PLAYLIST_NAME_MAX}" autocomplete="off"><div class="pl-field-error"></div></div>
           </div>
         </section>

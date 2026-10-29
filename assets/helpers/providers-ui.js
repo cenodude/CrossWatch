@@ -319,7 +319,7 @@
       return { text: `${okCount} of ${names.length} connected`, detail: "", title, dot: "warn" };
     }
     if (!card.status.ok) return { ...base, title };
-    const detail = names.length > PROFILE_NAME_LIMIT ? `${names.length} profiles` : names.map((item) => item.name).join(", ");
+    const detail = names.length > PROFILE_NAME_LIMIT ? `${names.length} instances` : names.map((item) => item.name).join(", ");
     return { ...base, detail, title };
   }
 
@@ -542,7 +542,7 @@
     const userProfileCount = userProfilesRaw && typeof userProfilesRaw === "object" ? Object.keys(userProfilesRaw).length : 0;
     const summarySections = [
       ...sections.filter((section) => section.id !== "sec-auth-others"),
-      { id: "sec-user-profiles", title: "User profiles", okCount: userProfileCount, total: userProfileCount || 0 },
+      { id: "sec-user-profiles", title: "Profiles", okCount: userProfileCount, total: userProfileCount || 0 },
     ];
     const summaryCards = summarySections.map((section) => `<div class="cw-auth-summary-card ${section.okCount ? "" : "is-empty"}" data-cw-auth-summary="${section.id}">
       <span class="cw-auth-summary-icon material-symbols-rounded" aria-hidden="true">${summaryIcon[section.id] || "hub"}</span>
@@ -581,7 +581,7 @@
     };
     const userProfileSection = `<section class="cw-auth-service-section cw-user-profile-section" data-cw-auth-group="sec-user-profiles">
         <div class="cw-auth-service-head">
-          <h4>User profiles</h4>
+          <h4>Profiles</h4>
           <p>Manage people and provider instances linked to Managed User accounts.</p>
           <span class="material-symbols-rounded cw-auth-section-chevron" aria-hidden="true">expand_more</span>
         </div>
@@ -865,9 +865,9 @@
     CROSSWATCH: {
       provider: "crosswatch", logo: "CROSSWATCH", help: window.CW.HelpLinks.url("crosswatch"), deleteSelector: "#cw_crosswatch_disconnect",
       tabs: { auth: ["lock", "Authentication", "Connect local tracker"], settings: ["database", "Settings", "Storage and restore"] },
-      copy: { auth: ["CrossWatch Authentication", "Connect this local tracker profile."], settings: ["CrossWatch Local Tracker", "Configure storage and restore snapshots for this tracker profile."] },
-      journey: ["Connect Local Tracker", "Enable the built-in CrossWatch tracker as a normal connection. Use profiles when you want separate local watchlist, ratings, history, progress or collection data.", "124,92,255", "98,194,255", "CROSSWATCH"],
-      steps: [["1", "Choose profile", "Use Default or create CW-P profiles"], ["2", "Connect locally", "Enable the selected profile as a connection"], ["3", "Sync locally", "Use the profile in normal sync pairs"]],
+      copy: { auth: ["CrossWatch Authentication", "Connect this local tracker instance."], settings: ["CrossWatch Local Tracker", "Configure storage and restore snapshots for this tracker instance."] },
+      journey: ["Connect Local Tracker", "Enable the built-in CrossWatch tracker as a normal connection. Use instances when you want separate local watchlist, ratings, history, progress or collection data.", "124,92,255", "98,194,255", "CROSSWATCH"],
+      steps: [["1", "Choose instance", "Use Default or create CW-P instances"], ["2", "Connect locally", "Enable the selected instance as a connection"], ["3", "Sync locally", "Use the instance in normal sync pairs"]],
       introSubs: ["auth"],
       order: [".cw-tracker-auth-card", ".cw-tracker-settings-stack"],
       actions: [{ row: ".cw-tracker-auth-actions", status: "#cw_tracker_auth_msg", buttons: "#cw_crosswatch_connect" }]
@@ -1179,7 +1179,7 @@
     save.disabled = !canSave;
     save.classList.toggle("is-disabled", !canSave);
     if (canSave) save.removeAttribute("title");
-    else save.title = "Connect this profile before saving.";
+    else save.title = "Connect this instance before saving.";
   }
 
   function syncConnectionSuccessState(panel, info, cfg = getCachedConfig()) {
@@ -1208,7 +1208,7 @@
     const capped = count >= limit;
     newBtn.disabled = capped;
     newBtn.setAttribute("aria-disabled", capped ? "true" : "false");
-    if (capped) newBtn.title = `Maximum ${limit} profiles reached.`;
+    if (capped) newBtn.title = `Maximum ${limit} instances reached.`;
     else newBtn.removeAttribute("title");
   }
 
@@ -1221,7 +1221,7 @@
     const newBtn = toolbar.querySelector(".cw-profile-new");
     const delBtn = toolbar.querySelector(".cw-profile-delete");
     if (select) {
-      select.setAttribute("aria-label", `${info?.copy?.auth?.[0] || info?.key || "Connection"} profile`);
+      select.setAttribute("aria-label", `${info?.copy?.auth?.[0] || info?.key || "Connection"} instance`);
       Array.from(select.options || []).forEach((option) => {
         const fullName = connectionProfileFullName(option);
         option.dataset.cwProfileFullName = fullName;
@@ -1245,12 +1245,12 @@
     }
     if (newBtn && !newBtn.__cwConnectionProfileDecorated) {
       newBtn.__cwConnectionProfileDecorated = true;
-      newBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">add</span><span>New profile</span>`;
+      newBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">add</span><span>New instance</span>`;
     }
     refreshConnectionProfileCreateState(select, newBtn);
     if (delBtn && !delBtn.__cwConnectionProfileDecorated) {
       delBtn.__cwConnectionProfileDecorated = true;
-      delBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Delete profile</span>`;
+      delBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">delete</span><span>Delete instance</span>`;
     }
   }
 
@@ -1268,8 +1268,8 @@
       card.innerHTML = `
         <div class="cw-connection-profile-head">
           <span class="material-symbols-rounded" aria-hidden="true">group</span>
-          <strong>Connection profiles</strong>
-          <a class="material-symbols-rounded cw-connection-profile-help" href="${window.CW.HelpLinks.url("connection-profiles")}" target="_blank" rel="noopener noreferrer" aria-label="Open connection profiles guide" title="Open connection profiles guide">help</a>
+          <strong>Connection instances</strong>
+          <a class="material-symbols-rounded cw-connection-profile-help" href="${window.CW.HelpLinks.url("connection-instances")}" target="_blank" rel="noopener noreferrer" aria-label="Open connection instances guide" title="Open connection instances guide">help</a>
         </div>
         <div class="cw-connection-profile-body">
           <div class="cw-connection-profile-slot"></div>
@@ -1801,7 +1801,7 @@
         const trigger = ev.currentTarget;
         if (connectionDeleteBlockedByProfiles(panel, info)) {
           resetConnectionDeleteConfirm(trigger);
-          try { window.CW.AuthShared.showConnectionWarning("Remove the additional profiles before deleting the main connection."); } catch {}
+          try { window.CW.AuthShared.showConnectionWarning("Remove the additional instances before deleting the main connection."); } catch {}
           return;
         }
         if (trigger?.dataset?.cwConfirmDelete !== "1") {

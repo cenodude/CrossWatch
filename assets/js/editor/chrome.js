@@ -77,7 +77,7 @@
       summary.classList.add("cw-import-summary");
       summary.innerHTML =
         '<span class="cw-import-title">Import provider state</span>' +
-        '<span class="cw-import-help material-symbol" title="Imports selected Watchlist, History, Ratings, or Progress data from a configured provider profile into Current State. Replace baseline refreshes those datasets from the provider; Merge keeps existing baseline rows and adds or updates provider rows. Provider accounts are not changed." aria-label="Import provider state help">help</span>';
+        '<span class="cw-import-help material-symbol" title="Imports selected Watchlist, History, Ratings, or Progress data from a configured provider instance into Current State. Replace baseline refreshes those datasets from the provider; Merge keeps existing baseline rows and adds or updates provider rows. Provider accounts are not changed." aria-label="Import provider state help">help</span>';
     }
 
     const body = summary ? summary.nextElementSibling : null;
