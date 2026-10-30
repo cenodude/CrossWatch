@@ -149,8 +149,75 @@ def _resolve_oidc_user(cfg: dict[str, Any], identity: dict[str, Any]) -> dict[st
             continue
         public = app_auth._public_user(uid, raw)
         if public.get("enabled") and not app_auth._token_only_user(public) and authOidc.identity_matches_link(raw.get("oidc") if isinstance(raw.get("oidc"), dict) else {}, identity):
-            return public
-    return None
+            return public if authOidc.provisioned_user_allowed(cfg, raw, identity) else None
+    if _oidc_identity_in_use(cfg, identity):
+        return None
+    expected = _expected_oidc_users(a, identity)
+    return expected[0] if len(expected) == 1 else None
+
+
+def _expected_oidc_users(a: dict[str, Any], identity: dict[str, Any]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for user_id, raw in app_auth._cfg_users(a).items():
+        uid = app_auth._normalize_app_user_id(user_id)
+        if not uid or not isinstance(raw, dict):
+            continue
+        public = app_auth._public_user(uid, raw)
+        if public.get("enabled") and not public.get("is_admin") and not app_auth._token_only_user(public) and authOidc.identity_matches_expectation(raw.get("oidc"), identity):
+            out.append(public)
+    return out
+
+
+def _bind_expected_link(cfg: dict[str, Any], identity: dict[str, Any], user: dict[str, Any]) -> bool:
+    if user.get("is_admin"):
+        return False
+    raw = app_auth._cfg_users(app_auth._cfg_auth(cfg)).get(app_auth._normalize_app_user_id(user.get("id")))
+    if not isinstance(raw, dict) or authOidc.identity_matches_link(raw.get("oidc"), identity):
+        return False
+    authOidc.link_identity(cfg, identity, raw)
+    return True
+
+
+def _can_provision(cfg: dict[str, Any], identity: dict[str, Any]) -> bool:
+    if not authOidc.provisioning_enabled(cfg) or not str(identity.get("sub") or "").strip():
+        return False
+    if not authOidc.identity_in_allowed_groups(cfg, identity) or _oidc_identity_in_use(cfg, identity):
+        return False
+    users = app_auth._cfg_users(app_auth._cfg_auth(cfg))
+    return not any(isinstance(raw, dict) and authOidc.identity_matches_expectation(raw.get("oidc"), identity) for raw in users.values())
+
+
+def _unique_name(base: str, taken: Any, limit: int) -> str:
+    base = base[:limit]
+    for n in range(1, 1000):
+        name = base if n == 1 else f"{base[:limit - 4]}-{n}"
+        if not taken(name):
+            return name
+    raise RuntimeError("oidc_provision_name_exhausted")
+
+
+def _provision_oidc_user(cfg: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
+    from cw_platform.provider_instances import generate_user_profile_id, sanitize_user_profile_label, upsert_user_profile, user_profile_id_for_label
+
+    a = app_auth._cfg_auth(cfg)
+    email = str(identity.get("email") or "").strip()
+    base = app_auth._clean_username(identity.get("preferred_username") or email.split("@", 1)[0] or identity.get("username")) or "user"
+    username = _unique_name(base, lambda name: app_auth._username_in_use(a, name), 64)
+    label = _unique_name(sanitize_user_profile_label(base) or "user", lambda name: bool(user_profile_id_for_label(cfg, name)), 40)
+    profile = upsert_user_profile(cfg, generate_user_profile_id(cfg), label=label, instances={})
+    write = authOidc.provision_access(cfg) == "full"
+    user_id, raw = app_auth._new_managed_user(a, username, secrets.token_urlsafe(32), str(profile.get("id") or ""), {"permissions": {"write": write}})
+    authOidc.link_identity(cfg, identity, raw)
+    authOidc.mark_provisioned(raw)
+    return app_auth._public_user(user_id, raw)
+
+
+def _audit_provisioned(request: Request, user: dict[str, Any], identity: dict[str, Any]) -> None:
+    app_auth._audit(request, "user_created", actor=user, target_type="managed_user", target_id=user.get("id"), message=f"Managed user {user.get('username') or user.get('id')} was created from OIDC sign-in", fields={"username": user.get("username"), "profile_id": user.get("profile_id"), "oidc_username": identity.get("username"), "write": bool((user.get("permissions") or {}).get("write"))})
+
+
+def _audit_bound_link(request: Request, user: dict[str, Any], identity: dict[str, Any]) -> None:
+    app_auth._audit(request, "oidc_linked", actor=user, target_type="oidc", target_id=identity.get("sub"), message=f"OIDC was linked to {user.get('username') or user.get('id')} on first sign-in", fields={"oidc_username": identity.get("username"), "user_id": user.get("id")})
 
 
 def _oidc_identity_in_use(cfg: dict[str, Any], identity: dict[str, Any], *, exclude_user_id: Any = "") -> bool:
@@ -289,6 +356,9 @@ def api_oidc_save_config(request: Request, payload: dict[str, Any] | None = Body
         return _unauthorized()
     if token and not app_auth._origin_allowed(request):
         return app_auth._origin_blocked_response()
+    groups = (payload or {}).get("allowed_groups") if "allowed_groups" in (payload or {}) else authOidc.allowed_groups(cfg)
+    if bool((payload or {}).get("provision")) and not authOidc._norm_groups(groups):
+        return JSONResponse({"ok": False, "error": "Add at least one allowed group before creating logins from OIDC"}, status_code=400, headers={"Cache-Control": "no-store"})
 
     def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
         a = app_auth._cfg_auth(latest)
@@ -359,28 +429,37 @@ def api_oidc_callback(request: Request, state: str = Query(""), code: str = Quer
         return resp
     identity = _identity_dict(res.get("identity"))
     user = _resolve_oidc_user(cfg, identity)
-    if user is None:
+    if user is None and not _can_provision(cfg, identity):
         resp = HTMLResponse("This OIDC account is not linked for CrossWatch sign-in.", status_code=403, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
-    pending_2fa = _totp_pending_response(request, cfg, res, identity, user)
+    pending_2fa = _totp_pending_response(request, cfg, res, identity, user) if user is not None else None
     if pending_2fa is not None:
         return pending_2fa
 
-    def _mutate(latest: dict[str, Any]) -> tuple[dict[str, Any], str, int]:
+    def _mutate(latest: dict[str, Any]) -> tuple[dict[str, Any], str, int, bool, bool]:
         latest_user = _resolve_oidc_user(latest, identity)
+        created = False
         if latest_user is None:
-            raise KeyError("linked_user_not_found")
+            if not _can_provision(latest, identity):
+                raise KeyError("linked_user_not_found")
+            latest_user = _provision_oidc_user(latest, identity)
+            created = True
+        bound = not created and _bind_expected_link(latest, identity, latest_user)
         token2, exp2 = app_auth._issue_session(latest, request, latest_user)
-        return latest_user, token2, exp2
+        return latest_user, token2, exp2, bound, created
 
     try:
         cfg, result = app_auth._update_config(_mutate)
-        login_user, token, exp = result
+        login_user, token, exp, bound, created = result
     except KeyError:
         resp = HTMLResponse("This OIDC account is not linked for CrossWatch sign-in.", status_code=403, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
+    if created:
+        _audit_provisioned(request, login_user, identity)
+    if bound or created:
+        _audit_bound_link(request, login_user, identity)
     app_auth._audit(request, "login", actor=login_user, message=f"{login_user.get('username') or 'User'} logged in with OIDC", target_type="user", target_id=login_user.get("id"), fields={"oidc_username": identity.get("username"), "remember_me": bool(res.get("remember_me"))})
     dest = _safe_next(res.get("next_url")) if login_user.get("is_admin") else "/profile"
     resp = RedirectResponse(url=dest, status_code=302)
@@ -441,18 +520,19 @@ def api_oidc_2fa(request: Request, payload: dict[str, Any] = Body(default_factor
         app_auth._audit(request, "2fa_failed", actor=user, status="failed", message="OIDC two-factor verification failed", target_type="user", target_id=user.get("id"), fields={"attempts": st["n"]})
         return JSONResponse({"ok": False, "error": msg}, status_code=429 if st["retry_after"] > 0 else 401, headers={"Cache-Control": "no-store"})
 
-    def _mutate(latest: dict[str, Any]) -> tuple[dict[str, Any], str, int]:
+    def _mutate(latest: dict[str, Any]) -> tuple[dict[str, Any], str, int, bool]:
         latest_user = _resolve_oidc_user(latest, identity)
         if latest_user is None:
             raise KeyError("linked_user_not_found")
         if recovery_used and not app_auth._consume_recovery_code(app_auth._cfg_auth(latest), latest_user, raw_code):
             raise ValueError("invalid_recovery_code")
+        bound = _bind_expected_link(latest, identity, latest_user)
         token2, exp2 = app_auth._issue_session(latest, request, latest_user)
-        return latest_user, token2, exp2
+        return latest_user, token2, exp2, bound
 
     try:
         cfg, result = app_auth._update_config(_mutate)
-        login_user, session_token, exp = result
+        login_user, session_token, exp, bound = result
     except (KeyError, ValueError):
         _PENDING_2FA.pop(token, None)
         resp = JSONResponse({"ok": False, "error": "This OIDC account is not linked for CrossWatch sign-in"}, status_code=403, headers={"Cache-Control": "no-store"})
@@ -461,6 +541,8 @@ def api_oidc_2fa(request: Request, payload: dict[str, Any] = Body(default_factor
 
     _PENDING_2FA.pop(token, None)
     app_auth._rate_limit_reset(request)
+    if bound:
+        _audit_bound_link(request, login_user, identity)
     if recovery_used:
         app_auth._audit(request, "2fa_recovery_code_used", actor=login_user, message=f"{login_user.get('username') or 'User'} used a recovery code", target_type="user", target_id=login_user.get("id"))
     app_auth._audit(request, "login", actor=login_user, message=f"{login_user.get('username') or 'User'} logged in with OIDC", target_type="user", target_id=login_user.get("id"), fields={"oidc_username": identity.get("username"), "remember_me": bool(rec.get("remember_me"))})
@@ -531,6 +613,8 @@ def api_oidc_link_check(request: Request, payload: dict[str, Any] = Body(...)) -
         if _oidc_identity_in_use(latest, identity, exclude_user_id=target_id):
             raise ValueError("This OIDC account is already linked to another CrossWatch account")
         status = authOidc.link_identity(latest, identity, target_raw if target_id != app_auth.ADMIN_USER_ID else None)
+        if latest_actor and latest_actor.get("is_admin") and target_id != app_auth.ADMIN_USER_ID:
+            authOidc.release_provisioned(target_raw)
         return target_id, target_user, status
 
     try:

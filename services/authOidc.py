@@ -19,6 +19,12 @@ from cw_platform.app_version import user_agent
 
 PENDING_TTL_SEC = 10 * 60
 DISCOVERY_TTL_SEC = 15 * 60
+EXPECT_CLAIMS = ("preferred_username", "email", "sub")
+EXPECT_KEYS = ("expect_iss", "expect_claim", "expect_value", "expect_set_at")
+EXPECT_VALUE_MAX = 256
+PROVISION_ACCESS = ("full", "readonly")
+GROUPS_MAX = 50
+PROVISIONED_KEY = "oidc_provisioned"
 
 _PENDING_FLOWS: dict[str, dict[str, Any]] = {}
 _DISCOVERY_CACHE: dict[str, tuple[int, dict[str, Any]]] = {}
@@ -105,6 +111,27 @@ def _norm_scopes(value: Any) -> str:
     return " ".join(parts)
 
 
+def _norm_groups(value: Any, limit: int | None = GROUPS_MAX) -> list[str]:
+    items = value if isinstance(value, list) else str(value or "").replace("\n", ",").split(",")
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        clean = str(item or "").strip()
+        if clean and clean not in seen:
+            seen.add(clean)
+            out.append(clean)
+    return out if limit is None else out[:limit]
+
+
+def _norm_groups_claim(value: Any) -> str:
+    return str(value or "").strip()[:64] or "groups"
+
+
+def _norm_provision_access(value: Any) -> str:
+    clean = str(value or "").strip().lower()
+    return clean if clean in PROVISION_ACCESS else "full"
+
+
 def sanitize_config(raw: dict[str, Any] | None, previous: dict[str, Any] | None = None) -> dict[str, Any]:
     raw = raw if isinstance(raw, dict) else {}
     previous = previous if isinstance(previous, dict) else {}
@@ -117,6 +144,10 @@ def sanitize_config(raw: dict[str, Any] | None, previous: dict[str, Any] | None 
         "client_id": str(raw.get("client_id") or "").strip(),
         "client_secret": secret,
         "scopes": _norm_scopes(raw.get("scopes")),
+        "provision": bool(raw.get("provision", previous.get("provision", False))),
+        "groups_claim": _norm_groups_claim(raw.get("groups_claim", previous.get("groups_claim"))),
+        "allowed_groups": _norm_groups(raw.get("allowed_groups", previous.get("allowed_groups"))),
+        "provision_access": _norm_provision_access(raw.get("provision_access", previous.get("provision_access"))),
     }
 
 
@@ -128,9 +159,45 @@ def public_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "client_id": str(oidc.get("client_id") or ""),
         "client_secret_configured": bool(str(oidc.get("client_secret") or "").strip()),
         "scopes": _norm_scopes(oidc.get("scopes")),
+        "provision": bool(oidc.get("provision", False)),
+        "groups_claim": _norm_groups_claim(oidc.get("groups_claim")),
+        "allowed_groups": _norm_groups(oidc.get("allowed_groups")),
+        "provision_access": _norm_provision_access(oidc.get("provision_access")),
         "configured": configured(cfg),
         "login_available": login_available(cfg),
     }
+
+
+def allowed_groups(cfg: dict[str, Any]) -> list[str]:
+    return _norm_groups(_oidc_cfg(cfg).get("allowed_groups"))
+
+
+def provisioning_enabled(cfg: dict[str, Any]) -> bool:
+    return configured(cfg) and bool(_oidc_cfg(cfg).get("provision")) and bool(allowed_groups(cfg))
+
+
+def provision_access(cfg: dict[str, Any]) -> str:
+    return _norm_provision_access(_oidc_cfg(cfg).get("provision_access"))
+
+
+def identity_in_allowed_groups(cfg: dict[str, Any], identity: dict[str, Any]) -> bool:
+    allowed = set(allowed_groups(cfg))
+    return bool(allowed) and bool(allowed & set(_norm_groups(identity.get("groups"), None)))
+
+
+def provisioned_user_allowed(cfg: dict[str, Any], raw_user: dict[str, Any] | None, identity: dict[str, Any]) -> bool:
+    if not isinstance(raw_user, dict) or not raw_user.get(PROVISIONED_KEY):
+        return True
+    return identity_in_allowed_groups(cfg, identity)
+
+
+def mark_provisioned(raw_user: dict[str, Any]) -> None:
+    raw_user[PROVISIONED_KEY] = True
+
+
+def release_provisioned(raw_user: dict[str, Any] | None) -> None:
+    if isinstance(raw_user, dict):
+        raw_user.pop(PROVISIONED_KEY, None)
 
 
 def configured(cfg: dict[str, Any]) -> bool:
@@ -150,23 +217,55 @@ def identity_matches_link(link: dict[str, Any] | None, identity: dict[str, Any])
     return bool(want[0] and want[1] and want == got)
 
 
+def _claim_value(claim: str, value: Any) -> str:
+    clean = str(value or "").strip()
+    return clean.casefold() if claim == "email" else clean
+
+
+def _expectation(link: dict[str, Any] | None) -> tuple[str, str, str]:
+    if not isinstance(link, dict) or all(_link_key(link)):
+        return "", "", ""
+    claim = str(link.get("expect_claim") or "").strip()
+    value = _claim_value(claim, link.get("expect_value"))
+    if claim not in EXPECT_CLAIMS or claim == "sub" or not value:
+        return "", "", ""
+    return _norm_issuer(link.get("expect_iss")), claim, value
+
+
+def _claim_true(value: Any) -> bool:
+    return value is True or str(value or "").strip().lower() == "true"
+
+
+def identity_matches_expectation(link: dict[str, Any] | None, identity: dict[str, Any]) -> bool:
+    iss, claim, want = _expectation(link)
+    if not claim or not iss or _norm_issuer(identity.get("iss")) != iss or not str(identity.get("sub") or "").strip():
+        return False
+    if claim == "email" and not _claim_true(identity.get("email_verified")):
+        return False
+    return _claim_value(claim, identity.get(claim)) == want
+
+
+def _managed_users(cfg: dict[str, Any]) -> dict[str, Any]:
+    app_auth = cfg.get("app_auth")
+    users = app_auth.get("users") if isinstance(app_auth, dict) else None
+    return users if isinstance(users, dict) else {}
+
+
 def login_available(cfg: dict[str, Any]) -> bool:
     if not configured(cfg):
         return False
-    if all(_link_key(_admin_link(cfg))):
+    if all(_link_key(_admin_link(cfg))) or provisioning_enabled(cfg):
         return True
-    app_auth = cfg.get("app_auth")
-    users = app_auth.get("users") if isinstance(app_auth, dict) else None
-    if isinstance(users, dict):
-        for raw in users.values():
-            if isinstance(raw, dict) and bool(raw.get("enabled", True)) and all(_link_key(_managed_link(raw))):
-                return True
+    for raw in _managed_users(cfg).values():
+        if isinstance(raw, dict) and bool(raw.get("enabled", True)) and (all(_link_key(_managed_link(raw))) or _expectation(_managed_link(raw))[1]):
+            return True
     return False
 
 
 def get_status(cfg: dict[str, Any], raw_user: dict[str, Any] | None = None) -> dict[str, Any]:
     link = _managed_link(raw_user) if isinstance(raw_user, dict) else _admin_link(cfg)
     iss, sub = _link_key(link)
+    _expect_iss, expect_claim, _expect_value = _expectation(link)
     return {
         **public_config(cfg),
         "linked": bool(iss and sub),
@@ -176,11 +275,79 @@ def get_status(cfg: dict[str, Any], raw_user: dict[str, Any] | None = None) -> d
         "linked_email": str(link.get("email") or "").strip(),
         "linked_picture": str(link.get("picture") or "").strip(),
         "linked_at": int(link.get("linked_at") or 0),
+        "pending_claim": expect_claim,
+        "pending_value": str(link.get("expect_value") or "").strip() if expect_claim else "",
     }
+
+
+def link_summary(raw_user: dict[str, Any] | None) -> dict[str, Any]:
+    link = _managed_link(raw_user) if isinstance(raw_user, dict) else {}
+    iss, sub = _link_key(link)
+    _expect_iss, expect_claim, _expect_value = _expectation(link)
+    return {
+        "linked": bool(iss and sub),
+        "subject": sub,
+        "username": str(link.get("username") or "").strip(),
+        "email": str(link.get("email") or "").strip(),
+        "pending_claim": expect_claim,
+        "pending_value": str(link.get("expect_value") or "").strip() if expect_claim else "",
+    }
+
+
+def _identity_linked_elsewhere(cfg: dict[str, Any], identity: dict[str, Any], raw_user: dict[str, Any]) -> bool:
+    if identity_matches_link(_admin_link(cfg), identity):
+        return True
+    return any(raw is not raw_user and isinstance(raw, dict) and identity_matches_link(_managed_link(raw), identity) for raw in _managed_users(cfg).values())
+
+
+def _expectation_taken(cfg: dict[str, Any], key: tuple[str, str, str], raw_user: dict[str, Any]) -> bool:
+    return any(raw is not raw_user and isinstance(raw, dict) and _expectation(_managed_link(raw)) == key for raw in _managed_users(cfg).values())
+
+
+def clear_expectation(raw_user: dict[str, Any]) -> None:
+    link = _managed_link(raw_user)
+    for key in EXPECT_KEYS:
+        link.pop(key, None)
+    if not link:
+        raw_user.pop("oidc", None)
+
+
+def set_expectation(cfg: dict[str, Any], raw_user: dict[str, Any], spec: Any) -> dict[str, Any]:
+    spec = spec if isinstance(spec, dict) else {}
+    claim = str(spec.get("claim") or "").strip()
+    value = str(spec.get("value") or "").strip()
+    if not claim and not value:
+        clear_expectation(raw_user)
+        return link_summary(raw_user)
+    if claim not in EXPECT_CLAIMS:
+        raise ValueError("Match OIDC on username, email or subject")
+    if not value or len(value) > EXPECT_VALUE_MAX:
+        raise ValueError("Enter the OIDC value to match")
+    if not configured(cfg):
+        raise ValueError("Set up OIDC sign-in first")
+    if all(_link_key(_managed_link(raw_user))):
+        raise ValueError("Unlink the current OIDC account first")
+    iss = _norm_issuer(_oidc_cfg(cfg).get("issuer"))
+    if claim == "sub":
+        identity = {"iss": iss, "sub": value}
+        if _identity_linked_elsewhere(cfg, identity, raw_user):
+            raise ValueError("This OIDC account is already linked to another CrossWatch account")
+        link_identity(cfg, identity, raw_user)
+        release_provisioned(raw_user)
+        return link_summary(raw_user)
+    if _expectation_taken(cfg, (iss, claim, _claim_value(claim, value)), raw_user):
+        raise ValueError("Another login already waits for this OIDC account")
+    clear_expectation(raw_user)
+    release_provisioned(raw_user)
+    link = _managed_link(raw_user, create=True)
+    link.update({"expect_iss": iss, "expect_claim": claim, "expect_value": value, "expect_set_at": _now()})
+    return link_summary(raw_user)
 
 
 def link_identity(cfg: dict[str, Any], identity: dict[str, Any], raw_user: dict[str, Any] | None = None) -> dict[str, Any]:
     link = _managed_link(raw_user, create=True) if isinstance(raw_user, dict) else _admin_link(cfg, create=True)
+    for key in EXPECT_KEYS:
+        link.pop(key, None)
     link["iss"] = _norm_issuer(identity.get("iss"))
     link["sub"] = str(identity.get("sub") or "").strip()
     link["username"] = str(identity.get("username") or "").strip()
@@ -325,14 +492,21 @@ def _fetch_userinfo(disco: dict[str, Any], access_token: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _identity_from_claims(issuer: str, claims: dict[str, Any], userinfo: dict[str, Any]) -> dict[str, Any]:
+def _identity_from_claims(issuer: str, claims: dict[str, Any], userinfo: dict[str, Any], groups_claim: str = "groups") -> dict[str, Any]:
+    sub = str(claims.get("sub") or "").strip()
+    if str(userinfo.get("sub") or "").strip() != sub:
+        userinfo = {}
     merged = {**claims, **userinfo}
+    email_source = userinfo if str(userinfo.get("email") or "").strip() else claims
     username = str(merged.get("preferred_username") or merged.get("name") or merged.get("email") or merged.get("sub") or "").strip()
     return {
         "iss": _norm_issuer(issuer),
-        "sub": str(claims.get("sub") or "").strip(),
+        "sub": sub,
         "username": username,
-        "email": str(merged.get("email") or "").strip(),
+        "email": str(email_source.get("email") or "").strip(),
+        "email_verified": _claim_true(email_source.get("email_verified")),
+        "preferred_username": str(merged.get("preferred_username") or "").strip(),
+        "groups": _norm_groups(merged.get(_norm_groups_claim(groups_claim)), None),
         "picture": str(merged.get("picture") or "").strip(),
     }
 
@@ -428,7 +602,7 @@ def check_callback(cfg: dict[str, Any], *, state: str, code: str) -> dict[str, A
         "remember_me": bool(rec.get("remember_me")),
         "target_user_id": str(rec.get("target_user_id") or ""),
         "next_url": str(rec.get("next_url") or ""),
-        "identity": _identity_from_claims(str(oidc.get("issuer") or ""), claims, userinfo),
+        "identity": _identity_from_claims(str(oidc.get("issuer") or ""), claims, userinfo, str(oidc.get("groups_claim") or "")),
     }
 
 

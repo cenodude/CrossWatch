@@ -291,6 +291,10 @@ async function cwAppAuthOidcRefreshStatus() {
       cwSetInputValue("app_auth_oidc_client_id", cfg.client_id || "");
       cwSetInputValue("app_auth_oidc_client_secret", "");
       cwSetInputValue("app_auth_oidc_scopes", cfg.scopes || "openid profile email");
+      cwSetSelectValue("app_auth_oidc_provision", cfg.provision ? "true" : "false");
+      cwSetSelectValue("app_auth_oidc_provision_access", cfg.provision_access === "readonly" ? "readonly" : "full");
+      cwSetInputValue("app_auth_oidc_allowed_groups", (Array.isArray(cfg.allowed_groups) ? cfg.allowed_groups : []).join(", "));
+      cwSetInputValue("app_auth_oidc_groups_claim", cfg.groups_claim && cfg.groups_claim !== "groups" ? cfg.groups_claim : "");
       const secret = document.getElementById("app_auth_oidc_client_secret");
       if (secret) secret.placeholder = cfg.client_secret_configured ? "(leave blank to keep)" : "Client secret";
     }
@@ -335,6 +339,10 @@ window.cwAppAuthOidcSaveConfig = async function cwAppAuthOidcSaveConfig() {
       client_secret: secret?.value || "",
       keep_client_secret: !(secret?.value || "").trim(),
       scopes: document.getElementById("app_auth_oidc_scopes")?.value || "openid profile email",
+      provision: String(document.getElementById("app_auth_oidc_provision")?.value || "false") === "true",
+      provision_access: document.getElementById("app_auth_oidc_provision_access")?.value || "full",
+      allowed_groups: document.getElementById("app_auth_oidc_allowed_groups")?.value || "",
+      groups_claim: document.getElementById("app_auth_oidc_groups_claim")?.value || "groups",
     };
     const r = await fetch("/api/app-auth/oidc/config", {
       method: "POST",

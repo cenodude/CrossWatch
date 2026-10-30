@@ -449,3 +449,446 @@ def test_oidc_callback_requires_matching_flow_cookie(monkeypatch) -> None:
 
     assert resp.status_code == 400
     assert cfg["app_auth"]["sessions"] == []
+
+
+def _pending(claim: str, value: str, iss: str = "https://accounts.google.com") -> dict:
+    return {"expect_iss": iss, "expect_claim": claim, "expect_value": value, "expect_set_at": 1_700_000_200}
+
+
+def _callback(oidc_api):
+    req = _request("/api/app-auth/oidc/callback", headers={"cookie": f"{oidc_api.FLOW_COOKIE_NAME}=flow-nonce"})
+    return oidc_api.api_oidc_callback(req, state="ok", code="code", error="")
+
+
+def _pending_identity(**extra) -> dict:
+    return {"iss": "https://accounts.google.com", "sub": "authentik-42", "username": "pascal", "preferred_username": "pascal", "email": "", "picture": "", **extra}
+
+
+def test_oidc_callback_binds_pending_username_on_first_sign_in(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user(_pending("preferred_username", "pascal"))}
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity())
+
+    resp = _callback(oidc_api)
+
+    assert resp.status_code == 302
+    assert cfg["app_auth"]["sessions"][0]["user_id"] == "u1"
+    link = cfg["app_auth"]["users"]["u1"]["oidc"]
+    assert link["sub"] == "authentik-42"
+    assert "expect_claim" not in link and "expect_value" not in link
+
+
+def test_oidc_bound_link_ignores_later_username_claim(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user(_pending("preferred_username", "pascal"))}
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity())
+    assert _callback(oidc_api).status_code == 302
+
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(sub="someone-else"))
+    resp = _callback(oidc_api)
+
+    assert resp.status_code == 403
+    assert cfg["app_auth"]["users"]["u1"]["oidc"]["sub"] == "authentik-42"
+
+
+def test_oidc_pending_email_requires_verified_claim(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user(_pending("email", "pascal@example.com"))}
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(preferred_username="", email="Pascal@example.com", email_verified=False))
+
+    assert _callback(oidc_api).status_code == 403
+    assert "sub" not in cfg["app_auth"]["users"]["u1"]["oidc"]
+
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(preferred_username="", email="Pascal@example.com", email_verified=True))
+
+    assert _callback(oidc_api).status_code == 302
+    assert cfg["app_auth"]["users"]["u1"]["oidc"]["sub"] == "authentik-42"
+
+
+def test_oidc_pending_claim_needs_same_issuer(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user(_pending("preferred_username", "pascal", iss="https://old-idp.example"))}
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity())
+
+    assert _callback(oidc_api).status_code == 403
+    assert cfg["app_auth"]["sessions"] == []
+
+
+def test_oidc_pending_claim_skips_identity_linked_to_disabled_user(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _auth_cfg()
+    disabled = _managed_user(_managed_identity_record("authentik-42"))
+    disabled["enabled"] = False
+    cfg["app_auth"]["users"] = {"u1": _managed_user(_pending("preferred_username", "pascal")), "u2": disabled}
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity())
+
+    assert _callback(oidc_api).status_code == 403
+    assert "sub" not in cfg["app_auth"]["users"]["u1"]["oidc"]
+
+
+def test_oidc_pending_claim_makes_sign_in_available() -> None:
+    from services import authOidc
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user(_pending("preferred_username", "pascal"))}
+
+    assert authOidc.login_available(cfg) is True
+
+
+def test_set_expectation_rejects_duplicate_pending_value() -> None:
+    import pytest
+    from services import authOidc
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user(_pending("preferred_username", "pascal")), "u2": _managed_user()}
+
+    with pytest.raises(ValueError):
+        authOidc.set_expectation(cfg, cfg["app_auth"]["users"]["u2"], {"claim": "preferred_username", "value": "pascal"})
+
+
+def test_set_expectation_username_is_case_sensitive_email_is_not() -> None:
+    import pytest
+    from services import authOidc
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user(_pending("preferred_username", "alice")), "u2": _managed_user(), "u3": _managed_user(_pending("email", "bob@example.com")), "u4": _managed_user()}
+    users = cfg["app_auth"]["users"]
+
+    authOidc.set_expectation(cfg, users["u2"], {"claim": "preferred_username", "value": "Alice"})
+    with pytest.raises(ValueError):
+        authOidc.set_expectation(cfg, users["u4"], {"claim": "email", "value": "BOB@example.com"})
+
+
+def test_oidc_pending_username_does_not_match_other_case(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user(_pending("preferred_username", "Alice"))}
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(username="alice", preferred_username="alice"))
+
+    assert _callback(oidc_api).status_code == 403
+    assert "sub" not in cfg["app_auth"]["users"]["u1"]["oidc"]
+
+
+def test_set_expectation_subject_links_directly_and_checks_conflicts() -> None:
+    import pytest
+    from services import authOidc
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user(), "u2": _managed_user()}
+    users = cfg["app_auth"]["users"]
+
+    out = authOidc.set_expectation(cfg, users["u1"], {"claim": "sub", "value": "authentik-42"})
+
+    assert out["linked"] is True
+    assert users["u1"]["oidc"]["iss"] == "https://accounts.google.com"
+    assert users["u1"]["oidc"]["sub"] == "authentik-42"
+    with pytest.raises(ValueError):
+        authOidc.set_expectation(cfg, users["u2"], {"claim": "sub", "value": "authentik-42"})
+    with pytest.raises(ValueError):
+        authOidc.set_expectation(cfg, users["u1"], {"claim": "preferred_username", "value": "pascal"})
+
+
+def test_set_expectation_clears_pending_value() -> None:
+    from services import authOidc
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user(_pending("preferred_username", "pascal"))}
+
+    authOidc.set_expectation(cfg, cfg["app_auth"]["users"]["u1"], {"claim": "", "value": ""})
+
+    assert "oidc" not in cfg["app_auth"]["users"]["u1"]
+
+
+def test_profile_login_sets_pending_oidc_and_users_list_reports_it(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+    from api import authOidcAPI as oidc_api
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user()}
+    _bind_config(monkeypatch, oidc_api, cfg)
+    monkeypatch.setattr(auth, "_profile_id_valid", lambda *_a, **_k: True)
+
+    auth.apply_profile_login(cfg, "profile-1", {"user_id": "u1", "oidc": {"claim": "preferred_username", "value": "pascal"}})
+
+    assert cfg["app_auth"]["users"]["u1"]["oidc"]["expect_value"] == "pascal"
+    token = _login_admin(cfg)
+    body = _json_body(auth.api_users_all(_request("/api/app-auth/users", headers={"cookie": f"{auth.COOKIE_NAME}={token}"})))
+    row = next(item for item in body["items"] if item["id"] == "u1")
+    assert body["oidc_configured"] is True
+    assert row["oidc"]["pending_claim"] == "preferred_username"
+    assert row["oidc"]["pending_value"] == "pascal"
+
+
+def test_profile_login_rejects_bad_oidc_claim(monkeypatch) -> None:
+    import pytest
+    from api import appAuthAPI as auth
+
+    cfg = _auth_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user()}
+    monkeypatch.setattr(auth, "_profile_id_valid", lambda *_a, **_k: True)
+
+    with pytest.raises(auth.ProfileLoginError):
+        auth.apply_profile_login(cfg, "profile-1", {"user_id": "u1", "oidc": {"claim": "name", "value": "pascal"}})
+
+
+def test_identity_from_claims_keeps_matching_claims() -> None:
+    from services import authOidc
+
+    identity = authOidc._identity_from_claims("https://idp.example/", {"sub": "s1", "preferred_username": "pascal", "email": "p@example.com", "email_verified": "true"}, {})
+
+    assert identity["preferred_username"] == "pascal"
+    assert identity["email_verified"] is True
+
+
+def test_identity_from_claims_takes_email_and_verified_from_same_source() -> None:
+    from services import authOidc
+
+    claims = {"sub": "s1", "email": "token@example.com", "email_verified": True}
+    identity = authOidc._identity_from_claims("https://idp.example", claims, {"sub": "s1", "email": "userinfo@example.com"})
+
+    assert identity["email"] == "userinfo@example.com"
+    assert identity["email_verified"] is False
+
+
+def _provision_cfg(access: str = "full") -> dict:
+    cfg = _auth_cfg()
+    cfg["app_auth"]["oidc"].update({"provision": True, "allowed_groups": ["crosswatch"], "groups_claim": "groups", "provision_access": access})
+    return cfg
+
+
+def test_oidc_provisioning_creates_login_profile_and_link(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+    from cw_platform.provider_instances import list_user_profiles
+
+    cfg = _provision_cfg("readonly")
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"]))
+
+    resp = _callback(oidc_api)
+
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/profile"
+    [(uid, raw)] = cfg["app_auth"]["users"].items()
+    assert raw["username"] == "pascal"
+    assert raw["role"] == "user"
+    assert raw["permissions"]["write"] is False
+    assert raw["oidc"]["sub"] == "authentik-42"
+    assert raw["oidc_provisioned"] is True
+    assert [p["id"] for p in list_user_profiles(cfg)] == [raw["profile_id"]]
+    assert cfg["app_auth"]["sessions"][0]["user_id"] == uid
+
+
+def test_oidc_provisioning_requires_allowed_group(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _provision_cfg()
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["family"]))
+
+    assert _callback(oidc_api).status_code == 403
+    assert not cfg["app_auth"].get("users")
+
+
+def test_oidc_provisioning_off_does_not_create_logins(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _provision_cfg()
+    cfg["app_auth"]["oidc"]["provision"] = False
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"]))
+
+    assert _callback(oidc_api).status_code == 403
+    assert not cfg["app_auth"].get("users")
+
+
+def test_oidc_provisioned_login_blocked_after_leaving_group(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _provision_cfg()
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"]))
+    assert _callback(oidc_api).status_code == 302
+
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=[]))
+
+    assert _callback(oidc_api).status_code == 403
+    assert len(cfg["app_auth"]["users"]) == 1
+    assert len(cfg["app_auth"]["sessions"]) == 1
+
+
+def test_oidc_provisioning_picks_free_username(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _provision_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user()}
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"]))
+
+    assert _callback(oidc_api).status_code == 302
+    names = sorted(raw["username"] for raw in cfg["app_auth"]["users"].values())
+    assert names == ["pascal", "pascal-2"]
+
+
+def test_oidc_provisioning_skips_identity_linked_to_disabled_user(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _provision_cfg()
+    disabled = _managed_user(_managed_identity_record("authentik-42"))
+    disabled["enabled"] = False
+    cfg["app_auth"]["users"] = {"u1": disabled}
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"]))
+
+    assert _callback(oidc_api).status_code == 403
+    assert list(cfg["app_auth"]["users"]) == ["u1"]
+
+
+def test_oidc_provisioning_prefers_pending_expectation(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _provision_cfg()
+    cfg["app_auth"]["users"] = {"u1": _managed_user(_pending("preferred_username", "pascal"))}
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"]))
+
+    assert _callback(oidc_api).status_code == 302
+    assert list(cfg["app_auth"]["users"]) == ["u1"]
+    assert "oidc_provisioned" not in cfg["app_auth"]["users"]["u1"]
+
+
+def test_oidc_provisioning_blocked_by_disabled_pending_login(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _provision_cfg()
+    disabled = _managed_user(_pending("preferred_username", "pascal"))
+    disabled["enabled"] = False
+    cfg["app_auth"]["users"] = {"u1": disabled}
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"]))
+
+    assert _callback(oidc_api).status_code == 403
+    assert list(cfg["app_auth"]["users"]) == ["u1"]
+
+
+def test_oidc_provisioned_login_blocked_when_no_groups_remain(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+
+    cfg = _provision_cfg()
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"]))
+    assert _callback(oidc_api).status_code == 302
+
+    cfg["app_auth"]["oidc"].update({"provision": False, "allowed_groups": []})
+
+    assert _callback(oidc_api).status_code == 403
+
+
+def test_oidc_provisioned_user_self_relink_keeps_group_check(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+    from api import authOidcAPI as oidc_api
+
+    cfg = _provision_cfg()
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"]))
+    assert _callback(oidc_api).status_code == 302
+    [uid] = list(cfg["app_auth"]["users"])
+    token = _login_managed(cfg, uid)
+    headers = {"cookie": f"{auth.COOKIE_NAME}={token}"}
+
+    oidc_api.api_oidc_unlink(_request("/api/app-auth/oidc/unlink", method="POST", headers=headers), {})
+    monkeypatch.setattr(oidc_api.authOidc, "consume_link", lambda *_a, **_k: {"ok": True, "pending": False, "target_user_id": uid, "identity": _pending_identity(sub="authentik-99")})
+    assert oidc_api.api_oidc_link_check(_request("/api/app-auth/oidc/link/check", method="POST", headers=headers), {"state": "ok"}).status_code == 200
+
+    assert cfg["app_auth"]["users"][uid]["oidc_provisioned"] is True
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(sub="authentik-99", groups=[]))
+    assert _callback(oidc_api).status_code == 403
+
+
+def test_oidc_admin_relink_releases_group_check(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+    from api import authOidcAPI as oidc_api
+
+    cfg = _provision_cfg()
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"]))
+    assert _callback(oidc_api).status_code == 302
+    [uid] = list(cfg["app_auth"]["users"])
+    headers = {"cookie": f"{auth.COOKIE_NAME}={_login_admin(cfg)}"}
+    monkeypatch.setattr(oidc_api.authOidc, "consume_link", lambda *_a, **_k: {"ok": True, "pending": False, "target_user_id": uid, "identity": _pending_identity()})
+
+    assert oidc_api.api_oidc_link_check(_request("/api/app-auth/oidc/link/check", method="POST", headers=headers), {"state": "ok"}).status_code == 200
+
+    assert "oidc_provisioned" not in cfg["app_auth"]["users"][uid]
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=[]))
+    assert _callback(oidc_api).status_code == 302
+
+
+def test_identity_groups_are_not_truncated() -> None:
+    from services import authOidc
+
+    cfg = _provision_cfg()
+    groups = [f"g{n}" for n in range(80)] + ["crosswatch"]
+    identity = authOidc._identity_from_claims("https://accounts.google.com", {"sub": "s1", "groups": groups}, {})
+
+    assert authOidc.identity_in_allowed_groups(cfg, identity) is True
+
+
+def test_oidc_config_rejects_provisioning_without_groups(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+    from api import authOidcAPI as oidc_api
+
+    cfg = _auth_cfg()
+    _bind_config(monkeypatch, oidc_api, cfg)
+    token = _login_admin(cfg)
+    req = _request("/api/app-auth/oidc/config", method="POST", headers={"cookie": f"{auth.COOKIE_NAME}={token}"})
+
+    resp = oidc_api.api_oidc_save_config(req, {"enabled": True, "issuer": "https://accounts.google.com", "client_id": "client-abc", "keep_client_secret": True, "provision": True, "allowed_groups": ""})
+
+    assert resp.status_code == 400
+    assert "provision" not in cfg["app_auth"]["oidc"]
+
+
+def test_oidc_config_keeps_provisioning_fields() -> None:
+    from services import authOidc
+
+    out = authOidc.sanitize_config({"provision": True, "allowed_groups": "crosswatch, family,crosswatch", "groups_claim": "", "provision_access": "admin"})
+
+    assert out["provision"] is True
+    assert out["allowed_groups"] == ["crosswatch", "family"]
+    assert out["groups_claim"] == "groups"
+    assert out["provision_access"] == "full"
+
+
+def test_identity_from_claims_reads_custom_groups_claim() -> None:
+    from services import authOidc
+
+    identity = authOidc._identity_from_claims("https://idp.example", {"sub": "s1", "roles": ["crosswatch"], "groups": ["other"]}, {}, "roles")
+
+    assert identity["groups"] == ["crosswatch"]
+
+
+def test_identity_from_claims_ignores_userinfo_for_other_subject() -> None:
+    from services import authOidc
+
+    claims = {"sub": "s1", "preferred_username": "pascal"}
+    identity = authOidc._identity_from_claims("https://idp.example", claims, {"sub": "s2", "preferred_username": "mallory", "email": "m@example.com", "email_verified": True})
+
+    assert identity["preferred_username"] == "pascal"
+    assert identity["email"] == ""
+    assert identity["email_verified"] is False

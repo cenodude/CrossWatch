@@ -23,6 +23,7 @@
   let removeLoginTimer = 0;
   let wizardStep = 0;
   let authActive = false;
+  let oidcConfigured = false;
   let showPassword = false;
 
   const RESOURCE_KEYS = ["sync_pairs", "watcher_routes", "webhook_routes"];
@@ -42,6 +43,11 @@
     ["scrobbler", "Scrobbler", "Their own watcher routes and webhooks."],
     ["schedule", "Schedule", "When their own pairs run."],
     ["connections", "Reconnect", "Sign in again to their own accounts."],
+  ];
+  const OIDC_CLAIMS = [
+    ["preferred_username", "Username", "badge", "Links on their first sign-in with exactly this username, including upper and lower case."],
+    ["email", "Email", "mail", "Links on their first sign-in with this email, once the provider has verified it."],
+    ["sub", "Subject", "fingerprint", "The account ID from your identity provider. Links right away."],
   ];
   const NAME_IDEAS = ["Me", "Partner", "Kids", "Guests", "Living room"];
   const STRENGTH_LABELS = ["", "Too short", "Okay", "Good", "Strong"];
@@ -190,9 +196,24 @@
     return on.length ? `Settings: ${on.join(", ")}` : "No settings access";
   }
 
+  function oidcDraft(user) {
+    const raw = user?.oidc && typeof user.oidc === "object" ? user.oidc : {};
+    const claim = txt(raw.pending_claim) || "preferred_username";
+    const value = txt(raw.pending_value);
+    return {
+      oidcLinked: raw.linked === true,
+      oidcLabel: txt(raw.username || raw.email || raw.subject),
+      oidcClaim: claim,
+      oidcValue: value,
+      initialOidcClaim: claim,
+      initialOidcValue: value,
+    };
+  }
+
   function makeLoginDraft(profile) {
     const user = profile ? profileLogins(profile.id)[0] : null;
     return {
+      ...oidcDraft(user),
       wanted: !!user,
       user_id: txt(user?.id),
       username: txt(user?.username || ""),
@@ -660,6 +681,39 @@
         </div>` : ""}`;
   }
 
+  function oidcClaimLabel(claim) {
+    return (OIDC_CLAIMS.find(([key]) => key === claim) || [, "Username"])[1];
+  }
+
+  function renderOidcField(login) {
+    if (!oidcConfigured) return "";
+    if (login.oidcLinked) {
+      return `
+        <div class="cw-upw-field">
+          <span class="cw-upw-label">OIDC sign-in</span>
+          <div class="cw-upw-card-actions is-split">
+            <span class="cw-upw-tag is-good">${icon("verified_user")}Linked${login.oidcLabel ? ` to ${esc(login.oidcLabel)}` : ""}</span>
+            <button type="button" class="cw-upw-btn is-danger-ghost" data-action="oidc-unlink">${icon("link_off")}<span>Unlink</span></button>
+          </div>
+        </div>`;
+    }
+    const current = OIDC_CLAIMS.find(([key]) => key === login.oidcClaim) || OIDC_CLAIMS[0];
+    const waiting = login.initialOidcValue && login.oidcValue === login.initialOidcValue && login.oidcClaim === login.initialOidcClaim;
+    return `
+      <div class="cw-upw-field">
+        <span class="cw-upw-label">OIDC sign-in (optional)</span>
+        <div class="cw-upw-segment">
+          ${OIDC_CLAIMS.map(([key, label, iconName]) => `
+            <button type="button" class="cw-upw-option${current[0] === key ? " is-selected" : ""}" data-action="oidc-claim" data-value="${key}" aria-pressed="${current[0] === key}">
+              ${icon(iconName)}
+              <span><strong>${esc(label)}</strong></span>
+            </button>`).join("")}
+        </div>
+        <span class="cw-upw-control">${icon("passkey")}<input class="cw-upw-input" id="cw-upm-login-oidc" type="text" maxlength="256" value="${esc(login.oidcValue)}" placeholder="${esc(`${current[1]} at your identity provider`)}" autocomplete="off" spellcheck="false"></span>
+        <p class="cw-upw-note">${icon(waiting ? "schedule" : "info")}${esc(waiting ? `Waiting for their first OIDC sign-in as ${login.initialOidcValue}.` : current[3])}</p>
+      </div>`;
+  }
+
   function renderAuthSetup(login) {
     return `
       <div class="cw-upw-card is-warning">
@@ -697,6 +751,7 @@
           ${renderPasswordField(login, true)}
         </div>
         ${renderAccessChoice(login)}
+        ${renderOidcField(login)}
         <div class="cw-upw-card-actions is-split">
           ${renderToggle("cw-upm-login-enabled", login.enabled, "Login enabled")}
           <button type="button" class="cw-upw-btn is-danger-ghost" data-action="remove-login">${icon("person_remove")}<span>Remove login</span></button>
@@ -728,6 +783,7 @@
             ${renderPasswordField(login, false)}
           </div>
           ${renderAccessChoice(login)}
+          ${renderOidcField(login)}
         </div>` : renderAuthSetup(login)) : ""}`;
   }
 
@@ -759,8 +815,11 @@
           return `<li>${icon(RESOURCE_ICONS[key])}<span><strong>${esc(refs.map((ref) => providerLabel(ref?.provider)).join(" → ") || row.label)}</strong><small>${esc(resourceTitle(key).replace(/s$/, ""))}</small></span></li>`;
         }).join("")}</ul>`
       : none("Nothing switched on");
+    const oidcItem = login.wanted && oidcConfigured && txt(login.oidcValue)
+      ? `<li>${icon("passkey")}<span><strong>${esc(txt(login.oidcValue))}</strong><small>${esc(`OIDC ${oidcClaimLabel(login.oidcClaim).toLowerCase()}`)}</small></span></li>`
+      : "";
     const loginBody = login.wanted
-      ? `<ul class="cw-upw-list"><li>${icon("alternate_email")}<span><strong>${esc(login.username)}</strong><small>${esc([ACCESS_LABELS[login.access] || "", grantsSummary(login)].filter(Boolean).join(" · "))}</small></span></li></ul>`
+      ? `<ul class="cw-upw-list"><li>${icon("alternate_email")}<span><strong>${esc(login.username)}</strong><small>${esc([ACCESS_LABELS[login.access] || "", grantsSummary(login)].filter(Boolean).join(" · "))}</small></span></li>${oidcItem}</ul>`
       : none("No login, view only");
     return `
       ${paneHead("Ready to create", "Have a last look. You can change all of this later.")}
@@ -952,8 +1011,10 @@
     try {
       const userData = await json(`/api/app-auth/users?ts=${Date.now()}`);
       appUsers = Array.isArray(userData?.items) ? userData.items : [];
+      oidcConfigured = userData?.oidc_configured === true;
     } catch {
       appUsers = [];
+      oidcConfigured = false;
     }
   }
 
@@ -1105,6 +1166,7 @@
     if (field("cw-upm-login-username")) login.username = txt(field("cw-upm-login-username").value);
     if (field("cw-upm-login-password")) login.password = String(field("cw-upm-login-password").value || "");
     if (field("cw-upm-login-enabled")) login.enabled = !!field("cw-upm-login-enabled").checked;
+    if (field("cw-upm-login-oidc")) login.oidcValue = txt(field("cw-upm-login-oidc").value);
     if (field("cw-upm-admin-username")) login.adminUsername = txt(field("cw-upm-admin-username").value);
     if (field("cw-upm-admin-password")) login.adminPassword = String(field("cw-upm-admin-password").value || "");
     root.querySelectorAll("input[data-upw-grant]").forEach((input) => {
@@ -1169,11 +1231,20 @@
     return null;
   }
 
+  function oidcPayload(login) {
+    if (!oidcConfigured || login.oidcLinked) return null;
+    const value = txt(login.oidcValue);
+    if (!value) return login.initialOidcValue ? { claim: "", value: "" } : null;
+    if (value === login.initialOidcValue && login.oidcClaim === login.initialOidcClaim) return null;
+    return { claim: login.oidcClaim, value };
+  }
+
   function loginPayload() {
     const login = modalDraft?.login || {};
     if (!login.wanted || !authActive) return null;
-    if (!login.user_id) return { username: txt(login.username), password: login.password, permissions: accessPermissions(login.access, login.grants) };
-    const out = {};
+    const oidc = oidcPayload(login);
+    if (!login.user_id) return { username: txt(login.username), password: login.password, permissions: accessPermissions(login.access, login.grants), ...(oidc ? { oidc } : {}) };
+    const out = oidc ? { oidc } : {};
     if (txt(login.username) !== login.initialUsername) out.username = txt(login.username);
     if (login.password) out.password = login.password;
     const grantsChanged = SETTINGS_GRANTS.some(([key]) => (login.grants?.[key] !== false) !== (login.initialGrants?.[key] !== false));
@@ -1254,6 +1325,29 @@
     if (!modalDraft?.login || !ACCESS_LABELS[mode]) return;
     modalDraft.login.access = mode;
     render();
+  }
+
+  function chooseOidcClaim(claim) {
+    syncDraftFromDom();
+    if (!modalDraft?.login || !OIDC_CLAIMS.some(([key]) => key === claim)) return;
+    modalDraft.login.oidcClaim = claim;
+    render();
+  }
+
+  async function unlinkOidc() {
+    const userId = txt(modalDraft?.login?.user_id);
+    if (!userId) return;
+    syncDraftFromDom();
+    await json("/api/app-auth/oidc/unlink", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: userId }),
+    });
+    await loadLogins();
+    const user = appUsers.find((row) => txt(row?.id) === userId);
+    Object.assign(modalDraft.login, oidcDraft(user));
+    render();
+    toast("OIDC account unlinked", true);
   }
 
   function chooseNameIdea(value) {
@@ -1533,6 +1627,8 @@
           }
           if (action === "login-choice") return chooseLogin(actionNode.dataset.value === "yes");
           if (action === "access-choice") return chooseAccess(actionNode.dataset.value);
+          if (action === "oidc-claim") return chooseOidcClaim(actionNode.dataset.value);
+          if (action === "oidc-unlink") return unlinkOidc();
           if (action === "toggle-password") return togglePassword(false);
           if (action === "generate-password") return togglePassword(true);
           if (action === "copy-password") return copyText($("cw-upm-login-password")?.value, "Password");
