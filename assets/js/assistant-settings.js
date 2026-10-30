@@ -155,7 +155,10 @@
     showAnalyze(mode);
     if (!$("assistant_base_url")) return;
     const wiki = $("assistant_wiki_help");
-    if (wiki) wiki.value = conf.wiki_help === false ? "off" : "on";
+    if (wiki) {
+      wiki.value = conf.wiki_help === false ? "off" : "on";
+      try { w.CW?.IconSelect?.enhance?.(wiki, wiki.__cwIconSelectCfg || { className: "cw-plain-select" }); } catch {}
+    }
     preset = presetFor(conf.base_url);
     $("assistant_base_url").value = conf.base_url || PRESETS[preset] || "";
     $("assistant_model").value = conf.model || "";

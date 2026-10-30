@@ -269,7 +269,10 @@ window.cwAppAuthPlexUnlink = async function cwAppAuthPlexUnlink() {
 
 function cwSetSelectValue(id, value) {
   const el = document.getElementById(id);
-  if (el) el.value = String(value);
+  if (!el) return;
+  el.value = String(value);
+  try { el.dispatchEvent(new Event("change")); } catch {}
+  try { window.CW?.IconSelect?.enhance?.(el, el.__cwIconSelectCfg || { className: "cw-plain-select" }); } catch {}
 }
 
 function cwSetInputValue(id, value) {
