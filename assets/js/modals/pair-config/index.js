@@ -1875,7 +1875,7 @@ left.innerHTML = `
       ${droppedBlock}
       ${animeRow}`];
 
-    if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex</div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${getPairMarkedWatchedValue(state)?"checked":""}><span class="slider"></span></label></div><div class="muted">Include manually marked watched items from Plex. Applies only to this pair.</div>`);
+    if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex</div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${getPairMarkedWatchedValue(state)?"checked":""}><span class="slider"></span></label></div><div class="muted">Include watched items from your Plex library, even when no playback-history entry is available. Applies only to this pair.</div>`);
     if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex cloud history</div>`);
     if (same(state.src,"plex") || (isTwoWayMode(state) && same(state.dst,"plex"))) parts.push(`<div class="opt-row"><label for="plx-cloud-read" data-tip-id="plx-cloud-read">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? "Read cloud history" : "Include Plex cloud history"}</label><label class="switch"><input id="plx-cloud-read" type="checkbox" ${state.pairProviders?.plex?.history?.read_cloud_history === true ? "checked" : ""}><span class="slider"></span></label></div>`);
     if (same(state.dst,"plex") || (isTwoWayMode(state) && same(state.src,"plex"))) parts.push(`<div class="opt-row"><label for="plx-discover-fallback" data-tip-id="plx-discover-fallback">${isTwoWayMode(state) || (same(state.src,"plex") && same(state.dst,"plex")) ? "Write cloud fallback" : "Include Plex cloud history"}</label><label class="switch"><input id="plx-discover-fallback" type="checkbox" ${state.pairProviders?.plex?.history?.discover_fallback === true ? "checked" : ""}><span class="slider"></span></label></div>`);
@@ -2823,7 +2823,7 @@ export default{
       state.options.collection=safe(f.collection,state.options.collection);
       const r0=state.options.ratings, rI=f.ratings||{};
       state.options.ratings=Object.assign({},r0,rI,{types:Array.isArray(rI.types)&&rI.types.length?rI.types:r0.types,mode:rI.mode||r0.mode,from_date:rI.from_date||r0.from_date||""});
-      ["watchlist","ratings","history","progress"].forEach(k=>{state.options[k].library_only=!!state.options[k].library_only});
+      if(pair.id) ["watchlist","ratings","history","progress"].forEach(k=>{state.options[k].library_only=!!state.options[k].library_only});
       state.pairProviders = normalizePairProviders(pair.providers);
       state.path_matching = !!pair.path_matching;
       state.match_users = !!pair.match_users;
