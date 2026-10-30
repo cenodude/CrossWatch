@@ -205,7 +205,7 @@ for (const instance of ["default", "P01"]) {
   test(`a sole ${instance} instance leaves the destination explicitly empty`, () => {
     const src = element(), dst = element();
     const context = vm.createContext({
-      ID: id => id === "cx-src-inst" ? src : dst,
+      ID: id => id === "cx-src-inst" ? src : dst, document: {documentElement: {dataset: {}}},
       same: (a, b) => a === b, escHTML: value => value, G: {}, renderPairUserProfileControl() {},
       defaultFor: () => ({}), isAniList: () => false, isSimkl: () => false, isMDBList: () => false, isCrossWatch: () => false,
       applyProgressMaxRecommendation: () => ({maxPercent: 90}), ratingsDisabledFor: () => new Set(),
@@ -213,7 +213,7 @@ for (const instance of ["default", "P01"]) {
       sanitizeFeaturesForPair: (_, features) => features, getPairProviderStrictValue: () => false,
       libraryOnlyOn: () => false, tmdbMetadataReady: () => true,
     });
-    vm.runInContext([sourceFor("renderInstanceSelects"), sourceFor("hasAniList"), sourceFor("hasAnimeProvider"), sourceFor("supportsPathMatching"), sourceFor("getPairMarkedWatchedValue"), sourceFor("buildPayload")].join(";"), context);
+    vm.runInContext([sourceFor("scopedPairView"), sourceFor("renderInstanceSelects"), sourceFor("hasAniList"), sourceFor("hasAnimeProvider"), sourceFor("supportsPathMatching"), sourceFor("getPairMarkedWatchedValue"), sourceFor("buildPayload")].join(";"), context);
     const state = {src: "PLEX", dst: "PLEX", src_instance: instance, instanceMap: {PLEX: [{id: instance, configured: true}]}};
     context.renderInstanceSelects(state);
     assert.equal(state.src_instance, instance);
@@ -223,6 +223,57 @@ for (const instance of ["default", "P01"]) {
     assert.equal(payload.target_instance, "");
   });
 }
+
+for (const dataset of [{cwRole: "user"}, {cwViewAs: "1"}]) {
+  test(`a scoped ${Object.keys(dataset)[0]} view never offers the default instance`, () => {
+    const src = element(), dst = element();
+    const context = vm.createContext({
+      ID: id => id === "cx-src-inst" ? src : dst, document: {documentElement: {dataset}},
+      same: (a, b) => a === b, escHTML: value => value, G: {}, renderPairUserProfileControl() {},
+    });
+    vm.runInContext([sourceFor("scopedPairView"), sourceFor("renderInstanceSelects")].join(";"), context);
+    const state = {src: "SIMKL", dst: "MDBLIST", src_instance: "default", dst_instance: "default", instancesLoaded: true, instanceMap: {SIMKL: [{id: "SIMKL-P01", configured: true}]}};
+    context.renderInstanceSelects(state);
+    assert.equal(state.src_instance, "SIMKL-P01");
+    assert.equal(state.dst_instance, "");
+    assert.equal(dst.disabled, true);
+    assert.ok(!src.innerHTML.includes("Default"));
+    assert.ok(dst.innerHTML.includes("No configured instance"));
+    state.dst = "SIMKL";
+    context.renderInstanceSelects(state);
+    assert.equal(state.dst_instance, "");
+    assert.ok(dst.innerHTML.includes("No other configured instance"));
+  });
+}
+
+test("a scoped edit never keeps an unconfigured saved instance or swaps it silently", () => {
+  const src = element(), dst = element();
+  const context = vm.createContext({
+    ID: id => id === "cx-src-inst" ? src : dst, document: {documentElement: {dataset: {cwRole: "user"}}},
+    same: (a, b) => a === b, escHTML: value => value, G: {}, renderPairUserProfileControl() {},
+    resetPairUserProfileControl() {}, renderFeaturePanel() {},
+  });
+  vm.runInContext([sourceFor("scopedPairView"), sourceFor("renderInstanceSelects")].join(";"), context);
+  const state = {
+    src: "SIMKL", dst: "TRAKT", src_instance: "SIMKL-P02", dst_instance: "TRAKT-P01", instancesLoaded: true,
+    savedInstances: {src: {provider: "SIMKL", instance: "SIMKL-P02"}, dst: {provider: "TRAKT", instance: "TRAKT-P01"}},
+    instanceMap: {SIMKL: [{id: "SIMKL-P01", configured: true}, {id: "SIMKL-P02", configured: false}]},
+  };
+  context.renderInstanceSelects(state);
+  assert.equal(state.src_instance, "");
+  assert.ok(src.innerHTML.includes("Choose an account"));
+  assert.ok(!src.innerHTML.includes("SIMKL-P02"));
+  assert.equal(state.dst_instance, "");
+  assert.equal(dst.disabled, true);
+  state.dst = "MDBLIST";
+  context.renderInstanceSelects(state);
+  assert.equal(state.src_instance, "");
+  assert.ok(src.innerHTML.includes("Choose an account"));
+  src.value = "SIMKL-P01";
+  src.onchange();
+  assert.equal(state.src_instance, "SIMKL-P01");
+  assert.ok(!src.innerHTML.includes("Choose an account"));
+});
 
 test("library lists load and save independently for both instances", async () => {
   const nodes = new Map(), requests = [];

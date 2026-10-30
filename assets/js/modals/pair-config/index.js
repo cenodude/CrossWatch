@@ -852,10 +852,25 @@ const {
   instanceFor: (state, kind) => pairInstanceForKind(state, kind),
 });
 
+function scopedPairView(){
+  const d=document.documentElement.dataset;
+  return d.cwRole==="user"||d.cwViewAs==="1";
+}
+
+function hasOwnInstance(state,prov){
+  const map=state.instanceMap||{};
+  const raw=map[String(prov||"").toUpperCase()]||map[String(prov||"").toLowerCase()]||[];
+  return (Array.isArray(raw)?raw:[]).some(x=>{
+    const id=String((typeof x==="string"?x:x?.id)||"").trim();
+    return !!id&&id.toLowerCase()!=="default"&&(typeof x==="string"||x.configured!==false);
+  });
+}
+
 function renderProviderSelects(state){
   const srcSel=ID("cx-src"),dstSel=ID("cx-dst");
-  const opts=state.providers.map(p=>`<option value="${p.name}">${p.label}</option>`).join("");
-  const dstOpts=state.providers.filter(p=>p.capabilities?.can_target!==false).map(p=>`<option value="${p.name}">${p.label}</option>`).join("");
+  const providers=scopedPairView()?state.providers.filter(p=>hasOwnInstance(state,p.name)||same(p.name,state.src)||same(p.name,state.dst)):state.providers;
+  const opts=providers.map(p=>`<option value="${p.name}">${p.label}</option>`).join("");
+  const dstOpts=providers.filter(p=>p.capabilities?.can_target!==false).map(p=>`<option value="${p.name}">${p.label}</option>`).join("");
   srcSel.innerHTML=`<option value="">Select…</option>${opts}`;dstSel.innerHTML=`<option value="">Select…</option>${dstOpts}`;
   if(state.src) srcSel.value=state.src;if(state.dst) dstSel.value=state.dst;
   const providerKind=(name)=>{
@@ -911,6 +926,7 @@ function renderInstanceSelects(state){
   const srcInstSel=ID("cx-src-inst"),dstInstSel=ID("cx-dst-inst");
   if(!srcInstSel||!dstInstSel) return;
   const map=state.instanceMap||{};
+  const scoped=scopedPairView();
   const norm=(v)=>{const s=String(v||"default").trim();return (!s||s.toLowerCase()==="default")?"default":s};
   const optsFor=(prov)=>{
     const key=String(prov||"").toUpperCase();
@@ -940,7 +956,7 @@ function renderInstanceSelects(state){
     const want=norm(cur);
     const gated=all.some(row=>typeof row.configured==="boolean");
     let rows=gated?all.filter(row=>row.configured!==false):all.slice();
-    if(pin&&pin===want&&!rows.some(row=>row.id===pin)){
+    if(!scoped&&pin&&pin===want&&!rows.some(row=>row.id===pin)){
       const known=all.find(row=>row.id===pin);
       const neverConfigured=pin==="default"&&known&&known.configured===false;
       if(!neverConfigured||!rows.length){
@@ -949,18 +965,21 @@ function renderInstanceSelects(state){
         rows=pin==="default"?[stale,...rows]:[...rows,stale];
       }
     }
-    if(!rows.length) rows=[{id:"default",label:"Default",stale:!!state.instancesLoaded}];
-    if(sel===dstInstSel&&same(state.src,state.dst)) rows=rows.filter(row=>row.id!==norm(srcInstSel.value));
+    if(scoped) rows=rows.filter(row=>row.id!=="default"&&row.configured!==false);
+    else if(!rows.length) rows=[{id:"default",label:"Default",stale:!!state.instancesLoaded}];
+    const samePair=sel===dstInstSel&&same(state.src,state.dst);
+    if(samePair) rows=rows.filter(row=>row.id!==norm(srcInstSel.value));
     const ids=rows.map(row=>row.id);
-    sel.innerHTML=rows.map(row=>`<option value="${escHTML(row.id)}" title="${escHTML(row.id)}">${escHTML(row.stale?`${row.label} - not configured`:row.label)}</option>`).join("");
-    sel.value=ids.includes(want)?want:(ids[0]||"");
-    if(!rows.length) sel.innerHTML='<option value="">No other configured instance</option>';
+    const lost=scoped&&!!pin&&!ids.includes(pin)&&(pin===want||!String(cur||"").trim());
+    sel.innerHTML=(lost?'<option value="" disabled>Choose an account</option>':"")+rows.map(row=>`<option value="${escHTML(row.id)}" title="${escHTML(row.id)}">${escHTML(row.stale?`${row.label} - not configured`:row.label)}</option>`).join("");
+    sel.value=ids.includes(want)?want:(lost?"":(ids[0]||""));
+    if(!rows.length) sel.innerHTML=`<option value="">${samePair?"No other configured instance":"No configured instance"}</option>`;
     sel.disabled=!prov||!rows.length;
   };
 
   fill(srcInstSel, state.src, state.src_instance, pinnedFor("src", state.src));
   fill(dstInstSel, state.dst, state.dst_instance, pinnedFor("dst", state.dst));
-  state.src_instance=norm(srcInstSel.value);
+  state.src_instance=srcInstSel.value||!scoped ? norm(srcInstSel.value) : "";
   state.dst_instance=dstInstSel.value ? norm(dstInstSel.value) : "";
 
   const onInstChange=()=>{resetPairUserProfileControl(state);try{renderFeaturePanel(state)}catch{}};
@@ -2848,6 +2867,10 @@ export default{
         alert("Choose two different instances to create a sync pair.");
         return;
       }
+      if(scopedPairView()&&(!state.src_instance||!state.dst_instance)){
+        alert("Choose a connected account for both source and target.");
+        return;
+      }
       await saveConfigBits(state);
 
       const feats=payload.features||{};
@@ -2858,7 +2881,7 @@ export default{
       }
 
       const res=await savePair(payload);
-      if(!res.ok){alert(res.error==="same_provider_instance"?"Choose two different instances to create a sync pair.":res.error==="not_found"?"This pair no longer exists. Close the editor and create a new pair.":"Save failed");return;}
+      if(!res.ok){alert(res.error==="same_provider_instance"?"Choose two different instances to create a sync pair.":res.error==="not_found"?"This pair no longer exists. Close the editor and create a new pair.":res.error==="profile_scope_denied"?"Choose accounts that belong to this profile.":"Save failed");return;}
 
       try{
         if(typeof window.loadPairs==="function"){await window.loadPairs(true)}

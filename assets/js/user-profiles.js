@@ -491,11 +491,12 @@
       ${paneHead(editing ? "Profile name" : "Who is this profile for?", "Give it a name you will recognise. You can always view CrossWatch as any profile.")}
       <div class="cw-upw-name">
         <div class="cw-upw-photo">
-          ${avatar(name, "xl", draftAvatarUrl())}
-          <div class="cw-upw-photo-actions">
-            <label class="cw-upw-btn is-photo">${icon("add_a_photo")}<span>${draftAvatarUrl() ? "Change" : "Add picture"}</span><input type="file" accept="image/png,image/jpeg,image/webp" data-upw-photo hidden></label>
-            ${draftAvatarUrl() ? `<button type="button" class="cw-upw-btn is-photo" data-action="remove-photo" title="Remove picture" aria-label="Remove picture">${icon("delete")}</button>` : ""}
-          </div>
+          <label class="cw-upw-photo-pick" title="${draftAvatarUrl() ? "Change picture" : "Add picture"}">
+            ${avatar(name, "xl", draftAvatarUrl())}
+            <span class="cw-upw-photo-badge">${icon("photo_camera")}</span>
+            <input type="file" accept="image/png,image/jpeg,image/webp" data-upw-photo hidden aria-label="${draftAvatarUrl() ? "Change picture" : "Add picture"}">
+          </label>
+          ${draftAvatarUrl() ? `<button type="button" class="cw-upw-photo-remove" data-action="remove-photo" title="Remove picture" aria-label="Remove picture">${icon("close")}</button>` : ""}
         </div>
         <div class="cw-upw-name-field">
           <input class="cw-upw-input is-xl" id="cw-upm-modal-label" type="text" maxlength="40" value="${esc(name)}" placeholder="Type a name" autocomplete="off" spellcheck="false" aria-label="Profile name">
@@ -520,7 +521,7 @@
     const insts = draftInstances();
     const required = resourceRequiredMap();
     const keys = providerKeys();
-    const head = paneHead(`Which accounts belong to ${draftName()}?`, "Pick the provider accounts this profile uses. Accounts that belong to another profile are locked.");
+    const head = paneHead(`Which accounts belong to ${draftName()}?`, "Select accounts for this profile. Accounts assigned elsewhere are locked. Default instances cannot be assigned.");
     if (!keys.length) {
       return `${head}${emptyState("link_off", "No named accounts yet", "Default connections stay with the admin. Add a named connection such as PLEX-P01 under Connections, then come back.")}`;
     }
