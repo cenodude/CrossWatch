@@ -14,6 +14,7 @@
       <a class="cw-button" href="https://github.com/cenodude/CrossWatch">View on GitHub</a>
       <a class="cw-button" href="https://wiki.crosswatch.app/">Open Wiki</a>
       <a class="cw-button" href="https://www.reddit.com/r/CrossWatchApp/">Reddit</a>
+      <a class="cw-button" href="https://discord.gg/c9cjzHGve">Discord</a>
     </div>
   </div>
 </section>
@@ -33,6 +34,9 @@
   </a>
   <a href="https://www.reddit.com/r/CrossWatchApp/">
     <img src="https://img.shields.io/badge/Reddit-r%2FCrossWatchApp-ff4500?style=for-the-badge&amp;logo=reddit&amp;logoColor=white" alt="Reddit">
+  </a>
+  <a href="https://discord.gg/c9cjzHGve">
+    <img src="https://img.shields.io/badge/Discord-Join%20chat-5865F2?style=for-the-badge&amp;logo=discord&amp;logoColor=white" alt="Discord">
   </a>
 </section>
 
