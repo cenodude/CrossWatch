@@ -8,6 +8,7 @@ from importlib import import_module
 from typing import Any
 from urllib.parse import quote
 
+from cw_platform.played_writes import note_write
 from providers.scrobble._media_server import DeliveryError, MediaServerSink, PUBLIC_IDS, combine_results, identical_copies, ids_match
 from providers.scrobble.scrobble import _log
 from providers.sync.jellyfin import _routes as jf_routes
@@ -185,6 +186,7 @@ class JellyfinEmbySink(MediaServerSink):
         if complete and not watched:
             path, params = self._path(adapter, row["Id"], "played")
             date_played = moment.strftime("%Y%m%d%H%M%S") if self.name == "emby" else moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+            note_write(self.name, adapter.cfg.user_id, row["Id"])
             self._body(adapter.client.post(path, params={**params, "DatePlayed": date_played}), read=False)
             data = self._fetch(adapter, row["Id"]).get("UserData") or {}
             marked = True

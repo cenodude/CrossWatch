@@ -19,6 +19,7 @@ from providers.scrobble._log_dedupe import LogDeduplicator
 from providers.scrobble._show_tmdb import show_tmdb_id
 from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent, MediaType, mask_account as _mask_account
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
+from providers.scrobble.manual_marks import MarkTracker, MediaServerMarkPoller
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.routes import watch_poll_seconds
 from providers.scrobble.sources import source_enabled
@@ -411,7 +412,10 @@ def _normalize_ids(ids: dict[str, Any]) -> dict[str, str]:
     return out
 
 
-class EmbyWatchService:
+class EmbyWatchService(MediaServerMarkPoller):
+    _MARK_PROVIDER = "emby"
+    _MARK_FIELDS = "ProviderIds,ProductionYear,Path,ParentId,UserDataLastPlayedDate"
+
     def __init__(
         self,
         sinks: Iterable[ScrobbleSink] | None = None,
@@ -459,6 +463,8 @@ class EmbyWatchService:
         self._offline = False
         self._offline_failures = 0
         self._offline_retry = OFFLINE_INITIAL_RETRY_SECONDS
+        self._marks = MarkTracker()
+        self._mark_users_cache: tuple[float, list[tuple[str, str]]] = (0.0, [])
 
         lvl = "DEBUG" if self._quiet_startup else "INFO"
         self._log(f"Ensuring Watcher is running; inst={self._instance_id} | wired sinks: {self.sinks_count()}", lvl)
@@ -716,6 +722,12 @@ class EmbyWatchService:
             duration_ms=duration_ms,
         )
 
+    def _mark_get(self, path: str, cfg: dict[str, Any]) -> Any:
+        return _get_json(self._base, self._tok, path, cfg=cfg, timeout=self._request_timeout(cfg))
+
+    def _build_mark_event(self, sess: dict[str, Any], cfg: dict[str, Any]) -> ScrobbleEvent | None:
+        return self._build_event(sess, "stopped", 100)
+
     def _current_sessions(self, cfg: dict[str, Any]) -> list[dict[str, Any]] | None:
         try:
             q = f"/Sessions?ActiveWithinSeconds={max(15, int(self._poll * 2))}"
@@ -964,6 +976,7 @@ class EmbyWatchService:
             item, ps = _media_from_session(s)
             if not item:
                 continue
+            self._note_mark_session(s, now)
 
             dur = item.get("RunTimeTicks") or 0
             pos = ps.get("PositionTicks") if isinstance(ps, dict) else None
@@ -1144,6 +1157,7 @@ class EmbyWatchService:
                 except Exception:
                     pass
 
+        self._poll_manual_marks(cfg, now)
         return bool(cur)
 
     def start(self) -> None:
@@ -1165,6 +1179,7 @@ class EmbyWatchService:
             else:
                 self._idle_steps = min(self._idle_steps + 1, 12)
                 sleep_for = min(self._poll * (1.5 ** self._idle_steps), max(self._max_idle_sleep, self._poll))
+            sleep_for = min(sleep_for, self._marks.seconds_until_due(time.time()))
             if self._offline:
                 sleep_for = self._offline_retry
             self._stop.wait(sleep_for)

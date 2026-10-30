@@ -109,6 +109,16 @@ class MultiDispatcher:
                 return True
         return False
 
+    def wants_manual_marks(self) -> bool:
+        for d in self._dispatchers:
+            try:
+                fn = getattr(d, "wants_manual_marks", None)
+                if callable(fn) and bool(fn()):
+                    return True
+            except Exception as e:
+                _log(f"Route manual marks check error: {e}", "ERROR")
+        return False
+
     def needs_user_resolution(self) -> bool:
         for d in self._dispatchers:
             try:

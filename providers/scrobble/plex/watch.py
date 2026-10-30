@@ -7,7 +7,7 @@ import time, threading, re
 import ssl
 from socket import socket
 import xml.etree.ElementTree as ET
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from typing import Any, Iterable, Mapping, Callable, cast
 
 from plexapi.server import PlexServer
@@ -33,6 +33,18 @@ from providers.scrobble.scrobble import (
     mask_account as _mask_account,
 )
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
+from providers.scrobble.manual_marks import (
+    CLOCK_SLACK_SECONDS,
+    MAX_MARKS_PER_POLL,
+    MarkTracker,
+    interval_seconds,
+    log_read_failure,
+    log_read_health,
+    mark_label,
+    parse_epoch,
+    wants_marks,
+)
+from cw_platform.played_writes import written_by_crosswatch
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
 from providers.scrobble.sources import source_enabled
 from providers.scrobble._show_tmdb import show_tmdb_id
@@ -429,6 +441,8 @@ class WatchService:
         self._offline = False
         self._offline_failures = 0
         self._offline_retry = OFFLINE_INITIAL_RETRY_SECONDS
+        self._marks = MarkTracker()
+        self._mark_conn: tuple[tuple[str, ...], dict[str, Any]] | None = None
 
     def _log(self, msg: str, level: str = "INFO") -> None:
         lvl = (str(level) or "INFO").upper()
@@ -1684,6 +1698,147 @@ class WatchService:
         except Exception:
             pass
 
+    def _manual_mark_identity(self, cfg: dict[str, Any]) -> dict[str, Any]:
+        shared = self._shared_instance_identity()
+        if shared:
+            return shared
+        try:
+            block = get_instance_block(cfg, "plex", str(self._instance_id or "default"))
+        except Exception:
+            block = cfg.get("plex") or {}
+        name = str((block or {}).get("username") or "").strip()
+        if not name:
+            return {}
+        return {
+            "name": name,
+            "user_name": name,
+            "user_username": name,
+            "account_id": str((block or {}).get("account_id") or "").strip(),
+        }
+
+    def _mark_fingerprint(self, cfg: dict[str, Any]) -> tuple[str, ...]:
+        try:
+            block = get_instance_block(cfg, "plex", str(self._instance_id or "default"))
+        except Exception:
+            block = cfg.get("plex") or {}
+        keys = ("server_url", "account_token", "token", "pms_token", "username", "account_id")
+        return tuple(str((block or {}).get(key) or "").strip() for key in keys)
+
+    def _mark_settings_changed(self) -> bool:
+        conn = self._mark_conn
+        if conn is None:
+            return False
+        current = self._mark_fingerprint(self._active_cfg())
+        return any(current) and current != conn[0]
+
+    def _recent_views(self, mark: float | None) -> list[tuple[str, Any, float | None]]:
+        rows: list[tuple[str, Any, float | None]] = []
+        plex = self._plex
+        if plex is None:
+            return rows
+        for kind in (1, 4):
+            params: dict[str, Any] = {
+                "type": kind,
+                "sort": "lastViewedAt:desc",
+                "includeGuids": 1,
+                "X-Plex-Container-Start": 0,
+                "X-Plex-Container-Size": 1 if mark is None else 100,
+            }
+            if mark is not None:
+                params["lastViewedAt>>"] = int(mark) - 1
+            container = plex.query(f"/library/all?{urlencode(params)}")
+            for el in list(container if container is not None else []):
+                rows.append((str(el.attrib.get("ratingKey") or "").strip(), el, parse_epoch(el.attrib.get("lastViewedAt"))))
+        return rows
+
+    def _manual_mark_event(self, el: Any, ident: dict[str, Any], server_uuid: str | None) -> ScrobbleEvent | None:
+        attrs = el.attrib or {}
+        kind = str(attrs.get("type") or "").strip().lower()
+        if kind not in ("movie", "episode"):
+            return None
+        rk = _safe_int(attrs.get("ratingKey"))
+        if not rk:
+            return None
+        episode = kind == "episode"
+        section = attrs.get("librarySectionID")
+        ids_raw: dict[str, Any] = {"plex": rk}
+        ids_raw.update(_ids_from_guids_any([g.attrib.get("id") for g in el.findall("Guid")]))
+        ev = ScrobbleEvent(
+            action="stop",
+            media_type="episode" if episode else "movie",
+            ids=_normalize_ids(ids_raw),
+            title=attrs.get("grandparentTitle") if episode else attrs.get("title"),
+            year=_safe_int(attrs.get("year")),
+            season=_safe_int(attrs.get("parentIndex")) if episode else None,
+            number=_safe_int(attrs.get("index")) if episode else None,
+            progress=100,
+            account=None,
+            server_uuid=server_uuid,
+            session_key=f"mark:{rk}:{attrs.get('lastViewedAt') or ''}",
+            raw={
+                "Metadata": {"ratingKey": str(rk), "librarySectionID": section},
+                "librarySectionID": section,
+                "_cw_manual_mark": True,
+                "_cw_preserve_stop": True,
+            },
+        )
+        ev = self._event_with_session_identity(ev, ident)
+        return self._enrich_event_with_plex(ev)
+
+    def _poll_manual_marks(self) -> None:
+        try:
+            cfg = self._active_cfg()
+            now = time.time()
+            if not self._plex or not source_enabled(cfg, "watcher") or not self._marks.due(cfg, now):
+                return
+            if not wants_marks(self._dispatch):
+                return
+            conn = self._mark_conn
+            if conn is None or conn[0] != self._mark_fingerprint(cfg):
+                return
+            ident = conn[1]
+            try:
+                server_uuid = str(self._plex.machineIdentifier or "").strip() or None
+            except Exception:
+                server_uuid = None
+            account = str(ident.get("user_id") or ident.get("account_id") or _norm_user(str(ident.get("name") or "")))
+            ledger = f"{server_uuid or ''}:{account}"
+            who = f"user={_mask_account(str(ident.get('name') or '')) or '-'}"
+            try:
+                rows = self._recent_views(self._marks.watermark(ledger))
+            except Exception as exc:
+                log_read_failure(self._marks, ledger, who, exc, self._log)
+                return
+            fresh = self._marks.fresh(ledger, rows, now, interval_seconds(cfg) + CLOCK_SLACK_SECONDS)
+            log_read_health(self._marks, ledger, who, now, self._log)
+            admitted = 0
+            for el in fresh:
+                rk = str(el.attrib.get("ratingKey") or "").strip()
+                if not rk or self._marks.seen_in_session(rk, now):
+                    continue
+                if written_by_crosswatch("plex", server_uuid, rk, parse_epoch(el.attrib.get("lastViewedAt")), now):
+                    continue
+                if (_safe_int(el.attrib.get("viewOffset")) or 0) > 0:
+                    continue
+                if admitted >= MAX_MARKS_PER_POLL:
+                    self._log(f"manual marks: more than {MAX_MARKS_PER_POLL} marks; the rest is left to sync", "WARNING")
+                    break
+                ev = self._manual_mark_event(el, ident, server_uuid)
+                if ev is None:
+                    continue
+                cache_key = (str(ev.session_key), _norm_user(ev.account or ""), str(ev.server_uuid or "").strip())
+                try:
+                    if not self._passes_filters(ev) or not self._accepts_user(ev):
+                        continue
+                    admitted += 1
+                    if not self._dispatch.dispatch(ev):
+                        continue
+                finally:
+                    self._allowed_sessions.discard(cache_key)
+                self._log(f"manual mark {ev.media_type} user={_mask_account(ev.account)} media='{mark_label(ev)}'")
+        except Exception as exc:
+            self._dbg(f"manual marks poll failed: {exc}")
+
     def _handle_alert(self, alert: dict[str, Any]) -> None:
         if self._stop.is_set():
             return
@@ -1742,6 +1897,9 @@ class WatchService:
             if not isinstance(ev, ScrobbleEvent):
                 self._dbg("alert parsed but no event produced (unknown shape)")
                 return
+            seen_rk = self._find_rating_key(ev.raw or {})
+            if seen_rk:
+                self._marks.note_session(str(seen_rk), time.time())
             fingerprint = self._playback_fingerprint(ev.raw or {}, ev.session_key)
             if ev.account:
                 fingerprint["account"] = str(ev.account).strip()
@@ -1987,6 +2145,7 @@ class WatchService:
         self._log(f"Ensuring Watcher is running; inst={self._instance_display()} | wired sinks: {self.sinks_count()}", lvl)
         while not self._stop.is_set():
             session = None
+            settings_changed = False
             try:
                 cfg = self._cfg_provider() or {}
                 base, token = _plex_btok(cfg, instance_id=self._instance_id)
@@ -1996,6 +2155,7 @@ class WatchService:
                 session = _build_session(token, _resolve_verify_from_cfg(cfg, base))
                 self._plex = PlexServer(base, token, session=session)
                 self._refresh_account_context()
+                self._mark_conn = (self._mark_fingerprint(cfg), self._manual_mark_identity(cfg))
                 if self._stop.is_set():
                     break
                 self._listener = _PlexAlertListener(
@@ -2010,10 +2170,16 @@ class WatchService:
                 self._mark_online()
                 self._log(f"Watcher connected; inst={self._instance_display()}", lvl)
                 while not self._stop.is_set() and self._listener and self._listener.is_alive():
+                    if self._mark_settings_changed():
+                        settings_changed = True
+                        self._log("Plex account settings changed; reconnecting", "INFO")
+                        break
+                    self._poll_manual_marks()
                     time.sleep(0.5)
             except Exception as e:
                 self._mark_offline(e)
             finally:
+                self._mark_conn = None
                 listener = self._listener
                 self._listener = None
                 if listener is not None:
@@ -2025,6 +2191,8 @@ class WatchService:
                     session.close()
             if self._stop.is_set():
                 break
+            if settings_changed:
+                continue
             self._attempt += 1
             if not self._offline:
                 self._mark_offline(RuntimeError("watcher disconnected"))

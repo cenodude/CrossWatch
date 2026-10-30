@@ -6,10 +6,13 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping
 from urllib.parse import quote
 
+from cw_platform.played_writes import note_write
+
 from ._common import (
     SiloSyncError,
     as_int,
     attach_paths,
+    cfg_section,
     chunks,
     iso_z,
     key_of,
@@ -104,7 +107,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 
     _dbg(FEATURE, "write_prepare", action="add", items=len(entries), unresolved=len(unresolved))
     failed: set[str] = set()
+    profile = cfg_section(adapter).get("profile_id")
     for batch in chunks(entries):
+        for entry in batch:
+            note_write("silo", profile, entry["media_item_id"])
         resp = silo_request(adapter, "POST", "/sync/progress", json_body={"items": batch})
         if resp.status_code == 401:
             raise SiloSyncError("silo_progress_unauthorized")
@@ -148,6 +154,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         if kind not in ("movie", "episode") or not cid:
             unresolved.append(unresolved_entry(key, "not_in_library", item))
             continue
+        note_write("silo", cfg_section(adapter).get("profile_id"), cid)
         resp = silo_request(adapter, "DELETE", f"/progress/{quote(cid, safe='')}/position")
         if resp.status_code in (200, 204):
             confirmed.append(key)

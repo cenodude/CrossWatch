@@ -26,6 +26,7 @@ from ._common import (
     prefetch_series_minimals,
 )
 from cw_platform.id_map import KEY_PRIORITY, canonical_key, minimal as id_minimal
+from cw_platform.played_writes import note_write
 
 def _unresolved_path() -> str:
     return state_file("emby_history.unresolved.json")
@@ -674,6 +675,7 @@ def _write_userdata(http: Any, uid: str, item_id: str, *, date_iso: str | None) 
     if date_iso:
         payload["LastPlayedDate"] = date_iso
         payload["DatePlayed"] = date_iso
+    note_write("emby", uid, item_id)
     r = http.post(f"/Users/{uid}/Items/{item_id}/UserData", json=payload)
     ok = getattr(r, "status_code", 0) in (200, 204)
     if not ok:
@@ -682,6 +684,7 @@ def _write_userdata(http: Any, uid: str, item_id: str, *, date_iso: str | None) 
 
 
 def _mark_played(http: Any, uid: str, item_id: str, *, date_played_iso: str | None) -> bool:
+    note_write("emby", uid, item_id)
     try:
         date_param: str | None = None
         if date_played_iso:

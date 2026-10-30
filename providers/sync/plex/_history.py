@@ -22,6 +22,7 @@ from xml.etree import ElementTree as ET
 from cw_platform.log_context import log_run_id
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from, ids_from_guid
+from cw_platform.played_writes import note_write
 
 from ._common import (
     _as_base_url,
@@ -2148,6 +2149,7 @@ def _ensure_session_pool(srv: Any, workers: int) -> None:
 
 
 def _scrobble_with_date(srv: Any, rating_key: Any, epoch: int) -> bool:
+    note_write("plex", getattr(srv, "machineIdentifier", ""), rating_key)
     try:
         base = _as_base_url(srv)
         ses = getattr(srv, "_session", None)

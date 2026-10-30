@@ -590,7 +590,11 @@ class Dispatcher:
             return False
 
     def _passes_filters(self, ev: ScrobbleEvent, cfg: dict[str, Any]) -> bool:
+        from providers.scrobble.manual_marks import is_manual_mark, route_allows
+
         if not ((cfg.get("scrobble") or {}).get("watch") or {}).get("route_enabled", True):
+            return False
+        if is_manual_mark(ev.raw) and not route_allows(cfg):
             return False
         watch_cfg = (cfg.get("scrobble") or {}).get("watch") or {}
         filter_identity = json.dumps(
@@ -629,6 +633,17 @@ class Dispatcher:
         if cache_key:
             self._session_ok.add(cache_key)
         return True
+
+    def wants_manual_marks(self) -> bool:
+        from providers.scrobble.manual_marks import route_allows
+
+        try:
+            cfg = self._cfg_provider() or {}
+            if not ((cfg.get("scrobble") or {}).get("watch") or {}).get("route_enabled", True):
+                return False
+            return route_allows(cfg)
+        except Exception:
+            return False
 
     def accepts_user(self, ev: ScrobbleEvent) -> bool:
         try:

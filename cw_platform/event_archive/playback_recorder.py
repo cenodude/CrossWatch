@@ -102,6 +102,8 @@ def _record(ev: Any, cfg: dict[str, Any], *, delivery: str | None, reason: str |
             detail.update(playback=history, state=state, progress=progress)
             if ev.account:
                 detail["account"] = str(ev.account)
+            if raw.get("_cw_manual_mark"):
+                detail["manual_mark"] = True
         row["detail"] = json.dumps(detail, ensure_ascii=False, separators=(",", ":"))
         if old is None:
             record_events([row], conn=c)

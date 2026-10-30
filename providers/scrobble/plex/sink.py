@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlencode
 
+from cw_platform.played_writes import note_write
 from providers.scrobble._media_server import DeliveryError, MediaServerSink, PUBLIC_IDS as _PUBLIC_IDS, combine_results, identical_copies, ids_match as _id_match
 from providers.scrobble.scrobble import ScrobbleEvent, _log
 from providers.sync.plex._common import configure_plex_context, home_scope_enter, home_scope_exit, ids_from_obj, isolated_plex_context, plex_feature_library_ids
@@ -152,6 +153,7 @@ class PlexSink(MediaServerSink):
         watched = bool(getattr(obj, "viewCount", 0))
         if complete:
             if not watched:
+                note_write("plex", getattr(server, "machineIdentifier", ""), rk)
                 server.query("/:/scrobble", method=server._session.put,
                              params={"key": rk, "identifier": "com.plexapp.plugins.library", "viewedAt": played_at})
                 _log(f"plex marked watched rk={rk} viewedAt={played_at}", "DEBUG")

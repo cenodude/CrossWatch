@@ -548,6 +548,9 @@ function optionsPanel(r) {
   const pkcSupport = r.provider === "plex"
     ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">connected_tv</span><span><strong>PlexKodiConnect support</strong><small>Merge the split stop sessions PlexKodiConnect creates for the server owner, so the stop keeps its user and item.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-plexkodiconnect-support" ${r.options.watch?.plexkodiconnect_support === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
     : "";
+  const manualMarks = ["plex", "jellyfin", "emby", "silo"].includes(r.provider)
+    ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">task_alt</span><span><strong>Detect manual marks</strong><small>Send items marked as played by hand on the media server as watched. Checked every idle poll interval, at most every 30 seconds. Unmarks are not sent. On Plex this covers the account of the connected token only.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-manual-marks" ${r.options.watch?.manual_marks !== false ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
+    : "";
   const animeGlobalOn = globalAnimeMappingEnabled();
   const animeMapping = ["crosswatch", "simkl"].includes(r.sink)
     ? `<label class="scrm-toggle-row ${animeGlobalOn ? "" : "is-disabled"}"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">animation</span><span><strong>Anime ID Mapping</strong><small>${animeGlobalOn ? "Use local anime mappings for this route before sending watcher scrobbles." : "Enable global Anime ID Mapping first."}</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-anime-mapping" ${r.options.watch?.anime_mapping ? "checked" : ""} ${animeGlobalOn ? "" : "disabled"}><span class="scrm-switch-track"></span></span></label>`
@@ -572,6 +575,7 @@ function optionsPanel(r) {
       </div>
       ${unresolvedFallback}
       ${pkcSupport}
+      ${manualMarks}
       ${animeMapping}
       ${r.sink === "simkl" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>Track rewatches</strong><small>Allow repeat watches on this route. Requires SIMKL Pro or VIP. SIMKL applies a 48-hour gap per movie or episode. Your watched threshold still applies, with a minimum of 80%.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-simkl-rewatches" ${r.options.watch?.simkl_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>` : ""}
     </section>
@@ -750,6 +754,8 @@ function collect() {
   if (idlePoll !== "") watch.idle_poll_seconds = Number(idlePoll);
   if (provider === "plex") watch.unresolved_user_fallback = !!root.querySelector("#scr-unresolved-user-fallback")?.checked;
   if (provider === "plex") watch.plexkodiconnect_support = !!root.querySelector("#scr-plexkodiconnect-support")?.checked;
+  const manualMarksEl = root.querySelector("#scr-manual-marks");
+  if (manualMarksEl && ["plex", "jellyfin", "emby", "silo"].includes(provider)) watch.manual_marks = !!manualMarksEl.checked;
   if (["crosswatch", "simkl"].includes(String(root.querySelector("#scr-sink")?.value || draft.sink || "").toLowerCase())) watch.anime_mapping = !!root.querySelector("#scr-anime-mapping")?.checked;
   if (String(root.querySelector("#scr-sink")?.value || draft.sink || "").toLowerCase() === "simkl") watch.simkl_rewatches = !!root.querySelector("#scr-simkl-rewatches")?.checked;
   const ratingsMode = root.querySelector("#scr-ratings-mode")?.value || "off";

@@ -26,6 +26,7 @@ from ._common import (
 )
 from ._routes import items as items_route, played as played_route, user_data as user_data_route, user_params
 from cw_platform.id_map import KEY_PRIORITY, canonical_key, minimal as id_minimal
+from cw_platform.played_writes import note_write
 
 def _unresolved_path() -> str:
     return str(state_file("jellyfin_history.unresolved.json"))
@@ -457,6 +458,7 @@ def _episode_show_ids(http: Any, uid: str, row: Mapping[str, Any]) -> tuple[str,
 
 # low-level Jellyfin writes
 def _mark_played(http: Any, uid: str, item_id: str, *, date_played_iso: str | None) -> bool:
+    note_write("jellyfin", uid, item_id)
     try:
         params = {"DatePlayed": date_played_iso} if date_played_iso else None
         r = http.post(played_route(item_id), params=user_params(uid, params))
@@ -477,6 +479,7 @@ def _normalize_watched(http: Any, uid: str, item_id: str, *, date_played_iso: st
     payload: dict[str, Any] = {"Played": True, "PlaybackPositionTicks": 0}
     if date_played_iso:
         payload["LastPlayedDate"] = date_played_iso
+    note_write("jellyfin", uid, item_id)
     try:
         r = http.post(user_data_route(str(item_id)), params=user_params(uid), json=payload)
         return getattr(r, "status_code", 0) in (200, 204)

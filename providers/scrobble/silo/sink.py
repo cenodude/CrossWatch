@@ -7,6 +7,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from cw_platform.played_writes import note_write
 from providers.scrobble._media_server import DeliveryError, MediaServerSink
 from providers.scrobble.scrobble import _log
 from providers.sync._mod_SILO import SILOModule
@@ -59,6 +60,7 @@ class SiloSink(MediaServerSink):
             entry["position_ms"] = int(round(duration_ms * progress / 100.0))
             if entry["position_ms"] <= 0:
                 return {"ok": True, "skipped": True, "reason": "no_progress"}
+        note_write("silo", cfg_section(adapter).get("profile_id"), cid)
         resp = silo_request(adapter, "POST", "/sync/progress", json_body={"items": [entry]})
         if resp.status_code != 200:
             raise DeliveryError(f"silo_http_{resp.status_code}")
