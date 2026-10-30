@@ -279,7 +279,6 @@
       } else {
         profiles = [];
       }
-      if (isAdmin && !profiles.length) console.warn("[OverviewProfile] /api/user-profiles returned no usable rows");
       if (isAdmin && activeId && !profiles.some((row) => row.id === activeId)) {
         activeId = "";
         storeId("");
