@@ -40,6 +40,9 @@ Set up multiple Watcher routes for your servers and users, and sync pairs betwee
   <a href="https://www.reddit.com/r/CrossWatchApp/" style="margin: 0 6px;">
     <img alt="Reddit" src="https://img.shields.io/badge/Reddit-r%2FCrossWatchApp-ff4500?style=for-the-badge&logo=reddit&logoColor=white">
   </a>
+  <a href="https://discord.gg/c9cjzHGve" style="margin: 0 6px;">
+    <img alt="Discord" src="https://img.shields.io/badge/Discord-Join%20chat-5865F2?style=for-the-badge&logo=discord&logoColor=white">
+  </a>
 </p>
 
 <img width="1672" height="941" alt="CrossWatch web UI overview" src="https://github.com/user-attachments/assets/06355278-8cdc-4a13-95ae-89f924fd0975" />
@@ -196,7 +199,7 @@ The command exits with `0` on success and `1` if the sync reports errors or canc
 
 ## Help and feedback
 
-Setup docs are in the [wiki](https://wiki.crosswatch.app/). For questions and discussion, there's [r/CrossWatchApp](https://www.reddit.com/r/CrossWatchApp/).
+Setup docs are in the [wiki](https://wiki.crosswatch.app/). For questions and discussion, there's [r/CrossWatchApp](https://www.reddit.com/r/CrossWatchApp/) and the [Discord server](https://discord.gg/c9cjzHGve).
 
 Please report bugs in [Issues](https://github.com/cenodude/CrossWatch/issues), with steps to reproduce them and what went wrong.
 
