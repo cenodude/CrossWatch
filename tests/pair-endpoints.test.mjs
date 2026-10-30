@@ -16,6 +16,33 @@ const sourceFor = name => {
   return index.slice(node.start, node.end);
 };
 
+test("New provider selections retain library filtering defaults while saved pairs keep their setting", () => {
+  const exported = parse(index, {ecmaVersion: "latest", sourceType: "module"}).body.find(node => node.type === "ExportDefaultDeclaration");
+  const mount = exported.declaration.properties.find(node => node.key.name === "mount").value;
+  const initialize = mount.body.body.find(node => node.type === "IfStatement" && index.slice(node.test.start, node.test.end) === 'pair && typeof pair==="object"');
+  for (const scenario of [
+    {pair: {}, expected: true},
+    {pair: {features: {history: {library_only: false}}}, expected: false},
+    {pair: {id: "saved"}, expected: false},
+    {pair: {id: "saved", features: {history: {library_only: true}}}, expected: true},
+  ]) {
+    const context = vm.createContext({
+      PROGRESS_LEGACY_MAX_PERCENT: 95,
+      pair: {source: "JELLYFIN", target: "SILO", ...scenario.pair},
+      wrap: {dataset: {}}, normalizePairProviders: value => value || {},
+      isTwoWayMode: () => false,
+      byName: (_, name) => ({capabilities: {library_presence: {features: name === "SILO" ? ["history", "ratings", "progress"] : []}}}),
+    });
+    vm.runInContext(["defaultState", "providerSupportsLibraryOnly", "pairSupportsLibraryOnly", "libraryOnlyOn"].map(sourceFor).join(";"), context);
+    vm.runInContext(`const state = defaultState(); ${index.slice(initialize.start, initialize.end)}`, context);
+    assert.equal(vm.runInContext('libraryOnlyOn(state, state.options.history)', context), scenario.expected);
+    if (!scenario.pair.id) {
+      assert.equal(vm.runInContext('libraryOnlyOn(state, state.options.progress, "progress")', context), true);
+      assert.equal(vm.runInContext('libraryOnlyOn(state, state.options.watchlist, "watchlist")', context), false);
+    }
+  }
+});
+
 for (const peer of ["SIMKL", "FLOPPY", "KITSU"]) {
   for (const twoWay of [false, true]) {
     for (const reverse of [false, true]) {
