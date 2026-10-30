@@ -132,6 +132,114 @@ def filter_history_events(idx: Mapping[str, Any], *, event_mode: bool) -> dict[s
     return out
 
 
+def _history_type(item: Mapping[str, Any]) -> str:
+    typ = str(item.get("type") or "").strip().lower()
+    return "show" if typ == "tv" else typ
+
+
+def _history_records(
+    idx: Mapping[str, Any],
+    typed_tokens: Callable[[Mapping[str, Any]], set[str]],
+) -> dict[str, tuple[int, str, set[str], str]]:
+    out = {}
+    for key, item in idx.items():
+        if not isinstance(item, Mapping):
+            continue
+        epoch = history_epoch_from_item(item)
+        if epoch is None:
+            epoch = history_epoch_from_key(key)
+        if epoch is None:
+            continue
+        typ = _history_type(item)
+        event_key = history_event_key(item, key)
+        tokens = {f"{typ}|{token}" for token in typed_tokens(item)}
+        out[key] = (epoch, event_key, tokens, typ)
+    return out
+
+
+class HistoryEventIndex:
+    def __init__(
+        self,
+        dst_idx: Mapping[str, Any],
+        typed_tokens: Callable[[Mapping[str, Any]], set[str]],
+        *,
+        tolerance_seconds: int = HISTORY_TIMESTAMP_TOLERANCE_SECONDS,
+    ) -> None:
+        self.typed_tokens = typed_tokens
+        self.tolerance = max(0, int(tolerance_seconds))
+        self.targets = _history_records(dst_idx, typed_tokens)
+        self.sparse = {event_key for _, event_key, tokens, _ in self.targets.values()
+                       if not tokens and is_history_event_key(event_key)}
+        self.by_event: dict[str, list[str]] = {}
+        self.postings: dict[str, list[tuple[int, str]]] = {}
+        for key, (epoch, event_key, tokens, typ) in self.targets.items():
+            self.by_event.setdefault(event_key, []).append(key)
+            if event_key in self.sparse:
+                tokens.add(f"{typ}|event:{event_key}")
+            for token in tokens:
+                self.postings.setdefault(token, []).append((epoch, key))
+        for rows in self.postings.values():
+            rows.sort()
+
+    def match(self, src_idx: Mapping[str, Any]) -> dict[str, str]:
+        tolerance = self.tolerance
+        targets = self.targets
+        sources = _history_records(src_idx, self.typed_tokens)
+        src_sparse = {event_key for _, event_key, tokens, _ in sources.values()
+                      if not tokens and is_history_event_key(event_key)}
+        extra: dict[str, list[tuple[int, str]]] = {}
+        for event_key in src_sparse - self.sparse:
+            for key in self.by_event.get(event_key, ()):
+                epoch, _, _, typ = targets[key]
+                extra.setdefault(f"{typ}|event:{event_key}", []).append((epoch, key))
+        for token, rows in extra.items():
+            rows.extend(self.postings.get(token, ()))
+            rows.sort()
+
+        candidates: dict[str, dict[str, tuple[int, int]]] = {}
+        reverse: dict[str, dict[str, tuple[int, int]]] = {}
+        for key, (epoch, event_key, tokens, typ) in sources.items():
+            if event_key in self.sparse or event_key in src_sparse:
+                tokens.add(f"{typ}|event:{event_key}")
+            peers = {}
+            for token in tokens:
+                rows = extra.get(token) or self.postings.get(token, [])
+                lo = bisect_left(rows, epoch - tolerance, key=lambda row: row[0])
+                hi = bisect_right(rows, epoch + tolerance, key=lambda row: row[0])
+                for other_epoch, other_key in rows[lo:hi]:
+                    score = (int(event_key != targets[other_key][1]), abs(epoch - other_epoch))
+                    peers[other_key] = score
+            if peers:
+                candidates[key] = peers
+                for other_key, score in peers.items():
+                    reverse.setdefault(other_key, {})[key] = score
+
+        def nearest(peers: Mapping[str, tuple[int, int]]) -> str | None:
+            if not peers:
+                return None
+            score = min(peers.values())
+            best = [key for key, value in peers.items() if value == score]
+            return best[0] if len(best) == 1 else None
+
+        matches: dict[str, str] = {}
+        while candidates:
+            source_choices = {key: nearest(peers) for key, peers in candidates.items()}
+            target_choices = {key: nearest(peers) for key, peers in reverse.items()}
+            pairs = [(key, peer) for key, peer in source_choices.items()
+                     if peer is not None and target_choices.get(peer) == key]
+            if not pairs:
+                break
+            for key, peer in pairs:
+                matches[key] = peer
+                for other_key in candidates.pop(key):
+                    reverse[other_key].pop(key, None)
+                for source_key in reverse.pop(peer):
+                    candidates[source_key].pop(peer, None)
+            candidates = {key: peers for key, peers in candidates.items() if peers}
+            reverse = {key: peers for key, peers in reverse.items() if peers}
+        return matches
+
+
 def history_event_matches(
     src_idx: Mapping[str, Any],
     dst_idx: Mapping[str, Any],
@@ -139,89 +247,7 @@ def history_event_matches(
     *,
     tolerance_seconds: int = HISTORY_TIMESTAMP_TOLERANCE_SECONDS,
 ) -> dict[str, str]:
-    """Pair viewings without changing timestamps or reusing a destination row.
-
-    Prefer exact event identities, then the unique nearest timestamp on both
-    sides. Equally close alternatives remain unmatched. Index by identity and
-    time so unrelated library rows never require a pairwise comparison.
-    """
-    tolerance = max(0, int(tolerance_seconds))
-
-    def records(idx: Mapping[str, Any]) -> dict[str, tuple[int, str, set[str]]]:
-        out = {}
-        for key, item in idx.items():
-            if not isinstance(item, Mapping):
-                continue
-            epoch = history_epoch_from_item(item)
-            if epoch is None:
-                epoch = history_epoch_from_key(key)
-            if epoch is None:
-                continue
-            typ = str(item.get("type") or "").strip().lower()
-            typ = "show" if typ == "tv" else typ
-            event_key = history_event_key(item, key)
-            tokens = {f"{typ}|{token}" for token in typed_tokens(item)}
-            out[key] = (epoch, event_key, tokens)
-        return out
-
-    sources, targets = records(src_idx), records(dst_idx)
-    sparse_events = {event_key for _, event_key, tokens in (*sources.values(), *targets.values())
-                     if not tokens and is_history_event_key(event_key)}
-    for idx, rows in ((src_idx, sources), (dst_idx, targets)):
-        for key, (_, event_key, tokens) in rows.items():
-            if event_key in sparse_events:
-                # Only sparse records fall back to exact event identity.
-                # Explicit provider mappings remain authoritative.
-                typ = str(idx[key].get("type") or "").strip().lower()
-                typ = "show" if typ == "tv" else typ
-                tokens.add(f"{typ}|event:{event_key}")
-    postings: dict[str, list[tuple[int, str]]] = {}
-    for key, (epoch, _, tokens) in targets.items():
-        for token in tokens:
-            postings.setdefault(token, []).append((epoch, key))
-    for rows in postings.values():
-        rows.sort()
-
-    candidates: dict[str, dict[str, tuple[int, int]]] = {}
-    reverse: dict[str, dict[str, tuple[int, int]]] = {}
-    for key, (epoch, event_key, tokens) in sources.items():
-        peers = {}
-        for token in tokens:
-            rows = postings.get(token, [])
-            lo = bisect_left(rows, epoch - tolerance, key=lambda row: row[0])
-            hi = bisect_right(rows, epoch + tolerance, key=lambda row: row[0])
-            for other_epoch, other_key in rows[lo:hi]:
-                score = (int(event_key != targets[other_key][1]), abs(epoch - other_epoch))
-                peers[other_key] = score
-        if peers:
-            candidates[key] = peers
-            for other_key, score in peers.items():
-                reverse.setdefault(other_key, {})[key] = score
-
-    def nearest(peers: Mapping[str, tuple[int, int]]) -> str | None:
-        if not peers:
-            return None
-        score = min(peers.values())
-        best = [key for key, value in peers.items() if value == score]
-        return best[0] if len(best) == 1 else None
-
-    matches: dict[str, str] = {}
-    while candidates:
-        source_choices = {key: nearest(peers) for key, peers in candidates.items()}
-        target_choices = {key: nearest(peers) for key, peers in reverse.items()}
-        pairs = [(key, peer) for key, peer in source_choices.items()
-                 if peer is not None and target_choices.get(peer) == key]
-        if not pairs:
-            break
-        for key, peer in pairs:
-            matches[key] = peer
-            for other_key in candidates.pop(key):
-                reverse[other_key].pop(key, None)
-            for source_key in reverse.pop(peer):
-                candidates[source_key].pop(peer, None)
-        candidates = {key: peers for key, peers in candidates.items() if peers}
-        reverse = {key: peers for key, peers in reverse.items() if peers}
-    return matches
+    return HistoryEventIndex(dst_idx, typed_tokens, tolerance_seconds=tolerance_seconds).match(src_idx)
 
 
 def compare_history_events(

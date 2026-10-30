@@ -292,7 +292,7 @@ from ._history_rewatches import (
     config_with_history_rewatches,
     filter_history_events,
     compare_history_events,
-    history_event_matches,
+    HistoryEventIndex,
     history_timestamp_tolerance_seconds,
     history_rewatch_pair_enabled,
     history_rewatches_requested,
@@ -953,6 +953,15 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 out["collected_at"] = str(collected_at)
         return out
 
+    history_event_indexes: dict[int, tuple[Mapping[str, Any], int, HistoryEventIndex]] = {}
+
+    def _history_event_index(idx: Mapping[str, Any]) -> HistoryEventIndex:
+        cached = history_event_indexes.get(id(idx))
+        if cached is None or cached[0] is not idx or cached[1] != len(idx):
+            cached = (idx, len(idx), HistoryEventIndex(idx, _typed_tokens, tolerance_seconds=history_tolerance))
+            history_event_indexes[id(idx)] = cached
+        return cached[2]
+
     def _find_history_event_in_idx(idx: Mapping[str, Any], it: Mapping[str, Any], fallback_key: str | None = None) -> Mapping[str, Any] | None:
         if feature != "history" or not history_event_mode:
             return None
@@ -960,7 +969,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         direct = idx.get(sk) if sk else None
         if isinstance(direct, Mapping):
             return direct
-        matches = history_event_matches({sk: it}, idx, _typed_tokens, tolerance_seconds=history_tolerance)
+        matches = _history_event_index(idx).match({sk: it})
         return idx.get(matches[sk]) if sk in matches else None
 
     def _show_level_tokens(it: Mapping[str, Any]) -> set[str]:

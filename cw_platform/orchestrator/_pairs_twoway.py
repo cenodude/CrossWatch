@@ -126,6 +126,7 @@ from ._history_rewatches import (
     config_with_history_rewatches,
     filter_history_events,
     compare_history_events,
+    HistoryEventIndex,
     history_event_matches,
     history_timestamp_tolerance_seconds,
     history_rewatch_pair_enabled,
@@ -878,6 +879,15 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 out["collected_at"] = str(collected_at)
         return out
 
+    history_event_indexes: dict[int, tuple[Mapping[str, Any], int, HistoryEventIndex]] = {}
+
+    def _history_event_index(idx: Mapping[str, Any]) -> HistoryEventIndex:
+        cached = history_event_indexes.get(id(idx))
+        if cached is None or cached[0] is not idx or cached[1] != len(idx):
+            cached = (idx, len(idx), HistoryEventIndex(idx, _typed_tokens, tolerance_seconds=history_tolerance))
+            history_event_indexes[id(idx)] = cached
+        return cached[2]
+
     def _find_history_event_in_idx(idx: Mapping[str, Any], it: Mapping[str, Any], fallback_key: str | None = None) -> Mapping[str, Any] | None:
         if feature != "history" or not history_event_mode:
             return None
@@ -885,7 +895,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         direct = idx.get(sk) if sk else None
         if isinstance(direct, Mapping):
             return direct
-        matches = history_event_matches({sk: it}, idx, _typed_tokens, tolerance_seconds=history_tolerance)
+        matches = _history_event_index(idx).match({sk: it})
         return idx.get(matches[sk]) if sk in matches else None
 
     def _show_level_tokens(it: Mapping[str, Any]) -> set[str]:
@@ -1036,7 +1046,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         if ts_tomb is None:
             return False
         try:
-            if prev_self is not None and prev_self_alias is not None and not _prev_had(dict(prev_self), dict(prev_self_alias), it):
+            if prev_self is not None and prev_self_alias is not None and not _prev_had(prev_self, prev_self_alias, it):
                 return False
         except Exception:
             pass
@@ -1068,7 +1078,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
     except Exception:
         tombX = set(tomb)
 
-    def _prev_had(prev_idx: dict[str, Any], prev_alias: dict[str, str], it: Mapping[str, Any]) -> bool:
+    def _prev_had(prev_idx: Mapping[str, Any], prev_alias: Mapping[str, str], it: Mapping[str, Any]) -> bool:
         if feature == "history" and history_event_mode:
             return bool(_find_history_event_in_idx(prev_idx, it))
         ck = _ck(it)
