@@ -19,10 +19,16 @@ html.cw-upw-lock{overflow:hidden}
 .cw-upw-avatar .material-symbols-rounded{font-size:1.3em}
 .cw-upw-avatar.has-image{overflow:hidden;background:var(--upw-raised)}
 .cw-upw-avatar>img{display:block;width:100%;height:100%;object-fit:cover}
-.cw-upw-photo{display:grid;justify-items:center;gap:10px}
-.cw-upw-photo-actions{display:flex;align-items:center;gap:6px}
-.cw-upw-btn.is-photo{min-height:32px;padding:0 10px;gap:6px;border-radius:10px;font-size:12px;cursor:pointer}
-.cw-upw-btn.is-photo .material-symbols-rounded{font-size:16px}
+.cw-upw-photo{position:relative;display:grid;justify-items:center;align-self:start}
+.cw-upw-photo-pick{position:relative;display:block;border-radius:50%;cursor:pointer}
+.cw-upw-photo-pick .cw-upw-avatar.is-xl{width:112px;height:112px;border:5px solid var(--upw-raised);border-radius:50%;font-size:38px}
+.cw-upw-photo-badge{position:absolute;right:-4px;bottom:2px;display:grid;place-items:center;width:38px;height:38px;border:4px solid var(--upw-raised);border-radius:50%;background:var(--upw-accent);color:#fff;transition:transform .15s ease}
+.cw-upw-photo-badge .material-symbols-rounded{font-size:18px}
+.cw-upw-photo-pick:hover .cw-upw-photo-badge,.cw-upw-photo-pick:focus-within .cw-upw-photo-badge{transform:scale(1.08)}
+.cw-upw-photo-pick:focus-within{outline:2px solid var(--upw-accent);outline-offset:3px}
+.cw-upw-photo-remove{position:absolute;top:0;right:-4px;display:grid;place-items:center;width:26px;height:26px;padding:0;border:3px solid var(--upw-raised);border-radius:50%;background:var(--upw-input);color:var(--upw-muted);cursor:pointer}
+.cw-upw-photo-remove:hover{color:var(--upw-text)}
+.cw-upw-photo-remove .material-symbols-rounded{font-size:14px}
 .cw-upw-preview{display:grid;grid-template-columns:auto minmax(0,1fr);gap:12px 14px;align-items:center;padding:16px;border:1px solid var(--upw-border);border-radius:var(--upw-radius);background:color-mix(in srgb,var(--upw-surface) 70%,transparent);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
 .cw-upw-preview-text{display:grid;gap:3px;min-width:0}
 .cw-upw-preview-text strong{overflow:hidden;color:var(--upw-text);font-size:16px;font-weight:900;text-overflow:ellipsis;white-space:nowrap}
@@ -334,3 +340,5 @@ html:is([data-cw-theme="flat-dark"],[data-cw-theme="flat-light"]) .cw-upw-overla
 html:is([data-cw-theme="flat-dark"],[data-cw-theme="flat-light"]) .cw-upw-overlay .cw-upw-btn.is-primary:hover{background:var(--cw-page-primary-hover);box-shadow:none;filter:none}
 html:is([data-cw-theme="flat-dark"],[data-cw-theme="flat-light"]) .cw-upw-overlay .cw-upw-btn.is-confirming{background:var(--upw-danger)}
 html:is([data-cw-theme="flat-dark"],[data-cw-theme="flat-light"]) .cw-upw-overlay .cw-upw-done-mark::before{display:none}
+html:is([data-cw-theme="flat-dark"],[data-cw-theme="flat-light"]) .cw-upw-overlay .cw-upw-photo-pick .cw-upw-avatar.is-xl{border-radius:50%}
+html:is([data-cw-theme="flat-dark"],[data-cw-theme="flat-light"]) .cw-upw-overlay .cw-upw-photo-badge{background:var(--cw-page-primary-bg);color:var(--cw-page-primary-text)}
