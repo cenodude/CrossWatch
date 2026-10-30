@@ -267,6 +267,13 @@ export default {
       if (!isSimkl) el("ao-finder").hidden = true;
     }
 
+    function refreshSelects() {
+      ["ao-media-type", "ao-match-provider", "ao-target-namespace"].forEach((id) => {
+        const node = el(id);
+        try { window.CW?.IconSelect?.enhance?.(node, node.__cwIconSelectCfg || { className: "cw-plain-select" }); } catch {}
+      });
+    }
+
     function syncMediaType() {
       const isMovie = el("ao-media-type").value === "movie";
       el("ao-episodes").hidden = isMovie;
@@ -317,6 +324,7 @@ export default {
       ["ao-title", "ao-match-id", "ao-target-id", "ao-note", "ao-match-season", "ao-ep-from", "ao-ep-to", "ao-ep-start"]
         .forEach((id) => { el(id).value = ""; });
       el("ao-media-type").value = "show";
+      refreshSelects();
       syncMediaType();
       setStatus("");
     }
@@ -337,6 +345,7 @@ export default {
       el("ao-ep-from").value = row.episode_from ?? "";
       el("ao-ep-to").value = row.episode_to ?? "";
       el("ao-ep-start").value = row.episode_start_at ?? "";
+      refreshSelects();
       syncMediaType();
       setStatus("Editing an existing rule.");
       el("ao-match-id").focus();

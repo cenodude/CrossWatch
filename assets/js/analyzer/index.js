@@ -449,6 +449,9 @@ const Analyzer = {
       filteredRows = filterRows();
       showLocalPage();
     }
+    function redrawFilters() {
+      for (const selector of ["#an-severity", "#an-feature"]) window.CW?.IconSelect?.enhance?.($(selector), $(selector).__cwIconSelectCfg || { className: "cw-plain-select" });
+    }
     function changeView(next) {
       if (!VIEWS[next]) return;
       pageController?.abort();
@@ -458,6 +461,7 @@ const Analyzer = {
       $("#an-severity").value = "";
       $("#an-search").value = "";
       $("#an-feature").value = "";
+      redrawFilters();
       refreshResults();
     }
     async function showDetail(row) {
@@ -748,6 +752,7 @@ const Analyzer = {
         $("#an-search").value = "";
         $("#an-feature").value = "";
         $("#an-severity").value = "";
+        redrawFilters();
         refreshResults();
       } else if (button.dataset.more != null) {
         const values = affectedLabels(currentRows[Number(button.dataset.more)]);
