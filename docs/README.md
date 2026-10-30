@@ -7,7 +7,7 @@
     <img class="cw-logo" src="images/CrossWatch.png" alt="CrossWatch">
     <p class="cw-kicker">Media sync hub</p>
     <h1>CrossWatch</h1>
-    <p class="cw-lede">Keep your media servers, media clients and trackers in sync. Review changes before applying them with Interactive Sync.</p>
+    <p class="cw-lede">Keep your media servers, media clients and trackers in sync, for you and everyone in your household. Review changes before applying them with Interactive Sync.</p>
     <div class="cw-actions" aria-label="CrossWatch links">
       <a class="cw-button is-primary" href="https://wiki.crosswatch.app/getting-started/installation">Install CrossWatch</a>
       <a class="cw-button" href="images/screenshots/cw1.png" data-cw-gallery="crosswatch">View screenshots</a>
@@ -233,14 +233,24 @@
     <p>Keep media state aligned across servers and trackers, including collections, separate rewatches and unfinished playback where supported.</p>
   </article>
   <article>
+    <span class="cw-token">LISTS</span>
+    <h3>Playlists and published lists</h3>
+    <p>Sync playlists between providers and publish lists for Kometa, Radarr and Sonarr.</p>
+  </article>
+  <article>
     <span class="cw-token">HUB</span>
-    <h3>Profiles for real setups</h3>
-    <p>Build separate sync setups for different users, servers and trackers without mixing everyone into one account.</p>
+    <h3>Profiles for everyone at home</h3>
+    <p>Give family and friends their own profile, with a picture and an optional login. Each profile keeps its own accounts, pairs, routes and schedule.</p>
   </article>
   <article>
     <span class="cw-token">LIVE</span>
     <h3>Watcher and webhooks</h3>
     <p>Send play events from Plex, Emby, Jellyfin, Silo, Kodi or Scrob to supported trackers with Watcher, without Plex Pass or Emby Premiere. Webhooks are also available for Plex, Emby and Jellyfin.</p>
+  </article>
+  <article>
+    <span class="cw-token">USERS</span>
+    <h3>One server, many users</h3>
+    <p>Sync several Plex, Emby, Jellyfin or Silo users from one server connection, so each person keeps their own history.</p>
   </article>
   <article>
     <span class="cw-token">SAFE</span>
@@ -267,6 +277,11 @@
     <h3>Anime ID mapping</h3>
     <p>Match anime across AniList, MyAnimeList (MAL), Kitsu, SIMKL and CW tracker pairs with AniBridge, animeApi and custom mappings. Watcher and webhooks also support anime mapping for supported providers.</p>
   </article>
+  <article>
+    <span class="cw-token">AI</span>
+    <h3>Optional AI help</h3>
+    <p>Ask CrossWatch for advice with your own AI model, or give AI apps like Claude, Codex or Cursor read-only access. Off until you set it up.</p>
+  </article>
 </section>
 
 <section class="cw-flow">
@@ -289,6 +304,20 @@
     <span>04</span>
     <strong>Follow up</strong>
     <p>Open notifications for sync progress, pending reviews, reports and release updates. Use Events and Logs to investigate problems.</p>
+  </div>
+</section>
+
+<section class="cw-section cw-intro">
+  <div>
+    <p class="cw-kicker">Profiles and managed users</p>
+    <h2>Share CrossWatch with your household.</h2>
+  </div>
+  <div>
+    <p>Create a profile for each person, pick their accounts and give them a login if you want. Choose read-only, monitor or full access. With full access they manage their own pairs, Watcher routes, webhooks and schedule, and can reconnect their own accounts. Use View as to see and manage any profile yourself. Sign-in supports Plex SSO, OIDC and two-factor authentication.</p>
+    <div class="cw-actions">
+      <a class="cw-button" href="https://wiki.crosswatch.app/crosswatch/settings/connections/profiles">Set up profiles</a>
+      <a class="cw-button" href="https://wiki.crosswatch.app/crosswatch/settings/connections/managed-users">Managed users</a>
+    </div>
   </div>
 </section>
 

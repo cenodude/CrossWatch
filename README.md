@@ -61,7 +61,7 @@ When you need more control, Interactive Sync lets you review changes before appl
 - Watcher with multiple routes for different servers and users. **No Plex Pass or Emby Premiere needed.**
 - Server-to-server, server-to-tracker and tracker-to-tracker sync, where supported.
 - Watchlists, ratings, history, playback progress and collections. Rewatches too, for supported trackers.
-- Multiple accounts, separate profiles and managed user support.
+- Multiple accounts, separate profiles and managed users who can handle their own pairs, routes and schedule.
 - Interactive Sync to review additions, updates and removals before applying them.
 - Webhook scrobbling for supported providers.
 - Custom mappings for wrong matches, anime IDs, and split or combined episodes.
