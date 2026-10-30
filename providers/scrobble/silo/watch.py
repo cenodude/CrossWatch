@@ -7,7 +7,8 @@ import hashlib
 import threading
 import time
 from collections.abc import Callable, Mapping
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
 
 import requests
 
@@ -18,10 +19,22 @@ except Exception:
 
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config
+from cw_platform.played_writes import written_by_crosswatch
 from cw_platform.provider_instances import get_instance_block, list_sync_user_ids, normalize_instance_id
 from providers.auth._auth_SILO import is_configured, normalize_server_url, provider_block
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 from providers.scrobble.currently_watching import update_from_payload as _cw_update_payload
+from providers.scrobble.manual_marks import (
+    CLOCK_SLACK_SECONDS,
+    MAX_MARKS_PER_POLL,
+    MarkTracker,
+    interval_seconds,
+    log_read_failure,
+    log_read_health,
+    mark_label,
+    parse_epoch,
+    wants_marks,
+)
 from providers.scrobble.routes import watch_poll_seconds
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent, ScrobbleSink, mask_account
 from providers.scrobble.sources import source_enabled
@@ -36,6 +49,9 @@ OFFLINE_MAX_RETRY_SECONDS = 300.0
 SEEK_JUMP_PERCENT = 10.0
 MISSING_POLLS_BEFORE_STOP = 1
 SESSIONS_PATH = "/profiles/household/sessions"
+PROGRESS_PATH = "/progress"
+MARK_PAGE = 50
+MARK_MAX_PAGES = 4
 
 
 def _log(msg: str, level: str = "INFO") -> None:
@@ -122,6 +138,7 @@ class SiloWatchService:
         self._quiet_startup = bool(quiet_startup)
         self._offline = False
         self._offline_retry = OFFLINE_INITIAL_RETRY_SECONDS
+        self._marks = MarkTracker()
         self.session = requests.Session()
         try:
             self.session.headers.setdefault("Accept", "application/json")
@@ -135,7 +152,7 @@ class SiloWatchService:
         try:
             sc = getattr(self._dispatch, "sinks_count", None)
             if callable(sc):
-                return int(sc())
+                return int(cast(Any, sc()))
             return len(getattr(self._dispatch, "_dispatchers", None) or getattr(self._dispatch, "_sinks", None) or [])
         except Exception:
             return 0
@@ -409,7 +426,12 @@ class SiloWatchService:
         profiles = self._profile_ids(cfg, block)
         seen: set[str] = set()
         active = False
+        now = time.time()
         for row in rows:
+            seen_cid = str(row.get("content_id") or "").strip()
+            seen_pid = str(row.get("profile_id") or "").strip()
+            if seen_cid and seen_pid:
+                self._marks.note_session(f"{seen_pid}:{seen_cid}", now)
             source_key = str(row.get("id") or "").strip()
             if not source_key or str(row.get("profile_id") or "") not in profiles:
                 continue
@@ -433,7 +455,164 @@ class SiloWatchService:
             self._missing[source_key] = misses
             if misses >= MISSING_POLLS_BEFORE_STOP:
                 self._stop_session(source_key)
+        self._poll_manual_marks(cfg, block)
         return active
+
+    def _mark_profiles(self, cfg: Mapping[str, Any], block: Mapping[str, Any]) -> list[tuple[str, str, str]]:
+        found: list[tuple[str, Mapping[str, Any]]] = [(self._instance_id, block)]
+        needs = getattr(self._dispatch, "needs_user_resolution", None)
+        try:
+            wants_users = bool(needs()) if callable(needs) else False
+        except Exception:
+            wants_users = False
+        if wants_users:
+            for user_inst in list_sync_user_ids(cfg, "silo", self._instance_id):
+                found.append((user_inst, provider_block(cfg, user_inst)))
+        accepts = getattr(self._dispatch, "accepts_user", None)
+        out: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for inst, item in found:
+            pid = str(item.get("profile_id") or "").strip()
+            name = str(item.get("profile_name") or "").strip()
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+            probe = ScrobbleEvent(
+                action="stop",
+                media_type="movie",
+                ids={},
+                title=None,
+                year=None,
+                season=None,
+                number=None,
+                progress=100.0,
+                account=name or None,
+                server_uuid=None,
+                session_key=None,
+                raw={"_cw_session_identity": {"user_id": pid, "name": name}, "_cw_manual_mark": True},
+            )
+            try:
+                allowed = bool(accepts(probe)) if callable(accepts) else True
+            except Exception:
+                allowed = True
+            if allowed:
+                out.append((inst, pid, name))
+        return out
+
+    def _completed_rows(self, inst: str, watermark: float | None) -> list[dict[str, Any]]:
+        reader = SimpleNamespace(config=self._active_cfg(), instance_id=inst, session=self.session)
+        rows: list[dict[str, Any]] = []
+        cursor = ""
+        for _ in range(MARK_MAX_PAGES):
+            params: dict[str, Any] = {"status": "completed", "limit": MARK_PAGE}
+            if cursor:
+                params["cursor"] = cursor
+            resp = silo_request(reader, "GET", PROGRESS_PATH, params=params)
+            if resp.status_code != 200:
+                raise RuntimeError(f"http:{int(resp.status_code)}")
+            data = safe_json(resp)
+            if not isinstance(data, Mapping):
+                raise RuntimeError("invalid_response")
+            items = data.get("items")
+            if not isinstance(items, list):
+                raise RuntimeError("invalid_response")
+            rows.extend(dict(r) for r in items if isinstance(r, Mapping))
+            raw_page = data.get("page")
+            page: Mapping[str, Any] = raw_page if isinstance(raw_page, Mapping) else {}
+            cursor = str(page.get("next_cursor") or "")
+            if watermark is None or not cursor or not items:
+                break
+            last = items[-1] if isinstance(items[-1], Mapping) else {}
+            oldest = parse_epoch(last.get("updated_at"))
+            if oldest is None or oldest < watermark:
+                break
+        return rows
+
+    def _emit_manual_mark(self, pid: str, name: str, row: Mapping[str, Any]) -> bool | None:
+        cid = str(row.get("media_item_id") or "").strip()
+        if not cid or self._outside_whitelist(cid):
+            return None
+        source: dict[str, Any] = {"content_id": cid}
+        series = series_id_of(cid)
+        if _session_kind(cid, source) not in ("movie", "episode"):
+            detail = item_detail(self, cid, feature="watch")
+            series = series or str(detail.get("series_id") or "")
+            source.update({
+                "media_type": detail.get("type"),
+                "season_number": detail.get("season_number"),
+                "episode_number": detail.get("episode_number"),
+            })
+        meta = self._metadata(source)
+        if not meta:
+            return None
+        if not meta.get("title"):
+            if meta.get("media_type") == "episode" and not series:
+                series = str(item_detail(self, cid, feature="watch").get("series_id") or "")
+            lookup = series if meta.get("media_type") == "episode" else cid
+            detail = item_detail(self, lookup, feature="watch") if lookup else {}
+            meta["title"] = str(detail.get("title") or "").strip() or None
+        seconds = as_int(row.get("duration_seconds"))
+        duration_ms = seconds * 1000 if seconds and seconds > 0 else None
+        server = str(self._block(self._active_cfg()).get("server_url") or "")
+        session = {
+            "session_key": f"silo:{self._instance_id}:mark:{pid}:{cid}:{row.get('updated_at') or ''}",
+            "source_session_key": f"mark:{pid}:{cid}",
+            "content_id": cid,
+            "profile_id": pid,
+            "client": "",
+            "meta": meta,
+            "account": name or None,
+            "server_uuid": server_uuid_for(server),
+            "position_ms": duration_ms,
+            "duration_ms": duration_ms,
+            "seek_pending": False,
+        }
+        ev = self._event(session, "stop", 100.0)
+        raw = dict(ev.raw or {})
+        raw["_cw_manual_mark"] = True
+        raw["_cw_preserve_stop"] = True
+        ev = ScrobbleEvent(**{**ev.__dict__, "raw": raw})
+        if not self._dispatch.dispatch(ev):
+            return False
+        _log(f"manual mark {ev.media_type} user={mask_account(ev.account)} media='{mark_label(ev)}'", "INFO")
+        return True
+
+    def _poll_manual_marks(self, cfg: Mapping[str, Any], block: Mapping[str, Any]) -> None:
+        try:
+            now = time.time()
+            if not self._marks.due(cfg, now) or not wants_marks(self._dispatch):
+                return
+            slack = interval_seconds(cfg) + CLOCK_SLACK_SECONDS
+            for inst, pid, name in self._mark_profiles(cfg, block):
+                who = f"user={mask_account(name)}"
+                try:
+                    rows = self._completed_rows(inst, self._marks.watermark(pid))
+                except Exception as exc:
+                    log_read_failure(self._marks, pid, who, exc, _log)
+                    continue
+                dated = [(str(row.get("media_item_id") or "").strip(), row, parse_epoch(row.get("updated_at"))) for row in rows]
+                fresh = self._marks.fresh(pid, dated, now, slack)
+                log_read_health(self._marks, pid, who, now, _log)
+                admitted = 0
+                for row in fresh:
+                    cid = str(row.get("media_item_id") or "").strip()
+                    if not cid or self._marks.seen_in_session(f"{pid}:{cid}", now):
+                        continue
+                    if written_by_crosswatch("silo", pid, cid, parse_epoch(row.get("updated_at")), now):
+                        continue
+                    if (_float(row.get("position_seconds")) or 0.0) > 0:
+                        continue
+                    if admitted >= MAX_MARKS_PER_POLL:
+                        _log(f"manual marks: more than {MAX_MARKS_PER_POLL} marks for user={mask_account(name)}; the rest is left to sync", "WARNING")
+                        break
+                    try:
+                        if self._emit_manual_mark(pid, name, row) is not None:
+                            admitted += 1
+                    except Exception as exc:
+                        admitted += 1
+                        _log(f"manual marks: dispatch failed content={cid}: {exc}", "DEBUG")
+        except Exception as exc:
+            _log(f"manual marks poll failed: {exc}", "DEBUG")
 
     def start(self) -> None:
         cfg = self._active_cfg()
@@ -456,7 +635,7 @@ class SiloWatchService:
                 self._idle_poll = self._base_poll
             else:
                 self._idle_poll = min(max(self._max_idle_poll, self._base_poll), max(self._base_poll, self._idle_poll * 1.5))
-            self._stop.wait(self._idle_poll)
+            self._stop.wait(min(self._idle_poll, self._marks.seconds_until_due(time.time())))
 
     def start_async(self) -> None:
         if self._bg and self._bg.is_alive():

@@ -38,7 +38,7 @@ ROUTE_WATCH_POLICY_RANGES = {
 }
 ROUTE_POLL_KEYS = ("poll_seconds", "idle_poll_seconds")
 ROUTE_POLL_PROVIDERS = {"emby", "jellyfin", "kodi", "scrob", "silo"}
-ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback", "anime_mapping", "simkl_rewatches", "plexkodiconnect_support"}
+ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback", "anime_mapping", "simkl_rewatches", "plexkodiconnect_support", "manual_marks"}
 ROUTE_WATCH_STRICT_BOOLEAN_KEYS = {"simkl_rewatches", "plexkodiconnect_support"}
 
 

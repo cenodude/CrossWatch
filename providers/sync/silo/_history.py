@@ -6,10 +6,13 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping
 from urllib.parse import quote
 
+from cw_platform.played_writes import note_write
+
 from ._common import (
     SiloSyncError,
     as_int,
     attach_paths,
+    cfg_section,
     chunks,
     iso_z,
     key_of,
@@ -106,7 +109,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 
     _dbg(FEATURE, "write_prepare", action="add", dated=len(dated), undated=len(undated), unresolved=len(unresolved))
     failed: set[str] = set()
+    profile = cfg_section(adapter).get("profile_id")
     for batch in chunks(dated):
+        for entry in batch:
+            note_write("silo", profile, entry["media_item_id"])
         resp = silo_request(adapter, "POST", "/sync/progress", json_body={"items": batch})
         if resp.status_code == 401:
             raise SiloSyncError("silo_history_unauthorized")
@@ -120,6 +126,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             if isinstance(res, Mapping) and res.get("status") != "success":
                 failed.add(str(res.get("media_item_id") or ""))
     for cid, _key in undated:
+        note_write("silo", profile, cid)
         resp = silo_request(adapter, "POST", f"/watched/{quote(cid, safe='')}")
         if resp.status_code == 401:
             raise SiloSyncError("silo_history_unauthorized")

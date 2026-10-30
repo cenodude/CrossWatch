@@ -1449,10 +1449,11 @@ export default {
       const playback = playbackDetail(events);
       const delivery = playback.delivery || {};
       const isProblem = st === "failed" || delivery.status === "failed";
-      let account = "", progress = null, rating = null;
+      let account = "", progress = null, rating = null, manualMark = false;
       for (const e of events) {
         const d = parseDetail(e);
         if (d.account) account = String(d.account);
+        if (d.manual_mark) manualMark = true;
         if (d.progress != null) progress = d.progress;
         if (d.rating != null) rating = d.rating;
       }
@@ -1490,6 +1491,7 @@ export default {
         ["Player", esc(player)],
         ["Target", esc(target)],
         account ? ["Account", esc(account)] : null,
+        manualMark ? ["Trigger", "Marked as watched by hand"] : null,
         isRating ? (rating != null ? ["Rating", `${esc(rating)}/10`] : null) : (progress != null ? ["Progress", `${esc(progress)}%`] : null),
         ["First seen", esc(TS(g.first_event_at))],
         ["Last seen", esc(TS(g.last_event_at))],
