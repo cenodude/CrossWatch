@@ -1966,6 +1966,7 @@ def apply_profile_login(latest: dict[str, Any], profile_id: Any, login: dict[str
         if _username_in_use(a, username):
             raise ProfileLoginError("Username already exists", 409)
         uid, raw = _new_managed_user(a, username, password, pid, login)
+        _apply_profile_login_oidc(latest, raw, login)
         return uid, raw, True, True
     changes = {key: login[key] for key in ("username", "enabled", "permissions") if key in login}
     try:
@@ -1974,7 +1975,26 @@ def apply_profile_login(latest: dict[str, Any], profile_id: Any, login: dict[str
         raise ProfileLoginError("Username already exists", 409) from None
     except ValueError:
         raise ProfileLoginError("Username is required", 400) from None
+    _apply_profile_login_oidc(latest, raw, login)
     return uid, raw, False, bool(password)
+
+
+def _apply_profile_login_oidc(latest: dict[str, Any], raw: dict[str, Any], login: dict[str, Any]) -> None:
+    if "oidc" not in login:
+        return
+    from services import authOidc
+
+    try:
+        authOidc.set_expectation(latest, raw, login.get("oidc"))
+    except ValueError as exc:
+        raise ProfileLoginError(str(exc), 409) from None
+
+
+def _oidc_user_summary(cfg: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
+    from services import authOidc
+
+    raw = _cfg_users(_cfg_auth(cfg)).get(_normalize_app_user_id(row.get("id")))
+    return {**row, "oidc": authOidc.link_summary(raw if isinstance(raw, dict) else None)}
 
 
 def remove_profile_logins(latest: dict[str, Any], profile_id: Any) -> list[tuple[str, str]]:
@@ -2036,10 +2056,13 @@ def api_users_all(request: Request) -> JSONResponse:
     blocked = None if token_actor is not None else _admin_required(request, cfg)
     if blocked is not None:
         return blocked
+    from services import authOidc
+
     a = _cfg_auth(cfg)
     admin = _admin_identity(a)
     admin.update({"enabled": credentials_configured(cfg), "protected": True})
-    return JSONResponse({"ok": True, "items": [admin, *_list_managed_users(a)]}, headers={"Cache-Control": "no-store"})
+    items = [admin, *[_oidc_user_summary(cfg, row) for row in _list_managed_users(a)]]
+    return JSONResponse({"ok": True, "items": items, "oidc_configured": authOidc.configured(cfg)}, headers={"Cache-Control": "no-store"})
 
 
 @router.post("/users")

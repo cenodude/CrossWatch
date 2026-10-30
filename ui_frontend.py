@@ -1910,6 +1910,22 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                             <input id="app_auth_oidc_client_secret" type="password" autocomplete="new-password" placeholder="Client secret">
                             <input id="app_auth_oidc_scopes" type="text" autocomplete="off" placeholder="openid profile email">
                           </div>
+                          <div class="cw-field-label-row" style="margin-top:0.75rem">
+                            <strong>New logins from OIDC</strong>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="New logins from OIDC: Members of an allowed group get a login and an empty profile on their first OIDC sign-in. You assign their accounts and pairs afterwards. Removing them from the group at your identity provider blocks their OIDC sign-in." aria-label="New logins from OIDC help">help</button>
+                          </div>
+                          <div class="cw-app-oidc-grid">
+                            <select id="app_auth_oidc_provision" aria-label="Create logins from OIDC">
+                              <option value="false">Do not create logins</option>
+                              <option value="true">Create logins on first sign-in</option>
+                            </select>
+                            <select id="app_auth_oidc_provision_access" aria-label="Access for new logins">
+                              <option value="full">New logins: Full access</option>
+                              <option value="readonly">New logins: Read-only</option>
+                            </select>
+                            <input id="app_auth_oidc_allowed_groups" type="text" autocomplete="off" placeholder="Allowed groups, comma separated" aria-label="Allowed groups">
+                            <input id="app_auth_oidc_groups_claim" type="text" autocomplete="off" placeholder="Groups claim (groups)" aria-label="Groups claim">
+                          </div>
                           <div class="cw-app-oidc-actions">
                             <button class="btn primary" type="button" id="btn-app-auth-oidc-save" onclick="cwAppAuthOidcSaveConfig?.()">Save OIDC</button>
                             <button class="btn primary" type="button" id="btn-app-auth-oidc-link" onclick="cwAppAuthOidcLink?.()">Link OIDC account</button>
