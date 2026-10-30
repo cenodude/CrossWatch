@@ -633,6 +633,31 @@ def test_snapshot_manifest_reports_cleanup_features_separately(tmp_path: Path, m
     }
 
 
+def test_snapshot_manifest_lists_identities_only_when_asked(tmp_path: Path, monkeypatch) -> None:
+    import services.snapshots as snapshots
+
+    ops = CleanupCapabilityOps({})
+    _patch_ops(monkeypatch, snapshots, tmp_path, ops)
+    monkeypatch.setattr(snapshots, "_registry_sync_providers", lambda: ["PLEX"])
+    cfg = {
+        "plex": {
+            "sync_users": {"u1": {"username": "alice"}},
+            "instances": {"P01": {"sync_users": {"u2": {"username": ""}}}},
+        }
+    }
+
+    plain = snapshots.snapshot_manifest(cfg)[0]["instances"]
+    scoped = snapshots.snapshot_manifest(cfg, include_sync_users=True)[0]["instances"]
+
+    assert [row["id"] for row in plain] == ["default", "P01"]
+    assert [(row["id"], row["label"]) for row in scoped] == [
+        ("default", "Default"),
+        ("default~u1", "Default · alice"),
+        ("P01", "P01"),
+        ("P01~u2", "P01 · u2"),
+    ]
+
+
 def test_provider_cleanup_skips_source_only_features(tmp_path: Path, monkeypatch) -> None:
     import services.snapshots as snapshots
 
@@ -673,7 +698,10 @@ def test_provider_cleanup_modal_owns_provider_cleanup_ui() -> None:
     assert "/api/snapshots/tools/clear" not in snapshots_js
 
     assert "/api/snapshots/tools/clear" in modal_js
-    assert "/api/snapshots/manifest" in modal_js
+    assert "/api/snapshots/manifest?identities=1" in modal_js
+    assert "ccc-identities-toggle" in modal_js
+    assert "Not included:" in modal_js
+    assert "#ccc-features .cc-feature.selected" in modal_js
     assert '"progress"' in modal_js
     assert '"collection"' in modal_js
     assert "Collections" in modal_js

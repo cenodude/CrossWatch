@@ -78,6 +78,19 @@ function providerInstances(provider) {
   return instances.length ? instances : [{ id: "default", label: "Default", configured: true }];
 }
 
+function instanceIdentities(provider, instanceId) {
+  const parent = String(instanceId || "");
+  if (!parent || parent.includes("~")) return [];
+  const parentRow = providerInstances(provider).find((instance) => String(instance?.id || "") === parent);
+  const prefix = `${String(parentRow?.label || parent)} · `;
+  return providerInstances(provider)
+    .filter((instance) => String(instance?.id || "").startsWith(`${parent}~`) && instance?.configured !== false)
+    .map((instance) => {
+      const label = String(instance?.label || instance?.id || "");
+      return { id: String(instance.id), label, name: label.startsWith(prefix) ? label.slice(prefix.length) : label };
+    });
+}
+
 function providerLogo(provider) {
   const id = typeof provider === "string" ? provider : providerId(provider);
   const meta = window.CW?.ProviderMeta || window.CW_PROVIDER_META || {};
@@ -167,6 +180,19 @@ export default {
                 </div>
               </label>
             </div>
+            <div class="cc-identities hidden" id="ccc-identities">
+              <button type="button" class="cc-feature" id="ccc-identities-toggle" aria-pressed="false">
+                <span class="cc-feature-icon material-symbols-rounded" aria-hidden="true">group</span>
+                <span class="cc-feature-copy">
+                  <strong id="ccc-identities-title">Also clear identities</strong>
+                  <small id="ccc-identities-names"></small>
+                </span>
+              </button>
+              <div class="cc-warning" id="ccc-identities-warning">
+                <span class="material-symbols-rounded" aria-hidden="true">warning</span>
+                <div id="ccc-identities-warning-text"></div>
+              </div>
+            </div>
           </section>
 
           <section class="cc-feature-card">
@@ -196,7 +222,7 @@ export default {
           <section class="cc-run-card">
             <div class="cc-warning">
               <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-              <div>This clears data on the selected provider instance.</div>
+              <div id="ccc-run-warning">This clears data on the selected provider instance.</div>
             </div>
             <div class="cc-actions">
               <button type="button" class="cc-btn danger cw-danger-confirm" id="ccc-clear-selected">
@@ -274,7 +300,7 @@ export default {
     };
 
     const clearFeatureSelection = () => {
-      $$(".cc-feature", root).forEach((button) => {
+      $$("#ccc-features .cc-feature", root).forEach((button) => {
         button.classList.remove("selected");
         button.setAttribute("aria-pressed", "false");
       });
@@ -318,7 +344,7 @@ export default {
       const provider = $("#ccc-progress-provider", root);
       if (provider) provider.textContent = String(progress.provider || $("#ccc-provider", root)?.value || "-").toUpperCase();
       const instance = $("#ccc-progress-instance", root);
-      if (instance) instance.textContent = String(progress.instance || $("#ccc-instance", root)?.value || "default");
+      if (instance) instance.textContent = instanceLabel(progress.instance || $("#ccc-instance", root)?.value || "default");
       const feature = $("#ccc-progress-feature", root);
       if (feature) feature.textContent = progressFeatureLabel(progress.current_feature || progress.feature);
       const items = $("#ccc-progress-items", root);
@@ -350,6 +376,44 @@ export default {
     const currentProvider = () => {
       const id = String($("#ccc-provider", root)?.value || "").toUpperCase();
       return providers.find((provider) => providerId(provider) === id) || null;
+    };
+
+    const instanceLabel = (id) => {
+      const value = String(id || "default");
+      const row = providerInstances(currentProvider()).find((instance) => String(instance?.id || "") === value);
+      return String(row?.label || value);
+    };
+
+    const currentIdentities = () => instanceIdentities(currentProvider(), $("#ccc-instance", root)?.value);
+
+    const includeIdentities = () => !!$("#ccc-identities-toggle", root)?.classList.contains("selected") && currentIdentities().length > 0;
+
+    const identityCount = (count) => `${count} ${count === 1 ? "identity" : "identities"}`;
+
+    const updateIdentities = () => {
+      const identities = currentIdentities();
+      const included = includeIdentities();
+      const names = identities.map((identity) => identity.name).join(", ");
+      $("#ccc-identities", root)?.classList.toggle("hidden", !identities.length);
+      $("#ccc-identities-toggle", root)?.setAttribute("aria-pressed", included ? "true" : "false");
+      const title = $("#ccc-identities-title", root);
+      if (title) title.textContent = `Also clear ${identityCount(identities.length)}`;
+      const list = $("#ccc-identities-names", root);
+      if (list) list.textContent = names;
+      $("#ccc-identities-warning", root)?.classList.toggle("hidden", included);
+      const warning = $("#ccc-identities-warning-text", root);
+      if (warning) warning.textContent = `Only the account of this instance is cleared. Not included: ${names}.`;
+      const run = $("#ccc-run-warning", root);
+      if (run) {
+        run.textContent = included
+          ? `This clears data on the selected provider instance and ${identityCount(identities.length)}.`
+          : "This clears data on the selected provider instance.";
+      }
+    };
+
+    const resetIdentities = () => {
+      $("#ccc-identities-toggle", root)?.classList.remove("selected");
+      updateIdentities();
     };
 
     const enhanceTargetSelects = () => {
@@ -392,14 +456,14 @@ export default {
       enhanceTargetSelects();
     };
 
-    const selectedFeatures = () => $$(".cc-feature.selected", root).map((button) => String(button.dataset.feature || "")).filter(Boolean);
+    const selectedFeatures = () => $$("#ccc-features .cc-feature.selected", root).map((button) => String(button.dataset.feature || "")).filter(Boolean);
 
     function updateAvailability() {
       const provider = currentProvider();
       const available = new Set(providerFeatures(provider).map((feature) => feature.key));
       const instanceSelect = $("#ccc-instance", root);
       const instanceOk = !!instanceSelect?.selectedOptions?.[0] && !instanceSelect.selectedOptions[0].disabled;
-      $$(".cc-feature", root).forEach((row) => {
+      $$("#ccc-features .cc-feature", root).forEach((row) => {
         const key = String(row.dataset.feature || "");
         const enabled = !!provider && instanceOk && available.has(key);
         row.classList.toggle("disabled", !enabled);
@@ -413,12 +477,13 @@ export default {
       const anySelected = selectedFeatures().length > 0;
       const clearBtn = $("#ccc-clear-selected", root);
       if (clearBtn) clearBtn.disabled = busy || !provider || !instanceOk || !anySelected;
+      updateIdentities();
     }
 
     const refresh = async () => {
       setStatus("Loading provider targets...", "busy");
       try {
-        const data = await apiJson(`/api/snapshots/manifest?_=${Date.now()}`);
+        const data = await apiJson(`/api/snapshots/manifest?identities=1&_=${Date.now()}`);
         providers = Array.isArray(data?.providers) ? data.providers : [];
         fillProviders();
         fillInstances();
@@ -433,8 +498,14 @@ export default {
     $("#ccc-close", root)?.addEventListener("click", () => {
       if (!busy) window.cxCloseModal?.();
     });
-    $("#ccc-provider", root)?.addEventListener("change", () => { clearConfirm(); clearFeatureSelection(); fillInstances(); updateAvailability(); });
-    $("#ccc-instance", root)?.addEventListener("change", () => { clearConfirm(); clearFeatureSelection(); updateAvailability(); });
+    $("#ccc-provider", root)?.addEventListener("change", () => { clearConfirm(); clearFeatureSelection(); fillInstances(); resetIdentities(); updateAvailability(); });
+    $("#ccc-instance", root)?.addEventListener("change", () => { clearConfirm(); clearFeatureSelection(); resetIdentities(); updateAvailability(); });
+    $("#ccc-identities-toggle", root)?.addEventListener("click", () => {
+      if (busy) return;
+      clearConfirm();
+      $("#ccc-identities-toggle", root)?.classList.toggle("selected");
+      updateIdentities();
+    });
     $$("#ccc-features .cc-feature", root).forEach((button) => button.addEventListener("click", () => {
       if (busy || button.disabled) return;
       clearConfirm();
@@ -453,32 +524,45 @@ export default {
       clearConfirm();
 
       setBusy(true);
-      const progressId = newProgressId();
-      updateProgress({
-        ok: true,
-        done: false,
-        stage: "queued",
-        message: "Starting provider cleanup...",
-        percent: 1,
-        provider,
-        instance,
-        feature: "cleanup",
-        feature_total: features.length,
-      });
+      const targets = [instance, ...(includeIdentities() ? currentIdentities().map((identity) => identity.id) : [])];
+      const lines = [];
+      const failures = [];
       setStatus("Cleanup is running. This window stays locked until it finishes.", "busy");
       try {
-        await postJson("/api/snapshots/tools/clear", { provider, instance, features, progress_id: progressId, background: true });
-        const progress = await waitForProgress(progressId);
-        if (!progress) throw new Error("Cleanup progress was interrupted.");
-        if (progress.ok === false) throw new Error(progress.error || progress.message || "Cleanup failed");
-        const results = progress.cleanup_results || {};
-        const lines = Object.keys(results).map((key) => resultLine(key, results[key]));
-        setStatus(lines.length ? lines.join(" | ") : (progress.message || "Cleanup complete."), "ok");
-        window.CW?.DOM?.showToast?.("Provider cleanup complete", true);
-      } catch (e) {
-        console.warn("[provider-cleanup] clear failed", e);
-        setStatus(`Cleanup failed: ${e.message || e}`, "err");
-        window.CW?.DOM?.showToast?.(`Cleanup failed: ${e.message || e}`, false);
+        for (const target of targets) {
+          const prefix = targets.length > 1 ? `${instanceLabel(target)}: ` : "";
+          const progressId = newProgressId();
+          updateProgress({
+            ok: true,
+            done: false,
+            stage: "queued",
+            message: "Starting provider cleanup...",
+            percent: 1,
+            provider,
+            instance: target,
+            feature: "cleanup",
+            feature_total: features.length,
+          });
+          try {
+            await postJson("/api/snapshots/tools/clear", { provider, instance: target, features, progress_id: progressId, background: true });
+            const progress = await waitForProgress(progressId);
+            if (!progress) throw new Error("Cleanup progress was interrupted.");
+            if (progress.ok === false) throw new Error(progress.error || progress.message || "Cleanup failed");
+            const results = progress.cleanup_results || {};
+            const keys = Object.keys(results);
+            lines.push(`${prefix}${keys.length ? keys.map((key) => resultLine(key, results[key])).join(", ") : (progress.message || "Cleanup complete.")}`);
+          } catch (e) {
+            console.warn("[provider-cleanup] clear failed", target, e);
+            failures.push(`${prefix}${e.message || e}`);
+          }
+        }
+        if (failures.length) {
+          setStatus(`Cleanup failed: ${[...failures, ...lines].join(" | ")}`, "err");
+          window.CW?.DOM?.showToast?.(`Cleanup failed: ${failures[0]}`, false);
+        } else {
+          setStatus(lines.join(" | "), "ok");
+          window.CW?.DOM?.showToast?.("Provider cleanup complete", true);
+        }
       } finally {
         setBusy(false);
       }
