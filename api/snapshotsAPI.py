@@ -106,10 +106,10 @@ def _filter_snapshot_rows(cfg: dict[str, Any], request: Request | None, rows: li
 
 
 @router.get("/manifest")
-def api_snapshots_manifest(request: Request = cast(Request, None)) -> JSONResponse:
+def api_snapshots_manifest(identities: bool = Query(False), request: Request = cast(Request, None)) -> JSONResponse:
     try:
         cfg = load_config() or {}
-        providers = snapshot_manifest(cfg)
+        providers = snapshot_manifest(cfg, include_sync_users=identities)
         user = request_user(request)
         if user and not bool(user.get("is_admin")):
             scoped: list[dict[str, Any]] = []

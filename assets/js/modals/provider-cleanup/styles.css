@@ -36,6 +36,8 @@
 .cw-provider-cleanup .cc-feature.disabled{opacity:.45;cursor:not-allowed}
 .cw-provider-cleanup .cc-feature-empty{padding:14px;border:1px solid var(--cc-border);border-radius:12px;background:color-mix(in srgb,var(--cc-panel) 88%,#091321);color:var(--cc-muted);font-size:13px;line-height:1.35}
 .cw-provider-cleanup .cc-feature-empty.hidden{display:none}
+.cw-provider-cleanup .cc-identities{display:grid;gap:10px;margin-top:12px}
+.cw-provider-cleanup .cc-identities.hidden,.cw-provider-cleanup .cc-identities .cc-warning.hidden{display:none}
 .cw-provider-cleanup .cc-run-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;border-color:color-mix(in srgb,#ffbd4a 28%,var(--cc-border))}
 .cw-provider-cleanup .cc-warning{min-width:0;display:flex;align-items:center;gap:10px;color:var(--cc-muted);font-size:13px;line-height:1.35}
 .cw-provider-cleanup .cc-warning .material-symbols-rounded{color:#ffbd4a;font-size:24px}

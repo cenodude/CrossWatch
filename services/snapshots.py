@@ -18,7 +18,14 @@ import uuid
 
 from cw_platform.config_base import CONFIG, load_config
 from cw_platform.modules_registry import load_sync_ops, state_read_features, sync_provider_names
-from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
+from cw_platform.provider_instances import (
+    build_provider_config_view,
+    get_instance_block,
+    list_instance_ids,
+    list_sync_user_ids,
+    normalize_instance_id,
+    split_sync_user_id,
+)
 
 Feature = Literal["watchlist", "ratings", "history", "progress", "collection"]
 CreateFeature = Literal["watchlist", "ratings", "history", "progress", "collection", "all"]
@@ -712,7 +719,15 @@ def _stats_for(feature: Feature, idx: Mapping[str, Mapping[str, Any]]) -> dict[s
     }
 
 
-def snapshot_manifest(cfg: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
+def _instance_label(cfg: Mapping[str, Any], pid: str, inst: str) -> str:
+    ref = split_sync_user_id(inst)
+    if ref is None:
+        return "Default" if inst == "default" else inst
+    username = str(get_instance_block(cfg, pid, inst).get("username") or "").strip()
+    return f"{_instance_label(cfg, pid, ref[0])} · {username or ref[1]}"
+
+
+def snapshot_manifest(cfg: Mapping[str, Any] | None = None, *, include_sync_users: bool = False) -> list[dict[str, Any]]:
     cfg = cfg or load_config()
     out: list[dict[str, Any]] = []
     for pid in _registry_sync_providers():
@@ -724,13 +739,15 @@ def snapshot_manifest(cfg: Mapping[str, Any] | None = None) -> list[dict[str, An
         cleanup_feats = {k: _cleanup_feature_enabled(ops, k) for k in SNAPSHOT_FEATURES}
 
         insts = list_instance_ids(cfg, pid)
+        if include_sync_users:
+            insts = [x for inst in insts for x in (inst, *list_sync_user_ids(cfg, pid, inst))]
         inst_meta: list[dict[str, Any]] = []
         configured_any = False
         for inst in insts:
             cfg_view = build_provider_config_view(cfg, pid, inst)
             ok = _configured(ops, cfg_view)
             configured_any = configured_any or ok
-            inst_meta.append({"id": inst, "label": "Default" if inst == "default" else inst, "configured": ok})
+            inst_meta.append({"id": inst, "label": _instance_label(cfg, pid, inst), "configured": ok})
 
         out.append(
             {
