@@ -9,7 +9,7 @@ from typing import Any
 from cw_platform.anime_mapping.storage import query_edges
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import canonical_key, coalesce_ids, ids_from, merge_ids, minimal as id_minimal
-from providers.auth._auth_FLOPPY import FloppyAuthError, is_configured as auth_is_configured, provider_block
+from providers.auth._auth_FLOPPY import FloppyAuthError, FloppyRequestError, is_configured as auth_is_configured, provider_block
 from providers.sync._mod_common import safe_json
 
 
@@ -26,6 +26,7 @@ ANIME_ID_KEYS = ("mal", "anilist", "kitsu", "anidb")
 ANIME_LOOKUP_KEYS = ("tmdb", "tvdb", "imdb")
 
 _LAYOUT_CACHE: dict[str, list[tuple[int, int]]] = {}
+_SEASONS_CACHE: dict[str, set[int] | None] = {}
 
 
 def int_or_none(value: Any) -> int | None:
@@ -212,7 +213,7 @@ def api_request(adapter: Any, method: str, path: str, *, ok: tuple[int, ...] = (
                 if value:
                     parts.append(str(value))
         detail = " | ".join(parts)
-        raise FloppyAuthError(detail or f"Floppy request failed ({status})", reason=f"http_{status}", status_code=status)
+        raise FloppyRequestError(detail or f"Floppy request failed ({status})", reason=f"http_{status}", status_code=status)
     if status == 204:
         return {}
     data = safe_json(resp)
@@ -324,6 +325,7 @@ def media_parts_from_item_id(value: Any) -> tuple[str | None, str | None, str | 
 
 def reset_layout_cache() -> None:
     _LAYOUT_CACHE.clear()
+    _SEASONS_CACHE.clear()
 
 
 def _row_episode_number(row: Mapping[str, Any]) -> int | None:
@@ -346,6 +348,41 @@ def _season_episodes(adapter: Any, tmdb_id: str, season: int) -> list[int]:
     return sorted(numbers)
 
 
+def _row_season_number(row: Any) -> int | None:
+    if not isinstance(row, Mapping):
+        return None
+    item = row.get("item")
+    number = int_or_none((item if isinstance(item, Mapping) else row).get("season_number"))
+    return number if number is not None and number >= 0 else None
+
+
+def show_seasons(adapter: Any, tmdb_id: Any) -> set[int] | None:
+    key = str(tmdb_id or "").strip()
+    if not key:
+        return None
+    if key in _SEASONS_CACHE:
+        return _SEASONS_CACHE[key]
+    try:
+        data = api_get(adapter, f"media/tv/tmdb/{key}")
+    except FloppyAuthError as exc:
+        if exc.status_code != 404:
+            raise
+        return None
+    found: set[int] = set()
+    if isinstance(data, Mapping):
+        related = data.get("related")
+        rows = related.get("seasons") if isinstance(related, Mapping) else None
+        if isinstance(rows, list):
+            found = {n for n in (_row_season_number(row) for row in rows) if n is not None}
+        details = data.get("details")
+        count = int_or_none(details.get("seasons")) if isinstance(details, Mapping) else None
+        if not any(n > 0 for n in found) and count is not None and count > 0:
+            found |= set(range(1, count + 1))
+    seasons = found if any(n > 0 for n in found) else None
+    _SEASONS_CACHE[key] = seasons
+    return seasons
+
+
 def show_layout(adapter: Any, tmdb_id: str) -> list[tuple[int, int]]:
     key = str(tmdb_id or "").strip()
     if not key:
@@ -354,6 +391,12 @@ def show_layout(adapter: Any, tmdb_id: str) -> list[tuple[int, int]]:
     if cached is not None:
         return cached
     layout: list[tuple[int, int]] = []
+    seasons = show_seasons(adapter, key)
+    if seasons:
+        for season in sorted(n for n in seasons if n > 0):
+            layout.extend((season, number) for number in _season_episodes(adapter, key, season))
+        _LAYOUT_CACHE[key] = layout
+        return layout
     empty = 0
     for season in range(1, MAX_SEASONS + 1):
         numbers = _season_episodes(adapter, key, season)

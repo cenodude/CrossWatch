@@ -401,6 +401,8 @@ def test_floppy_secondary_read_failures_are_not_cached_as_absence(monkeypatch, h
     monkeypatch.setattr(_common, "paged", fail)
     monkeypatch.setattr(_history, "paged", fail)
     monkeypatch.setattr(_history, "show_bucket", fail)
+    monkeypatch.setattr(_common, "show_seasons", lambda *a, **k: None)
+    monkeypatch.setattr(_history, "show_seasons", lambda *a, **k: None)
     monkeypatch.setattr(_history, "_SEASON_EPISODE_CACHE", {})
     monkeypatch.setattr(_common, "_LAYOUT_CACHE", {})
     calls = {"episode_history": lambda: _history._episode_history(SimpleNamespace(), "1", 1, 1),
@@ -423,6 +425,7 @@ def test_floppy_secondary_reads_only_allow_not_found(monkeypatch, status, helper
         raise FloppyAuthError("lookup failed", status_code=status)
     monkeypatch.setattr(_common, "paged", fail)
     monkeypatch.setattr(_history, "paged", fail)
+    monkeypatch.setattr(_history, "show_seasons", lambda *a, **k: None)
     monkeypatch.setattr(_history, "_SEASON_EPISODE_CACHE", {})
     calls = {"movie": lambda: _history._movie_history(SimpleNamespace(), "1"),
              "episode": lambda: _history._episode_history(SimpleNamespace(), "1", 1, 1),
@@ -433,3 +436,69 @@ def test_floppy_secondary_reads_only_allow_not_found(monkeypatch, status, helper
     else:
         with pytest.raises(FloppyAuthError):
             calls[helper]()
+
+
+def _floppy_show_with_seasons(monkeypatch, listed, statuses=None, detail_status=200):
+    from providers.auth._auth_FLOPPY import FloppyRequestError
+    from providers.sync.floppy import _common, _history
+
+    requested: list[int] = []
+
+    def api_get(_adapter, path, **_kwargs):
+        if detail_status != 200:
+            raise FloppyRequestError("detail failed", reason=f"http_{detail_status}", status_code=detail_status)
+        return {"related": {"seasons": [{"item": {"season_number": n}} for n in listed]}}
+
+    def paged(_adapter, path, **_kwargs):
+        season = int(path.split("/")[-2])
+        requested.append(season)
+        status = (statuses or {}).get(season, 200)
+        if status != 200:
+            raise FloppyRequestError("Failed to retrieve season episodes.", reason=f"http_{status}", status_code=status)
+        return [{"episode_number": n} for n in range(1, 26)]
+    monkeypatch.setattr(_common, "api_get", api_get)
+    monkeypatch.setattr(_common, "paged", paged)
+    monkeypatch.setattr(_history, "paged", paged)
+    monkeypatch.setattr(_common, "_LAYOUT_CACHE", {})
+    monkeypatch.setattr(_common, "_SEASONS_CACHE", {})
+    monkeypatch.setattr(_history, "_SEASON_EPISODE_CACHE", {})
+    return requested
+
+
+def test_floppy_layout_walks_only_listed_seasons(monkeypatch):
+    from providers.sync.floppy import _common
+
+    requested = _floppy_show_with_seasons(monkeypatch, [0, 1], {2: 500})
+    assert _common.show_layout(SimpleNamespace(), "117465") == [(1, n) for n in range(1, 26)]
+    assert requested == [1]
+
+
+def test_floppy_layout_fails_on_listed_season_error(monkeypatch):
+    from providers.auth._auth_FLOPPY import FloppyAuthError
+    from providers.sync.floppy import _common
+
+    _floppy_show_with_seasons(monkeypatch, [1, 2], {2: 500})
+    with pytest.raises(FloppyAuthError):
+        _common.show_layout(SimpleNamespace(), "117465")
+    assert _common._LAYOUT_CACHE == {}
+
+
+def test_floppy_unlisted_season_is_known_empty(monkeypatch):
+    from providers.sync.floppy import _history
+
+    requested = _floppy_show_with_seasons(monkeypatch, [0, 1], {2: 500})
+    assert _history._season_episode_numbers(SimpleNamespace(), "117465", 2) == set()
+    assert _history._floppy_coord_status(SimpleNamespace(), "117465", 2, 1) is False
+    assert requested == []
+
+
+@pytest.mark.parametrize("listed,statuses,detail_status", [([1, 2], {2: 500}, 200), ([0, 1], {}, 500)])
+def test_floppy_season_check_fails_on_unknown(monkeypatch, listed, statuses, detail_status):
+    from providers.auth._auth_FLOPPY import FloppyAuthError
+    from providers.sync.floppy import _common, _history
+
+    _floppy_show_with_seasons(monkeypatch, listed, statuses, detail_status)
+    with pytest.raises(FloppyAuthError):
+        _history._season_episode_numbers(SimpleNamespace(), "117465", 2)
+    assert _history._SEASON_EPISODE_CACHE == {}
+    assert _common._SEASONS_CACHE == ({} if detail_status != 200 else {"117465": set(listed)})

@@ -18,7 +18,7 @@ from cw_platform.id_map import minimal as id_minimal
 from providers.auth._auth_FLOPPY import FloppyAuthError
 from providers.sync._mod_common import build_op_result, unresolved_keys
 
-from ._common import ANIME_BUCKET, COMPLETED, absolute_to_coord, api_delete, api_patch, api_post, api_request, bucket_body, bucket_params, canonical_item_key, confirmed_destination, failure_reason, has_coord, int_or_none, item_from_row, media_parts_from_item_id, paged, reset_layout_cache, show_bucket, show_layout, tmdb_enriched_item, tmdb_id_for_item, track_media, unresolved, write_bucket
+from ._common import ANIME_BUCKET, COMPLETED, absolute_to_coord, api_delete, api_patch, api_post, api_request, bucket_body, bucket_params, canonical_item_key, confirmed_destination, failure_reason, has_coord, int_or_none, item_from_row, media_parts_from_item_id, paged, reset_layout_cache, show_bucket, show_layout, show_seasons, tmdb_enriched_item, tmdb_id_for_item, track_media, unresolved, write_bucket
 
 _SRC_SNAPSHOT: dict[str, Any] = {"scope": None, "shows": {}}
 _SEASON_EPISODE_CACHE: dict[tuple[str, int], set[int] | None] = {}
@@ -99,6 +99,10 @@ def _season_episode_numbers(adapter: Any, tmdb_id: str, season: int) -> set[int]
         return None
     if key in _SEASON_EPISODE_CACHE:
         return _SEASON_EPISODE_CACHE[key]
+    seasons = show_seasons(adapter, key[0])
+    if seasons and key[1] > 0 and key[1] not in seasons:
+        _SEASON_EPISODE_CACHE[key] = set()
+        return set()
     try:
         rows = paged(adapter, f"media/tv/tmdb/{key[0]}/{key[1]}/episodes")
     except FloppyAuthError as exc:
