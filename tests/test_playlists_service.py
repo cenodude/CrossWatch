@@ -5,7 +5,15 @@ from typing import Any
 import pytest
 
 from cw_platform.id_map import canonical_key
-from cw_platform.playlists import PlaylistItem, PlaylistResource, PlaylistSnapshot, PlaylistUnavailableError, PlaylistUserError
+from cw_platform.playlists import (
+    PlaylistItem,
+    PlaylistLinkError,
+    PlaylistReadOnlyError,
+    PlaylistResource,
+    PlaylistSnapshot,
+    PlaylistUnavailableError,
+    PlaylistUserError,
+)
 from cw_platform import playlists_runner as runner
 from services import playlists as svc
 
@@ -547,7 +555,7 @@ def test_resolve_provider_playlist_messages(config_base, link_providers):
     ok = svc.resolve_provider_playlist(_cfg(), "TRAKT", "default", "https://trakt.tv/users/snoak/lists/noir")
     assert ok["ok"] and ok["resource"]["id"] == "555" and ok["resource"]["can_rename"] is False
     missing = svc.resolve_provider_playlist(_cfg(), "TRAKT", "default", "https://trakt.tv/users/x/lists/missing")
-    assert missing == {"ok": False, "error": "The Trakt list missing is private or no longer exists"}
+    assert missing == {"ok": False, "error": "That list is private, deleted or no longer shared with you"}
     assert svc.resolve_provider_playlist(_cfg(), "TRAKT", "default", "https://trakt.tv/boom") == {"ok": False, "error": "resolve failed"}
     assert svc.resolve_provider_playlist(_cfg(), "PLEX", "default", "https://x/y")["error"] == "this provider cannot add lists by link"
 
@@ -566,7 +574,7 @@ def test_endpoint_from_link_is_stored_read_only(config_base, link_providers):
 
 def test_endpoint_from_bad_link_returns_message(config_base, link_providers):
     res = svc.upsert_endpoint(_cfg(), {"name": "Noir", "provider": "TRAKT", "instance": "default", "playlist_id": "https://trakt.tv/users/x/lists/missing"})
-    assert res == {"ok": False, "error": "The Trakt list missing is private or no longer exists"}
+    assert res == {"ok": False, "error": "That list is private, deleted or no longer shared with you"}
 
 
 def test_unavailable_source_list_message_reaches_the_user(config_base, link_providers):
@@ -574,8 +582,8 @@ def test_unavailable_source_list_message_reaches_the_user(config_base, link_prov
     src = svc.upsert_endpoint(cfg, {"name": "Gone", "provider": "TRAKT", "instance": "default", "playlist_id": "gone"})["endpoint"]["id"]
     dst = svc.upsert_endpoint(cfg, {"name": "Plex dst", "provider": "PLEX", "instance": "default", "playlist_id": "T1"})["endpoint"]["id"]
     mid = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": src, "target_endpoints": [dst]})["mapping"]["id"]
-    assert svc.run_mapping(cfg, mid) == {"ok": False, "error": "The Trakt list Gone no longer exists"}
-    assert svc.preview_mapping(cfg, mid) == {"ok": False, "error": "The Trakt list Gone no longer exists"}
+    assert svc.run_mapping(cfg, mid) == {"ok": False, "error": "A list in this sync is private, deleted or no longer shared with you"}
+    assert svc.preview_mapping(cfg, mid) == {"ok": False, "error": "A list in this sync is private, deleted or no longer shared with you"}
 
 
 def test_raw_id_endpoint_keeps_read_only_flags_when_snapshot_fails(config_base, link_providers):
@@ -622,3 +630,17 @@ def test_name_based_endpoint_is_saved_without_link_resolve(config_base, link_pro
     monkeypatch.setattr(link_providers["TRAKT"], "resolve_playlist", lambda *a, **k: (_ for _ in ()).throw(AssertionError("resolved")))
     res = svc.upsert_endpoint(_cfg(), {"name": "Trakt src", "provider": "TRAKT", "instance": "default", "playlist_id": "src1"})
     assert res["ok"] and res["endpoint"]["playlist_id"] == "src1" and res["endpoint"]["can_add"] is True
+
+
+@pytest.mark.parametrize("exc, expected", [
+    (PlaylistUnavailableError("token=secret /srv/internal.py"), "That list is private, deleted or no longer shared with you"),
+    (PlaylistReadOnlyError("token=secret /srv/internal.py"), "That list is read only"),
+    (PlaylistLinkError("token=secret /srv/internal.py"), "That is not a list link this provider supports"),
+])
+def test_resolve_errors_never_expose_exception_text(config_base, link_providers, monkeypatch, exc, expected):
+    def fail(*_args, **_kwargs):
+        raise exc
+
+    monkeypatch.setattr(link_providers["TRAKT"], "resolve_playlist", fail)
+    res = svc.resolve_provider_playlist(_cfg(), "TRAKT", "default", "https://trakt.tv/users/x/lists/y")
+    assert res == {"ok": False, "error": expected}

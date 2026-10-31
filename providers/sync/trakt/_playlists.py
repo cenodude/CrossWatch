@@ -15,6 +15,8 @@ from cw_platform.playlists import (
     PlaylistItem,
     PlaylistResource,
     PlaylistSnapshot,
+    PlaylistLinkError,
+    PlaylistReadOnlyError,
     PlaylistUnavailableError,
 )
 from cw_platform.run_control import SyncCancelled
@@ -573,12 +575,12 @@ def _items_url(resource: PlaylistResource, lid: str) -> str:
 def _write_target(adapter: Any, playlist_id: Any) -> tuple[str, str]:
     lid = _list_id(playlist_id)
     if lid.lower().startswith(SMART_PREFIX):
-        raise PlaylistUnavailableError("Trakt smart lists are read only")
+        raise PlaylistReadOnlyError("Trakt smart lists are read only")
     res = _find_resource(adapter, lid)
     if res is None:
         raise RuntimeError(f"trakt list {lid} not found among writable lists")
     if res.is_smart or res.extra.get("public_list") or not (res.can_add or res.can_remove):
-        raise PlaylistUnavailableError(f"The Trakt list {res.name or res.id} is read only")
+        raise PlaylistReadOnlyError(f"The Trakt list {res.name or res.id} is read only")
     return res.id, _list_base(res, res.id)
 
 
@@ -756,7 +758,7 @@ def resolve(adapter: Any, ref: Any) -> PlaylistResource:
     if smart_slug:
         sid = f"{SMART_PREFIX}{smart_slug}"
         return _find_resource(adapter, sid) or _smart_public_resource(adapter, smart_slug, strict=True)
-    raise PlaylistUnavailableError("Paste a Trakt list link, like https://trakt.tv/users/name/lists/list-name")
+    raise PlaylistLinkError("unsupported Trakt list link")
 
 
 def create(adapter: Any, name: str, *, media_type: str | None = None, dry_run: bool = False) -> PlaylistResource:

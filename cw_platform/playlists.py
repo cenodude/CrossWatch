@@ -78,6 +78,14 @@ class PlaylistUnavailableError(PlaylistUserError):
     pass
 
 
+class PlaylistReadOnlyError(PlaylistUnavailableError):
+    pass
+
+
+class PlaylistLinkError(PlaylistUnavailableError):
+    pass
+
+
 def _clean_str(v: Any) -> str:
     return str(v).strip() if v is not None else ""
 

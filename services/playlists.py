@@ -13,6 +13,8 @@ from _logging import log as _cw_log
 from cw_platform.playlists import (
     BUILTIN_RULESETS,
     PlaylistResource,
+    PlaylistLinkError,
+    PlaylistReadOnlyError,
     PlaylistUnavailableError,
     playlist_capabilities,
     supports_playlists,
@@ -174,10 +176,18 @@ def list_resources(cfg: Mapping[str, Any], provider: str, instance: str | None =
     return {"ok": True, "provider": name, "instance": inst, "resources": [_resource_with_manage_flags(r, ops) for r in resources]}
 
 
+def _unavailable_error(exc: PlaylistUnavailableError, subject: str) -> dict[str, Any]:
+    if isinstance(exc, PlaylistLinkError):
+        return {"ok": False, "error": "That is not a list link this provider supports"}
+    if isinstance(exc, PlaylistReadOnlyError):
+        return {"ok": False, "error": f"{subject} is read only"}
+    return {"ok": False, "error": f"{subject} is private, deleted or no longer shared with you"}
+
+
 def _resolve_resource(cfg: Mapping[str, Any], ops: Any, provider: str, instance: str, ref: str) -> PlaylistResource:
     resolver = getattr(ops, "resolve_playlist", None)
     if not callable(resolver):
-        raise PlaylistUnavailableError("this provider cannot add lists by link")
+        raise PlaylistLinkError("provider cannot resolve links")
     view = build_provider_config_view(cfg, provider, instance)
     res = resolver(view, ref, instance=instance)
     if not isinstance(res, PlaylistResource):
@@ -194,10 +204,12 @@ def resolve_provider_playlist(cfg: Mapping[str, Any], provider: str, instance: s
     ops = _providers().get(name)
     if not ops or not supports_playlists(ops):
         return {"ok": False, "error": "provider not playlist-capable"}
+    if not callable(getattr(ops, "resolve_playlist", None)):
+        return {"ok": False, "error": "this provider cannot add lists by link"}
     try:
         res = _resolve_resource(cfg, ops, name, inst, raw)
     except PlaylistUnavailableError as e:
-        return {"ok": False, "error": str(e)}
+        return _unavailable_error(e, "That list")
     except Exception as e:
         return _internal_playlist_error("resolve", e, provider=name, instance=inst)
     return {"ok": True, "provider": name, "instance": inst, "resource": _resource_with_manage_flags(res, ops)}
@@ -700,7 +712,7 @@ def upsert_endpoint(cfg: dict[str, Any], payload: Mapping[str, Any]) -> dict[str
         try:
             linked = _resolve_resource(cfg, ops, clean["provider"], clean["instance"], pid)
         except PlaylistUnavailableError as e:
-            return {"ok": False, "error": str(e)}
+            return _unavailable_error(e, "That list")
         except Exception as e:
             return _internal_playlist_error("resolve", e, provider=clean["provider"], instance=clean["instance"])
         clean.update(_resource_meta_from(linked))
@@ -1280,7 +1292,7 @@ def preview_mapping(cfg: Mapping[str, Any], mapping_id: str) -> dict[str, Any]:
             plan = runner.preview_mapping(cfg, resolved)
     except PlaylistUnavailableError as e:
         _internal_playlist_error("preview", e, mapping_id=mapping_id)
-        return {"ok": False, "error": str(e)}
+        return _unavailable_error(e, "A list in this sync")
     except runner.PlaylistRunError as e:
         return _internal_playlist_error("preview", e, mapping_id=mapping_id)
     except Exception as e:
@@ -1299,7 +1311,7 @@ def run_mapping(cfg: Mapping[str, Any], mapping_id: str, *, dry_run: bool = Fals
             refresh_mapping_endpoints(cfg, resolved)
     except PlaylistUnavailableError as e:
         _internal_playlist_error("run", e, mapping_id=mapping_id, dry_run=dry_run)
-        return {"ok": False, "error": str(e)}
+        return _unavailable_error(e, "A list in this sync")
     except runner.PlaylistRunError as e:
         return _internal_playlist_error("run", e, mapping_id=mapping_id, dry_run=dry_run)
     except Exception as e:
