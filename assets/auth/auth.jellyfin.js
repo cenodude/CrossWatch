@@ -617,9 +617,21 @@
     return jfyQcPoller;
   }
 
+  function jfyQcPageUrl(server, code) {
+    let page;
+    try { page = new URL(/^https?:\/\//i.test(server) ? server : `http://${server}`); } catch { return ""; }
+    if (page.protocol !== "http:" && page.protocol !== "https:") return "";
+    page.pathname = `${page.pathname.replace(/\/+$/, "").replace(/\/web$/i, "")}/web/`;
+    page.search = "";
+    page.hash = `/quickconnect?code=${encodeURIComponent(code)}`;
+    const href = page.href;
+    return /^https?:\/\//i.test(href) ? href : "";
+  }
+
   async function jfyQcStart() {
     const server = (Q("#jfy_server")?.value || "").trim();
     if (!server) { setMethodNote("Enter a server URL first.", "warn"); return; }
+    if (!jfyQcPageUrl(server, "0")) { setMethodNote("Enter a valid server URL, for example http://192.168.1.10:8096.", "warn"); return; }
     const verify_ssl = !!(Q("#jfy_verify_ssl")?.checked || Q("#jfy_verify_ssl_dup")?.checked);
     jfyQcStop({ cancel: true });
     setMethodNote("");
@@ -647,8 +659,10 @@
         if (d?.reason === "disabled") selectMethod("password");
         return;
       }
-      const url = `${server.replace(/\/+$/, "")}/web/#/quickconnect?code=${encodeURIComponent(d.code)}`;
-      if (win && !win.closed) {
+      const url = jfyQcPageUrl(server, d.code);
+      if (!url) {
+        closeWin();
+      } else if (win && !win.closed) {
         const safeCode = String(d.code).replace(/[^0-9A-Za-z]/g, "");
         try {
           win.document.open();
