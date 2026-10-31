@@ -696,3 +696,20 @@ def test_next_sync_observes_manual_removal_using_existing_pair_rules(config_base
         assert not any(r[0] == "add" for r in operations)
     else:
         assert not any(r[0] == "remove" for r in operations)
+
+
+@pytest.mark.parametrize("feature,flagged", [("history", True), ("watchlist", False)])
+def test_jellyfin_history_removal_updates_every_copy(setup, feature, flagged):
+    s = setup
+    s.cfg["pairs"].append({"id": "p3", "source": "PLEX", "target": "JELLYFIN",
+                           "features": {f: {} for f in removal.FEATURES}})
+    jf = s.ops["JELLYFIN"] = Ops("JELLYFIN")
+    seen = {"read": [], "write": []}
+    read, write = jf.build_index, jf.remove
+    jf.build_index = lambda cfg, **k: seen["read"].append(cfg.get("_cw_history_all_copies")) or read(cfg, **k)
+    jf.remove = lambda cfg, items, **k: seen["write"].append(cfg.get("_cw_history_all_copies")) or write(cfg, items, **k)
+    s.seed("p3", "JELLYFIN", "default", feature, {"tmdb:1": movie()})
+    s.seed("p1", "TRAKT", "default", feature, {"tmdb:1": movie()})
+    s.execute(dict(kind=feature, items=[movie()]))
+    assert seen["write"] == [True if flagged else None]
+    assert seen["read"] and not any(seen["read"])

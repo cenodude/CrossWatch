@@ -131,7 +131,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "3.0"
+__VERSION__ = "3.1"
 _MIN_PROGRESS_WRITE_VERSION = (10, 9)
 _JF_VERSION_CACHE: dict[str, tuple[float, str | None]] = {}
 
@@ -449,6 +449,7 @@ class JFClient:
 class JELLYFINModule:
     def __init__(self, cfg: Mapping[str, Any]):
         self.path_matching = coerce_bool(cfg.get("_cw_path_matching", False))
+        self.history_all_copies = coerce_bool(cfg.get("_cw_history_all_copies", False))
         inst = _pick_instance_id("JELLYFIN", cfg)
         self.instance_id = inst
         jf = _merge_instance_block((cfg or {}).get("jellyfin") or {}, inst)

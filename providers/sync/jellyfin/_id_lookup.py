@@ -161,7 +161,7 @@ def _catalogue(adapter: Any, feature: str) -> dict[str, Any] | None:
         return None
 
 
-def find(adapter: Any, feature: str, kind: str, pairs: list[str]) -> list[Mapping[str, Any]]:
+def find(adapter: Any, feature: str, kind: str, pairs: list[str], *, strict: bool = False) -> list[Mapping[str, Any]]:
     if not pairs:
         return []
     catalogue = _catalogue(adapter, feature)
@@ -176,20 +176,32 @@ def find(adapter: Any, feature: str, kind: str, pairs: list[str]) -> list[Mappin
             # Validate persisted matches, including deleted items, changed IDs
             # and items moved out of the pair's selected libraries.
             if iid not in catalogue["validated"]:
+                current: dict[str, Any] | None
                 try:
                     response = adapter.client.get(f"/Items/{iid}", params={"userId": adapter.cfg.user_id, "Fields": _FIELDS})
-                    current = response.json() if response.status_code == 200 else {}
-                    if not isinstance(current, dict) or str(current.get("Id") or "") != iid:
+                    if response.status_code in (400, 404):
                         current = {}
+                    elif response.status_code != 200:
+                        current = None
+                    else:
+                        current = response.json()
+                        if not isinstance(current, dict) or str(current.get("Id") or "") != iid:
+                            current = None
                     if current and selected:
                         ancestors = adapter.client.get(f"/Items/{iid}/Ancestors", params={"userId": adapter.cfg.user_id})
-                        allowed = ancestors.json() if ancestors.status_code == 200 else []
-                        if not isinstance(allowed, list) or not any(isinstance(a, dict) and str(a.get("Id")) in selected for a in allowed):
+                        allowed = ancestors.json() if ancestors.status_code == 200 else None
+                        if not isinstance(allowed, list):
+                            current = None
+                        elif not any(isinstance(a, dict) and str(a.get("Id")) in selected for a in allowed):
                             current = {}
-                    catalogue["validated"][iid] = current
                 except Exception:
-                    catalogue["validated"][iid] = {}
+                    current = None
+                catalogue["validated"][iid] = current
             row = catalogue["validated"][iid]
+            if row is None:
+                if strict:
+                    raise LookupError(f"identity_validation_failed:{iid}")
+                row = {}
         if row.get("Type") == kind and common._row_matches_pair(row, pairs):
             found.append(row)
     common._dbg("identity_index_match", lookup_feature=feature, kind=kind, candidates=len(candidates), matched=len(found))

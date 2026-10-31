@@ -216,6 +216,8 @@ def _normalize_features(f: dict | None) -> dict:
                 f[k]["use_source_status"] = coerce_bool(f[k].get("use_source_status", False))
             if "undated_as_today" in f[k]:
                 f[k]["undated_as_today"] = coerce_bool(f[k].get("undated_as_today", False))
+            if "update_all_copies" in f[k]:
+                f[k]["update_all_copies"] = coerce_bool(f[k].get("update_all_copies", False))
         if k in ("history", "ratings", "progress", "watchlist") and isinstance(f.get(k), dict) and "library_only" in f[k]:
             f[k]["library_only"] = coerce_bool(f[k].get("library_only", False))
         if k in ("history", "progress", "ratings") and isinstance(f.get(k), dict):

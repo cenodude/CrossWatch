@@ -297,6 +297,7 @@ from ._history_rewatches import (
     history_rewatch_pair_enabled,
     history_rewatches_requested,
 )
+from ._history_copies import config_with_history_copies, copy_gap_adds, history_copies_requested, take_copy_gaps
 
 # Blackbox imports
 from ._blackbox import load_blackbox_keys, record_attempts, record_success
@@ -1106,6 +1107,9 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         plex_cfg = dict(dst_cfg.get("plex") or {})
         plex_cfg["history"] = {**(plex_cfg.get("history") or {}), "read_cloud_history": False}
         dst_cfg = {**dst_cfg, "plex": plex_cfg}
+    history_copies = history_copies_requested(feature, fcfg, dst) and not history_event_mode
+    if history_copies:
+        dst_cfg = config_with_history_copies(dst_cfg)
     if feature == "history" and src == "PLEX" and ((src_cfg.get("plex") or {}).get("history") or {}).get("read_cloud_history") is True:
         allow_removes = False
         emit("history:cloud_read", feature=feature, provider="PLEX", reason="Plex cloud history reads enabled; History removals are disabled for this pair.")
@@ -1122,7 +1126,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             dbg=dbg,
         )
 
-    if src == dst or disable_dst_cloud_read:
+    if src == dst or disable_dst_cloud_read or history_copies:
         src_cur = build_snapshots_for_feature(
             feature=feature, config=src_cfg, providers={src: src_ops},
             snap_cache=ctx.snap_cache, snap_ttl_sec=ctx.snap_ttl_sec,
@@ -1150,6 +1154,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
         src_cur = require_snapshot(snaps, src, feature)
         dst_cur = require_snapshot(snaps, dst, feature)
+    dst_cur, copy_gaps = take_copy_gaps(dst_cur) if history_copies else (dst_cur, {})
     emit_cloud_history_read(emit, src, feature, src_cfg, src_cur)
     cancelled = bool(cancel_requested())
 
@@ -1609,6 +1614,12 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             if coord_pruned:
                 dbg("anime_mapping.coord_pruned", feature=feature, src=src, dst=dst, adds=coord_pruned)
             adds = pruned
+
+    if history_copies and copy_gaps:
+        gap_adds = copy_gap_adds(src_idx, copy_gaps, adds, alias=_alias_index, find=_find_in_idx,
+                                 minimal=_sync_minimal, key_of=_sync_key)
+        dbg("history.copies.planned", feature=feature, dst=dst, gaps=len(copy_gaps), adds=len(gap_adds))
+        adds = list(adds) + gap_adds
 
     if feature == "collection" and bool((fcfg or {}).get("media_updates")) and collection_media_updates_for(dst_ops):
         for sv in (src_idx or {}).values():
@@ -2282,6 +2293,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             )
         except Exception:
             refreshed = None
+        if refreshed and history_copies:
+            refreshed = take_copy_gaps(refreshed)[0]
         base_update = 0
         if refreshed:
             for rk, rv in refreshed.items():

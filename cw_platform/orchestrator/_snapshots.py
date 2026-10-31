@@ -110,6 +110,8 @@ def refresh_destination_after_apply(
             memo_key = (scope, provider, feature, mode, "paths" if config.get("_cw_path_matching") else "ids")
             if "_cw_provider_instance" in config:
                 memo_key += (str(config["_cw_provider_instance"]),)
+            if config.get("_cw_history_all_copies"):
+                memo_key += ("copies",)
             snap_cache[memo_key] = (time.time(), canon)
     except Exception:
         pass
@@ -744,6 +746,8 @@ def build_snapshots_for_feature(
         memo_key = (scope, name, feature, mode, "paths" if config.get("_cw_path_matching") else "ids")
         if "_cw_provider_instance" in config:
             memo_key += (str(config["_cw_provider_instance"]),)
+        if config.get("_cw_history_all_copies"):
+            memo_key += ("copies",)
         if snap_ttl_sec > 0:
             ent = snap_cache.get(memo_key)
             if ent is not None:
