@@ -256,6 +256,12 @@ def sort_rows(rows: list[dict[str, Any]], sort: Any) -> list[dict[str, Any]]:
     return rows
 
 
+def page_rows(rows: list[dict[str, Any]], offset: Any, limit: Any) -> list[dict[str, Any]]:
+    start = _index(offset) or 0
+    size = _number(limit)
+    return rows[start:start + size] if size else rows[start:]
+
+
 def format_items(items: Sequence[Mapping[str, Any]], name: str) -> tuple[list[dict[str, Any]], int]:
     if name == "mdblist.json":
         return _mdblist_rows(items)
