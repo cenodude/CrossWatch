@@ -875,6 +875,31 @@ def test_oidc_config_keeps_provisioning_fields() -> None:
     assert out["provision_access"] == "full"
 
 
+def test_oidc_button_label_defaults_and_is_escaped() -> None:
+    from api.appAuthAPI import _login_html
+    from services import authOidc
+
+    assert authOidc.sanitize_config({})["button_label"] == "OIDC"
+    assert authOidc.sanitize_config({"button_label": "  Sign in   with Authentik "})["button_label"] == "Sign in with Authentik"
+    assert ">OIDC</span>" in _login_html(oidc_available=True)
+    html = _login_html(oidc_available=True, oidc_label="<b>Authentik</b>")
+    assert "&lt;b&gt;Authentik&lt;/b&gt;" in html
+    assert "<b>Authentik</b>" not in html
+
+
+def test_oidc_button_icon_is_rendered_from_fixed_list() -> None:
+    from api.appAuthAPI import _OIDC_ICON_PATHS, _login_html
+    from services import authOidc
+
+    assert set(_OIDC_ICON_PATHS) == set(authOidc.BUTTON_ICONS)
+    assert authOidc.sanitize_config({"button_icon": "Authentik"})["button_icon"] == "authentik"
+    assert authOidc.sanitize_config({"button_icon": "<svg onload=x>"})["button_icon"] == ""
+    html = _login_html(oidc_available=True, oidc_label="Sign in with Authentik", oidc_icon="authentik")
+    assert 'cw-oidc-btn has-icon' in html
+    assert _OIDC_ICON_PATHS["authentik"] in html
+    assert '<svg class="cw-sso-icon"' not in _login_html(oidc_available=True)
+
+
 def test_identity_from_claims_reads_custom_groups_claim() -> None:
     from services import authOidc
 

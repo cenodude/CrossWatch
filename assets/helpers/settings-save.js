@@ -605,6 +605,9 @@ async function saveSettings() {
 
     try { delete cfg.app_auth; } catch {}
 
+    let oidcDraft = null;
+    try { oidcDraft = _cwFn("cwAppAuthOidcDraft", window)?.() || null; } catch {}
+
     try {
       const ok = await _cwSaveAppAuth(serverCfg);
       if (!ok) return;
@@ -619,6 +622,20 @@ async function saveSettings() {
     } catch (e) {
       console.warn("saveSettings: app users save failed", e);
       if (e?.__cwAbortSave) throw e;
+    }
+
+    try {
+      const saveOidc = _cwFn("cwAppAuthOidcSavePending", window);
+      const res = saveOidc && oidcDraft ? await saveOidc(oidcDraft) : null;
+      if (res && res.ok === false) {
+        _cwShowToast(res.error || "OIDC save failed", false);
+        _cwAbortSave(res.error || "OIDC save failed");
+      }
+    } catch (e) {
+      console.warn("saveSettings: OIDC save failed", e);
+      if (e?.__cwAbortSave) throw e;
+      _cwShowToast("OIDC save failed", false);
+      _cwAbortSave("OIDC save failed");
     }
 
     try {

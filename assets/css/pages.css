@@ -618,6 +618,10 @@ html[data-cw-theme="flat-light"] .cw-page-hero :is(.ss-hero-summary,.cw-editor-h
 :is(#page-settings #auth-providers,.scrm-modal) .cw-su-row .cw-wl-check{min-height:0;width:auto;justify-content:flex-end}
 :is(#page-settings #auth-providers,.scrm-modal) .cw-su-pin{order:3;grid-column:2/-1;width:100%}
 :is(#page-settings #auth-providers,.scrm-modal) .cw-su-count{flex:1 0 100%;order:-1}
+:is(#page-settings #auth-providers,.scrm-modal) .cw-su-search{flex:1 0 100%}
+:is(#page-settings #auth-providers,.scrm-modal) .cw-su-tools .cw-wl-load{flex:1 1 0;justify-content:center}
+:is(#page-settings #auth-providers,.scrm-modal) .cw-su-usage{white-space:normal;overflow-wrap:anywhere}
+:is(#page-settings #auth-providers,.scrm-modal) .cw-su-more .cw-wl-load{width:100%;justify-content:center}
 }
 body :is(#page-snapshots,#page-playlists,#page-editor) .cw-page-hero::after{transform:translateY(-50%)!important}
 
@@ -1307,9 +1311,13 @@ html:is([data-cw-theme],.cw-theme-original) body #page-settings .cw-settings-pro
 }
 
 @media(max-width:920px){
-html:is([data-cw-theme],.cw-theme-original) #page-settings #auth-providers #cw-auth-connection-overlay.cw-connection-overlay .cw-connection-profile-card{grid-column:1 / -1;grid-row:2!important;margin:12px 12px 0;padding:8px 12px;}
+html:is([data-cw-theme],.cw-theme-original) #page-settings #auth-providers #cw-auth-connection-overlay.cw-connection-overlay .cw-connection-profile-card{grid-column:1 / -1;grid-row:auto!important;order:1;margin:12px 12px 0;padding:8px 12px;}
+html:is([data-cw-theme],.cw-theme-original) #page-settings #auth-providers #cw-auth-connection-overlay.cw-connection-overlay .cw-connection-modal-panel>.cw-subtiles:has(>.cw-subtile:nth-of-type(4)){grid-template-columns:repeat(4,minmax(0,1fr))!important;}
 html:is([data-cw-theme],.cw-theme-original) #page-settings #auth-providers #cw-auth-connection-overlay.cw-connection-overlay .cw-connection-profile-toolbar{display:grid!important;grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;gap:8px!important;align-items:end!important;}
 html:is([data-cw-theme],.cw-theme-original) #page-settings #auth-providers #cw-auth-connection-overlay.cw-connection-overlay .cw-connection-profile-toolbar :is(.cw-icon-select-btn,.cw-profile-label-input){height:44px!important;min-height:44px!important;box-sizing:border-box}
+}
+@media(max-width:520px){
+html:is([data-cw-theme],.cw-theme-original) #page-settings #auth-providers #cw-auth-connection-overlay.cw-connection-overlay .cw-connection-modal-panel>.cw-subtiles:has(>.cw-subtile:nth-of-type(4)){grid-template-columns:repeat(2,minmax(0,1fr))!important;}
 }
 
 @media(max-width:760px){

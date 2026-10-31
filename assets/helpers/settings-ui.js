@@ -291,6 +291,8 @@ async function cwAppAuthOidcRefreshStatus() {
       cwSetInputValue("app_auth_oidc_client_id", cfg.client_id || "");
       cwSetInputValue("app_auth_oidc_client_secret", "");
       cwSetInputValue("app_auth_oidc_scopes", cfg.scopes || "openid profile email");
+      cwSetInputValue("app_auth_oidc_button_label", cfg.button_label && cfg.button_label !== "OIDC" ? cfg.button_label : "");
+      cwSetSelectValue("app_auth_oidc_button_icon", cfg.button_icon || "");
       cwSetSelectValue("app_auth_oidc_provision", cfg.provision ? "true" : "false");
       cwSetSelectValue("app_auth_oidc_provision_access", cfg.provision_access === "readonly" ? "readonly" : "full");
       cwSetInputValue("app_auth_oidc_allowed_groups", (Array.isArray(cfg.allowed_groups) ? cfg.allowed_groups : []).join(", "));
@@ -323,47 +325,81 @@ async function cwAppAuthOidcRefreshStatus() {
   }
 }
 
-window.cwAppAuthOidcSaveConfig = async function cwAppAuthOidcSaveConfig() {
-  const btn = document.getElementById("btn-app-auth-oidc-save");
-  const original = btn?.textContent || "Save OIDC";
+function cwAppAuthOidcState(raw) {
+  const scopes = [];
+  String(raw.scopes || "").split(/\s+/).filter(Boolean).forEach((s) => { if (!scopes.includes(s)) scopes.push(s); });
+  if (!scopes.length) scopes.push("openid", "profile", "email");
+  if (!scopes.includes("openid")) scopes.unshift("openid");
+  const groups = [];
+  (Array.isArray(raw.allowed_groups) ? raw.allowed_groups : String(raw.allowed_groups || "").split(/[,\n]/))
+    .map((g) => String(g || "").trim()).filter(Boolean).forEach((g) => { if (!groups.includes(g)) groups.push(g); });
+  const icon = String(raw.button_icon || "").trim().toLowerCase();
+  return {
+    enabled: !!raw.enabled,
+    issuer: String(raw.issuer || "").trim().replace(/\/+$/, ""),
+    client_id: String(raw.client_id || "").trim(),
+    scopes: scopes.join(" "),
+    button_label: String(raw.button_label || "").split(/\s+/).filter(Boolean).join(" ").slice(0, 40) || "OIDC",
+    button_icon: icon,
+    provision: !!raw.provision,
+    provision_access: raw.provision_access === "readonly" ? "readonly" : "full",
+    allowed_groups: groups.slice(0, 50),
+    groups_claim: String(raw.groups_claim || "").trim().slice(0, 64) || "groups",
+  };
+}
+
+function cwAppAuthOidcFormState() {
+  const val = (id) => document.getElementById(id)?.value || "";
+  return cwAppAuthOidcState({
+    enabled: val("app_auth_oidc_enabled") === "true",
+    issuer: val("app_auth_oidc_issuer"),
+    client_id: val("app_auth_oidc_client_id"),
+    scopes: val("app_auth_oidc_scopes"),
+    button_label: val("app_auth_oidc_button_label"),
+    button_icon: val("app_auth_oidc_button_icon"),
+    provision: val("app_auth_oidc_provision") === "true",
+    provision_access: val("app_auth_oidc_provision_access"),
+    allowed_groups: val("app_auth_oidc_allowed_groups"),
+    groups_claim: val("app_auth_oidc_groups_claim"),
+  });
+}
+
+window.cwAppAuthOidcDraft = function cwAppAuthOidcDraft() {
+  if (!document.getElementById("app_auth_oidc_enabled")) return null;
+  return { form: cwAppAuthOidcFormState(), secret: String(document.getElementById("app_auth_oidc_client_secret")?.value || "").trim() };
+};
+
+window.cwAppAuthOidcSavePending = async function cwAppAuthOidcSavePending(draft) {
+  const pending = draft === undefined ? window.cwAppAuthOidcDraft() : draft;
+  if (!pending) return { ok: true, changed: false };
+  let cr;
   try {
-    if (btn) {
-      btn.disabled = true;
-      btn.textContent = "Saving...";
-    }
-    const secret = document.getElementById("app_auth_oidc_client_secret");
-    const body = {
-      enabled: String(document.getElementById("app_auth_oidc_enabled")?.value || "false") === "true",
-      issuer: document.getElementById("app_auth_oidc_issuer")?.value || "",
-      client_id: document.getElementById("app_auth_oidc_client_id")?.value || "",
-      client_secret: secret?.value || "",
-      keep_client_secret: !(secret?.value || "").trim(),
-      scopes: document.getElementById("app_auth_oidc_scopes")?.value || "openid profile email",
-      provision: String(document.getElementById("app_auth_oidc_provision")?.value || "false") === "true",
-      provision_access: document.getElementById("app_auth_oidc_provision_access")?.value || "full",
-      allowed_groups: document.getElementById("app_auth_oidc_allowed_groups")?.value || "",
-      groups_claim: document.getElementById("app_auth_oidc_groups_claim")?.value || "groups",
-    };
-    const r = await fetch("/api/app-auth/oidc/config", {
+    cr = await fetch("/api/app-auth/oidc/config", { cache: "no-store", credentials: "same-origin" });
+  } catch {
+    return { ok: false, error: "OIDC settings could not be read" };
+  }
+  const current = cr.ok ? await cr.json().catch(() => null) : null;
+  if (!current?.ok) return { ok: true, changed: false };
+  const { form, secret } = pending;
+  if (!secret && JSON.stringify(form) === JSON.stringify(cwAppAuthOidcState(current))) return { ok: true, changed: false };
+  let r;
+  try {
+    r = await fetch("/api/app-auth/oidc/config", {
       method: "POST",
       cache: "no-store",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...form, client_secret: secret, keep_client_secret: !secret }),
     });
-    const data = await r.json().catch(() => null);
-    if (!r.ok || !data?.ok) throw new Error(data?.error || `OIDC save failed (${r.status})`);
-    if (secret) secret.value = "";
-    await cwAppAuthOidcRefreshStatus();
-    try { _cwShowToast?.("OIDC configuration saved", true); } catch {}
-  } catch (e) {
-    try { _cwShowToast?.(String(e?.message || e || "OIDC save failed"), false); } catch {}
-  } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.textContent = original;
-    }
+  } catch {
+    return { ok: false, error: "OIDC settings could not be saved" };
   }
+  const data = await r.json().catch(() => null);
+  if (!r.ok || !data?.ok) return { ok: false, error: data?.error || `OIDC save failed (${r.status})` };
+  const secretEl = document.getElementById("app_auth_oidc_client_secret");
+  if (secretEl) secretEl.value = "";
+  await cwAppAuthOidcRefreshStatus();
+  return { ok: true, changed: true };
 };
 
 window.cwAppAuthOidcLink = async function cwAppAuthOidcLink() {
@@ -374,6 +410,11 @@ window.cwAppAuthOidcLink = async function cwAppAuthOidcLink() {
     if (btn) {
       btn.disabled = true;
       btn.textContent = "Waiting for OIDC...";
+    }
+    const saved = await window.cwAppAuthOidcSavePending();
+    if (!saved?.ok) {
+      if (popup && !popup.closed) popup.close();
+      throw new Error(saved?.error || "OIDC save failed");
     }
     const r = await fetch("/api/app-auth/oidc/link/start", {
       method: "POST",
