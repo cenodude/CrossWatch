@@ -25,6 +25,7 @@ EXPECT_VALUE_MAX = 256
 PROVISION_ACCESS = ("full", "readonly")
 GROUPS_MAX = 50
 PROVISIONED_KEY = "oidc_provisioned"
+BUTTON_ICONS = ("authentik", "authelia", "keycloak", "google", "microsoft", "okta", "auth0")
 
 _PENDING_FLOWS: dict[str, dict[str, Any]] = {}
 _DISCOVERY_CACHE: dict[str, tuple[int, dict[str, Any]]] = {}
@@ -127,6 +128,23 @@ def _norm_groups_claim(value: Any) -> str:
     return str(value or "").strip()[:64] or "groups"
 
 
+def _norm_button_label(value: Any) -> str:
+    return " ".join(str(value or "").split())[:40] or "OIDC"
+
+
+def button_label(cfg: dict[str, Any]) -> str:
+    return _norm_button_label(_oidc_cfg(cfg).get("button_label"))
+
+
+def _norm_button_icon(value: Any) -> str:
+    clean = str(value or "").strip().lower()
+    return clean if clean in BUTTON_ICONS else ""
+
+
+def button_icon(cfg: dict[str, Any]) -> str:
+    return _norm_button_icon(_oidc_cfg(cfg).get("button_icon"))
+
+
 def _norm_provision_access(value: Any) -> str:
     clean = str(value or "").strip().lower()
     return clean if clean in PROVISION_ACCESS else "full"
@@ -144,6 +162,8 @@ def sanitize_config(raw: dict[str, Any] | None, previous: dict[str, Any] | None 
         "client_id": str(raw.get("client_id") or "").strip(),
         "client_secret": secret,
         "scopes": _norm_scopes(raw.get("scopes")),
+        "button_label": _norm_button_label(raw.get("button_label", previous.get("button_label"))),
+        "button_icon": _norm_button_icon(raw.get("button_icon", previous.get("button_icon"))),
         "provision": bool(raw.get("provision", previous.get("provision", False))),
         "groups_claim": _norm_groups_claim(raw.get("groups_claim", previous.get("groups_claim"))),
         "allowed_groups": _norm_groups(raw.get("allowed_groups", previous.get("allowed_groups"))),
@@ -159,6 +179,8 @@ def public_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "client_id": str(oidc.get("client_id") or ""),
         "client_secret_configured": bool(str(oidc.get("client_secret") or "").strip()),
         "scopes": _norm_scopes(oidc.get("scopes")),
+        "button_label": _norm_button_label(oidc.get("button_label")),
+        "button_icon": _norm_button_icon(oidc.get("button_icon")),
         "provision": bool(oidc.get("provision", False)),
         "groups_claim": _norm_groups_claim(oidc.get("groups_claim")),
         "allowed_groups": _norm_groups(oidc.get("allowed_groups")),

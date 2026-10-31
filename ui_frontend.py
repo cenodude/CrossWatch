@@ -1897,39 +1897,49 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                         <div class="cw-auth-oidc-field">
                           <div class="cw-field-label-row">
                             <strong>OIDC sign-in</strong>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="OIDC sign-in: Configure an external OpenID Connect provider and link this administrator account." aria-label="OIDC sign-in help">help</button>
+                            <button type="button" class="cw-field-help material-symbols-rounded" title="OIDC sign-in: Configure an external OpenID Connect provider such as Authentik, Authelia or Keycloak. Link it to this administrator account here, and to profile logins in the Profile wizard." aria-label="OIDC sign-in help">help</button>
                           </div>
                           <div class="sub" id="app_auth_oidc_state">Not configured</div>
                           <div class="cw-app-oidc-grid">
-                            <select id="app_auth_oidc_enabled" aria-label="OIDC enabled">
+                            <select id="app_auth_oidc_enabled" aria-label="OIDC enabled" title="Turns the OIDC sign-in button on the login page on or off.">
                               <option value="false">Disabled</option>
                               <option value="true">Enabled</option>
                             </select>
-                            <input id="app_auth_oidc_issuer" type="url" autocomplete="off" placeholder="Issuer URL">
-                            <input id="app_auth_oidc_client_id" type="text" autocomplete="off" placeholder="Client ID">
-                            <input id="app_auth_oidc_client_secret" type="password" autocomplete="new-password" placeholder="Client secret">
-                            <input id="app_auth_oidc_scopes" type="text" autocomplete="off" placeholder="openid profile email">
+                            <input id="app_auth_oidc_issuer" type="url" autocomplete="off" placeholder="Issuer URL" aria-label="Issuer URL" title="Required. The issuer URL of your provider, for example https://auth.example.com/application/o/crosswatch/ for Authentik. CrossWatch reads the provider settings from it.">
+                            <input id="app_auth_oidc_client_id" type="text" autocomplete="off" placeholder="Client ID" aria-label="Client ID" title="Required. The client ID of the CrossWatch application at your provider. Set its redirect URI to https://your-crosswatch/api/app-auth/oidc/callback.">
+                            <input id="app_auth_oidc_client_secret" type="password" autocomplete="new-password" placeholder="Client secret" aria-label="Client secret" title="The client secret from your provider. Leave empty for a public client. Once saved it is never shown again; leave the field blank to keep it.">
+                            <input id="app_auth_oidc_scopes" type="text" autocomplete="off" placeholder="openid profile email" aria-label="Scopes" title="Optional. Scopes to request, separated by spaces. Default: openid profile email. openid is always added.">
+                            <input id="app_auth_oidc_button_label" type="text" maxlength="40" autocomplete="off" placeholder="Button label (OIDC)" aria-label="Sign-in button label" title="Optional. Text on the login page button, for example Sign in with Authentik. Empty shows OIDC.">
+                            <select id="app_auth_oidc_button_icon" aria-label="Sign-in button icon" title="Optional. Icon shown before the text on the login page button.">
+                              <option value="">No button icon</option>
+                              <option value="authentik">Authentik</option>
+                              <option value="authelia">Authelia</option>
+                              <option value="keycloak">Keycloak</option>
+                              <option value="google">Google</option>
+                              <option value="microsoft">Microsoft</option>
+                              <option value="okta">Okta</option>
+                              <option value="auth0">Auth0</option>
+                            </select>
                           </div>
                           <div class="cw-field-label-row" style="margin-top:0.75rem">
                             <strong>New logins from OIDC</strong>
                             <button type="button" class="cw-field-help material-symbols-rounded" title="New logins from OIDC: Members of an allowed group get a login and an empty profile on their first OIDC sign-in. You assign their accounts and pairs afterwards. Removing them from the group at your identity provider blocks their OIDC sign-in." aria-label="New logins from OIDC help">help</button>
                           </div>
                           <div class="cw-app-oidc-grid">
-                            <select id="app_auth_oidc_provision" aria-label="Create logins from OIDC">
+                            <select id="app_auth_oidc_provision" aria-label="Create logins from OIDC" title="Off by default. When on, members of an allowed group get a login and an empty profile on their first OIDC sign-in. Needs at least one allowed group.">
                               <option value="false">Do not create logins</option>
                               <option value="true">Create logins on first sign-in</option>
                             </select>
-                            <select id="app_auth_oidc_provision_access" aria-label="Access for new logins">
+                            <select id="app_auth_oidc_provision_access" aria-label="Access for new logins" title="Access for logins created from OIDC. Full access can change their own data, Read-only can only look. Never administrator. You can change it per login later.">
                               <option value="full">New logins: Full access</option>
                               <option value="readonly">New logins: Read-only</option>
                             </select>
-                            <input id="app_auth_oidc_allowed_groups" type="text" autocomplete="off" placeholder="Allowed groups, comma separated" aria-label="Allowed groups">
-                            <input id="app_auth_oidc_groups_claim" type="text" autocomplete="off" placeholder="Groups claim (groups)" aria-label="Groups claim">
+                            <input id="app_auth_oidc_allowed_groups" type="text" autocomplete="off" placeholder="Allowed groups, comma separated" aria-label="Allowed groups" title="Required when creating logins. Group names exactly as your provider sends them, separated by commas. Logins created from OIDC are checked against these groups on every sign-in.">
+                            <input id="app_auth_oidc_groups_claim" type="text" autocomplete="off" placeholder="Groups claim (groups)" aria-label="Groups claim" title="Optional. The claim that holds the group names. Empty uses groups, which Authentik sends by default.">
                           </div>
                           <div class="cw-app-oidc-actions">
-                            <button class="btn primary" type="button" id="btn-app-auth-oidc-save" onclick="cwAppAuthOidcSaveConfig?.()">Save OIDC</button>
-                            <button class="btn primary" type="button" id="btn-app-auth-oidc-link" onclick="cwAppAuthOidcLink?.()">Link OIDC account</button>
-                            <button class="btn" type="button" id="btn-app-auth-oidc-unlink" onclick="cwAppAuthOidcUnlink?.()">Unlink</button>
+                            <button class="btn primary" type="button" id="btn-app-auth-oidc-link" onclick="cwAppAuthOidcLink?.()" title="Saves the OIDC settings, then opens your provider to link your own OIDC account to this administrator login.">Link OIDC account</button>
+                            <button class="btn" type="button" id="btn-app-auth-oidc-unlink" onclick="cwAppAuthOidcUnlink?.()" title="Removes the OIDC account from this administrator login. Password sign-in keeps working.">Unlink</button>
                           </div>
                         </div>
                       </div>
