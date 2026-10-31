@@ -13,6 +13,9 @@ from _logging import log as _cw_log
 from cw_platform.playlists import (
     BUILTIN_RULESETS,
     PlaylistResource,
+    PlaylistLinkError,
+    PlaylistReadOnlyError,
+    PlaylistUnavailableError,
     playlist_capabilities,
     supports_playlists,
     validate_ruleset,
@@ -171,6 +174,45 @@ def list_resources(cfg: Mapping[str, Any], provider: str, instance: str | None =
         res["resources"] = []
         return res
     return {"ok": True, "provider": name, "instance": inst, "resources": [_resource_with_manage_flags(r, ops) for r in resources]}
+
+
+def _unavailable_error(exc: PlaylistUnavailableError, subject: str) -> dict[str, Any]:
+    if isinstance(exc, PlaylistLinkError):
+        return {"ok": False, "error": "That is not a list link this provider supports"}
+    if isinstance(exc, PlaylistReadOnlyError):
+        return {"ok": False, "error": f"{subject} is read only"}
+    return {"ok": False, "error": f"{subject} is private, deleted or no longer shared with you"}
+
+
+def _resolve_resource(cfg: Mapping[str, Any], ops: Any, provider: str, instance: str, ref: str) -> PlaylistResource:
+    resolver = getattr(ops, "resolve_playlist", None)
+    if not callable(resolver):
+        raise PlaylistLinkError("provider cannot resolve links")
+    view = build_provider_config_view(cfg, provider, instance)
+    res = resolver(view, ref, instance=instance)
+    if not isinstance(res, PlaylistResource):
+        raise PlaylistUnavailableError("list not found")
+    return res
+
+
+def resolve_provider_playlist(cfg: Mapping[str, Any], provider: str, instance: str | None, ref: Any) -> dict[str, Any]:
+    name = str(provider or "").strip().upper()
+    inst = normalize_instance_id(instance)
+    raw = str(ref or "").strip()
+    if not raw:
+        return {"ok": False, "error": "list link required"}
+    ops = _providers().get(name)
+    if not ops or not supports_playlists(ops):
+        return {"ok": False, "error": "provider not playlist-capable"}
+    if not callable(getattr(ops, "resolve_playlist", None)):
+        return {"ok": False, "error": "this provider cannot add lists by link"}
+    try:
+        res = _resolve_resource(cfg, ops, name, inst, raw)
+    except PlaylistUnavailableError as e:
+        return _unavailable_error(e, "That list")
+    except Exception as e:
+        return _internal_playlist_error("resolve", e, provider=name, instance=inst)
+    return {"ok": True, "provider": name, "instance": inst, "resource": _resource_with_manage_flags(res, ops)}
 
 
 def create_provider_playlist(
@@ -453,44 +495,52 @@ def provider_count_summary(cfg: Mapping[str, Any]) -> dict[str, Any]:
     return {"providers": counts, "providers_instances": inst_counts}
 
 
-def _snapshot_count(cfg: Mapping[str, Any], provider: str, instance: str, playlist_id: str) -> int | None:
+def _endpoint_snapshot(cfg: Mapping[str, Any], provider: str, instance: str, playlist_id: str) -> Any:
     ops = _providers().get(str(provider or "").upper())
     if not ops or not supports_playlists(ops) or not playlist_id:
         return None
     try:
         view = build_provider_config_view(cfg, provider, instance)
-        snap = ops.get_playlist_snapshot(view, playlist_id, instance=instance)
-        return len(snap.items)
+        return ops.get_playlist_snapshot(view, playlist_id, instance=instance)
     except Exception:
         return None
 
 
-def _resource_meta(cfg: Mapping[str, Any], provider: str, instance: str, playlist_id: str) -> dict[str, Any]:
+def _resource_meta_from(res: PlaylistResource) -> dict[str, Any]:
+    extra = res.extra or {}
+    out: dict[str, Any] = {
+        "playlist_type": str(extra.get("endpoint_type") or res.kind or "").strip().lower(),
+        "media_types": list(res.media_types or []),
+        "source_kind": str(extra.get("source_kind") or extra.get("endpoint_type") or res.kind or "").strip().lower(),
+        "smart": bool(res.is_smart),
+        "discovery": bool(getattr(res, "is_discovery", False)),
+        "virtual": bool(extra.get("virtual")),
+        "can_read": bool(res.can_read),
+        "can_add": bool(res.can_add),
+        "can_remove": bool(res.can_remove),
+        "can_reorder": bool(res.can_reorder),
+        "destructive_remove": bool(extra.get("destructive_remove")),
+        "remove_warning": str(extra.get("remove_warning") or "").strip(),
+        "warnings": [str(w) for w in (extra.get("warnings") or []) if str(w).strip()],
+    }
+    return {k: v for k, v in out.items() if v not in ("", [], None)}
+
+
+def _resource_meta(cfg: Mapping[str, Any], provider: str, instance: str, playlist_id: str, *, by_name: bool = False) -> dict[str, Any]:
     ops = _providers().get(str(provider or "").upper())
     if not ops or not supports_playlists(ops) or not playlist_id:
         return {}
     try:
         view = build_provider_config_view(cfg, provider, instance)
-        for res in ops.list_playlist_resources(view, instance=instance) or []:
+        resources = list(ops.list_playlist_resources(view, instance=instance) or [])
+        for res in resources:
             raw_id = str((res.extra or {}).get("raw_id") or "").strip()
             if res.id == playlist_id or raw_id == playlist_id:
-                extra = res.extra or {}
-                out: dict[str, Any] = {
-                    "playlist_type": str(extra.get("endpoint_type") or res.kind or "").strip().lower(),
-                    "media_types": list(res.media_types or []),
-                    "source_kind": str(extra.get("source_kind") or extra.get("endpoint_type") or res.kind or "").strip().lower(),
-                    "smart": bool(res.is_smart),
-                    "discovery": bool(getattr(res, "is_discovery", False)),
-                    "virtual": bool(extra.get("virtual")),
-                    "can_read": bool(res.can_read),
-                    "can_add": bool(res.can_add),
-                    "can_remove": bool(res.can_remove),
-                    "can_reorder": bool(res.can_reorder),
-                    "destructive_remove": bool(extra.get("destructive_remove")),
-                    "remove_warning": str(extra.get("remove_warning") or "").strip(),
-                    "warnings": [str(w) for w in (extra.get("warnings") or []) if str(w).strip()],
-                }
-                return {k: v for k, v in out.items() if v not in ("", [], None)}
+                return _resource_meta_from(res)
+        if by_name and not playlist_id.isdigit():
+            for res in resources:
+                if res.name == playlist_id:
+                    return _resource_meta_from(res)
     except Exception:
         return {}
     return {}
@@ -503,10 +553,13 @@ def _refresh_endpoint_meta(cfg: dict[str, Any], endpoint_id: str) -> dict[str, A
             provider = str(ep.get("provider") or "").strip().upper()
             instance = normalize_instance_id(ep.get("instance"))
             playlist_id = str(ep.get("playlist_id") or "")
-            ep.update(_resource_meta(cfg, provider, instance, playlist_id))
-            cnt = _snapshot_count(cfg, provider, instance, playlist_id)
-            if cnt is not None:
-                ep["item_count"] = cnt
+            meta = _resource_meta(cfg, provider, instance, playlist_id)
+            snap = _endpoint_snapshot(cfg, provider, instance, playlist_id)
+            if not meta and snap is not None and isinstance(getattr(snap, "resource", None), PlaylistResource):
+                meta = _resource_meta_from(snap.resource)
+            ep.update(meta)
+            if snap is not None:
+                ep["item_count"] = len(snap.items)
             ep["last_synced"] = int(time.time())
             return dict(ep)
     return None
@@ -649,6 +702,22 @@ def upsert_endpoint(cfg: dict[str, Any], payload: Mapping[str, Any]) -> dict[str
                 instance=clean["instance"],
                 media_type=media_type,
             )
+
+    pid = clean["playlist_id"]
+    resolvable = bool(pid) and callable(getattr(ops, "resolve_playlist", None))
+    known_meta = _resource_meta(cfg, clean["provider"], clean["instance"], pid, by_name=True) if resolvable and "/" not in pid else {}
+    if known_meta:
+        clean.update(known_meta)
+    elif resolvable:
+        try:
+            linked = _resolve_resource(cfg, ops, clean["provider"], clean["instance"], pid)
+        except PlaylistUnavailableError as e:
+            return _unavailable_error(e, "That list")
+        except Exception as e:
+            return _internal_playlist_error("resolve", e, provider=clean["provider"], instance=clean["instance"])
+        clean.update(_resource_meta_from(linked))
+        clean["playlist_id"] = linked.id
+        clean["playlist_name"] = clean["playlist_name"] or linked.name
 
     if not (clean["playlist_id"] or clean.get("pending_create")):
         return {"ok": False, "error": "playlist required"}
@@ -1221,6 +1290,9 @@ def preview_mapping(cfg: Mapping[str, Any], mapping_id: str) -> dict[str, Any]:
     try:
         with _mapping_env(resolved):
             plan = runner.preview_mapping(cfg, resolved)
+    except PlaylistUnavailableError as e:
+        _internal_playlist_error("preview", e, mapping_id=mapping_id)
+        return _unavailable_error(e, "A list in this sync")
     except runner.PlaylistRunError as e:
         return _internal_playlist_error("preview", e, mapping_id=mapping_id)
     except Exception as e:
@@ -1237,6 +1309,9 @@ def run_mapping(cfg: Mapping[str, Any], mapping_id: str, *, dry_run: bool = Fals
             result = runner.run_mapping(cfg, resolved, dry_run=dry_run)
         if not dry_run and isinstance(cfg, dict):
             refresh_mapping_endpoints(cfg, resolved)
+    except PlaylistUnavailableError as e:
+        _internal_playlist_error("run", e, mapping_id=mapping_id, dry_run=dry_run)
+        return _unavailable_error(e, "A list in this sync")
     except runner.PlaylistRunError as e:
         return _internal_playlist_error("run", e, mapping_id=mapping_id, dry_run=dry_run)
     except Exception as e:
