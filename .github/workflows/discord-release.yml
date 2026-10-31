@@ -1,0 +1,30 @@
+name: Discord release notice
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      # Releases created with GITHUB_TOKEN are handled in release.yml instead.
+      - name: Notify Discord chat
+        env:
+          DISCORD_CHAT_WEBHOOK: ${{ secrets.DISCORD_CHAT_WEBHOOK }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          url = os.environ.get("DISCORD_CHAT_WEBHOOK", "")
+          if not url:
+              print("Discord chat notice skipped: DISCORD_CHAT_WEBHOOK is not configured")
+              raise SystemExit(0)
+          tag = os.environ["RELEASE_TAG"]
+          payload = {"content": f"📦 New CrossWatch release **{tag}**, see <#1558090784983621792>.", "allowed_mentions": {"parse": []}, "flags": 4}
+          request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "User-Agent": "CrossWatch-release-notifier"})
+          with urllib.request.urlopen(request, timeout=20) as response:
+              print(f"Discord chat notice sent ({response.status})")
+          PY
