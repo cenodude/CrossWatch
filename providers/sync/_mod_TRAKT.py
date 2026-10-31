@@ -106,7 +106,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.9"
+__VERSION__ = "2.0"
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
 os.environ.setdefault("CW_TRAKT_UA", http_user_agent("TRAKT", override_env="CW_TRAKT_UA"))
@@ -132,6 +132,7 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "reorder": True,
     "smart": False,
     "discovery": True,
+    "resolve": True,
     "media_types": ["movies", "shows", "seasons", "episodes"],
 }
 
@@ -921,6 +922,9 @@ class _TraktOPS:
 
     def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None):
         return self._pl().get_snapshot(self._playlist_adapter(cfg, instance), playlist_id)
+
+    def resolve_playlist(self, cfg: Mapping[str, Any], ref: str, *, instance: str | None = None):
+        return self._pl().resolve(self._playlist_adapter(cfg, instance), ref)
 
     def create_playlist(
         self,

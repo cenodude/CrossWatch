@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from cw_platform.id_map import canonical_key
-from cw_platform.playlists import PlaylistItem, PlaylistResource, PlaylistSnapshot, PlaylistUserError
+from cw_platform.playlists import PlaylistItem, PlaylistResource, PlaylistSnapshot, PlaylistUnavailableError, PlaylistUserError
 from cw_platform import playlists_runner as runner
 from services import playlists as svc
 
@@ -513,3 +513,112 @@ def test_endpoint_edit_refreshes_generated_pair(config_base, fake_providers):
     assert upd["ok"]
     pair = next(p for p in cfg["pairs"] if p["id"] == pair_id)
     assert pair["target_instance"] == "second"
+
+
+def _public_res(provider: str, pid: str = "555", name: str = "Noir by snoak") -> PlaylistResource:
+    return PlaylistResource(provider=provider, id=pid, name=name, extra={"endpoint_type": "public_list", "public_list": True, "can_rename": False, "can_delete": False})
+
+
+class LinkOps(FakeOps):
+    def resolve_playlist(self, cfg, ref, *, instance=None):
+        if "missing" in ref:
+            raise PlaylistUnavailableError("The Trakt list missing is private or no longer exists")
+        if "boom" in ref:
+            raise RuntimeError("token=secret-from-provider")
+        if ref == "gone":
+            return _public_res(self._name, "gone", "Gone")
+        return _public_res(self._name)
+
+    def get_playlist_snapshot(self, cfg, playlist_id, *, instance=None):
+        if playlist_id == "555":
+            return PlaylistSnapshot(resource=_public_res(self._name), items=[PlaylistItem.from_media(_movie(5))])
+        if playlist_id == "gone":
+            raise PlaylistUnavailableError("The Trakt list Gone no longer exists")
+        return super().get_playlist_snapshot(cfg, playlist_id, instance=instance)
+
+
+@pytest.fixture
+def link_providers(fake_providers):
+    fake_providers["TRAKT"] = LinkOps("TRAKT", fake_providers["TRAKT"].pl)
+    return fake_providers
+
+
+def test_resolve_provider_playlist_messages(config_base, link_providers):
+    ok = svc.resolve_provider_playlist(_cfg(), "TRAKT", "default", "https://trakt.tv/users/snoak/lists/noir")
+    assert ok["ok"] and ok["resource"]["id"] == "555" and ok["resource"]["can_rename"] is False
+    missing = svc.resolve_provider_playlist(_cfg(), "TRAKT", "default", "https://trakt.tv/users/x/lists/missing")
+    assert missing == {"ok": False, "error": "The Trakt list missing is private or no longer exists"}
+    assert svc.resolve_provider_playlist(_cfg(), "TRAKT", "default", "https://trakt.tv/boom") == {"ok": False, "error": "resolve failed"}
+    assert svc.resolve_provider_playlist(_cfg(), "PLEX", "default", "https://x/y")["error"] == "this provider cannot add lists by link"
+
+
+def test_endpoint_from_link_is_stored_read_only(config_base, link_providers):
+    cfg = _cfg()
+    res = svc.upsert_endpoint(cfg, {"name": "Noir", "provider": "TRAKT", "instance": "default", "playlist_id": "https://trakt.tv/users/snoak/lists/noir"})
+    ep = res["endpoint"]
+    assert (ep["playlist_id"], ep["playlist_name"], ep["playlist_type"]) == ("555", "Noir by snoak", "public_list")
+    assert ep["can_add"] is False and ep["can_remove"] is False and ep["item_count"] == 1
+    dst = svc.upsert_endpoint(cfg, {"name": "Plex dst", "provider": "PLEX", "instance": "default", "playlist_id": "T1"})["endpoint"]["id"]
+    assert svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": ep["id"], "target_endpoints": [dst]})["ok"]
+    ok, why = svc.validate_mapping(cfg, {"name": "Map2", "source_endpoint": dst, "target_endpoints": [ep["id"]]})
+    assert not ok and "read only" in why
+
+
+def test_endpoint_from_bad_link_returns_message(config_base, link_providers):
+    res = svc.upsert_endpoint(_cfg(), {"name": "Noir", "provider": "TRAKT", "instance": "default", "playlist_id": "https://trakt.tv/users/x/lists/missing"})
+    assert res == {"ok": False, "error": "The Trakt list missing is private or no longer exists"}
+
+
+def test_unavailable_source_list_message_reaches_the_user(config_base, link_providers):
+    cfg = _cfg()
+    src = svc.upsert_endpoint(cfg, {"name": "Gone", "provider": "TRAKT", "instance": "default", "playlist_id": "gone"})["endpoint"]["id"]
+    dst = svc.upsert_endpoint(cfg, {"name": "Plex dst", "provider": "PLEX", "instance": "default", "playlist_id": "T1"})["endpoint"]["id"]
+    mid = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": src, "target_endpoints": [dst]})["mapping"]["id"]
+    assert svc.run_mapping(cfg, mid) == {"ok": False, "error": "The Trakt list Gone no longer exists"}
+    assert svc.preview_mapping(cfg, mid) == {"ok": False, "error": "The Trakt list Gone no longer exists"}
+
+
+def test_raw_id_endpoint_keeps_read_only_flags_when_snapshot_fails(config_base, link_providers):
+    cfg = _cfg()
+    ep = svc.upsert_endpoint(cfg, {"name": "Gone", "provider": "TRAKT", "instance": "default", "playlist_id": "gone"})["endpoint"]
+    assert (ep["playlist_id"], ep["playlist_name"], ep["playlist_type"]) == ("gone", "Gone", "public_list")
+    assert ep["can_add"] is False and ep["can_remove"] is False and "item_count" not in ep
+    dst = svc.upsert_endpoint(cfg, {"name": "Plex dst", "provider": "PLEX", "instance": "default", "playlist_id": "T1"})["endpoint"]["id"]
+    ok, why = svc.validate_mapping(cfg, {"name": "Map1", "source_endpoint": dst, "target_endpoints": [ep["id"]]})
+    assert not ok and "read only" in why
+
+
+def test_own_list_endpoint_is_not_resolved(config_base, link_providers, monkeypatch):
+    monkeypatch.setattr(link_providers["TRAKT"], "resolve_playlist", lambda *a, **k: (_ for _ in ()).throw(AssertionError("resolved")))
+    ep = svc.upsert_endpoint(_cfg(), {"name": "Trakt src", "provider": "TRAKT", "instance": "default", "playlist_id": "L1"})["endpoint"]
+    assert ep["playlist_id"] == "L1" and ep["can_add"] is True
+
+
+def test_listed_read_only_flags_survive_failed_refresh(config_base, link_providers, monkeypatch):
+    ops = link_providers["TRAKT"]
+    ops.pl["pub"] = {"name": "Pub", "items": [], "can_add": False, "can_remove": False, "extra": {"endpoint_type": "liked_list", "public_list": True}}
+    real_list = ops.list_playlist_resources
+    calls = {"n": 0}
+
+    def flaky(cfg, *, instance=None):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("trakt down")
+        return real_list(cfg, instance=instance)
+
+    def broken_snapshot(cfg, playlist_id, *, instance=None):
+        raise RuntimeError("trakt down")
+
+    monkeypatch.setattr(ops, "list_playlist_resources", flaky)
+    monkeypatch.setattr(ops, "get_playlist_snapshot", broken_snapshot)
+    monkeypatch.setattr(ops, "resolve_playlist", lambda *a, **k: (_ for _ in ()).throw(AssertionError("resolved")))
+    cfg = _cfg()
+    ep = svc.upsert_endpoint(cfg, {"name": "Pub", "provider": "TRAKT", "instance": "default", "playlist_id": "pub"})["endpoint"]
+    assert ep["can_add"] is False and ep["can_remove"] is False and ep["playlist_type"] == "liked_list"
+    assert svc._endpoint_writable(cfg, ep["id"]) is False
+
+
+def test_name_based_endpoint_is_saved_without_link_resolve(config_base, link_providers, monkeypatch):
+    monkeypatch.setattr(link_providers["TRAKT"], "resolve_playlist", lambda *a, **k: (_ for _ in ()).throw(AssertionError("resolved")))
+    res = svc.upsert_endpoint(_cfg(), {"name": "Trakt src", "provider": "TRAKT", "instance": "default", "playlist_id": "src1"})
+    assert res["ok"] and res["endpoint"]["playlist_id"] == "src1" and res["endpoint"]["can_add"] is True

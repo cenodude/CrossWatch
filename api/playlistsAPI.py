@@ -131,6 +131,17 @@ def api_playlist_resources(
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
 
 
+@router.post("/resources/resolve")
+def api_playlist_resource_resolve(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> JSONResponse:
+    cfg = load_config() or {}
+    provider = str(payload.get("provider") or "")
+    instance = str(payload.get("instance") or "default")
+    if not user_can_access_instance(cfg, request_user(request), provider, instance):
+        return _scope_denied()
+    res = svc.resolve_provider_playlist(cfg, provider, instance, payload.get("ref"))
+    return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
+
+
 @router.post("/resources")
 def api_playlist_resource_create(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> JSONResponse:
     cfg = load_config() or {}
