@@ -52,6 +52,17 @@ def test_random_sort_shuffles_and_other_values_keep_list_order(monkeypatch) -> N
     assert svc.sort_rows([{"id": 1}, {"id": 2}], "") == [{"id": 1}, {"id": 2}]
     assert svc.sort_rows([{"id": 1}, {"id": 2}], "title") == [{"id": 1}, {"id": 2}]
 
+
+def test_page_rows_slices_by_offset_and_limit_and_ignores_bad_values() -> None:
+    rows = [{"id": n} for n in range(1, 6)]
+    assert svc.page_rows(rows, "1", "2") == [{"id": 2}, {"id": 3}]
+    assert svc.page_rows(rows, "3", "") == [{"id": 4}, {"id": 5}]
+    assert svc.page_rows(rows, "", "2") == [{"id": 1}, {"id": 2}]
+    assert svc.page_rows(rows, "9", "2") == []
+    assert svc.page_rows(rows, "-1", "abc") == rows
+    assert svc.page_rows(rows, "x", "0") == rows
+
+
 def test_publish_is_stable_per_list_and_a_new_key_replaces_the_old_one(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(svc, "_path", lambda: tmp_path / "published_lists.json")
     feed = svc.publish("default", "cwpl_1")
@@ -92,6 +103,19 @@ def test_public_address_needs_the_key_and_records_the_read(tmp_path, monkeypatch
     assert mixed.status_code == 200
     assert [(row["id"], row["mediatype"]) for row in mixed.json()] == [(247718, "show"), (12, "movie"), (949, "movie")]
     assert svc.feeds()[feed["id"]]["last_fetch_format"] == "mdblist.json"
+    monkeypatch.setattr(svc, "list_items", lambda cfg, feed: MIXED)
+    paged = client.get(f"{base}/mdblist.json?key={feed['key']}&offset=1&limit=2")
+    assert paged.status_code == 200
+    assert [(row["rank"], row["mediatype"]) for row in paged.json()] == [(2, "show"), (3, "show")]
+    assert paged.headers["x-total-items"] == "5"
+    assert client.get(f"{base}/mdblist.json?key={feed['key']}&offset=abc&limit=-3").status_code == 200
+    shuffled = client.get(f"{base}/mdblist.json?key={feed['key']}&sort=random&limit=2")
+    assert [row["rank"] for row in shuffled.json()] == [5, 4]
+    assert shuffled.headers["x-total-items"] == "5"
+    monkeypatch.setattr(svc, "list_items", lambda cfg, feed: ITEMS)
+    kometa = client.get(f"{base}/kometa-movies.json?key={feed['key']}&offset=1&limit=1")
+    assert kometa.json() == [{"tmdb_id": 12}]
+    assert kometa.headers["x-total-items"] == "2"
 
 
 class _Lists:

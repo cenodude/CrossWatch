@@ -97,7 +97,7 @@ def api_unpublish_list(feed_id: str = FPath(...), request: Request = cast(Reques
 
 @public_router.get("/published/{feed_id}/{name}")
 def published_list(feed_id: str = FPath(...), name: str = FPath(...), key: str = Query(""),
-                   sort: str = Query("")) -> JSONResponse:
+                   sort: str = Query(""), offset: str = Query(""), limit: str = Query("")) -> JSONResponse:
     headers = {"Cache-Control": "no-store"}
     feed = svc.authorized(feed_id, key)
     if not feed or name not in svc.FORMATS:
@@ -107,4 +107,5 @@ def published_list(feed_id: str = FPath(...), name: str = FPath(...), key: str =
         return JSONResponse({"ok": False, "error": "List unavailable"}, status_code=404, headers=headers)
     rows, skipped = svc.format_items(items, name)
     svc.touch(feed_id, name)
-    return JSONResponse(svc.sort_rows(rows, sort), headers={**headers, "X-CrossWatch-Skipped": str(skipped)})
+    page = svc.page_rows(svc.sort_rows(rows, sort), offset, limit)
+    return JSONResponse(page, headers={**headers, "X-CrossWatch-Skipped": str(skipped), "X-Total-Items": str(len(rows))})
