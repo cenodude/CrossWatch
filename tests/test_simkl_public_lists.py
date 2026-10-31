@@ -2,6 +2,7 @@
 # SIMKL custom lists: followed, shared and public lists by link
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from types import SimpleNamespace
+from urllib.parse import urlparse
 
 import pytest
 
@@ -72,7 +73,7 @@ def _custom(resources):
 
 def test_capabilities_offer_link_resolve():
     caps = playlist_capabilities(mod.OPS)
-    assert caps["resolve"] and "simkl.com/" in caps["link_example"]
+    assert caps["resolve"] and urlparse(caps["link_example"]).hostname == "simkl.com"
     assert callable(getattr(mod.OPS, "resolve_playlist", None))
 
 
