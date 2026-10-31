@@ -7,6 +7,7 @@ const MODULES_ENDPOINT = "/api/modules/versions";
 const RELEASES_URL = "https://github.com/cenodude/CrossWatch/releases";
 const WIKI_URL = "https://wiki.crosswatch.app/";
 const COMMUNITY_URL = "https://github.com/cenodude/CrossWatch/discussions";
+const DISCORD_URL = "https://discord.gg/uA9vFUr9M";
 const SUPPORT_URL = "https://buymeacoffee.com/cenodude";
 const TTL = 60_000;
 
@@ -76,19 +77,21 @@ ul{display:grid;gap:6px;margin:2px 0 0;padding-left:18px}
 li::marker{color:#997bff}
 .help-section{margin-top:16px}
 .help-label{margin-bottom:10px;font-size:14px;font-weight:800}
-.help-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.help-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .helpLink{display:grid;grid-template-columns:44px minmax(0,1fr) auto;align-items:center;gap:14px;padding:16px;border:1px solid var(--border);border-radius:16px;background:var(--panel);color:var(--text);text-decoration:none}
 .helpLink:hover{border-color:var(--accent)}
 .helpIcon{display:grid;place-items:center;width:44px;height:44px;border:1px solid rgba(124,92,255,.35);border-radius:12px;background:var(--cw-about-icon-bg,#2e2943);color:var(--cw-about-icon-fg,#b59eff)}
 .support-card .helpIcon{background:var(--cw-about-support-bg,#203b32);border-color:rgba(77,184,136,.35);color:var(--cw-about-support-fg,#66d1a0)}
+.discord-card .helpIcon{background:var(--cw-about-discord-bg,#272b4f);border-color:rgba(88,101,242,.45);color:var(--cw-about-discord-fg,#9aa3ff)}
 .helpIcon .material-symbols-rounded{font-size:25px}
+.helpIcon svg{width:24px;height:24px;fill:currentColor}
 .helpCopy{display:grid;gap:4px;min-width:0}
 .helpEyebrow{color:var(--muted);font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase}
 .helpTitle{font-size:15px;font-weight:800;line-height:1.3}
 .helpSub{color:var(--muted);font-size:12px;line-height:1.45}
 .helpArrow{color:var(--muted);font-size:21px}
 :is(button,a,summary):focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-@media(max-width:1000px){.lede-card{grid-template-columns:230px minmax(0,1fr);gap:20px}.lede-copy{padding-left:20px}.lede-wordmark{font-size:24px}}
+@media(max-width:1000px){.help-grid{grid-template-columns:1fr}.lede-card{grid-template-columns:230px minmax(0,1fr);gap:20px}.lede-copy{padding-left:20px}.lede-wordmark{font-size:24px}}
 @media(max-width:650px){.about-backdrop{padding:12px}.about-panel{max-height:calc(100dvh - 24px);border-radius:16px}.about-head{padding:16px 60px 16px 16px}.about-x{top:16px;right:16px}.about-actions{gap:6px}.chip,.about-link{font-size:11px;padding:7px 10px}.about-body{padding:0 16px 16px}.update{grid-template-columns:42px minmax(0,1fr);padding:14px}.update .about-link{grid-column:2;justify-self:start}.lede-card{grid-template-columns:1fr;gap:20px;padding:18px}.lede-brand{grid-template-columns:48px auto;justify-content:start}.lede-copy{padding:18px 0 0;border-left:0;border-top:1px solid var(--border)}.help-grid{grid-template-columns:1fr}.r{grid-template-columns:minmax(0,1fr) auto}.r span{display:none}}
 @media(prefers-reduced-motion:reduce){.about-fold-chevron{transition:none}}
 `;
@@ -253,6 +256,15 @@ function view(info, mods, logo) {
                   <span class="helpEyebrow">Community Support</span>
                   <span class="helpTitle">Ask questions & get help</span>
                   <span class="helpSub">Join the discussions and get help from the community.</span>
+                </span>
+                <span class="material-symbols-rounded helpArrow" aria-hidden="true">chevron_right</span>
+              </a>
+              <a class="helpLink discord-card" href="${DISCORD_URL}" target="_blank" rel="noopener noreferrer">
+                <span class="helpIcon" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.292a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.1.246.199.373.293a.077.077 0 0 1-.006.128 12.3 12.3 0 0 1-1.873.891.077.077 0 0 0-.041.107c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.029zM8.02 15.331c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.946 2.418-2.157 2.418z"/></svg></span>
+                <span class="helpCopy">
+                  <span class="helpEyebrow">Discord</span>
+                  <span class="helpTitle">Join the community chat</span>
+                  <span class="helpSub">Talk with other users and follow new releases.</span>
                 </span>
                 <span class="material-symbols-rounded helpArrow" aria-hidden="true">chevron_right</span>
               </a>

@@ -1383,6 +1383,9 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.28;b
 .cw-help-sub{font-size:12.5px;line-height:1.5;font-weight:600;color:var(--cw-soft)}
 .cw-help-icon{width:34px;height:34px;display:grid;place-items:center;flex:0 0 auto;border:1px solid rgba(166,126,255,.18);border-radius:12px;background:linear-gradient(135deg,rgba(123,95,255,.18),rgba(186,96,255,.12));color:#eef3ff}
 .cw-help-icon svg{width:18px;height:18px;display:block}
+.cw-discord-link .cw-help-icon{border-color:rgba(129,140,248,.34);background:linear-gradient(135deg,rgba(88,101,242,.92),rgba(71,82,196,.88));color:#fff}
+.cw-discord-link:hover{border-color:rgba(129,140,248,.40)}
+.cw-discord-link .cw-help-icon svg{fill:currentColor}
 @media (max-width:860px){
   .cw-login-shell{grid-template-columns:1fr}
   .cw-hero{padding:28px 24px 22px;border-right:0;border-bottom:1px solid rgba(255,255,255,.06)}
@@ -1469,6 +1472,15 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
               <path d="M6 5.75C6 4.78 6.78 4 7.75 4H18a1 1 0 0 1 1 1v12.25A2.75 2.75 0 0 1 16.25 20H8.75A2.75 2.75 0 0 1 6 17.25V5.75Z" stroke-linejoin="round"/>
               <path d="M9 8h6M9 11h6M9 14h4M6.25 17.5H16" stroke-linecap="round"/>
             </svg>
+          </span>
+        </a>
+        <a class="cw-help-link cw-discord-link" href="https://discord.gg/uA9vFUr9M" target="_blank" rel="noopener noreferrer">
+          <span class="cw-help-copy">
+            <span class="cw-help-kicker">Community</span>
+            <span class="cw-help-sub">Chat with other users on Discord.</span>
+          </span>
+          <span class="cw-help-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.865-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.028C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.292a.074.074 0 0 1 .078-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.1.246.199.373.293a.077.077 0 0 1-.006.128 12.3 12.3 0 0 1-1.873.891.077.077 0 0 0-.041.107c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.029zM8.02 15.331c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.086-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.332-.946 2.418-2.157 2.418z"/></svg>
           </span>
         </a>
       </div>
