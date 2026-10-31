@@ -14,6 +14,7 @@ from cw_platform.playlists import (
     BUILTIN_RULESETS,
     PlaylistResource,
     PlaylistLinkError,
+    PlaylistPlanError,
     PlaylistReadOnlyError,
     PlaylistUnavailableError,
     playlist_capabilities,
@@ -181,6 +182,8 @@ def _unavailable_error(exc: PlaylistUnavailableError, subject: str) -> dict[str,
         return {"ok": False, "error": "That is not a list link this provider supports"}
     if isinstance(exc, PlaylistReadOnlyError):
         return {"ok": False, "error": f"{subject} is read only"}
+    if isinstance(exc, PlaylistPlanError):
+        return {"ok": False, "error": f"{subject} needs a paid plan on this provider"}
     return {"ok": False, "error": f"{subject} is private, deleted or no longer shared with you"}
 
 

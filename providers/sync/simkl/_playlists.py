@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import copy
+import time
 from typing import Any, Iterable, Mapping, Sequence
+from urllib.parse import unquote, urlparse
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
-from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PlaylistItem, PlaylistResource, PlaylistSnapshot
+from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PlaylistItem, PlaylistLinkError, PlaylistPlanError, PlaylistResource, PlaylistSnapshot, PlaylistUnavailableError
 
 from .._log import log as cw_log
 from ._common import (
@@ -43,6 +46,11 @@ _CUSTOM_TIERS = {"pro", "vip"}
 _CUSTOM_MEDIA = {"movies": ("movies", "movie"), "tv": ("shows", "show"), "anime": ("anime", "anime")}
 _CUSTOM_PAGE = 500
 _CUSTOM_MAX_PAGES = 20
+_SIMKL_HOSTS = {"simkl.com", "www.simkl.com"}
+_ROLE_TYPES = {"follower": "followed_list", "collaborator": "collaboration"}
+_SNAPSHOT_MEMO_TTL = 6 * 3600.0
+_SNAPSHOT_MEMO_MAX = 16
+_SNAPSHOT_MEMO: dict[tuple[str, str], tuple[float, tuple[str, Any], list[PlaylistItem]]] = {}
 
 
 class SIMKLPlaylistError(RuntimeError):
@@ -50,6 +58,18 @@ class SIMKLPlaylistError(RuntimeError):
 
 
 class SIMKLPlaylistNotFound(SIMKLPlaylistError):
+    pass
+
+
+class SIMKLListUnavailable(SIMKLPlaylistNotFound, PlaylistUnavailableError):
+    pass
+
+
+class SIMKLPremiumRequired(SIMKLPlaylistError, PlaylistPlanError):
+    pass
+
+
+class SIMKLListsNotEnabled(SIMKLPlaylistError):
     pass
 
 
@@ -128,7 +148,12 @@ def _custom_get(adapter: Any, url: str, **query: Any) -> Mapping[str, Any]:
     resp = adapter.client.session.get(url, headers=headers, params=params, timeout=getattr(adapter.cfg, "timeout", 15.0))
     code = int(getattr(resp, "status_code", 0) or 0)
     if code == 404:
-        raise SIMKLPlaylistNotFound("simkl custom list not found")
+        raise SIMKLListUnavailable("The SIMKL list no longer exists")
+    error = str(_mapping(_response_json(resp)).get("error") or "") if code in (401, 403) else ""
+    if code == 403 and error == "private_list":
+        raise SIMKLListUnavailable("The SIMKL list is private")
+    if error in ("oauth2_token_required", "user_token_required"):
+        raise SIMKLListsNotEnabled(f"simkl custom lists need an AUTH V2 user token: {error}")
     if not (200 <= code < 300):
         raise SIMKLFetchError(f"simkl custom list read failed: {code}")
     data = _response_json(resp)
@@ -136,21 +161,42 @@ def _custom_get(adapter: Any, url: str, **query: Any) -> Mapping[str, Any]:
         raise SIMKLFetchError("simkl custom list read returned no data")
     if data.get("error"):
         if str(data.get("error")) == "premium_only":
-            raise SIMKLPlaylistError("SIMKL custom lists need SIMKL PRO or VIP")
+            raise SIMKLPremiumRequired("SIMKL custom lists need SIMKL PRO or VIP")
         raise SIMKLPlaylistError(f"simkl custom list error: {data.get('error')}")
     return data
 
 
-def _custom_resource(adapter: Any, row: Mapping[str, Any]) -> PlaylistResource | None:
+def _endpoint_type(row: Mapping[str, Any], me: str) -> str:
+    role = str(row.get("role") or "").strip().lower()
+    if role in _ROLE_TYPES:
+        return _ROLE_TYPES[role]
+    if role == "owner":
+        return "custom_list"
+    owner_id = str(_mapping(row.get("user")).get("id") or "").strip()
+    return "public_list" if me and owner_id and owner_id != me else "custom_list"
+
+
+def _custom_resource(adapter: Any, row: Mapping[str, Any], *, me: str = "") -> PlaylistResource | None:
     list_id = str(row.get("id") or "").strip()
     media = _CUSTOM_MEDIA.get(str(row.get("media_type") or "").strip().lower())
     if not list_id.isdigit() or not media:
         return None
     counts = _mapping(row.get("counts"))
+    endpoint_type = _endpoint_type(row, me)
+    owner = str(_mapping(row.get("user")).get("name") or "").strip()
+    name = str(row.get("name") or list_id)
+    shared: dict[str, Any] = {}
+    owner_id = str(_mapping(row.get("user")).get("id") or "").strip()
+    if not str(row.get("role") or "").strip() and not (me and owner_id == me):
+        shared["unresolved"] = True
+    if endpoint_type != "custom_list":
+        shared["owner"] = owner
+        if endpoint_type != "collaboration":
+            shared["public_list"] = True
     return PlaylistResource(
         provider=_PROVIDER,
         id=f"{CUSTOM_PREFIX}{list_id}",
-        name=str(row.get("name") or list_id),
+        name=f"{name} by {owner}" if endpoint_type != "custom_list" and owner else name,
         instance=_instance_id(adapter),
         kind=PLAYLIST_KIND_REGULAR,
         can_read=True,
@@ -159,7 +205,8 @@ def _custom_resource(adapter: Any, row: Mapping[str, Any]) -> PlaylistResource |
         can_reorder=False,
         media_types=(media[1],),
         extra={
-            "endpoint_type": "custom_list",
+            **shared,
+            "endpoint_type": endpoint_type,
             "raw_id": list_id,
             "list_type": str(row.get("type") or ""),
             "privacy": str(row.get("privacy") or ""),
@@ -175,41 +222,117 @@ def _custom_resource(adapter: Any, row: Mapping[str, Any]) -> PlaylistResource |
     )
 
 
-def _custom_resources(adapter: Any) -> list[PlaylistResource]:
+def _me(adapter: Any) -> tuple[str, str]:
+    cached = getattr(adapter, "_simkl_custom_account", None)
+    if isinstance(cached, tuple):
+        return cached
+    account = _account(adapter)
     try:
-        user_id, tier = _account(adapter)
-        if not user_id or tier not in _CUSTOM_TIERS:
-            _info("custom_lists_skipped", reason="account_tier" if user_id else "no_account", tier=tier)
-            return []
-        out: list[PlaylistResource] = []
-        for page in range(1, _CUSTOM_MAX_PAGES + 1):
-            data = _custom_get(adapter, URL_USER_LISTS.format(user_id=user_id), limit=_CUSTOM_PAGE, page=page)
-            rows = data.get("lists")
-            for row in rows if isinstance(rows, list) else []:
-                resource = _custom_resource(adapter, row) if isinstance(row, Mapping) else None
-                if resource:
-                    out.append(resource)
-            pagination = _mapping(data.get("pagination"))
-            if page >= int(pagination.get("total_pages") or 1):
-                break
-        return out
+        adapter._simkl_custom_account = account
+    except Exception:
+        pass
+    return account
+
+
+def _user_lists(adapter: Any, user_id: str, me: str, **flags: Any) -> list[PlaylistResource]:
+    out: list[PlaylistResource] = []
+    for page in range(1, _CUSTOM_MAX_PAGES + 1):
+        data = _custom_get(adapter, URL_USER_LISTS.format(user_id=user_id), limit=_CUSTOM_PAGE, page=page, **flags)
+        rows = data.get("lists")
+        for row in rows if isinstance(rows, list) else []:
+            resource = _custom_resource(adapter, row, me=me) if isinstance(row, Mapping) else None
+            if resource:
+                out.append(resource)
+        pagination = _mapping(data.get("pagination"))
+        if page >= int(pagination.get("total_pages") or 1):
+            break
+    return out
+
+
+def _custom_resources(adapter: Any) -> list[PlaylistResource]:
+    user_id, tier = _me(adapter)
+    if not user_id:
+        _warn("custom_lists_failed", error="account_unavailable")
+        raise SIMKLFetchError("simkl account settings unavailable")
+    if tier not in _CUSTOM_TIERS:
+        _info("custom_lists_skipped", reason="account_tier", tier=tier)
+        return []
+    try:
+        out = _user_lists(adapter, user_id, user_id)
+    except (SIMKLPremiumRequired, SIMKLListsNotEnabled) as e:
+        _info("custom_lists_skipped", reason=type(e).__name__)
+        return []
     except Exception as e:
         _warn("custom_lists_failed", error=str(e))
-        return []
+        raise
+    known = {res.id for res in out}
+    for flag in ("followed", "collaborants"):
+        try:
+            extra = _user_lists(adapter, user_id, user_id, **{flag: "true"})
+        except Exception as e:
+            _warn("custom_lists_failed", scope=flag, error=str(e))
+            continue
+        for res in extra:
+            if res.id not in known:
+                known.add(res.id)
+                out.append(res)
+    return out
+
+
+def _snapshot_stamp(head: Mapping[str, Any]) -> tuple[str, Any] | None:
+    updated = str(head.get("updated_at") or "").strip()
+    if not updated or str(head.get("type") or "").strip().lower() != "regular":
+        return None
+    return updated, _mapping(head.get("counts")).get("items")
+
+
+def _memo_get(adapter: Any, list_id: str, stamp: tuple[str, Any] | None) -> list[PlaylistItem] | None:
+    if stamp is None:
+        return None
+    hit = _SNAPSHOT_MEMO.get((_instance_id(adapter), list_id))
+    if not hit or hit[1] != stamp or (time.time() - hit[0]) > _SNAPSHOT_MEMO_TTL:
+        return None
+    return copy.deepcopy(hit[2])
+
+
+def _memo_put(adapter: Any, list_id: str, stamp: tuple[str, Any] | None, items: list[PlaylistItem]) -> None:
+    if stamp is None:
+        return
+    key = (_instance_id(adapter), list_id)
+    _SNAPSHOT_MEMO.pop(key, None)
+    _SNAPSHOT_MEMO[key] = (time.time(), stamp, copy.deepcopy(items))
+    while len(_SNAPSHOT_MEMO) > _SNAPSHOT_MEMO_MAX:
+        _SNAPSHOT_MEMO.pop(next(iter(_SNAPSHOT_MEMO)))
 
 
 def _custom_snapshot(adapter: Any, list_id: str) -> PlaylistSnapshot:
     items: list[PlaylistItem] = []
     seen: set[str] = set()
     head: Mapping[str, Any] = {}
+    stamp: tuple[str, Any] | None = None
+    raw_rows = 0
     for page in range(1, _CUSTOM_MAX_PAGES + 1):
         data = _custom_get(adapter, URL_LIST.format(list_id=list_id), limit=_CUSTOM_PAGE, page=page)
-        head = head or data
+        if not head:
+            head = data
+            stamp = _snapshot_stamp(head)
+            cached = _memo_get(adapter, list_id, stamp) if int(_mapping(head.get("pagination")).get("total_pages") or 1) > 1 else None
+            if cached is not None:
+                resource = _custom_resource(adapter, head, me=_me(adapter)[0])
+                if resource is None:
+                    raise SIMKLPlaylistNotFound("simkl custom list not found")
+                _info("snapshot_unchanged", list_id=resource.id, count=len(cached))
+                return PlaylistSnapshot(resource=resource, items=cached, checkpoint=str(head.get("updated_at") or "") or None)
         bucket = (_CUSTOM_MEDIA.get(str(data.get("media_type") or "").strip().lower()) or ("shows", "show"))[0]
         rows = data.get("items")
-        for row in rows if isinstance(rows, list) else []:
-            if not isinstance(row, Mapping):
-                continue
+        pagination = _mapping(data.get("pagination"))
+        total_pages = int(pagination.get("total_pages") or 1)
+        if not isinstance(rows, list) or total_pages > _CUSTOM_MAX_PAGES or (not rows and page < total_pages):
+            raise SIMKLFetchError("simkl custom list page incomplete")
+        if any(not isinstance(row, Mapping) for row in rows):
+            raise SIMKLFetchError("simkl custom list page has invalid rows")
+        raw_rows += len(rows)
+        for row in rows:
             ids = dict(row.get("ids") or {}) if isinstance(row.get("ids"), Mapping) else {}
             if ids.get("simkl_id") and not ids.get("simkl"):
                 ids["simkl"] = ids.get("simkl_id")
@@ -219,14 +342,58 @@ def _custom_snapshot(adapter: Any, list_id: str) -> PlaylistSnapshot:
             if item.key and item.key not in seen:
                 seen.add(item.key)
                 items.append(item)
-        pagination = _mapping(data.get("pagination"))
-        if page >= int(pagination.get("total_pages") or 1):
+        if page >= total_pages:
             break
-    resource = _custom_resource(adapter, head)
+    expected = _mapping(head.get("pagination")).get("total_items")
+    if isinstance(expected, int) and not isinstance(expected, bool) and raw_rows != expected:
+        raise SIMKLFetchError("simkl custom list read incomplete")
+    resource = _custom_resource(adapter, head, me=_me(adapter)[0])
     if resource is None:
         raise SIMKLPlaylistNotFound("simkl custom list not found")
+    _memo_put(adapter, list_id, stamp, items)
     _info("snapshot_done", list_id=resource.id, count=len(items))
     return PlaylistSnapshot(resource=resource, items=items, checkpoint=str(head.get("updated_at") or "") or None)
+
+
+def _link_id(ref: Any) -> str:
+    raw = str(ref or "").strip()
+    custom = _custom_id(raw)
+    if custom:
+        return custom
+    if raw.isdigit():
+        return raw
+    if "://" not in raw and raw.split("/", 1)[0].lower() in _SIMKL_HOSTS:
+        raw = f"https://{raw}"
+    if "://" in raw:
+        parsed = urlparse(raw)
+        if (parsed.hostname or "").lower() not in _SIMKL_HOSTS:
+            return ""
+        path = parsed.path
+    else:
+        path = raw.split("?", 1)[0].split("#", 1)[0]
+    parts = [unquote(p) for p in path.split("/") if p]
+    for i, part in enumerate(parts[:-1]):
+        if part.lower() in ("list", "lists") and parts[i + 1].isdigit():
+            return parts[i + 1]
+    return ""
+
+
+def resolve(adapter: Any, ref: Any) -> PlaylistResource:
+    list_id = _link_id(ref)
+    if not list_id:
+        raise PlaylistLinkError("unsupported SIMKL list link")
+    user_id, tier = _me(adapter)
+    if user_id and tier not in _CUSTOM_TIERS:
+        raise SIMKLPremiumRequired("SIMKL custom lists need SIMKL PRO or VIP")
+    wanted = f"{CUSTOM_PREFIX}{list_id}"
+    for res in _custom_resources(adapter):
+        if res.id == wanted:
+            return res
+    head = _custom_get(adapter, URL_LIST.format(list_id=list_id), limit=1, page=1)
+    resource = _custom_resource(adapter, head, me=_me(adapter)[0])
+    if resource is None:
+        raise SIMKLListUnavailable("The SIMKL list cannot be used here")
+    return resource
 
 
 def _read_only_result(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -236,7 +403,10 @@ def _read_only_result(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
 
 def list_resources(adapter: Any) -> list[PlaylistResource]:
     out = [_resource(adapter, status) for status, _label, _media, _buckets in _STATUS_ROWS]
-    out.extend(_custom_resources(adapter))
+    try:
+        out.extend(_custom_resources(adapter))
+    except Exception as e:
+        _warn("custom_lists_unavailable", error=str(e))
     _info("list_resources_done", count=len(out))
     return out
 

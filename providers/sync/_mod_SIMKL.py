@@ -93,7 +93,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "2.0"
+__VERSION__ = "2.1"
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
 
@@ -252,6 +252,8 @@ _PLAYLIST_CAPABILITIES = {
     "unordered": True,
     "destructive_remove": True,
     "remove_warning": "Removing from a SIMKL status bucket removes the item from the full SIMKL library and clears its SIMKL rating.",
+    "resolve": True,
+    "link_example": "https://simkl.com/5/list/2733/star-wars-franchise-tv-shows",
 }
 
 
@@ -1004,6 +1006,11 @@ class _SIMKLOPS:
         if feat_playlists is None:
             raise SIMKLError("SIMKL playlist support is unavailable")
         return feat_playlists.get_snapshot(self._playlist_adapter(cfg, instance), playlist_id)
+
+    def resolve_playlist(self, cfg: Mapping[str, Any], ref: str, *, instance: str | None = None):
+        if feat_playlists is None:
+            raise SIMKLError("SIMKL playlist support is unavailable")
+        return feat_playlists.resolve(self._playlist_adapter(cfg, instance), ref)
 
     def create_playlist(
         self,

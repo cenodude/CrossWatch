@@ -8,6 +8,7 @@ from cw_platform.id_map import canonical_key
 from cw_platform.playlists import (
     PlaylistItem,
     PlaylistLinkError,
+    PlaylistPlanError,
     PlaylistReadOnlyError,
     PlaylistResource,
     PlaylistSnapshot,
@@ -655,6 +656,7 @@ def test_name_based_endpoint_is_saved_without_link_resolve(config_base, link_pro
     (PlaylistUnavailableError("token=secret /srv/internal.py"), "That list is private, deleted or no longer shared with you"),
     (PlaylistReadOnlyError("token=secret /srv/internal.py"), "That list is read only"),
     (PlaylistLinkError("token=secret /srv/internal.py"), "That is not a list link this provider supports"),
+    (PlaylistPlanError("token=secret /srv/internal.py"), "That list needs a paid plan on this provider"),
 ])
 def test_resolve_errors_never_expose_exception_text(config_base, link_providers, monkeypatch, exc, expected):
     def fail(*_args, **_kwargs):
