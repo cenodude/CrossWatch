@@ -555,8 +555,9 @@ def _refresh_endpoint_meta(cfg: dict[str, Any], endpoint_id: str) -> dict[str, A
             playlist_id = str(ep.get("playlist_id") or "")
             meta = _resource_meta(cfg, provider, instance, playlist_id)
             snap = _endpoint_snapshot(cfg, provider, instance, playlist_id)
-            if not meta and snap is not None and isinstance(getattr(snap, "resource", None), PlaylistResource):
-                meta = _resource_meta_from(snap.resource)
+            snap_res = getattr(snap, "resource", None) if snap is not None else None
+            if not meta and isinstance(snap_res, PlaylistResource) and not (snap_res.extra or {}).get("unresolved"):
+                meta = _resource_meta_from(snap_res)
             ep.update(meta)
             if snap is not None:
                 ep["item_count"] = len(snap.items)

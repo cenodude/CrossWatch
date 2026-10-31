@@ -626,6 +626,25 @@ def test_listed_read_only_flags_survive_failed_refresh(config_base, link_provide
     assert svc._endpoint_writable(cfg, ep["id"]) is False
 
 
+def test_unresolved_snapshot_keeps_stored_discovery_flags(config_base, link_providers, monkeypatch):
+    ops = link_providers["TRAKT"]
+    cfg = _cfg()
+    ep = svc.upsert_endpoint(cfg, {"name": "Noir", "provider": "TRAKT", "instance": "default", "playlist_id": "https://trakt.tv/users/snoak/lists/noir"})["endpoint"]
+    stored = runner.pl_root(cfg, create=True)["endpoints"]
+    for row in stored:
+        if row.get("id") == ep["id"]:
+            row.update({"smart": True, "discovery": True, "virtual": True, "source_kind": "discovery"})
+    unresolved = PlaylistResource(provider="TRAKT", id="555", name="555", extra={"unresolved": True, "public_list": True})
+
+    def snapshot(cfg, playlist_id, *, instance=None):
+        return PlaylistSnapshot(resource=unresolved, items=[PlaylistItem.from_media(_movie(5)), PlaylistItem.from_media(_movie(6))])
+
+    monkeypatch.setattr(ops, "get_playlist_snapshot", snapshot)
+    out = svc._refresh_endpoint_meta(cfg, ep["id"])
+    assert out["smart"] is True and out["discovery"] is True and out["source_kind"] == "discovery"
+    assert out["playlist_type"] == "public_list" and out["can_add"] is False and out["item_count"] == 2
+
+
 def test_name_based_endpoint_is_saved_without_link_resolve(config_base, link_providers, monkeypatch):
     monkeypatch.setattr(link_providers["TRAKT"], "resolve_playlist", lambda *a, **k: (_ for _ in ()).throw(AssertionError("resolved")))
     res = svc.upsert_endpoint(_cfg(), {"name": "Trakt src", "provider": "TRAKT", "instance": "default", "playlist_id": "src1"})

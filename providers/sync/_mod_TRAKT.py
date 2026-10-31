@@ -133,6 +133,7 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "smart": False,
     "discovery": True,
     "resolve": True,
+    "link_example": "https://trakt.tv/users/name/lists/list-name",
     "media_types": ["movies", "shows", "seasons", "episodes"],
 }
 
