@@ -1,5 +1,5 @@
 # providers/sync/_mod_WETRAKR.py
-# CrossWatch - WeTrakr tracking, ratings and resume progress sync module
+# CrossWatch - WeTrakr tracking, ratings, resume progress and list sync module
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -13,13 +13,27 @@ from cw_platform.run_control import raise_if_cancelled
 from providers.auth import _auth_WETRAKR as auth
 from providers.sync._mod_common import build_op_result, build_session, make_snapshot_progress
 from providers.sync._log import log
-from providers.sync.wetrakr import _history, _progress, _ratings, _watchlist
+from providers.sync.wetrakr import _history, _playlists, _progress, _ratings, _watchlist
 from providers.sync.wetrakr._common import WRITE_BATCH_SIZE, WeTrakrSyncError, body_of, commit_snapshot, dropped_show_tokens, item_key, request, tag_dropped_shows, write_lock
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 __all__ = ["get_manifest", "WETRAKRModule", "OPS"]
-_FEATURES = {"watchlist": True, "history": True, "ratings": True, "progress": True, "playlists": False, "collection": False}
+_FEATURES = {"watchlist": True, "history": True, "ratings": True, "progress": True, "playlists": True, "collection": False}
 _FEATURE_MODULES = {"watchlist": _watchlist, "history": _history, "ratings": _ratings, "progress": _progress}
+_PLAYLIST_CAPABILITIES: dict[str, Any] = {
+    "read": True,
+    "create": True,
+    "rename": True,
+    "delete": True,
+    "add": True,
+    "remove": True,
+    "reorder": True,
+    "smart": False,
+    "discovery": False,
+    "resolve": True,
+    "link_example": "https://wetrakr.com/lists/12345",
+    "media_types": ["movies", "shows", "seasons", "episodes"],
+}
 
 
 class _NullCtx:
@@ -69,7 +83,8 @@ def get_manifest() -> Mapping[str, Any]:
                 "progress": {**shared, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
                     "accepted_ids": ["tmdb", "imdb", "tvdb"], "requires_duration": False, "batch_size": 1,
                     "completion_policy": {"progress_write": {"mode": "none"}}},
-                **{feature: {"read": False, "write": False} for feature in ("playlists", "collection")}}}
+                "playlists": _PLAYLIST_CAPABILITIES,
+                "collection": {"read": False, "write": False}}}
 
 
 class WETRAKRModule:
@@ -198,6 +213,49 @@ class _WETRAKROPS:
 
     def tag_dropped_shows(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         return WETRAKRModule(cfg).tag_dropped_shows(items)
+
+    def _playlist_adapter(self, cfg: Mapping[str, Any], instance: str | None) -> WETRAKRModule:
+        return WETRAKRModule(cfg, instance_id=instance)
+
+    def list_playlist_resources(self, cfg: Mapping[str, Any], *, instance: str | None = None) -> list[Any]:
+        return list(_playlists.list_resources(self._playlist_adapter(cfg, instance)))
+
+    def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None) -> Any:
+        return _playlists.get_snapshot(self._playlist_adapter(cfg, instance), playlist_id)
+
+    def resolve_playlist(self, cfg: Mapping[str, Any], ref: str, *, instance: str | None = None) -> Any:
+        return _playlists.resolve(self._playlist_adapter(cfg, instance), ref)
+
+    def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None,
+                        items: Iterable[Mapping[str, Any]] | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
+        return _playlists.create(self._playlist_adapter(cfg, instance), name, media_type=media_type, items=list(items or []), dry_run=dry_run)
+
+    def rename_playlist(self, cfg: Mapping[str, Any], playlist_id: str, name: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
+        return _playlists.rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def delete_playlist(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        return _playlists.delete(self._playlist_adapter(cfg, instance), playlist_id, dry_run=dry_run)
+
+    def add_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, items: Iterable[Mapping[str, Any]], *,
+                           instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return _playlists.add(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def remove_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, items: Iterable[Mapping[str, Any]], *,
+                              instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return _playlists.remove(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def reorder_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, ordered_keys: Iterable[str], *,
+                               instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        keys = list(ordered_keys or [])
+        if dry_run:
+            return {"ok": True, "count": 0, "reordered": 0, "dry_run": True}
+        return _playlists.reorder(self._playlist_adapter(cfg, instance), playlist_id, keys)
 
 
 OPS = _WETRAKROPS()
