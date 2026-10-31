@@ -20,6 +20,7 @@ from cw_platform.id_map import canonical_key, unified_keys_from_ids
 from cw_platform.local_db import state as sqlite_state
 from cw_platform.modules_registry import load_sync_ops
 from cw_platform.orchestrator._applier import apply_remove
+from cw_platform.orchestrator._history_copies import COPIES_PROVIDERS, config_with_history_copies
 from cw_platform.orchestrator._history_rewatches import (
     collapse_history_latest, config_with_history_rewatches, history_event_matches, history_rewatch_supported,
     history_timestamp_tolerance_seconds,
@@ -345,6 +346,10 @@ def _sync_guard():
         lock.release()
 
 
+def _write_view(view, provider, feature):
+    return config_with_history_copies(view) if feature == "history" and provider in COPIES_PROVIDERS else view
+
+
 def _read_current(ops, config, provider, instance, feature):
     with _capture_mode_env(pid=provider, instance=instance, feat=feature):
         result = ops.build_index(config, feature=feature)
@@ -402,7 +407,7 @@ def _remove_viewings(cfg, feature, target, *, dry_run):
     removed_keys, unresolved_keys = [], []
     if matched:
         with _crosswatch_write_env() if provider == "CROSSWATCH" else _capture_mode_env(pid=provider, instance=instance, feat=feature):
-            result = apply_remove(dst_ops=ops, cfg=view, dst_name=provider, feature=feature,
+            result = apply_remove(dst_ops=ops, cfg=_write_view(view, provider, feature), dst_name=provider, feature=feature,
                                   items=[live[key] for key in matched.values()], dry_run=dry_run,
                                   emit=lambda event, **data: _emit(event, instance=instance, **data),
                                   dbg=lambda *a, **k: None, chunk_size=100, chunk_pause_ms=0)
@@ -479,7 +484,7 @@ def _remove_titles(cfg, feature, target, *, dry_run):
             # Capture mode prefers provider-native IDs. Keep the same identities
             # for confirmation after leaving that context (which prefers TMDB).
             write_keys = {key: canonical_key(dest) for key, (_, dest) in matched.items()}
-            result = apply_remove(dst_ops=ops, cfg=view, dst_name=provider, feature=feature,
+            result = apply_remove(dst_ops=ops, cfg=_write_view(view, provider, feature), dst_name=provider, feature=feature,
                                   items=[v for _, v in matched.values()], dry_run=dry_run,
                                   emit=lambda event, **data: _emit(event, instance=instance, **data),
                                   dbg=lambda *a, **k: None, chunk_size=100, chunk_pause_ms=0)

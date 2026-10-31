@@ -13,12 +13,19 @@ from typing import Any, Iterable, Mapping
 from ._common import (
     state_file,
     chunked,
+    all_ext_pairs,
+    get_series_episodes,
     jf_get_library_roots,
     jf_resolve_library_id,
     jf_scope_history,
     make_logger,
     normalize as jelly_normalize,
+    _episode_number_matches,
+    _ids_from_provider_ids,
+    _merged_guid_priority,
     _now_iso_z,
+    _targeted_cache,
+    _valid_item_id,
     resolve_item_id,
     sleep_ms,
     _pair_scope,
@@ -573,6 +580,184 @@ def _dst_user_states(http: Any, uid: str, iids: Iterable[str]) -> dict[str, tupl
     return out
 
 
+_COPIES_FIELD = "_cw_unplayed_copies"
+
+
+def _copy_ids(raw: Any, *, movie: bool = False) -> dict[str, str]:
+    ids = raw if isinstance(raw, Mapping) else {}
+    out: dict[str, str] = {}
+    for key in (("tmdb", "imdb") if movie else ("tmdb", "imdb", "tvdb")):
+        value = str(ids.get(key) or "").strip().lower()
+        if value:
+            out[key] = value if key == "imdb" else (value.lstrip("0") or "0")
+    return out
+
+
+def _ids_agree(a: Mapping[str, str], b: Mapping[str, str], *, required: bool) -> bool:
+    common = set(a) & set(b)
+    return (bool(common) or not required) and all(a[k] == b[k] for k in common)
+
+
+def _copy_rows(adapter: Any, kind: str, ids: Mapping[str, Any], *, exclude: str) -> list[Mapping[str, Any]] | None:
+    from . import _id_lookup
+    movie = kind == "Movie"
+    wanted = _copy_ids(ids, movie=movie)
+    pairs = all_ext_pairs(wanted, _merged_guid_priority(adapter))
+    if not pairs:
+        return []
+    catalogue = _id_lookup._catalogue(adapter, "history")
+    if catalogue is None:
+        return None
+
+    def agreeing(rows: Iterable[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+        return [
+            row for row in rows
+            if str(row.get("Id") or "") != exclude
+            and _ids_agree(wanted, _copy_ids(_ids_from_provider_ids(row.get("ProviderIds")), movie=movie), required=True)
+        ]
+
+    cached = {str(row["Id"]): row for pair in pairs for row in catalogue["index"].get(pair, []) if row.get("Type") == kind}
+    if not agreeing(cached.values()):
+        return []
+    try:
+        return agreeing(_id_lookup.find(adapter, "history", kind, pairs, strict=True))
+    except LookupError as exc:
+        _dbg("copies_validation_failed", kind=kind, error=str(exc))
+        return None
+
+
+def _series_episode_rows(adapter: Any, series_id: str) -> list[Mapping[str, Any]] | None:
+    cache = _targeted_cache(adapter, "history")
+    key = ("episodes", series_id)
+    cached = cache.get(key)
+    if cached is not None:
+        return cached
+    rows: list[Mapping[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    start = 0
+    while True:
+        try:
+            body = get_series_episodes(adapter.client, adapter.cfg.user_id, series_id, start=start, limit=500)
+        except Exception as exc:
+            _dbg("copies_episodes_failed", series_id=series_id, error_type=type(exc).__name__)
+            return None
+        page = body.get("Items") if isinstance(body, Mapping) else None
+        if not isinstance(page, list) or any(not isinstance(row, Mapping) for row in page):
+            return None
+        signature = tuple(str(row.get("Id") or "") for row in page)
+        if page and signature in seen:
+            return None
+        seen.add(signature)
+        rows.extend(page)
+        if len(page) < 500:
+            break
+        start += len(page)
+    if len(cache) >= 2048:
+        cache.clear()
+    cache[key] = rows
+    return rows
+
+
+def _episode_copies(
+    adapter: Any,
+    series_id: str,
+    show_ids: Mapping[str, Any],
+    season: Any,
+    episode: Any,
+    episode_ids: Mapping[str, Any],
+    *,
+    exclude: str,
+) -> list[str] | None:
+    siblings = _copy_rows(adapter, "Series", show_ids, exclude=str(series_id))
+    if siblings is None:
+        return None
+    wanted = _copy_ids(episode_ids)
+    out: list[str] = []
+    for sid in [str(series_id), *(str(row["Id"]) for row in siblings)]:
+        rows = _series_episode_rows(adapter, sid)
+        if rows is None:
+            return None
+        for row in rows:
+            iid = _valid_item_id(row.get("Id"))
+            if (
+                iid
+                and iid != exclude
+                and iid not in out
+                and row.get("Type") == "Episode"
+                and str(row.get("SeriesId") or sid) == sid
+                and _episode_number_matches(row, season, episode)
+                and _ids_agree(wanted, _copy_ids(_ids_from_provider_ids(row.get("ProviderIds"))), required=False)
+            ):
+                out.append(iid)
+    return out
+
+
+def _attach_unplayed_copies(adapter: Any, events: Mapping[str, dict[str, Any]], series_of: Mapping[str, str]) -> None:
+    wanted: dict[str, list[dict[str, Any]]] = {}
+    failed = 0
+    for key, ev in events.items():
+        typ = ev.get("type")
+        own = str(ev.get("jellyfin_item_id") or "")
+        copies: list[str] | None
+        if typ == "episode" and series_of.get(key):
+            copies = _episode_copies(adapter, series_of[key], ev.get("show_ids") or {}, ev.get("season"),
+                                     ev.get("episode"), ev.get("ids") or {}, exclude=own)
+        elif typ == "movie":
+            rows = _copy_rows(adapter, "Movie", ev.get("ids") or {}, exclude=own)
+            copies = None if rows is None else [str(row["Id"]) for row in rows]
+        else:
+            continue
+        if copies is None:
+            failed += 1
+            continue
+        for iid in copies:
+            wanted.setdefault(iid, []).append(ev)
+    states = _dst_user_states(adapter.client, adapter.cfg.user_id, wanted)
+    unplayed = 0
+    for iid, owners in wanted.items():
+        if states.get(iid, (True, None))[0]:
+            continue
+        unplayed += 1
+        for ev in owners:
+            gaps = ev.setdefault(_COPIES_FIELD, [])
+            if iid not in gaps:
+                gaps.append(iid)
+    _info("copies_index", candidates=len(wanted), unplayed=unplayed, failed=failed)
+
+
+def _get_item(http: Any, uid: str, iid: str) -> Mapping[str, Any]:
+    try:
+        r = http.get(items_route(iid), params=user_params(uid, {"Fields": "ProviderIds,SeriesId,ParentIndexNumber,IndexNumber"}))
+        body = r.json() if getattr(r, "status_code", 0) == 200 else {}
+    except Exception:
+        body = {}
+    return body if isinstance(body, Mapping) and str(body.get("Id") or "") == str(iid) else {}
+
+
+def _item_copies(adapter: Any, iid: str) -> list[str] | None:
+    http, uid = adapter.client, adapter.cfg.user_id
+    item = _get_item(http, uid, iid)
+    if not item:
+        return None
+    ids = _ids_from_provider_ids(item.get("ProviderIds"))
+    others: list[str] | None = []
+    if item.get("Type") == "Movie":
+        rows = _copy_rows(adapter, "Movie", ids, exclude=str(iid))
+        others = None if rows is None else [str(row["Id"]) for row in rows]
+    elif item.get("Type") == "Episode" and item.get("SeriesId"):
+        series_id = str(item["SeriesId"])
+        series = _get_item(http, uid, series_id)
+        if not series:
+            return None
+        others = _episode_copies(adapter, series_id, _ids_from_provider_ids(series.get("ProviderIds")),
+                                 item.get("ParentIndexNumber"), item.get("IndexNumber"), ids, exclude=str(iid))
+    if others is None:
+        return None
+    if others:
+        _dbg("copies_resolved", item_id=str(iid), copies=len(others) + 1)
+    return [str(iid), *others]
+
+
 # event index (watched_at)
 @retained_read
 def build_index(
@@ -616,6 +801,7 @@ def build_index(
     scope_index = 0
     seen_pages: set[tuple[str, ...]] = set()
     events: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
+    series_of: dict[str, str] = {}
     page = 0
 
     while True:
@@ -754,6 +940,8 @@ def build_index(
             out_ev = dict(event)
             if lib_id:
                 out_ev["library_id"] = lib_id
+            if typ == "Episode" and series_id:
+                series_of[ev_key] = str(series_id)
             events.append((ts, {"key": ev_key}, out_ev))
 
         start += raw_count
@@ -779,6 +967,9 @@ def build_index(
         cur = out.get(key)
         if cur is None or (cur.get("watched_at") or "") < (ev.get("watched_at") or ""):
             out[key] = ev
+
+    if getattr(adapter, "history_all_copies", False):
+        _attach_unplayed_copies(adapter, out, series_of)
 
     event_bases: set[str] = set()
     for ek in out.keys():
@@ -980,12 +1171,14 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     from ._id_lookup import prepare
     prepare(adapter, "history", wants.values())
 
+    all_copies = bool(getattr(adapter, "history_all_copies", False))
     for k, m in wants.items():
         iid = _try_resolve_iid(adapter, m)
-        if iid:
-            mids.append((k, str(iid)))
+        found = (_item_copies(adapter, str(iid)) if all_copies else [str(iid)]) if iid else None
+        if found:
+            mids.extend((k, copy_iid) for copy_iid in found)
         else:
-            hint = str(getattr(adapter, "_jellyfin_last_resolve_hint", "") or "unmatched_in_jellyfin")
+            hint = "copies_lookup_failed" if iid else str(getattr(adapter, "_jellyfin_last_resolve_hint", "") or "unmatched_in_jellyfin")
             unresolved.append({"item": id_minimal(m), "key": k, "hint": hint, "reason": "resolve_failed"})
             _freeze(m, reason="resolve_failed")
             results.append(_result_row(k, _ST_RESOLVE_FAILED, action="resolve", reason=hint))
@@ -993,6 +1186,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     shadow = _shadow_load()
     bb = _bb_load()
+    already: set[str] = set()
+    shadow_writes: dict[str, str] = {}
     ok = 0
     stats = {
         "wrote": 0, "forced": 0, "backdated": 0, "skip_newer": 0,
@@ -1034,9 +1229,12 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
             src_iso = _epoch_to_iso_z(src_ts)
             played, dst_ts = states.get(iid, (False, None))
+            if all_copies and played:
+                already.add(k)
 
             if played and dst_ts is not None and dst_ts >= (src_ts - tol):
                 bb[k] = {"reason": "presence:existing_newer", "since": _now_iso_z(), "iid": iid}
+                already.add(k)
                 stats["skip_newer"] += 1
                 status = _ST_ALREADY if abs(dst_ts - src_ts) <= tol else _ST_NEWER
                 _confirm(k, status, action="skip", reason="existing_newer", iid=iid, req_ts=src_ts, dst_ts=dst_ts)
@@ -1046,6 +1244,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
             if played and dst_ts is None:
                 bb[k] = {"reason": "presence:existing_untimed", "since": _now_iso_z(), "iid": iid}
+                already.add(k)
                 stats["skip_played_untimed"] += 1
                 _confirm(k, _ST_ALREADY, action="skip", reason="existing_untimed", iid=iid, req_ts=src_ts)
                 processed += 1
@@ -1054,14 +1253,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
             if _mark_played(http, uid, iid, date_played_iso=src_iso):
                 ok += 1
-                ent = shadow.get(k) or {}
-                cur_cnt = int(ent.get("count") or 0) if isinstance(ent, Mapping) else 0
-                shadow[k] = {
-                    "count": max(0, cur_cnt) + 1,
-                    "iid": iid,
-                    "updated": _now_iso_z(),
-                    "hint": id_minimal(wants[k]),
-                }
+                shadow_writes.setdefault(k, iid)
                 bb[k] = {"reason": "presence:shadow", "since": _now_iso_z(), "iid": iid}
                 stats["wrote"] += 1
                 normalized = _normalize_watched(http, uid, iid, date_played_iso=src_iso)
@@ -1090,8 +1282,28 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 results.append(_result_row(k, _ST_READBACK, action="verify", reason="not_played", iid=iid, req_ts=req_ts))
                 reason_counts["readback_mismatch"] = reason_counts.get("readback_mismatch", 0) + 1
                 shadow.pop(k, None)
+                shadow_writes.pop(k, None)
                 if ok > 0:
                     ok -= 1
+
+    for k, iid in shadow_writes.items():
+        if k in already:
+            continue
+        ent = shadow.get(k) or {}
+        cur_cnt = int(ent.get("count") or 0) if isinstance(ent, Mapping) else 0
+        shadow[k] = {
+            "count": max(0, cur_cnt) + 1,
+            "iid": iid,
+            "updated": _now_iso_z(),
+            "hint": id_minimal(wants[k]),
+        }
+
+    if all_copies:
+        failed = {str(u.get("key") or "") for u in unresolved}
+        written = {str(r.get("key")) for r in results if r.get("status") == _ST_WRITTEN} - failed
+        confirmed_keys[:] = [c for c in dict.fromkeys(confirmed_keys) if c not in failed]
+        results[:] = [r for r in results if not (r.get("action") == "skip" and r.get("key") in written)]
+        ok = len(written)
 
     _shadow_save(shadow)
     _bb_save(bb)
@@ -1142,6 +1354,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
         reason_counts[reason] = reason_counts.get(reason, 0) + 1
         results.append(_result_row(str(u.get("key") or ""), _ST_RESOLVE_FAILED, action="resolve", reason=reason))
 
+    all_copies = bool(getattr(adapter, "history_all_copies", False))
     for k, m in wants.items():
         ent = shadow.get(k) or {}
         iid = _try_resolve_iid(adapter, m)
@@ -1152,22 +1365,35 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                 hinted["jellyfin_item_id"] = str(ent_iid)
                 iid = _try_resolve_iid(adapter, hinted)
 
-        if iid:
-            mids.append((k, str(iid)))
+        found = (_item_copies(adapter, str(iid)) if all_copies else [str(iid)]) if iid else None
+        if found:
+            mids.extend((k, copy_iid) for copy_iid in found)
         else:
-            hint = str(getattr(adapter, "_jellyfin_last_resolve_hint", "") or "unmatched_in_jellyfin")
+            hint = "copies_lookup_failed" if iid else str(getattr(adapter, "_jellyfin_last_resolve_hint", "") or "unmatched_in_jellyfin")
             unresolved.append({"item": id_minimal(m), "key": k, "hint": hint, "reason": "resolve_failed"})
             _freeze(m, reason="resolve_failed")
             results.append(_result_row(k, _ST_RESOLVE_FAILED, action="resolve", reason=hint))
             reason_counts["resolve_failed"] = reason_counts.get("resolve_failed", 0) + 1
     ok = 0
+    decided: dict[str, bool] = {}
     for chunk in chunked(mids, qlim):
         for k, iid in chunk:
+            if k in decided:
+                if decided[k] and not _unmark_played(http, uid, iid):
+                    unresolved.append({"item": id_minimal(wants[k]), "key": k, "hint": "unmark_played_failed", "reason": "write_failed"})
+                    _freeze(wants[k], reason="write_failed")
+                    results.append(_result_row(k, _ST_WRITE_FAILED, action="write", reason="unmark_played_failed", iid=iid))
+                    reason_counts["write_failed"] = reason_counts.get("write_failed", 0) + 1
+                elif decided[k]:
+                    results.append(_result_row(k, _ST_WRITTEN, action="write", reason="unmarked", iid=iid))
+                sleep_ms(delay)
+                continue
             ent = shadow.get(k) or {}
             cur_cnt = int(ent.get("count") or 0) if isinstance(ent, Mapping) else 0
             tracked = (k in shadow) and cur_cnt > 0
+            decided[k] = not (tracked and cur_cnt > 1 and not force_clear)
 
-            if tracked and cur_cnt > 1 and not force_clear:
+            if not decided[k]:
                 shadow[k] = {
                     **(dict(ent) if isinstance(ent, Mapping) else {}),
                     "count": cur_cnt - 1,
@@ -1208,6 +1434,11 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
                         "updated": _now_iso_z(),
                     }
             sleep_ms(delay)
+
+    if all_copies:
+        failed = {str(u.get("key") or "") for u in unresolved}
+        confirmed_keys[:] = [c for c in dict.fromkeys(confirmed_keys) if c not in failed]
+        ok = len({str(r.get("key")) for r in results if r.get("status") == _ST_WRITTEN} - failed)
 
     shadow = {k: v for k, v in shadow.items() if int((v or {}).get("count") or 0) > 0}
     _shadow_save(shadow)
