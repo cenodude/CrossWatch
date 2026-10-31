@@ -24,6 +24,10 @@ class FloppyAuthError(RuntimeError):
         self.status_code = status_code
 
 
+class FloppyRequestError(FloppyAuthError):
+    pass
+
+
 def _load_config() -> dict[str, Any]:
     try:
         return dict(load_config() or {})
