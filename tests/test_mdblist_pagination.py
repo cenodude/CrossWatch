@@ -39,7 +39,7 @@ def setup_reader(monkeypatch, tmp_path, feature):
     if feature == "history":
         monkeypatch.setattr(module, "_rewatches_enabled", lambda a: False)
     if feature == "playlists":
-        monkeypatch.setattr(module, "_find_owned_resource", lambda *a: None)
+        monkeypatch.setattr(module, "_find_resource", lambda ad, lid: module._resource_from_list(ad, {"id": lid, "name": "List"}))
     return module, adapter, writes
 
 

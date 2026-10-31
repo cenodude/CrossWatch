@@ -144,7 +144,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.0"
+__VERSION__ = "2.1"
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -222,6 +222,8 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "smart": True,
     "smart_writable": False,
     "discovery": True,
+    "resolve": True,
+    "link_example": "https://mdblist.com/lists/name/list-name",
     "media_types": ["movies", "shows"],
 }
 
@@ -1141,6 +1143,9 @@ class _MDBLISTOPS:
 
     def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None):
         return self._pl().get_snapshot(self._playlist_adapter(cfg, instance), playlist_id)
+
+    def resolve_playlist(self, cfg: Mapping[str, Any], ref: str, *, instance: str | None = None):
+        return self._pl().resolve(self._playlist_adapter(cfg, instance), ref)
 
     def create_playlist(
         self,
