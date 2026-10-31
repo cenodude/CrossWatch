@@ -429,7 +429,7 @@ def html() -> str:
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
                   </button>
                 </div>
-                <div class="sub" id="jfy_qc_help">In Jellyfin open your user menu &rarr; Quick Connect, then enter this code and authorize.</div>
+                <div class="sub" id="jfy_qc_help">A Jellyfin tab opens with this code filled in. Sign in if asked, then click Authorize. No tab? In Jellyfin open your user menu &rarr; Quick Connect and enter this code.</div>
                 <div class="jfy-qc-meta">
                   <span class="sub" id="jfy_qc_status">Waiting for authorization&hellip;</span>
                   <span class="sub" id="jfy_qc_timer"></span>

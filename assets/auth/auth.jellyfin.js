@@ -617,12 +617,35 @@
     return jfyQcPoller;
   }
 
+  function jfyQcPageUrl(server, code) {
+    let page;
+    try { page = new URL(/^https?:\/\//i.test(server) ? server : `http://${server}`); } catch { return ""; }
+    if (page.protocol !== "http:" && page.protocol !== "https:") return "";
+    page.pathname = `${page.pathname.replace(/\/+$/, "").replace(/\/web$/i, "")}/web/`;
+    page.search = "";
+    page.hash = `/quickconnect?code=${encodeURIComponent(code)}`;
+    const href = page.href;
+    return /^https?:\/\//i.test(href) ? href : "";
+  }
+
   async function jfyQcStart() {
     const server = (Q("#jfy_server")?.value || "").trim();
     if (!server) { setMethodNote("Enter a server URL first.", "warn"); return; }
+    if (!jfyQcPageUrl(server, "0")) { setMethodNote("Enter a valid server URL, for example http://192.168.1.10:8096.", "warn"); return; }
     const verify_ssl = !!(Q("#jfy_verify_ssl")?.checked || Q("#jfy_verify_ssl_dup")?.checked);
     jfyQcStop({ cancel: true });
     setMethodNote("");
+    let win = null;
+    try { win = window.open("about:blank", "_blank"); } catch {}
+    try {
+      win.document.write(
+        '<!doctype html><meta charset="utf-8"><title>CrossWatch → Jellyfin</title>' +
+        '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif">' +
+        '<div style="font-size:14px;opacity:.7">Contacting your Jellyfin server…</div></body>'
+      );
+      win.document.close();
+    } catch {}
+    const closeWin = () => { try { if (win && !win.closed) win.close(); } catch {} };
     const start = Q("#btn-jfy-qc-start"); if (start) { start.disabled = true; start.classList.add("busy"); }
     try {
       const r = await fetch(jfyApi("/api/jellyfin/quickconnect/start"), {
@@ -630,10 +653,31 @@
         body: JSON.stringify({ server, verify_ssl }), cache: "no-store",
       });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok || d?.ok === false) {
+      if (!r.ok || d?.ok === false || !d?.code) {
+        closeWin();
         setMethodNote(d?.error || "Could not start Quick Connect.", "warn");
         if (d?.reason === "disabled") selectMethod("password");
         return;
+      }
+      const url = jfyQcPageUrl(server, d.code);
+      if (!url) {
+        closeWin();
+      } else if (win && !win.closed) {
+        const safeCode = String(d.code).replace(/[^0-9A-Za-z]/g, "");
+        try {
+          win.document.open();
+          win.document.write(
+            '<!doctype html><meta charset="utf-8"><title>CrossWatch → Jellyfin</title>' +
+            '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
+            '<div><div style="font-size:14px;opacity:.7;margin-bottom:12px">Opening Jellyfin Quick Connect…</div>' +
+            '<div style="font-size:36px;font-weight:700;letter-spacing:.22em;color:#00a4dc">' + safeCode + '</div>' +
+            '<div style="font-size:12px;opacity:.6;margin-top:12px">Redirecting in a moment…</div></div></body>'
+          );
+          win.document.close();
+        } catch {}
+        setTimeout(() => { try { if (win && !win.closed) win.location.href = url; } catch {} }, 3000);
+      } else {
+        try { window.open(url, "_blank", "noopener"); } catch {}
       }
       const code = Q("#jfy_qc_code"); if (code) code.textContent = d.code || "------";
       const st = Q("#jfy_qc_status"); if (st) st.textContent = "Waiting for authorization…";
@@ -642,6 +686,9 @@
       qcUpdateTimer();
       qcTimer = setInterval(qcUpdateTimer, 1000);
       ensureJfyQcPoller().start({ intervalMs: QC_POLL_MS, deadlineMs: qcDeadline });
+    } catch {
+      closeWin();
+      setMethodNote("Could not start Quick Connect.", "warn");
     } finally {
       if (start) { start.disabled = false; start.classList.remove("busy"); }
     }
