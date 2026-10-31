@@ -86,6 +86,16 @@ def test_full_read_returns_every_row(collection):
     assert len(rows) == 643
 
 
+def test_jellyfin_read_excludes_virtual_items(monkeypatch):
+    monkeypatch.setattr(jellyfin_collection, "jf_selected_library_ids", lambda cfg, feature: set())
+    http = Library(3)
+    seen = []
+    get = http.get
+    http.get = lambda path, *, params: (seen.append(dict(params)), get(path, params=params))[1]
+    jellyfin_collection._fetch_rows(_adapter(http))
+    assert seen and all(p.get("IsMissing") is False for p in seen)
+
+
 def test_valid_empty_library_is_not_a_failure(collection):
     rows, _allowed = collection.module._fetch_rows(_adapter(Library(0)))
     assert rows == []

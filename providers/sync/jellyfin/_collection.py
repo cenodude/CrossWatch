@@ -109,6 +109,7 @@ def _fetch_rows(adapter: Any) -> tuple[list[tuple[Mapping[str, Any], str | None]
         "Recursive": True,
         "IncludeItemTypes": "Movie,Series,Season,Episode",
         "CollapseBoxSetItems": False,
+        "IsMissing": False,
         "Fields": _ITEM_FIELDS + (_MEDIA_INFO_FIELDS if _media_info_enabled(adapter) else ""),
         "EnableUserData": False,
         "EnableTotalRecordCount": True,
