@@ -204,3 +204,24 @@ jobs:
             echo "docker pull ${{ env.DOCKERHUB_IMAGE }}:${{ steps.ver.outputs.version }}"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # GITHUB_TOKEN-created releases do not trigger release event workflows.
+      - name: Notify Discord chat
+        if: inputs.draft == false
+        continue-on-error: true
+        env:
+          DISCORD_CHAT_WEBHOOK: ${{ secrets.DISCORD_CHAT_WEBHOOK }}
+          RELEASE_TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          url = os.environ.get("DISCORD_CHAT_WEBHOOK", "")
+          if not url:
+              print("Discord chat notice skipped: DISCORD_CHAT_WEBHOOK is not configured")
+              raise SystemExit(0)
+          tag = os.environ["RELEASE_TAG"]
+          payload = {"content": f"📦 New CrossWatch release **{tag}**, see <#1558090784983621792>.", "allowed_mentions": {"parse": []}, "flags": 4}
+          request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={"Content-Type": "application/json", "User-Agent": "CrossWatch-release-notifier"})
+          with urllib.request.urlopen(request, timeout=20) as response:
+              print(f"Discord chat notice sent ({response.status})")
+          PY
