@@ -86,6 +86,10 @@ class PlaylistLinkError(PlaylistUnavailableError):
     pass
 
 
+class PlaylistPlanError(PlaylistUnavailableError):
+    pass
+
+
 def _clean_str(v: Any) -> str:
     return str(v).strip() if v is not None else ""
 
