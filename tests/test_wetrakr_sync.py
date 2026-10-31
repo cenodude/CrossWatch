@@ -151,7 +151,7 @@ def test_registry_profiles_capabilities_and_ids(env):
     from cw_platform.orchestrator._history_rewatches import history_rewatch_pair_enabled
 
     assert load_sync_ops("WETRAKR") is OPS
-    assert get_manifest()["version"] == "0.1"
+    assert get_manifest()["version"] == "0.2"
     assert OPS.is_configured(env.view)
     assert not OPS.is_configured(env.cfg)
     assert sync_provider_supports_feature("wetrakr", "watchlist")
@@ -591,7 +591,7 @@ def test_sync_discovery_exposes_profile_only_watchlist_history_and_rewatches(env
     data = json.loads(syncAPI.api_sync_providers().body)
     assert len(data) == 1
     assert data[0]["configured"]
-    assert {feature for feature, enabled in data[0]["features"].items() if enabled} == {"watchlist", "history", "ratings", "progress"}
+    assert {feature for feature, enabled in data[0]["features"].items() if enabled} == {"watchlist", "history", "ratings", "progress", "playlists"}
     assert data[0]["capabilities"]["history"]["rewatches"] == {"read": True, "write": True}
     assert not env.server.calls
 

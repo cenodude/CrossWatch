@@ -440,6 +440,7 @@
     if (id.includes("watchlist") || raw === "watchlist") return "Watchlist";
     if (raw === "custom_list") return "Custom list";
     if (raw === "liked_list") return "Liked list";
+    if (raw === "followed_list") return "Followed list";
     if (raw === "public_list") return "Public list";
     if (raw === "collaboration") return "Shared list";
     if (raw === "status_bucket") return "Status";
@@ -1269,6 +1270,7 @@
       watchlist: ["bookmark", "Watchlist"],
       discovery: ["travel_explore", "Discovery source"],
       liked_list: ["favorite", "Liked list"],
+      followed_list: ["bookmark_added", "Followed list"],
       public_list: ["public", "Public list"],
       collaboration: ["group", "Shared list"],
       collection: ["collections_bookmark", "Collection"],
