@@ -710,6 +710,7 @@ def _asset_block(include_admin: bool = True, user: dict | None = None) -> str:
         '<script type="module" src="/assets/js/topology/advisor.js?v=__CW_VERSION__"></script>',
     ) if include_admin else (('<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',) if full_user else ())
     return "\n".join((
+        '<script src="/assets/helpers/dialog-focus.js?v=__CW_VERSION__" defer></script>',
         helper_tags,
         '<script src="/assets/crosswatch.js?v=__CW_VERSION__" defer></script>',
         app_tags,

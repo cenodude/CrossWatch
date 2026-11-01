@@ -573,6 +573,12 @@ function bundleKey(s) {
       refresh(true, true);
       setTimeout(() => { if (!state.busy) setRefreshSpinning(false); }, 600);
     });
+    $("#ss-capture-modal", page)?.addEventListener("keydown", event => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if ($("#ss-capture-actions", page)?.classList.contains("show")) $("#ss-capture-ack", page)?.click();
+    });
     $("#ss-capture-ack", page)?.addEventListener("click", () => {
       hideCaptureProgressModal(0);
       window.setTimeout(() => refresh(true, false), 80);
@@ -807,7 +813,13 @@ function bundleKey(s) {
     if (!page) return;
     const modal = $("#ss-capture-modal", page);
     if (!modal) return;
+    state.captureReturnFocus = document.activeElement;
     modal.classList.remove("hidden", "is-error", "is-done");
+    window.CW?.DialogFocus?.activate(modal, () => {
+      if ($("#ss-capture-actions", page)?.classList.contains("show")) $("#ss-capture-ack", page)?.click();
+    });
+    modal.tabIndex = -1;
+    modal.focus({ preventScroll: true });
     $("#ss-capture-actions", page)?.classList.remove("show");
     updateCaptureProgressModal({
       ok: true,
@@ -832,7 +844,10 @@ function bundleKey(s) {
     if (!page) return;
     window.setTimeout(() => {
       const modal = $("#ss-capture-modal", page);
+      window.CW?.DialogFocus?.deactivate(modal);
       if (modal) modal.classList.add("hidden");
+      if (state.captureReturnFocus?.isConnected) state.captureReturnFocus.focus?.({ preventScroll: true });
+      state.captureReturnFocus = null;
       $("#ss-capture-actions", page)?.classList.remove("show");
       state.captureProgressId = "";
     }, delay);

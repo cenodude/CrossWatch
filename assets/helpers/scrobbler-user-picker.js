@@ -156,8 +156,12 @@
           closeUserPicker();
         });
         d.addEventListener("keydown", (e) => {
-          if (e.key === "Escape") closeUserPicker();
-        });
+          const popup = d.getElementById("sc_user_pop");
+          if (e.key !== "Escape" || !popup || popup.classList.contains("hidden")) return;
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          closeUserPicker();
+        }, true);
       }
 
       if (!STATE.__scUserPosBound) {

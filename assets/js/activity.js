@@ -296,6 +296,13 @@
     `;
     document.body.appendChild(modal);
     state.modal = modal;
+    window.CW?.DialogFocus?.trap(modal);
+    modal.addEventListener("keydown", event => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeModal();
+    });
 
     $(".activity-close", modal)?.addEventListener("click", closeModal);
     ["#activity-q", "#activity-media", "#activity-status"].forEach((sel) => {
@@ -307,7 +314,10 @@
   }
 
   function closeModal() {
+    window.CW?.DialogFocus?.deactivate(state.modal);
     state.modal?.classList.add("hidden");
+    if (state.returnFocus?.isConnected) state.returnFocus.focus?.({ preventScroll: true });
+    state.returnFocus = null;
   }
 
   function modalParams() {
@@ -359,7 +369,10 @@
 
   function openModal() {
     const modal = ensureModal();
+    state.returnFocus = document.activeElement;
     modal.classList.remove("hidden");
+    window.CW?.DialogFocus?.activate(modal, closeModal);
+    $(".activity-close", modal)?.focus();
     loadActivityPage(true);
   }
 

@@ -74,6 +74,7 @@ function fixture(kind = "watchlist") {
     },
   };
   return {node, requests, modes, provider, open: () => context.window.CW.Editor.SendModal.open(ctx),
+    key: event => shell.keydown(event), get visible() {return shell.isConnected;},
     click: target => shell.click({target}), preview: fn => {preview = fn;}, send: fn => {send = fn;},
     get cleared() {return cleared;}, get refreshed() {return refreshed;}};
 }
@@ -188,4 +189,26 @@ test("Editor cloud failures display title and human reason", async () => {
   assert.match(html, /&lt;Example&gt;/);
   assert.match(html, /Plex could not match this title/);
   assert.doesNotMatch(html, /plex_discover_not_found/);
+});
+
+
+test("Escape closes the Send dialog and consumes the key", async () => {
+  const f = fixture(); await f.open();
+  let prevented = false, stopped = false;
+  f.key({key: "Escape", preventDefault() {prevented = true;}, stopPropagation() {stopped = true;}});
+  assert.equal(f.visible, false);
+  assert.equal(prevented && stopped, true);
+});
+
+test("Escape cannot dismiss an active provider send", async () => {
+  const f = fixture(); await f.open();
+  const pending = deferred();
+  f.send(() => pending.promise);
+  const sending = f.click(f.node("[data-send-submit]"));
+  f.key({key: "Escape", preventDefault() {}, stopPropagation() {}});
+  assert.equal(f.visible, true);
+  pending.resolve({ok: true, confirmed: 1});
+  await sending;
+  f.key({key: "Escape", preventDefault() {}, stopPropagation() {}});
+  assert.equal(f.visible, false);
 });

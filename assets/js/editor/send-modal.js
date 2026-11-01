@@ -118,8 +118,14 @@
     </div>`;
   }
 
+  let returnFocus = null;
+
   function close() {
-    document.getElementById("cw-editor-send-modal")?.remove();
+    const shell = document.getElementById("cw-editor-send-modal");
+    window.CW?.DialogFocus?.deactivate(shell);
+    shell?.remove();
+    if (returnFocus?.isConnected) returnFocus.focus?.({ preventScroll: true });
+    returnFocus = null;
   }
 
   function notify(message, ok = false) {
@@ -178,6 +184,7 @@
     };
 
     close();
+    returnFocus = document.activeElement;
     const shell = document.createElement("div");
     shell.id = "cw-editor-send-modal";
     shell.className = "cw-editor-send-overlay";
@@ -234,6 +241,24 @@
         </div>
       </div>`;
     document.body.appendChild(shell);
+    window.CW?.DialogFocus?.activate(shell, () => {
+      if (!busy) {
+        clearTimeout(confirmTimer);
+        close();
+      }
+    });
+    const dialog = shell.querySelector('[role="dialog"]');
+    dialog.tabIndex = -1;
+    dialog.focus?.({ preventScroll: true });
+    shell.addEventListener("keydown", event => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!busy) {
+        clearTimeout(confirmTimer);
+        close();
+      }
+    });
     const list = shell.querySelector(".cw-editor-send-list");
     const submit = shell.querySelector("[data-send-submit]");
     const status = shell.querySelector("[data-send-status]");
@@ -360,6 +385,7 @@
         .filter(p => selected.has(providerKey(p)))
         .map(p => ({ provider: p.provider, instance: p.instance || "default" }));
       busy = true;
+      dialog.focus?.({ preventScroll: true });
       clearTimeout(confirmTimer);
       syncButtons();
       if (submit) {
