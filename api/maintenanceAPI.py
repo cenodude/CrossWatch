@@ -17,7 +17,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, File, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
 from cw_platform.local_db import crosswatch_db_path
@@ -44,7 +44,72 @@ from cw_platform.provider_instances import normalize_instance_id
 
 _LOG = logging.getLogger("crosswatch.api.maintenance")
 
-router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
+def _maintenance_guard(request: Request):
+    guarded = {
+        "clear-state", "state-file/compact", "state-file/prune", "clear-provider-sync-cache", "clear-pair-state",
+        "database-rebuild", "events-optimize", "events-rebuild", "events-purge", "reset-all-default",
+        "reset-currently-watching", "clear-activity-log", "clear-recent-scrobbles", "reset-stats",
+    }
+    if request.method != "POST" or request.url.path.removeprefix("/api/maintenance/") not in guarded:
+        yield
+        return
+    from cw_platform.local_db.operation_lock import exclusive_operation
+
+    _, config_dir, *_ = _cw()
+    operation = exclusive_operation(config_dir)
+    try:
+        operation.__enter__()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail="database_operation_busy") from exc
+    try:
+        yield
+    finally:
+        operation.__exit__(None, None, None)
+
+
+router = APIRouter(prefix="/api/maintenance", tags=["maintenance"], dependencies=[Depends(_maintenance_guard)])
+
+
+@router.get("/jobs/current")
+def maintenance_job_status() -> dict[str, Any]:
+    from services.maintenance_jobs import status
+
+    _, config_dir, *_ = _cw()
+    return status(Path(config_dir))
+
+
+@router.post("/jobs")
+def maintenance_job_start(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    from services.maintenance_jobs import start
+    from api.syncAPI import _is_sync_running
+
+    action = str(payload.get("action") or "")
+    actions = {
+        "database-health": maintenance_database_health,
+        "events-health": maintenance_events_health,
+        "state-file-prune": prune_state_file,
+        "state-file": compact_state_file,
+        "events-rebuild": lambda: maintenance_events_rebuild({"confirm": True}),
+        "events-purge": lambda: maintenance_events_purge({"confirm": True}),
+        "state": clear_state_minimal,
+        "database-rebuild": lambda: maintenance_database_rebuild({"confirm": True}),
+    }
+    if action not in actions and action != "events-optimize":
+        return {"ok": False, "error": "unknown_action"}
+    if action in {"events-rebuild", "events-purge", "state", "database-rebuild"} and payload.get("confirm") is not True:
+        return {"ok": False, "error": "confirmation_required"}
+    if action not in {"database-health", "events-health"} and _is_sync_running():
+        return {"ok": False, "error": "sync_running"}
+    _, config_dir, *_ = _cw()
+
+    def work(progress):
+        if action == "events-optimize":
+            from cw_platform.event_archive.maintenance import optimize
+
+            return optimize(progress=progress)
+        return actions[action]()
+
+    return start(Path(config_dir), action, work)
 
 SYNC_STATE_PATTERNS = (
     "*pair_alias*.json",
@@ -508,13 +573,12 @@ def _load_config_for_state_prune(config_dir: Path) -> dict[str, Any] | None:
     try:
         from cw_platform.config_base import load_config
 
-        cfg = load_config() or {}
+        cfg = load_config()
         if isinstance(cfg, dict):
             return cfg
     except Exception:
-        pass
-    raw = _read_json(config_dir / "config.json")
-    return raw if isinstance(raw, dict) else None
+        _LOG.exception("Cannot load normalized configuration; state cleanup deferred")
+    return None
 
 
 def _configured_state_refs(cfg: Mapping[str, Any]) -> set[tuple[str, str]]:
@@ -1350,8 +1414,11 @@ def prune_state_file() -> dict[str, Any]:
         }
 
     pruned, removed, details = _prune_state_payload(payload, cfg)
+    from services.pair_state import stale_pair_scopes, prune_pair_scopes
+
+    pair_inventory = stale_pair_scopes(CONFIG_DIR, cfg)
     orphans = _orphaned_state_files()
-    if removed.get("removed_baselines", 0) <= 0 and removed.get("removed_instances", 0) <= 0 and removed.get("removed_providers", 0) <= 0:
+    if not pair_inventory["scopes"] and removed.get("removed_baselines", 0) <= 0 and removed.get("removed_instances", 0) <= 0 and removed.get("removed_providers", 0) <= 0:
         orphan_files, orphan_bytes = _remove_orphaned_state_files(orphans)
         return {
             "ok": True,
@@ -1365,6 +1432,7 @@ def prune_state_file() -> dict[str, Any]:
             "after_bytes": int(before.get("bytes") or 0),
             "summary": {"removed_files": orphan_files, "removed_items": 0, "freed_bytes": orphan_bytes},
             "inventory": _sync_state_baseline_inventory(CONFIG_DIR),
+            "pair_scopes": pair_inventory,
         }
 
     backup: dict[str, Any] | None = None
@@ -1387,6 +1455,9 @@ def prune_state_file() -> dict[str, Any]:
 
     try:
         _save_sync_state(CONFIG_DIR, pruned)
+        pair_removed = prune_pair_scopes(CONFIG_DIR, cfg)
+        removed["removed_pair_scopes"] = pair_removed["scopes"]
+        removed["removed_items"] += pair_removed["items"]
     except Exception:
         _LOG.exception("state prune write failed")
         return {
@@ -1416,6 +1487,7 @@ def prune_state_file() -> dict[str, Any]:
         "after_bytes": int(after.get("bytes") or 0),
         "summary": summary,
         "inventory": _sync_state_baseline_inventory(CONFIG_DIR),
+        "pair_scopes": pair_inventory,
     }
 
 
@@ -1655,7 +1727,16 @@ def support_bundle(
 def maintenance_database_health() -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
     try:
-        return local_db_diagnostics(CONFIG_DIR)
+        result = local_db_diagnostics(CONFIG_DIR)
+        from services.pair_state import stale_pair_scopes
+
+        cfg = _load_config_for_state_prune(CONFIG_DIR)
+        if isinstance(cfg, dict):
+            result["pair_scopes"] = stale_pair_scopes(CONFIG_DIR, cfg)
+        else:
+            result["pair_scopes"] = {"scopes": [], "items": 0, "active_scopes": 0, "deferred": True,
+                                     "reason": "config_unavailable", "deferred_pairs": []}
+        return result
     except Exception:
         _LOG.exception("database-health failed")
         return {"ok": False, "error": "internal_error"}

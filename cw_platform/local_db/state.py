@@ -886,8 +886,18 @@ def clear_pair_state(base_path: str | Path, pair_scope: str) -> tuple[int, int]:
         if conn is None:
             raise RuntimeError("Pair state database is unavailable")
         removed = pair_state_counts(base_path, pair_scope)
+        while True:
+            with conn:
+                count = conn.execute(
+                    "DELETE FROM pair_baseline_items WHERE id IN ("
+                    "SELECT b.id FROM pair_baseline_items b JOIN pair_feature_state p ON p.id=b.provider_state_id "
+                    "WHERE p.pair_scope=? LIMIT 1000)", (pair_scope,),
+                ).rowcount
+            if count < 1000:
+                break
         with conn:
             conn.execute("DELETE FROM pair_feature_state WHERE pair_scope=?", (pair_scope,))
+            conn.execute("DELETE FROM pair_scope_owners WHERE pair_scope=?", (pair_scope,))
             conn.execute("DELETE FROM episode_group_state WHERE pair_scope=?", (pair_scope,))
             conn.execute("DELETE FROM episode_group_scrobbles WHERE pair_scope=?", (pair_scope,))
         _invalidate()
@@ -913,6 +923,7 @@ def clear_state(base_path: str | Path) -> None:
             conn.execute("DELETE FROM episode_group_state")
             conn.execute("DELETE FROM episode_group_scrobbles")
             conn.execute("DELETE FROM pair_baseline_items")
+            conn.execute("DELETE FROM pair_scope_owners")
             conn.execute("DELETE FROM pair_feature_state")
             conn.execute("DELETE FROM baseline_items")
             conn.execute("DELETE FROM provider_feature_state")

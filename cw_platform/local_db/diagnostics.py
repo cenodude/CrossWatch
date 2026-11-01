@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import time
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -115,7 +116,8 @@ def _last_sync(conn: Any) -> dict[str, Any]:
     }
 
 
-def diagnostics(base_path: str | Path | None = None) -> dict[str, Any]:
+def diagnostics(base_path: str | Path | None = None, *, full: bool = True) -> dict[str, Any]:
+    started = time.monotonic()
     path = crosswatch_db_path(base_path)
     existed = path.exists()
     conn = get_conn(base_path)
@@ -130,12 +132,12 @@ def diagnostics(base_path: str | Path | None = None) -> dict[str, Any]:
             "active_writers": active_writers(),
         }
 
-    integrity_row = conn.execute("PRAGMA integrity_check").fetchone()
-    integrity = str(integrity_row[0] if integrity_row is not None else "unknown")
-    foreign_key_errors = len(conn.execute("PRAGMA foreign_key_check").fetchall())
+    integrity_row = conn.execute("PRAGMA integrity_check").fetchone() if full else None
+    integrity = str(integrity_row[0] if integrity_row is not None else "not_checked")
+    foreign_key_errors = len(conn.execute("PRAGMA foreign_key_check").fetchall()) if full else 0
     orphan_counts = {
         key: _one(conn, sql)
-        for key, sql in _ORPHAN_QUERIES.items()
+        for key, sql in (_ORPHAN_QUERIES.items() if full else [])
     }
     stale_counts = {
         "ttl_expired": _one(conn, "SELECT COUNT(*) FROM ttl_dedupe_entries WHERE expires_at<?", (time.time(),)),
@@ -144,13 +146,26 @@ def diagnostics(base_path: str | Path | None = None) -> dict[str, Any]:
             "SELECT COUNT(*) FROM currently_watching_streams WHERE COALESCE(state,'') NOT IN ('playing','buffering')",
         ),
     }
-    table_counts = _table_counts(conn)
+    table_counts = _table_counts(conn) if full else {
+        table: _one(conn, f"SELECT COUNT(*) FROM {table}")
+        for table in ("provider_feature_state", "baseline_items")
+    }
+    storage_pages = {name: _one(conn, f"PRAGMA {name}") for name in ("page_count", "page_size", "freelist_count")}
+    table_storage = []
+    if full:
+        try:
+            table_storage = [dict(row) for row in conn.execute(
+                "SELECT name, SUM(pgsize) AS bytes FROM dbstat GROUP BY name ORDER BY bytes DESC"
+            )]
+        except Exception:
+            pass
     schema_version = _schema_version(conn)
     issues = sum(orphan_counts.values()) + foreign_key_errors
     schema_ok = schema_version == SCHEMA_VERSION
-    healthy = integrity == "ok" and issues == 0 and schema_ok
+    healthy = (not full or integrity == "ok") and issues == 0 and schema_ok
     wal_path = Path(str(path) + "-wal")
     shm_path = Path(str(path) + "-shm")
+    logging.getLogger("crosswatch.local_db").info("Database %s check finished in %s ms", "full" if full else "startup", int((time.monotonic() - started) * 1000))
     return {
         "ok": True,
         "path": str(path),
@@ -165,6 +180,9 @@ def diagnostics(base_path: str | Path | None = None) -> dict[str, Any]:
         "wal_size_bytes": _file_size(wal_path),
         "shm_size_bytes": _file_size(shm_path),
         "table_counts": table_counts,
+        "check_level": "full" if full else "startup",
+        "table_storage": table_storage,
+        "unused_bytes": storage_pages["freelist_count"] * storage_pages["page_size"],
         "orphan_counts": orphan_counts,
         "stale_counts": stale_counts,
         "last_sync": _last_sync(conn),

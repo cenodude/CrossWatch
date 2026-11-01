@@ -243,6 +243,14 @@ class StateStore:
     ) -> None:
         if self.pair_scope:
             sqlite_state.save_pair_blocks(self.base_path, self.pair_scope, blocks, last_sync_epoch=last_sync_epoch)
+            if self.mapping_pair_id:
+                from ..local_db.db import get_conn
+
+                conn = get_conn(self.base_path)
+                if conn is not None:
+                    with conn:
+                        conn.execute("INSERT OR REPLACE INTO pair_scope_owners(pair_scope,pair_id,feature) VALUES(?,?,?)",
+                                     (self.pair_scope, self.mapping_pair_id, next((key[2] for key in blocks), "")))
         else:
             sqlite_state.save_feature_blocks(self.base_path, blocks, last_sync_epoch=last_sync_epoch)
 

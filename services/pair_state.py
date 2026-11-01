@@ -6,6 +6,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
+import logging
 
 from cw_platform.local_db import state as sqlite_state
 from cw_platform.orchestrator._pairs import _feature_list_for_pair
@@ -14,6 +15,85 @@ from cw_platform.pair_scope import pair_feature_scope
 from cw_platform.provider_instances import normalize_instance_id
 
 FEATURES = ("watchlist", "history", "ratings", "progress", "collection", "playlists")
+
+
+def configured_scopes(cfg: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
+    from cw_platform.orchestrator._pairs import expand_sync_user_pairs
+    from cw_platform.value_coercion import coerce_bool
+
+    out: dict[str, tuple[str, str]] = {}
+    expanded = expand_sync_user_pairs(cfg)
+    for pairs in (expanded, [pair for pair in expanded if coerce_bool(pair.get("enabled", True), True)]):
+        for index, pair in enumerate(pairs, 1):
+            for feature in FEATURES:
+                scope = pair_feature_scope(cfg, pair, feature, index)
+                out[scope] = (str(pair.get("id") or pair.get("pair_id") or index), feature)
+    return out
+
+
+def stale_pair_scopes(config_dir: str | Path, cfg: Mapping[str, Any], *, protected: Iterable[str] = ()) -> dict[str, Any]:
+    from cw_platform.local_db.db import get_conn
+
+    active = configured_scopes(cfg)
+    protected = set(protected)
+    from cw_platform.orchestrator._pairs import expand_sync_user_pairs
+    from cw_platform.identity_links import clean_identity_map
+    from cw_platform.value_coercion import coerce_bool
+
+    deferred_pairs = set()
+    deferred_positional = False
+    for index, pair in enumerate(cfg.get("pairs") or [], 1):
+        if not isinstance(pair, Mapping) or not coerce_bool(pair.get("match_users", False)):
+            continue
+        expanded = expand_sync_user_pairs({**cfg, "pairs": [pair]})
+        links = clean_identity_map(pair.get("user_matches"))
+        if not expanded or (expanded != [pair] and len(expanded) < len(links)):
+            deferred_pairs.add(str(pair.get("id") or pair.get("pair_id") or index))
+            deferred_positional = deferred_positional or not (pair.get("id") or pair.get("pair_id"))
+    conn = get_conn(config_dir)
+    if conn is None:
+        raise RuntimeError("database_unavailable")
+    rows = conn.execute("SELECT DISTINCT pair_scope FROM pair_feature_state").fetchall()
+    owners = {row[0]: row[1] for row in conn.execute("SELECT pair_scope,pair_id FROM pair_scope_owners")}
+    owners.update({scope: owner[0] for scope, owner in active.items()})
+    deferred_scopes = [row["pair_scope"] for row in rows
+                       if deferred_pairs and (row["pair_scope"] not in owners or owners[row["pair_scope"]] in deferred_pairs
+                                              or (deferred_positional and str(owners[row["pair_scope"]]).isdigit()))]
+    protected.update(deferred_scopes)
+    stale = [str(row["pair_scope"]) for row in rows if str(row["pair_scope"]).startswith("cw2_") and row["pair_scope"] not in active and row["pair_scope"] not in protected]
+    items = sum(sqlite_state.pair_state_counts(config_dir, scope)[1] for scope in stale)
+    return {"scopes": stale, "items": items,
+            "active_scopes": sum(row["pair_scope"] in active for row in rows), "stored_scopes": len(rows),
+            "deferred": bool(deferred_pairs), "deferred_pairs": sorted(deferred_pairs), "deferred_scopes": len(deferred_scopes)}
+
+
+def prune_pair_scopes(config_dir: str | Path, cfg: Mapping[str, Any], *, protected: Iterable[str] = ()) -> dict[str, Any]:
+    from cw_platform.local_db.db import get_conn
+
+    inventory = stale_pair_scopes(config_dir, cfg, protected=protected)
+    result = clear_pair_state(config_dir, Path(config_dir) / ".cw_state", inventory["scopes"])
+    if result["errors"]:
+        raise RuntimeError("pair_scope_cleanup_failed")
+    conn = get_conn(config_dir)
+    if conn is None:
+        raise RuntimeError("database_unavailable")
+    with conn:
+        conn.executemany("INSERT INTO pair_scope_owners(pair_scope,pair_id,feature) VALUES(?,?,?) "
+                         "ON CONFLICT(pair_scope) DO UPDATE SET pair_id=excluded.pair_id,feature=excluded.feature",
+                         [(scope, *owner) for scope, owner in configured_scopes(cfg).items()])
+        conn.execute("DELETE FROM pair_scope_owners WHERE pair_scope NOT IN (SELECT pair_scope FROM pair_feature_state)")
+    if result["items"]:
+        logging.getLogger("crosswatch.pair_state").info("Pruned %s obsolete pair scopes and %s items", len(inventory["scopes"]), result["items"])
+    return {**result, "scopes": len(inventory["scopes"])}
+
+
+def owned_pair_scopes(config_dir: str | Path, pair_id: str) -> list[str]:
+    from cw_platform.local_db.db import get_conn
+
+    conn = get_conn(config_dir)
+    if conn is None:
+        raise RuntimeError("database_unavailable")
+    return [str(row[0]) for row in conn.execute("SELECT pair_scope FROM pair_scope_owners WHERE pair_id=?", (pair_id,))]
 
 
 def pair_scopes(cfg: Mapping[str, Any], pair_id: str, features: Iterable[str] | None = None) -> dict[str, str] | None:
