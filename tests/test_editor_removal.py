@@ -60,6 +60,13 @@ class Ops:
         return dict(ok=True, confirmed_keys=keys, count=len(keys), unresolved=[])
 
 
+@pytest.fixture(autouse=True)
+def _fresh_live_reads():
+    removal._LIVE_READS.clear()
+    yield
+    removal._LIVE_READS.clear()
+
+
 @pytest.fixture
 def setup(config_base, monkeypatch):
     cfg = {"pairs": [
@@ -565,6 +572,59 @@ def test_live_check_removes_a_remote_record_added_after_the_last_sync(setup):
     result = setup.execute(payload)
     assert result["confirmed"] == 1
     assert list(setup.ops["MDBLIST"].live[("default", "history")]) == ["tmdb:2"]
+
+
+def test_live_check_reads_once_before_and_once_after_the_removal(setup):
+    ops = setup.ops["MDBLIST"]
+    ops.live[("default", "ratings")] = {"tmdb:1": movie(rating=8), "tmdb:2": movie(2, rating=7)}
+    reads = []
+    read = ops.build_index
+    ops.build_index = lambda cfg, **kw: reads.append(kw["feature"]) or read(cfg, **kw)
+    payload = dict(kind="ratings", items=[movie()], live_check=[{"provider": "MDBLIST", "instance": "default"}])
+    result = setup.execute(payload)
+    assert result["confirmed"] == 1
+    assert reads == ["ratings", "ratings"]
+    assert list(ops.live[("default", "ratings")]) == ["tmdb:2"]
+
+
+def test_a_new_add_clears_the_shared_read(setup, monkeypatch):
+    ops = setup.ops["MDBLIST"]
+    ops.live[("default", "ratings")] = {"tmdb:2": movie(2, rating=7)}
+    payload = dict(kind="ratings", items=[movie()], live_check=[{"provider": "MDBLIST", "instance": "default"}])
+    assert not api.api_editor_remove_preview(payload, request=None)["providers"]
+    ops.live[("default", "ratings")]["tmdb:1"] = movie(rating=8)
+    removal.forget_live_reads("MDBLIST", "default", "ratings")
+    assert [p["provider"] for p in api.api_editor_remove_preview(payload, request=None)["providers"]] == ["MDBLIST"]
+
+
+def test_direct_removal_writes_by_id_without_reading_and_prunes_local_state(setup):
+    ops = setup.ops["MDBLIST"]
+    ops.live[("default", "ratings")] = {"tmdb:1": movie(rating=8), "tmdb:2": movie(2, rating=7)}
+    database.save_feature_baseline(setup.root, provider="MDBLIST", feature="ratings", items={"tmdb:1": movie(rating=8), "tmdb:2": movie(2, rating=7)})
+    ops.build_index = lambda *a, **k: pytest.fail("Direct removal must not read the provider")
+    result = api.api_editor_send(dict(kind="ratings", operation="remove", direct=True, items=[movie()],
+                                      providers=[{"provider": "MDBLIST", "instance": "default"}]), request=None)
+    assert result["results"][0]["ok"] is True and result["removed"] == 1
+    assert list(ops.live[("default", "ratings")]) == ["tmdb:2"]
+    stored = api._load_state_items("ratings", "MDBLIST", "default", raw_state=api._state_store().load_state_features({"ratings"}))
+    assert list(stored) == ["tmdb:2"]
+
+
+def test_direct_removal_reports_a_title_the_provider_did_not_find(setup):
+    ops = setup.ops["MDBLIST"]
+    ops.live[("default", "ratings")] = {"tmdb:2": movie(2, rating=7)}
+    ops.fail = {"tmdb:1"}
+    result = api.api_editor_send(dict(kind="ratings", operation="remove", direct=True, items=[movie()],
+                                      providers=[{"provider": "MDBLIST", "instance": "default"}]), request=None)
+    row = result["results"][0]
+    assert row["ok"] is False and row["result"]["unresolved"] == 1
+
+
+@pytest.mark.parametrize("provider,item", [("PLEX", movie()), ("TRAKT", movie(_cw_event_key=history_event_key(movie(watched_at="2026-01-01T00:00:00Z"))))])
+def test_direct_removal_asks_for_a_live_match_when_ids_are_not_enough(setup, provider, item):
+    payload = dict(kind="history", operation="remove", direct=True, items=[dict(item, key=item.pop("_cw_event_key", ""))],
+                   providers=[{"provider": provider, "instance": "default"}])
+    assert api.api_editor_send(payload, request=None)["results"][0]["error"] == "needs_live_match"
 
 
 def test_live_check_reports_a_missing_record_instead_of_asking_for_a_sync(setup):
