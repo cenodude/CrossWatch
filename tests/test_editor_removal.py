@@ -698,6 +698,124 @@ def test_next_sync_observes_manual_removal_using_existing_pair_rules(config_base
         assert not any(r[0] == "remove" for r in operations)
 
 
+def _rewatch_caps(write):
+    def capabilities():
+        caps = {feature: {"remove": True} for feature in removal.FEATURES}
+        caps["history"]["rewatches"] = {"read": True, "write": write, "account_gate": "pro_vip" if write else False}
+        return caps
+    return capabilities
+
+
+def test_send_targets_report_rewatch_support_for_history_only(setup, monkeypatch):
+    s = setup
+    s.ops["TRAKT"].capabilities = _rewatch_caps(True)
+    s.ops["PLEX"].capabilities = _rewatch_caps(False)
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
+    rows = {row["provider"]: row for row in api.api_editor_send_providers(kind="history", request=None)["providers"]}
+    assert rows["TRAKT"]["rewatch_write"] is True and rows["TRAKT"]["rewatch_gate"] == "pro_vip"
+    assert rows["PLEX"]["rewatch_write"] is False and rows["PLEX"]["rewatch_gate"] == ""
+    watchlist = api.api_editor_send_providers(kind="watchlist", request=None)["providers"]
+    assert all("rewatch_write" not in row for row in watchlist)
+
+
+def test_rewatch_send_skips_single_play_providers_and_flags_the_rest(setup, monkeypatch):
+    s = setup
+    s.ops["TRAKT"].capabilities = _rewatch_caps(True)
+    s.ops["PLEX"].capabilities = _rewatch_caps(False)
+    seen = []
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
+    monkeypatch.setattr(api, "apply_add", lambda **kw: seen.append((kw["dst_name"], dict(kw["cfg"]))) or {"ok": True, "confirmed": 1})
+    monkeypatch.setattr(api, "_merge_sent_items_into_state", lambda *a, **k: None)
+    payload = dict(kind="history", items=[movie(watched_at="2026-11-01T12:00:00Z")],
+                   providers=[{"provider": "PLEX", "instance": "default"}, {"provider": "TRAKT", "instance": "default"}])
+    result = api.api_editor_send({**payload, "rewatch": True}, request=None)
+    rows = {row["provider"]: row for row in result["results"]}
+    assert rows["PLEX"]["error"] == "rewatch_not_supported" and rows["PLEX"]["ok"] is False
+    assert rows["TRAKT"]["ok"] is True
+    assert seen == [("TRAKT", {"provider": "TRAKT", "instance": "default", "_cw_history_rewatches": True})]
+    seen.clear()
+    api.api_editor_send(payload, request=None)
+    assert [name for name, _ in seen] == ["PLEX", "TRAKT"]
+    assert not any(cfg.get("_cw_history_rewatches") for _, cfg in seen)
+
+
+def test_rewatch_sends_event_identities_and_merges_event_receipts(setup, monkeypatch):
+    s = setup
+    s.ops["MDBLIST"].capabilities = _rewatch_caps(True)
+    sent, merged = [], []
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
+
+    def fake_add(**kw):
+        sent.extend(deepcopy(kw["items"]))
+        return {"ok": True, "confirmed": 1, "confirmed_keys": [kw["items"][0]["_cw_event_key"]]}
+
+    monkeypatch.setattr(api, "apply_add", fake_add)
+    monkeypatch.setattr(api, "_merge_sent_items_into_state", lambda provider, instance, feature, items: merged.extend(items))
+    api.api_editor_send(dict(kind="history", rewatch=True, items=[movie(watched_at="2026-11-01T12:00:00Z")],
+                             providers=[{"provider": "MDBLIST", "instance": "default"}]), request=None)
+    assert sent[0]["_cw_event_key"] == history_event_key(movie(watched_at="2026-11-01T12:00:00Z"))
+    assert sent[0]["_cw_rewatch_sync"] is True
+    assert len(merged) == 1 and merged[0]["_cw_event_key"] == sent[0]["_cw_event_key"]
+
+
+def test_collapsed_trakt_receipt_replaces_the_titles_stored_watches(setup, monkeypatch):
+    s = setup
+    s.ops["TRAKT"].capabilities = _rewatch_caps(True)
+    old = movie(watched_at="2026-05-03T21:10:00Z")
+    database.save_feature_baseline(s.root, provider="TRAKT", feature="history", items={
+        history_event_key(old): old,
+        "tmdb:2@1777842600": movie(2, watched_at="2026-05-03T21:10:00Z"),
+    })
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
+    monkeypatch.setattr(api, "apply_add", lambda **kw: {"ok": True, "confirmed": 1, "confirmed_keys": ["tmdb:1"]})
+    newer, older = movie(watched_at="2026-11-01T12:00:00Z"), movie(watched_at="2026-10-01T12:00:00Z")
+    api.api_editor_send(dict(kind="history", rewatch=True, items=[newer, older],
+                             providers=[{"provider": "TRAKT", "instance": "default"}]), request=None)
+    stored = api._load_state_items("history", "TRAKT", "default", raw_state=api._state_store().load_state_features({"history"}))
+    title_rows = {k: v for k, v in stored.items() if k.startswith("tmdb:1") and not k.startswith("tmdb:1@1777842600")}
+    assert len(title_rows) == 1
+    assert next(iter(title_rows.values()))["watched_at"] == "2026-11-01T12:00:00Z"
+    assert "tmdb:2@1777842600" in stored
+
+
+def test_undated_rewatch_is_refused_instead_of_using_event_mode(setup, monkeypatch):
+    s = setup
+    s.ops["TRAKT"].capabilities = _rewatch_caps(True)
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
+    monkeypatch.setattr(api, "apply_add", lambda **kw: pytest.fail("Undated rewatches must not be written"))
+    result = api.api_editor_send(dict(kind="history", rewatch=True, items=[movie(watched=True, _cw_watched_state=True)],
+                                      providers=[{"provider": "TRAKT", "instance": "default"}]), request=None)
+    assert result["results"][0]["error"] == "undated_rewatch_not_supported"
+
+
+def test_undated_history_only_goes_to_providers_that_store_unknown_dates(setup, monkeypatch):
+    s = setup
+    s.ops["TRAKT"].capabilities = _rewatch_caps(True)
+    seen = []
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
+    monkeypatch.setattr(api, "apply_add", lambda **kw: seen.append((kw["dst_name"], deepcopy(kw["items"]))) or {"ok": True, "confirmed": 1})
+    monkeypatch.setattr(api, "_merge_sent_items_into_state", lambda *a, **k: None)
+    item = movie(watched=True, _cw_watched_state=True)
+    result = api.api_editor_send(dict(kind="history", items=[item], providers=[
+        {"provider": "PLEX", "instance": "default"}, {"provider": "TRAKT", "instance": "default"}]), request=None)
+    rows = {row["provider"]: row for row in result["results"]}
+    assert rows["PLEX"]["error"] == "undated_not_supported"
+    assert [name for name, _ in seen] == ["TRAKT"]
+    assert "watched_at" not in seen[0][1][0] and seen[0][1][0]["_cw_watched_state"] is True
+    rows = {row["provider"]: row for row in api.api_editor_send_providers(kind="history", request=None)["providers"]}
+    assert rows["TRAKT"]["undated_write"] is True and rows["PLEX"]["undated_write"] is False
+    assert api._normalize_send_item(movie(_cw_watched_state=True), "history") is None
+
+
+def test_history_notes_report_trakt_single_play_setting(setup, monkeypatch):
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
+    monkeypatch.setattr(api, "_trakt_keeps_one_play", lambda view: view["instance"] == "default")
+    assert api.api_editor_history_notes(provider="trakt", instance="default", request=None)["keeps_one_play"] is True
+    assert api.api_editor_history_notes(provider="PLEX", instance="default", request=None)["keeps_one_play"] is None
+    with pytest.raises(HTTPException):
+        api.api_editor_history_notes(provider="NOPE", instance="default", request=None)
+
+
 @pytest.mark.parametrize("feature,flagged", [("history", True), ("watchlist", False)])
 def test_jellyfin_history_removal_updates_every_copy(setup, feature, flagged):
     s = setup

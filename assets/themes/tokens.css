@@ -71,3 +71,6 @@ html[data-cw-theme="flat-light"] {
 @media (max-width: 760px) {
   :root, html[data-cw-theme] { --cw-page-control-height: 44px; }
 }
+:root{--cw-page-overlay-radius:14px;--cw-page-overlay-shadow:0 18px 44px rgba(0,0,0,.5);--cw-page-overlay-backdrop:rgba(3,5,10,.62);--cw-page-overlay-dim:rgba(3,5,10,.55);--cw-page-input-scheme:dark}
+html[data-cw-theme]{--cw-page-overlay-radius:10px;--cw-page-overlay-shadow:0 12px 32px rgba(0,0,0,.35)}
+html[data-cw-theme="flat-light"]{--cw-page-overlay-shadow:0 12px 32px rgba(16,24,40,.16);--cw-page-overlay-backdrop:rgba(16,24,40,.36);--cw-page-overlay-dim:rgba(16,24,40,.36);--cw-page-input-scheme:light}

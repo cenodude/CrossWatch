@@ -14,7 +14,7 @@ function modal(presence = null, type = "movie") {
     navigator: { language: "en-US" },
     document: { documentElement: { dataset: {} } },
   };
-  vm.runInNewContext(source.replace("  (window.CW ||= {}).ProfileMediaModal =", "  window.testModal = { state, movieProgressBox, overviewTab, episodesTab, seasonProgress, upNext, episodeSlot, livesCard, episodeDetail };\n  (window.CW ||= {}).ProfileMediaModal ="), context);
+  vm.runInNewContext(source.replace("  (window.CW ||= {}).ProfileMediaModal =", "  window.testModal = { state, movieProgressBox, overviewTab, episodesTab, seasonProgress, upNext, episodeSlot, livesCard, episodeDetail, showResumePoints };\n  (window.CW ||= {}).ProfileMediaModal ="), context);
   const api = context.window.testModal;
   Object.assign(api.state, { item: { type, tmdb: "123" }, presence, progress: [] });
   return api;
@@ -279,4 +279,19 @@ test("leaving an actor ignores its late response and reuses metadata on reopenin
   await f.extra.openPerson("12");
   assert.equal(f.requests.length, 2);
   assert.match(f.body.innerHTML, /Actor/);
+});
+
+test("a show lists each paused episode with its provider", () => {
+  const api = modal({ synced: null, scrobble: null }, "show");
+  api.state.progress = [
+    { rid: "0", provider: "PLEX", instance: "default", label: "Plex", pct: 48, remaining: 1500, updated: "", season: 2, episode: 4, episodeTitle: "The Long Night", record: { can_remove_progress: true } },
+    { rid: "1", provider: "TRAKT", instance: "default", label: "Trakt", pct: 12, remaining: 0, updated: "", season: 1, episode: 1, episodeTitle: "", record: {} },
+  ];
+  const html = api.showResumePoints();
+  assert.match(html, /Resume points/);
+  assert.match(html, /S2E4 · The Long Night/);
+  assert.match(html, /S1E1/);
+  assert.match(html, /48%/);
+  api.state.progress = [];
+  assert.equal(api.showResumePoints(), "");
 });

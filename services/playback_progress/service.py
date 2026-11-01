@@ -476,6 +476,12 @@ def _show_ids_for_artwork(item: Mapping[str, Any]) -> dict[str, Any]:
     return clean_mapping(show_ids)
 
 
+def _matches_show_tmdb(item: Mapping[str, Any], wanted: str) -> bool:
+    if _group_text(item.get("media_type") or item.get("type")) not in {"episode", "anime_episode"}:
+        return False
+    return str(_show_ids_for_artwork(item).get("tmdb") or "").strip() == str(wanted or "").strip() != ""
+
+
 def _artwork_identity_keys(item: Mapping[str, Any]) -> list[str]:
     media_type = _group_text(item.get("media_type") or item.get("type"))
     keys: list[str] = []
@@ -1135,6 +1141,7 @@ class PlaybackProgressService:
         month: str | None = None,
         display_tz: str = "UTC",
         tmdb: str | None = None,
+        show_tmdb: str | None = None,
         progressive: bool = False,
     ) -> dict[str, Any]:
         cfg = load_config()
@@ -1220,6 +1227,9 @@ class PlaybackProgressService:
         wanted_tmdb = str(tmdb or "").strip()
         if wanted_tmdb:
             filtered = [item for item in filtered if str((item.get("ids") or {}).get("tmdb") or "").strip() == wanted_tmdb]
+        wanted_show = str(show_tmdb or "").strip()
+        if wanted_show:
+            filtered = [item for item in filtered if _matches_show_tmdb(item, wanted_show)]
         if not provider_filter:
             filtered = _group_records(filtered)
         sorted_items = self._sort(filtered, sort)

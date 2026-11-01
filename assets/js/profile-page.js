@@ -2148,20 +2148,24 @@
     const mark = logo ? `<img src="${esc(logo)}" alt="" loading="lazy">` : `<span>${esc(name.slice(0, 2))}</span>`;
     const value = rating != null ? `<b>${esc(rating)}</b>` : "";
     const cls = ["cw-hist-provider", `is-${role}`, value ? "has-value" : "", options.differs ? "is-differs" : ""].filter(Boolean).join(" ");
+    if (options.action) {
+      return `<button type="button" class="${esc(cls)}" data-ia-chip data-ia-ref="${esc(`${ref.provider}:${ref.instance}`)}" title="${esc(title)}" aria-label="${esc(title)}" aria-haspopup="dialog">${mark}${value}</button>`;
+    }
     return `<span class="${esc(cls)}" title="${esc(title)}" aria-label="${esc(title)}">${mark}${value}</span>`;
   }
 
-  function timelineCoverage(item, withRatings = false) {
+  function timelineCoverage(item, withRatings = false, action = false) {
     const present = timelineEndpoints(item?.present);
     const missing = timelineEndpoints(item?.missing);
     const total = present.length + missing.length;
     const comparable = item?.coverage_comparable !== false;
+    const actionable = action && comparable;
     const full = comparable && total > 0 && !missing.length;
     const base = Number(item?.rating);
     const conflict = withRatings && item?.agree === false;
     const chips = providerChipStrip(present
-      .map((ref) => timelineChipEntry(ref, "present", withRatings ? { rating: ref.rating, differs: ref.rating != null && ref.rating !== base } : {}))
-      .concat(missing.map((ref) => timelineChipEntry(ref, "missing"))), "cw-hist-provider");
+      .map((ref) => timelineChipEntry(ref, "present", { action: actionable, ...(withRatings ? { rating: ref.rating, differs: ref.rating != null && ref.rating !== base } : {}) }))
+      .concat(missing.map((ref) => timelineChipEntry(ref, "missing", { action: actionable }))), "cw-hist-provider");
     const label = !comparable
       ? "Show-level status · Not comparable"
       : conflict
@@ -2170,7 +2174,10 @@
         ? (total === 1 ? "On 1 provider" : "On every provider")
         : `On ${numberFmt.format(present.length)} of ${numberFmt.format(total)}`;
     const state = conflict ? " is-conflict" : full ? " is-full" : "";
-    return `<span class="cw-hist-coverage${state}"><span class="cw-hist-providers">${chips}</span><span class="cw-hist-coverage-label">${esc(label)}</span></span>`;
+    const labelHtml = actionable
+      ? `<button type="button" class="cw-hist-coverage-label" data-ia-cover aria-haspopup="dialog" title="Add or remove on your providers">${esc(label)}<span class="material-symbols-rounded" aria-hidden="true">expand_more</span></button>`
+      : `<span class="cw-hist-coverage-label">${esc(label)}</span>`;
+    return `<span class="cw-hist-coverage${state}"><span class="cw-hist-providers">${chips}</span>${labelHtml}</span>`;
   }
 
   function timelineMethod(item) {
@@ -2969,9 +2976,39 @@
       } catch {}
     }
 
+    const itemActions = () => (selectable() && !!meta().removeKind && meta().mode !== "route" && window.CW?.ItemActions ? window.CW.ItemActions : null);
+
     function detail(item) {
       const mode = meta().mode;
-      return mode === "route" ? timelineRoute(item) : timelineCoverage(item, mode === "ratings");
+      return mode === "route" ? timelineRoute(item) : timelineCoverage(item, mode === "ratings", !!itemActions());
+    }
+
+    function openItemActions(node) {
+      const actions = itemActions();
+      const card = node.closest("[data-timeline-key]");
+      const item = card ? state.items.find((row) => selectionKey(row) === card.dataset.timelineKey) : null;
+      if (!actions || !item) return;
+      const feature = meta().removeKind;
+      const [provider, ...instance] = String(node.dataset.iaRef || "").split(":");
+      const entry = { ...selectionEntry(item), tmdb: item.tmdb };
+      const tmdb = String(item.ids?.tmdb || item.tmdb || "");
+      const reload = () => load({ quiet: true });
+      const movie = String(item.type || "").toLowerCase() === "movie";
+      void actions.openMenu({
+        anchor: node,
+        feature,
+        item: entry,
+        refs: { present: timelineEndpoints(item.present), missing: timelineEndpoints(item.missing) },
+        focus: node.dataset.iaRef ? { provider, instance: instance.join(":") || "default" } : null,
+        rating: item.rating,
+        epoch: feature === "history" ? epochOf(item.sort_epoch) : 0,
+        scope: () => [card],
+        onChanged: reload,
+        openHistory: feature === "history" && movie && tmdb
+          ? () => actions.openHistory({ item: entry, poster: `/art/tmdb/movie/${encodeURIComponent(tmdb)}?size=w342`, onChanged: reload })
+          : null,
+        openDetails: card.querySelector("[data-profile-poster-key]") ? () => card.querySelector("[data-profile-poster-key]")?.click() : null,
+      });
     }
 
     function badge(item) {
@@ -3458,6 +3495,12 @@
       enhanceCoverageSelect();
       host.addEventListener("click", (event) => {
         const target = event.target;
+        const actionNode = target?.closest?.("[data-ia-chip],[data-ia-cover]");
+        if (actionNode) {
+          event.preventDefault();
+          openItemActions(actionNode);
+          return;
+        }
         const selectPick = target?.closest?.("[data-timeline-select]");
         if (selectPick) {
           void selectResults(selectPick.dataset.timelineSelect);

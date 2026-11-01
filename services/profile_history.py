@@ -8,6 +8,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone, tzinfo
 from typing import Any, Callable, Mapping
 
+from cw_platform.history_events import history_epoch_from_item, history_epoch_from_key, is_history_event_key
 from cw_platform.profile_preferences import display_timezone
 
 from services import dashboard_widgets as dw
@@ -488,12 +489,15 @@ def title_presence(index: dict[str, Any], media: str, tmdb: Any) -> dict[str, An
         for endpoint in row.get("_endpoints") or []:
             if endpoint not in present:
                 present.append(endpoint)
+    newest = max(rows, key=lambda row: int(row.get("sort_epoch") or 0))
     out: dict[str, Any] = {
         "count": len(rows),
-        "last_epoch": max(int(row.get("sort_epoch") or 0) for row in rows),
+        "last_epoch": int(newest.get("sort_epoch") or 0),
         "present": [_ref(endpoint) for endpoint in present],
         "missing": [_ref(endpoint) for endpoint in endpoints if endpoint not in present],
     }
+    if newest.get("key"):
+        out["entry"] = selection_entry(newest)
     if source == "ratings":
         latest = max(rows, key=lambda row: int(row.get("sort_epoch") or 0))
         ratings = latest.get("_ratings") or {}
@@ -527,6 +531,80 @@ def title_presence(index: dict[str, Any], media: str, tmdb: Any) -> dict[str, An
             for (season, episode), epoch in sorted(episodes.items())
         ]
     return out
+
+
+TITLE_PLAYS_MAX = 50
+
+
+def _undated_watch(item: Mapping[str, Any]) -> bool:
+    if item.get("watched") is not True or history_epoch_from_item(item) is not None:
+        return False
+    return item.get("_cw_watched_state") is True or item.get("_wetrakr_watched_at_unknown") is True
+
+
+def title_plays(state: Any, tracker_items: Any, user_filter: Mapping[str, Any] | None, tmdb: Any) -> list[dict[str, Any]]:
+    return title_play_summary(state, tracker_items, user_filter, tmdb)["plays"]
+
+
+def _title_watches(state: Any, tracker_items: Any, user_filter: Mapping[str, Any] | None, tmdb: Any) -> list[tuple[int, tuple[str, str], str, dict[str, Any]]]:
+    wanted = str(tmdb or "").strip()
+    found: list[tuple[int, tuple[str, str], str, dict[str, Any]]] = []
+    if not wanted:
+        return found
+
+    def add(raw_key: Any, item: dict[str, Any], sources: list[dict[str, str]]) -> None:
+        if dw._media_type(item) != "movie" or str(dw._tmdb_id(item) or "").strip() != wanted:
+            return
+        if str(item.get("_stremio_watched_at_fallback") or "").strip():
+            return
+        if _undated_watch(item):
+            epoch = 0
+        else:
+            epoch = int(history_epoch_from_item(item) or history_epoch_from_key(str(raw_key)) or 0)
+            if epoch <= 0:
+                return
+        for endpoint in _row_endpoints({"sources": sources}):
+            found.append((epoch, endpoint, str(raw_key), item))
+
+    for raw_key, raw_item in (_resolve(tracker_items) or {}).items():
+        item = dw._unwrap_history_item(raw_item)
+        sources = [source for source in dw._sources_from_item(item) if dw._sources_match_user([source], user_filter)]
+        if sources:
+            add(raw_key, item, sources)
+    for provider, instance, block in dw._history_provider_blocks(_resolve(state) or {}, user_filter):
+        ref = dw._provider_ref(provider, instance)
+        for raw_key, raw_item in dw._feature_items(block, "history").items():
+            add(raw_key, dw._unwrap_history_item(raw_item), [ref])
+    return found
+
+
+def title_play_summary(state: Any, tracker_items: Any, user_filter: Mapping[str, Any] | None, tmdb: Any) -> dict[str, Any]:
+    found = _title_watches(state, tracker_items, user_filter, tmdb)
+    holders: dict[tuple[str, str], dict[str, Any]] = {}
+    for epoch, endpoint, _raw_key, _item in found:
+        holder = holders.setdefault(endpoint, {**_ref(endpoint), "watches": 0, "dated": 0, "undated": 0})
+        holder["watches"] += 1
+        holder["dated" if epoch > 0 else "undated"] += 1
+    plays: list[dict[str, Any]] = []
+    truncated = False
+    for epoch, endpoint, raw_key, item in sorted(found, key=lambda entry: entry[0], reverse=True):
+        last = plays[-1] if plays else None
+        same = last is not None and (last["epoch"] == epoch == 0 or (epoch > 0 and last["epoch"] - epoch <= dw._HISTORY_BUCKET_SECONDS))
+        play = last if same else None
+        if play is None:
+            if len(plays) >= TITLE_PLAYS_MAX:
+                truncated = True
+                break
+            play = {"epoch": epoch, "type": "movie", "title": dw._title(item), "year": dw._year(item), "ids": dw._ids(item), "present": []}
+            plays.append(play)
+        if any(ref["provider"] == endpoint[0] and ref["instance"] == endpoint[1] for ref in play["present"]):
+            continue
+        play["present"].append({**_ref(endpoint), "key": raw_key, "epoch": epoch, "event": is_history_event_key(raw_key)})
+    for play in plays:
+        for field in ("title", "year", "ids"):
+            if play.get(field) in (None, "", {}):
+                play.pop(field, None)
+    return {"plays": plays, "holders": [holders[key] for key in sorted(holders)], "truncated": truncated}
 
 
 SELECTION_MAX = 1000

@@ -126,6 +126,131 @@ def test_title_presence_finds_movies_and_shows_by_tmdb_id() -> None:
     assert profile_history.title_presence(index, "movie", 1399) is None
 
 
+def test_title_presence_returns_the_newest_entry_for_actions() -> None:
+    index = _watchlist_index()
+
+    movie = profile_history.title_presence(index, "movie", 11)
+
+    assert movie is not None
+    assert movie["entry"]["key"] == "tmdb:11"
+    assert movie["entry"]["ids"] == {"tmdb": 11}
+    assert movie["entry"]["present"] == [PLEX, TRAKT]
+
+
+def _history_state(blocks: dict[tuple[str, str], dict[str, Any]]) -> dict[str, Any]:
+    providers: dict[str, Any] = {}
+    for (provider, instance), items in blocks.items():
+        node = providers.setdefault(provider, {})
+        target = node if instance == "default" else node.setdefault("instances", {}).setdefault(instance, {})
+        target["history"] = {"baseline": {"items": items}}
+    return {"providers": providers}
+
+
+def test_title_plays_groups_one_watch_across_providers() -> None:
+    watched = "2026-10-25T18:45:00Z"
+    nearby = "2026-10-25T18:47:00Z"
+    earlier = "2026-05-03T21:10:00Z"
+    state = _history_state({
+        ("PLEX", "default"): {"tmdb:11": {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}, "watched_at": watched}},
+        ("TRAKT", "default"): {
+            "tmdb:11@1792953620": {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}, "watched_at": nearby},
+            "tmdb:11@1777842600": {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}, "watched_at": earlier},
+            "tmdb:12": {"type": "movie", "title": "Other", "ids": {"tmdb": 12}, "watched_at": watched},
+        },
+        ("SIMKL", "default"): {"tmdb:11": {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}, "watched_at": earlier}},
+    })
+
+    plays = profile_history.title_plays(state, {}, None, 11)
+
+    assert [len(play["present"]) for play in plays] == [2, 2]
+    newest, oldest = plays
+    assert {ref["provider"] for ref in newest["present"]} == {"PLEX", "TRAKT"}
+    assert {ref["provider"] for ref in oldest["present"]} == {"TRAKT", "SIMKL"}
+    assert newest["title"] == "Michael" and newest["ids"]["tmdb"] == 11
+    trakt = next(ref for ref in newest["present"] if ref["provider"] == "TRAKT")
+    plex = next(ref for ref in newest["present"] if ref["provider"] == "PLEX")
+    assert trakt["key"] == "tmdb:11@1792953620" and trakt["event"] is True
+    assert plex["key"] == "tmdb:11" and plex["event"] is False
+    assert profile_history.title_plays(state, {}, None, 99) == []
+
+
+def test_title_plays_keeps_only_the_profiles_own_tracker_sources() -> None:
+    tracker = {
+        "tmdb:11@1792953620": {
+            "type": "movie", "title": "Michael", "ids": {"tmdb": 11}, "watched_at": "2026-10-25T18:45:00Z",
+            "sources_by_provider": {"TRAKT": ["alice", "bob"]},
+        },
+    }
+
+    plays = profile_history.title_plays({}, tracker, {"TRAKT": ["alice"]}, 11)
+
+    assert [(ref["provider"], ref["instance"]) for ref in plays[0]["present"]] == [("TRAKT", "alice")]
+
+
+def test_title_plays_lists_undated_watches_as_one_play() -> None:
+    undated = {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}, "watched": True, "_cw_watched_state": True}
+    state = _history_state({
+        ("TRAKT", "default"): {"tmdb:11@0": dict(undated), "tmdb:11@1792953620": {**undated, "watched_at": "2026-10-25T18:45:00Z"}},
+        ("CROSSWATCH", "default"): {"tmdb:11": dict(undated)},
+    })
+
+    plays = profile_history.title_plays(state, {}, None, 11)
+
+    assert [play["epoch"] for play in plays] == [1792953900, 0]
+    assert {ref["provider"] for ref in plays[1]["present"]} == {"TRAKT", "CROSSWATCH"}
+
+
+def test_title_plays_reads_wetrakr_unknown_dates_and_ignores_capture_times() -> None:
+    base = {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}, "watched": True}
+    state = _history_state({
+        ("WETRAKR", "default"): {"tmdb:11": {**base, "_wetrakr_watched_at_unknown": True}},
+        ("CROSSWATCH", "default"): {"tmdb:11": {**base, "_cw_watched_state": True, "captured_at": "2026-10-30T10:00:00Z"}},
+        ("TRAKT", "default"): {"tmdb:11@1792953900": {**base, "watched_at": "2026-10-25T18:45:00Z", "captured_at": "2026-10-30T10:00:00Z"}},
+    })
+
+    plays = profile_history.title_plays(state, {}, None, 11)
+
+    assert [play["epoch"] for play in plays] == [1792953900, 0]
+    assert {ref["provider"] for ref in plays[1]["present"]} == {"WETRAKR", "CROSSWATCH"}
+
+
+def test_title_play_summary_keeps_every_holder_when_rows_are_truncated() -> None:
+    base = {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}}
+    trakt = {f"tmdb:11@{1792953900 - day * 86400}": {**base, "watched_at": 1792953900 - day * 86400} for day in range(profile_history.TITLE_PLAYS_MAX + 1)}
+    state = _history_state({
+        ("TRAKT", "default"): trakt,
+        ("CROSSWATCH", "default"): {"tmdb:11": {**base, "watched": True, "_cw_watched_state": True}},
+    })
+
+    summary = profile_history.title_play_summary(state, {}, None, 11)
+
+    assert len(summary["plays"]) == profile_history.TITLE_PLAYS_MAX and summary["truncated"] is True
+    assert all(ref["provider"] == "TRAKT" for play in summary["plays"] for ref in play["present"])
+    holders = {row["provider"]: row for row in summary["holders"]}
+    assert holders["CROSSWATCH"]["undated"] == 1
+    assert holders["TRAKT"]["dated"] == profile_history.TITLE_PLAYS_MAX + 1
+
+
+def test_title_play_summary_is_not_truncated_at_exactly_the_limit() -> None:
+    base = {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}}
+    trakt = {f"tmdb:11@{1792953900 - day * 86400}": {**base, "watched_at": 1792953900 - day * 86400} for day in range(profile_history.TITLE_PLAYS_MAX)}
+
+    summary = profile_history.title_play_summary(_history_state({("TRAKT", "default"): trakt}), {}, None, 11)
+
+    assert len(summary["plays"]) == profile_history.TITLE_PLAYS_MAX and summary["truncated"] is False
+
+
+def test_title_plays_ignores_episodes_and_undated_rows() -> None:
+    state = _history_state({
+        ("PLEX", "default"): {
+            "ep": {"type": "episode", "title": "Pilot", "ids": {"tmdb": 5}, "show_ids": {"tmdb": 11}, "season": 1, "episode": 1, "watched_at": "2026-01-01T00:00:00Z"},
+            "tmdb:11": {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}},
+        },
+    })
+
+    assert profile_history.title_plays(state, {}, None, 11) == []
+
+
 def test_title_presence_collects_episode_plays_for_a_show() -> None:
     index: dict[str, Any] = {
         "source": "synced",

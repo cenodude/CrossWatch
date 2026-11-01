@@ -41,7 +41,7 @@ class FakeAdapter:
 
 
 def _patch_settings(monkeypatch, payload, status=200):
-    _common._SETTINGS_MEMO = (0.0, None)
+    _common._SETTINGS_MEMO = {}
 
     def fake_rwr(sess, method, url, **kw):
         return FakeResp(status, payload)

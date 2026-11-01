@@ -10,6 +10,7 @@ from providers.metadata._meta_TMDB import TmdbProvider
 from services.playback_progress.service import (
     _combine_records,
     _group_records,
+    _matches_show_tmdb,
     _overlay_live_streams,
     _progress_edit_max_exclusive,
     _profile_has_explicit_identity,
@@ -1380,3 +1381,16 @@ def test_settings_modal_shows_profile_names_without_the_provider() -> None:
 
     assert "return profileLabel(p);" in block
     assert 'if (id === "default") return "Default";' in block
+
+
+def test_show_tmdb_filter_matches_episodes_by_their_show_ids():
+    from_metadata = _record(media_type="episode", season=2, episode=4, ids={"tmdb": "5978363"}, provider_metadata={"show_ids": {"tmdb": "69478"}})
+    from_ids = _record(media_type="episode", season=1, episode=1, ids={"tmdb": "1", "tmdb_show": "69478"})
+    other_show = _record(media_type="episode", ids={"tmdb": "69478"}, provider_metadata={"show_ids": {"tmdb": "1399"}})
+    movie = _record(ids={"tmdb": "69478"})
+
+    assert _matches_show_tmdb(from_metadata, "69478")
+    assert _matches_show_tmdb(from_ids, "69478")
+    assert not _matches_show_tmdb(other_show, "69478")
+    assert not _matches_show_tmdb(movie, "69478")
+    assert not _matches_show_tmdb(from_metadata, "")

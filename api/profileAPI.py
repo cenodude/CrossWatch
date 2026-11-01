@@ -969,6 +969,28 @@ def api_profile_title(
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
 
+@router.get("/title/plays")
+def api_profile_title_plays(request: Request, tmdb: int = Query(..., ge=1), user_profile: str = Query("")) -> JSONResponse:
+    ctx = _profile_context(request)
+    if isinstance(ctx, JSONResponse):
+        return ctx
+    cfg, _a, _uid, _raw, _user, token = ctx
+    profile_id = str(effective_user_profile_id(cfg, token, user_profile) or "").strip()
+    media_scope = MediaScope(cfg)
+    summary = profile_history.title_play_summary(
+        lambda: media_scope.state(_history_state()),
+        lambda: media_scope.tracker(_tracker_feature_items("history"), "history"),
+        _history_user_filter(cfg, profile_id),
+        tmdb,
+    )
+    try:
+        index, _version = _profile_history_index(cfg, profile_id, "synced")
+        endpoints = [{"provider": endpoint[0], "instance": endpoint[1]} for endpoint in index.get("endpoints") or []]
+    except Exception:
+        endpoints = []
+    return JSONResponse({"ok": True, "tmdb": str(tmdb), **summary, "endpoints": endpoints}, headers={"Cache-Control": "no-store"})
+
+
 
 def build_movie_watch_status(cfg: dict[str, Any], profile_id: str, ids: list[int]) -> dict[str, bool | None]:
     indices = []
