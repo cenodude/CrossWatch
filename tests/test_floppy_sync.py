@@ -90,7 +90,7 @@ def test_floppy_capabilities_expose_only_requested_features() -> None:
     features = OPS.features()
     caps = OPS.capabilities()
 
-    assert features == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
+    assert features == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}
     assert caps["watchlist"]["custom_lists"] is True
     assert caps["ratings"]["scale"] == "0-10"
     assert caps["progress"]["read"] is True

@@ -26,7 +26,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.3"
+__VERSION__ = "1.4"
 __all__ = ["get_manifest", "PUBLICMETADBModule", "OPS"]
 
 
@@ -70,6 +70,8 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "remove": True,
     "delete": True,
     "reorder": False,
+    "resolve": True,
+    "link_example": "https://publicmetadb.com/lists/u/name/list-name",
     "smart": False,
     "smart_writable": False,
     "media_types": ["movie", "show"],
@@ -476,6 +478,9 @@ class _PUBLICMETADBOPS:
 
     def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None):
         return self._pl().get_snapshot(self._playlist_adapter(cfg, instance), playlist_id)
+
+    def resolve_playlist(self, cfg: Mapping[str, Any], ref: str, *, instance: str | None = None):
+        return self._pl().resolve(self._playlist_adapter(cfg, instance), ref)
 
     def create_playlist(
         self,

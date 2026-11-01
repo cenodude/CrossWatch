@@ -113,9 +113,9 @@ def episode_row(**over: Any) -> dict[str, Any]:
 def test_manifest_declares_supported_features_only():
     manifest = mod.get_manifest()
     assert manifest["name"] == "SCROB"
-    assert manifest["version"] == "1.0"
+    assert manifest["version"] == "1.1"
     assert manifest["bidirectional"] is True
-    assert manifest["features"] == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
+    assert manifest["features"] == {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}
 
 
 def test_capabilities_declare_event_history_and_rewatches():
@@ -132,7 +132,7 @@ def test_registry_discovers_scrob():
     assert load_sync_ops("SCROB") is mod.OPS
     assert sync_provider_supports_feature("scrob", "history") is True
     assert sync_provider_supports_feature("scrob", "collection") is True
-    assert sync_provider_supports_feature("scrob", "playlists") is False
+    assert sync_provider_supports_feature("scrob", "playlists") is True
 
 
 def test_is_configured_checks_instances():

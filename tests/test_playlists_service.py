@@ -6,6 +6,7 @@ import pytest
 
 from cw_platform.id_map import canonical_key
 from cw_platform.playlists import (
+    PlaylistAuthError,
     PlaylistItem,
     PlaylistLinkError,
     PlaylistPlanError,
@@ -587,6 +588,21 @@ def test_unavailable_source_list_message_reaches_the_user(config_base, link_prov
     assert svc.preview_mapping(cfg, mid) == {"ok": False, "error": "A list in this sync is private, deleted or no longer shared with you"}
 
 
+def test_target_auth_failure_asks_to_reconnect(config_base, link_providers, monkeypatch):
+    cfg = _cfg()
+    src = svc.upsert_endpoint(cfg, {"name": "Trakt src", "provider": "TRAKT", "instance": "default", "playlist_id": "L1"})["endpoint"]["id"]
+    dst = svc.upsert_endpoint(cfg, {"name": "Plex dst", "provider": "PLEX", "instance": "default", "playlist_id": "T1"})["endpoint"]["id"]
+    mid = svc.upsert_mapping(cfg, {"name": "Map1", "source_endpoint": src, "target_endpoints": [dst]})["mapping"]["id"]
+
+    def rejected(*_args, **_kwargs):
+        raise PlaylistAuthError("token=secret rejected")
+
+    monkeypatch.setattr(link_providers["PLEX"], "list_playlist_resources", rejected)
+    expected = {"ok": False, "error": "A list in this sync cannot be read until you reconnect this provider"}
+    assert svc.preview_mapping(cfg, mid) == expected
+    assert svc.run_mapping(cfg, mid) == expected
+
+
 def test_raw_id_endpoint_keeps_read_only_flags_when_snapshot_fails(config_base, link_providers):
     cfg = _cfg()
     ep = svc.upsert_endpoint(cfg, {"name": "Gone", "provider": "TRAKT", "instance": "default", "playlist_id": "gone"})["endpoint"]
@@ -657,6 +673,7 @@ def test_name_based_endpoint_is_saved_without_link_resolve(config_base, link_pro
     (PlaylistReadOnlyError("token=secret /srv/internal.py"), "That list is read only"),
     (PlaylistLinkError("token=secret /srv/internal.py"), "That is not a list link this provider supports"),
     (PlaylistPlanError("token=secret /srv/internal.py"), "That list needs a paid plan on this provider"),
+    (PlaylistAuthError("token=secret /srv/internal.py"), "That list cannot be read until you reconnect this provider"),
 ])
 def test_resolve_errors_never_expose_exception_text(config_base, link_providers, monkeypatch, exc, expected):
     def fail(*_args, **_kwargs):

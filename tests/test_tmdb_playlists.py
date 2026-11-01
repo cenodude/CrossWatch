@@ -137,12 +137,14 @@ def test_add_items_confirms_per_item_results(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(playlists, "resolve_tmdb_id", lambda adapter, item, want: (item.get("ids") or {}).get("tmdb"))
 
     def handler(method: str, path: str, params: Any, body: Any) -> _Resp:
+        if path == "/account/obj-1/lists":
+            return _Resp(200, {"page": 1, "total_pages": 1, "total_results": 1, "results": [{"id": 11, "name": "Faves", "number_of_items": 0, "public": 0}]})
         return _Resp(200, {"success": True, "results": [
             {"media_type": "movie", "media_id": 550, "success": True},
-            {"media_type": "tv", "media_id": 1399, "success": False, "error": ["Media already taken"]},
+            {"media_type": "tv", "media_id": 1399, "success": False, "error": ["Media is required"]},
         ]})
 
-    calls = _fake_v4(monkeypatch, adapter, handler)
+    seen = _fake_v4(monkeypatch, adapter, handler)
     items = [
         {"type": "movie", "title": "Fight Club", "ids": {"tmdb": 550, "imdb": "tt0137523"}},
         {"type": "show", "title": "Game of Thrones", "ids": {"tmdb": 1399}},
@@ -150,6 +152,7 @@ def test_add_items_confirms_per_item_results(monkeypatch: pytest.MonkeyPatch) ->
         {"type": "movie", "title": "No id", "ids": {"imdb": "tt0000001"}},
     ]
     res = adapter.add_playlist_items("11", items)
+    calls = [c for c in seen if c["path"] != "/account/obj-1/lists"]
     assert calls[0]["method"] == "POST" and calls[0]["path"] == "/list/11/items"
     assert calls[0]["json"] == {"items": [{"media_type": "movie", "media_id": 550}, {"media_type": "tv", "media_id": 1399}]}
     assert res["ok"] is False
@@ -159,11 +162,20 @@ def test_add_items_confirms_per_item_results(monkeypatch: pytest.MonkeyPatch) ->
     assert hints == ["missing_tmdb_id", "rejected", "unsupported_type"]
 
 
-def test_remove_items_uses_delete_and_whole_success(monkeypatch: pytest.MonkeyPatch) -> None:
+OWN_LISTS = {"page": 1, "total_pages": 1, "total_results": 1, "results": [{"id": 11, "name": "Faves", "number_of_items": 1, "public": 0}]}
+
+
+def test_remove_items_uses_delete_and_per_item_results(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = mod.TMDBModule(_v4_cfg())
-    calls = _fake_v4(monkeypatch, adapter, lambda *args: _Resp(200, {"success": True}))
+
+    def handler(method: str, path: str, params: Any, body: Any) -> _Resp:
+        if path == "/account/obj-1/lists":
+            return _Resp(200, OWN_LISTS)
+        return _Resp(200, {"success": True, "results": [{"media_type": "movie", "media_id": 550, "success": True}]})
+
+    calls = _fake_v4(monkeypatch, adapter, handler)
     res = adapter.remove_playlist_items("11", [{"type": "movie", "title": "Fight Club", "ids": {"tmdb": 550}}])
-    assert calls[0]["method"] == "DELETE"
+    assert [c["method"] for c in calls if c["path"] == "/list/11/items"] == ["DELETE"]
     assert res["ok"] is True and res["count"] == 1
 
 
@@ -171,7 +183,9 @@ def test_create_list_is_private(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = mod.TMDBModule(_v4_cfg())
     calls = _fake_v4(monkeypatch, adapter, lambda *args: _Resp(201, {"id": 77, "success": True}))
     res = adapter.create_playlist("Synced")
-    assert calls[0]["json"] == {"name": "Synced", "iso_639_1": "en", "public": False}
+    body = calls[0]["json"]
+    assert body == {"name": "Synced", "iso_639_1": "en", "public": 0}
+    assert body["public"] is not False and type(body["public"]) is int
     assert res.id == "77" and res.name == "Synced"
 
 

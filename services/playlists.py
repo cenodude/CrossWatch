@@ -13,6 +13,7 @@ from _logging import log as _cw_log
 from cw_platform.playlists import (
     BUILTIN_RULESETS,
     PlaylistResource,
+    PlaylistAuthError,
     PlaylistLinkError,
     PlaylistPlanError,
     PlaylistReadOnlyError,
@@ -184,6 +185,8 @@ def _unavailable_error(exc: PlaylistUnavailableError, subject: str) -> dict[str,
         return {"ok": False, "error": f"{subject} is read only"}
     if isinstance(exc, PlaylistPlanError):
         return {"ok": False, "error": f"{subject} needs a paid plan on this provider"}
+    if isinstance(exc, PlaylistAuthError):
+        return {"ok": False, "error": f"{subject} cannot be read until you reconnect this provider"}
     return {"ok": False, "error": f"{subject} is private, deleted or no longer shared with you"}
 
 

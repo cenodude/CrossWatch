@@ -59,10 +59,10 @@ def test_module_is_registered_and_discoverable() -> None:
     assert ops.name() == "PUNCHPLAY"
     assert ops.label() == "PunchPlay"
     assert dict(ops.features()) == {
-        "watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True,
+        "watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True,
     }
     assert sync_provider_supports_feature("PUNCHPLAY", "history") is True
-    assert sync_provider_supports_feature("PUNCHPLAY", "playlists") is False
+    assert sync_provider_supports_feature("PUNCHPLAY", "playlists") is True
 
 
 def test_manifest_matches_validated_contract() -> None:
