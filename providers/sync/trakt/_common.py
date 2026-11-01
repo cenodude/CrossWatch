@@ -3,7 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import time
@@ -26,7 +25,7 @@ def _user_agent() -> str:
 
 STATE_DIR = Path("/config/.cw_state")
 _ACT_MEMO: tuple[float, dict[str, Any] | None] = (0.0, None)
-_SETTINGS_MEMO: dict[str, tuple[float, dict[str, Any]]] = {}
+_SETTINGS_MEMO: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 
 
 def _pair_scope() -> str | None:
@@ -232,10 +231,9 @@ def _pos_int(v: Any) -> int | None:
     return n if n > 0 else None
 
 
-def _settings_memo_key(headers: Mapping[str, str]) -> str:
+def _settings_memo_key(headers: Mapping[str, str]) -> tuple[str, str]:
     lowered = {str(k).lower(): str(v) for k, v in dict(headers or {}).items()}
-    raw = f"{lowered.get('trakt-api-key', '')}|{lowered.get('authorization', '')}"
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return lowered.get("trakt-api-key", ""), lowered.get("authorization", "")
 
 
 def fetch_user_settings(session: Any, headers: Mapping[str, str], *, timeout: float = 15.0, max_retries: int = 3) -> dict[str, Any] | None:
