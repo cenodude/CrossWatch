@@ -81,6 +81,17 @@ def test_resources_own_followed_and_liked(monkeypatch):
     assert liked.name == "Noir" and liked.extra["endpoint_type"] == "liked_list" and liked.extra["public_list"]
 
 
+@pytest.mark.parametrize("reason", ["lists", "items"])
+def test_followed_list_locked_by_owner_plan_stays_listed_as_locked(monkeypatch, reason):
+    followed = [{"id": 204, "name": "Owner over limit", "owner": OWNER, "locked": True, "locked_reason": reason}]
+    adapter, calls = _adapter(monkeypatch, {("GET", "/sync/lists/followed"): followed})
+    res = {r.id: r for r in pl.list_resources(adapter)}["204"]
+    assert res.extra["locked"] and res.extra["locked_reason"] == reason and not res.can_read
+    with pytest.raises(PlaylistUnavailableError, match="locked"):
+        pl.get_snapshot(adapter, "204")
+    assert not [c for c in calls if "/lists/204" in c[1]]
+
+
 def test_own_list_failure_raises_and_extras_are_optional(monkeypatch):
     adapter, _ = _adapter(monkeypatch, {("GET", "/sync/lists"): _err(500)})
     with pytest.raises(WeTrakrSyncError):
