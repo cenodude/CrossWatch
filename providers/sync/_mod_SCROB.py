@@ -15,17 +15,18 @@ from ._mod_common import build_session
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 from providers.auth._auth_SCROB import is_configured as auth_configured
+from providers.sync.scrob import _playlists as feat_playlists
 
 try:  # type: ignore[name-defined]
     ctx  # type: ignore[misc]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.0"
+__VERSION__ = "1.1"
 os.environ.setdefault("CW_SCROB_UA", http_user_agent("Scrob", override_env="CW_SCROB_UA"))
 __all__ = ["get_manifest", "SCROBModule", "OPS"]
 
-FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
+FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}
 
 CAPABILITIES: dict[str, Any] = {
     "bidirectional": True,
@@ -76,6 +77,21 @@ CAPABILITIES: dict[str, Any] = {
         "observed_deletes": True,
         "required_ids": ["tmdb"],
         "notes": "Scrob collection source uses the personal export; show and season writes expand server-side.",
+    },
+    "playlists": {
+        "read": True,
+        "create": True,
+        "rename": True,
+        "delete": True,
+        "add": True,
+        "remove": True,
+        "reorder": False,
+        "smart": False,
+        "discovery": False,
+        "resolve": True,
+        "link_example": "http://your-scrob-server:7330/list/12",
+        "media_types": ["movies", "shows", "seasons"],
+        "accepted_ids": ["tmdb", "tvdb"],
     },
 }
 
@@ -253,6 +269,43 @@ class _SCROBOPS:
         instance_id: Any = None,
     ) -> dict[str, Any]:
         return self._adapter(cfg, instance_id=instance_id).remove(feature, items, dry_run=dry_run)
+
+    def list_playlist_resources(self, cfg: Mapping[str, Any], *, instance: str | None = None) -> list[Any]:
+        return list(feat_playlists.list_resources(self._adapter(cfg, instance_id=instance)))
+
+    def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None) -> Any:
+        return feat_playlists.get_snapshot(self._adapter(cfg, instance_id=instance), playlist_id)
+
+    def resolve_playlist(self, cfg: Mapping[str, Any], ref: str, *, instance: str | None = None) -> Any:
+        return feat_playlists.resolve(self._adapter(cfg, instance_id=instance), ref)
+
+    def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None,
+                        items: Iterable[Mapping[str, Any]] | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
+        return feat_playlists.create(self._adapter(cfg, instance_id=instance), name, media_type=media_type, items=list(items or []), dry_run=dry_run)
+
+    def rename_playlist(self, cfg: Mapping[str, Any], playlist_id: str, name: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
+        return feat_playlists.rename(self._adapter(cfg, instance_id=instance), playlist_id, name, dry_run=dry_run)
+
+    def delete_playlist(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        return feat_playlists.delete(self._adapter(cfg, instance_id=instance), playlist_id, dry_run=dry_run)
+
+    def add_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, items: Iterable[Mapping[str, Any]], *,
+                           instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return feat_playlists.add(self._adapter(cfg, instance_id=instance), playlist_id, lst)
+
+    def remove_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, items: Iterable[Mapping[str, Any]], *,
+                              instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return feat_playlists.remove(self._adapter(cfg, instance_id=instance), playlist_id, lst)
+
+    def reorder_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, ordered_keys: Iterable[str], *,
+                               instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        return feat_playlists.reorder(self._adapter(cfg, instance_id=instance), playlist_id, list(ordered_keys or []))
 
 
 OPS = _SCROBOPS()

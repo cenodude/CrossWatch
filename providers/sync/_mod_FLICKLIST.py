@@ -26,7 +26,7 @@ from providers.sync.flicklist._common import (
     tag_dropped_shows as flicklist_tag_dropped_shows,
 )
 
-__VERSION__ = "1.0"
+__VERSION__ = "1.1"
 __all__ = ["get_manifest", "FLICKLISTModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
@@ -136,6 +136,8 @@ def get_manifest() -> Mapping[str, Any]:
                 "create": True,
                 "remove": True,
                 "reorder": False,
+                "resolve": True,
+                "link_example": "https://flicklist.tv/u/name/lists/list-name",
                 "smart_lists_read_only": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "accepted_ids": list(_ACCEPTED_IDS),
@@ -304,6 +306,9 @@ class FLICKLISTModule:
     def get_playlist_snapshot(self, playlist_id: str) -> Any:
         return feat_playlists.get_snapshot(self, playlist_id)
 
+    def resolve_playlist(self, ref: str) -> Any:
+        return feat_playlists.resolve(self, ref)
+
     def create_playlist(self, name: str, *, media_type: str | None = None, items: Sequence[Mapping[str, Any]] | None = None, dry_run: bool = False) -> Any:
         return feat_playlists.create(self, name, media_type=media_type, items=items, dry_run=dry_run)
 
@@ -379,6 +384,9 @@ class _FLICKLISTOPS:
 
     def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None) -> Any:
         return self._adapter(cfg, instance).get_playlist_snapshot(playlist_id)
+
+    def resolve_playlist(self, cfg: Mapping[str, Any], ref: str, *, instance: str | None = None) -> Any:
+        return self._adapter(cfg, instance).resolve_playlist(ref)
 
     def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
         return self._adapter(cfg, instance).create_playlist(name, media_type=media_type, dry_run=dry_run)

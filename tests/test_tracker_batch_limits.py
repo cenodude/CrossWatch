@@ -87,6 +87,9 @@ def test_flicklist_bulk_defaults_split_1001_items(monkeypatch, feature, operatio
     calls = []
 
     def request(adapter, method, url, **kwargs):
+        if method == "GET" and url.endswith("/sync/lists"):
+            lists = [{"id": "test-list", "name": "Test"}]
+            return SimpleNamespace(status_code=200, text=json.dumps(lists), json=lambda: lists, headers={})
         payload = kwargs["json"]["items"]
         calls.append((method, len(payload)))
         body = {"added" if method == "POST" else "deleted": len(payload), "not_found": []}

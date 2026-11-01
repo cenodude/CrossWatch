@@ -15,6 +15,7 @@ from .id_map import _norm_type, any_key_overlap, canonical_key, typed_keys_for_i
 from .playlists import (
     BUILTIN_RULESETS,
     BUILTIN_TRAKT_FREE_ACCOUNT_RULESET_ID,
+    PlaylistAuthError,
     PlaylistItem,
     PlaylistResource,
     PlaylistSnapshot,
@@ -430,6 +431,8 @@ def _find_resource(ops: Any, cfg: Mapping[str, Any], instance: str, playlist_id:
                              lambda: list(ops.list_playlist_resources(cfg, instance=instance) or [])):
             if res.id == playlist_id or res.name == playlist_id:
                 return res
+    except PlaylistAuthError:
+        raise
     except Exception:
         return None
     return None

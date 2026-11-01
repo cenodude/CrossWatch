@@ -306,6 +306,8 @@ def test_ratings_and_playlists_send_season_items(monkeypatch: pytest.MonkeyPatch
     calls: list[dict[str, Any]] = []
 
     def fake_request(adapter: Any, method: str, url: str, **kwargs: Any) -> _Resp:
+        if method == "GET" and url.endswith("/sync/lists"):
+            return _Resp(200, [{"id": 42, "name": "Mine"}])
         calls.append({"method": method, "url": url, **kwargs})
         return _Resp(200, {"added": 1})
 
@@ -385,7 +387,13 @@ def test_playlist_episode_payload_uses_show_ids(monkeypatch: pytest.MonkeyPatch)
     from providers.sync.flicklist import _playlists as playlists
 
     calls: list[dict[str, Any]] = []
-    monkeypatch.setattr(playlists, "flicklist_request", lambda adapter, method, url, **kwargs: calls.append({"method": method, "url": url, **kwargs}) or _Resp(200, {"added": 1}))
+    def fake_request(adapter: Any, method: str, url: str, **kwargs: Any) -> _Resp:
+        if method == "GET" and url.endswith("/sync/lists"):
+            return _Resp(200, [{"id": 42, "name": "Mine"}])
+        calls.append({"method": method, "url": url, **kwargs})
+        return _Resp(200, {"added": 1})
+
+    monkeypatch.setattr(playlists, "flicklist_request", fake_request)
 
     item = {
         "type": "episode",

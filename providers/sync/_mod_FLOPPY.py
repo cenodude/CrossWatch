@@ -13,12 +13,13 @@ from providers.auth._auth_FLOPPY import FloppyAuthError, FloppyClient
 from providers.sync._mod_common import SimpleRateLimiter, build_op_result, build_session
 from providers.sync.floppy import _collection as feat_collection
 from providers.sync.floppy import _history as feat_history
+from providers.sync.floppy import _playlists as feat_playlists
 from providers.sync.floppy import _progress as feat_progress
 from providers.sync.floppy import _ratings as feat_ratings
 from providers.sync.floppy import _watchlist as feat_watchlist
 from providers.sync.floppy._common import api_delete, api_get, configured_block, is_configured, media_parts_from_item_id, paged
 
-__VERSION__ = "1.1"
+__VERSION__ = "1.2"
 __all__ = ["get_manifest", "FLOPPYModule", "OPS"]
 
 if "ctx" not in globals():
@@ -29,7 +30,7 @@ if "ctx" not in globals():
     ctx = _NullCtx()  # type: ignore[assignment]
 
 
-_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
+_FEATURES = {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}
 _FEATURE_MODULES: dict[str, Any] = {"watchlist": feat_watchlist, "ratings": feat_ratings, "history": feat_history, "progress": feat_progress, "collection": feat_collection}
 
 
@@ -86,7 +87,7 @@ def get_manifest() -> Mapping[str, Any]:
             "ratings": {"read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": True, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "scale": "0-10", "step": 0.1},
             "history": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "event_history": True, "rewatches": {"read": True, "write": True, "account_gate": False}},
             "progress": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": False, "requires_ids": ["tmdb"], "units": "seconds", "completion_policy": {"progress_write": {"mode": "none"}}},
-            "playlists": {"read": False, "write": False},
+            "playlists": {"read": True, "create": True, "rename": True, "delete": True, "add": True, "remove": True, "reorder": True, "smart": False, "discovery": False, "resolve": False, "media_types": ["movies", "shows", "seasons", "episodes"], "accepted_ids": ["tmdb"]},
             "collection": {"read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": True, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "provides_ids": ["tmdb", "imdb", "tvdb"], "default_format": "digital", "media_updates": True},
         },
     }
@@ -245,6 +246,49 @@ class _FLOPPYOPS:
 
     def remove(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str, dry_run: bool = False) -> dict[str, Any]:
         return self._adapter(cfg).remove(feature, items, dry_run=dry_run)
+
+    def _playlist_adapter(self, cfg: Mapping[str, Any], instance: str | None) -> FLOPPYModule:
+        view = dict(cfg or {})
+        if instance is not None:
+            view["_cw_provider_instance"] = normalize_instance_id(instance)
+        return FLOPPYModule(view)
+
+    def list_playlist_resources(self, cfg: Mapping[str, Any], *, instance: str | None = None) -> list[Any]:
+        return list(feat_playlists.list_resources(self._playlist_adapter(cfg, instance)))
+
+    def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None) -> Any:
+        return feat_playlists.get_snapshot(self._playlist_adapter(cfg, instance), playlist_id)
+
+    def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None,
+                        items: Iterable[Mapping[str, Any]] | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
+        return feat_playlists.create(self._playlist_adapter(cfg, instance), name, media_type=media_type, items=list(items or []), dry_run=dry_run)
+
+    def rename_playlist(self, cfg: Mapping[str, Any], playlist_id: str, name: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
+        return feat_playlists.rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def delete_playlist(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        return feat_playlists.delete(self._playlist_adapter(cfg, instance), playlist_id, dry_run=dry_run)
+
+    def add_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, items: Iterable[Mapping[str, Any]], *,
+                           instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return feat_playlists.add(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def remove_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, items: Iterable[Mapping[str, Any]], *,
+                              instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return feat_playlists.remove(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def reorder_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, ordered_keys: Iterable[str], *,
+                               instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        keys = list(ordered_keys or [])
+        if dry_run:
+            return {"ok": True, "count": 0, "reordered": 0, "dry_run": True}
+        return feat_playlists.reorder(self._playlist_adapter(cfg, instance), playlist_id, keys)
 
 
 OPS = _FLOPPYOPS()

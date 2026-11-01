@@ -18,7 +18,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.1"
+__VERSION__ = "1.2"
 os.environ.setdefault("CW_TMDB_UA", http_user_agent("TMDB", override_env="CW_TMDB_UA"))
 __all__ = ["get_manifest", "TMDBModule", "OPS"]
 
@@ -133,6 +133,8 @@ def get_manifest() -> Mapping[str, Any]:
                 "create": True,
                 "remove": True,
                 "reorder": False,
+                "resolve": True,
+                "link_example": "https://www.themoviedb.org/list/1-the-marvel-universe",
                 "requires_v4": True,
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
                 "accepted_ids": ["tmdb", "imdb", "tvdb"],
@@ -510,6 +512,9 @@ class TMDBModule:
     def get_playlist_snapshot(self, playlist_id: str) -> Any:
         return self._playlists().get_snapshot(self, playlist_id)
 
+    def resolve_playlist(self, ref: str) -> Any:
+        return self._playlists().resolve(self, ref)
+
     def create_playlist(self, name: str, *, media_type: str | None = None, items: Sequence[Mapping[str, Any]] | None = None, dry_run: bool = False) -> Any:
         return self._playlists().create(self, name, media_type=media_type, items=items, dry_run=dry_run)
 
@@ -573,6 +578,9 @@ class _TMDBOPS:
 
     def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None) -> Any:
         return self._adapter(cfg, instance).get_playlist_snapshot(playlist_id)
+
+    def resolve_playlist(self, cfg: Mapping[str, Any], ref: str, *, instance: str | None = None) -> Any:
+        return self._adapter(cfg, instance).resolve_playlist(ref)
 
     def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
         return self._adapter(cfg, instance).create_playlist(name, media_type=media_type, dry_run=dry_run)
