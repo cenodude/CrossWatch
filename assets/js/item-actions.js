@@ -53,19 +53,6 @@
     }
   }
 
-  function targets(feature) {
-    if (!targetCache.has(feature)) {
-      const pending = request(`/api/editor/send/providers?kind=${encodeURIComponent(feature)}`)
-        .then((data) => (Array.isArray(data?.providers) ? data.providers : []).map((row) => ({ ...row, ...cleanRef(row) })))
-        .catch(() => {
-          targetCache.delete(feature);
-          return [];
-        });
-      targetCache.set(feature, pending);
-    }
-    return targetCache.get(feature);
-  }
-
   function refLabel(ref, list = []) {
     const row = list.find((entry) => refKey(entry) === refKey(ref));
     if (row?.display) return row.display;
@@ -413,14 +400,76 @@
     return Number.isFinite(value) && value >= 1 && value <= 10 ? Math.round(value) : null;
   }
 
+  const REASONS = {
+    read_only: "Read-only source",
+    anime_only: "Anime only",
+    type_not_supported: "Does not support this type",
+    provider_unavailable: "Unavailable right now",
+  };
+  const accountName = (ref, list = []) => {
+    const row = list.find((entry) => refKey(entry) === refKey(ref));
+    if (row?.instance_label) return row.instance_label;
+    return !ref.instance || ref.instance === "default" ? "Default" : ref.instance;
+  };
+  const logoHtml = (provider, cls = "cw-ia-logo") => {
+    const logo = providerLogo(provider);
+    return `<span class="${cls}">${logo ? `<img src="${esc(logo)}" alt="">` : `<b>${esc(providerName(provider).slice(0, 2))}</b>`}</span>`;
+  };
+
+  function targetQuery(item) {
+    const type = String(item?.type || "").toLowerCase();
+    const ids = identity(item).ids || {};
+    const anime = type === "anime" || ["anilist", "mal", "kitsu"].some((key) => ids[key] != null && ids[key] !== "");
+    const page = document.documentElement?.dataset?.cwPage;
+    const profile = window.CW?.ProfileViewAs?.id || (page === "profile" ? "" : window.CW?.OverviewProfile?.id) || "";
+    return { media_type: type === "tv" ? "show" : type, anime, user_profile: profile };
+  }
+
+  function targets(feature, query = {}) {
+    const params = new URLSearchParams({ kind: feature });
+    if (query.media_type) params.set("media_type", query.media_type);
+    if (query.anime) params.set("anime", "true");
+    if (query.user_profile) params.set("user_profile", query.user_profile);
+    const key = params.toString();
+    if (!targetCache.has(key)) {
+      const pending = request(`/api/editor/send/item-targets?${key}`)
+        .then((data) => ({
+          rows: (Array.isArray(data?.providers) ? data.providers : []).map((row) => ({ ...row, ...cleanRef(row) })),
+          hidden: (Array.isArray(data?.hidden) ? data.hidden : []).map((row) => ({ ...row, ...cleanRef(row) })),
+        }))
+        .catch(() => {
+          targetCache.delete(key);
+          return { rows: [], hidden: [] };
+        });
+      targetCache.set(key, pending);
+    }
+    return targetCache.get(key);
+  }
+
   const menu = (() => {
     let el = null;
     let ctx = null;
     let list = [];
+    let hidden = [];
+    let lists = {};
     let armedUntil = 0;
+    let armedRow = "";
     let armTimer = 0;
     let score = 0;
     let lastFocus = null;
+
+    const isNarrow = () => !!window.matchMedia?.("(max-width: 560px)")?.matches;
+    const writable = (ref) => list.some((row) => refKey(row) === refKey(ref));
+    const hiddenReason = (ref) => {
+      const row = hidden.find((entry) => refKey(entry) === refKey(ref));
+      return row ? REASONS[row.reason] || "Cannot be changed here" : "";
+    };
+    const progressRows = () => (Array.isArray(ctx?.progressRows) ? ctx.progressRows : []);
+    const focusRow = () => progressRows().find((row) => row.rid === ctx?.focusRow) || null;
+    const rowAllows = (row, kind) => !!(kind === "mark_watched" ? row?.record?.can_mark_watched : row?.record?.can_remove_progress);
+    const groupRefs = (group) => (group.present || []).map(cleanRef).filter((ref) => (lists[group.feature] || []).some((row) => refKey(row) === refKey(ref)));
+    const activeGroups = () => (ctx?.groups || []).filter((group) => !ctx.off.has(group.feature) && groupRefs(group).length);
+    const isArmed = (key) => Date.now() < armedUntil && armedRow === key;
 
     function ensure() {
       if (el) return el;
@@ -468,9 +517,8 @@
     function place() {
       const anchor = ctx?.anchor;
       if (!anchor?.isConnected) return close(false);
-      const narrow = window.matchMedia?.("(max-width: 560px)")?.matches;
-      el.classList.toggle("is-sheet", !!narrow);
-      if (narrow) {
+      el.classList.toggle("is-sheet", isNarrow());
+      if (isNarrow()) {
         el.style.left = "";
         el.style.top = "";
         return;
@@ -487,174 +535,8 @@
       el.style.top = `${Math.round(Math.max(12, top))}px`;
     }
 
-    let lists = {};
-    let armedRow = "";
-    const isNarrow = () => !!window.matchMedia?.("(max-width: 560px), (pointer: coarse)")?.matches;
-    const writable = (ref) => list.some((row) => refKey(row) === refKey(ref));
-    const progressRows = () => (Array.isArray(ctx?.progressRows) ? ctx.progressRows : []);
-    const focusRow = () => progressRows().find((row) => row.rid === ctx?.focusRow) || null;
-    const rowAllows = (row, kind) => !!(kind === "mark_watched" ? row?.record?.can_mark_watched : row?.record?.can_remove_progress);
-    const groupRefs = (group) => (group.present || []).map(cleanRef).filter((ref) => (lists[group.feature] || []).some((row) => refKey(row) === refKey(ref)));
-    const activeGroups = () => (ctx?.groups || []).filter((group) => !ctx.off.has(group.feature) && groupRefs(group).length);
-
-    function progressButtonsHtml() {
-      const armed = Date.now() < armedUntil && !armedRow;
-      const out = [];
-      const row = focusRow();
-      if (ctx.focusRow != null) {
-        if (!row) return `<p class="cw-ia-note">${icon("info")}This resume point is gone.</p>`;
-        if (rowAllows(row, "mark_watched")) out.push(`<button type="button" class="cw-ia-act is-primary" data-ia-act="pg-watched-one">${icon("check_circle")}Mark as watched on ${esc(row.provider_label)}</button>`);
-        if (rowAllows(row, "remove")) out.push(`<button type="button" class="cw-ia-act is-danger" data-ia-act="pg-clear-one">${icon("delete")}Remove the resume point</button>`);
-        if (!out.length) out.push(`<p class="cw-ia-note">${icon("lock")}${esc(row.provider_label)} does not allow changes to this resume point.</p>`);
-        return out.join("");
-      }
-      const watchable = progressRows().filter((entry) => rowAllows(entry, "mark_watched"));
-      const clearable = progressRows().filter((entry) => rowAllows(entry, "remove"));
-      if (watchable.length) out.push(`<button type="button" class="cw-ia-act is-primary" data-ia-act="pg-watched-all">${icon("check_circle")}${esc(watchable.length === 1 ? `Mark as watched: ${watchable[0].label}` : `Mark all ${watchable.length} as watched`)}</button>`);
-      if (clearable.length) {
-        const label = clearable.length === 1 ? "Remove the resume point" : `Remove all ${clearable.length} resume points`;
-        out.push(`<button type="button" class="cw-ia-act is-danger${armed ? " is-armed" : ""}" data-ia-act="pg-clear-all">${icon(armed ? "warning" : "delete")}${esc(armed ? `Click again: ${label.toLowerCase()}` : label)}</button>`);
-      }
-      if (!out.length) out.push(`<p class="cw-ia-note">${icon("lock")}These resume points cannot be changed from here.</p>`);
-      return out.join("");
-    }
-
-    function everythingHtml() {
-      const armed = Date.now() < armedUntil && !armedRow;
-      const rows = ctx.groups.map((group) => {
-        const refs = groupRefs(group);
-        const on = refs.length > 0 && !ctx.off.has(group.feature);
-        const note = refs.length ? listNames(refs.map((ref) => refLabel(ref, lists[group.feature] || []))) : (group.present || []).length ? "Not in a sync pair CrossWatch can remove from" : "Not on any provider";
-        return `<label class="cw-ia-ev${refs.length ? "" : " is-empty"}">
-          <input type="checkbox" data-ia-act="ev-toggle" data-ia-feature="${esc(group.feature)}"${on ? " checked" : ""}${refs.length ? "" : " disabled"}>
-          <span class="cw-ia-ev-icon">${icon(FEATURE_ICONS[group.feature] || "check")}</span>
-          <span class="cw-ia-ev-copy"><strong>${esc(FEATURE_LABELS[group.feature] || group.feature)}</strong><small>${esc(note)}</small></span>
-          <b>${esc(refs.length)}</b>
-        </label>`;
-      }).join("");
-      const total = activeGroups().reduce((sum, group) => sum + groupRefs(group).length, 0);
-      const label = total ? `Remove ${plural(total, "record")}` : "Nothing selected";
-      return `${rows}<p class="cw-ia-note">${icon("info")}History removal clears every watch on that provider. Other sync sources can add records back.</p>
-        <button type="button" class="cw-ia-act is-danger${armed ? " is-armed" : ""}" data-ia-act="ev-remove"${total ? "" : " disabled"}>${icon(armed ? "warning" : "delete_sweep")}${esc(armed ? `Click again: ${label.toLowerCase()}` : label)}</button>`;
-    }
-
-    function providerRowsHtml(present, missing) {
-      const { feature } = ctx;
-      const rows = [...present.map((ref) => ({ ref, on: true })), ...missing.map((ref) => ({ ref, on: false }))];
-      if (!rows.length) return "";
-      const html = rows.map(({ ref, on }) => {
-        const key = refKey(ref);
-        const logo = providerLogo(ref.provider);
-        const rating = on && feature === "ratings" ? ratingOf(ctx, ref) : null;
-        const status = on ? (rating ? `Rated ${rating}/10` : FEATURES[feature].present) : FEATURES[feature].missing;
-        const armed = armedRow === key && Date.now() < armedUntil;
-        let control = `<span class="cw-ia-prow-lock" title="CrossWatch cannot change this provider">${icon("lock")}</span>`;
-        if (writable(ref)) {
-          const label = on ? (armed ? "Confirm" : "Remove") : feature === "ratings" ? `Rate ${score}` : "Add";
-          control = `<button type="button" class="cw-ia-mini ${on ? "is-danger" : "is-primary"}${armed ? " is-armed" : ""}" data-ia-act="row" data-ia-ref="${esc(key)}" data-ia-on="${on ? "1" : "0"}" aria-label="${esc(`${label} ${refLabel(ref, list)}`)}">${esc(label)}</button>`;
-        }
-        return `<div class="cw-ia-prow${on ? " is-on" : ""}" data-ia-ref="${esc(key)}">
-          <span class="cw-ia-logo">${logo ? `<img src="${esc(logo)}" alt="">` : `<b>${esc(providerName(ref.provider).slice(0, 2))}</b>`}<i aria-hidden="true"></i></span>
-          <span class="cw-ia-head-copy"><strong>${esc(refLabel(ref, list))}</strong><small>${esc(status)}</small></span>
-          ${control}
-        </div>`;
-      }).join("");
-      return `<div class="cw-ia-prows" role="list" aria-label="Providers">${html}</div>`;
-    }
-
-    function buttonsHtml() {
-      if (ctx.mode === "everything") return everythingHtml();
-      if (ctx.feature === "progress") return progressButtonsHtml();
-      const { feature, focus, refs } = ctx;
-      const present = (refs.present || []).map(cleanRef);
-      const missing = (refs.missing || []).map(cleanRef);
-      const armed = Date.now() < armedUntil && !armedRow;
-      const out = [];
-      const stepper = feature === "ratings" ? `<div class="cw-ia-score"><span>Score</span><button type="button" data-ia-act="score-down" aria-label="Lower score">${icon("remove")}</button><strong>${esc(score)}<small>/10</small></strong><button type="button" data-ia-act="score-up" aria-label="Raise score">${icon("add")}</button></div>` : "";
-      if (focus) {
-        const name = refLabel(focus, list);
-        const isPresent = present.some((ref) => refKey(ref) === refKey(focus));
-        if (!writable(focus)) {
-          out.push(`<p class="cw-ia-note">${icon("lock")}CrossWatch cannot change the ${esc(FEATURES[feature].noun)} on ${esc(name)}.</p>`);
-        } else if (isPresent) {
-          if (feature === "ratings") {
-            out.push(stepper);
-            if (score !== ratingOf(ctx, focus)) out.push(`<button type="button" class="cw-ia-act is-primary" data-ia-act="add-one">${icon("star")}Change to ${esc(score)} on ${esc(name)}</button>`);
-          }
-          const label = feature === "history" ? `Remove watched status on ${name}` : `Remove from ${name}`;
-          const confirmLabel = feature === "history" ? `Click again to remove every watch on ${name}` : label;
-          out.push(`<button type="button" class="cw-ia-act is-danger${armed ? " is-armed" : ""}" data-ia-act="remove-one">${icon(armed ? "warning" : "delete")}${esc(armed ? confirmLabel : label)}</button>`);
-        } else if (feature === "ratings") {
-          out.push(stepper, `<button type="button" class="cw-ia-act is-primary" data-ia-act="add-one">${icon("star")}Rate ${esc(score)} on ${esc(name)}</button>`);
-        } else if (feature === "history") {
-          const when = ctx.epoch ? `Copy the watch of ${fmtDate(ctx.epoch)} to ${name}` : `Mark watched now on ${name}`;
-          out.push(`<button type="button" class="cw-ia-act is-primary" data-ia-act="add-one">${icon("add")}${esc(when)}</button>`);
-        } else {
-          out.push(`<button type="button" class="cw-ia-act is-primary" data-ia-act="add-one">${icon("add")}Add to ${esc(name)}</button>`);
-        }
-      } else {
-        const addable = missing.filter(writable);
-        const removable = present.filter(writable);
-        if (addable.length) {
-          const target = addable.length === 1 ? refLabel(addable[0], list) : `the ${addable.length} missing`;
-          if (feature === "ratings") out.push(stepper, `<button type="button" class="cw-ia-act is-primary" data-ia-act="add-all">${icon("star")}Rate ${esc(score)} on ${esc(target)}</button>`);
-          else if (feature === "history") out.push(`<button type="button" class="cw-ia-act is-primary" data-ia-act="add-all">${icon("add")}${esc(ctx.epoch ? `Copy the watch to ${target}` : `Mark watched now on ${target}`)}</button>`);
-          else out.push(`<button type="button" class="cw-ia-act is-primary" data-ia-act="add-all">${icon("add")}Add to ${esc(target)}</button>`);
-        }
-        if (removable.length) {
-          const target = removable.length === 1 ? refLabel(removable[0], list) : `all ${removable.length}`;
-          const needsArm = feature === "history" || removable.length > 1;
-          const label = feature === "history" ? `Remove watched status on ${target}` : `Remove from ${target}`;
-          out.push(`<button type="button" class="cw-ia-act is-danger${armed ? " is-armed" : ""}" data-ia-act="remove-all" data-ia-arm="${needsArm ? "1" : ""}">${icon(armed ? "warning" : "delete")}${esc(armed ? `Click again: ${label.charAt(0).toLowerCase()}${label.slice(1)}` : label)}</button>`);
-        }
-        if (!addable.length && !removable.length) out.push(`<p class="cw-ia-note">${icon("lock")}None of these providers can be changed from here.</p>`);
-        if (isNarrow()) out.push(providerRowsHtml(present, missing));
-      }
-      if (feature === "history" && typeof ctx.openHistory === "function") out.push(`<button type="button" class="cw-ia-act is-ghost" data-ia-act="history">${icon("history")}Watch history and rewatches</button>`);
-      if (typeof ctx.openDetails === "function") out.push(`<button type="button" class="cw-ia-act is-ghost" data-ia-act="details">${icon("dashboard")}All providers and features</button>`);
-      return out.join("");
-    }
-
-    function headHtml() {
-      if (ctx.mode === "everything") {
-        return `<div class="cw-ia-head"><span class="cw-ia-logo is-icon is-danger">${icon("delete_sweep")}</span><span class="cw-ia-head-copy"><strong>Remove from everything</strong><small>${esc(ctx.item?.title || "This title")} on every provider</small></span></div>`;
-      }
-      const { feature, focus, refs } = ctx;
-      const present = refs.present || [];
-      const total = present.length + (refs.missing || []).length;
-      if (feature === "progress") {
-        const row = focusRow();
-        if (row) {
-          const logo = providerLogo(row.provider);
-          return `<div class="cw-ia-head"><span class="cw-ia-logo">${logo ? `<img src="${esc(logo)}" alt="">` : `<b>${esc(providerName(row.provider).slice(0, 2))}</b>`}</span><span class="cw-ia-head-copy"><strong>${esc(row.label)}</strong><small>${esc(`${Math.round(Number(row.record?.progress_percent) || 0)}% watched`)}</small></span></div>`;
-        }
-        const rows = progressRows();
-        return `<div class="cw-ia-head"><span class="cw-ia-logo is-icon">${icon(FEATURE_ICONS.progress)}</span><span class="cw-ia-head-copy"><strong>${esc(plural(rows.length, "resume point"))}</strong><small>${esc(listNames([...new Set(rows.map((entry) => entry.provider_label))]))}</small></span></div>`;
-      }
-      if (focus) {
-        const isPresent = present.some((ref) => refKey(ref) === refKey(focus));
-        const logo = providerLogo(focus.provider);
-        const rating = ratingOf(ctx, focus);
-        const sub = isPresent
-          ? (feature === "ratings" && rating ? `Rated ${rating}/10` : FEATURES[feature].present)
-          : FEATURES[feature].missing;
-        return `<div class="cw-ia-head"><span class="cw-ia-logo">${logo ? `<img src="${esc(logo)}" alt="">` : `<b>${esc(providerName(focus.provider).slice(0, 2))}</b>`}</span><span class="cw-ia-head-copy"><strong>${esc(refLabel(focus, list))}</strong><small>${esc(sub)}</small></span></div>`;
-      }
-      const missingNames = (refs.missing || []).map((ref) => refLabel(ref, list));
-      const title = !refs.missing?.length ? `On every ${FEATURES[feature].noun === "history" ? "provider" : FEATURES[feature].noun}` : `On ${present.length} of ${total}`;
-      const sub = missingNames.length ? `Missing on ${listNames(missingNames)}` : listNames(present.map((ref) => refLabel(ref, list)));
-      return `<div class="cw-ia-head"><span class="cw-ia-logo is-icon">${icon(FEATURE_ICONS[feature] || "bookmark")}</span><span class="cw-ia-head-copy"><strong>${esc(title)}</strong><small>${esc(sub)}</small></span></div>`;
-    }
-
-    function render() {
-      if (!ctx || !el) return;
-      el.setAttribute("aria-label", ctx.mode === "everything" ? `Remove ${ctx.item?.title || "this title"} from everything` : `${ctx.item?.title || "Title"} ${FEATURES[ctx.feature].noun}`);
-      el.innerHTML = `${headHtml()}<div class="cw-ia-actions">${list.loading ? `<p class="cw-ia-note">${icon("progress_activity")}Checking providers…</p>` : buttonsHtml()}</div>`;
-      place();
-    }
-
-    function arm() {
-      if (Date.now() < armedUntil) return false;
+    function arm(key) {
+      armedRow = key;
       armedUntil = Date.now() + ARM_MS;
       window.clearTimeout(armTimer);
       armTimer = window.setTimeout(() => {
@@ -663,7 +545,167 @@
         render();
       }, ARM_MS);
       render();
-      return true;
+    }
+
+    const item = (action, symbol, label, tone = "", extra = "") => `<button type="button" class="cw-ia-item${tone ? ` is-${tone}` : ""}" data-ia-act="${action}"${extra}>${icon(symbol)}<span>${esc(label)}</span></button>`;
+    const section = (label) => `<div class="cw-ia-section">${esc(label)}</div>`;
+    const stepper = () => `<div class="cw-ia-score"><span>Your score</span><button type="button" data-ia-act="score-down" aria-label="Lower score">${icon("remove")}</button><strong>${esc(score)}<small>/10</small></strong><button type="button" data-ia-act="score-up" aria-label="Raise score">${icon("add")}</button></div>`;
+
+    function head(symbol, title, sub, logoProvider = "") {
+      const mark = logoProvider ? logoHtml(logoProvider) : `<span class="cw-ia-logo is-icon">${icon(symbol)}</span>`;
+      return `<div class="cw-ia-head">${mark}<span class="cw-ia-head-copy"><strong>${esc(title)}</strong><small>${esc(sub)}</small></span></div>`;
+    }
+
+    function links() {
+      const out = [];
+      if (ctx.feature === "history" && typeof ctx.openHistory === "function") out.push(item("history", "history", "Watch history and rewatches", "accent"));
+      if (typeof ctx.openDetails === "function") out.push(item("details", "dashboard", "Open details", "accent"));
+      return out.length ? `<div class="cw-ia-list">${out.join("")}</div>` : "";
+    }
+
+    function addLabel(target) {
+      if (ctx.feature === "ratings") return `Rate ${score} on ${target}`;
+      if (ctx.feature === "history") return ctx.epoch ? `Copy the watch of ${fmtDate(ctx.epoch)} to ${target}` : `Mark watched on ${target}`;
+      if (ctx.feature === "collection") return `Add to ${target} collection`;
+      return `Add to ${target} watchlist`;
+    }
+
+    function removeLabel(target) {
+      if (ctx.feature === "ratings") return `Remove rating on ${target}`;
+      if (ctx.feature === "history") return `Remove watched status on ${target}`;
+      if (ctx.feature === "collection") return `Remove from ${target} collection`;
+      return `Remove from ${target} watchlist`;
+    }
+
+    function focusHtml() {
+      const { feature, focus, refs } = ctx;
+      const present = (refs.present || []).some((ref) => refKey(ref) === refKey(focus));
+      const name = providerName(focus.provider);
+      const rating = present && feature === "ratings" ? ratingOf(ctx, focus) : null;
+      const sub = present ? (rating ? `Rated ${rating}/10` : FEATURES[feature].present) : FEATURES[feature].missing;
+      const top = head("", `${name} · ${accountName(focus, list)}`, sub, focus.provider);
+      const body = [];
+      if (!writable(focus)) {
+        body.push(`<p class="cw-ia-note">${icon("lock")}${esc(hiddenReason(focus) || "Not one of your accounts for this")}</p>`);
+      } else if (present) {
+        if (feature === "ratings") {
+          body.push(stepper());
+          if (score !== rating) body.push(item("add-one", "star", `Change to ${score} on ${name}`, "accent"));
+        }
+        const armed = isArmed("one");
+        body.push(item("remove-one", armed ? "warning" : "delete", armed ? "Click again to remove every watch here" : removeLabel(name), "danger"));
+      } else {
+        if (feature === "ratings") body.push(stepper());
+        body.push(item("add-one", feature === "ratings" ? "star" : "add", addLabel(name), "accent"));
+      }
+      return `${top}<div class="cw-ia-list">${body.join("")}</div>${links()}`;
+    }
+
+    function coverageHtml() {
+      const { feature, refs } = ctx;
+      const present = (refs.present || []).map((ref) => ({ ...ref, ...cleanRef(ref) }));
+      const missing = (refs.missing || []).map(cleanRef).filter(writable);
+      const total = present.length + missing.length;
+      const title = !missing.length ? (feature === "history" ? "Watched on every account" : "On every account") : `On ${present.length} of ${total} accounts`;
+      const sub = missing.length ? `Missing on ${listNames(missing.map((ref) => providerName(ref.provider)))}` : FEATURES[feature].present;
+      const rows = [...present.map((ref) => ({ ref, on: true })), ...missing.map((ref) => ({ ref, on: false }))].map(({ ref, on }) => {
+        const key = refKey(ref);
+        const canWrite = writable(ref);
+        const rating = on && feature === "ratings" ? ratingOf(ctx, ref) : null;
+        const pill = on ? `<span class="cw-ia-pill is-on">${esc(rating ? `${rating}/10` : "On")}</span>` : `<span class="cw-ia-pill is-off">Missing</span>`;
+        const armed = isArmed(`row:${key}`);
+        const action = !canWrite
+          ? `<span class="cw-ia-lock" title="${esc(hiddenReason(ref) || "Not one of your accounts for this")}">${icon("lock")}</span>`
+          : on
+            ? `<button type="button" class="cw-ia-link is-danger${armed ? " is-armed" : ""}" data-ia-act="row" data-ia-ref="${esc(key)}" data-ia-on="1">${armed ? "Confirm" : "Remove"}</button>`
+            : `<button type="button" class="cw-ia-link" data-ia-act="row" data-ia-ref="${esc(key)}" data-ia-on="0">${feature === "ratings" ? `Rate ${score}` : "Add"}</button>`;
+        return `<div class="cw-ia-row${on ? " is-on" : ""}">${logoHtml(ref.provider)}<span class="cw-ia-row-copy"><strong>${esc(providerName(ref.provider))}</strong><small>${esc(accountName(ref, list))}</small></span>${pill}${action}</div>`;
+      }).join("");
+      const removable = present.filter(writable);
+      const foot = [];
+      if (missing.length) foot.push(`<button type="button" class="cw-ia-btn is-primary" data-ia-act="add-all">${esc(missing.length === 1 ? addLabel(providerName(missing[0].provider)).replace(/ (watchlist|collection)$/, "") : `Add to ${missing.length} missing`)}</button>`);
+      if (removable.length > 1) {
+        const armed = isArmed("all");
+        foot.push(`<button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="remove-all">${esc(armed ? "Click again to confirm" : "Remove from all")}</button>`);
+      }
+      return `${head(FEATURE_ICONS[feature], title, sub)}${feature === "ratings" && missing.length ? `<div class="cw-ia-list">${stepper()}</div>` : ""}${section("Your accounts")}<div class="cw-ia-rows">${rows || `<p class="cw-ia-note">${icon("info")}None of your accounts can hold this.</p>`}</div>${links()}${foot.length ? `<div class="cw-ia-foot">${foot.join("")}</div>` : ""}`;
+    }
+
+    function progressHtml() {
+      const row = focusRow();
+      if (ctx.focusRow != null) {
+        if (!row) return `${head("resume", "Resume point", "This resume point is gone")}`;
+        const body = [];
+        if (rowAllows(row, "mark_watched")) body.push(item("pg-watched-one", "check_circle", "Mark as watched", "accent"));
+        if (rowAllows(row, "remove")) body.push(item("pg-clear-one", "delete", "Remove the resume point", "danger"));
+        if (!body.length) body.push(`<p class="cw-ia-note">${icon("lock")}${esc(row.provider_label)} does not allow changes here</p>`);
+        return `${head("", row.label, `${Math.round(Number(row.record?.progress_percent) || 0)}% watched`, row.provider)}<div class="cw-ia-list">${body.join("")}</div>`;
+      }
+      const rows = progressRows();
+      const list2 = rows.map((entry) => {
+        const pct = Math.round(Number(entry.record?.progress_percent) || 0);
+        const actions = [
+          rowAllows(entry, "mark_watched") ? `<button type="button" class="cw-ia-link" data-ia-act="pg-watched-row" data-ia-rid="${esc(entry.rid)}">Watched</button>` : "",
+          rowAllows(entry, "remove") ? `<button type="button" class="cw-ia-link is-danger" data-ia-act="pg-clear-row" data-ia-rid="${esc(entry.rid)}">Remove</button>` : "",
+        ].join("");
+        return `<div class="cw-ia-row is-on">${logoHtml(entry.provider)}<span class="cw-ia-row-copy"><strong>${esc(entry.label)}</strong><small>${esc(`${pct}% watched`)}</small></span>${actions || `<span class="cw-ia-lock">${icon("lock")}</span>`}</div>`;
+      }).join("");
+      const clearable = rows.filter((entry) => rowAllows(entry, "remove"));
+      const watchable = rows.filter((entry) => rowAllows(entry, "mark_watched"));
+      const foot = [];
+      if (watchable.length > 1) foot.push(`<button type="button" class="cw-ia-btn is-primary" data-ia-act="pg-watched-all">Mark all as watched</button>`);
+      if (clearable.length > 1) {
+        const armed = isArmed("all");
+        foot.push(`<button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="pg-clear-all">${esc(armed ? "Click again to confirm" : "Remove all")}</button>`);
+      }
+      return `${head("resume", plural(rows.length, "resume point"), listNames([...new Set(rows.map((entry) => entry.provider_label))]))}${section("Resume points")}<div class="cw-ia-rows">${list2}</div>${foot.length ? `<div class="cw-ia-foot">${foot.join("")}</div>` : ""}`;
+    }
+
+    function everythingHtml() {
+      const rows = ctx.groups.map((group) => {
+        const refs = groupRefs(group);
+        const on = refs.length > 0 && !ctx.off.has(group.feature);
+        const note = refs.length ? listNames(refs.map((ref) => providerName(ref.provider))) : "Nothing CrossWatch can remove";
+        return `<label class="cw-ia-row cw-ia-check${refs.length ? "" : " is-empty"}">
+          <input type="checkbox" data-ia-act="ev-toggle" data-ia-feature="${esc(group.feature)}"${on ? " checked" : ""}${refs.length ? "" : " disabled"}>
+          <span class="cw-ia-logo is-icon">${icon(FEATURE_ICONS[group.feature] || "check")}</span>
+          <span class="cw-ia-row-copy"><strong>${esc(FEATURE_LABELS[group.feature] || group.feature)}</strong><small>${esc(note)}</small></span>
+          <span class="cw-ia-pill">${esc(refs.length)}</span>
+        </label>`;
+      }).join("");
+      const total = activeGroups().reduce((sum, group) => sum + groupRefs(group).length, 0);
+      const armed = isArmed("all");
+      return `${head("delete_sweep", "Remove from everything", ctx.item?.title || "This title")}<div class="cw-ia-rows">${rows}</div><p class="cw-ia-note">${icon("info")}History removal clears every watch on that account.</p><div class="cw-ia-foot"><button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="ev-remove"${total ? "" : " disabled"}>${esc(!total ? "Nothing selected" : armed ? "Click again to confirm" : `Remove ${plural(total, "record")}`)}</button></div>`;
+    }
+
+    function render() {
+      if (!ctx || !el) return;
+      el.setAttribute("aria-label", ctx.mode === "everything" ? "Remove from everything" : `${ctx.item?.title || "Title"} ${FEATURES[ctx.feature]?.noun || ""}`);
+      if (list.loading) {
+        el.innerHTML = `${head("progress_activity", "Checking your accounts", ctx.item?.title || "")}`;
+      } else if (ctx.mode === "everything") {
+        el.innerHTML = everythingHtml();
+      } else if (ctx.feature === "progress") {
+        el.innerHTML = progressHtml();
+      } else {
+        el.innerHTML = ctx.focus ? focusHtml() : coverageHtml();
+      }
+      place();
+    }
+
+    function runProgress(current, kind, rows) {
+      close(true);
+      const tasks = rows.map((row) => ({ ...progressTask(kind, row, row.record, row.label), play: row.rid }));
+      const many = (items) => (items.length === 1 ? items[0].name : plural(items.length, "resume point"));
+      void run({
+        feature: "progress",
+        item: current.item,
+        scope: current.scope,
+        onChanged: current.onChanged,
+        tasks,
+        working: `${kind === "mark_watched" ? "Marking as watched:" : "Removing:"} ${many(tasks)}…`,
+        done: (okTasks) => `${kind === "mark_watched" ? "Marked as watched:" : "Removed:"} ${many(okTasks)}`,
+      });
     }
 
     function onClick(event) {
@@ -679,69 +721,19 @@
         return;
       }
       if (action === "ev-remove") {
-        if (arm()) return;
-        const groups = activeGroups();
-        const tasks = groups.flatMap((group) => groupRefs(group).map((ref) => {
-          const task = removeTask(group.feature, ref, group.item, `${refLabel(ref, lists[group.feature] || [])} ${FEATURES[group.feature].noun}`, { scope: group.scope });
-          return task;
-        }));
+        if (!isArmed("all")) return arm("all");
+        const tasks = activeGroups().flatMap((group) => groupRefs(group).map((ref) => removeTask(group.feature, ref, group.item, `${providerName(ref.provider)} ${FEATURES[group.feature].noun}`, { scope: group.scope })));
         close(true);
-        void run({
-          feature: "everything",
-          item: current.item,
-          scope: null,
-          onChanged: current.onChanged,
-          tasks,
-          working: `Removing ${plural(tasks.length, "record")}…`,
-          done: (okTasks) => `Removed ${plural(okTasks.length, "record")}`,
-        });
+        void run({ feature: "everything", item: current.item, scope: null, onChanged: current.onChanged, tasks, working: `Removing ${plural(tasks.length, "record")}…`, done: (okTasks) => `Removed ${plural(okTasks.length, "record")}` });
         return;
       }
       if (action.startsWith("pg-")) {
         const kind = action.includes("watched") ? "mark_watched" : "remove";
-        const rows = action.endsWith("-one") ? [focusRow()].filter(Boolean) : progressRows().filter((row) => rowAllows(row, kind));
-        if (action === "pg-clear-all" && rows.length > 1 && arm()) return;
-        close(true);
-        const tasks = rows.map((row) => ({ ...progressTask(kind, row, row.record, row.label), play: row.rid }));
-        const many = (list2) => (list2.length === 1 ? list2[0].name : plural(list2.length, "resume point"));
-        void run({
-          feature: "progress",
-          item: current.item,
-          scope: current.scope,
-          onChanged: current.onChanged,
-          tasks,
-          working: `${kind === "mark_watched" ? "Marking as watched:" : "Removing:"} ${many(tasks)}…`,
-          done: (okTasks) => `${kind === "mark_watched" ? "Marked as watched:" : "Removed:"} ${many(okTasks)}`,
-        });
-        return;
-      }
-      const present = (current.refs.present || []).map(cleanRef).filter(writable);
-      const missing = (current.refs.missing || []).map(cleanRef).filter(writable);
-      const addOptions = () => {
-        if (current.feature === "ratings") return { fields: { rating: score }, noUndo: true };
-        if (current.feature === "history") return { fields: { watched_at: current.epoch ? isoFromEpoch(current.epoch) : new Date().toISOString() } };
-        if (current.feature === "collection") return { fields: { collected_at: new Date().toISOString() } };
-        return {};
-      };
-      if (action === "row") {
-        const key = button.dataset.iaRef;
-        const ref = [...(current.refs.present || []), ...(current.refs.missing || [])].map(cleanRef).find((entry) => refKey(entry) === key);
-        if (!ref || !writable(ref)) return;
-        if (button.dataset.iaOn === "1") {
-          if (current.feature === "history" && !(armedRow === key && Date.now() < armedUntil)) {
-            armedRow = key;
-            armedUntil = 0;
-            arm();
-            return;
-          }
-          armedRow = "";
-          close(true);
-          void run(removeJob(current, [ref], list));
-        } else {
-          close(true);
-          void run(addJob(current, [ref], list, addOptions()));
-        }
-        return;
+        if (action.endsWith("-one")) return runProgress(current, kind, [focusRow()].filter(Boolean));
+        if (action.endsWith("-row")) return runProgress(current, kind, progressRows().filter((row) => row.rid === button.dataset.iaRid));
+        const rows = progressRows().filter((row) => rowAllows(row, kind));
+        if (kind === "remove" && !isArmed("all")) return arm("all");
+        return runProgress(current, kind, rows);
       }
       if (action === "score-down" || action === "score-up") {
         score = Math.max(1, Math.min(10, score + (action === "score-up" ? 1 : -1)));
@@ -758,6 +750,26 @@
         current.openDetails();
         return;
       }
+      const addOptions = () => {
+        if (current.feature === "ratings") return { fields: { rating: score }, noUndo: true };
+        if (current.feature === "history") return { fields: { watched_at: current.epoch ? isoFromEpoch(current.epoch) : new Date().toISOString().replace(/\.\d{3}Z$/, "Z") } };
+        if (current.feature === "collection") return { fields: { collected_at: new Date().toISOString() } };
+        return {};
+      };
+      const all = [...(current.refs.present || []), ...(current.refs.missing || [])].map(cleanRef);
+      if (action === "row") {
+        const ref = all.find((entry) => refKey(entry) === button.dataset.iaRef);
+        if (!ref || !writable(ref)) return;
+        if (button.dataset.iaOn === "1") {
+          if (current.feature === "history" && !isArmed(`row:${refKey(ref)}`)) return arm(`row:${refKey(ref)}`);
+          close(true);
+          void run(removeJob(current, [ref], list));
+        } else {
+          close(true);
+          void run(addJob(current, [ref], list, addOptions()));
+        }
+        return;
+      }
       if (action === "add-one") {
         close(true);
         void run(addJob(current, [current.focus], list, addOptions()));
@@ -765,27 +777,19 @@
       }
       if (action === "add-all") {
         close(true);
-        void run(addJob(current, missing, list, addOptions()));
+        void run(addJob(current, (current.refs.missing || []).map(cleanRef).filter(writable), list, addOptions()));
         return;
       }
       if (action === "remove-one") {
-        if (current.feature === "history" && armedRow) {
-          armedRow = "";
-          armedUntil = 0;
-        }
-        if (current.feature === "history" && arm()) return;
+        if (current.feature === "history" && !isArmed("one")) return arm("one");
         close(true);
         void run(removeJob(current, [current.focus], list));
         return;
       }
       if (action === "remove-all") {
-        if (armedRow) {
-          armedRow = "";
-          armedUntil = 0;
-        }
-        if (button.dataset.iaArm === "1" && arm()) return;
+        if (!isArmed("all")) return arm("all");
         close(true);
-        void run(removeJob(current, present, list));
+        void run(removeJob(current, (current.refs.present || []).map(cleanRef).filter(writable), list));
       }
     }
 
@@ -800,32 +804,34 @@
       ctx.off = new Set();
       lastFocus = options.anchor;
       armedUntil = 0;
+      armedRow = "";
       score = ratingOf(ctx, ctx.focus || {}) || Math.round(Number(options.rating)) || 8;
       list = Object.assign([], { loading: true });
+      hidden = [];
       lists = {};
       options.anchor?.classList?.add("is-ia-open");
       el.hidden = false;
       render();
       const token = ctx;
+      const query = targetQuery(options.item);
       if (options.mode === "everything") {
         const features = (options.groups || []).map((group) => group.feature);
-        const loaded = await Promise.all(features.map((feature) => targets(feature)));
+        const loaded = await Promise.all(features.map((feature) => targets(feature, query)));
         if (ctx !== token) return true;
-        lists = Object.fromEntries(features.map((feature, index) => [feature, loaded[index]]));
+        lists = Object.fromEntries(features.map((feature, index) => [feature, loaded[index].rows]));
         list = [];
       } else if (options.feature === "progress") {
         list = [];
       } else {
-        const rows = await targets(options.feature);
+        const result = await targets(options.feature, query);
         if (ctx !== token) return true;
-        list = rows;
-        if (options.fillMissing) {
-          const seen = new Set([...ctx.refs.present, ...ctx.refs.missing].map(refKey));
-          ctx.refs.missing.push(...rows.filter((row) => !seen.has(refKey(row))).map(cleanRef));
-        }
+        list = result.rows;
+        hidden = result.hidden;
+        const seen = new Set([...ctx.refs.present, ...ctx.refs.missing].map(refKey));
+        ctx.refs.missing = [...ctx.refs.missing, ...list.filter((row) => !seen.has(refKey(row))).map(cleanRef)];
       }
       render();
-      el.querySelector("button")?.focus({ preventScroll: true });
+      el.querySelector("button,input")?.focus({ preventScroll: true });
       return true;
     }
 
@@ -837,9 +843,10 @@
     let ctx = null;
     let data = null;
     let list = [];
+    let hiddenRows = [];
     let when = "now";
     let customDate = "";
-    let picked = null;
+    let picked = new Set();
     let armed = { key: "", until: 0 };
     let armTimer = 0;
     let lastFocus = null;
@@ -876,26 +883,32 @@
     const holders = () => (Array.isArray(data?.holders) ? data.holders : []);
     const playsOn = (ref) => plays().filter((play) => (play.present || []).some((entry) => refKey(entry) === refKey(ref)));
     const holds = (ref) => holders().some((row) => refKey(row) === refKey(ref)) || playsOn(ref).length > 0;
-
-    function columns() {
-      const map = new Map();
-      for (const ref of [...list, ...(data?.endpoints || []), ...holders(), ...plays().flatMap((play) => play.present || [])]) {
-        const clean = cleanRef(ref);
-        if (clean.provider && !map.has(refKey(clean))) map.set(refKey(clean), clean);
-      }
-      return [...map.values()].sort((a, b) => refLabel(a, list).localeCompare(refLabel(b, list), undefined, { sensitivity: "base" }));
-    }
-
     const keepsOne = (ref) => playNotes.get(refKey(ref)) === true;
+    const isArmed = (key) => armed.key === key && Date.now() < armed.until;
 
     function blockReason(ref) {
       const target = writable(ref);
-      if (!target) return "CrossWatch cannot write history here";
+      if (!target) return "Not one of your accounts for this";
       if (when === "release" && !ctx.releaseDate) return "No release date known";
       if (when === "unknown" && !target.undated_write) return "Needs a watch date";
       if (when === "unknown" && holds(ref)) return "Already watched here, another play needs a date";
       if (holds(ref) && !target.rewatch_write) return "Keeps one play per title";
       return "";
+    }
+
+    function clearsAll(play, ref) {
+      const entry = (play.present || []).find((row) => refKey(row) === refKey(ref));
+      const target = writable(ref);
+      return !(entry?.event && target?.rewatch_read && target?.rewatch_write);
+    }
+
+    function columns() {
+      const map = new Map();
+      for (const ref of [...list, ...holders(), ...plays().flatMap((play) => play.present || [])]) {
+        const clean = cleanRef(ref);
+        if (clean.provider && !map.has(refKey(clean))) map.set(refKey(clean), clean);
+      }
+      return [...map.values()].sort((a, b) => providerName(a.provider).localeCompare(providerName(b.provider), undefined, { sensitivity: "base" }) || accountName(a, list).localeCompare(accountName(b, list)));
     }
 
     function close() {
@@ -909,7 +922,7 @@
     }
 
     function armKey(key) {
-      if (armed.key === key && Date.now() < armed.until) return false;
+      if (isArmed(key)) return false;
       armed = { key, until: Date.now() + ARM_MS };
       window.clearTimeout(armTimer);
       armTimer = window.setTimeout(() => {
@@ -920,23 +933,17 @@
       return true;
     }
 
-    const isArmed = (key) => armed.key === key && Date.now() < armed.until;
-
     function chip(ref, play, index) {
       const entry = (play.present || []).find((row) => refKey(row) === refKey(ref));
-      const name = refLabel(ref, list);
-      const logo = providerLogo(ref.provider);
-      const mark = logo ? `<img src="${esc(logo)}" alt="" loading="lazy">` : `<b>${esc(providerName(ref.provider).slice(0, 2))}</b>`;
+      const name = `${providerName(ref.provider)} · ${accountName(ref, list)}`;
       const target = writable(ref);
       let title;
       let disabled = false;
       if (entry) {
-        const single = !(entry.event && target?.rewatch_read && target?.rewatch_write);
-        title = !target ? `On ${name}` : single ? `Remove the watched status on ${name}` : `Remove this watch from ${name}`;
+        title = !target ? `On ${name}` : clearsAll(play, ref) ? `Remove the watched status on ${name}` : `Remove this watch from ${name}`;
         disabled = !target;
       } else if (!target) {
-        title = `Not on ${name}`;
-        disabled = true;
+        return "";
       } else if (holds(ref) && !target.rewatch_write) {
         title = `${name} keeps one play per title`;
         disabled = true;
@@ -947,9 +954,53 @@
         title = `Already watched on ${name}, another play needs a date`;
         disabled = true;
       } else {
-        title = holds(ref) && keepsOne(ref) ? `Copy this watch to ${name}. ${name} keeps one play, so its older play is replaced` : `Copy this watch to ${name}`;
+        title = holds(ref) && keepsOne(ref) ? `Copy this watch to ${name}. It keeps one play, so its older play is replaced` : `Copy this watch to ${name}`;
       }
-      return `<button type="button" class="cw-ia-chip${entry ? " is-on" : ""}" data-ia-ref="${esc(refKey(ref))}" data-ia-play="${index}" data-ia-sheet="chip" title="${esc(title)}" aria-label="${esc(title)}"${disabled ? " disabled" : ""}>${mark}<i aria-hidden="true"></i></button>`;
+      return `<button type="button" class="cw-ia-chip${entry ? " is-on" : ""}" data-ia-ref="${esc(refKey(ref))}" data-ia-play="${index}" data-ia-sheet="chip" title="${esc(title)}" aria-label="${esc(title)}"${disabled ? " disabled" : ""}>${logoHtml(ref.provider, "cw-ia-chip-logo")}<i aria-hidden="true"></i></button>`;
+    }
+
+    function playsHtml(rows, cols) {
+      if (!data) return `<p class="cw-ia-empty">${icon("progress_activity")}Loading plays…</p>`;
+      if (data.error) return `<p class="cw-ia-empty is-bad">${icon("error")}${esc(data.error)}</p>`;
+      if (!rows.length) return `<p class="cw-ia-empty">${icon("visibility_off")}Not watched on any of your accounts yet.</p>`;
+      return rows.map((play, index) => {
+        const key = `play:${index}`;
+        const refs = (play.present || []).map(cleanRef);
+        const writableRefs = refs.filter(writable);
+        const armedRow = isArmed(key);
+        const wipes = writableRefs.filter((ref) => clearsAll(play, ref)).map((ref) => providerName(ref.provider));
+        const label = armedRow ? "Click again to remove this watch everywhere" : "Remove this watch everywhere";
+        const where = refs.map((ref) => `${providerName(ref.provider)} · ${accountName(ref, list)}`).join(", ");
+        const warning = armedRow && wipes.length
+          ? `<p class="cw-ia-warn">${icon("warning")}${esc(`${listNames(wipes)} only ${wipes.length === 1 ? "knows" : "know"} that you watched this, not each watch. Removing it there clears every watch on ${wipes.length === 1 ? "that account" : "those accounts"}.`)}</p>`
+          : "";
+        return `<div class="cw-ia-play${armedRow ? " is-armed" : ""}">
+          <span class="cw-ia-play-copy"><strong>${esc(fmtWhen(play.epoch))}</strong><small>${esc(where)}</small></span>
+          <span class="cw-ia-play-chips">${cols.map((ref) => chip(ref, play, index)).join("")}</span>
+          <button type="button" class="cw-ia-icon-btn is-danger${armedRow ? " is-armed" : ""}" data-ia-sheet="remove-play" data-ia-index="${index}" title="${esc(label)}" aria-label="${esc(label)}"${writableRefs.length ? "" : " disabled"}>${icon(armedRow ? "warning" : "delete")}</button>
+          ${warning}
+        </div>`;
+      }).join("");
+    }
+
+    function sendToHtml(cols) {
+      const own = cols.filter((ref) => writable(ref));
+      if (!own.length) return `<p class="cw-ia-empty">${icon("lock")}None of your accounts can receive history from here.</p>`;
+      const groups = new Map();
+      for (const ref of own) {
+        if (!groups.has(ref.provider)) groups.set(ref.provider, []);
+        groups.get(ref.provider).push(ref);
+      }
+      return [...groups.entries()].map(([provider, refs]) => {
+        const accounts = refs.map((ref) => {
+          const reason = blockReason(ref);
+          const on = !reason && picked.has(refKey(ref));
+          const target = writable(ref);
+          const gate = target?.rewatch_gate === "pro_vip" && holds(ref) ? "Rewatches need a Pro or VIP account" : "";
+          return `<button type="button" class="cw-ia-acc${on ? " is-on" : ""}" data-ia-sheet="pick" data-ia-ref="${esc(refKey(ref))}" aria-pressed="${on}" title="${esc(reason || gate || accountName(ref, list))}"${reason ? " disabled" : ""}><span class="cw-ia-acc-box" aria-hidden="true">${on ? icon("check") : ""}</span>${esc(accountName(ref, list))}${reason ? `<small>${esc(reason)}</small>` : ""}</button>`;
+        }).join("");
+        return `<div class="cw-ia-group">${logoHtml(provider)}<div class="cw-ia-group-body"><strong>${esc(providerName(provider))}</strong><div class="cw-ia-accs">${accounts}</div></div></div>`;
+      }).join("");
     }
 
     function render() {
@@ -959,28 +1010,6 @@
       const rows = plays();
       const title = ctx.item?.title || "Title";
       const loading = !data;
-      const rowsHtml = loading
-        ? `<p class="cw-ia-sheet-empty">${icon("progress_activity")}Loading plays…</p>`
-        : data.error
-          ? `<p class="cw-ia-sheet-empty is-bad">${icon("error")}${esc(data.error)}</p>`
-          : rows.length
-            ? rows.map((play, index) => {
-              const key = `play:${index}`;
-              const writableRefs = (play.present || []).map(cleanRef).filter(writable);
-              const armedRow = isArmed(key);
-              const wipes = writableRefs.filter((ref) => clearsAll(play, ref)).map((ref) => refLabel(ref, list));
-              const label = armedRow ? "Click again to remove this watch everywhere" : "Remove this watch everywhere";
-              const warning = armedRow && wipes.length
-                ? `<p class="cw-ia-play-warn">${icon("warning")}${esc(`${listNames(wipes)} ${wipes.length === 1 ? "only knows" : "only know"} whether you watched this, not each watch. Removing it there clears every watch on ${wipes.length === 1 ? "that provider" : "those providers"}.`)}</p>`
-                : "";
-              return `<div class="cw-ia-play${armedRow ? " is-armed" : ""}">
-                <span class="cw-ia-play-copy"><strong>${esc(fmtWhen(play.epoch))}</strong><small>${esc(plural((play.present || []).length, "provider"))}</small></span>
-                <span class="cw-ia-play-chips">${cols.map((ref) => chip(ref, play, index)).join("")}</span>
-                <button type="button" class="cw-ia-icon-btn${armedRow ? " is-armed" : ""}" data-ia-sheet="remove-play" data-ia-index="${index}" title="${esc(label)}" aria-label="${esc(label)}"${writableRefs.length ? "" : " disabled"}>${icon(armedRow ? "warning" : "delete")}</button>
-                ${warning}
-              </div>`;
-            }).join("")
-            : `<p class="cw-ia-sheet-empty">${icon("visibility_off")}Not watched on any provider yet.</p>`;
       const undated = list.some((row) => row.undated_write);
       if (when === "unknown" && !undated) when = "now";
       const options = [["now", "Now"], ["release", "On release"], ["custom", "Pick date"], ...(undated ? [["unknown", "No date"]] : [])];
@@ -988,47 +1017,37 @@
         const disabled = value === "release" && !ctx.releaseDate;
         return `<button type="button" role="radio" aria-checked="${when === value}" class="cw-ia-seg${when === value ? " is-on" : ""}" data-ia-sheet="when" data-ia-when="${value}"${disabled ? ' disabled title="No release date known"' : ""}>${esc(label)}</button>`;
       }).join("");
-      const writableCols = cols.filter((ref) => writable(ref));
-      if (!picked) picked = new Set(writableCols.filter((ref) => !blockReason(ref)).map(refKey));
-      const pills = writableCols.map((ref) => {
-        const reason = blockReason(ref);
-        const on = !reason && picked.has(refKey(ref));
-        const target = writable(ref);
-        const gate = target?.rewatch_gate === "pro_vip" && holds(ref) ? `${refLabel(ref, list)} rewatches need a Pro or VIP account` : "";
-        const logo = providerLogo(ref.provider);
-        const tip = reason || gate || (on ? "Selected" : "Skipped");
-        return `<button type="button" class="cw-ia-pill${on ? " is-on" : ""}" data-ia-sheet="pick" data-ia-ref="${esc(refKey(ref))}" aria-pressed="${on}" title="${esc(tip)}"${reason ? " disabled" : ""}>
-          <span class="cw-ia-pill-logo">${logo ? `<img src="${esc(logo)}" alt="">` : `<b>${esc(providerName(ref.provider).slice(0, 2))}</b>`}</span><span>${esc(refLabel(ref, list))}</span>
-        </button>`;
-      }).join("");
-      const chosen = writableCols.filter((ref) => !blockReason(ref) && picked.has(refKey(ref)));
+      const own = cols.filter((ref) => writable(ref));
+      const pickable = own.filter((ref) => !blockReason(ref));
+      const chosen = pickable.filter((ref) => picked.has(refKey(ref)));
       const anyPlays = rows.length > 0 || holders().length > 0;
-      const notes = [...new Set(writableCols.map((ref) => {
-        const reason = blockReason(ref);
-        return reason && reason !== "No release date known" ? `${refLabel(ref, list)}: ${reason.charAt(0).toLowerCase()}${reason.slice(1)}` : "";
-      }).filter(Boolean))];
+      const notes = [];
       for (const ref of chosen) {
-        if (holds(ref) && keepsOne(ref)) notes.push(`${refLabel(ref, list)} is set to keep one play per title, so this replaces its older play`);
+        if (holds(ref) && keepsOne(ref)) notes.push(`${providerName(ref.provider)} keeps one play per title, so this replaces its older play`);
       }
+      const leftOut = hiddenRows.map((row) => `${providerName(row.provider)} (${(REASONS[row.reason] || "not available").toLowerCase()})`);
       const dateOk = when !== "custom" || /^\d{4}-\d{2}-\d{2}$/.test(customDate);
-      const addLabel = !chosen.length ? "Pick a provider" : `${anyPlays ? "Log a rewatch on" : "Mark watched on"} ${chosen.length === writableCols.length && chosen.length > 1 ? `all ${chosen.length}` : chosen.length} provider${chosen.length === 1 ? "" : "s"}`;
+      const addLabel = !chosen.length ? "Pick where to send it" : `${anyPlays ? "Log a rewatch on" : "Mark watched on"} ${plural(chosen.length, "account")}`;
       const clearable = holders().some((ref) => writable(ref)) || rows.some((play) => (play.present || []).some(writable));
       const clearArmed = isArmed("clear");
+      const allPicked = pickable.length > 0 && pickable.every((ref) => picked.has(refKey(ref)));
+      const count = loading ? "loading" : data?.truncated ? `newest ${plural(rows.length, "play")} shown` : plural(rows.length, "play");
       host.innerHTML = `<header class="cw-ia-sheet-head">
           <span class="cw-ia-sheet-poster">${ctx.poster ? `<img src="${esc(ctx.poster)}" alt="" onerror="this.remove()">` : ""}</span>
-          <span class="cw-ia-sheet-title"><h2 id="cw-ia-sheet-title">${esc(title)}</h2><small>Watch history · ${esc(loading ? "loading" : data?.truncated ? `newest ${plural(rows.length, "play")} shown` : plural(rows.length, "play"))}</small></span>
+          <span class="cw-ia-sheet-title"><h2 id="cw-ia-sheet-title">${esc(title)}</h2><small>Watch history · ${esc(count)}</small></span>
           <button type="button" class="cw-ia-icon-btn" data-ia-sheet="close" aria-label="Close">${icon("close")}</button>
         </header>
-        <div class="cw-ia-plays">${rowsHtml}</div>
+        <div class="cw-ia-plays">${playsHtml(rows, cols)}</div>
         <div class="cw-ia-log">
-          <h3>Log a play</h3>
+          <div class="cw-ia-section">Log a play</div>
           <div class="cw-ia-segs" role="radiogroup" aria-label="When did you watch it">${segs}</div>
           ${when === "custom" ? `<label class="cw-ia-date"><span>Watched on</span><input type="date" data-ia-sheet="date" value="${esc(customDate)}" max="${esc(new Date().toISOString().slice(0, 10))}"></label>` : ""}
-          <span class="cw-ia-log-label">Send to</span>
-          <div class="cw-ia-pills">${pills || `<p class="cw-ia-sheet-empty">${icon("lock")}No provider can receive history from here.</p>`}</div>
-          ${notes.length ? `<p class="cw-ia-log-note">${esc(notes.join(" · "))}</p>` : ""}
-          <button type="button" class="cw-ia-primary" data-ia-sheet="add"${chosen.length && dateOk && !loading ? "" : " disabled"}>${icon("add")}${esc(addLabel)}</button>
-          ${clearable ? `<button type="button" class="cw-ia-quiet-danger${clearArmed ? " is-armed" : ""}" data-ia-sheet="clear">${icon(clearArmed ? "warning" : "delete")}${esc(clearArmed ? "Click again to mark as unwatched everywhere" : "Mark as unwatched everywhere")}</button>` : ""}
+          <div class="cw-ia-section cw-ia-section-row"><span>Send to</span>${pickable.length ? `<button type="button" class="cw-ia-link" data-ia-sheet="pick-all">${allPicked ? "Clear" : "Select all"}</button>` : ""}</div>
+          <div class="cw-ia-groups">${loading ? "" : sendToHtml(cols)}</div>
+          ${leftOut.length ? `<p class="cw-ia-muted">${esc(`Not listed: ${listNames(leftOut)}.`)}</p>` : ""}
+          ${notes.length ? `<p class="cw-ia-hint">${esc(notes.join(" · "))}</p>` : ""}
+          <button type="button" class="cw-ia-btn is-primary is-wide" data-ia-sheet="add"${chosen.length && dateOk && !loading ? "" : " disabled"}>${esc(addLabel)}</button>
+          ${clearable ? `<button type="button" class="cw-ia-btn is-quiet-danger is-wide${clearArmed ? " is-armed" : ""}" data-ia-sheet="clear">${esc(clearArmed ? "Click again to mark as unwatched everywhere" : "Mark as unwatched everywhere")}</button>` : ""}
         </div>`;
     }
 
@@ -1043,12 +1062,6 @@
           await owner.onChanged?.();
         },
       };
-    }
-
-    function clearsAll(play, ref) {
-      const entry = (play.present || []).find((row) => refKey(row) === refKey(ref));
-      const target = writable(ref);
-      return !(entry?.event && target?.rewatch_read && target?.rewatch_write);
     }
 
     function playItem(play, ref) {
@@ -1075,7 +1088,10 @@
       if (action === "when") {
         when = button.dataset.iaWhen || "now";
         if (when === "custom" && !customDate) customDate = new Date().toISOString().slice(0, 10);
-        picked = null;
+        picked = new Set([...picked].filter((key) => {
+          const ref = columns().find((entry) => refKey(entry) === key);
+          return ref && !blockReason(ref);
+        }));
         render();
         return;
       }
@@ -1086,20 +1102,28 @@
         render();
         return;
       }
+      if (action === "pick-all") {
+        const pickable = columns().filter((ref) => writable(ref) && !blockReason(ref));
+        const all = pickable.every((ref) => picked.has(refKey(ref)));
+        picked = all ? new Set() : new Set(pickable.map(refKey));
+        render();
+        return;
+      }
       const job = jobCtx();
+      const label = (ref) => `${providerName(ref.provider)} · ${accountName(ref, list)}`;
       if (action === "chip") {
         const play = plays()[Number(button.dataset.iaPlay)];
-        const ref = cleanRef({ provider: button.dataset.iaRef.split(":")[0], instance: button.dataset.iaRef.split(":").slice(1).join(":") });
+        const [provider, ...instance] = String(button.dataset.iaRef || "").split(":");
+        const ref = cleanRef({ provider, instance: instance.join(":") });
         if (!play) return;
-        const name = refLabel(ref, list);
+        const name = label(ref);
         const present = (play.present || []).some((row) => refKey(row) === refKey(ref));
         const index = button.dataset.iaPlay;
         if (present) {
           void run({ ...job, tasks: [removeTask("history", ref, playItem(play, ref), name, { play: index })], working: `Removing the watch from ${name}…`, done: () => `Watch removed from ${name}` });
         } else {
-          const rewatch = holds(ref);
           const fields = Number(play.epoch) ? { watched_at: isoFromEpoch(play.epoch) } : { watched: true, _cw_watched_state: true };
-          void run({ ...job, tasks: [addTask("history", ref, ctx.item, name, { fields, rewatch, play: index })], working: `Copying the watch to ${name}…`, done: () => `Watch copied to ${name}` });
+          void run({ ...job, tasks: [addTask("history", ref, ctx.item, name, { fields, rewatch: holds(ref), play: index })], working: `Copying the watch to ${name}…`, done: () => `Watch copied to ${name}` });
         }
         return;
       }
@@ -1111,9 +1135,9 @@
         const refs = (play?.present || []).map(cleanRef).filter(writable);
         void run({
           ...job,
-          tasks: refs.map((ref) => removeTask("history", ref, playItem(play, ref), refLabel(ref, list), { play: index })),
-          working: `Removing the watch from ${refs.length === 1 ? refLabel(refs[0], list) : `${refs.length} providers`}…`,
-          done: (okTasks) => `Watch removed from ${okTasks.length === 1 ? okTasks[0].name : `${okTasks.length} providers`}`,
+          tasks: refs.map((ref) => removeTask("history", ref, playItem(play, ref), label(ref), { play: index })),
+          working: `Removing the watch from ${refs.length === 1 ? label(refs[0]) : `${refs.length} accounts`}…`,
+          done: (okTasks) => `Watch removed from ${okTasks.length === 1 ? okTasks[0].name : `${okTasks.length} accounts`}`,
         });
         return;
       }
@@ -1124,9 +1148,9 @@
         const { key, ...titleItem } = ctx.item;
         void run({
           ...job,
-          tasks: refs.map((ref) => removeTask("history", ref, titleItem, refLabel(ref, list))),
-          working: `Marking as unwatched on ${refs.length === 1 ? refLabel(refs[0], list) : `${refs.length} providers`}…`,
-          done: (okTasks) => `Marked as unwatched on ${okTasks.length === 1 ? okTasks[0].name : `${okTasks.length} providers`}`,
+          tasks: refs.map((ref) => removeTask("history", ref, titleItem, label(ref))),
+          working: `Marking as unwatched on ${refs.length === 1 ? label(refs[0]) : `${refs.length} accounts`}…`,
+          done: (okTasks) => `Marked as unwatched on ${okTasks.length === 1 ? okTasks[0].name : `${okTasks.length} accounts`}`,
         });
         return;
       }
@@ -1136,11 +1160,12 @@
           : { watched_at: when === "release" ? noonIso(ctx.releaseDate) : when === "custom" ? noonIso(customDate) : new Date().toISOString().replace(/\.\d{3}Z$/, "Z") };
         const refs = columns().filter((ref) => writable(ref) && !blockReason(ref) && picked.has(refKey(ref)));
         const rewatchAny = plays().length > 0 || holders().length > 0;
+        picked = new Set();
         void run({
           ...job,
-          tasks: refs.map((ref) => addTask("history", ref, ctx.item, refLabel(ref, list), { fields, rewatch: holds(ref) })),
-          working: `${rewatchAny ? "Logging the rewatch on" : "Marking watched on"} ${refs.length === 1 ? refLabel(refs[0], list) : `${refs.length} providers`}…`,
-          done: (okTasks) => `${rewatchAny ? "Rewatch logged on" : "Marked watched on"} ${okTasks.length === 1 ? okTasks[0].name : `${okTasks.length} providers`}`,
+          tasks: refs.map((ref) => addTask("history", ref, ctx.item, label(ref), { fields, rewatch: holds(ref) })),
+          working: `${rewatchAny ? "Logging the rewatch on" : "Marking watched on"} ${refs.length === 1 ? label(refs[0]) : `${refs.length} accounts`}…`,
+          done: (okTasks) => `${rewatchAny ? "Rewatch logged on" : "Marked watched on"} ${okTasks.length === 1 ? okTasks[0].name : `${okTasks.length} accounts`}`,
         });
       }
     }
@@ -1163,20 +1188,22 @@
       if (!ctx) return;
       const mine = ++loadSeq;
       const tmdb = String(ctx.item?.ids?.tmdb || ctx.item?.tmdb || "");
+      const scope = window.CW?.ProfileViewAs?.scope || String;
       try {
-        const [result, rows] = await Promise.all([
-          request(`/api/profile/title/plays?tmdb=${encodeURIComponent(tmdb)}`, undefined, 60000),
-          targets("history"),
+        const [result, found] = await Promise.all([
+          request(scope(`/api/profile/title/plays?tmdb=${encodeURIComponent(tmdb)}`), undefined, 60000),
+          targets("history", targetQuery(ctx.item)),
         ]);
         if (mine !== loadSeq || !ctx) return;
         data = result;
-        list = rows;
-        void loadNotes(rows.filter((row) => row.provider === "TRAKT"), mine);
+        list = found.rows;
+        hiddenRows = found.hidden;
+        void loadNotes(found.rows.filter((row) => row.provider === "TRAKT"), mine);
       } catch (e) {
         if (mine !== loadSeq || !ctx) return;
         data = { plays: [], error: e?.message || "Plays could not be loaded" };
       }
-      picked = null;
+      picked = new Set([...picked].filter((key) => list.some((row) => refKey(row) === key)));
       render();
     }
 
@@ -1190,9 +1217,10 @@
       ctx = { ...options, item: { ...identity(options.item), type: "movie", ...(options.item?.key ? { key: options.item.key } : {}) } };
       data = null;
       list = [];
+      hiddenRows = [];
       when = "now";
       customDate = "";
-      picked = null;
+      picked = new Set();
       armed = { key: "", until: 0 };
       playNotes.clear();
       root.hidden = false;
@@ -1206,5 +1234,5 @@
     return { open, close };
   })();
 
-  (window.CW ||= {}).ItemActions = { canWrite, openMenu: menu.open, closeMenu: menu.close, openHistory: sheet.open, targets };
+  (window.CW ||= {}).ItemActions = { canWrite, openMenu: menu.open, closeMenu: menu.close, openHistory: sheet.open, targets, targetQuery };
 })();

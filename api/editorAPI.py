@@ -1453,6 +1453,97 @@ def _rewatch_account_gate(ops: Any) -> str:
     return gate if isinstance(gate, str) else ""
 
 
+ANIME_ONLY_PROVIDERS = frozenset({"ANILIST", "MYANIMELIST", "KITSU"})
+_ITEM_TYPE_KEYS = {"movie": "movies", "show": "shows", "tv": "shows", "anime": "shows", "season": "seasons", "episode": "episodes"}
+
+
+def _feature_write_blocked(ops: Any, feature: str, media_type: str) -> str:
+    try:
+        caps = ops.capabilities() or {}
+    except Exception:
+        caps = {}
+    fcaps = caps.get(feature) if isinstance(caps, Mapping) else None
+    if not isinstance(fcaps, Mapping):
+        return ""
+    if fcaps.get("write") is False:
+        return "read_only"
+    types = fcaps.get("types")
+    type_key = _ITEM_TYPE_KEYS.get(str(media_type or "").strip().lower())
+    if type_key and isinstance(types, Mapping) and type_key in types and not types[type_key]:
+        return "type_not_supported"
+    return ""
+
+
+def _pair_instances(cfg: Mapping[str, Any], feature: str) -> set[tuple[str, str]]:
+    from cw_platform.orchestrator._pairs import _feature_list_for_pair
+
+    out: set[tuple[str, str]] = set()
+    for pair in cfg.get("pairs") or []:
+        if not isinstance(pair, Mapping) or pair.get("enabled", True) is False:
+            continue
+        if feature not in (pair.get("features") or {}) and feature not in _feature_list_for_pair(pair):
+            continue
+        for side in ("source", "target"):
+            provider = str(pair.get(side) or "").strip().upper()
+            if provider:
+                out.add((provider, normalize_instance_id(pair.get(f"{side}_instance"))))
+    return out
+
+
+def _owned_instances(cfg: Mapping[str, Any], request: Request | None, user_profile: str, feature: str) -> set[tuple[str, str]]:
+    from api.appAuthAPI import effective_request_profile_id
+    from cw_platform.provider_instances import instances_for_user_profile
+
+    profile = effective_request_profile_id(dict(cfg), request, user_profile) if request is not None else str(user_profile or "").strip()
+    if not profile:
+        return _pair_instances(cfg, feature)
+    return {
+        (str(provider or "").strip().upper(), normalize_instance_id(instance))
+        for provider, instances in (instances_for_user_profile(cfg, profile) or {}).items()
+        for instance in (instances if isinstance(instances, list) else [instances])
+    }
+
+
+def item_action_targets(
+    cfg: Mapping[str, Any],
+    request: Request | None,
+    feature: str,
+    *,
+    media_type: str = "",
+    anime: bool = False,
+    user_profile: str = "",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    owned = _owned_instances(cfg, request, user_profile, feature)
+    targets: list[dict[str, Any]] = []
+    hidden: list[dict[str, Any]] = []
+    for row in _filter_targets_for_request(cfg, request, _editor_send_targets(dict(cfg), feature)):
+        if (row["provider"], row["instance"]) not in owned:
+            continue
+        ops = load_sync_ops(row["provider"])
+        reason = _feature_write_blocked(ops, feature, media_type) if ops else "provider_unavailable"
+        if not reason and row["provider"] in ANIME_ONLY_PROVIDERS and not anime:
+            reason = "anime_only"
+        if reason:
+            hidden.append({key: row.get(key) for key in ("provider", "instance", "label", "instance_label", "display")} | {"reason": reason})
+        else:
+            targets.append(row)
+    return targets, hidden
+
+
+@router.get("/send/item-targets")
+def api_editor_item_targets(
+    kind: str = Query("watchlist"),
+    media_type: str = Query("", max_length=20),
+    anime: bool = Query(False),
+    user_profile: str = Query("", max_length=120),
+    request: Request = cast(Request, None),
+) -> dict[str, Any]:
+    cfg = load_config() or {}
+    feature = _normalize_kind(kind)
+    targets, hidden = item_action_targets(cfg, request, feature, media_type=media_type, anime=anime, user_profile=user_profile)
+    return {"ok": True, "kind": feature, "providers": targets, "hidden": hidden}
+
+
 @router.get("/send/providers")
 def api_editor_send_providers(kind: str = Query("watchlist"), request: Request = cast(Request, None)) -> dict[str, Any]:
     cfg = load_config() or {}

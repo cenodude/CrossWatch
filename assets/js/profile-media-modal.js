@@ -73,6 +73,22 @@
   const liveFeature = (key) => (itemActions() && (isMovie() || key === "watchlist") ? LIVE_FEATURES[key] || "" : "");
   const refId = (ref) => `${String(ref?.provider || "").toUpperCase()}:${String(ref?.instance || "default")}`;
 
+  function missingRefs(key) {
+    const present = new Set((state.presence?.[key]?.present || []).map(refId));
+    return (state.actionTargets?.[LIVE_FEATURES[key]] || []).filter((row) => !present.has(refId(row))).map((row) => ({ provider: row.provider, instance: row.instance || "default" }));
+  }
+
+  async function loadActionTargets(seq) {
+    const actions = itemActions();
+    if (!actions?.targets) return;
+    const query = actions.targetQuery ? actions.targetQuery(actionItem(null)) : {};
+    const keys = Object.keys(LIVE_FEATURES).filter((key) => liveFeature(key));
+    const results = await Promise.all(keys.map((key) => actions.targets(LIVE_FEATURES[key], query)));
+    if (seq !== state.seq || root.hidden) return;
+    state.actionTargets = Object.fromEntries(keys.map((key, index) => [LIVE_FEATURES[key], results[index]?.rows || []]));
+    if (!personView) render();
+  }
+
   function actionItem(entry) {
     const imdb = state.meta?.ids?.imdb || state.item?.ids?.imdb || "";
     const base = {
@@ -164,20 +180,12 @@
     if (!actions || !feature) return;
     const entry = state.presence?.[key] || null;
     const present = Array.isArray(entry?.present) ? entry.present : [];
-    const seen = new Set(present.map(refId));
-    const missing = [];
-    for (const ref of [...(Array.isArray(entry?.missing) ? entry.missing : []), ...await actions.targets(feature)]) {
-      if (seen.has(refId(ref))) continue;
-      seen.add(refId(ref));
-      missing.push({ provider: ref.provider, instance: ref.instance || "default" });
-    }
-    if (!node.isConnected) return;
     const [provider, ...instance] = String(node.dataset.iaRef || "").split(":");
     void actions.openMenu({
       anchor: node,
       feature,
       item: actionItem(entry),
-      refs: { present, missing },
+      refs: { present, missing: missingRefs(key) },
       focus: node.dataset.iaRef ? { provider, instance: instance.join(":") || "default" } : null,
       rating: entry?.rating ?? null,
       epoch: feature === "history" ? Number(entry?.last_epoch) || 0 : 0,
@@ -303,6 +311,7 @@
       presence: null,
       loading: true,
       presenceLoading: true,
+      actionTargets: null,
       tab: "overview",
       seasons: sameTitle ? new Map([...state.seasons].filter(([, data]) => !data.loading && !data.error)) : new Map(),
       season: null,
@@ -317,6 +326,7 @@
     render();
     root.querySelector(".cw-mm-card")?.focus({ preventScroll: true });
     void loadProgress(item, seq);
+    if (itemActions()) void loadActionTargets(seq);
     await Promise.all([
       loadMeta(item).then((meta) => {
         if (seq !== state.seq || root.hidden) return;
@@ -448,11 +458,11 @@
       const present = entry?.present || [];
       const synced = present.length > 0;
       const feature = liveFeature(key);
-      const chips = synced
-        ? `<div class="cw-mm-live-chips">${present.map((ref) => providerChip(ref, false, !!feature)).join("")}${(entry.missing || []).map((ref) => providerChip(ref, true, !!feature)).join("")}</div>`
-        : "";
-      const tools = feature
-        ? `<div class="cw-mm-live-tools"><button type="button" class="cw-mm-live-action" data-ia-cover aria-haspopup="dialog">${icon(synced ? "tune" : "add")}${synced ? "Manage" : "Add"}</button>${feature === "history" ? `<button type="button" class="cw-mm-live-action" data-mm-plays>${icon("history")}Plays</button>` : ""}</div>`
+      const missing = feature ? missingRefs(key) : (synced ? entry.missing || [] : []);
+      const chipList = [...present.map((ref) => providerChip(ref, false, !!feature)), ...missing.map((ref) => providerChip(ref, true, !!feature))];
+      const chips = chipList.length ? `<div class="cw-mm-live-chips">${chipList.join("")}</div>` : "";
+      const tools = feature === "history"
+        ? `<div class="cw-mm-live-tools"><button type="button" class="cw-mm-plays" data-mm-plays>${icon("add")}Plays</button></div>`
         : "";
       return `<div class="cw-mm-live${synced ? " is-on" : ""}${feature ? " has-actions" : ""}" data-mm-live="${esc(key)}">
         <div class="cw-mm-live-head">${icon(symbol)}<strong>${esc(label)}</strong><span>${esc(synced ? liveSummary(key, entry) : "Not synced")}</span></div>
@@ -610,8 +620,7 @@
       </div>`;
     }).join("");
     if (!list) return "";
-    const tools = editable ? `<div class="cw-mm-live-tools"><button type="button" class="cw-mm-live-action" data-ia-cover aria-haspopup="dialog">${icon("tune")}Manage resume points</button></div>` : "";
-    return `<div class="cw-mm-progress-rows" data-mm-progress>${list}${tools}</div>`;
+    return `<div class="cw-mm-progress-rows" data-mm-progress>${list}</div>`;
   }
 
   function showResumePoints() {
