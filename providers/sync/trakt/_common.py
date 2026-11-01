@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -25,7 +26,7 @@ def _user_agent() -> str:
 
 STATE_DIR = Path("/config/.cw_state")
 _ACT_MEMO: tuple[float, dict[str, Any] | None] = (0.0, None)
-_SETTINGS_MEMO: tuple[float, dict[str, Any] | None] = (0.0, None)
+_SETTINGS_MEMO: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
 def _pair_scope() -> str | None:
@@ -231,17 +232,26 @@ def _pos_int(v: Any) -> int | None:
     return n if n > 0 else None
 
 
+def _settings_memo_key(headers: Mapping[str, str]) -> str:
+    lowered = {str(k).lower(): str(v) for k, v in dict(headers or {}).items()}
+    raw = f"{lowered.get('trakt-api-key', '')}|{lowered.get('authorization', '')}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def fetch_user_settings(session: Any, headers: Mapping[str, str], *, timeout: float = 15.0, max_retries: int = 3) -> dict[str, Any] | None:
     global _SETTINGS_MEMO
+    if not isinstance(_SETTINGS_MEMO, dict):
+        _SETTINGS_MEMO = {}
     now = time.time()
-    ts, cached = _SETTINGS_MEMO
+    key = _settings_memo_key(headers)
+    ts, cached = _SETTINGS_MEMO.get(key, (0.0, None))
     if cached is not None and (now - ts) < 300.0:
         return cached
     try:
         r = request_with_retries(session, "GET", "https://api.trakt.tv/users/settings", headers=dict(headers), timeout=timeout, max_retries=max_retries)
         if 200 <= r.status_code < 300:
             data = r.json() if (r.text or "").strip() else {}
-            _SETTINGS_MEMO = (now, data)
+            _SETTINGS_MEMO[key] = (now, data)
             return data
     except Exception:
         pass

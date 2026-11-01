@@ -56,14 +56,135 @@
     return hours ? `${hours}h ${total % 60}m` : `${total}m`;
   }
 
-  function providerChip(ref, missing = false) {
+  function providerChip(ref, missing = false, action = false) {
     const provider = String(ref?.provider || "");
     const instance = String(ref?.instance || "default");
     const name = window.CW?.ProviderMeta?.label?.(provider) || provider;
     const logo = window.CW?.ProviderMeta?.logoPath?.(provider) || "";
     const title = `${name}${instance !== "default" ? ` · ${instance}` : ""}${missing ? " · missing" : ""}`;
     const mark = missing ? "" : ref?.rating != null ? `<em>${esc(ref.rating)}</em>` : `<span class="cw-mm-provider-mark material-symbols-rounded" aria-hidden="true">check</span>`;
-    return `<span class="cw-mm-provider${missing ? " is-missing" : ""}" title="${esc(title)}">${logo ? `<img src="${esc(logo)}" alt="" loading="lazy">` : `<b>${esc(name.slice(0, 2))}</b>`}${mark}</span>`;
+    const inner = `${logo ? `<img src="${esc(logo)}" alt="" loading="lazy">` : `<b>${esc(name.slice(0, 2))}</b>`}${mark}`;
+    if (action) return `<button type="button" class="cw-mm-provider${missing ? " is-missing" : ""}" data-ia-chip data-ia-ref="${esc(`${provider.toUpperCase()}:${instance}`)}" title="${esc(title)}" aria-label="${esc(title)}" aria-haspopup="dialog">${inner}</button>`;
+    return `<span class="cw-mm-provider${missing ? " is-missing" : ""}" title="${esc(title)}">${inner}</span>`;
+  }
+
+  const LIVE_FEATURES = { watchlist: "watchlist", synced: "history", ratings: "ratings", collection: "collection" };
+  const itemActions = () => (window.CW?.ItemActions?.canWrite?.() ? window.CW.ItemActions : null);
+  const liveFeature = (key) => (itemActions() && (isMovie() || key === "watchlist") ? LIVE_FEATURES[key] || "" : "");
+  const refId = (ref) => `${String(ref?.provider || "").toUpperCase()}:${String(ref?.instance || "default")}`;
+
+  function actionItem(entry) {
+    const imdb = state.meta?.ids?.imdb || state.item?.ids?.imdb || "";
+    const base = {
+      type: kindOf(state.item),
+      title: state.meta?.title || state.item?.title || "",
+      year: state.meta?.year || state.item?.year || "",
+      ids: { tmdb: tmdbOf(state.item), ...(imdb ? { imdb } : {}) },
+    };
+    const found = entry?.entry;
+    return found ? { ...base, ...found, ids: { ...base.ids, ...(found.ids || {}) } } : base;
+  }
+
+  async function refreshPresence() {
+    const seq = state.seq;
+    const presence = await loadPresence(state.item);
+    if (seq !== state.seq || root.hidden || personView) return;
+    state.presence = presence;
+    render();
+  }
+
+  function openPlays() {
+    const actions = itemActions();
+    if (!actions || !isMovie()) return;
+    actions.openHistory({
+      item: actionItem(state.presence?.synced),
+      releaseDate: String(state.meta?.release?.date || state.meta?.detail?.release_date || "").slice(0, 10) || null,
+      poster: posterUrl(state.item),
+      onChanged: refreshPresence,
+    });
+  }
+
+  function openProgressActions(node) {
+    const actions = itemActions();
+    const rows = Array.isArray(state.progress) ? state.progress : [];
+    if (!actions || !rows.length) return;
+    const movie = isMovie();
+    const progressRows = rows.filter((row) => row.record).map((row) => {
+      const who = providerDisplay(row);
+      return {
+        rid: row.rid,
+        provider: row.provider.toUpperCase(),
+        instance: row.instance,
+        provider_label: who.full,
+        label: movie ? who.full : `${episodeCode(row)} on ${who.full}`,
+        record: row.record,
+      };
+    });
+    const seq = state.seq;
+    void actions.openMenu({
+      anchor: node,
+      feature: "progress",
+      item: actionItem(null),
+      progressRows,
+      focusRow: node.dataset.iaPlay ?? null,
+      scope: () => [root?.querySelector("[data-mm-progress]")],
+      onChanged: async () => {
+        if (seq !== state.seq) return;
+        await Promise.all([loadProgress(state.item, seq), refreshPresence()]);
+      },
+    });
+  }
+
+  function openEverything(node) {
+    const actions = itemActions();
+    if (!actions) return;
+    const keys = isMovie() ? ["watchlist", "synced", "ratings", "collection"] : ["watchlist"];
+    const groups = keys.map((key) => {
+      const entry = state.presence?.[key];
+      const { key: _recordKey, ...titleItem } = actionItem(entry);
+      return {
+        feature: LIVE_FEATURES[key],
+        present: Array.isArray(entry?.present) ? entry.present : [],
+        item: key === "synced" ? titleItem : actionItem(entry),
+        scope: () => [root?.querySelector(`[data-mm-live="${key}"]`)],
+      };
+    }).filter((group) => group.present.length);
+    if (!groups.length) return;
+    void actions.openMenu({ anchor: node, mode: "everything", item: actionItem(null), groups, onChanged: refreshPresence });
+  }
+
+  async function openItemActions(node) {
+    const actions = itemActions();
+    if (node.closest("[data-mm-progress]")) {
+      openProgressActions(node);
+      return;
+    }
+    const key = node.closest("[data-mm-live]")?.dataset.mmLive || "";
+    const feature = liveFeature(key);
+    if (!actions || !feature) return;
+    const entry = state.presence?.[key] || null;
+    const present = Array.isArray(entry?.present) ? entry.present : [];
+    const seen = new Set(present.map(refId));
+    const missing = [];
+    for (const ref of [...(Array.isArray(entry?.missing) ? entry.missing : []), ...await actions.targets(feature)]) {
+      if (seen.has(refId(ref))) continue;
+      seen.add(refId(ref));
+      missing.push({ provider: ref.provider, instance: ref.instance || "default" });
+    }
+    if (!node.isConnected) return;
+    const [provider, ...instance] = String(node.dataset.iaRef || "").split(":");
+    void actions.openMenu({
+      anchor: node,
+      feature,
+      item: actionItem(entry),
+      refs: { present, missing },
+      focus: node.dataset.iaRef ? { provider, instance: instance.join(":") || "default" } : null,
+      rating: entry?.rating ?? null,
+      epoch: feature === "history" ? Number(entry?.last_epoch) || 0 : 0,
+      scope: () => [root?.querySelector(`[data-mm-live="${key}"]`)],
+      onChanged: refreshPresence,
+      openHistory: feature === "history" ? openPlays : null,
+    });
   }
 
   function ensure() {
@@ -88,6 +209,7 @@
     document.addEventListener("keydown", (event) => {
       if (root.hidden || event.key !== "Escape") return;
       if (document.getElementById("cw-trailer")?.classList.contains("show")) return;
+      if (document.querySelector(".cw-ia-pop:not([hidden]),.cw-ia-sheet-wrap:not([hidden])")) return;
       event.preventDefault();
       close();
     }, true);
@@ -117,15 +239,21 @@
     if (document.documentElement?.dataset?.cwPermPlayback !== "off") {
       try {
         const tmdb = tmdbOf(item);
-        const res = await fetch((window.CW?.ProfileViewAs?.scope || String)(`/api/playback_progress/items?tmdb=${encodeURIComponent(tmdb)}&page=1&page_size=50`), { credentials: "same-origin", cache: "no-store" });
+        const movie = kindOf(item) === "movie";
+        const query = movie ? `tmdb=${encodeURIComponent(tmdb)}&page=1&page_size=50` : `show_tmdb=${encodeURIComponent(tmdb)}&page=1&page_size=250`;
+        const res = await fetch((window.CW?.ProfileViewAs?.scope || String)(`/api/playback_progress/items?${query}`), { credentials: "same-origin", cache: "no-store" });
         const data = await res.json().catch(() => null);
-        const match = (Array.isArray(data?.items) ? data.items : []).find((entry) => {
-          if (String(entry?.media_type || "").toLowerCase() !== "movie") return false;
-          const records = Array.isArray(entry.records) && entry.records.length ? entry.records : [entry];
-          return records.some((record) => String(record?.ids?.tmdb || "") === tmdb);
-        });
-        const records = match ? (Array.isArray(match.records) && match.records.length ? match.records : [match]) : [];
-        rows = records.map((record) => ({
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const matches = movie
+          ? items.filter((entry) => {
+            if (String(entry?.media_type || "").toLowerCase() !== "movie") return false;
+            const records = Array.isArray(entry.records) && entry.records.length ? entry.records : [entry];
+            return records.some((record) => String(record?.ids?.tmdb || "") === tmdb);
+          }).slice(0, 1)
+          : items;
+        const records = matches.flatMap((match) => (Array.isArray(match.records) && match.records.length ? match.records : [match]));
+        rows = records.map((record, index) => ({
+          rid: String(index),
           provider: String(record.provider || ""),
           instance: String(record.instance_id || "default"),
           label: record.provider_label || record.provider || "",
@@ -133,7 +261,12 @@
           pct: Number(record.progress_percent) || 0,
           remaining: Number(record.remaining_seconds) || 0,
           updated: record.updated_at || record.progress_at || "",
+          season: record.season ?? null,
+          episode: record.episode ?? null,
+          episodeTitle: String(record.episode_title || ""),
+          record,
         }));
+        if (!movie) rows.sort((a, b) => (Date.parse(String(b.updated || "")) || 0) - (Date.parse(String(a.updated || "")) || 0));
       } catch {
         rows = [];
       }
@@ -174,7 +307,7 @@
       seasons: sameTitle ? new Map([...state.seasons].filter(([, data]) => !data.loading && !data.error)) : new Map(),
       season: null,
       episode: null,
-      progress: kindOf(item) === "movie" ? null : undefined,
+      progress: null,
     });
     if (root.hidden) state.lastFocus = document.activeElement;
     root.hidden = false;
@@ -183,7 +316,7 @@
     root.querySelector(".cw-mm-body").scrollTop = 0;
     render();
     root.querySelector(".cw-mm-card")?.focus({ preventScroll: true });
-    if (kindOf(item) === "movie") void loadProgress(item, seq);
+    void loadProgress(item, seq);
     await Promise.all([
       loadMeta(item).then((meta) => {
         if (seq !== state.seq || root.hidden) return;
@@ -314,15 +447,21 @@
       const entry = presence[key];
       const present = entry?.present || [];
       const synced = present.length > 0;
+      const feature = liveFeature(key);
       const chips = synced
-        ? `<div class="cw-mm-live-chips">${present.map((ref) => providerChip(ref)).join("")}${(entry.missing || []).map((ref) => providerChip(ref, true)).join("")}</div>`
+        ? `<div class="cw-mm-live-chips">${present.map((ref) => providerChip(ref, false, !!feature)).join("")}${(entry.missing || []).map((ref) => providerChip(ref, true, !!feature)).join("")}</div>`
         : "";
-      return `<div class="cw-mm-live${synced ? " is-on" : ""}">
+      const tools = feature
+        ? `<div class="cw-mm-live-tools"><button type="button" class="cw-mm-live-action" data-ia-cover aria-haspopup="dialog">${icon(synced ? "tune" : "add")}${synced ? "Manage" : "Add"}</button>${feature === "history" ? `<button type="button" class="cw-mm-live-action" data-mm-plays>${icon("history")}Plays</button>` : ""}</div>`
+        : "";
+      return `<div class="cw-mm-live${synced ? " is-on" : ""}${feature ? " has-actions" : ""}" data-mm-live="${esc(key)}">
         <div class="cw-mm-live-head">${icon(symbol)}<strong>${esc(label)}</strong><span>${esc(synced ? liveSummary(key, entry) : "Not synced")}</span></div>
-        ${chips}
+        ${chips}${tools}
       </div>`;
     }).join("");
-    return `<section class="cw-mm-lives"><h3>Providers</h3><div class="cw-mm-live-grid">${tiles}</div></section>`;
+    const removable = !!itemActions() && (isMovie() ? ["watchlist", "synced", "ratings", "collection"] : ["watchlist"]).some((key) => (presence[key]?.present || []).length);
+    const foot = removable ? `<div class="cw-mm-lives-foot"><button type="button" class="cw-mm-clear-all" data-mm-clear-all aria-haspopup="dialog">${icon("delete_sweep")}Remove from everything…</button></div>` : "";
+    return `<section class="cw-mm-lives"><h3>Providers</h3><div class="cw-mm-live-grid">${tiles}</div>${foot}</section>`;
   }
 
   function tabs() {
@@ -442,6 +581,45 @@
     return `<div class="cw-mm-tiles">${shown.map(([symbol, label, value]) => `<div class="cw-mm-tile" title="${esc(value)}">${icon(symbol)}<span><small>${esc(label)}</small><strong>${esc(value)}</strong></span></div>`).join("")}</div>`;
   }
 
+  const providerDisplay = (row) => {
+    const name = window.CW?.ProviderMeta?.label?.(row.provider) || row.label || row.provider;
+    const profile = row.instance !== "default" ? row.instanceLabel || row.instance : "";
+    return { name, profile, full: profile ? `${name} · ${profile}` : name };
+  };
+  const episodeCode = (row) => (row.season != null && row.episode != null ? `S${row.season}E${row.episode}` : "Episode");
+
+  function progressRowsHtml(records, episodes = false) {
+    const editable = !!itemActions() && records.some((row) => row.record?.can_mark_watched || row.record?.can_remove_progress);
+    const list = records.map((row) => {
+      const logo = window.CW?.ProviderMeta?.logoPath?.(row.provider) || "";
+      const who = providerDisplay(row);
+      const updated = Date.parse(String(row.updated || ""));
+      const meta = [episodes ? who.full : "", row.remaining ? `${runtimeLabel(Math.round(row.remaining / 60))} left` : "", Number.isFinite(updated) ? `paused ${relTime(Math.floor(updated / 1000))}` : ""].filter(Boolean).join(" · ");
+      const heading = episodes ? `${episodeCode(row)}${row.episodeTitle ? ` · ${row.episodeTitle}` : ""}` : who.full;
+      const value = Math.round(row.pct);
+      const mark = logo ? `<img src="${esc(logo)}" alt="" loading="lazy">` : `<b>${esc(who.name.slice(0, 2))}</b>`;
+      const label = `${episodes ? `${episodeCode(row)} on ` : ""}${who.full}: resume point`;
+      const logoHtml = editable
+        ? `<button type="button" class="cw-mm-progress-logo" data-ia-chip data-ia-ref="${esc(refId(row))}" data-ia-play="${esc(row.rid)}" title="${esc(label)}" aria-label="${esc(label)}" aria-haspopup="dialog">${mark}</button>`
+        : `<span class="cw-mm-progress-logo">${mark}</span>`;
+      return `<div class="cw-mm-progress-row">
+        ${logoHtml}
+        <span class="cw-mm-progress-copy"><strong>${esc(heading)}</strong><small>${esc(meta)}</small></span>
+        <span class="cw-mm-progress-mini"><i style="width:${value}%"></i></span>
+        <b>${value}%</b>
+      </div>`;
+    }).join("");
+    if (!list) return "";
+    const tools = editable ? `<div class="cw-mm-live-tools"><button type="button" class="cw-mm-live-action" data-ia-cover aria-haspopup="dialog">${icon("tune")}Manage resume points</button></div>` : "";
+    return `<div class="cw-mm-progress-rows" data-mm-progress>${list}${tools}</div>`;
+  }
+
+  function showResumePoints() {
+    const rows = Array.isArray(state.progress) ? state.progress : [];
+    if (!rows.length) return "";
+    return `<div class="cw-mm-seasons-progress"><h5>Resume points</h5>${progressRowsHtml(rows, true)}</div>`;
+  }
+
   function movieProgressBox() {
     const history = state.presence?.synced;
     const scrobble = state.presence?.scrobble;
@@ -452,20 +630,6 @@
     const pct = best ? Math.round(best.pct) : watched ? 100 : 0;
     const watchStatus = state.presenceLoading ? "Checking watch status..." : !state.presence ? "Watch status unavailable" : "";
     const summary = best ? `<b>${pct}%</b>` : watched ? "<b>Watched</b>" : watchStatus || (rows === null ? "Checking..." : "Not started");
-    const list = records.map((row) => {
-      const logo = window.CW?.ProviderMeta?.logoPath?.(row.provider) || "";
-      const name = window.CW?.ProviderMeta?.label?.(row.provider) || row.label || row.provider;
-      const profile = row.instance !== "default" ? row.instanceLabel || row.instance : "";
-      const updated = Date.parse(String(row.updated || ""));
-      const meta = [row.remaining ? `${runtimeLabel(Math.round(row.remaining / 60))} left` : "", Number.isFinite(updated) ? `paused ${relTime(Math.floor(updated / 1000))}` : ""].filter(Boolean).join(" · ");
-      const value = Math.round(row.pct);
-      return `<div class="cw-mm-progress-row">
-        <span class="cw-mm-progress-logo">${logo ? `<img src="${esc(logo)}" alt="" loading="lazy">` : `<b>${esc(name.slice(0, 2))}</b>`}</span>
-        <span class="cw-mm-progress-copy"><strong>${esc(name)}${profile ? ` · ${esc(profile)}` : ""}</strong><small>${esc(meta)}</small></span>
-        <span class="cw-mm-progress-mini"><i style="width:${value}%"></i></span>
-        <b>${value}%</b>
-      </div>`;
-    }).join("");
     const lastEpoch = Math.max(Number(history?.last_epoch) || 0, Number(scrobble?.last_epoch) || 0);
     const lastSeen = lastEpoch ? [`Last watched ${relTime(lastEpoch)}`, dateFmt.format(new Date(lastEpoch * 1000))] : [];
     const watchline = watchStatus
@@ -478,7 +642,7 @@
       : `<div class="cw-mm-watchline">${icon("visibility")}<span class="cw-mm-watchline-copy"><strong>Not watched yet</strong><small>No synced history or scrobbles</small></span></div>`;
     return `<div class="cw-mm-box"><h4>Watch progress <small>${summary}</small></h4>
       <div class="cw-mm-progress${!best && watched ? " is-done" : ""}"><i style="width:${pct}%"></i></div>
-      ${list ? `<div class="cw-mm-progress-rows">${list}</div>` : ""}
+      ${progressRowsHtml(records)}
       ${watchline}${castStrip()}</div>`;
   }
 
@@ -506,7 +670,7 @@
       const pair = `${first}${second}`;
       main = `<div class="cw-mm-box"><h4>Watch progress <small>${numberFmt.format(watched)}/${numberFmt.format(total)} episodes <b>${pct}%</b></small></h4>
         <div class="cw-mm-progress"><i style="width:${pct}%"></i></div>
-        ${unmatchedEpisodes().length ? `<p class="cw-mm-muted">${plural(unmatchedEpisodes().length, "watched episode")} could not be matched to TMDB season numbering and ${unmatchedEpisodes().length === 1 ? "is" : "are"} excluded from progress.</p>` : pair ? `<div class="cw-mm-episodes-pair">${pair}</div>` : empty("No episode information on TMDB.")}${seasonProgress()}</div>`;
+        ${unmatchedEpisodes().length ? `<p class="cw-mm-muted">${plural(unmatchedEpisodes().length, "watched episode")} could not be matched to TMDB season numbering and ${unmatchedEpisodes().length === 1 ? "is" : "are"} excluded from progress.</p>` : pair ? `<div class="cw-mm-episodes-pair">${pair}</div>` : empty("No episode information on TMDB.")}${seasonProgress()}${showResumePoints()}</div>`;
     }
     return `<div class="cw-mm-grid-2">${main}<div class="cw-mm-stack">
       <div class="cw-mm-box"><h4>Details</h4>${detailTiles()}</div>
@@ -759,6 +923,20 @@
 
   function onClick(event) {
     const target = event.target;
+    const actionNode = target?.closest?.("[data-ia-chip],[data-ia-cover]");
+    if (actionNode) {
+      void openItemActions(actionNode);
+      return;
+    }
+    if (target?.closest?.("[data-mm-plays]")) {
+      openPlays();
+      return;
+    }
+    const clearAll = target?.closest?.("[data-mm-clear-all]");
+    if (clearAll) {
+      openEverything(clearAll);
+      return;
+    }
     if (target?.closest?.("[data-mm-person-back]")) {
       const view = personView;
       personView = null;

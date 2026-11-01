@@ -139,7 +139,7 @@ _HELPER_SCRIPTS = (
 )
 _APP_SCRIPTS = (
     "syncbar.js", "run-summary-stream.js", "overview-profile.js", "settings-scope.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js", "scheduler-profiles.js",
-    "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
+    "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "item-actions.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
     "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js", "assistant-settings.js",
 )
 _USER_HELPER_SCRIPTS = (
@@ -147,7 +147,7 @@ _USER_HELPER_SCRIPTS = (
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js",
 )
 _USER_APP_SCRIPTS = (
-    "overview-profile.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "playingcard.js", "insights.js", "activity.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
+    "overview-profile.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "playingcard.js", "insights.js", "activity.js", "item-actions.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
 )
 _FULL_USER_HELPER_SCRIPTS = tuple(dict.fromkeys((*_USER_HELPER_SCRIPTS, "details-log.js")))
 _FULL_USER_APP_SCRIPTS = tuple(dict.fromkeys(("syncbar.js", "run-summary-stream.js", "schedulerbanner.js", *_USER_APP_SCRIPTS)))
@@ -3075,6 +3075,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <script src="/assets/js/dashboard-widgets.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/activity.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/profile-datetime.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/item-actions.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/profile-media-modal.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/profile-page.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>

@@ -10,9 +10,9 @@ from providers.sync.trakt import _common, _history
 
 @pytest.fixture(autouse=True)
 def _reset_settings_memo() -> Any:
-    _common._SETTINGS_MEMO = (0.0, None)
+    _common._SETTINGS_MEMO = {}
     yield
-    _common._SETTINGS_MEMO = (0.0, None)
+    _common._SETTINGS_MEMO = {}
 
 
 class _Resp:
@@ -73,6 +73,20 @@ def _play(key: str, watched_at: str, tmdb: str = "111") -> dict[str, Any]:
 
 
 # --- reading the setting ------------------------------------------------------
+
+
+def test_settings_cache_is_kept_per_account(monkeypatch: pytest.MonkeyPatch) -> None:
+    tokens = {"alice": {"browsing": {"watch_only_once": True}}, "bob": {"browsing": {"watch_only_once": False}}}
+    monkeypatch.setattr(_common, "headers_for_adapter", lambda a: {"Authorization": f"Bearer {a.token}"})
+    adapters = {}
+    for name, settings in tokens.items():
+        adapter = _adapter(settings)
+        adapter.token = name
+        adapters[name] = adapter
+    assert _common.watch_only_once(adapters["alice"]) is True
+    assert _common.watch_only_once(adapters["bob"]) is False
+    assert _common.watch_only_once(adapters["alice"]) is True
+    assert adapters["alice"].client.session.calls == 1
 
 
 def test_watch_only_once_true(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1041,13 +1041,18 @@
     return labels.length > 1 ? `Route: ${labels.join(" -> ")}` : `Source: ${labels[0]}`;
   }
 
-  function sourceIcons(sources, max = 4) {
+  const actionKinds = new Set(["history", "ratings"]);
+  const iconActions = (kind) => actionKinds.has(kind) && !!window.CW?.ItemActions?.canWrite?.();
+  const iconActionAttrs = (on, provider, instance, label) => (on ? ` data-ia-ref="${esc(`${provider}:${instance}`)}" title="${esc(`${label}: add or remove`)}"` : "");
+
+  function sourceIcons(sources, max = 4, action = false) {
     return sourceRows(sources, max).map(({ provider, instance, instanceLabel }) => {
       const logo = providerLogo(provider);
       const label = sourceLabel({ provider, instance, instanceLabel });
+      const attrs = iconActionAttrs(action, provider, instance, label);
       return logo
-        ? `<span class="cw-dash-source"><img src="${esc(logo)}" alt="${esc(label)} logo"></span>`
-        : `<span class="cw-dash-source cw-dash-source--text" aria-label="${esc(label)}">${esc(providerShort(provider).slice(0, 3))}</span>`;
+        ? `<span class="cw-dash-source"${attrs}><img src="${esc(logo)}" alt="${esc(label)} logo"></span>`
+        : `<span class="cw-dash-source cw-dash-source--text" aria-label="${esc(label)}"${attrs}>${esc(providerShort(provider).slice(0, 3))}</span>`;
     }).join("");
   }
 
@@ -1055,13 +1060,14 @@
     return ` data-cw-widget-item="${esc(kind)}" data-cw-widget-index="${esc(index)}"`;
   }
 
-  function ratingSourceIcons(sources, max = 3) {
+  function ratingSourceIcons(sources, max = 3, action = false) {
     return sourceRows(sources, max).map(({ provider, instance, instanceLabel }) => {
       const logo = providerLogo(provider);
       const label = sourceLabel({ provider, instance, instanceLabel });
+      const attrs = action ? iconActionAttrs(true, provider, instance, label) : ` title="${esc(label)}"`;
       return logo
-        ? `<span class="cw-rating-provider-icon" title="${esc(label)}" aria-label="${esc(label)}"><img src="${esc(logo)}" alt=""></span>`
-        : `<span class="cw-rating-provider-icon cw-rating-provider-icon--text" title="${esc(label)}" aria-label="${esc(label)}">${esc(providerShort(provider).slice(0, 3))}</span>`;
+        ? `<span class="cw-rating-provider-icon"${attrs} aria-label="${esc(label)}"><img src="${esc(logo)}" alt=""></span>`
+        : `<span class="cw-rating-provider-icon cw-rating-provider-icon--text"${attrs} aria-label="${esc(label)}">${esc(providerShort(provider).slice(0, 3))}</span>`;
     }).join("");
   }
 
@@ -1325,6 +1331,34 @@
     return true;
   }
 
+  const ICON_STRIPS = ".cw-history-sources,.cw-media-card-sources,.cw-rating-provider-icons";
+  const touchInput = () => !!window.matchMedia?.("(pointer: coarse)")?.matches;
+
+  function openIconActions(node, all = false) {
+    const actions = window.CW?.ItemActions;
+    const link = node.closest("[data-cw-widget-item]");
+    const kind = String(link?.getAttribute("data-cw-widget-item") || "");
+    const index = Number(link?.getAttribute("data-cw-widget-index") || -1);
+    const item = latestItems[kind]?.[index];
+    if (!actions?.canWrite?.() || !iconActions(kind) || !item) return false;
+    const feature = kind === "history" ? "history" : "ratings";
+    const [provider, ...instance] = String(node.dataset.iaRef || "").split(":");
+    const present = sourceRows(item.sources, 20).map((row) => ({ provider: row.provider, instance: row.instance, ...(feature === "ratings" && item.rating != null ? { rating: item.rating } : {}) }));
+    void actions.openMenu({
+      anchor: node,
+      feature,
+      item: { ...item, tmdb: item.tmdb },
+      refs: { present, missing: [] },
+      fillMissing: true,
+      focus: all ? null : { provider, instance: instance.join(":") || "default" },
+      rating: item.rating,
+      epoch: feature === "history" ? Number(item.sort_epoch || item.watched_at) || 0 : 0,
+      scope: () => [link],
+      openDetails: () => openProfileWidgetPreview(kind, index) || void openDetailCard(kind, index),
+    });
+    return true;
+  }
+
   function openProfileWidgetPreview(kind, index) {
     if (!["history", "ratings", "scrobble", "progress"].includes(kind)) return false;
     const item = latestItems[kind]?.[Number(index)];
@@ -1361,7 +1395,7 @@
           <strong>${esc(title)}</strong>
           <span>${esc(meta || "Watched")}</span>
         </span>
-        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3)}</span>
+        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3, iconActions("history"))}</span>
       </${tag}>`;
   }
 
@@ -1483,7 +1517,7 @@
       : kind === "scrobble"
         ? [activityLabel(item), typeLabel(item), age].filter(Boolean).join(" - ")
         : [typeLabel(item), age].filter(Boolean).join(" - ");
-    const route = kind === "scrobble" ? scrobbleRouteIcons(item) : { html: sourceIcons(item?.sources, 3), route: sourceRouteTitle(item?.sources) };
+    const route = kind === "scrobble" ? scrobbleRouteIcons(item) : { html: sourceIcons(item?.sources, 3, iconActions(kind)), route: sourceRouteTitle(item?.sources) };
     const corner = kind === "progress" && progressLabel ? progressLabel : age;
     const episodeChip = rawType === "episode" && item?.episode_label ? String(item.episode_label) : "";
     return `
@@ -1518,7 +1552,7 @@
     const art = backdropPoster(item, null, "w780") || poster(item, "w300") || coverPoster(item, "w342");
     const route = kind === "scrobble"
       ? { html: sourceIcons(scrobbleRouteRows(item), 3), route: scrobbleRouteIcons(item).route }
-      : { html: sourceIcons(item?.sources, 3), route: sourceRouteTitle(item?.sources) };
+      : { html: sourceIcons(item?.sources, 3, iconActions(kind)), route: sourceRouteTitle(item?.sources) };
     return `
       <${tag} class="cw-media-card cw-media-card--${esc(kind)}"${hrefAttr}${widgetItemAttrs(kind, index)} title="${esc([title, meta].filter(Boolean).join(" | "))}">
         <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
@@ -1554,7 +1588,7 @@
         <img src="${esc(coverPoster(item, "w342"))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
         <span class="cw-rating-score"><span>${esc(item?.rating || "")}</span></span>
         ${ratedLabel ? `<span class="cw-rating-age-badge">${esc(ratedLabel)}</span>` : ""}
-        <span class="cw-rating-provider-icons" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${ratingSourceIcons(item?.sources, 3)}</span>
+        <span class="cw-rating-provider-icons" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${ratingSourceIcons(item?.sources, 3, iconActions("ratings"))}</span>
       </${tag}>`;
   }
 
@@ -1579,7 +1613,7 @@
           <strong>${esc(title)}</strong>
           <span>${esc(meta || "Rating")}</span>
         </span>
-        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3)}</span>
+        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3, iconActions("ratings"))}</span>
       </${tag}>`;
   }
 
@@ -2113,6 +2147,18 @@
         row.scrollBy({ left: dir * amount, behavior: "smooth" });
         return;
       }
+      const iconStrip = touchInput() ? event.target?.closest?.(ICON_STRIPS) : null;
+      if (iconStrip && event.currentTarget.contains(iconStrip) && iconStrip.querySelector("[data-ia-ref]") && openIconActions(iconStrip, true)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const actionIcon = event.target?.closest?.("[data-ia-ref]");
+      if (actionIcon && event.currentTarget.contains(actionIcon) && openIconActions(actionIcon)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       const itemLink = event.target?.closest?.("[data-cw-widget-item]");
       if (itemLink && event.currentTarget.contains(itemLink)) {
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -2143,6 +2189,8 @@
     window.addEventListener("sync-complete", refreshForSyncComplete);
     window.addEventListener("cw:scrobble-stopped", refreshForScrobbleStopped);
     window.addEventListener("cw:manual-watched-saved", () => markWidgetsDirty(250));
+    window.addEventListener("cw:item-changed", () => markWidgetsDirty(250, { preserve: hasLoaded }));
+    window.addEventListener("cw:editor-send-complete", () => markWidgetsDirty(250, { preserve: hasLoaded }));
     window.addEventListener("cw:watchlist-widget-state", (event) => {
       setWidgetEmpty("watchlist", !!event?.detail?.empty);
       cacheWatchlistEmpty(!!event?.detail?.empty);
