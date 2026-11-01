@@ -27,6 +27,15 @@ FORMATS: dict[str, dict[str, str]] = {
     "mdblist.json": {"tool": "MDBList JSON", "label": "MDBList JSON", "media": "all"},
 }
 _SHOW_TYPES = {"show", "anime", "season", "episode"}
+_MEDIATYPES = ("movie", "show", "season", "episode")
+_SORT_KEYS: dict[str, tuple[str, ...]] = {
+    "year": ("release_year",),
+    "media_type": ("mediatype",),
+    "id": ("id", "tmdb_id"),
+    "tmdb_id": ("id", "tmdb_id"),
+    "tvdbid": ("tvdbid", "tvdbId", "tvdb_id"),
+    "tvdb_id": ("tvdbid", "tvdbId", "tvdb_id"),
+}
 _LOCK = threading.Lock()
 
 
@@ -211,6 +220,11 @@ def _entries(items: Sequence[Mapping[str, Any]], media: str) -> list[tuple[str, 
     return out
 
 
+def _mediatype(item: Mapping[str, Any]) -> str:
+    typ = str(item.get("type") or "").strip().lower()
+    return typ if typ in _MEDIATYPES else "show" if typ in _SHOW_TYPES else ""
+
+
 def _mdblist_rows(items: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], int]:
     rows: list[dict[str, Any]] = []
     seen: set[tuple[Any, ...]] = set()
@@ -224,7 +238,7 @@ def _mdblist_rows(items: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, An
         ids = ids if isinstance(ids, Mapping) else {}
         tmdb = _number(ids.get("tmdb"))
         season, episode = _index(item.get("season")), _number(item.get("episode"))
-        mediatype = "movie" if typ == "movie" else typ if nested else "show"
+        mediatype = _mediatype(item)
         if not tmdb or (nested and season is None) or (typ == "episode" and episode is None):
             skipped += 1
             continue
@@ -250,10 +264,33 @@ def _mdblist_rows(items: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, An
     return rows, skipped
 
 
-def sort_rows(rows: list[dict[str, Any]], sort: Any) -> list[dict[str, Any]]:
-    if str(sort or "").strip().lower() == "random":
+def filter_items(items: Sequence[Mapping[str, Any]], mediatype: Any) -> list[Mapping[str, Any]]:
+    wanted = {part.strip().lower() for part in str(mediatype or "").split(",")} & set(_MEDIATYPES)
+    return [item for item in items if _mediatype(item) in wanted] if wanted else list(items)
+
+
+def _sort_value(row: Mapping[str, Any], keys: Sequence[str]) -> Any:
+    value = next((row[key] for key in keys if row.get(key) not in (None, "")), None)
+    if keys[0] == "mediatype" and value in _MEDIATYPES:
+        return _MEDIATYPES.index(value)
+    if keys[0] == "imdb_id" and value:
+        digits = value[2:].lstrip("0")
+        return len(digits), digits
+    return value.casefold() if isinstance(value, str) else value
+
+
+def sort_rows(rows: list[dict[str, Any]], sort: Any, order: Any = "") -> list[dict[str, Any]]:
+    field = str(sort or "").strip().lower()
+    descending = str(order or "").strip().lower() == "desc"
+    if field == "random":
         random.shuffle(rows)
-    return rows
+        return rows
+    if field in {"", "rank"}:
+        return rows[::-1] if descending else rows
+    keys = _SORT_KEYS.get(field, (field,))
+    ranked = [(_sort_value(row, keys), row) for row in rows]
+    known = sorted((pair for pair in ranked if pair[0] is not None), key=lambda pair: pair[0], reverse=descending)
+    return [row for _, row in known] + [row for value, row in ranked if value is None]
 
 
 def page_rows(rows: list[dict[str, Any]], offset: Any, limit: Any) -> list[dict[str, Any]]:
