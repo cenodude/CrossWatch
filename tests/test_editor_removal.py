@@ -555,6 +555,33 @@ def test_viewed_tracker_offers_rows_that_no_pair_has_synced_yet(setup):
     assert list(ops.live[("default", "history")]) == ["tmdb:2"]
 
 
+def test_live_check_removes_a_remote_record_added_after_the_last_sync(setup):
+    setup.ops["MDBLIST"].live[("default", "history")] = {"tmdb:1": movie(), "tmdb:2": movie(2)}
+    payload = dict(kind="history", items=[movie()])
+    assert not api.api_editor_remove_preview(payload, request=None)["providers"]
+    payload["live_check"] = [{"provider": "MDBLIST", "instance": "default"}]
+    preview = api.api_editor_remove_preview(payload, request=None)
+    assert [(p["provider"], p["count"]) for p in preview["providers"]] == [("MDBLIST", 1)]
+    result = setup.execute(payload)
+    assert result["confirmed"] == 1
+    assert list(setup.ops["MDBLIST"].live[("default", "history")]) == ["tmdb:2"]
+
+
+def test_live_check_reports_a_missing_record_instead_of_asking_for_a_sync(setup):
+    payload = dict(kind="history", items=[movie()], live_check=[{"provider": "MDBLIST", "instance": "default"}])
+    preview = api.api_editor_remove_preview(payload, request=None)
+    assert not preview["providers"]
+    assert preview["empty_reason"] == "no_matching_records"
+
+
+def test_live_check_never_matches_server_local_ids_from_another_account(setup):
+    local = dict(type="movie", title="Local", ids={"plex": "123"})
+    setup.ops["TRAKT"].live[("second", "history")] = {"plex:123": dict(local)}
+    payload = dict(kind="history", items=[local], source_provider="PLEX",
+                   live_check=[{"provider": "TRAKT", "instance": "second"}])
+    assert not api.api_editor_remove_preview(payload, request=None)["providers"]
+
+
 def test_tracker_rows_are_only_offered_when_viewing_that_tracker(setup):
     _tracker_only(setup, {"tmdb:1": movie()})
     for source in ("", "PLEX"):

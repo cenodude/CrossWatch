@@ -201,7 +201,7 @@ def _can_remove(ops, feature, key, item, *, viewing=False):
     return True
 
 
-def _add_tracker_records(cfg, feature, selected, targets, entry):
+def _add_live_records(cfg, feature, selected, targets, entry, *, same_account=True):
     provider, instance = entry["provider"], entry["instance"]
     ops = load_sync_ops(provider)
     view = build_provider_config_view(cfg, provider, instance)
@@ -215,7 +215,7 @@ def _add_tracker_records(cfg, feature, selected, targets, entry):
         if titles:
             current = _RecordIndex(_read_current(ops, config_with_history_rewatches(view, False), provider, instance, feature))
             for index, key, item in titles:
-                matches = current.matches(key, item, same_account=True)
+                matches = current.matches(key, item, same_account=same_account)
                 if len(matches) != 1 or index in targets.get((provider, instance), {}).get("rows", ()):
                     continue
                 dest_key, dest = matches[0]
@@ -224,7 +224,7 @@ def _add_tracker_records(cfg, feature, selected, targets, entry):
                     target()["records"].setdefault(dest_key, dest)
         if events and _supports_viewings(provider, ops):
             recorded = _read_viewings(ops, config_with_history_rewatches(view, True), provider, instance, feature)
-            matched = _match_viewings({k: item for k, (_, item) in events.items()}, recorded, cfg, same_account=True)
+            matched = _match_viewings({k: item for k, (_, item) in events.items()}, recorded, cfg, same_account=same_account)
             for key, dest_key in matched.items():
                 index = events[key][0]
                 if index in targets.get((provider, instance), {}).get("rows", ()):
@@ -233,7 +233,19 @@ def _add_tracker_records(cfg, feature, selected, targets, entry):
                     target()["rows"].add(index)
                     target()["viewings"].setdefault(dest_key, recorded[dest_key])
     except Exception:
-        LOG.warning("Editor removal could not read the %s tracker %s", feature, instance, exc_info=True)
+        LOG.warning("Editor removal could not read %s %s from %s", feature, instance, provider, exc_info=True)
+
+
+def _live_checks(payload):
+    rows = payload.get("live_check")
+    out = []
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, Mapping):
+            continue
+        identity = (str(row.get("provider") or "").upper(), normalize_instance_id(row.get("instance")))
+        if identity[0] and identity not in out:
+            out.append(identity)
+    return out
 
 
 def _plan(payload, request):
@@ -248,7 +260,8 @@ def _plan(payload, request):
     missing_baselines = set()
     found_pair = not pair_id
     # Reuse labels and configured-instance filtering from Send. The baseline,
-    # rather than provider discovery or the global inventory, grants eligibility.
+    # rather than provider discovery or the global inventory, grants eligibility,
+    # unless the caller asks for a live check of specific accounts.
     available = {(row["provider"], row["instance"]): row
                  for row in api._filter_targets_for_request(cfg, request, api._editor_send_targets(cfg, feature))}
     for index, pair in enumerate(cfg.get("pairs") or [], 1):
@@ -311,7 +324,15 @@ def _plan(payload, request):
         raise HTTPException(404, "Sync pair not found for this feature")
     tracker = (source, source_instance)
     if source == "CROSSWATCH" and tracker in available and user_can_access_instance(cfg, user, *tracker):
-        _add_tracker_records(cfg, feature, selected, targets, available[tracker])
+        _add_live_records(cfg, feature, selected, targets, available[tracker])
+    for identity in _live_checks(payload):
+        if identity == tracker and source == "CROSSWATCH":
+            continue
+        if identity not in available or not user_can_access_instance(cfg, user, *identity):
+            continue
+        if len(targets.get(identity, {}).get("rows", ())) >= len(selected):
+            continue
+        _add_live_records(cfg, feature, selected, targets, available[identity], same_account=identity == tracker)
     rows = sorted(targets.values(), key=lambda t: (t["display"].casefold(), t["instance"]))
     signature = [(t["provider"], t["instance"], t["records"], t["viewings"]) for t in rows]
     digest = hashlib.sha256(json.dumps([feature, pair_id, signature], sort_keys=True, default=str).encode()).hexdigest()
@@ -329,7 +350,7 @@ def preview_removal(payload, request=None):
         public.append(row)
     return dict(ok=True, operation="remove", kind=feature, selected=len(selected), providers=public, preview_id=digest,
                 missing_baselines=missing,
-                empty_reason="pair_baseline_unavailable" if not public and missing else "no_matching_records")
+                empty_reason="pair_baseline_unavailable" if not public and missing and not _live_checks(payload) else "no_matching_records")
 
 
 @contextmanager
