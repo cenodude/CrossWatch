@@ -8,6 +8,7 @@
   let titleEl = null;
   let stageEl = null;
   let closeBtn = null;
+  let returnFocus = null;
 
   function ensureModal() {
     if (modal?.isConnected) return modal;
@@ -37,7 +38,10 @@
 
     closeBtn.addEventListener("click", (e) => { e.preventDefault(); close(); }, true);
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && modal?.classList.contains("show")) close();
+      if (e.key !== "Escape" || !modal?.classList.contains("show")) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      close();
     }, true);
     return modal;
   }
@@ -63,6 +67,7 @@
   function open(url, title = "Trailer") {
     if (!url) return;
     ensureModal();
+    if (!modal.classList.contains("show")) returnFocus = document.activeElement;
     titleEl.textContent = title || "Trailer";
     stageEl.querySelector("iframe")?.remove();
     const frame = document.createElement("iframe");
@@ -75,8 +80,10 @@
   }
 
   function close() {
-    if (!modal) return;
+    if (!modal?.classList.contains("show")) return;
     modal.classList.remove("show");
+    if (returnFocus?.isConnected) returnFocus.focus({preventScroll:true});
+    returnFocus = null;
     if (titleEl) titleEl.textContent = "Loading trailer";
     const frame = modal.querySelector("iframe");
     if (frame) {

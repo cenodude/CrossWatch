@@ -26,8 +26,13 @@
       closeAll(null);
     });
     d.addEventListener("keydown", (ev) => {
-      if (ev.key === "Escape") closeAll(null);
-    });
+      if (ev.key !== "Escape" || !OPEN) return;
+      const button = OPEN.btn;
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      closeAll(null);
+      if (button.isConnected) button.focus({preventScroll:true});
+    }, true);
   }
 
   function normalizeIcon(icon) {

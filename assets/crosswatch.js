@@ -274,6 +274,12 @@ function cwInitPwaInstall() {
 
   const hide = () => wrap.classList.remove("show");
   const dismiss = () => { _cwMarkInstallDismissed(); hide(); };
+  wrap.onkeydown = event => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    dismiss();
+  };
 
   secondaryBtn?.addEventListener("click", dismiss, { passive: true });
   closeBtn?.addEventListener("click", dismiss, { passive: true });

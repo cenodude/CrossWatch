@@ -11,7 +11,7 @@ function harness() {
   function element() {
     return {isConnected:true,attrs:{},style:{},dataset:{},children:[],classList:{add(){},remove(){}},
       setAttribute(k,v){this.attrs[k]=v;},appendChild(n){this.children.push(n);},
-      addEventListener(k,fn){this[k]=fn;},remove(){this.isConnected=false;},
+      addEventListener(k,fn){this[k]=fn;},removeEventListener(){},remove(){this.isConnected=false;},
       querySelector(){return {textContent:"Configure Connection"};},querySelectorAll(){return [];},
       focus(){document.activeElement=this;}};
   }
@@ -54,4 +54,24 @@ test("Tab and Shift Tab from the modal shell stay inside the dialog",()=>{
     assert.equal(h.document.activeElement,shiftKey?last:first);
     assert.equal(prevented,true);
   }
+});
+
+
+test("shared host respects handled Escape, native children and busy locks", async () => {
+  const h=harness();
+  const host=new h.context.ModalHost();
+  await host.mount({mount(){}});
+  const event = {key:"Escape",preventDefault(){},stopPropagation(){},stopImmediatePropagation(){}};
+  host._esc({...event,defaultPrevented:true});
+  assert.ok(host.shell);
+  h.document.querySelector=()=>({open:true});
+  host._esc(event);
+  assert.ok(host.shell);
+  h.document.querySelector=()=>null;
+  host.setOptions({dismissible:false});
+  host._esc(event);
+  assert.ok(host.shell);
+  host.setOptions({dismissible:true});
+  host._esc(event);
+  assert.equal(host.shell,null);
 });

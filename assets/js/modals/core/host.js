@@ -49,16 +49,16 @@ export class ModalHost {
     window.addEventListener('resize', this._resize, { passive: true });
 
     this._esc = (e) => {
-      if (e.key !== 'Escape') return;
-      if (this.options.dismissible === false) {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation?.();
-        return;
-      }
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      if (document.querySelector?.('dialog[open]')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation?.();
+      if (this.options.dismissible === false) return;
       this.unmount();
     };
-    document.addEventListener('keydown', this._esc, true);
+    s.addEventListener('keydown', this._esc);
+    document.addEventListener('keydown', this._esc);
 
     // global close helper for modal content
     window.cxCloseModal = () => this.unmount();
@@ -108,6 +108,9 @@ export class ModalHost {
     this.setOptions({ dismissible: props?.dismissible !== false });
     this._ensure();
     this._resetClasses(props);
+    window.CW?.DialogFocus?.activate(this.shell, () => {
+      if (this.options.dismissible !== false) this.unmount();
+    });
     this.api = api;
     this.shell.innerHTML = '';
 
@@ -124,7 +127,7 @@ export class ModalHost {
       this.shell.style.top = '50%';
       this.shell.style.transform = 'translate(-50%,-50%)';
 
-      if (typeof trapFocus === 'function') trapFocus(this.shell);
+      if (!window.CW?.DialogFocus && typeof trapFocus === 'function') trapFocus(this.shell);
       this.shell.focus?.({ preventScroll: true });
 
       this._hideForeign();
@@ -135,12 +138,13 @@ export class ModalHost {
   }
 
   unmount() {
+    window.CW?.DialogFocus?.deactivate(this.shell);
     try { this.api?.unmount?.(); } catch {}
     this.api = null;
 
     // remove listeners
     if (this._resize) window.removeEventListener('resize', this._resize);
-    if (this._esc) document.removeEventListener('keydown', this._esc, true);
+    if (this._esc) document.removeEventListener('keydown', this._esc);
     this._resize = this._esc = null;
 
     // cleanup globals

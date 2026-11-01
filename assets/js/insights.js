@@ -755,6 +755,15 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     return m ? `${m[1]}-${m[2]}-${m[3]} - ${m[4]}:${m[5]}` : base;
   };
 
+  let snapshotReturnFocus = null;
+
+  function closeCrosswatchSnapshotPicker() {
+    w.CW?.DialogFocus?.deactivate(_cwSnapModal);
+    _cwSnapModal?.classList.add("cw-snap-hidden");
+    if (snapshotReturnFocus?.isConnected) snapshotReturnFocus.focus?.({ preventScroll: true });
+    snapshotReturnFocus = null;
+  }
+
   function ensureCrosswatchSnapshotModal() {
     if (_cwSnapModal?.parentNode) return _cwSnapModal;
     const modal = d.createElement("div");
@@ -762,7 +771,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     modal.innerHTML = '<div class="cw-snap-dialog" role="dialog" aria-modal="true" aria-labelledby="cw-snap-title"><div class="cw-snap-head"><div class="cw-snap-title-wrap"><div class="cw-snap-kicker">Snapshot selector</div><div class="cw-snap-title" id="cw-snap-title">Select snapshot for <span class="hl"></span></div></div><button class="snap-icon-close" type="button" aria-label="Close snapshot selector">×</button></div><div class="cw-snap-body"></div><div class="cw-snap-foot"><button class="snap-close" type="button">Cancel</button></div></div>';
     modal.addEventListener("click", async ev => {
       const close = ev.target.closest(".snap-close,.snap-icon-close");
-      if (close) modal.classList.add("cw-snap-hidden");
+      if (close) closeCrosswatchSnapshotPicker();
       const btn = ev.target.closest(".snap-btn");
       if (!btn) return;
       const feature = modal.dataset.feature, name = btn.dataset.name, profile = btn.dataset.profile || modal.dataset.providerInstance || "default";
@@ -772,7 +781,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
         return void w.cxToast?.("Failed to set snapshot. Check server logs.");
       }
       try { localStorage.setItem(CW_SNAPSHOT_PROFILE_KEY, profile); } catch {}
-      modal.classList.add("cw-snap-hidden");
+      closeCrosswatchSnapshotPicker();
       w.cxToast?.(`Snapshot set for ${profile}: ${name === "latest" ? "latest" : snapLabel(name)}`);
       refreshInsights(true);
     });
@@ -780,7 +789,14 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       const sel = ev.target.closest(".cw-snap-profile-select");
       if (sel) loadCrosswatchSnapshotChoices(modal, modal.dataset.feature, sel.value);
     });
+    modal.addEventListener("keydown", event => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeCrosswatchSnapshotPicker();
+    });
     d.body.appendChild(modal);
+    w.CW?.DialogFocus?.trap(modal);
     _cwSnapModal = modal;
     return modal;
   }
@@ -817,7 +833,10 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const modal = ensureCrosswatchSnapshotModal(), head = $(".cw-snap-head .hl", modal);
     modal.dataset.feature = feature;
     if (head) head.textContent = featureLabel(feature);
-    await loadCrosswatchSnapshotChoices(modal, feature, profileId);
+    snapshotReturnFocus = d.activeElement;
     modal.classList.remove("cw-snap-hidden");
+    w.CW?.DialogFocus?.activate(modal, closeCrosswatchSnapshotPicker);
+    $(".snap-icon-close", modal)?.focus();
+    await loadCrosswatchSnapshotChoices(modal, feature, profileId);
   }
 })(window, document);
