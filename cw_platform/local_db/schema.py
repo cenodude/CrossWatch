@@ -624,7 +624,10 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         conn.execute(_CREATE_BASELINE_ITEMS.replace("baseline_items", "pair_baseline_items").replace(
             "REFERENCES provider_feature_state", "REFERENCES pair_feature_state"
         ))
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_pair_items_state_key ON pair_baseline_items(provider_state_id, item_key)")
+        conn.execute("DROP INDEX IF EXISTS idx_pair_items_state_key")
+        conn.execute("""CREATE TABLE IF NOT EXISTS pair_scope_owners (
+            pair_scope TEXT PRIMARY KEY, pair_id TEXT NOT NULL, feature TEXT NOT NULL
+        )""")
         _ensure_column(conn, "baseline_items", "collected_at", "TEXT")
         for table in ("baseline_items", "pair_baseline_items"):
             _ensure_column(conn, table, "path_metadata_json", "TEXT")

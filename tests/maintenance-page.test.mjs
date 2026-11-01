@@ -104,7 +104,7 @@ function runner({confirmed=true,typed='RESET',response={ok:true},reject=false}={
     setOperationBusy(value){context.operationBusy=value;},startActionFeedback(){},finishActionFeedback:(_button,status)=>feedback.push(status),
     setStatus:message=>messages.push(message),refreshSummary:async()=>{},loadActionInsight:async()=>{},
     eventsReceipt:()=>null,databaseReceipt:()=>null,stateFileReceipt:()=>null,statePruneReceipt:()=>null,
-    completionReceipt:()=> 'Done',returnToCaller(){},setTimeout(){},
+    completionReceipt:()=> 'Done',returnToCaller(){},setTimeout(){},followJob:async()=>response,
   };
   vm.runInNewContext(catalog+source.slice(source.indexOf('    async function runOp('),source.indexOf('    OPS.forEach(')),context);
   return {context,posts,feedback,messages,run:kind=>context.runOp(kind,{dataset:{}})};
@@ -125,7 +125,8 @@ test('cancelling destructive tasks sends no request',async()=>{
 test('event deletion retains explicit confirmation in the API payload',async()=>{
   const fixture=runner();
   await fixture.run('events-purge');
-  assert.equal(fixture.posts[0].url,'/api/maintenance/events-purge');
+  assert.equal(fixture.posts[0].url,'/api/maintenance/jobs');
+  assert.equal(fixture.posts[0].body.action,'events-purge');
   assert.equal(fixture.posts[0].body.confirm,true);
   assert.deepEqual(fixture.feedback,['success']);
 });
@@ -133,7 +134,8 @@ test('event deletion retains explicit confirmation in the API payload',async()=>
 test('database rebuild sends explicit confirmation and reports the backup',async()=>{
   const fixture=runner({response:{ok:true,backup:'/config/.cw_databases/backups/crosswatch-1.sqlite3'}});
   await fixture.run('database-rebuild');
-  assert.equal(fixture.posts[0].url,'/api/maintenance/database-rebuild');
+  assert.equal(fixture.posts[0].url,'/api/maintenance/jobs');
+  assert.equal(fixture.posts[0].body.action,'database-rebuild');
   assert.equal(fixture.posts[0].body.confirm,true);
   assert.deepEqual(fixture.feedback,['success']);
   assert.match(fixture.messages.at(-1),/backup \/config\/\.cw_databases\/backups\/crosswatch-1\.sqlite3/);
@@ -182,7 +184,7 @@ test('category batches run visible tasks sequentially and block another batch',a
   assert.equal(fixture.posts.length,1);
   release();
   await pending;
-  assert.deepEqual(fixture.posts.map(item=>item.url),['/api/maintenance/clear-state','/api/maintenance/clear-cache']);
+  assert.deepEqual(fixture.posts.map(item=>item.url),['/api/maintenance/jobs','/api/maintenance/clear-cache']);
   assert.equal(fixture.context.operationBusy,false);
   assert.equal(fixture.context.batchRunning,false);
   assert.equal(fixture.label.textContent,'Run all');
@@ -199,7 +201,7 @@ test('category cancellation and unhealthy checks stop later tasks',async()=>{
   assert.equal(cancelled.posts.length,0);
   const unhealthy=categoryRunner({response:{ok:true,healthy:false}});
   await unhealthy.runGroup('events');
-  assert.deepEqual(unhealthy.posts.map(item=>item.url),['/api/maintenance/events-health']);
+  assert.deepEqual(unhealthy.posts.map(item=>item.body.action),['events-health']);
   assert.equal(unhealthy.context.operationBusy,false);
   const failed=categoryRunner({reject:true});
   await failed.runGroup('sync');
@@ -214,10 +216,36 @@ test('category batches retain destructive task confirmation and archive configur
   await fixture.runGroup('events');
   assert.match(prompts[0],/Clear event data/);
   assert.match(prompts[1],/Clear all event data/);
-  assert.deepEqual(fixture.posts.map(item=>item.url),['/api/maintenance/events-health','/api/maintenance/events-optimize']);
+  assert.deepEqual(fixture.posts.map(item=>item.body.action),['events-health','events-optimize']);
   assert.equal(fixture.context.operationBusy,false);
   fixture.posts.length=0;
   await fixture.runGroup('archive');
   assert.equal(fixture.context.archiveOpen,true);
   assert.equal(fixture.posts.length,0);
+});
+
+
+test('maintenance polling continues beyond the old request deadline',async()=>{
+  let polls=0, elapsed=0;
+  const context={window:{setTimeout:fn=>{elapsed+=1000;fn();}},setStatus(){},
+    fjson:async()=>({id:'job',action:'events-optimize',state:++polls>60?'completed':'running',result:{ok:true}})};
+  vm.runInNewContext(source.slice(source.indexOf('    async function followJob('),source.indexOf('    async function runOp(')),context);
+  const result=await context.followJob({id:'job',action:'events-optimize',state:'queued'});
+  assert.equal(result.ok,true);
+  assert.equal(elapsed,61000);
+});
+
+test('refresh reconnects to maintenance and restart reports interruption',async()=>{
+  const messages=[],locks=[];
+  let state='running';
+  const context={window:{setTimeout:fn=>fn()},setStatus:message=>messages.push(message),
+    setOperationBusy:value=>locks.push(value),eventsReceipt:()=>'Optimization completed',databaseReceipt:()=>null,
+    fjson:async()=>{const current=state;state='completed';return {id:'job',action:'events-optimize',state:current,result:{ok:current!=='interrupted',error:'server_restarted'}};}};
+  vm.runInNewContext(source.slice(source.indexOf('    async function followJob('),source.indexOf('    async function runOp(')),context);
+  await context.resumeJob();
+  assert.equal(messages.at(-1),'Optimization completed');
+  assert.deepEqual(locks,[true,false]);
+  state='interrupted';
+  await context.resumeJob();
+  assert.match(messages.at(-1),/server_restarted/);
 });

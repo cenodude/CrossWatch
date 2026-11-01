@@ -12,7 +12,7 @@ from contextlib import contextmanager
 import dataclasses as _dc, importlib, inspect, json, os, re, shlex, shutil, threading, time, uuid
 import asyncio
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, sync_provider_supports_feature
@@ -2590,6 +2590,21 @@ def api_pairs_reorder(order: list[str] = Body(...), request: Request = cast(Requ
             pass
         return {"ok": False, "error": _public_error("pair_reorder_failed")}
 
+def _pair_mutation_guard():
+    from cw_platform.config_base import CONFIG
+    from cw_platform.local_db.operation_lock import exclusive_operation
+
+    operation = exclusive_operation(CONFIG)
+    try:
+        operation.__enter__()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail="database_operation_busy") from exc
+    try:
+        yield
+    finally:
+        operation.__exit__(None, None, None)
+
+
 @router.put("/pairs/{pair_id}")
 def api_pairs_update(pair_id: str, payload: PairPatch = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
     load_config, save_config = _env()
@@ -2694,7 +2709,7 @@ def _purge_pair_state(pair_id: str, scopes: Sequence[str] = ()) -> dict[str, Any
 
     return {'removed': removed, 'errors': errors}
 
-@router.delete("/pairs/{pair_id}")
+@router.delete("/pairs/{pair_id}", dependencies=[Depends(_pair_mutation_guard)])
 def api_pairs_delete(pair_id: str, purge_state: bool = True, request: Request = cast(Request, None)) -> dict[str, Any]:
     load_config, save_config = _env()
     state = {"removed": [], "errors": []}
@@ -2709,18 +2724,25 @@ def api_pairs_delete(pair_id: str, purge_state: bool = True, request: Request = 
         scopes: list[str] = []
         if purge_state and pair is not None:
             try:
-                from services.pair_state import pair_scopes
+                from services.pair_state import pair_scopes, owned_pair_scopes
+                from cw_platform.config_base import CONFIG
 
                 scopes = list((pair_scopes(cfg, pair_id) or {}).values())
-            except Exception:
-                scopes = []
+                scopes.extend(owned_pair_scopes(CONFIG, pair_id))
+            except Exception as exc:
+                state["errors"].append(f"scope_inventory: {exc}")
         before = len(arr)
         arr[:] = [it for it in arr if str(it.get("id")) != str(pair_id)]
         deleted = before - len(arr)
         if deleted:
             save_config(cfg)
         if purge_state:
-            state = _purge_pair_state(pair_id, scopes if deleted else ())
+            try:
+                cleaned = _purge_pair_state(pair_id, scopes if deleted else ())
+                state["removed"].extend(cleaned.get("removed") or [])
+                state["errors"].extend(cleaned.get("errors") or [])
+            except Exception as exc:
+                state["errors"].append(f"pair_state: {exc}")
         inventory_removed = 0
         if purge_state and deleted and pair is not None:
             try:
@@ -2738,6 +2760,7 @@ def api_pairs_delete(pair_id: str, purge_state: bool = True, request: Request = 
             "inventory_removed": inventory_removed,
             "state_removed": len(state.get("removed") or []),
             "state_errors": len(state.get("errors") or []),
+            "warnings": ["pair_state_cleanup_failed"] if state.get("errors") else [],
             "state_removed_preview": (state.get("removed") or [])[:25],
         }
     except Exception as e:

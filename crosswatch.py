@@ -1615,7 +1615,7 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
     try:
         from cw_platform.local_db.diagnostics import diagnostics as _runtime_db_diagnostics
 
-        rt = _runtime_db_diagnostics(CONFIG_DIR)
+        rt = _runtime_db_diagnostics(CONFIG_DIR, full=False)
         if rt.get("ok"):
             raw_counts = rt.get("table_counts")
             counts: dict[str, Any] = raw_counts if isinstance(raw_counts, dict) else {}
@@ -1645,8 +1645,7 @@ def main(host: str = "0.0.0.0", port: int = 8787) -> None:
         ev_status = str(ev.get("status") or "unknown").capitalize()
         ev_version = ev.get("schema_version") or "?"
         ev_events = int(ev.get("events") or 0)
-        ev_size = _fmt_bytes(ev.get("size_bytes") or 0)
-        boot.info(f"              {_c(f'Event archive: {ev_status} - schema v{ev_version} - {ev_events:,} events - {ev_size}', ev_color)}")
+        boot.info(f"              {_c(f'Event archive: {ev_status} - schema v{ev_version} - {ev_events:,} events - shared runtime database', ev_color)}")
     except Exception as exc:
         boot.info(f"              {_c(f'Event archive: error - {exc}', RED)}")
 

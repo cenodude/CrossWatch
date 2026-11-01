@@ -81,6 +81,8 @@ const SIMPLE_OPS = {
   "state-file-prune": "/api/maintenance/state-file/prune",
   "database-rebuild": "/api/maintenance/database-rebuild",
 };
+const JOB_ACTIONS = new Set(["events-optimize", "events-health", "database-health", "state-file", "state-file-prune", "events-rebuild", "events-purge", "state", "database-rebuild"]);
+
 const OPS = [
   {
     key: "state",
@@ -123,7 +125,7 @@ const OPS = [
     kind: "state-file-prune",
     icon: "cleaning_services",
     title: "Prune stale state",
-    desc: "Creates an app-state backup, then removes state baselines and leftover unresolved, blackbox and flap files for pairs or routes that no longer exist.",
+    desc: "Creates an app-state backup, then removes obsolete pair scopes, unused provider baselines and leftover retry files.",
   },
   {
     key: "database-rebuild",
@@ -202,8 +204,8 @@ const OPS = [
     key: "events-optimize",
     kind: "events-optimize",
     icon: "tune",
-    title: "Optimize archive",
-    desc: "Compacts and re-indexes the event archive to reclaim space.",
+    title: "Optimize database",
+    desc: "Compacts the shared runtime and event database to reclaim unused disk space.",
   },
   {
     key: "events-purge",
@@ -729,10 +731,10 @@ const MaintenancePage = {
         return `Health check · ${res.healthy ? "healthy" : "issues found"} · ${bits.join(" · ")}.`;
       }
       if (kind === "events-optimize") {
-        return `Optimize archive · freed ${formatBytes(res.reclaimed_bytes || 0)} · ${formatBytes(res.before_bytes || 0)} → ${formatBytes(res.after_bytes || 0)} · ${res.duration_ms ?? 0} ms.`;
+        return `Optimize database · freed ${formatBytes(res.reclaimed_bytes || 0)} · database ${formatBytes(res.database_bytes || 0)} · WAL ${formatBytes(res.wal_bytes || 0)} · ${res.duration_ms ?? 0} ms.${res.checkpoint_pending ? " Checkpoint pending: another connection is holding the WAL." : ""}`;
       }
       if (kind === "events-rebuild") {
-        return `Rebuild archive · ${new Intl.NumberFormat().format(res.events || 0)} events rebuilt from runtime state.`;
+        return `Rebuild archive · ${new Intl.NumberFormat().format(res.events || 0)} events · runtime data preserved.`;
       }
       return null;
     };
@@ -751,6 +753,10 @@ const MaintenancePage = {
         formatBytes(res.size_bytes || 0),
       ];
       if (res.wal_size_bytes) bits.push(`WAL ${formatBytes(res.wal_size_bytes)}`);
+      bits.push(`unused ${formatBytes(res.unused_bytes || 0)}`);
+      if (res.pair_scopes) bits.push(`${res.pair_scopes.active_scopes} active pair scopes`, `${res.pair_scopes.scopes.length} obsolete scopes (${res.pair_scopes.items} items)`);
+      if (res.pair_scopes?.deferred) bits.push(res.pair_scopes.reason === "config_unavailable" ? "Scope cleanup deferred: configuration unavailable" : `Scope cleanup deferred for ${res.pair_scopes.deferred_pairs.length} pair(s) with unresolved users`);
+      if (res.table_storage?.length) bits.push(...res.table_storage.slice(0, 5).map(row => `${row.name}: ${formatBytes(row.bytes)}`));
       return `Database health · ${res.healthy ? "healthy" : "issues found"} · ${bits.join(" · ")}.`;
     };
 
@@ -776,6 +782,7 @@ const MaintenancePage = {
       const backupPath = res.backup && res.backup.path ? String(res.backup.path) : "";
       const orphans = Number(res.orphaned_state_files || 0);
       const bits = [`${providers} providers`, `${instances} instances`, `${baselines} baselines`, `${items} items`, `${orphans} orphaned files`, `${freed} reclaimed`];
+      if (res.pair_scopes?.deferred) bits.push(`Preserved scopes for ${res.pair_scopes.deferred_pairs.length} pair(s) with unresolved users; unowned historical scopes were also preserved`);
       if (backupPath) bits.push(`backup ${backupPath}`);
       return `Prune sync state completed · ${bits.join(" · ")}.`;
     };
@@ -946,11 +953,43 @@ const MaintenancePage = {
       btn._cwResultTimer = window.setTimeout(() => resetActionFeedback(btn), 1400);
     }
 
+    async function followJob(initial) {
+      let job = initial;
+      while (job.state === "queued" || job.state === "running") {
+        setStatus(`Running ${job.action}: ${job.step || job.state}…`, "busy");
+        await new Promise(resolve => window.setTimeout(resolve, 1000));
+        const next = await fjson("/api/maintenance/jobs/current");
+        if (next.id !== initial.id) throw new Error("Maintenance status changed. Check the latest job before retrying.");
+        job = next;
+      }
+      window.dispatchEvent?.(new CustomEvent("cw:maintenance-job-changed"));
+      return job.result || { ok: false, error: job.state || "missing_job_result" };
+    }
+
+    async function resumeJob() {
+      try {
+        const job = await fjson("/api/maintenance/jobs/current");
+        if (!job.id || job.state === "idle") return;
+        setOperationBusy(true);
+        const result = await followJob(job);
+        setStatus(result.ok ? (eventsReceipt(job.action, result) || databaseReceipt(job.action, result) || "Maintenance completed.") : `Maintenance stopped: ${result.error}`, result.ok ? "ok" : "err");
+      } catch (error) {
+        setStatus(`Cannot retrieve maintenance status: ${error.message}`, "err");
+      } finally {
+        setOperationBusy(false);
+      }
+    }
+
     async function runOp(kind, btn, options = {}) {
       const {
         manageLock = true,
       } = options;
       if (manageLock && operationBusy) return false;
+
+      if (kind === "state" && !confirm("Reset all sync baselines, including obsolete pair scopes?\n\nThe next sync starts fresh. Previous deletions will not propagate, and two-way pairs can add missing items back. Create a backup first.")) {
+        setStatus("Cancelled.", "");
+        return false;
+      }
 
       if (kind === "captures" && !confirm("Delete all saved captures? This cannot be undone.")) {
         setStatus("Cancelled.", "");
@@ -962,7 +1001,7 @@ const MaintenancePage = {
         return false;
       }
 
-      if (kind === "events-rebuild" && !confirm("This removes the current event archive and rebuilds it from current runtime state.\n\nHistorical events that only exist in the event database may be lost.\n\nThis does not change CrossWatch configuration or provider runtime state.")) {
+      if (kind === "events-rebuild" && !confirm("Clear the event archive and start it empty?\n\nHistorical events will be removed. Runtime baselines, configuration and other database tables are preserved.")) {
         setStatus("Cancelled.", "");
         return false;
       }
@@ -997,8 +1036,14 @@ const MaintenancePage = {
             purge_state: false,
             purge_reports: true,
             purge_insights: true,
-          } : (kind === "events-rebuild" || kind === "events-purge" || kind === "database-rebuild") ? { confirm: true } : undefined;
-          res = await post(SIMPLE_OPS[kind], body);
+          } : (kind === "events-rebuild" || kind === "events-purge" || kind === "database-rebuild" || kind === "state") ? { confirm: true } : undefined;
+          if (JOB_ACTIONS.has(kind)) {
+            const job = await post("/api/maintenance/jobs", { action: kind, ...(body || {}) });
+            window.dispatchEvent?.(new CustomEvent("cw:maintenance-job-changed"));
+            res = job.ok === false ? job : await followJob(job);
+          } else {
+            res = await post(SIMPLE_OPS[kind], body);
+          }
         } else if (kind === "tracker") {
           const chkState = $("#cxm-cw-state", root);
           const chkSnaps = $("#cxm-cw-snaps", root);
@@ -1214,6 +1259,7 @@ const MaintenancePage = {
     syncRoute();
     showOverviewStatus();
     const loadMaintenanceBootStatus = async () => {
+      await resumeJob();
       await loadTrackerProfiles();
       await refreshSummary();
       if (root.isConnected && !operationBusy && statusEl.textContent === "Loading maintenance status...") setStatus("");

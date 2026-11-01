@@ -252,9 +252,9 @@
     }
     const board = document.querySelector("#pairs_list .pairs-board");
     const el = board?.querySelector(`.pair-card[data-id="${id}"]`); if (!el) return;
-    el.classList.add("removing"); setTimeout(() => el.remove(), 200);
     try {
       const res = await fetch(`/api/pairs/${id}`, { method: "DELETE" });
+      if (res.status === 409) window.alert("A sync or database maintenance task is running. Wait for it to finish, then delete the pair again.");
       let data = null;
       try { data = await res.json(); } catch {}
       if (!res.ok || data?.ok === false || Number(data?.deleted || 0) < 1) throw new Error(data?.error || "pair delete failed");
@@ -271,6 +271,7 @@
       el.classList.remove("removing");
       return;
     }
+    el.classList.add("removing"); setTimeout(() => el.remove(), 200);
     if (Array.isArray(window.cx?.pairs)) window.cx.pairs = window.cx.pairs.filter((p) => String(p.id) !== String(id));
     try { window.dispatchEvent(new CustomEvent("cx:pairs:changed", { detail: { action: "delete", id } })); } catch {}
     setTimeout(() => refreshBadges(board), 220);

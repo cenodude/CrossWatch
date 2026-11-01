@@ -170,6 +170,13 @@ class Orchestrator:
         prev_cb = self.emitter.cb
         prev_on = self.on_progress
         run_ctx: Any = None
+        from ..local_db.operation_lock import exclusive_operation
+        from contextlib import nullcontext
+        from ..run_control import cancel_requested
+
+        readonly = getattr(self.interactive, "preview", False)
+        operation = nullcontext() if readonly else exclusive_operation(self.state_store.base_path, wait=True, cancelled=cancel_requested)
+        operation.__enter__()
         try:
             if progress is not None:
                 if callable(progress):
@@ -236,6 +243,7 @@ class Orchestrator:
 
             return summary
         finally:
+            operation.__exit__(None, None, None)
             self.emitter.cb = prev_cb
             self.on_progress = prev_on
             if run_ctx is not None:

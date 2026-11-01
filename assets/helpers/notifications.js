@@ -192,4 +192,5 @@
     removeSource(name) { sources.delete(name); render(); },
   };
   render();
+  void import(`/assets/helpers/maintenance-notifications.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`).catch(() => {});
 })();

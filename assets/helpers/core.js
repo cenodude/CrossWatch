@@ -2053,6 +2053,7 @@
       if (typeof API.Pairs?.delete === "function") await API.Pairs.delete(id);
       else {
         const res = await fetch(`/api/pairs/${encodeURIComponent(id)}`, { method: "DELETE" });
+        if (res.status === 409) window.alert("A sync or database maintenance task is running. Wait for it to finish, then delete the pair again.");
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       }
       _invalidatePairsCache();

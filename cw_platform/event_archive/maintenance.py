@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .db import events_db_path, get_conn, close_conn
+from .db import events_db_path, get_conn
 
 _LOG = logging.getLogger("crosswatch.event_archive")
 from .schema import SCHEMA_VERSION
@@ -78,31 +78,6 @@ def health(*, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
     return out
 
 
-def _fmt_size(n: Any) -> str:
-    size = float(n or 0)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if size < 1024 or unit == "TB":
-            return f"{int(size)} {unit}" if unit == "B" else f"{size:.1f} {unit}"
-        size /= 1024
-    return "0 B"
-
-
-def _health_issue(h: dict[str, Any]) -> str:
-    if not h.get("available"):
-        return "database unavailable"
-    if not h.get("exists"):
-        return "database file missing"
-    if h.get("integrity") not in (None, "ok"):
-        return f"integrity: {h.get('integrity')}"
-    if h.get("quick_check") not in (None, "ok"):
-        return f"quick check: {h.get('quick_check')}"
-    if h.get("foreign_key_errors"):
-        return f"{h.get('foreign_key_errors')} foreign key errors"
-    if h.get("schema_version") != h.get("expected_schema_version"):
-        return f"schema v{h.get('schema_version')} != v{h.get('expected_schema_version')}"
-    return h.get("error") or "unknown issue"
-
-
 def _boot_result(status: str, ok: bool, path: Any, h: dict[str, Any], message: str) -> dict[str, Any]:
     return {
         "ok": ok, "status": status, "message": message, "path": str(path),
@@ -113,70 +88,68 @@ def _boot_result(status: str, ok: bool, path: Any, h: dict[str, Any], message: s
 
 def boot_check(*, auto_repair: bool = True, state_dir: str | Path | None = None, reports_dir: str | Path | None = None) -> dict[str, Any]:
     path = events_db_path()
-    existed = Path(str(path)).exists()
+    existed = Path(path).exists()
     c = get_conn()
-    rebuilt = False
-    if c is None and auto_repair:
-        rebuild(state_dir=state_dir, reports_dir=reports_dir, reimport=True)
-        c = get_conn()
-        rebuilt = True
     if c is None:
-        return {"ok": False, "status": "error", "message": "Unavailable — cannot open database", "path": str(path)}
-
-    h = health(conn=c)
-    if h.get("healthy"):
-        ver, events, size = h.get("schema_version"), int(h.get("events") or 0), _fmt_size(h.get("size_bytes"))
-        if rebuilt:
-            return _boot_result("rebuilt", True, path, h, f"Rebuilt · corruption detected, archive recreated · event schema v{ver} · {events:,} events")
-        if existed:
-            return _boot_result("ready", True, path, h, f"Ready · event schema v{ver} · {events:,} events · {size}")
-        return _boot_result("created", True, path, h, f"Created · event schema v{ver}")
-
-    if not auto_repair:
-        return _boot_result("unhealthy", False, path, h, f"Unhealthy — {_health_issue(h)}")
-
-    corrupt = (h.get("integrity") not in (None, "ok")) or (h.get("quick_check") not in (None, "ok")) or bool(h.get("foreign_key_errors"))
-    if corrupt:
-        rebuild(state_dir=state_dir, reports_dir=reports_dir, reimport=True)
-        label, note = "rebuilt", "corruption detected, archive recreated"
-    else:
-        close_conn()
-        label, note = "repaired", "schema updated"
-
-    c2 = get_conn()
-    h2 = health(conn=c2) if c2 is not None else {"healthy": False}
-    if h2.get("healthy"):
-        ver, events = h2.get("schema_version"), int(h2.get("events") or 0)
-        return _boot_result(label, True, path, h2, f"{label.capitalize()} · {note} · event schema v{ver} · {events:,} events")
-    return _boot_result("error", False, path, h2, f"Repair failed — {_health_issue(h2)}")
+        return {"ok": False, "status": "error", "message": "Unavailable; run database diagnostics", "path": str(path)}
+    started = time.monotonic()
+    try:
+        ver = int(c.execute("PRAGMA user_version").fetchone()[0])
+        events = int(c.execute("SELECT COUNT(*) FROM events").fetchone()[0])
+        h = {"schema_version": ver, "events": events, "size_bytes": _db_size(Path(path))}
+        healthy = ver == SCHEMA_VERSION
+        label = ("ready" if existed else "created") if healthy else "unhealthy"
+        return _boot_result(label, healthy, path, h, f"{label.capitalize()} - event schema v{ver} - {events:,} events - shared runtime database")
+    except Exception:
+        _LOG.exception("Event archive startup check failed")
+        return {"ok": False, "status": "error", "message": "Startup check failed; run database diagnostics", "path": str(path)}
+    finally:
+        _LOG.info("Event archive startup check finished in %s ms", int((time.monotonic() - started) * 1000))
 
 
-def optimize(*, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
-    path = events_db_path()
-    p = Path(str(path))
-    before = _db_size(p)
+def optimize(*, conn: sqlite3.Connection | None = None, progress=None) -> dict[str, Any]:
+    path = Path(events_db_path())
+    before = _db_size(path)
     c = conn or get_conn()
     if c is None:
         return {"ok": False, "available": False, "path": str(path)}
-    try:
-        c.commit()
-    except Exception:
-        pass
-    t0 = time.time()
+    c.commit()
+    started = time.monotonic()
     steps: list[str] = []
-    for stmt in ("PRAGMA wal_checkpoint(TRUNCATE)", "VACUUM", "ANALYZE", "PRAGMA optimize"):
-        step = stmt.split("(")[0].replace("PRAGMA ", "").strip()
+    timings: dict[str, int] = {}
+    checkpoints: dict[str, list[int]] = {}
+    for step, stmt in (
+        ("checkpoint_before", "PRAGMA wal_checkpoint(TRUNCATE)"),
+        ("vacuum", "VACUUM"),
+        ("analyze", "ANALYZE"),
+        ("optimize", "PRAGMA optimize"),
+        ("checkpoint_after", "PRAGMA wal_checkpoint(TRUNCATE)"),
+    ):
+        if progress:
+            progress(step)
+        _LOG.info("Database optimization starting %s", step)
+        t0 = time.monotonic()
         try:
-            c.execute(stmt)
+            cur = c.execute(stmt)
+            rows = cur.fetchall()
+            cur.close()
+            if step.startswith("checkpoint"):
+                checkpoints[step] = list(rows[0])
+                if rows[0][0] and step == "checkpoint_before":
+                    return {"ok": False, "error": "checkpoint_busy", "step": step, "checkpoints": checkpoints}
             steps.append(step)
+            timings[step] = int((time.monotonic() - t0) * 1000)
+            _LOG.info("Database optimization finished %s in %s ms", step, timings[step])
         except Exception:
-            _LOG.exception("events optimize step failed: %s", step)
-            return {"ok": False, "path": str(path), "error": "optimize_failed", "step": step, "before_bytes": before, "steps": steps}
-    after = _db_size(p)
+            _LOG.exception("Database optimization failed: %s", step)
+            return {"ok": False, "error": "optimize_failed", "step": step, "steps": steps, "timings_ms": timings}
+    after = _db_size(path)
     return {
-        "ok": True, "path": str(path), "steps": steps,
+        "ok": True, "path": str(path), "steps": steps, "timings_ms": timings,
+        "checkpoints": checkpoints, "checkpoint_pending": bool(checkpoints["checkpoint_after"][0]),
         "before_bytes": before, "after_bytes": after, "reclaimed_bytes": max(0, before - after),
-        "duration_ms": int((time.time() - t0) * 1000),
+        "database_bytes": _file_size(path), "wal_bytes": _file_size(Path(str(path) + "-wal")),
+        "duration_ms": int((time.monotonic() - started) * 1000),
     }
 
 
@@ -187,17 +160,10 @@ def rebuild(
     reimport: bool = True,
 ) -> dict[str, Any]:
     path = events_db_path()
-    close_conn()
-    removed: list[str] = []
-    for suffix in ("", "-wal", "-shm"):
-        fp = Path(str(path) + suffix)
-        try:
-            if fp.exists():
-                fp.unlink()
-                removed.append(fp.name)
-        except Exception:
-            _LOG.exception("events rebuild could not remove %s", fp.name)
-            return {"ok": False, "path": str(path), "error": "remove_failed", "file": fp.name}
+    cleared = purge()
+    if not cleared.get("ok"):
+        return cleared
+    removed = cleared.get("removed", {})
     c = get_conn()
     if c is None:
         return {"ok": False, "available": False, "path": str(path), "removed": removed}
