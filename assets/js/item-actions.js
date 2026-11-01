@@ -154,14 +154,15 @@
   function editorRemove(feature, ref, item, name) {
     return queued(async () => {
       const items = [item];
-      const preview = await request("/api/editor/send/preview", { kind: feature, items }, 60000);
+      const live_check = [cleanRef(ref)];
+      const preview = await request("/api/editor/send/preview", { kind: feature, items, live_check }, 60000);
       const target = (Array.isArray(preview?.providers) ? preview.providers : []).find((row) => refKey(row) === refKey(ref));
       if (!target) {
         return {
           ok: false,
           error: preview?.empty_reason === "pair_baseline_unavailable"
             ? "Run your sync pairs first. CrossWatch only removes records it has seen in a sync"
-            : `CrossWatch has no synced ${FEATURES[feature]?.noun || feature} record for this title on ${name}`,
+            : `${name} has no ${FEATURES[feature]?.noun || feature} record for this title`,
         };
       }
       const data = await request("/api/editor/send", {
@@ -171,6 +172,7 @@
         preview_id: preview.preview_id,
         providers: [cleanRef(ref)],
         items,
+        live_check,
       });
       const row = (Array.isArray(data?.results) ? data.results : [])[0] || {};
       const result = row.result || {};
@@ -457,6 +459,8 @@
     let armTimer = 0;
     let score = 0;
     let lastFocus = null;
+    let when = "now";
+    let customDate = "";
 
     const isNarrow = () => !!window.matchMedia?.("(max-width: 560px)")?.matches;
     const writable = (ref) => list.some((row) => refKey(row) === refKey(ref));
@@ -479,6 +483,11 @@
       el.hidden = true;
       document.body.appendChild(el);
       el.addEventListener("click", onClick);
+      el.addEventListener("change", (event) => {
+        if (!event.target?.matches?.("[data-ia-act=date]")) return;
+        customDate = String(event.target.value || "");
+        render();
+      });
       document.addEventListener("pointerdown", (event) => {
         if (el.hidden || el.contains(event.target) || ctx?.anchor?.contains?.(event.target)) return;
         close(false);
@@ -565,7 +574,7 @@
 
     function addLabel(target) {
       if (ctx.feature === "ratings") return `Rate ${score} on ${target}`;
-      if (ctx.feature === "history") return ctx.epoch ? `Copy the watch of ${fmtDate(ctx.epoch)} to ${target}` : `Mark watched on ${target}`;
+      if (ctx.feature === "history") return when === "copy" ? `Copy the watch of ${fmtDate(ctx.epoch)} to ${target}` : `Mark watched on ${target}`;
       if (ctx.feature === "collection") return `Add to ${target} collection`;
       return `Add to ${target} watchlist`;
     }
@@ -575,6 +584,17 @@
       if (ctx.feature === "history") return `Remove watched status on ${target}`;
       if (ctx.feature === "collection") return `Remove from ${target} collection`;
       return `Remove from ${target} watchlist`;
+    }
+
+    const dateReady = () => ctx.feature !== "history" || when !== "custom" || /^\d{4}-\d{2}-\d{2}$/.test(customDate);
+
+    function whenHtml() {
+      if (ctx.feature !== "history") return "";
+      const options = [...(ctx.epoch ? [["copy", "Same date", `Same date as the existing watch, ${fmtDate(ctx.epoch)}`]] : []), ["now", "Now", "Watched now"],
+        ...(ctx.releaseDate ? [["release", "Release", `On release, ${ctx.releaseDate}`]] : []), ["custom", "Pick date", "Pick a watch date"]];
+      const segs = options.map(([value, label, title]) => `<button type="button" role="radio" aria-checked="${when === value}" class="cw-ia-seg${when === value ? " is-on" : ""}" data-ia-act="when" data-ia-when="${value}" title="${esc(title)}">${esc(label)}</button>`).join("");
+      const date = when === "custom" ? `<label class="cw-ia-date"><span>Watched on</span><input type="date" data-ia-act="date" value="${esc(customDate)}" max="${esc(new Date().toISOString().slice(0, 10))}"></label>` : "";
+      return `<div class="cw-ia-when"><div class="cw-ia-segs" role="radiogroup" aria-label="When did you watch it">${segs}</div>${date}</div>`;
     }
 
     function focusHtml() {
@@ -596,7 +616,8 @@
         body.push(item("remove-one", armed ? "warning" : "delete", armed ? "Click again to remove every watch here" : removeLabel(name), "danger"));
       } else {
         if (feature === "ratings") body.push(stepper());
-        body.push(item("add-one", feature === "ratings" ? "star" : "add", addLabel(name), "accent"));
+        body.push(whenHtml());
+        body.push(item("add-one", feature === "ratings" ? "star" : "add", addLabel(name), "accent", dateReady() ? "" : " disabled"));
       }
       return `${top}<div class="cw-ia-list">${body.join("")}</div>${links()}`;
     }
@@ -623,12 +644,12 @@
       }).join("");
       const removable = present.filter(writable);
       const foot = [];
-      if (missing.length) foot.push(`<button type="button" class="cw-ia-btn is-primary" data-ia-act="add-all">${esc(missing.length === 1 ? addLabel(providerName(missing[0].provider)).replace(/ (watchlist|collection)$/, "") : `Add to ${missing.length} missing`)}</button>`);
+      if (missing.length) foot.push(`<button type="button" class="cw-ia-btn is-primary" data-ia-act="add-all"${dateReady() ? "" : " disabled"}>${esc(missing.length === 1 ? addLabel(providerName(missing[0].provider)).replace(/ (watchlist|collection)$/, "") : `Add to ${missing.length} missing`)}</button>`);
       if (removable.length > 1) {
         const armed = isArmed("all");
         foot.push(`<button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="remove-all">${esc(armed ? "Click again to confirm" : "Remove from all")}</button>`);
       }
-      return `${head(FEATURE_ICONS[feature], title, sub)}${feature === "ratings" && missing.length ? `<div class="cw-ia-list">${stepper()}</div>` : ""}${section("Your accounts")}<div class="cw-ia-rows">${rows || `<p class="cw-ia-note">${icon("info")}None of your accounts can hold this.</p>`}</div>${links()}${foot.length ? `<div class="cw-ia-foot">${foot.join("")}</div>` : ""}`;
+      return `${head(FEATURE_ICONS[feature], title, sub)}${feature === "ratings" && missing.length ? `<div class="cw-ia-list">${stepper()}</div>` : ""}${missing.length ? whenHtml() : ""}${section("Your accounts")}<div class="cw-ia-rows">${rows || `<p class="cw-ia-note">${icon("info")}None of your accounts can hold this.</p>`}</div>${links()}${foot.length ? `<div class="cw-ia-foot">${foot.join("")}</div>` : ""}`;
     }
 
     function progressHtml() {
@@ -735,6 +756,12 @@
         if (kind === "remove" && !isArmed("all")) return arm("all");
         return runProgress(current, kind, rows);
       }
+      if (action === "when") {
+        when = button.dataset.iaWhen || "now";
+        if (when === "custom" && !customDate) customDate = new Date().toISOString().slice(0, 10);
+        render();
+        return;
+      }
       if (action === "score-down" || action === "score-up") {
         score = Math.max(1, Math.min(10, score + (action === "score-up" ? 1 : -1)));
         render();
@@ -752,7 +779,10 @@
       }
       const addOptions = () => {
         if (current.feature === "ratings") return { fields: { rating: score }, noUndo: true };
-        if (current.feature === "history") return { fields: { watched_at: current.epoch ? isoFromEpoch(current.epoch) : new Date().toISOString().replace(/\.\d{3}Z$/, "Z") } };
+        if (current.feature === "history") {
+          const watched = when === "copy" ? isoFromEpoch(current.epoch) : when === "release" ? noonIso(current.releaseDate) : when === "custom" ? noonIso(customDate) : new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+          return { fields: { watched_at: watched } };
+        }
         if (current.feature === "collection") return { fields: { collected_at: new Date().toISOString() } };
         return {};
       };
@@ -803,6 +833,8 @@
       ctx.focus = options.focus ? cleanRef(options.focus) : null;
       ctx.off = new Set();
       lastFocus = options.anchor;
+      when = options.feature === "history" && Number(options.epoch) ? "copy" : "now";
+      customDate = "";
       armedUntil = 0;
       armedRow = "";
       score = ratingOf(ctx, ctx.focus || {}) || Math.round(Number(options.rating)) || 8;
@@ -991,15 +1023,25 @@
         if (!groups.has(ref.provider)) groups.set(ref.provider, []);
         groups.get(ref.provider).push(ref);
       }
+      const state = (ref) => {
+        const reason = blockReason(ref);
+        const gate = writable(ref)?.rewatch_gate === "pro_vip" && holds(ref) ? "Rewatches need a Pro or VIP account" : "";
+        return { reason, gate, on: !reason && picked.has(refKey(ref)) };
+      };
+      const box = (on) => `<span class="cw-ia-acc-box" aria-hidden="true">${on ? icon("check") : ""}</span>`;
       return [...groups.entries()].map(([provider, refs]) => {
+        if (refs.length === 1) {
+          const ref = refs[0];
+          const { reason, gate, on } = state(ref);
+          const account = accountName(ref, list);
+          const sub = reason || (account === "Default" ? "" : account);
+          return `<button type="button" class="cw-ia-dest${on ? " is-on" : ""}" data-ia-sheet="pick" data-ia-ref="${esc(refKey(ref))}" aria-pressed="${on}" title="${esc(reason || gate || `${providerName(provider)} · ${account}`)}"${reason ? " disabled" : ""}>${logoHtml(provider)}<span class="cw-ia-dest-copy"><strong>${esc(providerName(provider))}</strong>${sub ? `<small>${esc(sub)}</small>` : ""}</span>${box(on)}</button>`;
+        }
         const accounts = refs.map((ref) => {
-          const reason = blockReason(ref);
-          const on = !reason && picked.has(refKey(ref));
-          const target = writable(ref);
-          const gate = target?.rewatch_gate === "pro_vip" && holds(ref) ? "Rewatches need a Pro or VIP account" : "";
-          return `<button type="button" class="cw-ia-acc${on ? " is-on" : ""}" data-ia-sheet="pick" data-ia-ref="${esc(refKey(ref))}" aria-pressed="${on}" title="${esc(reason || gate || accountName(ref, list))}"${reason ? " disabled" : ""}><span class="cw-ia-acc-box" aria-hidden="true">${on ? icon("check") : ""}</span>${esc(accountName(ref, list))}${reason ? `<small>${esc(reason)}</small>` : ""}</button>`;
+          const { reason, gate, on } = state(ref);
+          return `<button type="button" class="cw-ia-acc${on ? " is-on" : ""}" data-ia-sheet="pick" data-ia-ref="${esc(refKey(ref))}" aria-pressed="${on}" title="${esc(reason || gate || accountName(ref, list))}"${reason ? " disabled" : ""}>${box(on)}${esc(accountName(ref, list))}${reason ? `<small>${esc(reason)}</small>` : ""}</button>`;
         }).join("");
-        return `<div class="cw-ia-group">${logoHtml(provider)}<div class="cw-ia-group-body"><strong>${esc(providerName(provider))}</strong><div class="cw-ia-accs">${accounts}</div></div></div>`;
+        return `<div class="cw-ia-dest is-multi">${logoHtml(provider)}<span class="cw-ia-dest-copy"><strong>${esc(providerName(provider))}</strong></span><div class="cw-ia-accs">${accounts}</div></div>`;
       }).join("");
     }
 
@@ -1037,7 +1079,7 @@
           <span class="cw-ia-sheet-title"><h2 id="cw-ia-sheet-title">${esc(title)}</h2><small>Watch history · ${esc(count)}</small></span>
           <button type="button" class="cw-ia-icon-btn" data-ia-sheet="close" aria-label="Close">${icon("close")}</button>
         </header>
-        <div class="cw-ia-plays">${playsHtml(rows, cols)}</div>
+        <div class="cw-ia-plays${data && !data.error && !rows.length ? " is-empty" : ""}">${playsHtml(rows, cols)}</div>
         <div class="cw-ia-log">
           <div class="cw-ia-section">Log a play</div>
           <div class="cw-ia-segs" role="radiogroup" aria-label="When did you watch it">${segs}</div>

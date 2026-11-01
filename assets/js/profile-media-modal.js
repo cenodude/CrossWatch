@@ -56,7 +56,7 @@
     return hours ? `${hours}h ${total % 60}m` : `${total}m`;
   }
 
-  function providerChip(ref, missing = false, action = false) {
+  function providerChip(ref, missing = false, action = false, episode = null) {
     const provider = String(ref?.provider || "");
     const instance = String(ref?.instance || "default");
     const name = window.CW?.ProviderMeta?.label?.(provider) || provider;
@@ -64,13 +64,21 @@
     const title = `${name}${instance !== "default" ? ` · ${instance}` : ""}${missing ? " · missing" : ""}`;
     const mark = missing ? "" : ref?.rating != null ? `<em>${esc(ref.rating)}</em>` : `<span class="cw-mm-provider-mark material-symbols-rounded" aria-hidden="true">check</span>`;
     const inner = `${logo ? `<img src="${esc(logo)}" alt="" loading="lazy">` : `<b>${esc(name.slice(0, 2))}</b>`}${mark}`;
+    if (episode) {
+      const label = `${title} · open ${episodeCode(episode)}`;
+      return `<button type="button" class="cw-mm-provider${missing ? " is-missing" : ""}" data-mm-episode="${esc(episode.season)}:${esc(episode.episode)}" title="${esc(label)}" aria-label="${esc(label)}">${inner}</button>`;
+    }
     if (action) return `<button type="button" class="cw-mm-provider${missing ? " is-missing" : ""}" data-ia-chip data-ia-ref="${esc(`${provider.toUpperCase()}:${instance}`)}" title="${esc(title)}" aria-label="${esc(title)}" aria-haspopup="dialog">${inner}</button>`;
     return `<span class="cw-mm-provider${missing ? " is-missing" : ""}" title="${esc(title)}">${inner}</span>`;
   }
 
   const LIVE_FEATURES = { watchlist: "watchlist", synced: "history", ratings: "ratings", collection: "collection" };
   const itemActions = () => (window.CW?.ItemActions?.canWrite?.() ? window.CW.ItemActions : null);
-  const liveFeature = (key) => (itemActions() && (isMovie() || key === "watchlist") ? LIVE_FEATURES[key] || "" : "");
+  const liveFeature = (key) => {
+    if (!itemActions()) return "";
+    if (key === "scrobble") return isMovie() ? "history" : "";
+    return isMovie() || key === "watchlist" ? LIVE_FEATURES[key] || "" : "";
+  };
   const refId = (ref) => `${String(ref?.provider || "").toUpperCase()}:${String(ref?.instance || "default")}`;
 
   function missingRefs(key) {
@@ -109,12 +117,14 @@
     render();
   }
 
+  const releaseDate = () => String(state.meta?.release?.date || state.meta?.detail?.release_date || "").slice(0, 10) || null;
+
   function openPlays() {
     const actions = itemActions();
     if (!actions || !isMovie()) return;
     actions.openHistory({
       item: actionItem(state.presence?.synced),
-      releaseDate: String(state.meta?.release?.date || state.meta?.detail?.release_date || "").slice(0, 10) || null,
+      releaseDate: releaseDate(),
       poster: posterUrl(state.item),
       onChanged: refreshPresence,
     });
@@ -175,23 +185,61 @@
       openProgressActions(node);
       return;
     }
+    if (node.closest("[data-mm-ep-live]")) {
+      openEpisodeActions(node);
+      return;
+    }
     const key = node.closest("[data-mm-live]")?.dataset.mmLive || "";
     const feature = liveFeature(key);
     if (!actions || !feature) return;
-    const entry = state.presence?.[key] || null;
+    const stateKey = key === "scrobble" ? "synced" : key;
+    const entry = state.presence?.[stateKey] || null;
     const present = Array.isArray(entry?.present) ? entry.present : [];
     const [provider, ...instance] = String(node.dataset.iaRef || "").split(":");
     void actions.openMenu({
       anchor: node,
       feature,
       item: actionItem(entry),
-      refs: { present, missing: missingRefs(key) },
+      refs: { present, missing: missingRefs(stateKey) },
       focus: node.dataset.iaRef ? { provider, instance: instance.join(":") || "default" } : null,
       rating: entry?.rating ?? null,
-      epoch: feature === "history" ? Number(entry?.last_epoch) || 0 : 0,
-      scope: () => [root?.querySelector(`[data-mm-live="${key}"]`)],
+      epoch: feature === "history" ? Number(state.presence?.[key]?.last_epoch) || Number(entry?.last_epoch) || 0 : 0,
+      releaseDate: feature === "history" ? releaseDate() : null,
+      scope: () => [...new Set([key, stateKey])].map((name) => root?.querySelector(`[data-mm-live="${name}"]`)),
       onChanged: refreshPresence,
       openHistory: feature === "history" ? openPlays : null,
+    });
+  }
+
+  function episodeItem(season, episode) {
+    const imdb = state.meta?.ids?.imdb || state.item?.ids?.imdb || "";
+    return {
+      type: "episode",
+      title: state.meta?.title || state.item?.title || "",
+      season,
+      episode,
+      show_ids: { tmdb: tmdbOf(state.item), ...(imdb ? { imdb } : {}) },
+    };
+  }
+
+  function openEpisodeActions(node) {
+    const actions = itemActions();
+    if (!actions || !state.episode) return;
+    const { season, episode } = state.episode;
+    const find = (key) => state.presence?.[key]?.episodes?.find((row) => Number(row.season) === season && Number(row.episode) === episode);
+    const history = find("synced");
+    const clicked = node.closest("[data-mm-ep-live]")?.dataset.mmEpLive === "scrobble" ? find("scrobble") : history;
+    const [provider, ...instance] = String(node.dataset.iaRef || "").split(":");
+    void actions.openMenu({
+      anchor: node,
+      feature: "history",
+      item: episodeItem(season, episode),
+      refs: { present: history?.present || [], missing: [] },
+      focus: node.dataset.iaRef ? { provider, instance: instance.join(":") || "default" } : null,
+      epoch: Number(clicked?.epoch || history?.epoch) || 0,
+      releaseDate: String(state.seasons.get(String(season))?.episodes?.find((row) => Number(row.episode) === episode)?.air_date || "").slice(0, 10) || null,
+      scope: () => [root?.querySelector(".cw-ep-providers")],
+      onChanged: refreshPresence,
     });
   }
 
@@ -421,6 +469,7 @@
     if (window.CW?.Trailer?.has?.(meta)) out.push(`<button class="cw-mm-btn is-primary" type="button" data-mm-trailer>${icon("play_arrow")}Watch trailer</button>`);
     out.push(`<a class="cw-mm-btn" href="https://www.themoviedb.org/${artType(item)}/${encodeURIComponent(tmdb)}" target="_blank" rel="noopener">TMDB</a>`);
     if (imdb) out.push(`<a class="cw-mm-btn" href="https://www.imdb.com/title/${encodeURIComponent(imdb)}/" target="_blank" rel="noopener">IMDb</a>`);
+    if (removable()) out.push(`<button type="button" class="cw-mm-btn is-icon is-danger" data-mm-clear-all aria-haspopup="dialog" title="Remove from everything" aria-label="Remove from everything">${icon("delete")}</button>`);
     const score = Number(meta?.detail?.vote_average) || (Number(meta?.score) || 0) / 10;
     if (score > 0) {
       const votes = Number(meta?.vote_count) || 0;
@@ -458,20 +507,23 @@
       const present = entry?.present || [];
       const synced = present.length > 0;
       const feature = liveFeature(key);
-      const missing = feature ? missingRefs(key) : (synced ? entry.missing || [] : []);
-      const chipList = [...present.map((ref) => providerChip(ref, false, !!feature)), ...missing.map((ref) => providerChip(ref, true, !!feature))];
+      const missing = feature && key !== "scrobble" ? missingRefs(key) : (synced ? entry.missing || [] : []);
+      const latest = key === "scrobble" && !isMovie() && itemActions()
+        ? (entry?.episodes || []).reduce((best, row) => (!best || Number(row.epoch) > Number(best.epoch) ? row : best), null)
+        : null;
+      const chipList = [...present.map((ref) => providerChip(ref, false, !!feature, latest)), ...missing.map((ref) => providerChip(ref, true, !!feature, latest))];
       const chips = chipList.length ? `<div class="cw-mm-live-chips">${chipList.join("")}</div>` : "";
-      const tools = feature === "history"
-        ? `<div class="cw-mm-live-tools"><button type="button" class="cw-mm-plays" data-mm-plays>${icon("add")}Plays</button></div>`
-        : "";
       return `<div class="cw-mm-live${synced ? " is-on" : ""}${feature ? " has-actions" : ""}" data-mm-live="${esc(key)}">
         <div class="cw-mm-live-head">${icon(symbol)}<strong>${esc(label)}</strong><span>${esc(synced ? liveSummary(key, entry) : "Not synced")}</span></div>
-        ${chips}${tools}
+        ${chips}
       </div>`;
     }).join("");
-    const removable = !!itemActions() && (isMovie() ? ["watchlist", "synced", "ratings", "collection"] : ["watchlist"]).some((key) => (presence[key]?.present || []).length);
-    const foot = removable ? `<div class="cw-mm-lives-foot"><button type="button" class="cw-mm-clear-all" data-mm-clear-all aria-haspopup="dialog">${icon("delete_sweep")}Remove from everything…</button></div>` : "";
-    return `<section class="cw-mm-lives"><h3>Providers</h3><div class="cw-mm-live-grid">${tiles}</div>${foot}</section>`;
+    return `<section class="cw-mm-lives"><h3>Providers</h3><div class="cw-mm-live-grid">${tiles}</div></section>`;
+  }
+
+  function removable() {
+    const presence = state.presence;
+    return !!presence && !!itemActions() && (isMovie() ? ["watchlist", "synced", "ratings", "collection"] : ["watchlist"]).some((key) => (presence[key]?.present || []).length);
   }
 
   function tabs() {
@@ -787,7 +839,7 @@
     const providers = [["synced", "History"], ["scrobble", "Scrobbled"]].map(([key, label]) => {
       const row = state.presence?.[key]?.episodes?.find(row => Number(row.season) === season && Number(row.episode) === episode);
       if (!row) return "";
-      return `<div><h4>${label}</h4><div class="cw-mm-live-chips">${(row.present || []).map(ref => providerChip(ref)).join("")}</div></div>`;
+      return `<div data-mm-ep-live="${key}"><h4>${label}</h4><div class="cw-mm-live-chips">${(row.present || []).map(ref => providerChip(ref, false, !!itemActions())).join("")}</div></div>`;
     }).join("");
     const details = [fmtIso(ep.air_date), runtimeLabel(ep.runtime), Number(ep.vote_average) > 0 ? `TMDB ${Number(ep.vote_average).toFixed(1)}/10` : ""].filter(Boolean);
     return `<div class="cw-ep-page">${back}<article><div class="cw-ep-intro">${ep.has_still ? `<img class="cw-ep-art" src="${esc(stillUrl(season, episode).replace("size=w300", "size=w780"))}" alt="" onerror="${placeholder}">` : ""}<div class="cw-ep-copy"><p class="cw-ep-series">${esc(state.meta?.title || state.item?.title)} <span>Season ${esc(season)} · Episode ${esc(episode)}</span></p><h2 id="cw-mm-title" tabindex="-1">${esc(ep.name || "Episode " + episode)}</h2><div class="cw-ep-meta">${details.map(value => `<span>${esc(value)}</span>`).join("")}</div><p class="cw-ep-synopsis">${esc(ep.overview || "No synopsis available for this episode yet.")}</p></div></div><section class="cw-ep-activity"><div class="cw-ep-status"><span class="cw-ep-status-icon">${icon(watched ? "check_circle" : "visibility")}</span><div><h3>Your activity</h3><p>${esc(status)}</p></div></div>${providers ? `<div class="cw-ep-providers">${providers}</div>` : ""}</section>${episodeCredits(ep)}</article></div>`;
@@ -935,10 +987,6 @@
     const actionNode = target?.closest?.("[data-ia-chip],[data-ia-cover]");
     if (actionNode) {
       void openItemActions(actionNode);
-      return;
-    }
-    if (target?.closest?.("[data-mm-plays]")) {
-      openPlays();
       return;
     }
     const clearAll = target?.closest?.("[data-mm-clear-all]");
