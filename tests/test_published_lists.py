@@ -53,6 +53,82 @@ def test_random_sort_shuffles_and_other_values_keep_list_order(monkeypatch) -> N
     assert svc.sort_rows([{"id": 1}, {"id": 2}], "title") == [{"id": 1}, {"id": 2}]
 
 
+SORTABLE = [
+    {"id": 3, "rank": 1, "title": "beta", "imdb_id": "tt10000000", "mediatype": "show", "release_year": 2001},
+    {"id": 1, "rank": 2, "title": "Alpha", "tvdbid": 7, "mediatype": "episode", "season": 1, "episode": 2},
+    {"id": 2, "rank": 3, "title": "Gamma", "imdb_id": "tt9000000", "tvdbid": 5, "mediatype": "movie", "release_year": 1999},
+    {"id": 4, "rank": 4, "title": "alpha", "mediatype": "season", "season": 0},
+]
+
+
+def _sorted_ids(sort: str, order: str = "") -> list[int]:
+    return [row["id"] for row in svc.sort_rows(list(SORTABLE), sort, order)]
+
+
+def test_sort_uses_row_fields_and_order_flips_the_direction() -> None:
+    assert _sorted_ids("title") == [1, 4, 3, 2]
+    assert _sorted_ids("title", "desc") == [2, 3, 1, 4]
+    assert _sorted_ids("TITLE", "DESC") == [2, 3, 1, 4]
+    assert _sorted_ids("id") == [1, 2, 3, 4]
+    assert _sorted_ids("id", "desc") == [4, 3, 2, 1]
+    assert _sorted_ids("year") == _sorted_ids("release_year") == [2, 3, 1, 4]
+    assert _sorted_ids("season") == [4, 1, 3, 2]
+
+
+def test_sort_keeps_rows_without_the_field_last_in_list_order() -> None:
+    assert _sorted_ids("year", "desc") == [3, 2, 1, 4]
+    assert _sorted_ids("tvdbid", "desc") == [1, 2, 3, 4]
+
+
+def test_sort_by_mediatype_runs_from_movies_to_episodes() -> None:
+    assert _sorted_ids("mediatype") == _sorted_ids("media_type") == [2, 3, 4, 1]
+    assert _sorted_ids("media_type", "desc") == [1, 4, 3, 2]
+
+
+def test_sort_by_imdb_id_is_numeric() -> None:
+    assert _sorted_ids("imdb_id") == [2, 3, 1, 4]
+    rows = [{"imdb_id": "tt0000002"}, {"imdb_id": "tt00000001"}, {"imdb_id": "tt0000001"}, {"imdb_id": "tt10000000"}]
+    assert svc.sort_rows(list(rows), "imdb_id") == [rows[1], rows[2], rows[0], rows[3]]
+    assert svc.sort_rows(list(rows), "imdb_id", "desc") == [rows[3], rows[0], rows[1], rows[2]]
+    odd = [{"imdb_id": "ttx"}, {"imdb_id": "tt"}, {"imdb_id": "tt1"}]
+    assert svc.sort_rows(list(odd), "imdb_id") == [odd[1], odd[2], odd[0]]
+
+
+def test_rank_means_list_position_on_formats_without_a_rank_key() -> None:
+    rows = [{"tmdb_id": 1}, {"tmdb_id": 2}]
+    assert svc.sort_rows(list(rows), "rank", "desc") == svc.sort_rows(list(rows), "", "desc") == [rows[1], rows[0]]
+
+
+def test_order_without_a_sort_reverses_the_list_and_random_ignores_it(monkeypatch) -> None:
+    assert _sorted_ids("", "desc") == _sorted_ids("rank", "desc") == [4, 2, 1, 3]
+    assert _sorted_ids("", "asc") == _sorted_ids("rank") == [3, 1, 2, 4]
+    assert _sorted_ids("nope", "desc") == [3, 1, 2, 4]
+    monkeypatch.setattr(svc.random, "shuffle", lambda rows: rows.reverse())
+    assert _sorted_ids("random", "desc") == [4, 2, 1, 3]
+
+
+def test_sort_finds_the_same_id_in_every_format() -> None:
+    kometa = [{"imdb_id": "tt0000001"}, {"tmdb_id": 9}, {"tmdb_id": 2}]
+    assert svc.sort_rows(kometa, "id", "desc") == [{"tmdb_id": 9}, {"tmdb_id": 2}, {"imdb_id": "tt0000001"}]
+    sonarr = [{"title": "A", "tvdbId": 9}, {"title": "B", "tvdbId": 2}]
+    assert svc.sort_rows(sonarr, "tvdbid") == [{"title": "B", "tvdbId": 2}, {"title": "A", "tvdbId": 9}]
+    assert svc.sort_rows(sonarr, "tvdbId") == [{"title": "B", "tvdbId": 2}, {"title": "A", "tvdbId": 9}]
+    shows = [{"tvdb_id": 9}, {"imdb_id": "tt0000001"}, {"tvdb_id": 2}]
+    assert svc.sort_rows(shows, "tvdb_id") == [{"tvdb_id": 2}, {"tvdb_id": 9}, {"imdb_id": "tt0000001"}]
+
+
+def _filtered_titles(mediatype: str) -> list[str]:
+    return [item["title"] for item in svc.filter_items(MIXED, mediatype)]
+
+
+def test_mediatype_filter_keeps_named_types_and_ignores_unknown_values() -> None:
+    assert _filtered_titles("movie") == ["Heat", "Local only", "Heat again"]
+    assert _filtered_titles(" SHOW ") == ["MobLand", "Bebop"]
+    assert _filtered_titles("season,episode") == ["Specials", "Pilot"]
+    assert _filtered_titles("nope,episode") == ["Pilot"]
+    assert _filtered_titles("nope") == _filtered_titles("") == [item["title"] for item in MIXED]
+
+
 def test_page_rows_slices_by_offset_and_limit_and_ignores_bad_values() -> None:
     rows = [{"id": n} for n in range(1, 6)]
     assert svc.page_rows(rows, "1", "2") == [{"id": 2}, {"id": 3}]
@@ -112,6 +188,18 @@ def test_public_address_needs_the_key_and_records_the_read(tmp_path, monkeypatch
     shuffled = client.get(f"{base}/mdblist.json?key={feed['key']}&sort=random&limit=2")
     assert [row["rank"] for row in shuffled.json()] == [5, 4]
     assert shuffled.headers["x-total-items"] == "5"
+    titled = client.get(f"{base}/mdblist.json?key={feed['key']}&sort=title&order=desc&limit=1")
+    assert [row["title"] for row in titled.json()] == ["MobLand"]
+    assert titled.headers["x-total-items"] == "5"
+    reversed_list = client.get(f"{base}/mdblist.json?key={feed['key']}&order=desc&limit=1")
+    assert [row["rank"] for row in reversed_list.json()] == [5]
+    movies = client.get(f"{base}/mdblist.json?key={feed['key']}&mediatype=movie")
+    assert [(row["id"], row["rank"]) for row in movies.json()] == [(949, 1)]
+    assert movies.headers["x-total-items"] == "1"
+    assert movies.headers["x-crosswatch-skipped"] == "1"
+    both = client.get(f"{base}/mdblist.json?key={feed['key']}&mediatype=season,episode&sort=mediatype&order=desc")
+    assert [row["mediatype"] for row in both.json()] == ["episode", "season"]
+    assert client.get(f"{base}/kometa-movies.json?key={feed['key']}&mediatype=show").json() == []
     monkeypatch.setattr(svc, "list_items", lambda cfg, feed: ITEMS)
     kometa = client.get(f"{base}/kometa-movies.json?key={feed['key']}&offset=1&limit=1")
     assert kometa.json() == [{"tmdb_id": 12}]

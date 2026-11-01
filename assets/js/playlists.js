@@ -763,7 +763,7 @@
         ${block("Kometa, show library", "Paste into a collection file of your show library.", kometa(urls["kometa-shows.json"] || ""), true)}
         ${block("Radarr (movies)", "Settings, Import Lists, add a Custom List (StevenLu Custom) and paste this address. Movies without an IMDb ID are left out.", urls["radarr.json"] || "", false)}
         ${block("Sonarr (shows)", "Settings, Import Lists, add a Custom List and paste this address. Shows without a TVDB ID are left out.", urls["sonarr.json"] || "", false)}
-        ${block("MDBList JSON (movies and shows)", "One mixed list in the MDBList JSON layout, with TMDB IDs. Items without a TMDB ID are left out. Add &sort=random for a new order on every read, or &limit=60&offset=60 to read only part of the list.", urls["mdblist.json"] || "", false)}
+        ${block("MDBList JSON (movies and shows)", "One mixed list in the MDBList JSON layout, with TMDB IDs. Items without a TMDB ID are left out. Add &sort=title, year, mediatype, id, imdb_id or tvdbid with &order=asc or &order=desc, or &sort=random for a new order on every read. Add &mediatype=movie, show, season or episode to keep only that type, or &limit=60&offset=60 to read only part of the list.", urls["mdblist.json"] || "", false)}
         ${block("Kodi TMDBHelper", "Use this path in a widget, menu item or button. It loads the MDBList JSON address above.", urls["mdblist.json"] ? `plugin://plugin.video.themoviedb.helper/?info=mdblist_locallist&&${urls["mdblist.json"]}` : "", false)}
       `,
       onOpen: (ctx) => {
