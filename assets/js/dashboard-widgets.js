@@ -1041,7 +1041,7 @@
     return labels.length > 1 ? `Route: ${labels.join(" -> ")}` : `Source: ${labels[0]}`;
   }
 
-  const actionKinds = new Set(["history", "ratings"]);
+  const actionKinds = new Set(["history", "ratings", "progress"]);
   const iconActions = (kind) => actionKinds.has(kind) && !!window.CW?.ItemActions?.canWrite?.();
   const iconActionAttrs = (on, provider, instance, label) => (on ? ` data-ia-ref="${esc(`${provider}:${instance}`)}" title="${esc(`${label}: add or remove`)}"` : "");
 
@@ -1341,6 +1341,10 @@
     const index = Number(link?.getAttribute("data-cw-widget-index") || -1);
     const item = latestItems[kind]?.[index];
     if (!actions?.canWrite?.() || !iconActions(kind) || !item) return false;
+    if (kind === "progress") {
+      void openProgressIcon(node, link, item, all);
+      return true;
+    }
     const feature = kind === "history" ? "history" : "ratings";
     const [provider, ...instance] = String(node.dataset.iaRef || "").split(":");
     const present = sourceRows(item.sources, 20).map((row) => ({ provider: row.provider, instance: row.instance, ...(feature === "ratings" && item.rating != null ? { rating: item.rating } : {}) }));
@@ -1357,6 +1361,47 @@
       openDetails: () => openProfileWidgetPreview(kind, index) || void openDetailCard(kind, index),
     });
     return true;
+  }
+
+  async function openProgressIcon(node, link, item, all) {
+    const actions = window.CW?.ItemActions;
+    const tmdb = String(item?.tmdb || item?.ids?.tmdb || "").trim();
+    if (!actions || !tmdb) return;
+    const episode = String(item?.type || "").toLowerCase() === "episode";
+    const params = new URLSearchParams({ page: "1", page_size: episode ? "250" : "50" });
+    params.set(episode ? "show_tmdb" : "tmdb", tmdb);
+    const profile = overviewProfileId();
+    if (profile) params.set("user_profile", profile);
+    let records = [];
+    try {
+      const res = await fetch(`/api/playback_progress/items?${params}`, { credentials: "same-origin", cache: "no-store" });
+      const data = await res.json().catch(() => null);
+      records = (Array.isArray(data?.items) ? data.items : [])
+        .flatMap((entry) => (Array.isArray(entry?.records) && entry.records.length ? entry.records : [entry]))
+        .filter((record) => (episode
+          ? Number(record?.season) === Number(item.season) && Number(record?.episode) === Number(item.episode)
+          : String(record?.media_type || "").toLowerCase() === "movie" && String(record?.ids?.tmdb || "") === tmdb));
+    } catch {
+      records = [];
+    }
+    if (!node.isConnected) return;
+    const rows = records.map((record, index) => {
+      const provider = String(record?.provider || "").toUpperCase();
+      const instance = String(record?.instance_id || "default");
+      const account = instance.toLowerCase() === "default" ? "Default" : String(record?.instance_label || instance);
+      const name = `${providerLabel(provider)} · ${account}`;
+      return { rid: String(index), provider, instance, provider_label: name, label: episode && item.episode_label ? `${item.episode_label} on ${name}` : name, record };
+    });
+    const [provider, ...instance] = String(node.dataset.iaRef || "").split(":");
+    const focus = all ? null : rows.find((row) => row.provider === provider && row.instance === (instance.join(":") || "default"));
+    void actions.openMenu({
+      anchor: node,
+      feature: "progress",
+      item: { title: item.title, type: item.type },
+      progressRows: rows,
+      focusRow: focus ? focus.rid : null,
+      scope: () => [link],
+    });
   }
 
   function openProfileWidgetPreview(kind, index) {
@@ -1471,7 +1516,7 @@
           <strong>${esc(title)}</strong>
           <span>${esc(meta || "Progress sync")}</span>
         </span>
-        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3)}</span>
+        <span class="cw-history-sources" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${sourceIcons(item?.sources, 3, iconActions("progress"))}</span>
       </${tag}>`;
   }
 

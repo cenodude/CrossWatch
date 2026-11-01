@@ -2143,13 +2143,14 @@
   function timelineProviderChip(ref, role, options = {}) {
     const name = visibleProviderLabel(ref.provider) || ref.provider;
     const rating = options.rating ?? null;
-    const title = timelineChipTitle(ref, role, rating);
+    const title = options.title || timelineChipTitle(ref, role, rating);
     const logo = providerLogo(ref.provider);
     const mark = logo ? `<img src="${esc(logo)}" alt="" loading="lazy">` : `<span>${esc(name.slice(0, 2))}</span>`;
     const value = rating != null ? `<b>${esc(rating)}</b>` : "";
     const cls = ["cw-hist-provider", `is-${role}`, value ? "has-value" : "", options.differs ? "is-differs" : ""].filter(Boolean).join(" ");
     if (options.action) {
-      return `<button type="button" class="${esc(cls)}" data-ia-chip data-ia-ref="${esc(`${ref.provider}:${ref.instance}`)}" title="${esc(title)}" aria-label="${esc(title)}" aria-haspopup="dialog">${mark}${value}</button>`;
+      const play = options.play != null ? ` data-ia-play="${esc(options.play)}"` : "";
+      return `<button type="button" class="${esc(cls)}" data-ia-chip data-ia-ref="${esc(`${ref.provider}:${ref.instance}`)}"${play} title="${esc(title)}" aria-label="${esc(title)}" aria-haspopup="dialog">${mark}${value}</button>`;
     }
     return `<span class="${esc(cls)}" title="${esc(title)}" aria-label="${esc(title)}">${mark}${value}</span>`;
   }
@@ -3874,7 +3875,20 @@
       const index = PLAYBACK_PROVIDER_KEYS.indexOf(key);
       return index >= 0 ? index : PLAYBACK_PROVIDER_KEYS.length + key.charCodeAt(0);
     };
+    const progressRowsOf = (item) => recordsOf(item).map((record, index) => {
+      const provider = String(record?.provider || "").toUpperCase();
+      const account = String(record?.instance_id || "default").toLowerCase() === "default" ? "Default" : profileLabel(record);
+      const name = `${visibleProviderLabel(provider) || provider} · ${account}`;
+      return { rid: String(index), provider, instance: String(record?.instance_id || "default"), provider_label: name, label: codeFor(item) ? `${codeFor(item)} on ${name}` : name, record };
+    });
     const providerChips = (item) => {
+      if (canAct() && window.CW?.ItemActions) {
+        return providerChipStrip(progressRowsOf(item).map((row) => timelineChipEntry(
+          { provider: row.provider, instance: row.instance },
+          "source",
+          { action: true, play: row.rid, title: `${row.provider_label}: resume point` },
+        )), "cw-hist-provider");
+      }
       const rows = Array.isArray(item?.providers) && item.providers.length ? item.providers : [item];
       return providerChipStrip(timelineEndpoints(rows.map((row) => ({
         provider: row?.provider,
@@ -4611,6 +4625,24 @@
       });
       host.addEventListener("click", (event) => {
         const target = event.target;
+        const chip = target?.closest?.("[data-ia-chip]");
+        if (chip && window.CW?.ItemActions) {
+          event.preventDefault();
+          const card = chip.closest("[data-playback-key]");
+          const item = state.items.find((entry) => keyOf(entry) === card?.dataset.playbackKey);
+          if (item) {
+            void window.CW.ItemActions.openMenu({
+              anchor: chip,
+              feature: "progress",
+              item: { title: titleFor(item), type: item.media_type },
+              progressRows: progressRowsOf(item),
+              focusRow: chip.dataset.iaPlay ?? null,
+              scope: () => [card],
+              onChanged: () => load({ background: true }),
+            });
+          }
+          return;
+        }
         const actionBtn = target?.closest?.("[data-playback-action]");
         if (actionBtn) {
           const item = state.items.find((entry) => keyOf(entry) === actionBtn.dataset.playbackKey);
