@@ -158,7 +158,7 @@ def list_resources(adapter: Any) -> list[PlaylistResource]:
             out.append(res)
     locked = 0
     for row in _optional(adapter, "/sync/lists/followed", "followed_lists"):
-        if row.get("locked"):
+        if row.get("locked") and str(row.get("locked_reason") or "followed").strip().lower() == "followed":
             locked += 1
             continue
         res = _resource(adapter, row, _shared_type(row, "followed_list"))
