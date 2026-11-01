@@ -60,21 +60,31 @@ test("adds report confirmations, skips and single-play providers", async () => {
   assert.equal((await api.sendAdd("watchlist", ref, {}, "Trakt")).note, "already there");
 });
 
-test("removals preview first and only remove the chosen provider", async () => {
+test("tracker removals go direct by id without a preview", async () => {
   const { api, calls } = load([
-    { providers: [{ provider: "TRAKT", instance: "default" }, { provider: "SIMKL", instance: "default" }], preview_id: "abc" },
     { results: [{ ok: true, result: { removed: 1 } }] },
-    { providers: [], empty_reason: "pair_baseline_unavailable" },
+    { results: [{ ok: false, result: { unresolved: 1 } }] },
   ]);
   const ref = { provider: "SIMKL", instance: "default" };
-  const done = await api.editorRemove("ratings", ref, { type: "movie", ids: { tmdb: "1" } }, "SIMKL");
-  assert.equal(done.ok, true);
-  assert.equal(calls[0].url, "/api/editor/send/preview");
-  assert.equal(calls[1].body.preview_id, "abc");
-  assert.deepEqual(JSON.parse(JSON.stringify(calls[1].body.providers)), [ref]);
-  const missing = await api.editorRemove("ratings", ref, { type: "movie", ids: { tmdb: "1" } }, "SIMKL");
-  assert.equal(missing.ok, false);
-  assert.match(missing.error, /sync pairs first/);
+  assert.equal((await api.editorRemove("ratings", ref, { type: "movie", ids: { tmdb: "1" } }, "SIMKL")).ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "/api/editor/send");
+  assert.equal(calls[0].body.direct, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[0].body.providers)), [ref]);
+  assert.match((await api.editorRemove("ratings", ref, { type: "movie", ids: { tmdb: "1" } }, "SIMKL")).error, /did not find/);
+});
+
+test("media servers fall back to the preview and live match", async () => {
+  const { api, calls } = load([
+    { results: [{ ok: false, error: "needs_live_match", result: {} }] },
+    { providers: [{ provider: "PLEX", instance: "default" }], preview_id: "abc" },
+    { results: [{ ok: true, result: { removed: 1 } }] },
+  ]);
+  const ref = { provider: "PLEX", instance: "default" };
+  assert.equal((await api.editorRemove("history", ref, { type: "movie", ids: { tmdb: "1" } }, "Plex")).ok, true);
+  assert.deepEqual(calls.map((call) => call.url), ["/api/editor/send", "/api/editor/send/preview", "/api/editor/send"]);
+  assert.equal(calls[2].body.preview_id, "abc");
+  assert.equal(calls[2].body.direct, undefined);
 });
 
 test("watchlist removal sends the key and aliases and explains a missing record", async () => {

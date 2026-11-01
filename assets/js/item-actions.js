@@ -151,9 +151,24 @@
     return run;
   }
 
+  async function directRemove(feature, ref, items, name) {
+    const data = await request("/api/editor/send", { kind: feature, operation: "remove", direct: true, providers: [cleanRef(ref)], items });
+    const row = (Array.isArray(data?.results) ? data.results : [])[0] || {};
+    if (row.error === "needs_live_match") return null;
+    const result = row.result || {};
+    if (row.error === "provider_not_allowed") return { ok: false, error: `You cannot change ${name}` };
+    if (row.error) return { ok: false, error: `Removal failed on ${name}` };
+    if (Number(result.removed) > 0) return { ok: true };
+    if (Number(result.unresolved) > 0) return { ok: false, error: `${name} did not find this title` };
+    if (Number(result.skipped) > 0) return { ok: false, skipped: true, error: `${name} cannot remove this type of title` };
+    return { ok: false, error: `${name} did not confirm the removal` };
+  }
+
   function editorRemove(feature, ref, item, name) {
     return queued(async () => {
       const items = [item];
+      const direct = await directRemove(feature, ref, items, name);
+      if (direct) return direct;
       const live_check = [cleanRef(ref)];
       const preview = await request("/api/editor/send/preview", { kind: feature, items, live_check }, 60000);
       const target = (Array.isArray(preview?.providers) ? preview.providers : []).find((row) => refKey(row) === refKey(ref));

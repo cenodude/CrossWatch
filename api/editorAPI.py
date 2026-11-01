@@ -1735,7 +1735,9 @@ def _emit_editor_operation(event: str, **data: Any) -> None:
 def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
     operation = payload.get("operation", "add")
     if operation == "remove":
-        from services.editor_removal import remove_selected
+        from services.editor_removal import remove_direct, remove_selected
+        if payload.get("direct") is True:
+            return remove_direct(payload, request)
         return remove_selected(payload, request)
     if operation != "add":
         raise HTTPException(400, "Unknown provider operation")
@@ -1813,6 +1815,9 @@ def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast
 
             cfg_view = deepcopy(cfg_view)
             cfg_view.setdefault("plex", {}).setdefault("history", {})["discover_fallback"] = payload.get("plex_discover_fallback") is True
+        if not dry_run:
+            from services.editor_removal import forget_live_reads
+            forget_live_reads(provider, instance, feature)
         try:
             res = apply_add(
                 dst_ops=ops,
