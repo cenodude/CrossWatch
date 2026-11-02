@@ -85,6 +85,18 @@ const affectedLabels = row => [
   ...array(row.extra_source_titles || row.extra_source).map(value => `Only at source: ${value}`),
   ...array(row.extra_target_titles || row.extra_target).map(value => `Only at destination: ${value}`)
 ];
+export function groupSnapshotGaps(gaps) {
+  const groups = new Map();
+  for (const row of array(gaps)) {
+    const missing = [...new Set(array(row.missing))];
+    const key = `${[row.source, row.target].sort().join(">")}|${[...missing].sort().join(",")}`;
+    const group = groups.get(key) || { source: row.source, target: row.target, missing, features: [] };
+    if (!group.features.includes(row.feature)) group.features.push(row.feature);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
 export function createResultFilter(providerName = String) {
   const cache = new WeakMap();
   const describe = row => {
@@ -250,7 +262,7 @@ const Analyzer = {
     }
     const providerName = token => {
       const [provider, instance] = String(token || "").split("@");
-      const name = window.CWProviderMeta?.label?.(provider) || provider;
+      const name = window.CW?.ProviderMeta?.label?.(provider) || provider;
       const profile = profileLabel(provider, instance);
       return profile ? `${name} · ${profile}` : name;
     };
@@ -259,6 +271,26 @@ const Analyzer = {
       const endpoint = (provider, instance) => providerName(`${provider}${instance ? `@${instance}` : ""}`);
       return `${endpoint(pair.source, pair.source_instance)} ${twoWay ? "↔" : "→"} ${endpoint(pair.target, pair.target_instance)}`;
     };
+    const pairOptionData = value => {
+      const pair = pairs.find(pair => pair.id === value);
+      return pair ? window.CW?.syncPairOptionData?.(pair) || null : null;
+    };
+    const endpointToken = (provider, instance) => {
+      const profile = String(instance || "").trim();
+      return `${String(provider || "").toUpperCase()}${profile && profile.toLowerCase() !== "default" ? `@${profile}` : ""}`;
+    };
+    const endpointPill = token => {
+      const [provider, instance] = String(token || "").split("@");
+      return window.CW?.syncProfilePillHTML?.(provider, instance) || esc(providerName(token));
+    };
+    const routeHTML = row => {
+      const runs = (pair, source, target) => endpointToken(pair.source, pair.source_instance) === source && endpointToken(pair.target, pair.target_instance) === target;
+      const pair = pairs.find(pair => runs(pair, row.source, row.target)) || pairs.find(pair => runs(pair, row.target, row.source));
+      const [source, source_instance] = String(row.source || "").split("@");
+      const [target, target_instance] = String(row.target || "").split("@");
+      return window.CW?.syncProfileRouteHTML?.(pair || { source, source_instance, target, target_instance }) || `${esc(providerName(row.source))} → ${esc(providerName(row.target))}`;
+    };
+    const gapNote = row => `${esc(row.features.map(human).join(", "))}: no saved snapshot ${row.missing.length > 1 ? "on either side" : `for ${endpointPill(row.missing[0])}`}`;
     const rowPairName = row => {
       const pair = pairs.find(pair => pair.id === row.pair_id);
       return pair ? pairName(pair) : row.pair_id || "";
@@ -298,7 +330,8 @@ const Analyzer = {
       }
       $('[data-view="system"]').classList.toggle("has-errors", errors > 0 || systemState === "error");
       const alerts = [];
-      if (analysisState === "ready" && snapshotGaps.length) alerts.push(`<div class="an-notice" role="status">${icon("info")}<div><strong>Some pair comparisons are unavailable</strong><p>Run the affected pair to read both providers. An unread snapshot is not treated as an empty library.</p>${snapshotGaps.slice(0, 5).map(row => `<p>${esc(providerName(row.source))} → ${esc(providerName(row.target))} · ${esc(human(row.feature))}: no saved snapshot for ${esc(array(row.missing).map(providerName).join(", "))}.</p>`).join("")}${snapshotGaps.length > 5 ? `<p>${snapshotGaps.length - 5} more comparisons need snapshot data.</p>` : ""}</div></div>`);
+      const gaps = groupSnapshotGaps(snapshotGaps);
+      if (analysisState === "ready" && gaps.length) alerts.push(`<div class="an-notice" role="status">${icon("info")}<div><strong>Some pair comparisons are unavailable</strong><p>Run the affected pair to read both providers. An unread snapshot is not treated as an empty library.</p>${gaps.slice(0, 5).map(row => `<p class="an-route-note">${routeHTML(row)}<span>${gapNote(row)}</span></p>`).join("")}${gaps.length > 5 ? `<p>${gaps.length - 5} more ${gaps.length === 6 ? "comparison needs" : "comparisons need"} snapshot data.</p>` : ""}</div></div>`);
       if (analysisState === "error") alerts.push(`<div class="an-notice an-error" role="alert">${icon("error")}<div><strong>Item analysis could not finish</strong><p>${esc(analysisError)}</p></div><button type="button" class="an-button" data-retry="analysis">Retry</button></div>`);
       if (systemState === "error") alerts.push(`<div class="an-notice an-error" role="alert">${icon("error")}<div><strong>System health could not be checked</strong><p>${esc(systemError)} The result is unknown.</p></div><button type="button" class="an-button" data-retry="system">Retry</button></div>`);
       if (errors || warnings) alerts.push(`<div class="an-notice ${errors ? "an-error" : "an-warning"}">${icon(errors ? "error" : "warning")}<div><strong>${errors ? `${errors} system failure${errors === 1 ? "" : "s"}` : `${warnings} system warning${warnings === 1 ? "" : "s"}`} need${(errors || warnings) === 1 ? "s" : ""} attention</strong><p>${errors && warnings ? `${warnings} warning${warnings === 1 ? "" : "s"} also found. ` : ""}Review provider and saved-state diagnostics.</p></div><button type="button" class="an-button" data-open-system>View findings</button></div>`);
@@ -319,7 +352,7 @@ const Analyzer = {
       $("#an-clear").hidden = !($("#an-search").value || $("#an-feature").value || $("#an-severity").value);
       const excluded = exclusions.reduce((sum, row) => sum + Number(row.excluded_total || 0), 0);
       $("#an-scope-notes").hidden = !excluded;
-      $("#an-scope-notes").innerHTML = `<summary>${excluded.toLocaleString()} items excluded by the pair?s sync rules</summary>${exclusions.map(row => `<p>${esc(providerName(row.source))} ? ${esc(providerName(row.target))} ? ${esc(human(row.feature))}: ${Number(row.excluded_total || 0).toLocaleString()} excluded${row.excluded_types ? ` ? Types: ${esc(Object.keys(row.excluded_types).join(", "))}` : ""}${row.excluded_libraries ? ` ? Libraries: ${esc(Object.keys(row.excluded_libraries).join(", "))}` : ""}${row.excluded_anime_only ? ` · Anime-only sync: ${Number(row.excluded_anime_only).toLocaleString()}` : ""}</p>`).join("")}`;
+      $("#an-scope-notes").innerHTML = `<summary>${excluded.toLocaleString()} items excluded by the pair's sync rules</summary>${exclusions.map(row => `<p class="an-route-note">${routeHTML(row)}<span>${esc(human(row.feature))}: ${Number(row.excluded_total || 0).toLocaleString()} excluded${row.excluded_types ? ` · Types: ${esc(Object.keys(row.excluded_types).join(", "))}` : ""}${row.excluded_libraries ? ` · Libraries: ${esc(Object.keys(row.excluded_libraries).join(", "))}` : ""}${row.excluded_anime_only ? ` · Anime-only sync: ${Number(row.excluded_anime_only).toLocaleString()}` : ""}</span></p>`).join("")}`;
       renderStatus();
     }
     function emptyState(title, message, symbol = "search_off") {
@@ -700,7 +733,7 @@ const Analyzer = {
           requestJSON("/api/analyzer/pair-activity", lifetime.signal).catch(() => ({}))
         ]);
         if (lifetime.signal.aborted || sequence !== scopeSequence) return;
-        pairs = array(rawPairs).filter(pair => pair.enabled !== false && pair.source && pair.target);
+        pairs = array(rawPairs).map((pair, index) => ({ ...pair, order: index + 1 })).filter(pair => pair.enabled !== false && pair.source && pair.target);
         for (const [provider, entries] of Object.entries(instances || {})) {
           PROFILE_LABELS[provider.toUpperCase()] = {};
           array(entries).forEach(row => {
@@ -715,7 +748,7 @@ const Analyzer = {
         $("#an-pair").innerHTML = `<option value="">All sync pairs (${pairs.length})</option>${pairs.map(pair => `<option value="${esc(pair.id)}">${esc(pairName(pair))}</option>`).join("")}`;
         $("#an-pair").value = array(saved).length > 1 ? "" : previous?.id || recent?.id || "";
         $("#an-pair").disabled = !pairs.length;
-        window.CW?.IconSelect?.enhance?.($("#an-pair"), { className: "cw-plain-select", menuClassName: "an-pair-menu", sortAlphabetically: true });
+        window.CW?.IconSelect?.enhance?.($("#an-pair"), { className: "cw-plain-select", menuClassName: "an-pair-menu", getOptionData: pairOptionData });
         updateSnapshot();
         await analyzeItems();
       } catch (error) {

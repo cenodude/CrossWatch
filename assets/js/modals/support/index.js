@@ -227,8 +227,14 @@ export default {
       } catch {
         setStatus("Could not read sync pairs; the full export is still available.", "warn");
       }
-      const pairs = (Array.isArray(payload?.pairs) ? [...payload.pairs] : [])
-        .sort((a, b) => String(a.label || a.id).localeCompare(String(b.label || b.id), undefined, { sensitivity: "base", numeric: true }));
+      const pairs = (Array.isArray(payload?.pairs) ? payload.pairs : []).map((pair, index) => ({ ...pair, order: index + 1 }));
+      const pairOption = (value) => {
+        const pair = pairs.find((item) => String(item?.id || "") === value);
+        if (!pair) return null;
+        const items = Number(pair.items || 0);
+        const tags = [...(pair.enabled === false ? ["Disabled"] : []), `${items} item${items === 1 ? "" : "s"}`];
+        return window.CW?.syncPairOptionData?.(pair, { tags }) || null;
+      };
       const options = ['<option value="all">All pairs</option>'].concat(pairs.map((p) => {
         const items = Number(p?.items || 0);
         const suffix = `${p?.enabled === false ? " · disabled" : ""} · ${items} item${items === 1 ? "" : "s"}`;
@@ -239,6 +245,7 @@ export default {
         sel.innerHTML = options;
         const values = Array.from(sel.options).map((o) => o.value);
         sel.value = values.includes(current) ? current : "all";
+        window.CW?.IconSelect?.enhance?.(sel, { className: "cw-plain-select", getOptionData: pairOption });
       });
 
       const totals = payload?.totals || {};

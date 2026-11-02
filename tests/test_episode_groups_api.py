@@ -32,6 +32,7 @@ def test_group_save_list_edit_delete_and_backup_roundtrip(client, config_base):
     payload = dict(pair_id="p1", group=group())
     assert client.post("/api/editor/episode-groups", json=payload).status_code == 200
     rows = client.get("/api/editor/episode-groups").json()["pairs"]
+    assert rows[0]["mode"]
     assert rows[0]["groups"] == [group()]
     payload["group"]["name"] = "Updated"
     payload["group"]["scrobble"] = True

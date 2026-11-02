@@ -1411,11 +1411,20 @@
     const dots = enabled
       .map((key) => {
         const cls = SYNC_FEATURE_DOT_CLASSES[key];
-        const tip = `${syncFeatureLabel(key)} enabled`;
+        const name = syncFeatureLabel(key);
+        const writes = syncFeatureWrites(pair.features[key]);
+        const tip = writes ? `${name}: ${writes}` : `${name} enabled`;
         return `<span class="cw-sync-feature-dot ${cls}" title="${escapeHtml(tip)}" aria-hidden="true"></span>`;
       })
       .join("");
     return `<span class="cw-sync-menu-features" role="img" aria-label="${escapeHtml(label)}">${dots}</span>`;
+  }
+
+  function syncFeatureWrites(value) {
+    if (!value || typeof value !== "object") return "";
+    if (value.add && value.remove) return "adds and removes";
+    if (value.add) return "adds only";
+    return value.remove ? "removes only" : "";
   }
 
   function syncMenuInstanceLabel(provider, instance) {
@@ -1423,15 +1432,53 @@
     const label = String(META.instanceLabel?.(provider, id) || id).trim();
     if (id.toLowerCase() === "default") return label === "Default instance" || label.toLowerCase() === "default" ? "" : label;
     if (label !== id) return label;
+    const [parent, ...user] = id.split("~");
+    if (user.length) {
+      const name = syncUserNames[String(provider || "").toUpperCase()]?.[id] || user.join("~");
+      const owner = syncMenuInstanceLabel(provider, parent);
+      return owner ? `${owner} · ${name}` : name;
+    }
     const numbered = id.match(/(?:^|[-_])P(\d+)$/i);
     return numbered ? `P${numbered[1].padStart(2, "0")}` : id;
   }
 
-  function syncMenuProviderHTML(provider, instance) {
+  let syncUserNames = {};
+  let syncUserNamesLoad = null;
+
+  function loadSyncUserNames() {
+    syncUserNamesLoad ||= fetch("/api/sync-user-labels", { credentials: "same-origin", cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : {}))
+      .catch(() => ({}))
+      .then((names) => { syncUserNames = names || {}; });
+    return syncUserNamesLoad;
+  }
+
+  function syncProfilePillHTML(provider, instance) {
     const brand = META.brandInfo?.(provider) || {};
     const name = brand.label || providerLabel(provider);
-    const detail = syncMenuInstanceLabel(provider, instance);
-    return `<span class="cw-sync-provider" style="--sync-brand:${escapeHtml(brand.tone?.solid || "var(--accent)")}" title="${escapeHtml(detail ? `${name} · ${detail}` : name)}">${brand.icon ? `<img src="${escapeHtml(brand.icon)}" width="16" height="16" alt="" aria-hidden="true">` : ""}<span class="cw-sync-provider-name">${escapeHtml(name)}</span>${detail ? `<small>${escapeHtml(detail)}</small>` : ""}</span>`;
+    const profile = syncMenuInstanceLabel(provider, instance) || "Default";
+    return `<span class="cw-sync-provider" style="--sync-brand:${escapeHtml(brand.tone?.solid || "var(--accent)")}" title="${escapeHtml(`${name} · ${profile}`)}">${brand.icon ? `<img src="${escapeHtml(brand.icon)}" width="16" height="16" alt="${escapeHtml(name)}">` : `<span class="cw-sync-provider-name">${escapeHtml(name)}</span>`}<span class="cw-sync-provider-name">${escapeHtml(profile)}</span></span>`;
+  }
+
+  function syncPairRouteHTML(pair) {
+    const source = syncProfilePillHTML(pair?.source, pair?.source_instance);
+    if (!pair?.target) return source;
+    const arrow = String(pair.mode || "").trim().toLowerCase() === "two-way" ? "↔" : "→";
+    return `${source}<span class="cw-sync-menu-arrow" aria-hidden="true">${arrow}</span>${syncProfilePillHTML(pair.target, pair.target_instance)}`;
+  }
+
+  function syncProfileRouteHTML(pair) {
+    return `<span class="cw-sync-pair-route">${syncPairRouteHTML(pair)}</span>`;
+  }
+
+  function syncPairOptionData(pair, { tags = [], menuTags = [] } = {}) {
+    const features = Array.isArray(pair?.features)
+      ? Object.fromEntries(pair.features.map((key) => [key, true]))
+      : pair?.features;
+    const tag = (text) => `<span class="cw-sync-pair-tag">${escapeHtml(text)}</span>`;
+    const selectedHtml = `${syncProfileRouteHTML(pair)}${syncFeatureDotsHTML({ features })}${tags.map(tag).join("")}`;
+    const order = pair?.order ? `<span class="cw-sync-pair-order">${escapeHtml(pair.order)}</span>` : "";
+    return { html: `${order}${selectedHtml}${menuTags.map(tag).join("")}`, selectedHtml };
   }
 
   function pairTitle(pair) {
@@ -1578,7 +1625,7 @@
       button.className = "cw-menu-item";
       button.setAttribute("role", "menuitem");
       button.setAttribute("aria-label", `Sync: ${pairTitle(pair)}`);
-      button.innerHTML = `<span class="cw-sync-menu-main"><span class="cw-sync-menu-title">${syncMenuProviderHTML(pair.source, pair.source_instance)}<span class="cw-sync-menu-arrow" aria-hidden="true">${mode === "two-way" ? "↔" : "→"}</span>${syncMenuProviderHTML(pair.target, pair.target_instance)}</span>${syncFeatureDotsHTML(pair)}</span>${modeLabel ? `<span class="cw-sync-menu-meta">${escapeHtml(modeLabel)}</span>` : ""}`;
+      button.innerHTML = `<span class="cw-sync-menu-main"><span class="cw-sync-menu-title">${syncPairRouteHTML(pair)}</span>${syncFeatureDotsHTML(pair)}</span>${modeLabel ? `<span class="cw-sync-menu-meta">${escapeHtml(modeLabel)}</span>` : ""}`;
       button.addEventListener("click", () => {
         cwCloseSyncMenu();
         runSync({ pair_id: String(pair.id || "").trim() });
@@ -2124,8 +2171,14 @@ Object.assign(window, {
   cwToggleSyncMenu, DETAILS_MAX_LINES,
 });
 CW.checkForUpdate = checkForUpdate;
+CW.syncProfilePillHTML = syncProfilePillHTML;
+CW.syncProfileRouteHTML = syncProfileRouteHTML;
+CW.syncFeatureDotsHTML = syncFeatureDotsHTML;
+CW.syncPairOptionData = syncPairOptionData;
+CW.loadSyncUserNames = loadSyncUserNames;
 
   onReady(() => {
+    loadSyncUserNames();
     const authPendingAtReady = authSetupPending();
     try { fixFormLabels(); } catch {}
     try { wireDetailsToStats(); } catch {}

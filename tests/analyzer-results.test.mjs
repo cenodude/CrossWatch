@@ -4,16 +4,39 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 globalThis.window = {};
 globalThis.document = { addEventListener() {} };
-const { mappingRowActions, savedMappingText, createResultFilter, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails, episodeGroupLabel } = await import("../assets/js/analyzer/index.js");
+const { mappingRowActions, savedMappingText, createResultFilter, groupSnapshotGaps, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails, episodeGroupLabel } = await import("../assets/js/analyzer/index.js");
 const features = ["history", "watchlist", "ratings", "progress", "collection"];
 const rows = Object.freeze(Array.from({ length: 5000 }, (_, n) => Object.freeze({
   title: `Movie ${String(n).padStart(5, "0")}`, provider: "SIMKL", feature: features[n % 5],
   key: `tmdb:${100000 + n}`, ids: { tmdb: String(100000 + n) },
   severity: ["info", "warn", "error"][n % 3], reason: "Provider could not match the item."
 })));
+
+test("snapshot gaps group by route and missing side", () => {
+  const groups = groupSnapshotGaps([
+    { source: "PLEX", target: "TRAKT", feature: "ratings", missing: ["PLEX", "TRAKT"] },
+    { source: "TRAKT", target: "PLEX", feature: "history", missing: ["TRAKT", "PLEX"] },
+    { source: "PLEX", target: "TRAKT", feature: "ratings", missing: ["PLEX", "TRAKT"] },
+    { source: "PLEX", target: "TRAKT", feature: "watchlist", missing: ["TRAKT"] },
+    { source: "PLEX", target: "SIMKL@P02", feature: "watchlist", missing: ["SIMKL@P02"] },
+  ]);
+  assert.deepEqual(groups.map((row) => row.features), [["ratings", "history"], ["watchlist"], ["watchlist"]]);
+  assert.deepEqual(groups.map((row) => row.missing.length), [2, 1, 1]);
+  assert.equal(groups[2].target, "SIMKL@P02");
+  assert.deepEqual(groupSnapshotGaps(undefined), []);
+});
+
+test("analyzer notes use provider meta and keep their separators", () => {
+  const source = readFileSync(new URL("../assets/js/analyzer/index.js", import.meta.url), "utf8");
+  assert.match(source, /window\.CW\?\.ProviderMeta\?\.label/);
+  assert.doesNotMatch(source, /CWProviderMeta/);
+  assert.doesNotMatch(source, /pair\?s sync rules|\} \? \$\{esc/);
+  assert.match(source, /class="an-route-note">\$\{routeHTML\(row\)\}/);
+});
 
 test("all 5,000 issues remain reachable across pages without duplicates", () => {
   const filtered = createResultFilter()(rows);

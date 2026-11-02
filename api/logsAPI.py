@@ -71,7 +71,8 @@ def sessions(request: Request, channel: Literal['sync', 'watcher', 'debug'] = 's
         (src, src_inst), (dst, dst_inst) = pair_refs(pair)
         arrow = '↔' if 'two' in str(pair.get('mode') or '') else '→'
         label = f"{pair.get('name') or f'Pair {index}'} · {src} · {src_inst} {arrow} {dst} · {dst_inst}"
-        pairs.append(dict(id=key, label=label))
+        pairs.append(dict(id=key, label=label, order=index, source=src, source_instance=src_inst, target=dst,
+                          target_instance=dst_inst, mode=pair.get('mode') or 'one-way', features=pair.get('features') or {}))
     latest = next((item['run_id'] for item in store.sessions('sync', pair_id=pair_id) if item['run_id'] and allowed(request, item)), '')
     if pair_id or run_id:
         items = [dict(item, **store.counts(item['id'], pair_id, run_id)) for item in items]

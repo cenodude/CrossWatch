@@ -123,7 +123,7 @@ def list_groups(request):
         except HTTPException:
             continue
         result.append(dict(id=str(pair["id"]), name=pair.get("name") or pair.get("label") or
-                           f"{pair['source']} → {pair['target']}", **sides,
+                           f"{pair['source']} → {pair['target']}", mode=str(pair.get("mode") or "one-way"), **sides,
                            groups=((policy.get("pairs") or {}).get(str(pair["id"])) or {}).get("episode_groups") or []))
     return dict(ok=True, pairs=result)
 
