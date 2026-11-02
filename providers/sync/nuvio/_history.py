@@ -12,12 +12,15 @@ from typing import Any
 from cw_platform.id_map import minimal as id_minimal
 
 from providers.sync._log import log as cw_log
+from providers.sync.stremio._common import imdb_id, read_cinemeta_entry, update_cinemeta_entry
+from providers.sync.stremio._history import cinemeta_refreshed, cinemeta_videos, tmdb_ids_for_record, verified_video_ids
 
 from ._common import (
     canonical_item_key,
     enrich_external_ids,
     epoch_ms,
     iso_from_epoch_ms,
+    item_alias_keys,
     make_item,
     metadata_title_for_content_id,
     payload_item_key,
@@ -101,6 +104,59 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             out[key] = item
     _info("index_done", count=len(out), rows=len(rows), skipped=skipped)
     return out
+
+
+def _videos_covering(adapter: Any, imdb: str, watched: set[str]) -> list[Mapping[str, Any]]:
+    videos = cinemeta_videos(adapter, imdb)
+    missing = ",".join(sorted(watched - {str(video.get("id") or "").strip() for video in videos}))
+    if not missing or read_cinemeta_entry(imdb).get("checked_missing") == missing:
+        return videos
+    videos = cinemeta_videos(adapter, imdb, fresh=True)
+    if cinemeta_refreshed(adapter, imdb):
+        update_cinemeta_entry(imdb, checked_missing=missing)
+    return videos
+
+
+def _add_tmdb_ids(adapter: Any, items: Iterable[dict[str, Any]]) -> None:
+    titles: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        imdb = imdb_id(item.get("_nuvio_content_id"))
+        if imdb and item.get("type") in {"movie", "episode"}:
+            titles.setdefault(imdb, []).append(item)
+    setattr(adapter, "_stremio_tmdb_lookup_failed", False)
+    for imdb, rows in titles.items():
+        movies = [item for item in rows if item["type"] == "movie"]
+        episodes = {f"{imdb}:{item['season']}:{item['episode']}": item for item in rows if item["type"] == "episode"}
+        native = tmdb_ids_for_record(adapter, {"_id": imdb}, "movie" if movies else "tv")
+        if not native:
+            continue
+        for item in movies:
+            item["ids"] = {**item["ids"], **native}
+        if not episodes or movies:
+            continue
+        try:
+            videos = _videos_covering(adapter, imdb, set(episodes))
+        except Exception:
+            continue
+        for video_id in verified_video_ids(adapter, native.get("tmdb", ""), videos, set(episodes), imdb):
+            item = episodes[video_id]
+            item["show_ids"] = {**item["show_ids"], **native}
+
+
+def sync_index(adapter: Any) -> dict[str, dict[str, Any]]:
+    index = build_index(adapter)
+    _add_tmdb_ids(adapter, index.values())
+    out: dict[str, dict[str, Any]] = {}
+    for item in index.values():
+        key = canonical_item_key(item)
+        existing = out.get(key)
+        if not existing or (epoch_ms(item.get("watched_at")) or 0) >= (epoch_ms(existing.get("watched_at")) or 0):
+            out[key] = item
+    return out
+
+
+def _current_row(current: Mapping[str, dict[str, Any]], item: Mapping[str, Any], *keys: str) -> dict[str, Any] | None:
+    return next((current[key] for key in (*keys, *item_alias_keys(item)) if key in current), None)
 
 
 def _payload_for_item(adapter: Any, item: Mapping[str, Any], current_rows: Any = None) -> tuple[dict[str, Any] | None, str | None]:
@@ -195,9 +251,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             results.append(entry)
             continue
         verify_key = payload_item_key(payload) or key
-        target = current.get(verify_key) or current.get(key)
+        target = _current_row(current, item, verify_key, key)
         if target and (epoch_ms(target.get("watched_at")) or 0) >= int(payload.get("watched_at") or 0):
-            dest_key = verify_key if verify_key in current else key
+            dest_key = canonical_item_key(target)
             skipped += 1
             skipped_keys.append(key)
             presence_confirmed_keys.append(key)
@@ -284,7 +340,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
 
     for item in src:
         item_key = canonical_item_key(item)
-        payload = _delete_key_for_item(adapter, current.get(item_key) or item)
+        payload = _delete_key_for_item(adapter, _current_row(current, item, item_key) or item)
         if not payload:
             entry = _unresolved(item, "nuvio_id_missing", item_key)
             unresolved.append(entry)

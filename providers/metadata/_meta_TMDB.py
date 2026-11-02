@@ -9,6 +9,7 @@ import os
 import random
 import threading
 import time
+import weakref
 from collections.abc import Mapping
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -35,6 +36,14 @@ def log(msg: str, level: str = "INFO", module: str = "META", **_: Any) -> None:
 
 IMG_BASE = "https://image.tmdb.org/t/p"
 
+_PROVIDERS: weakref.WeakSet[Any] = weakref.WeakSet()
+
+
+def clear_all_caches() -> None:
+    for provider in list(_PROVIDERS):
+        provider.clear_cache()
+
+
 class TmdbProvider:
     name = "TMDB"
     UA = http_user_agent(override_env="CW_TMDB_UA")
@@ -60,6 +69,7 @@ class TmdbProvider:
         self.save_cfg = save_cfg
         self._cache: dict[str, tuple[float, Any]] = {}
         self._disk_dir: Path | None = None
+        _PROVIDERS.add(self)
 
     def _apikey(self) -> str:
         cfg = self.load_cfg() or {}
@@ -99,16 +109,9 @@ class TmdbProvider:
         if target is None:
             return None
         try:
-            payload = json.loads((target / f"{key}.json").read_text("utf-8"))
+            return json.loads((target / f"{key}.json").read_text("utf-8")).get("data")
         except Exception:
             return None
-        try:
-            stamped = float(payload.get("ts") or 0)
-        except Exception:
-            return None
-        if (time.time() - stamped) >= self._ttl_seconds():
-            return None
-        return payload.get("data")
 
     def _disk_write(self, key: str, data: Any) -> None:
         target = self._disk_cache_dir()
@@ -125,30 +128,14 @@ class TmdbProvider:
             except Exception:
                 pass
 
-    def _ttl_seconds(self) -> int:
-        cfg = self.load_cfg() or {}
-        md = cfg.get("metadata") or {}
-        hours = md.get("ttl_hours", 720)
-        try:
-            hours = int(hours)
-        except Exception:
-            hours = 720
-        return max(1, hours) * 3600
-
     def _prune_cache(self) -> None:
-        if len(self._cache) < self.CACHE_MAX_ENTRIES:
-            return
-        ttl = self._ttl_seconds()
-        now = time.time()
-        snapshot = list(self._cache.items())
-        for key, (ts, _) in snapshot:
-            if (now - ts) >= ttl:
-                self._cache.pop(key, None)
         overflow = len(self._cache) - self.CACHE_MAX_ENTRIES
         if overflow > 0:
-            live = [entry for entry in snapshot if entry[0] in self._cache]
-            for key, _ in sorted(live, key=lambda kv: kv[1][0])[:overflow]:
+            for key, _ in sorted(list(self._cache.items()), key=lambda kv: kv[1][0])[:overflow]:
                 self._cache.pop(key, None)
+
+    def clear_cache(self) -> None:
+        self._cache.clear()
 
     def _backoff_params(self) -> tuple[int, float, float]:
         cfg = self.load_cfg() or {}
@@ -198,22 +185,28 @@ class TmdbProvider:
         msg = event if not suffix else f"{event} {suffix}"
         log(msg, level="debug", module="META", extra=clean or None)
 
-    def _get(self, url: str, params: dict[str, Any] | None = None, *, quiet_404: bool = False) -> Any:
+    def get_latest(self, url: str, params: dict[str, Any] | None = None, *, quiet_404: bool = False) -> Any:
+        try:
+            return self._get(url, params, quiet_404=quiet_404, fresh=True)
+        except Exception:
+            return self._get(url, params, quiet_404=quiet_404)
+
+    def _get(self, url: str, params: dict[str, Any] | None = None, *, quiet_404: bool = False, fresh: bool = False) -> Any:
         q = dict(params or {})
         q["api_key"] = self._apikey()
         ck = url + "?" + "&".join(sorted(f"{k}={v}" for k, v in q.items()))
         h = hashlib.sha1(ck.encode("utf-8")).hexdigest()
 
-        now = time.time()
-        hit = self._cache.get(h)
-        if hit and (now - hit[0]) < self._ttl_seconds():
-            return hit[1]
+        if not fresh:
+            hit = self._cache.get(h)
+            if hit:
+                return hit[1]
 
-        stored = self._disk_read(h)
-        if stored is not None:
-            self._prune_cache()
-            self._cache[h] = (now, stored)
-            return stored
+            stored = self._disk_read(h)
+            if stored is not None:
+                self._prune_cache()
+                self._cache[h] = (time.time(), stored)
+                return stored
 
         max_retries, base_s, max_s = self._backoff_params()
         attempt = 0
@@ -291,6 +284,31 @@ class TmdbProvider:
     def _entity_kind(value: Any) -> str:
         text = str(value or "").strip().lower()
         return "movie" if text in {"movie", "movies", "film", "films"} else "tv"
+
+    def find_imdb(self, imdb_id: str, entity: str) -> dict[str, str]:
+        base = "https://api.themoviedb.org/3"
+        kind = self._entity_kind(entity)
+
+        def lookup(**options: bool) -> str:
+            try:
+                found = self._get(f"{base}/find/{imdb_id}", {"external_source": "imdb_id"}, quiet_404=True, **options)
+            except requests.exceptions.RequestException as e:
+                if int(getattr(getattr(e, "response", None), "status_code", 0) or 0) == 404:
+                    return ""
+                raise
+            hit = self._pick_first(found.get(f"{kind}_results")) if isinstance(found, dict) else None
+            return str(hit.get("id") or "").strip() if isinstance(hit, dict) else ""
+
+        tmdb_id = lookup() or lookup(fresh=True)
+        if not tmdb_id:
+            return {}
+        out = {"tmdb": tmdb_id}
+        if kind == "tv":
+            external = self._get(f"{base}/tv/{tmdb_id}/external_ids")
+            tvdb_id = str(external.get("tvdb_id") or "").strip() if isinstance(external, dict) else ""
+            if tvdb_id:
+                out["tvdb"] = tvdb_id
+        return out
 
     @staticmethod
     def _detail_titles(det: Mapping[str, Any], kind: str) -> list[str]:
@@ -721,6 +739,8 @@ class TmdbProvider:
         ids: dict[str, str],
         locale: str | None = None,
         need: dict[str, bool] | None = None,
+        fresh: bool = False,
+        strict: bool = False,
     ) -> dict[str, Any]:
         need = need or {"poster": True, "backdrop": True}
         ent_in = (entity or "").lower().strip()
@@ -777,6 +797,7 @@ class TmdbProvider:
             except Exception as e:
                 self._log_exc("TMDb find by TVDB failed", e)
 
+        title_guess = not tmdb_id and bool(imdb_id or tvdb_id)
         if not tmdb_id and title:
             try:
                 if ent_in == "movie":
@@ -812,7 +833,9 @@ class TmdbProvider:
             params: dict[str, Any] = {"language": lang}
             if appends:
                 params["append_to_response"] = ",".join(appends)
-            return self._get(f"{base}/{k}/{tmdb_id}", params)
+            if fresh and strict:
+                return self._get(f"{base}/{k}/{tmdb_id}", params, fresh=True)
+            return self.get_latest(f"{base}/{k}/{tmdb_id}", params) if fresh else self._get(f"{base}/{k}/{tmdb_id}", params)
 
         try:
             det = _get_details(kind)
@@ -837,12 +860,18 @@ class TmdbProvider:
                     )
                 except Exception as e2:
                     self._log_exc("TMDb detail fetch failed", e2)
+                    if strict and int(getattr(getattr(e2, "response", None), "status_code", 0) or 0) != 404:
+                        raise
                     return {}
             else:
                 self._log_exc("TMDb detail fetch failed", e)
+                if strict:
+                    raise
                 return {}
         except Exception as e:
             self._log_exc("TMDb detail fetch failed", e)
+            if strict:
+                raise
             return {}
 
         vote_count_raw = det.get("vote_count")
@@ -909,7 +938,7 @@ class TmdbProvider:
             self._log_exc("TMDb videos fetch failed", e)
 
         extra_ids: dict[str, Any] = {}
-        if need.get("ids"):
+        if need.get("ids") and not title_guess:
             try:
                 if kind == "movie":
                     data = self._get(f"{base}/movie/{tmdb_id}/external_ids")
@@ -940,7 +969,7 @@ class TmdbProvider:
 
         out: dict[str, Any] = {
             "type": "movie" if kind == "movie" else "tv",
-            "ids": {"tmdb": str(tmdb_id), **extra_ids} if extra_ids else {"tmdb": str(tmdb_id)},
+            "ids": {} if title_guess else {"tmdb": str(tmdb_id), **extra_ids},
             "title": title_out,
             "year": year,
             "runtime_minutes": runtime_minutes,
@@ -1013,12 +1042,6 @@ def html() -> str:
             <label for="metadata_locale">Default locale (metadata.locale)</label>
             <input id="metadata_locale" name="metadata_locale" placeholder="e.g. nl-NL or en-US" oninput="this.dataset.dirty='1'">
             <div class="sub">Used when a request doesn't pass ?locale=. Falls back to UI locale if empty.</div>
-          </div>
-
-          <div>
-            <label for="metadata_ttl_hours">TTL hours (metadata.ttl_hours)</label>
-            <input id="metadata_ttl_hours" name="metadata_ttl_hours" type="number" min="1" step="1" placeholder="720" oninput="this.dataset.dirty='1'">
-            <div class="sub">Resolver cache freshness (coarse). Default 720h (30 days).</div>
           </div>
 
         </div>

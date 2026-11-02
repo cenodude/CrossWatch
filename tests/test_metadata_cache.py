@@ -12,8 +12,8 @@ from cw_platform.metadata_cache import (
 )
 
 
-def test_metadata_default_ttl_is_30_days() -> None:
-    assert DEFAULT_CFG["metadata"]["ttl_hours"] == 720
+def test_metadata_cache_has_no_expiry_setting() -> None:
+    assert "ttl_hours" not in DEFAULT_CFG["metadata"]
 
 
 def test_shared_metadata_cache_round_trip_and_expiry(tmp_path, monkeypatch) -> None:
@@ -29,8 +29,21 @@ def test_shared_metadata_cache_round_trip_and_expiry(tmp_path, monkeypatch) -> N
     assert read_metadata_cache(tmp_path, "movie", "123", "nl-NL", ttl_seconds=None)["title"] == "Example"
 
     monkeypatch.setattr(metaAPI, "_meta_cache_dir", lambda: tmp_path)
-    monkeypatch.setattr(metaAPI, "_cfg_meta_ttl_secs", lambda: 720 * 3600)
     assert metaAPI._meta_cache_path("movie", "123", "nl-NL") == path
+    assert metaAPI._read_meta_cache("movie", "123", "nl-NL")["title"] == "Example"
+
+
+def test_clearing_memory_reaches_the_playback_provider_pool(monkeypatch) -> None:
+    from services.playback_progress.adapters import base
+
+    provider = base.tmdb_metadata_provider({"tmdb": {"api_key": "cache-clear-test"}})
+    monkeypatch.setattr(metaAPI, "_tmdb_provider", lambda: None)
+    provider._cache["key"] = (1.0, {"stale": True})
+    try:
+        metaAPI.clear_memory_caches()
+        assert provider._cache == {}
+    finally:
+        base._TMDB_PROVIDERS.pop("cache-clear-test", None)
 
 
 def test_shared_metadata_cache_merge_preserves_existing_artwork() -> None:
@@ -60,7 +73,6 @@ def test_meta_api_reuses_shared_disk_cache_after_memory_cache_reset(tmp_path, mo
     monkeypatch.setattr(metaAPI, "_env", lambda: (Metadata(), tmp_path.parent, lambda: {}))
     monkeypatch.setattr(metaAPI, "_meta_cache_dir", lambda: tmp_path)
     monkeypatch.setattr(metaAPI, "_meta_cache_enabled", lambda: True)
-    monkeypatch.setattr(metaAPI, "_cfg_meta_ttl_secs", lambda: 720 * 3600)
     metaAPI._resolve_tmdb_cached.cache_clear()
 
     first = metaAPI.get_meta("unused", "movie", "321", tmp_path, need={"title": True, "year": True}, locale="en-US")
@@ -85,7 +97,6 @@ def test_empty_tmdb_result_is_not_cached_after_transient_failure(tmp_path, monke
     monkeypatch.setattr(metaAPI, "_env", lambda: (Metadata(), tmp_path.parent, lambda: {}))
     monkeypatch.setattr(metaAPI, "_meta_cache_dir", lambda: tmp_path)
     monkeypatch.setattr(metaAPI, "_meta_cache_enabled", lambda: False)
-    monkeypatch.setattr(metaAPI, "_cfg_meta_ttl_secs", lambda: 720 * 3600)
     metaAPI._resolve_tmdb_cached.cache_clear()
 
     first = metaAPI.get_meta("unused", "movie", "654", tmp_path, need={"title": True}, locale="en-US")

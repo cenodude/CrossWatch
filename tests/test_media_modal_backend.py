@@ -315,7 +315,7 @@ def test_season_preserves_full_episode_synopsis(monkeypatch) -> None:
     from types import SimpleNamespace
 
     overview = "A full episode synopsis. " * 30
-    provider = SimpleNamespace(_get=lambda *args, **kwargs: {"episodes": [{"episode_number": 1, "overview": overview}]})
+    provider = SimpleNamespace(get_latest=lambda *args, **kwargs: {"episodes": [{"episode_number": 1, "overview": overview}]})
     monkeypatch.setattr(metaAPI, "_tmdb_provider", lambda: provider)
     result = metaAPI.api_tmdb_season(tmdb=1399, season=1, locale="en-US")
     assert json.loads(result.body)["episodes"][0]["overview"] == overview
@@ -335,7 +335,7 @@ def test_season_includes_episode_guests_and_relevant_crew_without_extra_requests
             {"episode_number": 2},
         ]}
 
-    monkeypatch.setattr(metaAPI, "_tmdb_provider", lambda: SimpleNamespace(_get=get))
+    monkeypatch.setattr(metaAPI, "_tmdb_provider", lambda: SimpleNamespace(get_latest=get))
     episodes = json.loads(metaAPI.api_tmdb_season(tmdb=1399, season=1, locale="en-US").body)["episodes"]
     assert len(calls) == 1
     assert episodes[0]["guest_stars"] == [{"id": 12, "name": "Guest", "character": "Visitor", "profile_path": "/guest.jpg"}]

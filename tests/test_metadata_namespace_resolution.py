@@ -57,7 +57,6 @@ def _install(monkeypatch, tmp_path, provider, resolve_result=None):
     monkeypatch.setattr(metaAPI, "_env", lambda: (Manager(), tmp_path, lambda: {}))
     monkeypatch.setattr(metaAPI, "_meta_cache_dir", lambda: tmp_path)
     monkeypatch.setattr(metaAPI, "_meta_cache_enabled", lambda: True)
-    monkeypatch.setattr(metaAPI, "_cfg_meta_ttl_secs", lambda: 720 * 3600)
     monkeypatch.setattr(metaAPI, "_cfg_ui_locale", lambda: "en-US")
     metaAPI._resolve_tmdb_cached.cache_clear()
     metaAPI._RESOLVED_ENTITY_MEMO.clear()

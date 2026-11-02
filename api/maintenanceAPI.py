@@ -1131,6 +1131,12 @@ def clear_metadata_cache() -> dict[str, Any]:
     removed = _clear_cache_dir(CACHE_DIR)
     after = _scan_cache_dir(CACHE_DIR)
     after_usage = _path_usage(CACHE_DIR)
+    try:
+        from .metaAPI import clear_memory_caches
+
+        clear_memory_caches()
+    except Exception:
+        pass
 
     return {
         "ok": True,

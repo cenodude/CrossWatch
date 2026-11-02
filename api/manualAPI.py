@@ -206,7 +206,7 @@ def _tmdb_season_list(tmdb_id: int) -> list[dict[str, Any]] | None:
     provider = _tmdb_provider()
     if provider is None:
         return None
-    data = provider._get(f"https://api.themoviedb.org/3/tv/{tmdb_id}", {"language": _cfg_ui_locale() or "en-US"}, quiet_404=True) or {}
+    data = provider.get_latest(f"https://api.themoviedb.org/3/tv/{tmdb_id}", {"language": _cfg_ui_locale() or "en-US"}, quiet_404=True) or {}
     rows = []
     for raw in data.get("seasons") or []:
         season = _int_or_none(raw.get("season_number")) if isinstance(raw, dict) else None
@@ -223,7 +223,7 @@ def _tmdb_season_episodes(tmdb_id: int, season: int) -> list[dict[str, Any]] | N
     provider = _tmdb_provider()
     if provider is None:
         return None
-    data = provider._get(f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season}", {"language": _cfg_ui_locale() or "en-US"}, quiet_404=True) or {}
+    data = provider.get_latest(f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{season}", {"language": _cfg_ui_locale() or "en-US"}, quiet_404=True) or {}
     rows = []
     for raw in data.get("episodes") or []:
         episode = _int_or_none(raw.get("episode_number")) if isinstance(raw, dict) else None
@@ -433,7 +433,8 @@ def _rewatch_targets(value: Any) -> dict[tuple[str, str], set[tuple[int, int]]]:
     out: dict[tuple[str, str], set[tuple[int, int]]] = {}
     for raw in value if isinstance(value, list) else []:
         entry = raw if isinstance(raw, dict) else {"target": raw}
-        rows = entry.get("episodes") if isinstance(entry.get("episodes"), list) else []
+        episodes = entry.get("episodes")
+        rows = episodes if isinstance(episodes, list) else []
         out[_split_source(entry.get("target"))] = {
             (season, episode)
             for row in rows if isinstance(row, dict)
