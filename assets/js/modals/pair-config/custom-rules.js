@@ -68,6 +68,10 @@ export function undatedAsTodayAllowed(state) {
   return sides.some(provider => same(provider, "simkl")) && sides.some(provider => ["myanimelist", "kitsu", "crosswatch"].some(name => same(provider, name)));
 }
 
+export function historyRemoveAllowed(state) {
+  return !["tautulli", "tracearr"].some(name => same(state?.src, name));
+}
+
 export function featureAllowedForPair(state, feature) {
   const key = String(feature || "").trim().toLowerCase();
   if (key === "ratings" && (same(state?.src, "stremio") || same(state?.dst, "stremio"))) {
@@ -101,6 +105,9 @@ export function sanitizeFeaturesForPair(state, features) {
   const out = features && typeof features === "object" ? features : {};
   if (out.history && typeof out.history === "object" && !undatedAsTodayAllowed(state)) {
     delete out.history.undated_as_today;
+  }
+  if (out.history && typeof out.history === "object" && !historyRemoveAllowed(state)) {
+    out.history.remove = false;
   }
   if (!featureAllowedForPair(state, "ratings") && out.ratings && typeof out.ratings === "object") {
     Object.assign(out.ratings, { enable: false, add: false, remove: false });

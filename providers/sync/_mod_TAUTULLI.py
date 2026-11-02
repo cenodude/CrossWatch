@@ -149,6 +149,14 @@ class TAUTULLIClient:
         if isinstance(resp, dict):
             if str(resp.get("result") or "").lower() != "success":
                 msg = str(resp.get("message") or "unknown error")
+                if (
+                    cmd == "get_metadata"
+                    and r.status_code in (200, 400)
+                    and params.get("rating_key")
+                    and msg == f"Unable to retrieve metadata for rating_key '{params['rating_key']}'"
+                ):
+                    _warn("metadata_unavailable", op=cmd, rating_key=params["rating_key"], message=msg)
+                    return None
                 _warn("http_failed", op=cmd, message=msg)
                 raise RuntimeError(msg)
             return resp.get("data")
