@@ -469,7 +469,7 @@
     if (window.CW?.Trailer?.has?.(meta)) out.push(`<button class="cw-mm-btn is-primary" type="button" data-mm-trailer>${icon("play_arrow")}Watch trailer</button>`);
     out.push(`<a class="cw-mm-btn" href="https://www.themoviedb.org/${artType(item)}/${encodeURIComponent(tmdb)}" target="_blank" rel="noopener">TMDB</a>`);
     if (imdb) out.push(`<a class="cw-mm-btn" href="https://www.imdb.com/title/${encodeURIComponent(imdb)}/" target="_blank" rel="noopener">IMDb</a>`);
-    if (removable()) out.push(`<button type="button" class="cw-mm-btn is-icon is-danger" data-mm-clear-all aria-haspopup="dialog" title="Remove from everything" aria-label="Remove from everything">${icon("delete")}</button>`);
+    if (removable()) out.push(`<button type="button" class="cw-mm-btn is-danger" data-mm-clear-all aria-haspopup="dialog" title="Remove from everything" aria-label="Remove from everything">${icon("delete")}Remove</button>`);
     const score = Number(meta?.detail?.vote_average) || (Number(meta?.score) || 0) / 10;
     if (score > 0) {
       const votes = Number(meta?.vote_count) || 0;

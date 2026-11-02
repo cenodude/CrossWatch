@@ -975,7 +975,6 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 .cw-mm-actions{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:14px}
 .cw-mm-btn{display:inline-flex;align-items:center;gap:8px;height:42px;padding:0 14px;transition:background .14s ease,transform .14s ease}
 .cw-mm-btn:hover{transform:translateY(-1px)}
-.cw-mm-btn.is-icon{justify-content:center;width:42px;padding:0}
 .cw-mm-overview{max-width:760px;margin:12px 0 0}
 .cw-mm-ring{position:relative;display:grid;place-items:center;flex:0 0 auto;width:52px;height:52px}
 .cw-mm-ring::before{content:"";position:absolute;inset:4px}
@@ -1100,7 +1099,8 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 .cw-mm-tiles{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.cw-mm-backdrop,.cw-mm-card,.cw-mm-panel,.cw-mm-cover-track i,.cw-mm-season-track i{animation:none}}
 .cw-mm-tile>span:last-child{display:flex;width:100%;justify-content:space-between;gap:16px}
-.cw-mm-actions>a{padding:0 8px}
+.cw-mm-actions>:where(a,[data-mm-clear-all]){padding:0 8px}
+.cw-mm-actions>[data-mm-clear-all]{gap:6px}
 .cw-mm-live.is-on{order:-1}
 .cw-mm-card:has(.cw-ep-page){width:min(1000px,100%)}
 .cw-mm-card:has(.cw-ep-page) .cw-mm-hero{display:none}

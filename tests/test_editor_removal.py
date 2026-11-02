@@ -817,6 +817,16 @@ def test_item_targets_follow_sync_pairs_capabilities_and_media_type(setup, monke
     assert [(row["provider"], row["reason"]) for row in hidden] == [("MDBLIST", "read_only")]
 
 
+def test_item_targets_skip_a_pair_with_the_feature_turned_off(setup, monkeypatch):
+    s = setup
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
+    s.cfg["pairs"].append({"id": "p6", "source": "MDBLIST", "target": "PLEX", "features": {"history": {"enable": False}, "watchlist": {"enable": True}}})
+    history, _ = api.item_action_targets(s.cfg, None, "history", media_type="movie")
+    watchlist, _ = api.item_action_targets(s.cfg, None, "watchlist", media_type="movie")
+    assert "MDBLIST" not in {row["provider"] for row in history}
+    assert "MDBLIST" in {row["provider"] for row in watchlist}
+
+
 def test_item_targets_keep_anime_only_providers_for_anime(setup, monkeypatch):
     s = setup
     monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
