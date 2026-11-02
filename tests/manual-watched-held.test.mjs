@@ -10,7 +10,7 @@ const source = readFileSync(new URL("../assets/js/modals/manual-watched/index.js
 const helper = source.slice(source.indexOf("const providerKey ="), source.indexOf("\n", source.indexOf("const providerKey =")));
 const notes = source.slice(source.indexOf("const HELD_SOURCES"), source.indexOf("export default"));
 const context = {};
-vm.runInNewContext(`${helper}\n${notes}\nglobalThis.heldNotes = heldNotes;\nglobalThis.watchedTargets = watchedTargets;\nglobalThis.watchedEpisodes = watchedEpisodes;\nglobalThis.historyFits = historyFits;`, context);
+vm.runInNewContext(`${helper}\n${notes}\nglobalThis.heldNotes = heldNotes;\nglobalThis.watchedTargets = watchedTargets;\nglobalThis.watchedEpisodes = watchedEpisodes;\nglobalThis.historyFits = historyFits;\nglobalThis.oneOffNote = oneOffNote;`, context);
 const heldNotes = (...args) => [...context.heldNotes(...args)];
 const watchedTargets = (...args) => [...context.watchedTargets(...args)];
 
@@ -72,6 +72,51 @@ test("whole show and picked episodes each follow their own history rule", () => 
   assert.equal(context.historyFits(floppy, true, true), true);
   assert.equal(context.historyFits(floppy, false, false), true);
   assert.equal(context.historyFits({}, true, false), true);
+});
+
+test("a one-off add names the feature in the sync pair note", () => {
+  assert.equal(context.oneOffNote(["rating"]), "Not in a sync pair for ratings. This is added once and stays on that provider only.");
+  assert.match(context.oneOffNote(["history"]), /sync pair for history\./);
+});
+
+async function mountQuickAdd(props, providers) {
+  const root = { innerHTML: "", style: { setProperty() {}, removeProperty() {} }, closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+  const page = {
+    window: { CW: {}, addEventListener() {}, removeEventListener() {}, setTimeout, clearTimeout },
+    document: { getElementById: () => ({}), documentElement: { dataset: {}, clientHeight: 800 }, addEventListener() {}, removeEventListener() {} },
+    localStorage: { getItem: () => "[]", setItem() {} },
+    URLSearchParams,
+    AbortSignal,
+    fetch: async (url) => ({ ok: true, json: async () => (url.includes("/api/manual/providers") ? { providers } : {}) }),
+  };
+  vm.runInNewContext(source.replace("export default {", "globalThis.quickAdd = {"), page);
+  await page.quickAdd.mount(root, props);
+  return root;
+}
+
+const both = { provider: "MDBLIST", instance: "default", history_enabled: true, ratings_enabled: true, watchlist_enabled: true, collection_enabled: true };
+const locked = (action) => ({ action, item: { tmdb: "1", type: "movie", title: "Michael" }, only: ["MDBLIST:default"] });
+
+for (const [action, noun] of [["rating", "ratings"], ["watchlist", "watchlist"], ["collection", "collection"], ["history", "history"]]) {
+  test(`a locked Quick add keeps the requested ${action} action`, async () => {
+    const root = await mountQuickAdd(locked(action), [both]);
+    assert.ok(root.innerHTML.includes(`Not in a sync pair for ${noun}.`));
+    assert.equal(root.innerHTML.includes("cw-mw-score"), action === "rating");
+  });
+}
+
+test("a locked Quick add never swaps to another feature when its own is not supported", async () => {
+  const root = await mountQuickAdd(locked("rating"), [{ ...both, ratings_enabled: false }]);
+  assert.match(root.innerHTML, /Not in a sync pair for ratings\./);
+  assert.match(root.innerHTML, /data-role="send" disabled/);
+  assert.match(root.innerHTML, /Select at least one compatible provider\./);
+});
+
+test("a normal Quick add still opens on the action it was asked for", async () => {
+  const root = await mountQuickAdd({ action: "rating", item: { tmdb: "1", type: "movie", title: "Michael" } }, [both]);
+  assert.match(root.innerHTML, /data-action="rating"/);
+  assert.match(root.innerHTML, /cw-mw-chip active" data-action="rating"/);
+  assert.doesNotMatch(root.innerHTML, /sync pair/);
 });
 
 test("no stored data means no note", () => {

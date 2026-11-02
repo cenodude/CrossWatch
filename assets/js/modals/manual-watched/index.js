@@ -65,6 +65,10 @@ const closeModalAfterTap = () => {
 
 const HELD_SOURCES = { history: "synced", watchlist: "watchlist", rating: "ratings", collection: "collection" };
 
+const ONE_OFF_NOUNS = { history: "history", watchlist: "watchlist", rating: "ratings", collection: "collection" };
+
+const oneOffNote = (actions) => `Not in a sync pair for ${actions.map((key) => ONE_OFF_NOUNS[key]).join(" and ")}. This is added once and stays on that provider only.`;
+
 const targetName = (target) => target.display || target.label || target.provider;
 
 const watchedRefs = (held, picked) => {
@@ -147,16 +151,17 @@ export default {
     };
 
     const state = {
-      type: "movie",
+      type: props?.item?.type === "show" ? "show" : "movie",
+      only: Array.isArray(props?.only) ? new Set(props.only) : null,
       providers: [],
       selectedProviders: new Set(),
       remembered: [],
       query: "",
       results: [],
       searching: false,
-      selectedItem: null,
+      selectedItem: props?.item?.tmdb ? { ...props.item } : null,
       held: null,
-      titleLoading: false,
+      titleLoading: !!props?.item?.tmdb,
       dateMode: "today",
       watchedOn: todayLocal(),
       actions: { history: true, watchlist: false, rating: false, collection: false },
@@ -192,7 +197,9 @@ export default {
         return [];
       }
     };
+    const scoped = (rows) => (state.only ? rows.filter((row) => state.only.has(providerKey(row))) : rows);
     const saveSelection = () => {
+      if (state.only) return;
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify([...state.selectedProviders])); } catch {}
     };
     const renderPoster = (item) => !item?.tmdb
@@ -211,9 +218,11 @@ export default {
     const compatibleProviders = () => state.providers.filter(providerCompatible);
     const selectedCompatibleTargets = () => selectedTargets().filter(providerCompatible);
     const normalizeActions = () => {
-      const allowed = new Set(availableActions().map(([key]) => key));
-      ACTIONS.forEach(([key]) => { if (!allowed.has(key)) state.actions[key] = false; });
-      if (!selectedActionKeys().length && allowed.size) state.actions[[...allowed][0]] = true;
+      if (!state.only && state.providers.length) {
+        const allowed = new Set(availableActions().map(([key]) => key));
+        ACTIONS.forEach(([key]) => { if (!allowed.has(key)) state.actions[key] = false; });
+        if (!selectedActionKeys().length && allowed.size) state.actions[[...allowed][0]] = true;
+      }
       for (const key of [...state.selectedProviders]) {
         const item = state.providers.find((p) => providerKey(p) === key);
         if (!item || !providerCompatible(item)) state.selectedProviders.delete(key);
@@ -292,7 +301,7 @@ export default {
           <span class="cw-mw-badge">${esc(mediaLabel(state.selectedItem.type))}</span>
           ${state.selectedItem.year ? `<span class="cw-mw-badge">${esc(state.selectedItem.year)}</span>` : ""}
         </div>
-        <button type="button" class="cw-mw-chip" data-role="change">Change</button>
+        ${state.only ? "" : `<button type="button" class="cw-mw-chip" data-role="change">Change</button>`}
       </div>
     `;
 
@@ -455,7 +464,7 @@ export default {
     const chooseView = () => `
       <div class="cw-mw-form">
         ${selectedItemHtml()}
-        <div class="cw-mw-field"><span class="cw-mw-label">What</span><div class="cw-mw-chips">${actionChips()}</div></div>
+        ${state.only ? `<p class="cw-mw-muted">${esc(oneOffNote(selectedActionKeys()))}</p>` : `<div class="cw-mw-field"><span class="cw-mw-label">What</span><div class="cw-mw-chips">${actionChips()}</div></div>`}
         <div class="cw-mw-field"><span class="cw-mw-label">Where</span><div class="cw-mw-where">${providerChips()}<div class="cw-mw-held">${heldHtml()}</div></div></div>
         ${dated() ? `<div class="cw-mw-field"><span class="cw-mw-label">When</span><div class="cw-mw-chips">
           <button type="button" class="cw-mw-chip ${state.dateMode === "today" ? "active" : ""}" data-date-mode="today">Today</button>
@@ -663,10 +672,11 @@ export default {
     const loadProviders = async () => {
       try {
         const data = await fjson(providersUrl());
-        state.providers = sortProviders(Array.isArray(data.providers) ? data.providers : []);
-        state.remembered = loadRemembered();
+        state.providers = sortProviders(scoped(Array.isArray(data.providers) ? data.providers : []));
+        state.remembered = state.only ? [] : loadRemembered();
         const allowed = new Set(state.providers.map(providerKey));
         state.selectedProviders = new Set(state.remembered.filter((key) => allowed.has(key)));
+        if (state.only && state.providers.length === 1) state.selectedProviders.add(providerKey(state.providers[0]));
         normalizeActions();
       } catch (err) {
         state.providers = [];
@@ -770,7 +780,7 @@ export default {
       if (state.selectedItem !== item) return;
       state.titleLoading = false;
       state.held = held;
-      if (Array.isArray(targets?.providers)) state.providers = sortProviders(targets.providers);
+      if (Array.isArray(targets?.providers)) state.providers = sortProviders(scoped(targets.providers));
       render();
     };
 
@@ -980,6 +990,7 @@ export default {
 
     render();
     await loadProviders();
+    if (state.selectedItem) await loadTitle();
   },
   unmount() {
     activeCleanup?.();

@@ -165,16 +165,6 @@ const anchor = () => ({ isConnected: true, classList: { add() {}, remove() {} },
 const unpaired = { provider: "MDBLIST", instance: "default", in_pair: false };
 const paired = { provider: "TRAKT", instance: "default", in_pair: true };
 
-test("the add list shows the other accounts with the sync pair note", async () => {
-  const { actions, created } = load([{ providers: [paired], hidden: [], others: [unpaired], has_pair: true }]);
-  await actions.openMenu({ anchor: anchor(), feature: "ratings", more: true, item: { title: "Michael", type: "movie" }, refs: { present: [], missing: [] } });
-  const html = created[0].innerHTML;
-  assert.match(html, /Add rating to/);
-  assert.match(html, /data-ia-ref="MDBLIST:default"/);
-  assert.doesNotMatch(html, /data-ia-ref="TRAKT:default"/);
-  assert.match(html, /Not in a sync pair for ratings\. This is added once and stays on that provider only\./);
-});
-
 test("the coverage menu keeps accounts outside the pairs out of its missing list", async () => {
   const { actions, created } = load([{ providers: [paired], hidden: [], others: [unpaired], has_pair: true }]);
   await actions.openMenu({ anchor: anchor(), feature: "ratings", item: { title: "Michael", type: "movie" }, refs: { present: [], missing: [{ provider: "MDBLIST", instance: "default" }] } });

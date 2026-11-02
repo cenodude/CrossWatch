@@ -73,6 +73,7 @@
   }
 
   const LIVE_FEATURES = { watchlist: "watchlist", synced: "history", ratings: "ratings", collection: "collection" };
+  const QUICK_ACTIONS = { watchlist: "watchlist", synced: "history", ratings: "rating", collection: "collection" };
   const itemActions = () => (window.CW?.ItemActions?.canWrite?.() ? window.CW.ItemActions : null);
   const liveFeature = (key) => {
     if (!itemActions()) return "";
@@ -186,7 +187,20 @@
     void actions.openMenu({ anchor: node, mode: "everything", item: actionItem(null), groups, onChanged: refreshPresence });
   }
 
+  function openQuickAdd(node) {
+    const key = node.closest("[data-mm-live]")?.dataset.mmLive || "";
+    window.openManualWatchedModal?.({
+      action: QUICK_ACTIONS[key],
+      item: { tmdb: tmdbOf(state.item), type: isMovie() ? "movie" : "show", title: state.meta?.title || state.item?.title || "", year: state.meta?.year || state.item?.year || "" },
+      only: otherRefs(key).map(refId),
+    });
+  }
+
   async function openItemActions(node) {
+    if (node.hasAttribute("data-ia-more")) {
+      openQuickAdd(node);
+      return;
+    }
     const actions = itemActions();
     if (node.closest("[data-mm-progress]")) {
       openProgressActions(node);
@@ -209,7 +223,6 @@
       item: actionItem(entry),
       refs: { present, missing: missingRefs(stateKey) },
       focus: node.dataset.iaRef ? { provider, instance: instance.join(":") || "default" } : null,
-      more: node.hasAttribute("data-ia-more"),
       rating: entry?.rating ?? null,
       epoch: feature === "history" ? Number(state.presence?.[key]?.last_epoch) || Number(entry?.last_epoch) || 0 : 0,
       releaseDate: feature === "history" ? releaseDate() : null,
@@ -273,10 +286,13 @@
     document.addEventListener("keydown", (event) => {
       if (root.hidden || event.key !== "Escape") return;
       if (document.getElementById("cw-trailer")?.classList.contains("show")) return;
-      if (document.querySelector(".cw-ia-pop:not([hidden]),.cw-ia-sheet-wrap:not([hidden])")) return;
+      if (document.querySelector(".cw-ia-pop:not([hidden]),.cw-ia-sheet-wrap:not([hidden]),.cx-backdrop")) return;
       event.preventDefault();
       close();
     }, true);
+    window.addEventListener("cw:manual-watched-saved", () => {
+      if (!root.hidden && !personView) void refreshPresence();
+    });
     return root;
   }
 
