@@ -316,6 +316,8 @@ def _provider_episode_list(cfg: dict[str, Any], provider: str, instance: str, tm
 
 
 def _manual_history_targets(cfg: dict[str, Any], user: Any = None) -> list[dict[str, Any]]:
+    from .editorAPI import _provider_instance_label
+
     merged: dict[tuple[str, str], dict[str, Any]] = {}
 
     for provider in sync_provider_names(upper=True):
@@ -356,11 +358,13 @@ def _manual_history_targets(cfg: dict[str, Any], user: Any = None) -> list[dict[
             except Exception:
                 pass
 
+            instance_label = _provider_instance_label(cfg, provider, instance)
             merged[(provider, instance)] = {
                 "provider": provider,
                 "instance": instance,
                 "label": label,
-                "display": label if instance == "default" else f"{label} ({instance})",
+                "instance_label": instance_label,
+                "display": label if instance == "default" else f"{label} ({instance_label})",
                 "history_enabled": history_ok,
                 "ratings_enabled": ratings_ok,
                 "watchlist_enabled": watchlist_ok,

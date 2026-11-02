@@ -358,8 +358,9 @@ export default {
         const key = providerKey(item);
         const active = state.selectedProviders.has(key);
         const instance = String(item.instance || "default");
+        const account = instance === "default" ? "" : item.instance_label || instance;
         return `<button type="button" class="cw-mw-chip cw-mw-provider-chip ${active ? "active" : ""}" data-provider-key="${esc(key)}" aria-pressed="${active ? "true" : "false"}" title="${esc(item.display || item.label || item.provider)}">
-          ${logoHtml(item.provider)}<span>${esc(item.label || item.provider)}</span>${instance !== "default" ? `<small>${esc(instance)}</small>` : ""}
+          ${logoHtml(item.provider)}<span class="cw-mw-provider-names"><span>${esc(item.label || item.provider)}</span>${account ? `<small>${esc(account)}</small>` : ""}</span>
         </button>`;
       };
       if (!groups.main.length) return `<span class="cw-mw-muted">No configured provider supports this combination.</span>`;
