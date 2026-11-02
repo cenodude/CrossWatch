@@ -128,6 +128,10 @@ def _norm_groups_claim(value: Any) -> str:
     return str(value or "").strip()[:64] or "groups"
 
 
+def _norm_identity_claim(value: Any) -> str:
+    return str(value or "").strip()[:64]
+
+
 def _norm_button_label(value: Any) -> str:
     return " ".join(str(value or "").split())[:40] or "OIDC"
 
@@ -168,6 +172,8 @@ def sanitize_config(raw: dict[str, Any] | None, previous: dict[str, Any] | None 
         "groups_claim": _norm_groups_claim(raw.get("groups_claim", previous.get("groups_claim"))),
         "allowed_groups": _norm_groups(raw.get("allowed_groups", previous.get("allowed_groups"))),
         "provision_access": _norm_provision_access(raw.get("provision_access", previous.get("provision_access"))),
+        "match_identities": bool(raw.get("match_identities", previous.get("match_identities", False))),
+        "identity_claim": _norm_identity_claim(raw.get("identity_claim", previous.get("identity_claim"))),
     }
 
 
@@ -185,6 +191,8 @@ def public_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "groups_claim": _norm_groups_claim(oidc.get("groups_claim")),
         "allowed_groups": _norm_groups(oidc.get("allowed_groups")),
         "provision_access": _norm_provision_access(oidc.get("provision_access")),
+        "match_identities": bool(oidc.get("match_identities", False)),
+        "identity_claim": _norm_identity_claim(oidc.get("identity_claim")),
         "configured": configured(cfg),
         "login_available": login_available(cfg),
     }
@@ -196,6 +204,10 @@ def allowed_groups(cfg: dict[str, Any]) -> list[str]:
 
 def provisioning_enabled(cfg: dict[str, Any]) -> bool:
     return configured(cfg) and bool(_oidc_cfg(cfg).get("provision")) and bool(allowed_groups(cfg))
+
+
+def match_identities_enabled(cfg: dict[str, Any]) -> bool:
+    return bool(_oidc_cfg(cfg).get("match_identities"))
 
 
 def provision_access(cfg: dict[str, Any]) -> str:
@@ -514,20 +526,23 @@ def _fetch_userinfo(disco: dict[str, Any], access_token: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _identity_from_claims(issuer: str, claims: dict[str, Any], userinfo: dict[str, Any], groups_claim: str = "groups") -> dict[str, Any]:
+def _identity_from_claims(issuer: str, claims: dict[str, Any], userinfo: dict[str, Any], groups_claim: str = "groups", identity_claim: str = "") -> dict[str, Any]:
     sub = str(claims.get("sub") or "").strip()
     if str(userinfo.get("sub") or "").strip() != sub:
         userinfo = {}
     merged = {**claims, **userinfo}
     email_source = userinfo if str(userinfo.get("email") or "").strip() else claims
     username = str(merged.get("preferred_username") or merged.get("name") or merged.get("email") or merged.get("sub") or "").strip()
+    preferred_username = str(merged.get("preferred_username") or "").strip()
+    custom_name = merged.get(_norm_identity_claim(identity_claim))
     return {
         "iss": _norm_issuer(issuer),
         "sub": sub,
         "username": username,
         "email": str(email_source.get("email") or "").strip(),
         "email_verified": _claim_true(email_source.get("email_verified")),
-        "preferred_username": str(merged.get("preferred_username") or "").strip(),
+        "preferred_username": preferred_username,
+        "identity_name": (custom_name.strip() if isinstance(custom_name, str) else "") or preferred_username,
         "groups": _norm_groups(merged.get(_norm_groups_claim(groups_claim)), None),
         "picture": str(merged.get("picture") or "").strip(),
     }
@@ -624,7 +639,7 @@ def check_callback(cfg: dict[str, Any], *, state: str, code: str) -> dict[str, A
         "remember_me": bool(rec.get("remember_me")),
         "target_user_id": str(rec.get("target_user_id") or ""),
         "next_url": str(rec.get("next_url") or ""),
-        "identity": _identity_from_claims(str(oidc.get("issuer") or ""), claims, userinfo, str(oidc.get("groups_claim") or "")),
+        "identity": _identity_from_claims(str(oidc.get("issuer") or ""), claims, userinfo, str(oidc.get("groups_claim") or ""), str(oidc.get("identity_claim") or "")),
     }
 
 

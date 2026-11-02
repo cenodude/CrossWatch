@@ -872,6 +872,7 @@ const ensureStdEnabledToggle = () => {
     if (authSetupPending()) { _pairs = []; return; }
     try {
       const r = await fetch("/api/pairs", { cache: "no-store" });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const arr = await r.json();
       _pairs = Array.isArray(arr) ? arr.map((p, index) => ({
         id: String(p.id),
@@ -885,7 +886,7 @@ const ensureStdEnabledToggle = () => {
         mode: String(p.mode || "").trim(),
         features: p.features && typeof p.features === "object" ? p.features : {},
       })) : [];
-    } catch (e) { console.warn("[scheduler] /api/pairs failed", e); _pairs = []; }
+    } catch (e) { console.warn("[scheduler] /api/pairs failed", e); }
   };
   const fetchCaptureProviders = async () => {
     _captureProviders = [];
@@ -2769,6 +2770,20 @@ const ensureStdEnabledToggle = () => {
     if (section && section !== "scheduling") return;
     setCaptureDraftJobs([]);
     loadScheduling().catch(err => console.warn("scheduler reload failed", err));
+  });
+
+  const refreshPairs = async () => {
+    if (_loading || authSetupPending() || !$("#schAdv")) return;
+    const before = JSON.stringify(_pairs);
+    await fetchPairs();
+    if (JSON.stringify(_pairs) === before) return;
+    renderJobs();
+    renderWorkflows();
+    renderEventRules();
+  };
+  document.addEventListener("cw-settings-pane-changed", (e) => {
+    if (String(e?.detail?.pane || "").toLowerCase() !== "scheduling") return;
+    refreshPairs().catch(err => console.warn("scheduler pairs refresh failed", err));
   });
 
   const getPendingCapturePrefills = () => {

@@ -280,6 +280,15 @@ function cwSetInputValue(id, value) {
   if (el) el.value = String(value || "");
 }
 
+function cwAppAuthOidcProvisionFields() {
+  const fields = document.getElementById("app_auth_oidc_provision_fields");
+  if (fields) fields.hidden = document.getElementById("app_auth_oidc_provision")?.value !== "true";
+}
+
+document.addEventListener("change", (event) => {
+  if (event.target?.id === "app_auth_oidc_provision") cwAppAuthOidcProvisionFields();
+}, true);
+
 async function cwAppAuthOidcRefreshStatus() {
   let cfg = null;
   try {
@@ -297,6 +306,8 @@ async function cwAppAuthOidcRefreshStatus() {
       cwSetSelectValue("app_auth_oidc_provision_access", cfg.provision_access === "readonly" ? "readonly" : "full");
       cwSetInputValue("app_auth_oidc_allowed_groups", (Array.isArray(cfg.allowed_groups) ? cfg.allowed_groups : []).join(", "));
       cwSetInputValue("app_auth_oidc_groups_claim", cfg.groups_claim && cfg.groups_claim !== "groups" ? cfg.groups_claim : "");
+      cwSetSelectValue("app_auth_oidc_match_identities", cfg.match_identities ? "true" : "false");
+      cwSetInputValue("app_auth_oidc_identity_claim", cfg.identity_claim || "");
       const secret = document.getElementById("app_auth_oidc_client_secret");
       if (secret) secret.placeholder = cfg.client_secret_configured ? "(leave blank to keep)" : "Client secret";
     }
@@ -345,6 +356,8 @@ function cwAppAuthOidcState(raw) {
     provision_access: raw.provision_access === "readonly" ? "readonly" : "full",
     allowed_groups: groups.slice(0, 50),
     groups_claim: String(raw.groups_claim || "").trim().slice(0, 64) || "groups",
+    match_identities: !!raw.match_identities,
+    identity_claim: String(raw.identity_claim || "").trim().slice(0, 64),
   };
 }
 
@@ -361,6 +374,8 @@ function cwAppAuthOidcFormState() {
     provision_access: val("app_auth_oidc_provision_access"),
     allowed_groups: val("app_auth_oidc_allowed_groups"),
     groups_claim: val("app_auth_oidc_groups_claim"),
+    match_identities: val("app_auth_oidc_match_identities") === "true",
+    identity_claim: val("app_auth_oidc_identity_claim"),
   });
 }
 

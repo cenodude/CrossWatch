@@ -233,6 +233,34 @@ function schedulerPairs(pairs) {
   return context;
 }
 
+test("schedule pairs redraw on opening the pane only when they changed", async () => {
+  const source = read("js/scheduler.js");
+  const start = source.indexOf("  const refreshPairs = async () => {");
+  const end = source.indexOf('  document.addEventListener("cw-settings-pane-changed"', start);
+  const renders = [];
+  const render = (name) => () => renders.push(name);
+  const context = vm.createContext({
+    _pairs: [{ id: "a" }],
+    _loading: false,
+    authSetupPending: () => false,
+    $: () => ({}),
+    fetchPairs: async () => {},
+    renderJobs: render("jobs"),
+    renderWorkflows: render("workflows"),
+    renderEventRules: render("events"),
+  });
+  vm.runInContext(`var _pairs = this._pairs, _loading = false; ${source.slice(start, end)}; this.refreshPairs = refreshPairs;`, context);
+  await context.refreshPairs();
+  assert.deepEqual(renders, []);
+  vm.runInContext('fetchPairs = async () => { _pairs = [{ id: "a", features: { ratings: true } }]; }', context);
+  await context.refreshPairs();
+  assert.deepEqual(renders, ["jobs", "workflows", "events"]);
+  renders.length = 0;
+  vm.runInContext("_loading = true", context);
+  await context.refreshPairs();
+  assert.deepEqual(renders, []);
+});
+
 test("schedule pair dropdown keeps the Sync pairs order", () => {
   const context = schedulerPairs([
     { id: "b", order: 1, label: "TRAKT -> PLEX one-way", enabled: true },

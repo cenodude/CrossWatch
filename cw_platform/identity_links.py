@@ -8,9 +8,11 @@ from typing import Any
 
 from cw_platform.provider_instances import (
     get_instance_block,
+    list_instance_ids,
     list_sync_user_ids,
     normalize_instance_id,
     split_sync_user_id,
+    user_profiles_for_instance,
 )
 
 IDENTITY_PROVIDERS = frozenset({"plex", "emby", "jellyfin", "silo"})
@@ -46,6 +48,20 @@ def identities_by_key(cfg: Mapping[str, Any], provider: str, parent: Any) -> dic
         name = " ".join(str(entry.get("username") or entry.get("user") or "").split())
         if name:
             out[ref[1]] = {"instance": inst, "username": name}
+    return out
+
+
+def unowned_identities_named(cfg: Mapping[str, Any], name: Any) -> list[dict[str, str]]:
+    wanted = " ".join(str(name or "").split()).casefold()
+    if not wanted:
+        return []
+    out: list[dict[str, str]] = []
+    for provider in sorted(IDENTITY_PROVIDERS):
+        for parent in list_instance_ids(cfg, provider):
+            rows = [row for row in identities_by_key(cfg, provider, parent).values() if row["username"].casefold() == wanted]
+            if len(rows) > 1 or any(user_profiles_for_instance(cfg, provider, row["instance"]) for row in rows):
+                return []
+            out.extend({"provider": provider, "instance": row["instance"]} for row in rows)
     return out
 
 
