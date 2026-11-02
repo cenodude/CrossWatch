@@ -47,6 +47,11 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
     return data;
   };
   const selectedPair = () => pairs.find(pair => pair.id === $("[data-pair]").value);
+  const pairOption = value => {
+    const pair = pairs.find(pair => pair.id === value);
+    return pair ? window.CW?.syncPairOptionData?.({source:pair.source.provider, source_instance:pair.source.instance,
+      target:pair.target.provider, target_instance:pair.target.instance, mode:pair.mode}) || null : null;
+  };
   const reset = group => {
     editingId = group?.id || "";
     $("[data-name]").value = group?.name || "";
@@ -89,6 +94,7 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
       pair[side].provider === provider && pair[side].instance === instance));
     $("[data-pair]").innerHTML = pairs.map(pair=>`<option value="${esc(pair.id)}">${esc(pair.name)}</option>`).join("");
     if (pairs.some(pair=>pair.id === selected)) $("[data-pair]").value = selected;
+    window.CW?.IconSelect?.enhance?.($("[data-pair]"), {className:"cw-plain-select", getOptionData:pairOption});
     render(); reset();
   };
   const mutate = async body => {

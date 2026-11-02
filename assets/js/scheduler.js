@@ -282,6 +282,31 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
 @media (max-width:980px){#sec-scheduling .sch-std-head{grid-template-columns:1fr;padding-bottom:4px}#sec-scheduling .sch-std-head .cx-toggle{justify-self:start}#sec-scheduling .sch-std-inline{grid-template-columns:1fr}.sch-adv .cw-panel-head{grid-template-columns:1fr}.sch-adv .cw-panel-head .cx-toggle{justify-self:start}}
 @media (max-width:760px){#schAdv button{min-width:44px;min-height:44px}.sch-adv td[data-label="Days"]{min-width:0}.sch-adv .chipdays{display:grid;width:100%;grid-template-columns:repeat(2,minmax(0,1fr))}.sch-adv .chipdays label{width:100%;min-height:44px}.sch-adv *{min-width:0;box-sizing:border-box}.sch-adv :is(.sch-adv-section,.sch-workflow-card){margin-inline:0!important;padding:12px}.sch-adv :is(.sch-adv-section-head,.sch-plan-summary){flex-wrap:wrap}.sch-adv :is(.cw-panel-head,.sch-adv-section,.sch-workflow-card,.sch-workflow-steps,.sch-card-head-copy){grid-template-columns:minmax(0,1fr)}.sch-adv :is(input,select,.cw-icon-select){max-width:100%}.sch-adv .sch-workflow-step{grid-template-columns:24px minmax(0,1fr) auto auto}.sch-adv .sch-workflow-step .cw-icon-select{grid-column:1/-1}.sch-adv .sch-adv-section-copy{overflow-wrap:anywhere}#sec-scheduling .sch-std-title{font-size:22px}#sec-scheduling .sch-std-wizard{padding:0 16px 16px}.sch-adv .cw-panel-head{padding:16px}.sch-adv-head-title{font-size:22px}.sch-adv .cw-panel-head .cx-toggle{margin-top:10px}.sch-workflow-top{grid-template-columns:1fr}.sch-workflow-actions{justify-content:flex-start}.sch-workflow-controls{justify-content:flex-start}.sch-workflow-controls select,.sch-workflow-controls input{width:100%!important}.sch-workflow-step{grid-template-columns:24px 30px minmax(0,1fr) auto auto;width:auto}}
 .sch-webhooks .sch-adv-head-copy p{max-width:none}
+.sch-adv .sch-event-cell-head{display:none;align-items:center;min-height:24px}
+.sch-adv .sch-event-cell-head .sch-help{width:22px;height:22px;min-width:22px}
+.sch-adv .sch-event-cell-head .sch-help::before{font-size:17px}
+.sch-adv td[data-label="Guardrails"] input{width:100%!important;min-width:0!important}
+@media (max-width:1599px){.sch-adv .sch-event-cell-head{display:flex}.sch-adv .sch-event-table td[data-label="Action"] .stack>.subnote{display:none}}
+@media (max-width:760px){.sch-adv .sch-event-table tbody td:has(>.sch-event-cell-head)::before{content:none}}
+@media (min-width:761px) and (max-width:1599px){
+.sch-adv .sch-event-table,.sch-adv .sch-event-table tbody{display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
+.sch-adv .sch-event-table thead{display:none}
+.sch-adv .sch-event-table tbody tr{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));border:1px solid var(--sch-border-soft);border-radius:16px}
+.sch-adv .sch-event-table tbody td{display:grid;align-content:space-between;gap:4px;min-width:0;width:auto;padding:6px 8px;border:none;border-radius:0}
+.sch-adv .sch-event-table td[data-label="Source"]{grid-column:span 7}
+.sch-adv .sch-event-table td[data-label="Action"]{grid-column:span 6}
+.sch-adv .sch-event-table td[data-label="Event"]{grid-column:span 2}
+.sch-adv .sch-event-table td[data-label="Filters"]{grid-column:span 3}
+.sch-adv .sch-event-table td[data-label="Guardrails"]{grid-column:span 4}
+.sch-adv .sch-event-table td[data-label="Active"]{justify-items:start;padding-bottom:14px}
+.sch-adv .sch-event-table td[data-label="Remove"]{align-content:end;padding-bottom:14px}
+.sch-adv .sch-event-table td[data-label="Source"] .stack{grid-template-columns:minmax(0,1fr) minmax(0,2fr)}
+.sch-adv .sch-event-table .event-filter-stack{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+.sch-adv .sch-event-table td[data-label="Guardrails"] .stack.three{gap:4px}
+.sch-adv .sch-event-table td[data-label="Guardrails"] .field-mini{gap:2px}
+.sch-adv .sch-event-table td[data-label="Guardrails"] .field-mini .subnote{min-height:0;font-size:9px;letter-spacing:.04em;white-space:nowrap}
+.sch-adv .sch-event-table td[data-label="Guardrails"] input{padding:0 8px}
+}
 .sch-hook-services{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
 .sch-hook-service{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:12px;min-height:76px;padding:12px 14px;border:1px solid var(--sch-border);border-radius:14px;background:var(--sch-card-bg);color:var(--sch-fg);font:inherit;text-align:left;cursor:pointer;transition:border-color .14s ease,box-shadow .14s ease}
 .sch-hook-service:hover{border-color:var(--sch-fg-soft)}
@@ -848,8 +873,9 @@ const ensureStdEnabledToggle = () => {
     try {
       const r = await fetch("/api/pairs", { cache: "no-store" });
       const arr = await r.json();
-      _pairs = Array.isArray(arr) ? arr.map(p => ({
+      _pairs = Array.isArray(arr) ? arr.map((p, index) => ({
         id: String(p.id),
+        order: index + 1,
         label: `${String(p.source || "").toUpperCase()} -> ${String(p.target || "").toUpperCase()} ${String(p.mode || "")}`.trim(),
         enabled: !!p.enabled,
         source: String(p.source || "").trim().toLowerCase(),
@@ -857,6 +883,7 @@ const ensureStdEnabledToggle = () => {
         source_instance: String(p.source_instance || "default").trim() || "default",
         target_instance: String(p.target_instance || "default").trim() || "default",
         mode: String(p.mode || "").trim(),
+        features: p.features && typeof p.features === "object" ? p.features : {},
       })) : [];
     } catch (e) { console.warn("[scheduler] /api/pairs failed", e); _pairs = []; }
   };
@@ -1036,8 +1063,12 @@ const ensureStdEnabledToggle = () => {
     return line;
   };
   const fieldMini = (label, control) => stackWrap("field-mini", Object.assign(el("div", "subnote"), { textContent: label }), control);
-  const fieldMiniHelp = (label, control, helpKey) => {
+  const helpHead = (label, helpKey) => {
     const head = el("div", "subnote");
+    if (!helpKey) {
+      head.textContent = label;
+      return head;
+    }
     const wrap = el("span", "th-help");
     wrap.appendChild(Object.assign(el("span"), { textContent: label }));
     const btn = Object.assign(el("button"), {
@@ -1053,7 +1084,13 @@ const ensureStdEnabledToggle = () => {
     };
     wrap.appendChild(btn);
     head.appendChild(wrap);
-    return stackWrap("field-mini", head, control);
+    return head;
+  };
+  const fieldMiniHelp = (label, control, helpKey) => stackWrap("field-mini", helpHead(label, helpKey), control);
+  const eventCell = (label, helpKey, ...children) => {
+    const head = helpHead(label, helpKey);
+    head.classList.add("sch-event-cell-head");
+    return tdCell(label, head, ...children);
   };
   const setWebhookToggleState = (input, on) => {
     const toggle = input?.closest(".cx-toggle");
@@ -1284,19 +1321,6 @@ const ensureStdEnabledToggle = () => {
     const raw = String(value || "").trim();
     return !raw || raw.toLowerCase() === "default" ? "Default" : raw;
   };
-  const instanceBadge = (value) => {
-    const raw = String(value || "").trim();
-    if (!raw || raw.toLowerCase() === "default") return "D";
-    const upper = raw.toUpperCase();
-    const prof = upper.match(/(^|[^A-Z0-9])(P\d{1,3})(?=[^A-Z0-9]|$)/);
-    if (prof?.[2]) return prof[2];
-    const parts = upper.split(/[^A-Z0-9]+/).filter(Boolean);
-    if (parts.length) {
-      const last = parts[parts.length - 1];
-      if (last.length <= 4) return last;
-    }
-    return upper.slice(0, 4);
-  };
   const iconMeta = (value) => {
     const key = String(value || "").trim();
     const src = providerIcon(key);
@@ -1306,31 +1330,25 @@ const ensureStdEnabledToggle = () => {
     const route = [...eventRoutesFor("watcher"), ...eventRoutesFor("webhook")]
       .find((item) => String(item?.id || "") === String(value || ""));
     if (!route) return null;
-    const icons = [iconMeta(route.provider), iconMeta(route.sink)].filter(Boolean);
     return {
-      label: "",
-      badges: route.sink
-        ? [instanceBadge(route.provider_instance), instanceBadge(route.sink_instance)]
-        : [instanceBadge(route.provider_instance)],
-      note: "",
-      showNote: false,
-      icons,
-      separator: icons.length > 1 ? "arrow" : "",
+      html: window.CW?.syncProfileRouteHTML?.({
+        source: route.provider,
+        source_instance: route.provider_instance,
+        target: route.sink,
+        target_instance: route.sink_instance,
+      }),
     };
   };
-  const pairOptionData = (value, fallbackLabel = "") => {
+  const pairOptionData = (value, usedInSteps = []) => {
     const pair = _pairs.find((item) => String(item?.id || "") === String(value || ""));
     if (!pair) return null;
-    const icons = [iconMeta(pair.source), iconMeta(pair.target)].filter(Boolean);
-    return {
-      label: "",
-      badges: [instanceBadge(pair.source_instance), instanceBadge(pair.target_instance)],
-      note: "",
-      showNote: false,
-      icons,
-      separator: icons.length > 1 ? "arrow" : "",
-    };
+    const tags = [pair.enabled ? "" : "Disabled", window.CW?.syncFeatureDotsHTML?.(pair) ? "" : "No features"].filter(Boolean);
+    const menuTags = usedInSteps.length ? [`Step ${usedInSteps.join(", ")}`] : [];
+    return window.CW?.syncPairOptionData?.(pair, { tags, menuTags }) || null;
   };
+  const stepsUsingPair = (workflow, step, value) => workflow.steps.flatMap((item, index) => (
+    value && item !== step && String(item.pair_id || "") === String(value) ? [index + 1] : []
+  ));
   const enhanceIconSelect = (select, getOptionData) => {
     const helper = window.CW?.IconSelect?.enhance;
     if (typeof helper !== "function") return select;
@@ -1344,7 +1362,7 @@ const ensureStdEnabledToggle = () => {
   };
   const pairOptions = (selected, includeNoneText = "Select sync pair") => [
     ["", includeNoneText],
-    ...[..._pairs].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base", numeric: true })).map(p => [p.id, p.label + (p.enabled ? "" : " (disabled)"), { disabled: !p.enabled }])
+    ..._pairs.map(p => [p.id, p.label + (p.enabled ? "" : " (disabled)"), { disabled: !p.enabled }])
   ];
   const softenStatus = (value = "") => {
     const text = String(value || "").trim();
@@ -1651,7 +1669,7 @@ const ensureStdEnabledToggle = () => {
       grip,
       index,
       enhanceIconSelect(sel, (value, option) => {
-        const data = pairOptionData(value, String(option?.textContent || "").trim());
+        const data = pairOptionData(value, stepsUsingPair(workflow, step, value));
         return data ? { ...data, disabled: !!option?.disabled } : null;
       }),
       active,
@@ -1788,7 +1806,7 @@ const ensureStdEnabledToggle = () => {
     const tdDays = tdCell("Days", wrap);
     tr.append(
       tdCell("Sync pair", enhanceIconSelect(sel, (value, option) => {
-        const data = pairOptionData(value, String(option?.textContent || "").trim());
+        const data = pairOptionData(value);
         return data ? { ...data, disabled: !!option?.disabled } : null;
       })),
       tdCell("Time", t),
@@ -2050,21 +2068,21 @@ const ensureStdEnabledToggle = () => {
     del.onclick = () => { _eventRules = _eventRules.filter(x => x !== r); renderEventRules(); };
 
     tr.append(
-      tdCell("Source", stackWrap("stack", sourceSel, enhanceIconSelect(routeSel, (value, option) => {
+      eventCell("Source", "source", stackWrap("stack", sourceSel, enhanceIconSelect(routeSel, (value, option) => {
         const data = routeOptionData(value, String(option?.textContent || "").trim());
         return data ? { ...data, disabled: !!option?.disabled } : null;
       }))),
-      tdCell("Event", eventSel),
-      tdCell("Filters", stackWrap("stack event-filter-stack", mediaSel, minProgressInput)),
-      tdCell("Action", stackWrap(
+      eventCell("Event", "event", eventSel),
+      eventCell("Filters", "filters", stackWrap("stack event-filter-stack", mediaSel, minProgressInput)),
+      eventCell("Action", "action", stackWrap(
         "stack",
         Object.assign(el("div", "subnote"), { textContent: "Sync pair" }),
         enhanceIconSelect(pairSel, (value, option) => {
-          const data = pairOptionData(value, String(option?.textContent || "").trim());
+          const data = pairOptionData(value);
           return data ? { ...data, disabled: !!option?.disabled } : null;
         })
       )),
-      tdCell("Guardrails", stackWrap(
+      eventCell("Guardrails", "guardrails", stackWrap(
         "stack",
         stackWrap(
           "stack three",
@@ -2073,7 +2091,7 @@ const ensureStdEnabledToggle = () => {
           fieldMini("Max / hour", rateInput)
         )
       )),
-      tdCell("Active", activeChk),
+      eventCell("Active", "", activeChk),
       tdCell("Remove", del)
     );
     return tr;
@@ -2189,15 +2207,15 @@ const ensureStdEnabledToggle = () => {
       <div class="sch-adv-section-copy">Trigger a sync pair from watcher or webhook activity with filters and guardrails.</div>
     </div>
   </div>
-  <table>
+  <table class="sch-event-table">
     <thead><tr>
-      <th style="width:24%"><span class="th-help">Source<button type="button" class="sch-help" aria-label="Source help" title="Source help" data-help-key="source"></button></span></th>
-      <th style="width:12%"><span class="th-help">Event<button type="button" class="sch-help" aria-label="Event help" title="Event help" data-help-key="event"></button></span></th>
-      <th style="width:16%"><span class="th-help">Filters<button type="button" class="sch-help" aria-label="Filters help" title="Filters help" data-help-key="filters"></button></span></th>
-      <th style="width:22%"><span class="th-help">Action<button type="button" class="sch-help" aria-label="Action help" title="Action help" data-help-key="action"></button></span></th>
+      <th style="width:25%"><span class="th-help">Source<button type="button" class="sch-help" aria-label="Source help" title="Source help" data-help-key="source"></button></span></th>
+      <th style="width:9%"><span class="th-help">Event<button type="button" class="sch-help" aria-label="Event help" title="Event help" data-help-key="event"></button></span></th>
+      <th style="width:12%"><span class="th-help">Filters<button type="button" class="sch-help" aria-label="Filters help" title="Filters help" data-help-key="filters"></button></span></th>
+      <th style="width:26%"><span class="th-help">Action<button type="button" class="sch-help" aria-label="Action help" title="Action help" data-help-key="action"></button></span></th>
       <th style="width:18%"><span class="th-help">Guardrails<button type="button" class="sch-help" aria-label="Guardrails help" title="Guardrails help" data-help-key="guardrails"></button></span></th>
       <th style="width:5%">Active</th>
-      <th style="width:6%"></th>
+      <th style="width:5%"></th>
     </tr></thead>
     <tbody id="schEventRulesBody"></tbody>
   </table>

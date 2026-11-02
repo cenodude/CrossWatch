@@ -39,6 +39,7 @@
       const pair = session.pair || {};
       const endpoint = side => `${pair[side] || "Provider"}${pair[`${side}_instance`] && pair[`${side}_instance`] !== "default" ? ` · ${pair[`${side}_instance`]}` : ""}`;
       const label = `${endpoint("source")} ${pair.mode === "two-way" ? "↔" : "→"} ${endpoint("target")}`;
+      const route = window.CW?.syncProfileRouteHTML?.(pair) || esc(label);
       const [status, action, icon] = states[session.status] || states.error;
       const time = session.planned_at ? new Date(session.planned_at * 1000).toLocaleString() : "";
       notifications.push({
@@ -46,7 +47,7 @@
         href: `/#interactive_sync?session=${encodeURIComponent(session.id)}`,
         action, time: session.planned_at,
       });
-      return `<li><span class="material-symbols-rounded cw-review-icon" aria-hidden="true">${icon}</span><div class="cw-review-copy"><strong>${esc(pair.name || label)}</strong>${pair.name ? `<span>${esc(label)}</span>` : ""}<small>${esc(status)}${time ? ` · ${esc(time)}` : ""}</small></div><a class="cw-review-link" href="#interactive_sync?session=${encodeURIComponent(session.id)}" aria-label="${esc(`${action}: ${pair.name || label}`)}">${action}<span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></a></li>`;
+      return `<li><span class="material-symbols-rounded cw-review-icon" aria-hidden="true">${icon}</span><div class="cw-review-copy"><strong>${pair.name ? esc(pair.name) : route}</strong>${pair.name ? `<span>${route}</span>` : ""}<small>${esc(status)}${time ? ` · ${esc(time)}` : ""}</small></div><a class="cw-review-link" href="#interactive_sync?session=${encodeURIComponent(session.id)}" aria-label="${esc(`${action}: ${pair.name || label}`)}">${action}<span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></a></li>`;
     }).join("");
     const html = `<h3>Sync reviews</h3>${error ? '<p>Could not load your reviews. <button type="button" data-reviews-retry>Try again</button></p>' : `<ul>${body}</ul><p>Open reviews stay available for one hour of inactivity, until closed, or until CrossWatch restarts.</p>`}`;
     window.CW?.Notifications?.setSource("sync-reviews", { items: notifications, loading, error: error ? "Could not load sync reviews." : "" });

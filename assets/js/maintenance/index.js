@@ -450,7 +450,9 @@ const MaintenancePage = {
       try {
         const data = await fjson("/api/maintenance/support/scopes");
         pairList = (Array.isArray(data?.pairs) ? data.pairs : []).filter(pair => pair?.id).map((pair, index) => ({
+          ...pair,
           id: String(pair.id),
+          order: index + 1,
           label: `${index + 1} · ${pair.label || pair.id}${pair.enabled === false ? " (disabled)" : ""}`,
           features: Array.isArray(pair.features) ? pair.features.map(String) : [],
         }));
@@ -461,7 +463,14 @@ const MaintenancePage = {
         ? pairList.map(pair => `<option value="${escapeHtml(pair.id)}">${escapeHtml(pair.label)}</option>`).join("")
         : '<option value="">No sync pairs configured</option>';
       if (pairList.some(pair => pair.id === current)) select.value = current;
-      window.CW?.IconSelect?.enhance(select, { className: "cw-plain-select cxm-pair-select", menuMinWidth: 260, sortAlphabetically: true });
+      window.CW?.IconSelect?.enhance(select, {
+        className: "cw-plain-select cxm-pair-select",
+        menuMinWidth: 260,
+        getOptionData: value => {
+          const pair = pairList.find(pair => pair.id === value);
+          return pair ? window.CW?.syncPairOptionData?.(pair, { tags: pair.enabled === false ? ["Disabled"] : [] }) || null : null;
+        },
+      });
       renderPairFeatures();
     }
     function setPairOpen(open) {

@@ -32,6 +32,9 @@
 .an-page .an-notice>div{flex:1;min-width:0}
 .an-page .an-notice p{color:var(--an-muted);font-size:12px;margin-top:3px;overflow-wrap:anywhere}
 .an-page .an-notice strong{font-size:13px}
+.an-page .an-route-note,.an-page .an-route-note>span{display:flex;align-items:center;flex-wrap:wrap;gap:5px 8px}
+.an-page .an-route-note>span{gap:5px}
+.an-page .an-route-note{margin-top:7px}
 .an-page .an-notice>.material-symbols-rounded{color:var(--an-warning);font-size:24px}
 .an-page .an-error{border-color:color-mix(in srgb,var(--an-error) 32%,var(--an-border));background:color-mix(in srgb,var(--an-error) 5%,var(--an-panel))}
 .an-page .an-error>.material-symbols-rounded{color:var(--an-error)}
@@ -39,7 +42,7 @@
 .an-page .an-scope-bar>label{display:flex;align-items:center;gap:14px;font-size:12px;font-weight:600;flex:1;min-width:0}
 .an-page select{border:1px solid var(--an-border);border-radius:9px;padding:9px 32px 9px 12px;min-height:40px;background-color:var(--an-card);color:var(--an-text);font-size:12px;max-width:100%}
 .an-page #an-pair{min-width:0;width:min(100%,300px);font-size:13px;font-weight:600}
-.an-page #an-pair+.cw-icon-select{flex:0 1 300px;min-width:0;width:300px;max-width:100%}
+.an-page #an-pair+.cw-icon-select{flex:0 1 430px;min-width:0;width:430px;max-width:100%}
 .an-page #an-pair+.cw-icon-select .cw-icon-select-btn{min-height:43px;height:auto;padding:10px 12px;font-size:13px}
 .an-page #an-pair+.cw-icon-select .cw-icon-select-label,.an-pair-menu .cw-icon-select-label{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;line-height:1.5}
 .an-pair-menu{max-width:calc(100vw - 24px);box-sizing:border-box}

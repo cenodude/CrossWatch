@@ -23,6 +23,9 @@
 .is-route { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; border: 1px solid var(--is-line); background: var(--is-surface); padding: 18px 22px; border-radius: 13px; }
 .is-route > .material-symbols-rounded { color: var(--is-accent); }
 .is-route-mode { margin-left: auto; color: var(--is-muted); font-size: 12px; }
+.is-route .cw-sync-pair-route { gap: 8px; }
+.is-route .cw-sync-provider { font-size: 14px; }
+.is-route .cw-sync-provider img { flex-basis: 18px; width: 18px; height: 18px; }
 .is-status { display: flex; align-items: center; gap: 12px; padding: 20px 4px; font-size: 13px; }
 .is-status > span { color: var(--cw-theme-good); }
 .is-page .is-status.is-recheck > span { color: var(--cw-theme-warning); }

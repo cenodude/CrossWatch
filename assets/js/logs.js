@@ -194,8 +194,8 @@ const LogsPage = {
         let listing = await api('', {channel, ...scope()});
         if (!alive || token !== sequence) return;
         pairs=listing.pairs || [];latestRunId=listing.latest_run_id || '';
-        const options='<option value="">All pairs</option>'+[...pairs].sort((a,b)=>String(a.label).localeCompare(String(b.label),undefined,{sensitivity:"base",numeric:true})).map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('')+(pairId&&!pairs.some(p=>p.id===pairId)?`<option value="${esc(pairId)}" disabled>Pair unavailable</option>`:'');
-        if($('[data-pair]').innerHTML!==options){$('[data-pair]').innerHTML=options;$('[data-pair]').value=pairId;$('[data-pair]').dispatchEvent(new Event('change'));}
+        const options='<option value="">All pairs</option>'+pairs.map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('')+(pairId&&!pairs.some(p=>p.id===pairId)?`<option value="${esc(pairId)}" disabled>Pair unavailable</option>`:'');
+        if($('[data-pair]').innerHTML!==options){$('[data-pair]').innerHTML=options;$('[data-pair]').value=pairId;window.CW?.IconSelect?.enhance?.($('[data-pair]'),{className:'cw-plain-select',getOptionData:value=>{const pair=pairs.find(p=>p.id===value);return pair?.source?window.CW?.syncPairOptionData?.(pair)||null:null;}});$('[data-pair]').dispatchEvent(new Event('change'));}
         if(latestRequested){
           latestRequested=false;
           if(latestRunId){runId=latestRunId;listing=await api('',{channel,...scope()});if(!alive||token!==sequence)return;}
