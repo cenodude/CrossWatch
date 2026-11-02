@@ -119,6 +119,19 @@ test("a normal Quick add still opens on the action it was asked for", async () =
   assert.doesNotMatch(root.innerHTML, /sync pair/);
 });
 
+test("provider buttons show the custom account name", async () => {
+  const named = { ...both, instance: "CW-P01", instance_label: "Living room", display: "MDBList (Living room)" };
+  const root = await mountQuickAdd({ action: "rating", item: { tmdb: "1", type: "movie", title: "Michael" }, only: ["MDBLIST:CW-P01"] }, [named]);
+  assert.ok(root.innerHTML.includes("<small>Living room</small>"));
+  assert.ok(!root.innerHTML.includes("<small>CW-P01</small>"));
+});
+
+test("provider buttons fall back to the instance id without a custom name", async () => {
+  const plain = { ...both, instance: "CW-P01" };
+  const root = await mountQuickAdd({ action: "rating", item: { tmdb: "1", type: "movie", title: "Michael" }, only: ["MDBLIST:CW-P01"] }, [plain]);
+  assert.ok(root.innerHTML.includes("<small>CW-P01</small>"));
+});
+
 test("no stored data means no note", () => {
   assert.deepEqual(heldNotes(null, ["history", "rating"], [trakt]), []);
   assert.deepEqual(heldNotes({}, ["history"], [trakt]), []);

@@ -179,6 +179,22 @@ ROW = {"provider": "TRAKT", "instance": "default", "history_enabled": True, "wat
 ANILIST = {"provider": "ANILIST", "instance": "default", "history_enabled": True}
 
 
+def test_quick_add_targets_use_the_custom_account_name(monkeypatch) -> None:
+    import api.editorAPI as editor
+
+    ops = type("Ops", (), {"features": lambda self: {"history": True}, "is_configured": lambda self, cfg: True, "label": lambda self: "Trakt"})()
+    monkeypatch.setattr(manualAPI, "sync_provider_names", lambda upper=True: ["TRAKT"])
+    monkeypatch.setattr(manualAPI, "load_sync_ops", lambda provider: ops)
+    monkeypatch.setattr(manualAPI, "list_instance_ids", lambda cfg, provider: ["default", "P01"])
+    monkeypatch.setattr(manualAPI, "build_provider_config_view", lambda cfg, provider, instance: {})
+    monkeypatch.setattr(manualAPI, "history_rewatch_supported", lambda provider, ops, mode: False)
+    monkeypatch.setattr(editor, "_provider_instance_label", lambda cfg, provider, instance: "Living room" if instance == "P01" else "Default")
+    rows = {row["instance"]: row for row in manualAPI._manual_history_targets({})}
+    assert rows["P01"]["instance_label"] == "Living room"
+    assert rows["P01"]["display"] == "Trakt (Living room)"
+    assert rows["default"]["display"] == "Trakt"
+
+
 def test_quick_add_leaves_out_other_peoples_accounts(monkeypatch) -> None:
     _rules(monkeypatch, linked=True)
     assert manualAPI._title_targets({}, [ROW], None) == []
