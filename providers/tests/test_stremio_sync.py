@@ -3,8 +3,15 @@ from __future__ import annotations
 import copy
 from typing import Any
 
+import pytest
+
 from providers.sync import _mod_STREMIO as mod
 from providers.sync.stremio import _common, _history, _progress, _ratings, _watchlist
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cinemeta_cache(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(_common, "cinemeta_cache_dir", lambda: tmp_path / "cinemeta")
 
 
 class FakeClient:
@@ -186,7 +193,7 @@ def test_mark_s01e01_unwatched_preserves_other_episodes() -> None:
 
 
 def test_episode_history_read_uses_show_level_watched_date(monkeypatch) -> None:
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:bb_videos())
     adapter = FakeAdapter([series_record("tt0903747:1:1:6:eJxTYIACAAEpACE=")])
 
     index = _history.build_index(adapter)
@@ -199,7 +206,7 @@ def test_episode_history_read_uses_show_level_watched_date(monkeypatch) -> None:
 
 
 def test_episode_history_read_preserves_previous_synthetic_date(monkeypatch) -> None:
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:bb_videos())
     adapter = FakeAdapter([series_record("tt0903747:1:1:6:eJxTYIACAAEpACE=")])
     adapter._stremio_history_baseline = {
         "imdb:tt0903747#s01e01": {
@@ -222,7 +229,7 @@ def test_episode_history_read_preserves_previous_synthetic_date(monkeypatch) -> 
 
 
 def test_episode_history_read_matches_previous_event_key_baseline(monkeypatch) -> None:
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:bb_videos())
     adapter = FakeAdapter([series_record("tt0903747:1:1:6:eJxTYIACAAEpACE=")])
     adapter._stremio_history_baseline = {
         "imdb:tt0903747#s01e01@1760000000": {
@@ -266,7 +273,7 @@ def test_episode_history_read_preserves_previous_date_across_id_enrichment(monke
 
 
 def test_episode_history_read_falls_back_to_show_mtime(monkeypatch) -> None:
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:bb_videos())
     adapter = FakeAdapter(
         [
             series_record("tt0903747:1:1:6:eJxTYIACAAEpACE=")
@@ -283,7 +290,7 @@ def test_episode_history_read_falls_back_to_show_mtime(monkeypatch) -> None:
 
 
 def test_episode_history_read_marks_unknown_watched_date_when_show_timestamp_missing(monkeypatch) -> None:
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:bb_videos())
     adapter = FakeAdapter(
         [
             series_record("tt0903747:1:1:6:eJxTYIACAAEpACE=")
@@ -300,7 +307,7 @@ def test_episode_history_read_marks_unknown_watched_date_when_show_timestamp_mis
 
 
 def native_orders(*orders: list[dict[str, Any]]):
-    return lambda _adapter, _record, *_args: (list(orders), True)
+    return lambda _adapter, _record, *_args, **_: (list(orders), True)
 
 
 def watched_value(videos: list[dict[str, Any]], watched_ids: set[str]) -> str:
@@ -331,7 +338,7 @@ def test_history_read_indexes_native_tmdb_series_when_episode_order_available(mo
 
 
 def test_history_read_decodes_tmdb_record_with_cinemeta_anchor(monkeypatch) -> None:
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:bb_videos())
     watched = watched_value(bb_videos(), {"tt0903747:1:1"})
     adapter = FakeAdapter([series_record(watched) | {"_id": "tmdb:1396"}])
 
@@ -426,7 +433,7 @@ def test_history_read_keeps_watched_season_zero_specials(monkeypatch) -> None:
 
 
 def test_history_read_reports_cinemeta_anchor_that_is_not_in_the_video_list(monkeypatch) -> None:
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:bb_videos())
     adapter = FakeAdapter([series_record(watched_value([{"id": "tt0903747:9:9"}], {"tt0903747:9:9"}))])
 
     assert _history.build_index(adapter) == {}
@@ -584,7 +591,7 @@ def test_stremio_ops_injects_orchestrator_history_baseline(monkeypatch) -> None:
             return _history.build_index(self)
 
     monkeypatch.setattr(mod, "ctx", Ctx())
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:bb_videos())
     adapter = FakeStremioModule([series_record("tt0903747:1:1:6:eJxTYIACAAEpACE=")])
     monkeypatch.setattr(mod.OPS, "_adapter", lambda _cfg: adapter)
 
@@ -604,7 +611,7 @@ def test_history_write_resolves_imdb_with_tmdb_and_uses_metahub_poster(monkeypat
             }
 
     monkeypatch.setattr(_history, "tmdb_metadata_provider", lambda _adapter: Provider())
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: [{"id": "tt14586350:1:7", "season": 1, "episode": 7}])
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:[{"id": "tt14586350:1:7", "season": 1, "episode": 7}])
     adapter = FakeAdapter([])
     item = {
         "type": "episode",
@@ -716,7 +723,7 @@ def test_history_write_creates_native_tmdb_series_record_for_tmdb_only_episode(m
 
 
 def test_history_write_updates_native_record_with_cinemeta_anchored_bitfield(monkeypatch) -> None:
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:bb_videos())
     record = series_record(watched_value(bb_videos(), {"tt0903747:1:1"})) | {"_id": "tmdb:1396", "type": "series"}
     adapter = FakeAdapter([record])
     item = {
@@ -759,7 +766,7 @@ def test_history_write_refuses_to_touch_a_bitfield_it_cannot_align(monkeypatch) 
 
 
 def test_history_write_ignores_a_native_record_id_the_item_ids_disagree_with(monkeypatch) -> None:
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:bb_videos())
     adapter = FakeAdapter([])
     item = {
         "type": "episode",
@@ -810,7 +817,7 @@ def test_watchlist_read_drops_bare_numeric_id_without_a_tmdb_key() -> None:
 
 
 def test_history_write_batches_episodes_per_series(monkeypatch) -> None:
-    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb: bb_videos())
+    monkeypatch.setattr(_history, "cinemeta_videos", lambda _adapter, _imdb, **_:bb_videos())
     adapter = FakeAdapter([])
     items = [
         {"type": "episode", "series_title": "Breaking Bad", "show_ids": {"imdb": "tt0903747"}, "season": 1, "episode": 1},

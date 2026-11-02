@@ -27,6 +27,7 @@ from ._common import (
     ok_status,
     paged_get,
     positive_int,
+    safe_json,
     scrob_request,
     show_ids_for_scrob,
     _dbg,
@@ -159,20 +160,32 @@ def _payload_for(item: Mapping[str, Any]) -> dict[str, Any] | None:
     return payload
 
 
+def _write_key(item: Mapping[str, Any]) -> str:
+    return str(item.get("_cw_event_key") or "").strip() or _base_key(item)
+
+
+def _is_duplicate_watch(resp: Any) -> bool:
+    if int(resp.status_code) != 409:
+        return False
+    detail = mapping(safe_json(resp)).get("detail")
+    return isinstance(detail, Mapping) and detail.get("error") == "duplicate_watch"
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
     confirmed: list[str] = []
+    skipped_keys: list[str] = []
     unresolved_keys: list[str] = []
     unresolved: list[dict[str, Any]] = []
     planned = 0
     ok = True
 
     for item in items or []:
-        key = str(item.get("_cw_event_key") or "").strip() or _event_key(item)
+        key = _write_key(item)
         payload = _payload_for(item)
         if payload is None:
             if key:
                 unresolved_keys.append(key)
-                unresolved.append({"key": key, "status": "missing_supported_id"})
+                unresolved.append({"key": key, "status": "missing_supported_id", "reason": "missing_supported_id", "item": id_minimal(item)})
                 _dbg(FEATURE, "item_unresolved_before_write", key=key)
             continue
 
@@ -185,17 +198,21 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
         if ok_status(resp):
             confirmed.append(key)
             continue
+        if _is_duplicate_watch(resp):
+            skipped_keys.append(key)
+            continue
         ok = False
         unresolved_keys.append(key)
         unresolved.append({"key": key, "status": f"http:{int(resp.status_code)}", "error": error_of(resp)})
         _warn(FEATURE, "history_add_failed", key=key, status=int(resp.status_code), error=error_of(resp))
 
     _dbg(FEATURE, "write_prepare", action="add", items=planned, skipped=len(unresolved_keys))
-    _info(FEATURE, "write_done", action="add", confirmed=len(confirmed), unresolved=len(unresolved_keys), dry_run=bool(dry_run))
+    _info(FEATURE, "write_done", action="add", confirmed=len(confirmed), duplicates=len(skipped_keys), unresolved=len(unresolved_keys), dry_run=bool(dry_run))
     return {
         "ok": ok,
         "count": len(confirmed),
         "confirmed_keys": confirmed,
+        "skipped_keys": skipped_keys,
         "unresolved_keys": unresolved_keys,
         "deferred_keys": [],
         "unresolved": unresolved,
@@ -235,7 +252,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
     ok = True
 
     for item in items or []:
-        key = str(item.get("_cw_event_key") or "").strip() or _event_key(item)
+        key = _write_key(item)
         if not key:
             continue
         if dry_run:

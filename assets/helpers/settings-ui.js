@@ -1431,7 +1431,6 @@ function cwBuildTmdbPanel() {
   pApi.appendChild(apiCard);
 
   const localeEl = detach("metadata_locale");
-  const ttlEl = detach("metadata_ttl_hours");
 
   const advCard = document.createElement("div");
   advCard.className = "auth-card";
@@ -1451,19 +1450,7 @@ function cwBuildTmdbPanel() {
     advFields.appendChild(note);
   }
 
-  if (ttlEl) {
-    const f = document.createElement("div");
-    f.className = "field";
-    f.innerHTML = `<div class="muted" style="margin-bottom:6px;">Cache TTL (hours)</div>`;
-    f.appendChild(ttlEl);
-    advFields.appendChild(f);
-    const note = document.createElement("div");
-    note.className = "auth-card-notes";
-    note.textContent = "How long metadata stays cached before re-fetching.";
-    advFields.appendChild(note);
-  }
-
-  if (!localeEl && !ttlEl) {
+  if (!localeEl) {
     const note = document.createElement("div");
     note.className = "auth-card-notes";
     note.textContent = "No advanced options available yet.";
@@ -1763,7 +1750,6 @@ async function loadConfig() {
     _setSelectValue("debug", mode);
   })();
   _setVal("metadata_locale", cfg.metadata?.locale || "");
-  _setVal("metadata_ttl_hours", String(Number.isFinite(cfg.metadata?.ttl_hours) ? cfg.metadata.ttl_hours : 720));
 
   
   (function () {

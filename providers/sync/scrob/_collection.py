@@ -40,6 +40,9 @@ PATH_COLLECT_SEASON = "media/collect-season"
 
 COLLECTION_ID_FIELD = "_scrob_collection_id"
 
+REASON_NOTHING_ADDED = "collection_nothing_added"
+REASON_PRESENCE_UNKNOWN = "collection_presence_unknown"
+
 
 def _key_of(obj: Mapping[str, Any]) -> str:
     try:
@@ -410,11 +413,52 @@ def _covered(coverage: Mapping[int, set[int]], target: tuple[int, int | None]) -
     return season is None or season in seasons
 
 
+def _container_response(path: str, resp: Any) -> dict[str, Any]:
+    body = safe_json(resp)
+    fields = body if isinstance(body, Mapping) else {}
+    return {
+        "endpoint": path,
+        "status": int(resp.status_code),
+        "count": as_int(fields.get("count")),
+        "result": str(fields.get("status") or "")[:40],
+        "error": error_of(resp),
+    }
+
+
+def _container_added(response: Mapping[str, Any]) -> bool:
+    return 200 <= int(response["status"]) < 300 and int(response["count"] or 0) > 0
+
+
+def _settle_containers(adapter: Any, pending: list[dict[str, Any]]) -> tuple[list[str], list[dict[str, Any]]]:
+    if not pending:
+        return [], []
+    try:
+        coverage = _live_coverage(adapter)
+    except Exception as exc:
+        _warn(FEATURE, "presence_check_failed", error=type(exc).__name__)
+        coverage = None
+    present: list[str] = []
+    rows: list[dict[str, Any]] = []
+    for write in pending:
+        key = write["key"]
+        response = write["response"]
+        if coverage is not None and _covered(coverage, write["target"]):
+            present.append(key)
+            _dbg(FEATURE, "container_already_present", key=key, **response)
+            continue
+        reason = REASON_PRESENCE_UNKNOWN if coverage is None else REASON_NOTHING_ADDED
+        rows.append({"key": key, "reason": reason, "item": id_minimal(write["item"]), **response})
+        _warn(FEATURE, "container_add_unconfirmed", key=key, reason=reason, **response)
+    return present, rows
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
     confirmed: list[str] = []
     skipped: list[str] = []
     unresolved_keys: list[str] = []
     unresolved: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    seen_containers: set[str] = set()
     ok = True
     batch = [item for item in items or [] if isinstance(item, Mapping)]
     batch_coverage = _episode_coverage(batch)
@@ -426,6 +470,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             continue
         target = _container_target(item)
         if target is not None:
+            if key in seen_containers:
+                continue
+            seen_containers.add(key)
             covered = _covered(batch_coverage, target)
             if not covered:
                 if not live_loaded:
@@ -452,13 +499,25 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             continue
         resp = scrob_request(adapter, "POST", path, json=body)
         if ok_status(resp) or int(resp.status_code) == 409:
-            confirmed.append(key)
+            if target is None:
+                confirmed.append(key)
+                continue
+            response = _container_response(path, resp)
+            if _container_added(response):
+                confirmed.append(key)
+                _dbg(FEATURE, "container_added", key=key, **response)
+                continue
+            pending.append({"key": key, "item": item, "target": target, "response": response})
             continue
         ok = False
         unresolved_keys.append(key)
         unresolved.append({"key": key, "status": f"http:{int(resp.status_code)}", "error": error_of(resp)})
         _warn(FEATURE, "collection_add_failed", key=key, status=int(resp.status_code), error=error_of(resp))
-    _info(FEATURE, "write_done", action="add", confirmed=len(confirmed), skipped=len(skipped), unresolved=len(unresolved_keys), dry_run=bool(dry_run))
+    present, unconfirmed = _settle_containers(adapter, pending)
+    skipped.extend(present)
+    unresolved_keys.extend(row["key"] for row in unconfirmed)
+    unresolved.extend(unconfirmed)
+    _info(FEATURE, "write_done", action="add", confirmed=len(confirmed), skipped=len(skipped), unresolved=len(unresolved_keys), checked=len(pending), dry_run=bool(dry_run))
     return {"ok": ok, "count": len(confirmed), "confirmed_keys": confirmed, "skipped_keys": skipped, "unresolved_keys": unresolved_keys, "deferred_keys": [], "unresolved": unresolved}
 
 

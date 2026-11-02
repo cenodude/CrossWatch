@@ -505,8 +505,8 @@ def test_collection_add_maps_each_scope():
     adapter = FakeAdapter({
         ("GET", "export/data"): ResponseStub(200, []),
         ("POST", "media/collect"): ResponseStub(200, {"status": "ok"}),
-        ("POST", "media/collect-show"): ResponseStub(200, {"status": "ok"}),
-        ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok"}),
+        ("POST", "media/collect-show"): ResponseStub(200, {"status": "ok", "count": 12}),
+        ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok", "count": 5}),
     })
     items = [
         {"type": "movie", "ids": {"tmdb": "550"}},
@@ -552,7 +552,7 @@ def test_collection_add_skips_show_and_season_covered_by_batch_episodes():
 def test_collection_add_skips_containers_already_covered_in_scrob():
     adapter = FakeAdapter({
         ("GET", "export/data"): ResponseStub(200, _episode_export(500, 1, 1, 9001)),
-        ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok"}),
+        ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok", "count": 8}),
     })
     items = [
         {"type": "season", "show_ids": {"tmdb": "500"}, "season": 1},
@@ -575,6 +575,245 @@ def test_collection_add_leaves_container_unresolved_when_coverage_unknown():
     assert not result["confirmed_keys"] and not result["skipped_keys"]
     assert result["unresolved_keys"] == ["tmdb:500#show"]
     assert all(call["method"] == "GET" for call in adapter.calls)
+
+
+def _export_reads(*responses: Any) -> Any:
+    remaining = list(responses)
+
+    def respond(_kwargs: dict[str, Any]) -> Any:
+        response = remaining.pop(0) if len(remaining) > 1 else remaining[0]
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+    return respond
+
+
+def _calls(adapter: FakeAdapter, method: str) -> list[str]:
+    return [call["path"] for call in adapter.calls if call["method"] == method]
+
+
+SEASON_999 = {"type": "season", "show_ids": {"tmdb": "1396"}, "season": 999}
+SEASON_999_KEY = "tmdb:1396#season:999"
+
+
+def test_collection_add_leaves_empty_container_unresolved_when_nothing_is_present():
+    adapter = FakeAdapter({
+        ("GET", "export/data"): ResponseStub(200, _episode_export(1396, 1, 1, 62085)),
+        ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok", "count": 0}),
+    })
+
+    result = _collection.add(adapter, [SEASON_999])
+
+    assert result["confirmed_keys"] == [] and result["skipped_keys"] == []
+    assert result["count"] == 0
+    assert result["unresolved_keys"] == [SEASON_999_KEY]
+    row = result["unresolved"][0]
+    assert row["reason"] == _collection.REASON_NOTHING_ADDED
+    assert (row["endpoint"], row["status"], row["count"], row["result"]) == ("media/collect-season", 200, 0, "ok")
+    assert row["item"]["season"] == 999
+
+
+@pytest.mark.parametrize(
+    "response",
+    [ResponseStub(200, {"status": "ok"}), ResponseStub(200, None), ResponseStub(200, {"count": "unknown"}), ResponseStub(409, {"detail": "exists"})],
+)
+def test_collection_add_checks_container_when_response_shows_no_added_episodes(response):
+    adapter = FakeAdapter({
+        ("GET", "export/data"): ResponseStub(200, []),
+        ("POST", "media/collect-season"): response,
+    })
+
+    result = _collection.add(adapter, [SEASON_999])
+
+    assert result["confirmed_keys"] == []
+    assert result["unresolved_keys"] == [SEASON_999_KEY]
+
+
+def test_collection_add_confirms_positive_counts_without_an_extra_read():
+    adapter = FakeAdapter({
+        ("GET", "export/data"): ResponseStub(200, []),
+        ("POST", "media/collect-show"): ResponseStub(200, {"status": "ok", "count": 12}),
+    })
+
+    result = _collection.add(adapter, [{"type": "show", "ids": {"tmdb": "1400"}}])
+
+    assert result["confirmed_keys"] == ["tmdb:1400#show"]
+    assert _calls(adapter, "GET") == ["export/data"]
+
+
+def test_collection_add_skips_container_a_write_in_the_same_batch_filled():
+    adapter = FakeAdapter({
+        ("GET", "export/data"): _export_reads(ResponseStub(200, []), ResponseStub(200, _episode_export(500, 1, 1, 9001))),
+        ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok", "count": 6}),
+        ("POST", "media/collect-show"): ResponseStub(200, {"status": "ok", "count": 0}),
+    })
+    items = [{"type": "season", "show_ids": {"tmdb": "500"}, "season": 1}, {"type": "show", "ids": {"tmdb": "500"}}]
+
+    result = _collection.add(adapter, items)
+
+    assert result["confirmed_keys"] == ["tmdb:500#season:1"]
+    assert result["skipped_keys"] == ["tmdb:500#show"]
+    assert result["unresolved_keys"] == []
+
+
+def test_collection_add_checks_presence_once_per_batch():
+    adapter = FakeAdapter({
+        ("GET", "export/data"): ResponseStub(200, []),
+        ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok", "count": 0}),
+    })
+    items = [{"type": "season", "show_ids": {"tmdb": "500"}, "season": season} for season in (1, 2, 3)]
+
+    result = _collection.add(adapter, items)
+
+    assert len(result["unresolved_keys"]) == 3
+    assert _calls(adapter, "GET") == ["export/data", "export/data"]
+
+
+@pytest.mark.parametrize("failure", [ResponseStub(503, {"detail": "down"}), ConnectionError("down")])
+def test_collection_add_keeps_results_when_presence_check_fails(failure):
+    adapter = FakeAdapter({
+        ("GET", "export/data"): _export_reads(ResponseStub(200, []), failure),
+        ("POST", "media/collect"): ResponseStub(200, {"status": "ok"}),
+        ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok", "count": 0}),
+    })
+    movie = {"type": "movie", "ids": {"tmdb": "550"}}
+
+    result = _collection.add(adapter, [movie, SEASON_999])
+
+    assert result["confirmed_keys"] == ["tmdb:550"]
+    assert result["unresolved_keys"] == [SEASON_999_KEY]
+    assert result["unresolved"][0]["reason"] == _collection.REASON_PRESENCE_UNKNOWN
+
+
+def test_collection_add_does_not_swallow_cancellation_during_presence_check():
+    from cw_platform.run_control import SyncCancelled
+
+    adapter = FakeAdapter({
+        ("GET", "export/data"): _export_reads(ResponseStub(200, []), SyncCancelled("sync cancelled")),
+        ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok", "count": 0}),
+    })
+
+    with pytest.raises(SyncCancelled):
+        _collection.add(adapter, [SEASON_999])
+
+
+@pytest.mark.parametrize("verification", [ResponseStub(200, []), ResponseStub(503, {"detail": "down"})])
+def test_collection_add_gives_a_repeated_container_one_outcome(verification):
+    counts = iter([6, 0])
+    adapter = FakeAdapter({
+        ("GET", "export/data"): _export_reads(ResponseStub(200, []), verification),
+        ("POST", "media/collect-season"): lambda _kwargs: ResponseStub(200, {"status": "ok", "count": next(counts)}),
+    })
+    season = {"type": "season", "show_ids": {"tmdb": "500"}, "season": 1}
+
+    result = _collection.add(adapter, [season, dict(season)])
+
+    assert result["confirmed_keys"] == ["tmdb:500#season:1"]
+    assert result["skipped_keys"] == [] and result["unresolved_keys"] == []
+    assert _calls(adapter, "POST") == ["media/collect-season"]
+
+
+def test_collection_add_keeps_earlier_chunks_when_a_later_presence_check_fails(monkeypatch):
+    from types import SimpleNamespace
+
+    from cw_platform.orchestrator import _applier
+
+    monkeypatch.setattr(_applier, "record_unresolved", lambda *_a, **_k: {"ok": True})
+    monkeypatch.setattr(_applier._unresolved_mod, "clear_superseded_keys", lambda *_a, **_k: {})
+    counts = {1: 6, 2: 0, 3: 0}
+    season_two = ResponseStub(200, _episode_export(500, 2, 1, 9001))
+    adapter = FakeAdapter({
+        ("GET", "export/data"): _export_reads(ResponseStub(200, []), season_two, season_two, ResponseStub(503, {"detail": "down"})),
+        ("POST", "media/collect-season"): lambda kwargs: ResponseStub(200, {"status": "ok", "count": counts[kwargs["json"]["season_number"]]}),
+    })
+    provider = SimpleNamespace(add=lambda _cfg, items, **kwargs: _collection.add(adapter, items, dry_run=kwargs["dry_run"]))
+    done: list[dict[str, Any]] = []
+
+    def emit(event: str, **fields: Any) -> None:
+        if event == "apply:add:done":
+            done.append(fields)
+
+    result = _applier.apply_add(
+        dst_ops=provider, cfg={}, dst_name="SCROB", feature="collection",
+        items=[{"type": "season", "show_ids": {"tmdb": "500"}, "season": season} for season in (1, 2, 3)],
+        dry_run=False, emit=emit, dbg=lambda *_: None, chunk_size=2, chunk_pause_ms=0,
+    )
+
+    assert result["confirmed_keys"] == ["tmdb:500#season:1"]
+    assert result["skipped_keys"] == ["tmdb:500#season:2"]
+    assert result["unresolved_keys"] == ["tmdb:500#season:3"]
+    assert (done[0]["added"], done[0]["skipped"], done[0]["unresolved"]) == (1, 1, 1)
+
+
+def test_collection_add_keeps_movies_and_episodes_confirmed_at_any_count():
+    adapter = FakeAdapter({("POST", "media/collect"): ResponseStub(200, {"status": "ok", "count": 0})})
+    items = [
+        {"type": "movie", "ids": {"tmdb": "550"}},
+        {"type": "episode", "ids": {"tmdb": "63056"}, "show_ids": {"tmdb": "1399"}, "season": 1, "episode": 1},
+    ]
+
+    result = _collection.add(adapter, items)
+
+    assert result["confirmed_keys"] == ["tmdb:550", "tmdb:1399#s01e01"]
+    assert _calls(adapter, "GET") == []
+
+
+def test_collection_add_dry_run_does_not_write_or_check_presence():
+    adapter = FakeAdapter({("GET", "export/data"): ResponseStub(200, [])})
+
+    result = _collection.add(adapter, [SEASON_999], dry_run=True)
+
+    assert result["confirmed_keys"] == [SEASON_999_KEY]
+    assert _calls(adapter, "POST") == []
+    assert _calls(adapter, "GET") == ["export/data"]
+
+
+@pytest.mark.parametrize("interactive", [False, True])
+def test_empty_container_is_reported_unresolved_not_added(monkeypatch, interactive):
+    from types import SimpleNamespace
+
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+    from cw_platform.orchestrator import _applier
+    from cw_platform.reason_labels import friendly_reason, reason_message
+    from services.interactive_sync_report import SyncReport
+
+    recorded: list[Any] = []
+    monkeypatch.setattr(_applier, "record_unresolved", lambda _dst, _feature, items, **_kw: recorded.extend(items) or {"ok": True})
+    monkeypatch.setattr(_applier._unresolved_mod, "clear_superseded_keys", lambda *_a, **_k: {})
+    adapter = FakeAdapter({
+        ("GET", "export/data"): ResponseStub(200, []),
+        ("POST", "media/collect"): ResponseStub(200, {"status": "ok"}),
+        ("POST", "media/collect-season"): ResponseStub(200, {"status": "ok", "count": 0}),
+    })
+    provider = SimpleNamespace(add=lambda _cfg, items, **kwargs: _collection.add(adapter, items, dry_run=kwargs["dry_run"]))
+    report = SyncReport()
+    done: list[dict[str, Any]] = []
+
+    def emit(event: str, **fields: Any) -> None:
+        report.event(dict(event=event, **fields))
+        if event == "apply:add:done":
+            done.append(fields)
+
+    reads = ReviewReads()
+    try:
+        with use_review_reads(reads if interactive else None):
+            result = _applier.apply_add(
+                dst_ops=provider, cfg={}, dst_name="SCROB", feature="collection",
+                items=[SEASON_999, {"type": "movie", "ids": {"tmdb": "550"}}],
+                dry_run=False, emit=emit, dbg=lambda *_: None, chunk_size=100, chunk_pause_ms=0,
+            )
+    finally:
+        reads.close()
+
+    assert result["confirmed_keys"] == ["tmdb:550"]
+    assert result["unresolved_keys"] == [SEASON_999_KEY]
+    assert (done[0]["added"], done[0]["unresolved"], done[0]["skipped"]) == (1, 1, 0)
+    assert done[0]["accepted_unverified"] == int(interactive)
+    hint = recorded[0]["_cw_unresolved_hint"]
+    assert hint == _collection.REASON_NOTHING_ADDED
+    assert friendly_reason(hint) == "Nothing added to collection"
+    assert "aired episodes" in reason_message(hint, provider="SCROB", feature="collection")
 
 
 def test_collection_remove_maps_each_scope():

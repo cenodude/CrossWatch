@@ -2287,7 +2287,7 @@
         const panelHost = document.getElementById("meta-provider-panel");
         const tmdbPanel = panelHost?.querySelector('.cw-meta-provider-panel[data-provider="tmdb"]');
         const rawLoaded = slot?.dataset?.cwMetadataLoaded === "1";
-        const rawHasMarkup = !!raw?.querySelector("#sec-tmdb, #tmdb_api_key, #metadata_locale, #metadata_ttl_hours");
+        const rawHasMarkup = !!raw?.querySelector("#sec-tmdb, #tmdb_api_key, #metadata_locale");
 
         if (!force && rawLoaded && (tmdbPanel || rawHasMarkup)) {
           try { window.cwMetaProviderEnsure?.(); } catch {}

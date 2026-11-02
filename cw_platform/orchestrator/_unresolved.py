@@ -20,6 +20,7 @@ __all__ = [
     "load_unresolved_pending",
     "record_unresolved",
     "clear_unresolved",
+    "clear_superseded_keys",
     "clear_matched_history_retries",
     "is_remove_retry_reason",
     "is_remove_retry",
@@ -30,6 +31,7 @@ _LOG = logging.getLogger("crosswatch.orchestrator.unresolved")
 _GENERIC_FAILURE_HINTS = {
     "apply:add:failed",
     "two:apply:add:failed",
+    "apply:add:no_confirmations_fallback",
 }
 
 from ._scope import scoped_file, scope_safe
@@ -517,6 +519,32 @@ def clear_unresolved(
             _atomic_write(blk, bdata)
 
     return {"ok": True, "count": removed}
+
+
+def _alias_keys(item: Mapping[str, Any]) -> set[str]:
+    if _ck is None:
+        return set()
+    show_scoped = str(item.get("type") or "").strip().lower() in ("episode", "season") and bool(item.get("show_ids"))
+    field = "show_ids" if show_scoped else "ids"
+    ids = item.get(field)
+    base = {key: item[key] for key in ("type", "season", "episode", "season_number", "episode_number", "part") if key in item}
+    aliases = {_ck({**base, field: {key: value}}) for key, value in ids.items()} if isinstance(ids, Mapping) else set()
+    return aliases - {_ck(item), "unknown:"}
+
+
+def clear_superseded_keys(
+    dst: str,
+    feature: str,
+    items: Iterable[Mapping[str, Any]],
+    instance: str | None = None,
+) -> dict[str, Any]:
+    records = load_unresolved_map(dst, feature, cross_features=False, instance=instance)
+    if not records:
+        return {"ok": True, "count": 0}
+    blocking = _read_json(_blocking_path(dst, feature, instance=instance))
+    aliases = {alias for item in items or [] for alias in _alias_keys(item)}
+    stale = [key for key in aliases if key in records and not (is_remove_retry(records[key]) or is_remove_retry(blocking.get(key)))]
+    return clear_unresolved(dst, feature, stale, instance=instance)
 
 
 def clear_unresolved_all_scopes(dst: str, feature: str, keys: Iterable[str]) -> dict[str, Any]:

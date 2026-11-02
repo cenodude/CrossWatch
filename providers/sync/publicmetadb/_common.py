@@ -173,17 +173,6 @@ def _metadata_cache_enabled(adapter: Any) -> bool:
     return bool(metadata.get("meta_cache_enable", True))
 
 
-def _metadata_cache_ttl_seconds(adapter: Any) -> int:
-    cfg = getattr(adapter, "config", {}) or {}
-    metadata_obj = cfg.get("metadata") if isinstance(cfg, Mapping) else None
-    metadata: Mapping[str, Any] = metadata_obj if isinstance(metadata_obj, Mapping) else {}
-    try:
-        hours = int(metadata.get("ttl_hours", 720))
-    except Exception:
-        hours = 720
-    return max(1, hours) * 3600
-
-
 def _metadata_cache_max_mb(adapter: Any) -> int:
     cfg = getattr(adapter, "config", {}) or {}
     metadata_obj = cfg.get("metadata") if isinstance(cfg, Mapping) else None
@@ -302,7 +291,7 @@ def enrich_index_metadata(
                     entity,
                     tmdb_id,
                     locale or "en-US",
-                    ttl_seconds=_metadata_cache_ttl_seconds(adapter),
+                    ttl_seconds=None,
                 )
                 needs_title = not str(item.get("series_title" if str(item.get("type") or "").lower() == "episode" else "title") or "").strip()
                 needs_year = item.get("year") in (None, "")

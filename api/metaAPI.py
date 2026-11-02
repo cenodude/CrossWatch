@@ -128,14 +128,6 @@ def _shorten(txt: str, limit: int = 280) -> str:
     return f"{cut}…"
 
 
-def _cfg_meta_ttl_secs() -> int:
-    try:
-        md = (load_config() or {}).get("metadata") or {}
-        return max(1, int(md.get("ttl_hours", 720))) * 3600
-    except Exception:
-        return 720 * 3600
-
-
 def _meta_cache_enabled() -> bool:
     try:
         md = (load_config() or {}).get("metadata") or {}
@@ -548,7 +540,7 @@ def _read_meta_cache(
         entity,
         tmdb_id,
         locale,
-        ttl_seconds=_cfg_meta_ttl_secs(),
+        ttl_seconds=None,
     )
 
 
@@ -572,10 +564,6 @@ def _prune_meta_cache_if_needed() -> None:
         prune_metadata_cache(_meta_cache_dir(), max_mb=cap_mb)
     except Exception:
         pass
-
-
-def _ttl_bucket(seconds: int) -> int:
-    return int(time.time() // max(1, seconds))
 
 
 def _tmdb_provider() -> Any | None:
@@ -697,7 +685,6 @@ def _resolve_entity(
 
 @lru_cache(maxsize=4096)
 def _resolve_tmdb_cached(
-    ttl_key: int,
     entity: str,
     tmdb_id: str,
     locale: str | None,
@@ -719,6 +706,27 @@ def _resolve_tmdb_cached(
     if not isinstance(result, dict) or not result:
         raise _NoMetadataResult("empty metadata result")
     return result
+
+
+def _fresh_show_meta(entity: str, tmdb_id: str, locale: str | None, need_key: tuple[str, ...]) -> dict[str, Any]:
+    provider = _tmdb_provider()
+    if provider is None:
+        raise _NoMetadataResult("TMDb provider not available")
+    result = provider.fetch(entity=entity, ids={"tmdb": tmdb_id}, locale=locale, need={k: True for k in need_key}, fresh=True) or {}
+    if not isinstance(result, dict) or not result:
+        raise _NoMetadataResult("empty metadata result")
+    return result
+
+
+def clear_memory_caches() -> None:
+    _resolve_tmdb_cached.cache_clear()
+    _RESOLVED_ENTITY_MEMO.clear()
+    clear = getattr(_tmdb_provider(), "clear_cache", None)
+    if callable(clear):
+        clear()
+    from providers.metadata._meta_TMDB import clear_all_caches
+
+    clear_all_caches()
 
 
 def get_meta(
@@ -748,9 +756,10 @@ def get_meta(
         locale=eff_locale,
     )
     cached = None
+    live = entity == "show" and bool(eff_need.get("seasons"))
     if _meta_cache_enabled():
         cached = _read_meta_cache(entity, tmdb_id, eff_locale or "en-US")
-        if cached and _need_satisfied(cached, eff_need):
+        if cached and not live and _need_satisfied(cached, eff_need):
             _meta_debug(
                 "meta_cache_hit",
                 type=entity,
@@ -766,11 +775,8 @@ def get_meta(
             locale=eff_locale or "en-US",
         )
 
-    ttl_key = _ttl_bucket(_cfg_meta_ttl_secs())
     try:
-        res = _resolve_tmdb_cached(
-            ttl_key, entity, str(tmdb_id), eff_locale, need_key
-        ) or {}
+        res = (_fresh_show_meta if live else _resolve_tmdb_cached)(entity, str(tmdb_id), eff_locale, need_key) or {}
     except _NoMetadataResult:
         res = {}
     except Exception as e:
@@ -797,6 +803,8 @@ def get_meta(
         except Exception:
             pass
 
+    if not res and live and cached and _need_satisfied(cached, eff_need):
+        res = cached
     if res:
         res["resolved_type"] = entity
     return res or {}
@@ -1268,7 +1276,7 @@ def api_tmdb_season(
         return JSONResponse({"ok": False, "error": "metadata_unavailable"})
     eff_locale = locale or _cfg_ui_locale() or "en-US"
     try:
-        data = provider._get(
+        data = provider.get_latest(
             f"https://api.themoviedb.org/3/tv/{tmdb}/season/{season}",
             {"language": eff_locale},
             quiet_404=True,

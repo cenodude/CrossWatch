@@ -43,6 +43,7 @@ __all__ = [
     "enrich_external_ids",
     "is_configured",
     "iso_from_epoch_ms",
+    "item_alias_keys",
     "library_lock",
     "make_item",
     "metadata_title_for_content_id",
@@ -366,6 +367,15 @@ def make_item(
 
 def canonical_item_key(item: Mapping[str, Any]) -> str:
     return canonical_key(id_minimal(item))
+
+
+def item_alias_keys(item: Mapping[str, Any]) -> list[str]:
+    field = "show_ids" if item.get("show_ids") else "ids"
+    ids = item.get(field)
+    if not isinstance(ids, Mapping):
+        return []
+    base = {key: item[key] for key in ("type", "season", "episode") if key in item}
+    return [canonical_key({**base, field: {key: value}}) for key, value in ids.items() if value]
 
 
 def unresolved_result_keys(unresolved: Iterable[Mapping[str, Any]]) -> list[str]:

@@ -684,19 +684,12 @@ async function saveSettings() {
     }
 
     const prevMetaLocale = _cwNorm(serverCfg?.metadata?.locale);
-    const prevMetaTTL = Number.isFinite(serverCfg?.metadata?.ttl_hours) ? Number(serverCfg.metadata.ttl_hours) : 720;
     const metaLocaleEl = _cwEl("metadata_locale");
-    const metaTtlEl = _cwEl("metadata_ttl_hours");
     const uiMetaLocale = _cwNorm(metaLocaleEl?.value);
-    const uiMetaTTL = _cwNorm(metaTtlEl?.value);
     if (metaLocaleEl && uiMetaLocale !== prevMetaLocale) {
       const meta = ensureObj(cfg, "metadata");
       uiMetaLocale ? (meta.locale = uiMetaLocale) : delete meta.locale;
       mark();
-    }
-    if (metaTtlEl && uiMetaTTL !== "") {
-      const ttl = parseInt(uiMetaTTL, 10);
-      if (!Number.isNaN(ttl) && ttl !== prevMetaTTL) { ensureObj(cfg, "metadata").ttl_hours = Math.max(1, ttl); mark(); }
     }
 
     const normalizeUiDisplay = (value, fallbackLimit) => {

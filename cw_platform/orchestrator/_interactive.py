@@ -91,7 +91,7 @@ class InteractivePlan:
             if self.record_rows:
                 self.rows[rid] = dict(deepcopy(payload) if self.copy_rows else payload,
                                       id=rid, key=key, result=result,
-                                      reason=reason or hint or (f"History episode group: {item['_cw_episode_group']}" if item.get("_cw_episode_group") else ""),
+                                      reason=reason or reason_message(hint, provider=provider, feature=feature) or hint or (f"History episode group: {item['_cw_episode_group']}" if item.get("_cw_episode_group") else ""),
                                       selectable=not reason)
             if valid and not reason and rid in self.selected:
                 self.seen.add(rid)

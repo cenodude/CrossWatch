@@ -27,7 +27,7 @@ from .nuvio import _watchlist as feat_watchlist
 from .nuvio._common import pull_library_rows, pull_watch_progress_rows, pull_watched_rows
 from cw_platform.provider_instances import normalize_instance_id
 
-__VERSION__ = "0.6"
+__VERSION__ = "0.7"
 __all__ = ["get_manifest", "NUVIOModule", "OPS"]
 
 if "ctx" not in globals():
@@ -201,7 +201,7 @@ class NUVIOModule:
         if feature_name == "progress":
             return feat_progress.build_index(self)
         if feature_name == "history":
-            return feat_history.build_index(self)
+            return feat_history.sync_index(self)
         if feature_name == "watchlist":
             return feat_watchlist.build_index(self)
         return {}

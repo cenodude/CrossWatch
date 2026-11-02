@@ -637,6 +637,15 @@ def apply_add(
     )
     if dry_run:
         _mark_dry_run(res)
+    else:
+        try:
+            from ..id_map import canonical_key
+
+            written = {*(res.get("confirmed_keys") or []), *(res.get("skipped_keys") or [])}
+            if written:
+                _unresolved_mod.clear_superseded_keys(dst_name, feature, [item for item in items if canonical_key(item) in written], instance=(cfg or {}).get("_cw_provider_instance"))
+        except Exception:
+            pass
     _conf = int(res.get("confirmed", 0))
     payload: dict[str, Any] = {
         "dst": dst_name,
