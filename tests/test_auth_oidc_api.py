@@ -849,6 +849,74 @@ def test_identity_groups_are_not_truncated() -> None:
     assert authOidc.identity_in_allowed_groups(cfg, identity) is True
 
 
+def _match_cfg() -> dict:
+    cfg = _provision_cfg()
+    cfg["app_auth"]["oidc"]["match_identities"] = True
+    cfg["emby"] = {"sync_users": {"e1": {"username": "Pascal"}, "e2": {"username": "sam"}}}
+    cfg["jellyfin"] = {"sync_users": {"j1": {"username": "pascal"}}}
+    return cfg
+
+
+def _provision_with_identities(monkeypatch, cfg: dict, identity: dict) -> dict:
+    from api import authOidcAPI as oidc_api
+    from cw_platform.provider_instances import instances_for_user_profile
+
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, identity)
+    assert _callback(oidc_api).status_code == 302
+    [raw] = [row for row in cfg["app_auth"]["users"].values() if row.get("oidc_provisioned")]
+    return instances_for_user_profile(cfg, raw["profile_id"])
+
+
+def test_oidc_provisioning_matches_identities_by_name_on_each_connection(monkeypatch) -> None:
+    assert _provision_with_identities(monkeypatch, _match_cfg(), _pending_identity(groups=["crosswatch"])) == {"EMBY": ["default~e1"], "JELLYFIN": ["default~j1"]}
+
+
+def test_oidc_provisioning_identity_matching_is_off_by_default(monkeypatch) -> None:
+    cfg = _match_cfg()
+    del cfg["app_auth"]["oidc"]["match_identities"]
+
+    assert _provision_with_identities(monkeypatch, cfg, _pending_identity(groups=["crosswatch"])) == {}
+
+
+def test_oidc_provisioning_identity_claim_wins_over_username(monkeypatch) -> None:
+    identity = _pending_identity(groups=["crosswatch"], identity_name="sam")
+
+    assert _provision_with_identities(monkeypatch, _match_cfg(), identity) == {"EMBY": ["default~e2"]}
+
+
+def test_oidc_provisioning_skips_duplicate_identity_names(monkeypatch) -> None:
+    cfg = _match_cfg()
+    cfg["jellyfin"]["sync_users"]["j2"] = {"username": "PASCAL"}
+
+    assert _provision_with_identities(monkeypatch, cfg, _pending_identity(groups=["crosswatch"])) == {}
+
+
+def test_oidc_provisioning_skips_all_identities_when_one_is_owned(monkeypatch) -> None:
+    from cw_platform.provider_instances import assign_instance_to_user_profile_id, upsert_user_profile
+
+    cfg = _match_cfg()
+    upsert_user_profile(cfg, "owner", label="Owner")
+    assign_instance_to_user_profile_id(cfg, "owner", "emby", "default~e1")
+
+    assert _provision_with_identities(monkeypatch, cfg, _pending_identity(groups=["crosswatch"])) == {}
+
+
+def test_oidc_sign_in_of_existing_login_does_not_match_identities(monkeypatch) -> None:
+    from api import authOidcAPI as oidc_api
+    from cw_platform.provider_instances import list_user_profiles
+
+    cfg = _match_cfg()
+    _bind_config(monkeypatch, oidc_api, cfg)
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"]))
+    assert _callback(oidc_api).status_code == 302
+    before = [p["instance_uids"] for p in list_user_profiles(cfg)]
+    _bind_callback(monkeypatch, oidc_api, _pending_identity(groups=["crosswatch"], identity_name="sam"))
+
+    assert _callback(oidc_api).status_code == 302
+    assert [p["instance_uids"] for p in list_user_profiles(cfg)] == before
+
+
 def test_oidc_config_rejects_provisioning_without_groups(monkeypatch) -> None:
     from api import appAuthAPI as auth
     from api import authOidcAPI as oidc_api
@@ -873,6 +941,11 @@ def test_oidc_config_keeps_provisioning_fields() -> None:
     assert out["allowed_groups"] == ["crosswatch", "family"]
     assert out["groups_claim"] == "groups"
     assert out["provision_access"] == "full"
+    assert out["match_identities"] is False
+    assert out["identity_claim"] == ""
+    kept = authOidc.sanitize_config({"enabled": True}, {"match_identities": True, "identity_claim": " emby_username "})
+    assert kept["match_identities"] is True
+    assert kept["identity_claim"] == "emby_username"
 
 
 def test_oidc_button_label_defaults_and_is_escaped() -> None:
@@ -906,6 +979,17 @@ def test_identity_from_claims_reads_custom_groups_claim() -> None:
     identity = authOidc._identity_from_claims("https://idp.example", {"sub": "s1", "roles": ["crosswatch"], "groups": ["other"]}, {}, "roles")
 
     assert identity["groups"] == ["crosswatch"]
+
+
+def test_identity_from_claims_reads_identity_claim_with_username_fallback() -> None:
+    from services import authOidc
+
+    claims = {"sub": "s1", "preferred_username": "pascal", "emby_username": " Pazzie "}
+
+    assert authOidc._identity_from_claims("https://idp.example", claims, {}, "groups", "emby_username")["identity_name"] == "Pazzie"
+    assert authOidc._identity_from_claims("https://idp.example", claims, {})["identity_name"] == "pascal"
+    assert authOidc._identity_from_claims("https://idp.example", {**claims, "emby_username": ["x"]}, {}, "groups", "emby_username")["identity_name"] == "pascal"
+    assert authOidc._identity_from_claims("https://idp.example", {"sub": "s1", "preferred_username": "pascal"}, {}, "groups", "emby_username")["identity_name"] == "pascal"
 
 
 def test_identity_from_claims_ignores_userinfo_for_other_subject() -> None:

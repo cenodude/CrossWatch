@@ -212,8 +212,23 @@ def _provision_oidc_user(cfg: dict[str, Any], identity: dict[str, Any]) -> dict[
     return app_auth._public_user(user_id, raw)
 
 
-def _audit_provisioned(request: Request, user: dict[str, Any], identity: dict[str, Any]) -> None:
-    app_auth._audit(request, "user_created", actor=user, target_type="managed_user", target_id=user.get("id"), message=f"Managed user {user.get('username') or user.get('id')} was created from OIDC sign-in", fields={"username": user.get("username"), "profile_id": user.get("profile_id"), "oidc_username": identity.get("username"), "write": bool((user.get("permissions") or {}).get("write"))})
+def _assign_matching_identities(cfg: dict[str, Any], identity: dict[str, Any], profile_id: Any) -> list[str]:
+    if not authOidc.match_identities_enabled(cfg):
+        return []
+    from cw_platform.identity_links import unowned_identities_named
+    from cw_platform.provider_instances import assign_instance_to_user_profile_id
+
+    name = identity.get("identity_name") or identity.get("preferred_username")
+    matches = unowned_identities_named(cfg, name)
+    for row in matches:
+        assign_instance_to_user_profile_id(cfg, profile_id, row["provider"], row["instance"])
+    if not matches:
+        _log(f"No unique identity matched new OIDC login {name!r}; assigned nothing")
+    return [f"{row['provider']}:{row['instance']}" for row in matches]
+
+
+def _audit_provisioned(request: Request, user: dict[str, Any], identity: dict[str, Any], matched: list[str]) -> None:
+    app_auth._audit(request, "user_created", actor=user, target_type="managed_user", target_id=user.get("id"), message=f"Managed user {user.get('username') or user.get('id')} was created from OIDC sign-in", fields={"username": user.get("username"), "profile_id": user.get("profile_id"), "oidc_username": identity.get("username"), "write": bool((user.get("permissions") or {}).get("write")), "identities": matched})
 
 
 def _audit_bound_link(request: Request, user: dict[str, Any], identity: dict[str, Any]) -> None:
@@ -437,27 +452,29 @@ def api_oidc_callback(request: Request, state: str = Query(""), code: str = Quer
     if pending_2fa is not None:
         return pending_2fa
 
-    def _mutate(latest: dict[str, Any]) -> tuple[dict[str, Any], str, int, bool, bool]:
+    def _mutate(latest: dict[str, Any]) -> tuple[dict[str, Any], str, int, bool, bool, list[str]]:
         latest_user = _resolve_oidc_user(latest, identity)
         created = False
+        matched: list[str] = []
         if latest_user is None:
             if not _can_provision(latest, identity):
                 raise KeyError("linked_user_not_found")
             latest_user = _provision_oidc_user(latest, identity)
+            matched = _assign_matching_identities(latest, identity, latest_user.get("profile_id"))
             created = True
         bound = not created and _bind_expected_link(latest, identity, latest_user)
         token2, exp2 = app_auth._issue_session(latest, request, latest_user)
-        return latest_user, token2, exp2, bound, created
+        return latest_user, token2, exp2, bound, created, matched
 
     try:
         cfg, result = app_auth._update_config(_mutate)
-        login_user, token, exp, bound, created = result
+        login_user, token, exp, bound, created, matched = result
     except KeyError:
         resp = HTMLResponse("This OIDC account is not linked for CrossWatch sign-in.", status_code=403, headers={"Cache-Control": "no-store"})
         _del_flow_cookie(resp, request)
         return resp
     if created:
-        _audit_provisioned(request, login_user, identity)
+        _audit_provisioned(request, login_user, identity, matched)
     if bound or created:
         _audit_bound_link(request, login_user, identity)
     app_auth._audit(request, "login", actor=login_user, message=f"{login_user.get('username') or 'User'} logged in with OIDC", target_type="user", target_id=login_user.get("id"), fields={"oidc_username": identity.get("username"), "remember_me": bool(res.get("remember_me"))})
