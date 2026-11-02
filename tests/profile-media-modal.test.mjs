@@ -14,8 +14,9 @@ function modal(presence = null, type = "movie", ItemActions = undefined) {
     navigator: { language: "en-US" },
     document: { documentElement: { dataset: {} } },
   };
-  vm.runInNewContext(source.replace("  (window.CW ||= {}).ProfileMediaModal =", "  window.testModal = { state, movieProgressBox, overviewTab, episodesTab, seasonProgress, upNext, episodeSlot, livesCard, episodeDetail, showResumePoints };\n  (window.CW ||= {}).ProfileMediaModal ="), context);
+  vm.runInNewContext(source.replace("  (window.CW ||= {}).ProfileMediaModal =", "  window.testModal = { state, openItemActions, movieProgressBox, overviewTab, episodesTab, seasonProgress, upNext, episodeSlot, livesCard, episodeDetail, showResumePoints };\n  (window.CW ||= {}).ProfileMediaModal ="), context);
   const api = context.window.testModal;
+  api.window = context.window;
   Object.assign(api.state, { item: { type, tmdb: "123" }, presence, progress: [] });
   return api;
 }
@@ -60,6 +61,20 @@ test("a tile without a sync pair says so and offers the other accounts", () => {
   assert.match(html, /Collection<\/strong><span>No sync pair/);
   assert.match(html, /Scrobbled<\/strong><span>Not synced/);
   assert.equal((html.match(/data-ia-more/g) || []).length, 1);
+});
+
+test("the add button opens Quick add for the other accounts of that tile", async () => {
+  const api = modal({ ratings: null }, "movie", { canWrite: () => true });
+  Object.assign(api.state, { meta: { title: "Michael", year: 2026 }, actionOthers: { ratings: [{ provider: "MDBLIST", instance: "default" }] } });
+  const opened = [];
+  api.window.openManualWatchedModal = (props) => opened.push(props);
+  await api.openItemActions({ hasAttribute: (name) => name === "data-ia-more", closest: () => ({ dataset: { mmLive: "ratings" } }), dataset: {} });
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].action, "rating");
+  assert.equal(opened[0].item.type, "movie");
+  assert.equal(opened[0].item.tmdb, "123");
+  assert.equal(opened[0].item.title, "Michael");
+  assert.deepEqual([...opened[0].only], ["MDBLIST:default"]);
 });
 
 test("the add button goes away once the title is on the only other account", () => {
@@ -139,7 +154,7 @@ function loadingModal() {
   const metas = [], requests = [], body = {innerHTML:"",scrollTop:0}, panel = {innerHTML:""};
   const root = {hidden:true,addEventListener(){},querySelector:selector => selector === ".cw-mm-body" ? body : selector === ".cw-mm-panel" ? panel : {style:{},focus(){}},querySelectorAll:()=>[]};
   const context = {
-    window:{CW:{Meta:{get:() => {const d=deferred();metas.push(d);return d.promise;}},ProfileDateTime:{format:date=>date.toISOString()}}},
+    window:{addEventListener(){},CW:{Meta:{get:() => {const d=deferred();metas.push(d);return d.promise;}},ProfileDateTime:{format:date=>date.toISOString()}}},
     navigator:{language:"en-US"},
     document:{createElement:()=>root,body:{appendChild(){}},addEventListener(){},documentElement:{dataset:{cwPermPlayback:"off"},classList:{add(){},remove(){}}}},
     fetch:url=>{const d=deferred();requests.push({url,...d});return d.promise;},

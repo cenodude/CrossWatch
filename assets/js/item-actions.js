@@ -6,10 +6,10 @@
   const icon = (name) => `<span class="material-symbols-rounded" aria-hidden="true">${esc(name)}</span>`;
   const numberFmt = new Intl.NumberFormat(window.__CW_LOCALE || navigator.language || undefined);
   const FEATURES = {
-    watchlist: { noun: "watchlist", present: "On your watchlist", missing: "Not on this watchlist", more: "Add to watchlist", undo: true },
-    history: { noun: "history", present: "Watched here", missing: "Not watched here", more: "Mark watched on", undo: false },
-    ratings: { noun: "ratings", present: "Rated here", missing: "Not rated here", more: "Add rating to", undo: true },
-    collection: { noun: "collection", present: "In your collection", missing: "Not in this collection", more: "Add to collection", undo: true },
+    watchlist: { noun: "watchlist", present: "On your watchlist", missing: "Not on this watchlist", undo: true },
+    history: { noun: "history", present: "Watched here", missing: "Not watched here", undo: false },
+    ratings: { noun: "ratings", present: "Rated here", missing: "Not rated here", undo: true },
+    collection: { noun: "collection", present: "In your collection", missing: "Not in this collection", undo: true },
     progress: { noun: "resume point", present: "Has a resume point", missing: "No resume point", undo: false },
   };
   const FEATURE_ICONS = { watchlist: "bookmark", history: "history", ratings: "star", collection: "video_library", progress: "resume" };
@@ -645,13 +645,6 @@
       return `${top}<div class="cw-ia-list">${body.join("")}</div>${links()}`;
     }
 
-    function moreHtml() {
-      const { feature, refs } = ctx;
-      const held = new Set((refs.present || []).map(refKey));
-      const rows = others.filter((ref) => !held.has(refKey(ref))).map((ref) => `<div class="cw-ia-row">${logoHtml(ref.provider)}<span class="cw-ia-row-copy"><strong>${esc(providerName(ref.provider))}</strong><small>${esc(accountName(ref, list))}</small></span><button type="button" class="cw-ia-link" data-ia-act="row" data-ia-ref="${esc(refKey(ref))}" data-ia-on="0"${dateReady() ? "" : " disabled"}>${feature === "ratings" ? `Rate ${score}` : "Add"}</button></div>`).join("");
-      return `${head("add", FEATURES[feature].more, ctx.item?.title || "")}${feature === "ratings" ? `<div class="cw-ia-list">${stepper()}</div>` : ""}${whenHtml()}<div class="cw-ia-rows">${rows}</div><p class="cw-ia-note">${icon("info")}${esc(`${pairNote()}. This is added once and stays on that provider only.`)}</p>`;
-    }
-
     function coverageHtml() {
       const { feature, refs } = ctx;
       const present = (refs.present || []).map((ref) => ({ ...ref, ...cleanRef(ref) }));
@@ -739,7 +732,7 @@
       } else if (ctx.feature === "progress") {
         el.innerHTML = progressHtml();
       } else {
-        el.innerHTML = ctx.more ? moreHtml() : ctx.focus ? focusHtml() : coverageHtml();
+        el.innerHTML = ctx.focus ? focusHtml() : coverageHtml();
       }
       place();
     }
@@ -816,7 +809,7 @@
         if (current.feature === "collection") return { fields: { collected_at: new Date().toISOString() } };
         return {};
       };
-      const all = [...(current.refs.present || []), ...(current.refs.missing || []), ...others].map(cleanRef);
+      const all = [...(current.refs.present || []), ...(current.refs.missing || [])].map(cleanRef);
       if (action === "row") {
         const ref = all.find((entry) => refKey(entry) === button.dataset.iaRef);
         if (!ref || !writable(ref)) return;
