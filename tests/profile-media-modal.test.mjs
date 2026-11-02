@@ -8,9 +8,9 @@ import vm from "node:vm";
 
 const source = readFileSync(new URL("../assets/js/profile-media-modal.js", import.meta.url), "utf8");
 
-function modal(presence = null, type = "movie") {
+function modal(presence = null, type = "movie", ItemActions = undefined) {
   const context = {
-    window: { CW: { ProfileDateTime: { format: (date) => date.toISOString().slice(0, 10) } } },
+    window: { CW: { ItemActions, ProfileDateTime: { format: (date) => date.toISOString().slice(0, 10) } } },
     navigator: { language: "en-US" },
     document: { documentElement: { dataset: {} } },
   };
@@ -50,6 +50,24 @@ test("history-only, unwatched and absent presence retain their watch status", ()
     assert.match(html, /Not started/);
     assert.match(html, /width:0%/);
   }
+});
+
+test("a tile without a sync pair says so and offers the other accounts", () => {
+  const api = modal({ ratings: null, collection: null, scrobble: null }, "movie", { canWrite: () => true });
+  Object.assign(api.state, { actionTargets: { ratings: [], collection: [] }, actionOthers: { ratings: [{ provider: "MDBLIST", instance: "default" }], collection: [] }, actionPairless: new Set(["ratings", "collection"]) });
+  const html = api.livesCard();
+  assert.match(html, /Ratings<\/strong><span>No sync pair/);
+  assert.match(html, /Collection<\/strong><span>No sync pair/);
+  assert.match(html, /Scrobbled<\/strong><span>Not synced/);
+  assert.equal((html.match(/data-ia-more/g) || []).length, 1);
+});
+
+test("the add button goes away once the title is on the only other account", () => {
+  const api = modal({ ratings: { present: [{ provider: "MDBLIST", instance: "default", rating: 8 }], missing: [], rating: 8 } }, "movie", { canWrite: () => true });
+  Object.assign(api.state, { actionTargets: { ratings: [] }, actionOthers: { ratings: [{ provider: "MDBLIST", instance: "default" }] }, actionPairless: new Set(["ratings"]) });
+  const html = api.livesCard();
+  assert.doesNotMatch(html, /data-ia-more/);
+  assert.doesNotMatch(html, /No sync pair/);
 });
 
 test("a current rewatch keeps playback progress alongside the completed scrobble", () => {

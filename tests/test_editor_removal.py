@@ -827,6 +827,49 @@ def test_item_targets_skip_a_pair_with_the_feature_turned_off(setup, monkeypatch
     assert "MDBLIST" in {row["provider"] for row in watchlist}
 
 
+def _ratings_pair_only(s, monkeypatch):
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
+    s.cfg["pairs"][:] = [{"id": "p7", "source": "TRAKT", "target": "PLEX", "features": {"ratings": {"enable": True}}}]
+
+
+def test_item_others_offer_writable_accounts_outside_the_pairs(setup, monkeypatch):
+    s = setup
+    _ratings_pair_only(s, monkeypatch)
+    import cw_platform.provider_instances as instances
+    monkeypatch.setattr(instances, "user_profiles_for_instance", lambda cfg, provider, instance: [])
+    targets, _ = api.item_action_targets(s.cfg, None, "ratings", media_type="movie")
+    others = api.item_action_others(s.cfg, None, "ratings", media_type="movie")
+    assert {row["provider"] for row in targets} == {"TRAKT", "PLEX"}
+    assert all(row["in_pair"] for row in targets)
+    assert "MDBLIST" in {row["provider"] for row in others}
+    assert not any(row["in_pair"] for row in others)
+
+
+def test_item_others_leave_out_read_only_and_other_peoples_accounts(setup, monkeypatch):
+    s = setup
+    _ratings_pair_only(s, monkeypatch)
+    import cw_platform.provider_instances as instances
+    monkeypatch.setattr(instances, "user_profiles_for_instance", lambda cfg, provider, instance: [{"id": "P02"}])
+    assert api.item_action_others(s.cfg, None, "ratings", media_type="movie") == []
+    monkeypatch.setattr(instances, "user_profiles_for_instance", lambda cfg, provider, instance: [])
+    s.ops["MDBLIST"].capabilities = lambda: {"ratings": {"write": False}}
+    assert "MDBLIST" not in {row["provider"] for row in api.item_action_others(s.cfg, None, "ratings", media_type="movie")}
+
+
+def test_item_others_stay_empty_inside_a_profile(setup, monkeypatch):
+    s = setup
+    _ratings_pair_only(s, monkeypatch)
+    assert api.item_action_others(s.cfg, None, "ratings", media_type="movie", user_profile="P01") == []
+
+
+def test_item_targets_report_when_no_pair_has_the_feature(setup, monkeypatch):
+    s = setup
+    _ratings_pair_only(s, monkeypatch)
+    monkeypatch.setattr(api, "load_config", lambda: s.cfg)
+    assert api.api_editor_item_targets(kind="ratings", media_type="movie", anime=False, user_profile="", request=None)["has_pair"] is True
+    assert api.api_editor_item_targets(kind="collection", media_type="movie", anime=False, user_profile="", request=None)["has_pair"] is False
+
+
 def test_item_targets_keep_anime_only_providers_for_anime(setup, monkeypatch):
     s = setup
     monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
@@ -899,6 +942,19 @@ def test_rewatch_sends_event_identities_and_merges_event_receipts(setup, monkeyp
     assert sent[0]["_cw_event_key"] == history_event_key(movie(watched_at="2026-11-01T12:00:00Z"))
     assert sent[0]["_cw_rewatch_sync"] is True
     assert len(merged) == 1 and merged[0]["_cw_event_key"] == sent[0]["_cw_event_key"]
+
+
+def test_mixed_batch_keeps_collapsed_receipts_and_ordinary_confirmations(setup):
+    s = setup
+    old = movie(watched_at="2026-05-03T21:10:00Z")
+    database.save_feature_baseline(s.root, provider="TRAKT", feature="history", items={history_event_key(old): old})
+    watched = api._rewatch_send_item(movie(watched_at="2026-11-01T12:00:00Z"))
+    fresh = movie(2, watched_at="2026-11-01T12:00:00Z")
+    api.remember_sent_items("TRAKT", "default", "history", [watched, fresh], {"ok": True, "confirmed": 2, "confirmed_keys": ["tmdb:1", "tmdb:2"]}, rewatch=True)
+    stored = api._load_state_items("history", "TRAKT", "default", raw_state=api._state_store().load_state_features({"history"}))
+    assert history_event_key(old) not in stored
+    assert [row["watched_at"] for key, row in stored.items() if key.startswith("tmdb:1")] == ["2026-11-01T12:00:00Z"]
+    assert any(key.startswith("tmdb:2") for key in stored)
 
 
 def test_collapsed_trakt_receipt_replaces_the_titles_stored_watches(setup, monkeypatch):

@@ -10,7 +10,9 @@ const source = readFileSync(new URL("../assets/js/item-actions.js", import.meta.
 
 function load(responses, dataset = {}) {
   const calls = [];
-  const element = () => ({ setAttribute() {}, addEventListener() {}, appendChild() {}, querySelector: () => null, querySelectorAll: () => [], classList: { add() {}, remove() {} }, dataset: {}, style: {} });
+  const element = () => ({ setAttribute() {}, addEventListener() {}, appendChild() {}, querySelector: () => null, querySelectorAll: () => [], classList: { add() {}, remove() {}, toggle() {} }, dataset: {}, style: {} });
+  const clicks = [];
+  const created = [];
   const context = {
     window: { CW: {}, setTimeout, clearTimeout },
     navigator: { language: "en-US" },
@@ -19,10 +21,18 @@ function load(responses, dataset = {}) {
       head: { appendChild() {} },
       body: { appendChild() {} },
       getElementById: () => null,
-      createElement: element,
+      createElement: () => {
+        const node = element();
+        node.addEventListener = (type, handler) => {
+          if (type === "click") clicks.push(handler);
+        };
+        created.push(node);
+        return node;
+      },
       addEventListener() {},
     },
     AbortController,
+    URLSearchParams,
     fetch: async (url, init = {}) => {
       const body = init.body ? JSON.parse(init.body) : undefined;
       calls.push({ url, body });
@@ -32,8 +42,10 @@ function load(responses, dataset = {}) {
     },
   };
   context.window.document = context.document;
+  context.window.addEventListener = () => {};
   vm.runInNewContext(source.replace("  (window.CW ||= {}).ItemActions =", "  window.testActions = { identity, sendAdd, editorRemove, watchlistRemove, progressTask, watchlistKeys };\n  (window.CW ||= {}).ItemActions ="), context);
-  return { api: context.window.testActions, actions: context.window.CW.ItemActions, calls };
+  context.CSS = { escape: String };
+  return { api: context.window.testActions, actions: context.window.CW.ItemActions, calls, created, clicks };
 }
 
 test("identity keeps typed ids and drops nested objects", () => {
@@ -133,6 +145,62 @@ test("resume point actions post the record and report the provider message", asy
   const removed = api.progressTask("remove", { provider: "PLEX", instance: "home" }, record, "Plex");
   await assert.rejects(removed.exec(), /Plex refused the change/);
   assert.equal(calls[1].url, "/api/playback_progress/actions/remove");
+});
+
+test("targets carry the accounts outside the pairs and whether a pair exists", async () => {
+  const { actions } = load([{ providers: [], hidden: [], others: [{ provider: "mdblist", instance: "default", in_pair: false }], has_pair: false }]);
+  const result = await actions.targets("ratings", { media_type: "movie" });
+  assert.equal(result.hasPair, false);
+  assert.equal(result.others[0].provider, "MDBLIST");
+});
+
+test("targets from an older reply count as paired with nothing extra", async () => {
+  const { actions } = load([{ providers: [], hidden: [] }]);
+  const result = await actions.targets("ratings", {});
+  assert.equal(result.hasPair, true);
+  assert.equal(result.others.length, 0);
+});
+
+const anchor = () => ({ isConnected: true, classList: { add() {}, remove() {} }, contains: () => false, focus() {}, getBoundingClientRect: () => ({ left: 0, top: 0, bottom: 0 }) });
+const unpaired = { provider: "MDBLIST", instance: "default", in_pair: false };
+const paired = { provider: "TRAKT", instance: "default", in_pair: true };
+
+test("the add list shows the other accounts with the sync pair note", async () => {
+  const { actions, created } = load([{ providers: [paired], hidden: [], others: [unpaired], has_pair: true }]);
+  await actions.openMenu({ anchor: anchor(), feature: "ratings", more: true, item: { title: "Michael", type: "movie" }, refs: { present: [], missing: [] } });
+  const html = created[0].innerHTML;
+  assert.match(html, /Add rating to/);
+  assert.match(html, /data-ia-ref="MDBLIST:default"/);
+  assert.doesNotMatch(html, /data-ia-ref="TRAKT:default"/);
+  assert.match(html, /Not in a sync pair for ratings\. This is added once and stays on that provider only\./);
+});
+
+test("the coverage menu keeps accounts outside the pairs out of its missing list", async () => {
+  const { actions, created } = load([{ providers: [paired], hidden: [], others: [unpaired], has_pair: true }]);
+  await actions.openMenu({ anchor: anchor(), feature: "ratings", item: { title: "Michael", type: "movie" }, refs: { present: [], missing: [{ provider: "MDBLIST", instance: "default" }] } });
+  const html = created[0].innerHTML;
+  assert.match(html, /data-ia-ref="TRAKT:default"/);
+  assert.doesNotMatch(html, /data-ia-ref="MDBLIST:default"/);
+});
+
+test("Add all sends every missing paired account and leaves the others out", async () => {
+  const { actions, calls, clicks } = load([
+    { providers: [paired], hidden: [], others: [unpaired], has_pair: true },
+    { results: [{ ok: true, result: { confirmed: 1 } }] },
+  ]);
+  await actions.openMenu({ anchor: anchor(), feature: "watchlist", item: { title: "Michael", type: "movie", ids: { tmdb: "1" } }, refs: { present: [], missing: [{ provider: "MDBLIST", instance: "default" }] } });
+  clicks[0]({ target: { closest: () => ({ dataset: { iaAct: "add-all" } }) } });
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(calls[1].url, "/api/editor/send");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls[1].body.providers)), [{ provider: "TRAKT", instance: "default" }]);
+});
+
+test("a title added once can be removed and says it is not in a pair", async () => {
+  const { actions, created } = load([{ providers: [paired], hidden: [], others: [unpaired], has_pair: true }]);
+  await actions.openMenu({ anchor: anchor(), feature: "ratings", item: { title: "Michael", type: "movie" }, focus: unpaired, refs: { present: [{ ...unpaired, rating: 8 }], missing: [] } });
+  const html = created[0].innerHTML;
+  assert.match(html, /Remove rating on/);
+  assert.match(html, /Not in a sync pair for ratings</);
 });
 
 test("write access follows the role and view-as mode", () => {

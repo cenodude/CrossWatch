@@ -86,6 +86,11 @@
     return (state.actionTargets?.[LIVE_FEATURES[key]] || []).filter((row) => !present.has(refId(row))).map((row) => ({ provider: row.provider, instance: row.instance || "default" }));
   }
 
+  function otherRefs(key) {
+    const present = new Set((state.presence?.[key]?.present || []).map(refId));
+    return (state.actionOthers?.[LIVE_FEATURES[key]] || []).filter((row) => !present.has(refId(row)));
+  }
+
   async function loadActionTargets(seq) {
     const actions = itemActions();
     if (!actions?.targets) return;
@@ -94,6 +99,8 @@
     const results = await Promise.all(keys.map((key) => actions.targets(LIVE_FEATURES[key], query)));
     if (seq !== state.seq || root.hidden) return;
     state.actionTargets = Object.fromEntries(keys.map((key, index) => [LIVE_FEATURES[key], results[index]?.rows || []]));
+    state.actionOthers = Object.fromEntries(keys.map((key, index) => [LIVE_FEATURES[key], results[index]?.others || []]));
+    state.actionPairless = new Set(keys.filter((key, index) => results[index]?.hasPair === false).map((key) => LIVE_FEATURES[key]));
     if (!personView) render();
   }
 
@@ -202,6 +209,7 @@
       item: actionItem(entry),
       refs: { present, missing: missingRefs(stateKey) },
       focus: node.dataset.iaRef ? { provider, instance: instance.join(":") || "default" } : null,
+      more: node.hasAttribute("data-ia-more"),
       rating: entry?.rating ?? null,
       epoch: feature === "history" ? Number(state.presence?.[key]?.last_epoch) || Number(entry?.last_epoch) || 0 : 0,
       releaseDate: feature === "history" ? releaseDate() : null,
@@ -360,6 +368,8 @@
       loading: true,
       presenceLoading: true,
       actionTargets: null,
+      actionOthers: null,
+      actionPairless: null,
       tab: "overview",
       seasons: sameTitle ? new Map([...state.seasons].filter(([, data]) => !data.loading && !data.error)) : new Map(),
       season: null,
@@ -512,9 +522,11 @@
         ? (entry?.episodes || []).reduce((best, row) => (!best || Number(row.epoch) > Number(best.epoch) ? row : best), null)
         : null;
       const chipList = [...present.map((ref) => providerChip(ref, false, !!feature, latest)), ...missing.map((ref) => providerChip(ref, true, !!feature, latest))];
+      if (feature && key !== "scrobble" && otherRefs(key).length) chipList.push(`<button type="button" class="cw-mm-provider is-more" data-ia-chip data-ia-more title="Add to another account" aria-label="Add to another account" aria-haspopup="dialog">${icon("add")}</button>`);
       const chips = chipList.length ? `<div class="cw-mm-live-chips">${chipList.join("")}</div>` : "";
+      const empty = feature && key !== "scrobble" && state.actionPairless?.has(feature) ? "No sync pair" : "Not synced";
       return `<div class="cw-mm-live${synced ? " is-on" : ""}${feature ? " has-actions" : ""}" data-mm-live="${esc(key)}">
-        <div class="cw-mm-live-head">${icon(symbol)}<strong>${esc(label)}</strong><span>${esc(synced ? liveSummary(key, entry) : "Not synced")}</span></div>
+        <div class="cw-mm-live-head">${icon(symbol)}<strong>${esc(label)}</strong><span>${esc(synced ? liveSummary(key, entry) : empty)}</span></div>
         ${chips}
       </div>`;
     }).join("");

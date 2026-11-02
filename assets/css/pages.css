@@ -999,6 +999,10 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 .cw-mm-provider img{width:20px;height:20px;object-fit:contain}
 .cw-mm-provider-mark,.cw-mm-provider em{position:absolute;right:-4px;bottom:-4px;display:grid;place-items:center;min-width:16px;height:16px;padding:0 3px}
 .cw-mm-provider.is-missing{opacity:.35;filter:grayscale(1)}
+.cw-mm-provider.is-more .material-symbols-rounded{font-size:18px}
+.cw-mw-held{display:grid;gap:4px;margin-top:8px}
+.cw-mw-held:empty{display:none}
+.cw-mw-held p{margin:0}
 .cw-mm-muted{margin:0}
 .cw-mm-watchline{display:flex;align-items:center;gap:14px;margin:0 0 16px;padding:12px 14px}
 .cw-mm-watchline>.material-symbols-rounded{display:grid;place-items:center;flex:0 0 auto;width:42px;height:42px}

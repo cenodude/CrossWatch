@@ -15,7 +15,8 @@ from fastapi.responses import JSONResponse
 
 from cw_platform.access_policy import filter_instances_for_user, request_user
 from cw_platform.modules_registry import load_sync_ops, sync_provider_names
-from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
+from cw_platform.orchestrator._history_rewatches import config_with_history_rewatches, history_rewatch_supported
+from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id, user_profiles_for_instance
 
 router = APIRouter(prefix="/api/manual", tags=["manual"])
 
@@ -24,6 +25,7 @@ _LOG = logging.getLogger("crosswatch.api.manual")
 MANUAL_EPISODES_MAX = 500
 EPISODE_LIST_PROVIDERS = frozenset({"SIMKL"})
 COLLECTION_READ_ONLY_PROVIDERS = frozenset({"PLEX", "EMBY", "JELLYFIN", "KODI", "SILO"})
+FEATURE_FLAGS = {"history": "history_enabled", "ratings": "ratings_enabled", "watchlist": "watchlist_enabled", "collection": "collection_enabled"}
 _EPISODE_LIST_TTL = 3600
 _EPISODE_LIST_CACHE: dict[tuple[str, str, int], tuple[float, list[dict[str, Any]]]] = {}
 _EPISODE_LIST_LOCK = threading.Lock()
@@ -364,6 +366,7 @@ def _manual_history_targets(cfg: dict[str, Any], user: Any = None) -> list[dict[
                 "watchlist_enabled": watchlist_ok,
                 "collection_enabled": collection_ok,
                 "episode_list": history_ok and provider in EPISODE_LIST_PROVIDERS,
+                "rewatch_write": history_ok and history_rewatch_supported(provider, ops, "write"),
             }
 
     out = [v for v in merged.values() if bool(v.get("history_enabled") or v.get("watchlist_enabled") or v.get("collection_enabled"))]
@@ -371,12 +374,101 @@ def _manual_history_targets(cfg: dict[str, Any], user: Any = None) -> list[dict[
     return out
 
 
+def _manual_title_is_anime(cfg: dict[str, Any], media_type: str, tmdb_id: Any) -> bool | None:
+    from cw_platform.anime_mapping.service import AnimeMappingService
+
+    try:
+        service = AnimeMappingService(cfg)
+        if not service.ready():
+            return None
+        ids = service.enrich_ids({"tmdb": tmdb_id}, media_type=media_type).get("ids") or {}
+    except Exception:
+        return None
+    return any(ids.get(key) for key in ("anilist", "mal", "kitsu"))
+
+
+def _title_targets(
+    cfg: dict[str, Any],
+    rows: list[dict[str, Any]],
+    request: Request | None,
+    *,
+    media_type: str = "",
+    tmdb_id: Any = None,
+    user_profile: str = "",
+) -> list[dict[str, Any]]:
+    from .editorAPI import ANIME_ONLY_PROVIDERS, _feature_write_blocked, _profile_instances, _viewer_profile
+
+    profile = _viewer_profile(cfg, request, user_profile)
+    owned = _profile_instances(cfg, profile) if profile else None
+    anime = _manual_title_is_anime(cfg, media_type, tmdb_id) if tmdb_id not in (None, "") else None
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        provider = str(row.get("provider") or "").upper()
+        instance = normalize_instance_id(row.get("instance") or "default")
+        if owned is not None and (provider, instance) not in owned:
+            continue
+        if owned is None and user_profiles_for_instance(cfg, provider, instance):
+            continue
+        if anime is False and provider in ANIME_ONLY_PROVIDERS:
+            continue
+        ops = load_sync_ops(provider)
+        allowed = dict(row)
+        for feature, flag in FEATURE_FLAGS.items():
+            if allowed.get(flag) and (not ops or _feature_write_blocked(ops, feature, media_type)):
+                allowed[flag] = False
+        if media_type == "show" and row.get("history_enabled"):
+            allowed["history_whole_show"] = bool(allowed.get("history_enabled"))
+            allowed["history_episodes"] = bool(ops) and not _feature_write_blocked(ops, "history", "episode")
+            allowed["history_enabled"] = allowed["history_whole_show"] or allowed["history_episodes"]
+        if any(allowed.get(flag) for flag in FEATURE_FLAGS.values()):
+            out.append(allowed)
+    return out
+
+
+def _rewatch_targets(value: Any) -> dict[tuple[str, str], set[tuple[int, int]]]:
+    out: dict[tuple[str, str], set[tuple[int, int]]] = {}
+    for raw in value if isinstance(value, list) else []:
+        entry = raw if isinstance(raw, dict) else {"target": raw}
+        rows = entry.get("episodes") if isinstance(entry.get("episodes"), list) else []
+        out[_split_source(entry.get("target"))] = {
+            (season, episode)
+            for row in rows if isinstance(row, dict)
+            for season, episode in [(_int_or_none(row.get("season")), _int_or_none(row.get("episode")))]
+            if season is not None and episode is not None
+        }
+    return out
+
+
+def _remember_sent(provider: str, instance: str, feature: str, items: list[dict[str, Any]], res: dict[str, Any], *, rewatch: bool = False) -> None:
+    from .editorAPI import remember_sent_items
+    from services.editor_removal import forget_live_reads
+
+    try:
+        forget_live_reads(provider, instance, feature)
+        remember_sent_items(provider, instance, cast(Any, feature), items, res, rewatch=rewatch)
+    except Exception:
+        _LOG.exception("manual %s state update failed for %s:%s", feature, provider, instance)
+
+
 @router.get("/providers")
-def api_manual_providers(request: Request = cast(Request, None)) -> JSONResponse:
+def api_manual_providers(
+    media_type: str = Query("", max_length=20),
+    tmdb: str = Query("", max_length=20),
+    user_profile: str = Query("", max_length=120),
+    request: Request = cast(Request, None),
+) -> JSONResponse:
     from cw_platform.config_base import load_config
 
     cfg = load_config() or {}
-    return JSONResponse({"ok": True, "providers": _manual_history_targets(cfg, request_user(request))}, status_code=200)
+    rows = _title_targets(
+        cfg,
+        _manual_history_targets(cfg, request_user(request)),
+        request,
+        media_type=_normalize_media_type(media_type) if media_type else "",
+        tmdb_id=tmdb,
+        user_profile=user_profile,
+    )
+    return JSONResponse({"ok": True, "providers": rows}, status_code=200)
 
 
 @router.get("/episodes")
@@ -480,7 +572,14 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
     if raw_rating not in (None, "") and rating is None:
         return JSONResponse({"ok": False, "error": "invalid_rating"}, status_code=400)
 
-    available = _manual_history_targets(cfg, request_user(request))
+    available = _title_targets(
+        cfg,
+        _manual_history_targets(cfg, request_user(request)),
+        request,
+        media_type=media_type,
+        tmdb_id=tmdb_id,
+        user_profile=str(payload.get("user_profile") or ""),
+    )
     target_map = {
         (str(it.get("provider") or "").upper(), normalize_instance_id(it.get("instance") or "default")): it
         for it in available
@@ -511,6 +610,7 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
 
     results: list[dict[str, Any]] = []
     success_count = 0
+    rewatch_map = _rewatch_targets(payload.get("rewatch"))
 
     for raw in selected_targets:
         if not isinstance(raw, dict):
@@ -531,10 +631,25 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
         cfg_view = build_provider_config_view(cfg, provider, instance)
         history_res: dict[str, Any] | None = None
         history_skipped: str | None = None
-        if do_history and bool(target.get("history_enabled")):
+        history_allowed = bool(target.get("history_enabled")) and target.get("history_episodes" if episodes else "history_whole_show") is not False
+        watched = rewatch_map.get((provider, instance)) if do_history else None
+
+        def is_watched(row: dict[str, Any]) -> bool:
+            return watched is not None and (not watched or (row.get("season"), row.get("episode")) in watched)
+
+        rewatch = watched is not None and history_rewatch_supported(provider, ops, "write")
+        history_rows = history_items if rewatch else [row for row in history_items if not is_watched(row)]
+        if do_history and history_allowed and not history_rows:
+            history_skipped = "rewatch_not_supported"
+        elif do_history and history_allowed:
+            from .editorAPI import _rewatch_send_item
+
+            send_cfg = config_with_history_rewatches(cfg_view, True) if rewatch else cfg_view
+            send_items = [_rewatch_send_item(row) if is_watched(row) else row for row in history_rows]
             try:
-                hr = ops.add(cfg_view, history_items, feature="history")
+                hr = ops.add(send_cfg, send_items, feature="history")
                 history_res = dict(hr) if isinstance(hr, dict) else {"ok": bool(hr)}
+                _remember_sent(provider, instance, "history", send_items, history_res, rewatch=rewatch)
             except Exception:
                 _LOG.exception("manual history add failed for %s:%s", provider, instance)
                 history_res = {"ok": False, "error": "history_add_failed"}
@@ -548,6 +663,7 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
                 try:
                     wr = ops.add(cfg_view, [item_payload], feature="watchlist")
                     watchlist_res = dict(wr) if isinstance(wr, dict) else {"ok": bool(wr)}
+                    _remember_sent(provider, instance, "watchlist", [item_payload], watchlist_res)
                 except Exception:
                     _LOG.exception("manual watchlist add failed for %s:%s", provider, instance)
                     watchlist_res = {"ok": False, "error": "watchlist_add_failed"}
@@ -564,6 +680,7 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
                 try:
                     rr = ops.add(cfg_view, [rating_payload], feature="ratings")
                     rating_res = dict(rr) if isinstance(rr, dict) else {"ok": bool(rr)}
+                    _remember_sent(provider, instance, "ratings", [rating_payload], rating_res)
                 except Exception:
                     _LOG.exception("manual rating add failed for %s:%s", provider, instance)
                     rating_res = {"ok": False, "error": "rating_add_failed"}
@@ -577,6 +694,7 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
                 try:
                     cr = ops.add(cfg_view, [collection_payload], feature="collection")
                     collection_res = dict(cr) if isinstance(cr, dict) else {"ok": bool(cr)}
+                    _remember_sent(provider, instance, "collection", [collection_payload], collection_res)
                 except Exception:
                     _LOG.exception("manual collection add failed for %s:%s", provider, instance)
                     collection_res = {"ok": False, "error": "collection_add_failed"}
