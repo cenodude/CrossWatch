@@ -1490,18 +1490,43 @@ def _pair_instances(cfg: Mapping[str, Any], feature: str) -> set[tuple[str, str]
     return out
 
 
-def _owned_instances(cfg: Mapping[str, Any], request: Request | None, user_profile: str, feature: str) -> set[tuple[str, str]]:
+def _viewer_profile(cfg: Mapping[str, Any], request: Request | None, user_profile: str) -> str:
     from api.appAuthAPI import effective_request_profile_id
+
+    return effective_request_profile_id(dict(cfg), request, user_profile) if request is not None else str(user_profile or "").strip()
+
+
+def _profile_instances(cfg: Mapping[str, Any], profile: str) -> set[tuple[str, str]]:
     from cw_platform.provider_instances import instances_for_user_profile
 
-    profile = effective_request_profile_id(dict(cfg), request, user_profile) if request is not None else str(user_profile or "").strip()
-    if not profile:
-        return _pair_instances(cfg, feature)
     return {
         (str(provider or "").strip().upper(), normalize_instance_id(instance))
         for provider, instances in (instances_for_user_profile(cfg, profile) or {}).items()
         for instance in (instances if isinstance(instances, list) else [instances])
     }
+
+
+def _owned_instances(cfg: Mapping[str, Any], request: Request | None, user_profile: str, feature: str) -> set[tuple[str, str]]:
+    profile = _viewer_profile(cfg, request, user_profile)
+    return _profile_instances(cfg, profile) if profile else _pair_instances(cfg, feature)
+
+
+def _item_target_rows(
+    cfg: Mapping[str, Any],
+    request: Request | None,
+    feature: str,
+    media_type: str,
+    anime: bool,
+) -> list[tuple[dict[str, Any], str]]:
+    paired = _pair_instances(cfg, feature)
+    out: list[tuple[dict[str, Any], str]] = []
+    for row in _filter_targets_for_request(cfg, request, _editor_send_targets(dict(cfg), feature)):
+        ops = load_sync_ops(row["provider"])
+        reason = _feature_write_blocked(ops, feature, media_type) if ops else "provider_unavailable"
+        if not reason and row["provider"] in ANIME_ONLY_PROVIDERS and not anime:
+            reason = "anime_only"
+        out.append(({**row, "in_pair": (row["provider"], row["instance"]) in paired}, reason))
+    return out
 
 
 def item_action_targets(
@@ -1516,18 +1541,33 @@ def item_action_targets(
     owned = _owned_instances(cfg, request, user_profile, feature)
     targets: list[dict[str, Any]] = []
     hidden: list[dict[str, Any]] = []
-    for row in _filter_targets_for_request(cfg, request, _editor_send_targets(dict(cfg), feature)):
+    for row, reason in _item_target_rows(cfg, request, feature, media_type, anime):
         if (row["provider"], row["instance"]) not in owned:
             continue
-        ops = load_sync_ops(row["provider"])
-        reason = _feature_write_blocked(ops, feature, media_type) if ops else "provider_unavailable"
-        if not reason and row["provider"] in ANIME_ONLY_PROVIDERS and not anime:
-            reason = "anime_only"
         if reason:
             hidden.append({key: row.get(key) for key in ("provider", "instance", "label", "instance_label", "display")} | {"reason": reason})
         else:
             targets.append(row)
     return targets, hidden
+
+
+def item_action_others(
+    cfg: Mapping[str, Any],
+    request: Request | None,
+    feature: str,
+    *,
+    media_type: str = "",
+    anime: bool = False,
+    user_profile: str = "",
+) -> list[dict[str, Any]]:
+    from cw_platform.provider_instances import user_profiles_for_instance
+
+    if _viewer_profile(cfg, request, user_profile):
+        return []
+    return [
+        row for row, reason in _item_target_rows(cfg, request, feature, media_type, anime)
+        if not reason and not row["in_pair"] and not user_profiles_for_instance(cfg, row["provider"], row["instance"])
+    ]
 
 
 @router.get("/send/item-targets")
@@ -1541,7 +1581,9 @@ def api_editor_item_targets(
     cfg = load_config() or {}
     feature = _normalize_kind(kind)
     targets, hidden = item_action_targets(cfg, request, feature, media_type=media_type, anime=anime, user_profile=user_profile)
-    return {"ok": True, "kind": feature, "providers": targets, "hidden": hidden}
+    others = item_action_others(cfg, request, feature, media_type=media_type, anime=anime, user_profile=user_profile)
+    has_pair = bool(_pair_instances(cfg, feature) & _owned_instances(cfg, request, user_profile, feature))
+    return {"ok": True, "kind": feature, "providers": targets, "hidden": hidden, "others": others, "has_pair": has_pair}
 
 
 @router.get("/send/providers")
@@ -1731,6 +1773,34 @@ def _emit_editor_operation(event: str, **data: Any) -> None:
         pass
 
 
+def remember_sent_items(
+    provider: str,
+    instance: str,
+    feature: Kind,
+    send_items: list[dict[str, Any]],
+    res: Mapping[str, Any],
+    *,
+    rewatch: bool = False,
+) -> None:
+    if not bool(res.get("ok", True)) or int(res.get("confirmed", res.get("count", 0)) or 0) <= 0:
+        return
+    try:
+        confirmed_items = _items_confirmed_by_send(feature, send_items, res)
+        if rewatch:
+            collapsed = _collapsed_rewatch_receipts([item for item in send_items if item not in confirmed_items], res)
+            if collapsed:
+                _merge_sent_items_into_state(provider, instance, feature, list(collapsed.values()), replace_bases=set(collapsed))
+        _merge_sent_items_into_state(provider, instance, feature, confirmed_items)
+    except Exception:
+        pass
+    confirmed_keys = [str(k) for k in (res.get("confirmed_keys") or []) if k]
+    try:
+        clear_blackbox_keys(provider, feature, confirmed_keys)
+        clear_unresolved_all_scopes(provider, feature, confirmed_keys)
+    except Exception:
+        pass
+
+
 @router.post("/send")
 def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None)) -> dict[str, Any]:
     operation = payload.get("operation", "add")
@@ -1841,22 +1911,8 @@ def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast
         for key in totals:
             totals[key] += int(res.get(key, 0) or 0)
 
-        if not dry_run and bool(res.get("ok", True)) and int(res.get("confirmed", res.get("count", 0)) or 0) > 0:
-            try:
-                confirmed_items = _items_confirmed_by_send(feature, send_items, res)
-                if rewatch and not confirmed_items:
-                    collapsed = _collapsed_rewatch_receipts(send_items, res)
-                    _merge_sent_items_into_state(provider, instance, feature, list(collapsed.values()), replace_bases=set(collapsed))
-                else:
-                    _merge_sent_items_into_state(provider, instance, feature, confirmed_items)
-            except Exception:
-                pass
-            confirmed_keys = [str(k) for k in (res.get("confirmed_keys") or []) if k]
-            try:
-                clear_blackbox_keys(provider, feature, confirmed_keys)
-                clear_unresolved_all_scopes(provider, feature, confirmed_keys)
-            except Exception:
-                pass
+        if not dry_run:
+            remember_sent_items(provider, instance, feature, send_items, res, rewatch=rewatch)
 
     return {
         "ok": bool(results) and all(bool(r.get("ok")) for r in results),

@@ -63,6 +63,56 @@ const closeModalAfterTap = () => {
   window.setTimeout(closeModal, 80);
 };
 
+const HELD_SOURCES = { history: "synced", watchlist: "watchlist", rating: "ratings", collection: "collection" };
+
+const targetName = (target) => target.display || target.label || target.provider;
+
+const watchedRefs = (held, picked) => {
+  if (!picked) return held?.synced?.present || [];
+  const rows = held?.synced?.episodes || [];
+  return rows.filter((row) => picked.some((pick) => pick.season === row.season && pick.episode === row.episode)).flatMap((row) => row.present || []);
+};
+
+const watchedTargets = (held, targets, picked) => {
+  const refs = watchedRefs(held, picked);
+  return targets.filter((target) => refs.some((row) => providerKey(row) === providerKey(target)));
+};
+
+const watchedEpisodes = (held, target, picked) => (held?.synced?.episodes || [])
+  .filter((row) => picked.some((pick) => pick.season === row.season && pick.episode === row.episode))
+  .filter((row) => (row.present || []).some((ref) => providerKey(ref) === providerKey(target)))
+  .map((row) => ({ season: row.season, episode: row.episode }));
+
+const historyFits = (item, show, picking) => !show || item?.[picking ? "history_episodes" : "history_whole_show"] !== false;
+
+const heldNotes = (held, actions, targets, { show = false, picked = null } = {}) => actions.flatMap((action) => {
+  if (action === "history") {
+    if (show && !picked) {
+      const names = watchedTargets(held, targets, null).map(targetName).join(", ");
+      return names ? [`Has watched episodes on ${names}.`] : [];
+    }
+    const watched = watchedTargets(held, targets, picked);
+    const again = watched.filter((target) => target.rewatch_write).map(targetName).join(", ");
+    const once = watched.filter((target) => !target.rewatch_write).map(targetName).join(", ");
+    return [
+      ...(again ? [`Already watched on ${again}. Sending adds a rewatch.`] : []),
+      ...(once ? [picked
+        ? `Already watched on ${once}, which keeps one play. Those episodes are skipped there.`
+        : `Already watched on ${once}, which keeps one play. History is skipped there.`] : []),
+    ];
+  }
+  const refs = held?.[HELD_SOURCES[action]]?.present;
+  if (!Array.isArray(refs)) return [];
+  const names = targets.flatMap((target) => {
+    const ref = refs.find((row) => providerKey(row) === providerKey(target));
+    if (!ref) return [];
+    return [action === "rating" && ref.rating != null ? `${targetName(target)} (${ref.rating}/10)` : targetName(target)];
+  }).join(", ");
+  if (!names) return [];
+  if (action === "rating") return [`Already rated on ${names}. Sending may replace the score.`];
+  return [`Already in your ${action} on ${names}.`];
+});
+
 export default {
   async mount(root, props = {}) {
     if (!document.getElementById("cw-quick-add-style")) {
@@ -105,6 +155,8 @@ export default {
       results: [],
       searching: false,
       selectedItem: null,
+      held: null,
+      titleLoading: false,
       dateMode: "today",
       watchedOn: todayLocal(),
       actions: { history: true, watchlist: false, rating: false, collection: false },
@@ -154,7 +206,8 @@ export default {
     };
     const actionScope = () => selectedTargets().length ? selectedTargets() : state.providers;
     const availableActions = () => ACTIONS.filter(([key]) => actionScope().some((p) => supportsAction(p, key)));
-    const providerCompatible = (item) => selectedActionKeys().every((key) => supportsAction(item, key));
+    const providerCompatible = (item) => selectedActionKeys().every((key) => supportsAction(item, key))
+      && (!state.actions.history || historyFits(item, isShow(), pickingEpisodes()));
     const compatibleProviders = () => state.providers.filter(providerCompatible);
     const selectedCompatibleTargets = () => selectedTargets().filter(providerCompatible);
     const normalizeActions = () => {
@@ -204,6 +257,7 @@ export default {
     };
     const validation = () => {
       if (!state.selectedItem) return "Select a movie or show first.";
+      if (state.titleLoading) return "Checking this title...";
       if (!selectedActionKeys().length) return "Select at least one action.";
       if (!selectedCompatibleTargets().length) return "Select at least one compatible provider.";
       if (dated() && state.dateMode === "custom" && !state.watchedOn) return "Choose a date.";
@@ -393,11 +447,16 @@ export default {
       </div>`;
     };
 
+    const pickedForHeld = () => (pickingEpisodes() ? pickedRows() : null);
+
+    const heldHtml = () => heldNotes(state.held, selectedActionKeys(), selectedCompatibleTargets(), { show: isShow(), picked: pickedForHeld() })
+      .map((note) => `<p class="cw-mw-muted">${esc(note)}</p>`).join("");
+
     const chooseView = () => `
       <div class="cw-mw-form">
         ${selectedItemHtml()}
         <div class="cw-mw-field"><span class="cw-mw-label">What</span><div class="cw-mw-chips">${actionChips()}</div></div>
-        <div class="cw-mw-field"><span class="cw-mw-label">Where</span><div class="cw-mw-where">${providerChips()}</div></div>
+        <div class="cw-mw-field"><span class="cw-mw-label">Where</span><div class="cw-mw-where">${providerChips()}<div class="cw-mw-held">${heldHtml()}</div></div></div>
         ${dated() ? `<div class="cw-mw-field"><span class="cw-mw-label">When</span><div class="cw-mw-chips">
           <button type="button" class="cw-mw-chip ${state.dateMode === "today" ? "active" : ""}" data-date-mode="today">Today</button>
           <button type="button" class="cw-mw-chip ${state.dateMode === "release" ? "active" : ""}" data-date-mode="release">Release date</button>
@@ -585,11 +644,26 @@ export default {
       root.querySelector("[data-role=extra-episode]")?.focus?.({ preventScroll: true });
     };
 
+    const sortProviders = (rows) => [...rows]
+      .sort((a, b) => String(a.display || a.label || a.provider).localeCompare(String(b.display || b.label || b.provider), undefined, { sensitivity: "base", numeric: true }));
+
+    const viewerProfile = () => window.CW?.ProfileViewAs?.id || (document.documentElement?.dataset?.cwPage === "profile" ? "" : window.CW?.OverviewProfile?.id) || "";
+
+    const providersUrl = (item = null) => {
+      const params = new URLSearchParams();
+      if (viewerProfile()) params.set("user_profile", viewerProfile());
+      if (item) {
+        params.set("media_type", String(item.type || "movie"));
+        params.set("tmdb", String(item.tmdb));
+      }
+      const query = params.toString();
+      return `/api/manual/providers${query ? `?${query}` : ""}`;
+    };
+
     const loadProviders = async () => {
       try {
-        const data = await fjson("/api/manual/providers");
-        state.providers = (Array.isArray(data.providers) ? [...data.providers] : [])
-          .sort((a, b) => String(a.display || a.label || a.provider).localeCompare(String(b.display || b.label || b.provider), undefined, { sensitivity: "base", numeric: true }));
+        const data = await fjson(providersUrl());
+        state.providers = sortProviders(Array.isArray(data.providers) ? data.providers : []);
         state.remembered = loadRemembered();
         const allowed = new Set(state.providers.map(providerKey));
         state.selectedProviders = new Set(state.remembered.filter((key) => allowed.has(key)));
@@ -613,6 +687,11 @@ export default {
       state.saving = true;
       render();
       const providers = selectedCompatibleTargets().map((item) => ({ provider: item.provider, instance: item.instance }));
+      const canRewatch = state.actions.history && (!isShow() || pickingEpisodes());
+      const picked = pickedForHeld();
+      const rewatch = canRewatch
+        ? watchedTargets(state.held, selectedCompatibleTargets(), picked).map((target) => (picked ? { target: providerKey(target), episodes: watchedEpisodes(state.held, target, picked) } : providerKey(target)))
+        : [];
       try {
         const data = await fjson("/api/manual/watched", {
           method: "POST",
@@ -631,6 +710,8 @@ export default {
             providers,
             episodes: pickingEpisodes() ? pickedRows().map((row) => ({ season: row.season, episode: row.episode, air_date: row.air_date || null })) : undefined,
             episode_source: pickingEpisodes() ? state.listSource : undefined,
+            rewatch,
+            user_profile: viewerProfile() || undefined,
           }),
         });
         saveSelection();
@@ -677,11 +758,28 @@ export default {
       render();
     });
 
+    const loadTitle = async () => {
+      const item = state.selectedItem;
+      state.held = null;
+      state.titleLoading = !!item?.tmdb;
+      if (!item?.tmdb) return;
+      const profile = viewerProfile() ? `&user_profile=${encodeURIComponent(viewerProfile())}` : "";
+      const heldUrl = `/api/profile/title?type=${isShow() ? "show" : "movie"}&tmdb=${encodeURIComponent(item.tmdb)}${profile}`;
+      const settle = (url) => fjson(url, { signal: AbortSignal.timeout(8000) }).catch(() => null);
+      const [held, targets] = await Promise.all([settle(heldUrl), settle(providersUrl(item))]);
+      if (state.selectedItem !== item) return;
+      state.titleLoading = false;
+      state.held = held;
+      if (Array.isArray(targets?.providers)) state.providers = sortProviders(targets.providers);
+      render();
+    };
+
     const selectResult = (resultBtn) => {
       const tmdb = String(resultBtn.getAttribute("data-result-tmdb") || "");
       const previous = state.selectedItem;
       state.selectedItem = state.results.find((item) => String(item.tmdb) === tmdb) || null;
       if (String(previous?.tmdb || "") !== String(state.selectedItem?.tmdb || "") || previous?.type !== state.selectedItem?.type) resetEpisodes();
+      void loadTitle();
       render();
     };
 

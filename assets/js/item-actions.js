@@ -6,10 +6,10 @@
   const icon = (name) => `<span class="material-symbols-rounded" aria-hidden="true">${esc(name)}</span>`;
   const numberFmt = new Intl.NumberFormat(window.__CW_LOCALE || navigator.language || undefined);
   const FEATURES = {
-    watchlist: { noun: "watchlist", present: "On your watchlist", missing: "Not on this watchlist", undo: true },
-    history: { noun: "history", present: "Watched here", missing: "Not watched here", undo: false },
-    ratings: { noun: "ratings", present: "Rated here", missing: "Not rated here", undo: true },
-    collection: { noun: "collection", present: "In your collection", missing: "Not in this collection", undo: true },
+    watchlist: { noun: "watchlist", present: "On your watchlist", missing: "Not on this watchlist", more: "Add to watchlist", undo: true },
+    history: { noun: "history", present: "Watched here", missing: "Not watched here", more: "Mark watched on", undo: false },
+    ratings: { noun: "ratings", present: "Rated here", missing: "Not rated here", more: "Add rating to", undo: true },
+    collection: { noun: "collection", present: "In your collection", missing: "Not in this collection", more: "Add to collection", undo: true },
     progress: { noun: "resume point", present: "Has a resume point", missing: "No resume point", undo: false },
   };
   const FEATURE_ICONS = { watchlist: "bookmark", history: "history", ratings: "star", collection: "video_library", progress: "resume" };
@@ -453,10 +453,12 @@
         .then((data) => ({
           rows: (Array.isArray(data?.providers) ? data.providers : []).map((row) => ({ ...row, ...cleanRef(row) })),
           hidden: (Array.isArray(data?.hidden) ? data.hidden : []).map((row) => ({ ...row, ...cleanRef(row) })),
+          others: (Array.isArray(data?.others) ? data.others : []).map((row) => ({ ...row, ...cleanRef(row) })),
+          hasPair: data?.has_pair !== false,
         }))
         .catch(() => {
           targetCache.delete(key);
-          return { rows: [], hidden: [] };
+          return { rows: [], hidden: [], others: [], hasPair: true };
         });
       targetCache.set(key, pending);
     }
@@ -468,6 +470,7 @@
     let ctx = null;
     let list = [];
     let hidden = [];
+    let others = [];
     let lists = {};
     let armedUntil = 0;
     let armedRow = "";
@@ -479,6 +482,9 @@
 
     const isNarrow = () => !!window.matchMedia?.("(max-width: 560px)")?.matches;
     const writable = (ref) => list.some((row) => refKey(row) === refKey(ref));
+    const isOther = (ref) => others.some((row) => refKey(row) === refKey(ref));
+    const missingRefs = () => (ctx.refs.missing || []).map(cleanRef).filter((ref) => writable(ref) && !isOther(ref));
+    const pairNote = () => `Not in a sync pair for ${FEATURES[ctx.feature].noun}`;
     const hiddenReason = (ref) => {
       const row = hidden.find((entry) => refKey(entry) === refKey(ref));
       return row ? REASONS[row.reason] || "Cannot be changed here" : "";
@@ -620,6 +626,7 @@
       const sub = present ? (rating ? `Rated ${rating}/10` : FEATURES[feature].present) : FEATURES[feature].missing;
       const top = head("", `${name} · ${accountName(focus, list)}`, sub, focus.provider);
       const body = [];
+      const unpaired = list.some((row) => refKey(row) === refKey(focus) && row.in_pair === false);
       if (!writable(focus)) {
         body.push(`<p class="cw-ia-note">${icon("lock")}${esc(hiddenReason(focus) || "Not one of your accounts for this")}</p>`);
       } else if (present) {
@@ -634,13 +641,21 @@
         body.push(whenHtml());
         body.push(item("add-one", feature === "ratings" ? "star" : "add", addLabel(name), "accent", dateReady() ? "" : " disabled"));
       }
+      if (unpaired) body.push(`<p class="cw-ia-note">${icon("info")}${esc(pairNote())}</p>`);
       return `${top}<div class="cw-ia-list">${body.join("")}</div>${links()}`;
+    }
+
+    function moreHtml() {
+      const { feature, refs } = ctx;
+      const held = new Set((refs.present || []).map(refKey));
+      const rows = others.filter((ref) => !held.has(refKey(ref))).map((ref) => `<div class="cw-ia-row">${logoHtml(ref.provider)}<span class="cw-ia-row-copy"><strong>${esc(providerName(ref.provider))}</strong><small>${esc(accountName(ref, list))}</small></span><button type="button" class="cw-ia-link" data-ia-act="row" data-ia-ref="${esc(refKey(ref))}" data-ia-on="0"${dateReady() ? "" : " disabled"}>${feature === "ratings" ? `Rate ${score}` : "Add"}</button></div>`).join("");
+      return `${head("add", FEATURES[feature].more, ctx.item?.title || "")}${feature === "ratings" ? `<div class="cw-ia-list">${stepper()}</div>` : ""}${whenHtml()}<div class="cw-ia-rows">${rows}</div><p class="cw-ia-note">${icon("info")}${esc(`${pairNote()}. This is added once and stays on that provider only.`)}</p>`;
     }
 
     function coverageHtml() {
       const { feature, refs } = ctx;
       const present = (refs.present || []).map((ref) => ({ ...ref, ...cleanRef(ref) }));
-      const missing = (refs.missing || []).map(cleanRef).filter(writable);
+      const missing = missingRefs();
       const total = present.length + missing.length;
       const title = !missing.length ? (feature === "history" ? "Watched on every account" : "On every account") : `On ${present.length} of ${total} accounts`;
       const sub = missing.length ? `Missing on ${listNames(missing.map((ref) => providerName(ref.provider)))}` : FEATURES[feature].present;
@@ -711,7 +726,7 @@
       }).join("");
       const total = activeGroups().reduce((sum, group) => sum + groupRefs(group).length, 0);
       const armed = isArmed("all");
-      return `${head("delete_sweep", "Remove from everything", ctx.item?.title || "This title")}<div class="cw-ia-rows">${rows}</div><p class="cw-ia-note">${icon("info")}History removal clears every watch on that account.</p><div class="cw-ia-foot"><button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="ev-remove"${total ? "" : " disabled"}>${esc(!total ? "Nothing selected" : armed ? "Click again to confirm" : `Remove ${plural(total, "record")}`)}</button></div>`;
+      return `${head("delete_sweep", "Remove from everything", ctx.item?.title || "This title")}<div class="cw-ia-rows">${rows}</div><p class="cw-ia-note">${icon("info")}Removal clears every watch on your provider(s).</p><div class="cw-ia-foot"><button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="ev-remove"${total ? "" : " disabled"}>${esc(!total ? "Nothing selected" : armed ? "Click again to confirm" : `Remove ${plural(total, "record")}`)}</button></div>`;
     }
 
     function render() {
@@ -724,7 +739,7 @@
       } else if (ctx.feature === "progress") {
         el.innerHTML = progressHtml();
       } else {
-        el.innerHTML = ctx.focus ? focusHtml() : coverageHtml();
+        el.innerHTML = ctx.more ? moreHtml() : ctx.focus ? focusHtml() : coverageHtml();
       }
       place();
     }
@@ -801,7 +816,7 @@
         if (current.feature === "collection") return { fields: { collected_at: new Date().toISOString() } };
         return {};
       };
-      const all = [...(current.refs.present || []), ...(current.refs.missing || [])].map(cleanRef);
+      const all = [...(current.refs.present || []), ...(current.refs.missing || []), ...others].map(cleanRef);
       if (action === "row") {
         const ref = all.find((entry) => refKey(entry) === button.dataset.iaRef);
         if (!ref || !writable(ref)) return;
@@ -821,8 +836,9 @@
         return;
       }
       if (action === "add-all") {
+        const refs = missingRefs();
         close(true);
-        void run(addJob(current, (current.refs.missing || []).map(cleanRef).filter(writable), list, addOptions()));
+        void run(addJob(current, refs, list, addOptions()));
         return;
       }
       if (action === "remove-one") {
@@ -855,6 +871,7 @@
       score = ratingOf(ctx, ctx.focus || {}) || Math.round(Number(options.rating)) || 8;
       list = Object.assign([], { loading: true });
       hidden = [];
+      others = [];
       lists = {};
       options.anchor?.classList?.add("is-ia-open");
       el.hidden = false;
@@ -865,17 +882,18 @@
         const features = (options.groups || []).map((group) => group.feature);
         const loaded = await Promise.all(features.map((feature) => targets(feature, query)));
         if (ctx !== token) return true;
-        lists = Object.fromEntries(features.map((feature, index) => [feature, loaded[index].rows]));
+        lists = Object.fromEntries(features.map((feature, index) => [feature, [...loaded[index].rows, ...loaded[index].others]]));
         list = [];
       } else if (options.feature === "progress") {
         list = [];
       } else {
         const result = await targets(options.feature, query);
         if (ctx !== token) return true;
-        list = result.rows;
+        list = [...result.rows, ...result.others];
         hidden = result.hidden;
+        others = result.others;
         const seen = new Set([...ctx.refs.present, ...ctx.refs.missing].map(refKey));
-        ctx.refs.missing = [...ctx.refs.missing, ...list.filter((row) => !seen.has(refKey(row))).map(cleanRef)];
+        ctx.refs.missing = [...ctx.refs.missing, ...result.rows.filter((row) => !seen.has(refKey(row))).map(cleanRef)];
       }
       render();
       el.querySelector("button,input")?.focus({ preventScroll: true });
@@ -1019,7 +1037,7 @@
         const label = armedRow ? "Click again to remove this watch everywhere" : "Remove this watch everywhere";
         const where = refs.map((ref) => `${providerName(ref.provider)} · ${accountName(ref, list)}`).join(", ");
         const warning = armedRow && wipes.length
-          ? `<p class="cw-ia-warn">${icon("warning")}${esc(`${listNames(wipes)} only ${wipes.length === 1 ? "knows" : "know"} that you watched this, not each watch. Removing it there clears every watch on ${wipes.length === 1 ? "that account" : "those accounts"}.`)}</p>`
+          ? `<p class="cw-ia-warn">${icon("warning")}${esc(`${listNames(wipes)} only ${wipes.length === 1 ? "knows" : "know"} that you watched this, not each watch. Removing it there clears every watch on ${wipes.length === 1 ? "that provider" : "those providers"}.`)}</p>`
           : "";
         return `<div class="cw-ia-play${armedRow ? " is-armed" : ""}">
           <span class="cw-ia-play-copy"><strong>${esc(fmtWhen(play.epoch))}</strong><small>${esc(where)}</small></span>
@@ -1253,7 +1271,7 @@
         ]);
         if (mine !== loadSeq || !ctx) return;
         data = result;
-        list = found.rows;
+        list = [...found.rows, ...found.others.filter(holds)];
         hiddenRows = found.hidden;
         void loadNotes(found.rows.filter((row) => row.provider === "TRAKT"), mine);
       } catch (e) {
