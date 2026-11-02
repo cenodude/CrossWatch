@@ -9,7 +9,7 @@ import { providerLogoHTML, providerToneRgb, sharedFeatureOrder, sharedFeatureLab
 import { ensurePairConfigStyles } from "./styles.js";
 import { createTabsController } from "./tabs.js";
 import { createIdentityMap } from "../core/identity-map.js";
-import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, hasCumulativeAnimeHistory, ratingsDisabledForPair, sanitizeFeaturesForPair, sourceWatchStatusAllowed, undatedAsTodayAllowed } from "./custom-rules.js";
+import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, hasCumulativeAnimeHistory, historyRemoveAllowed, ratingsDisabledForPair, sanitizeFeaturesForPair, sourceWatchStatusAllowed, undatedAsTodayAllowed } from "./custom-rules.js";
 
 const TWO_WAY_WARNING =
   "Two-way sync means both sides can write to each other. It keeps both providers aligned, but it also heavily increases the risk of conflicts, duplicates, overwrites, and deletions. Use with extreme caution.";
@@ -1782,6 +1782,7 @@ function renderFeaturePanel(state){
         </div></div>`
       : "";
     const hsCumulative = hasCumulativeAnimeHistory(state);
+    const hsRemoveAllowed = historyRemoveAllowed(state);
     const hsSourceStatus = sourceWatchStatusAllowed(state);
     const animeOpts = normalizeAnimeHistoryOptions(state);
     const animeBlocked = !tmdbMetadataReady(state) || !globalAnimeMappingEnabled(state);
@@ -1832,11 +1833,12 @@ left.innerHTML = `
         <div class="opt-row">
           <label for="cx-hs-remove">Remove</label>
           <label class="switch">
-            <input id="cx-hs-remove" type="checkbox" ${hs.remove ? "checked" : ""}>
+            <input id="cx-hs-remove" type="checkbox" ${hs.remove && hsRemoveAllowed ? "checked" : ""} ${hsRemoveAllowed ? "" : 'disabled data-locked="1"'}>
             <span class="slider"></span>
           </label>
         </div>
       </div>
+      ${hsRemoveAllowed ? "" : `<div class="muted">Remove is not available when Tautulli or Tracearr is the source. They only import watch history.</div>`}
       ${hsCumulative && !globalAnimeMappingEnabled(state) ? `<div class="muted"><b>Enable global Anime ID Mapping for episode history.</b></div>` : ""}
       ${hsCumulative ? `<div class="muted">${hasAniList(state) ? "AniList" : [state?.src,state?.dst].some(p=>same(p,"myanimelist")) ? "MyAnimeList" : "Kitsu"} history supports both directions and is anime only. It uses watched status and episode progress per title. Remove reduces progress only for the latest watched episodes, or resets a movie to unwatched; ratings and notes are preserved. Gaps are reported unresolved. Specials and rewatches are skipped.</div>` : ""}
       <div class="muted">${rwSupported ? "Synchronize plays between providers. Rewatches require event-capable providers; SIMKL requires Pro/VIP. Remove is not recommended." : "Synchronize plays between providers. Rewatches are available only when both sides support event history; SIMKL requires Pro/VIP."}</div>
