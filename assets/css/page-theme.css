@@ -509,7 +509,8 @@ dialog.eg-dialog{font-size:14px;line-height:1.45;background:var(--is-surface);co
 .cw-mm-empty{border:1px dashed var(--mm-line);border-radius:14px;color:var(--mm-muted);font-size:13.5px;text-align:center}
 @media(max-width:720px){.cw-mm-card{border-radius:0}
 .cw-mm-tagline{text-align:left}}
-.cw-mm-actions>a{background:transparent;border-color:transparent;font-size:12px}
+.cw-mm-actions>:where(a,[data-mm-clear-all]){background:transparent;border-color:transparent;font-size:12px}
+.cw-mm-actions>[data-mm-clear-all] .material-symbols-rounded{font-size:16px}
 .cw-mm-live.is-on{background:rgba(var(--mm-accent),.07);border:1px solid rgba(var(--mm-accent),.14)}
 .cw-mm-heading .cw-mm-chip{font-weight:400}
 .cw-ep-page>[data-mm-series]{background:transparent;border:0;font-size:13px;font-weight:500;color:var(--mm-muted)}
@@ -711,8 +712,7 @@ button[data-ia-cover]:hover,button[data-ia-cover].is-ia-open{background:var(--cw
 button[data-ia-cover] .material-symbols-rounded{font-size:16px}
 button.cw-mm-provider[data-ia-chip]:hover,button.cw-mm-provider[data-mm-episode]:hover,button.cw-mm-provider[data-ia-chip].is-ia-open{box-shadow:inset 0 0 0 1px var(--cw-theme-accent)}
 .cw-dash-source[data-ia-ref]:hover,.cw-rating-provider-icon[data-ia-ref]:hover,.cw-scrobble-source-pill[data-ia-ref]:hover,.cw-scrobble-source-pill[data-ia-ref].is-ia-open,.cw-dash-source[data-ia-ref].is-ia-open,.cw-rating-provider-icon[data-ia-ref].is-ia-open{box-shadow:0 0 0 2px var(--cw-theme-accent)}
-.cw-mm-btn.is-danger{color:var(--cw-page-danger-text)}
-.cw-mm-btn.is-danger:hover,.cw-mm-btn.is-danger.is-ia-open{border-color:color-mix(in srgb,var(--cw-theme-danger) 45%,transparent);background:var(--cw-page-danger-bg)}
+.cw-mm-btn.is-danger:hover,.cw-mm-btn.is-danger.is-ia-open{border-color:color-mix(in srgb,var(--cw-theme-danger) 45%,transparent);background:var(--cw-page-danger-bg);color:var(--cw-page-danger-text)}
 [data-ia-state="work"]{opacity:.8}
 [data-ia-state="work"]::before{border:2px solid transparent;border-radius:50%;border-top-color:var(--cw-theme-accent);border-right-color:var(--cw-theme-accent);animation:cw-ia-spin .8s linear infinite}
 [data-ia-state="ok"]{animation:cw-ia-pulse .9s ease-out}

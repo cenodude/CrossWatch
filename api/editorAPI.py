@@ -1481,7 +1481,7 @@ def _pair_instances(cfg: Mapping[str, Any], feature: str) -> set[tuple[str, str]
     for pair in cfg.get("pairs") or []:
         if not isinstance(pair, Mapping) or pair.get("enabled", True) is False:
             continue
-        if feature not in (pair.get("features") or {}) and feature not in _feature_list_for_pair(pair):
+        if feature not in _feature_list_for_pair(pair):
             continue
         for side in ("source", "target"):
             provider = str(pair.get(side) or "").strip().upper()
