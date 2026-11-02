@@ -100,7 +100,7 @@ const locked = (action) => ({ action, item: { tmdb: "1", type: "movie", title: "
 for (const [action, noun] of [["rating", "ratings"], ["watchlist", "watchlist"], ["collection", "collection"], ["history", "history"]]) {
   test(`a locked Quick add keeps the requested ${action} action`, async () => {
     const root = await mountQuickAdd(locked(action), [both]);
-    assert.match(root.innerHTML, new RegExp(`Not in a sync pair for ${noun}\.`));
+    assert.ok(root.innerHTML.includes(`Not in a sync pair for ${noun}.`));
     assert.equal(root.innerHTML.includes("cw-mw-score"), action === "rating");
   });
 }
