@@ -13,6 +13,7 @@ from typing import Any
 import requests
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from providers.metadata._meta_TMDB import TmdbProvider
 
 from cw_platform.episode_groups import endpoint, tokens, validate_groups, check_corrections
 from cw_platform.episode_identity import unique_ids
@@ -152,11 +153,14 @@ def _matches(left, right):
 
 def tmdb_season(key, show_id, season):
     try:
-        response = requests.get(f"https://api.themoviedb.org/3/tv/{int(show_id)}/season/{int(season)}",
-                                params={"api_key": key}, timeout=8)
-        if response.status_code == 404:
+        provider = TmdbProvider(lambda: {"tmdb": {"api_key": key}}, lambda _: None)
+        body = provider.get_response(f"https://api.themoviedb.org/3/tv/{int(show_id)}/season/{int(season)}",
+                                     fresh=True, quiet_404=True, timeout=8, max_retries=0).data
+        rows = body.get("episodes") if isinstance(body, dict) else None
+    except requests.HTTPError as exc:
+        if getattr(exc.response, "status_code", None) == 404:
             return {}
-        rows = response.json().get("episodes") if response.status_code == 200 else None
+        return None
     except Exception:
         return None
     if not isinstance(rows, list):
@@ -395,7 +399,7 @@ def _lookups(cfg, ends, views, show_ids):
             if isinstance(item.get("show_ids"), dict) and item["show_ids"]:
                 known = dict(item["show_ids"])
                 break
-        layout = show_layout(cfg, provider, instance, {**show_ids, **{str(key): str(value) for key, value in known.items() if value}}, seasons)
+        layout: dict[str, Any] | None = show_layout(cfg, provider, instance, {**show_ids, **{str(key): str(value) for key, value in known.items() if value}}, seasons)
         sources.append(dict(label=LABELS[provider], ok=bool(layout), title=(layout or {}).get("title") or "",
                             seasons=[[season, count] for season, count in sorted(((layout or {}).get("counts") or {}).items()) if season > 0]))
         if side == "extra":

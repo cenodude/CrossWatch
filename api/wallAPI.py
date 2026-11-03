@@ -94,11 +94,7 @@ def _tmdb_api_key(cfg: dict[str, Any]) -> str:
                     return kk
         return ""
 
-    for key in ("tmdb", "tmdb_sync"):
-        found = _pick_from_block(cfg.get(key))
-        if found:
-            return found
-    return ""
+    return _pick_from_block(cfg.get("tmdb"))
 
 
 def _load_state(include_sync_users: bool = True) -> dict[str, Any]:

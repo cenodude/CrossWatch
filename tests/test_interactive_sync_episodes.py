@@ -12,6 +12,11 @@ from services.interactive_sync_episodes import match_episode, suggest_episodes
 CFG = {"mdblist": {"api_key": "destination"}, "tmdb": {"api_key": "metadata"}}
 
 
+@pytest.fixture(autouse=True)
+def metadata_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr("providers.metadata._meta_TMDB.TmdbProvider._disk_cache_dir", lambda _: tmp_path)
+
+
 def row(n=1):
     return dict(id=str(n), provider="MDBLIST", instance="default", item=dict(type="episode", season=3, episode=n,
                 ids={"tvdb": str(1000+n)}, show_ids={"tmdb": "10"}, watched_at="2025-10-03T08:00:00Z"))
@@ -23,6 +28,7 @@ def mock_api(monkeypatch, payloads):
         status_code = 200
         def __init__(self, body): self.body = body
         def json(self): return self.body
+        def raise_for_status(self): pass
     def get(self, url, **kwargs):
         path = url.split("/3/", 1)[1]
         calls.append(path)
@@ -92,3 +98,20 @@ def test_failed_lookup_keeps_draft_and_hides_credentials(monkeypatch):
     r = row()
     result = suggest_episodes(CFG, [(r,r["item"])])["results"][0]
     assert result["match"] is None and "SECRET" not in str(result)
+
+
+def test_missing_ids_are_skipped_and_tmdb_errors_are_reported(monkeypatch):
+    calls = []
+
+    def get(self, url, **kwargs):
+        path = url.split("/3/", 1)[1]
+        calls.append(path)
+        response = requests.Response()
+        response.status_code = 404 if path.startswith("find/") else 503
+        response._content = b"{}"
+        return response
+
+    monkeypatch.setattr(requests.Session, "get", get)
+    result = suggest_episodes(CFG, [(row(), row()["item"])])
+    assert calls == ["find/1001", "tv/10/season/3/episode/1"]
+    assert result["results"][0]["reason"] == "TMDb episode lookup returned HTTP 503."

@@ -46,11 +46,7 @@ def _tmdb_api_key(cfg: dict[str, Any]) -> str:
                     return kk
         return ""
 
-    for key in ("tmdb", "tmdb_sync"):
-        found = _pick_from_block(cfg.get(key))
-        if found:
-            return found
-    return ""
+    return _pick_from_block(cfg.get("tmdb"))
 
 
 def _normalize_media_type(value: Any) -> str:
@@ -82,13 +78,13 @@ def _tmdb_release_date(cfg: dict[str, Any], media_type: str, tmdb_id: Any) -> st
 
     typ = "tv" if _normalize_media_type(media_type) == "show" else "movie"
     try:
-        r = requests.get(
+        from providers.metadata._meta_TMDB import TmdbProvider
+
+        provider = TmdbProvider(lambda: {"tmdb": {"api_key": api_key}}, lambda _: None)
+        data = provider.get_response(
             f"https://api.themoviedb.org/3/{typ}/{tmdb_id}",
-            params={"api_key": api_key},
-            timeout=8,
-        )
-        r.raise_for_status()
-        data = r.json() or {}
+            fresh=True, quiet_404=True, timeout=8, max_retries=0,
+        ).data or {}
     except Exception:
         return None
 

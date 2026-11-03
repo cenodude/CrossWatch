@@ -471,7 +471,7 @@ def api_config_meta(request: Request) -> JSONResponse:
         payload.update(
             {
                 "ui": _public_ui_config(raw),
-                "tmdb_configured": _public_block_configured(raw, "tmdb", "tmdb_sync"),
+                "tmdb_configured": _public_block_configured(raw, "tmdb"),
             }
         )
     if is_admin:

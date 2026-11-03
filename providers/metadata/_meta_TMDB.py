@@ -11,9 +11,13 @@ import threading
 import time
 import weakref
 from collections.abc import Mapping
+from concurrent.futures import Future
+from copy import deepcopy
+from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import requests
 
@@ -37,11 +41,29 @@ def log(msg: str, level: str = "INFO", module: str = "META", **_: Any) -> None:
 IMG_BASE = "https://image.tmdb.org/t/p"
 
 _PROVIDERS: weakref.WeakSet[Any] = weakref.WeakSet()
+_PROVIDERS_LOCK = threading.RLock()
+_REQUEST_LOCKS = tuple(threading.RLock() for _ in range(64))
+
+
+@dataclass(frozen=True)
+class TmdbResponse:
+    data: Any
+    fetched_at: float
+    source: Literal["cache", "network", "shared"]
+
+
+_INFLIGHT: dict[tuple[Any, ...], Future[TmdbResponse]] = {}
+
+
+@lru_cache(maxsize=64)
+def _scope_of(root: str) -> str:
+    return os.path.normcase(os.path.realpath(root))
 
 
 def clear_all_caches() -> None:
-    for provider in list(_PROVIDERS):
-        provider.clear_cache()
+    with _PROVIDERS_LOCK:
+        for provider in list(_PROVIDERS):
+            provider.clear_cache()
 
 
 class TmdbProvider:
@@ -69,7 +91,8 @@ class TmdbProvider:
         self.save_cfg = save_cfg
         self._cache: dict[str, tuple[float, Any]] = {}
         self._disk_dir: Path | None = None
-        _PROVIDERS.add(self)
+        with _PROVIDERS_LOCK:
+            _PROVIDERS.add(self)
 
     def _apikey(self) -> str:
         cfg = self.load_cfg() or {}
@@ -104,23 +127,26 @@ class TmdbProvider:
         self._disk_dir = target
         return target
 
-    def _disk_read(self, key: str) -> Any:
+    def _disk_read(self, key: str) -> tuple[float, Any] | None:
         target = self._disk_cache_dir()
         if target is None:
             return None
         try:
-            return json.loads((target / f"{key}.json").read_text("utf-8")).get("data")
+            record = json.loads((target / f"{key}.json").read_text("utf-8"))
+            if not isinstance(record, dict) or record.get("data") is None:
+                return None
+            return float(record.get("ts") or 0), record["data"]
         except Exception:
             return None
 
-    def _disk_write(self, key: str, data: Any) -> None:
+    def _disk_write(self, key: str, data: Any, fetched_at: float) -> None:
         target = self._disk_cache_dir()
         if target is None:
             return
         path = target / f"{key}.json"
         tmp = target / f"{key}.{os.getpid()}.{threading.get_ident()}.tmp"
         try:
-            tmp.write_text(json.dumps({"ts": time.time(), "data": data}, ensure_ascii=False), encoding="utf-8")
+            tmp.write_text(json.dumps({"ts": fetched_at, "data": data}, ensure_ascii=False), encoding="utf-8")
             tmp.replace(path)
         except Exception:
             try:
@@ -129,13 +155,31 @@ class TmdbProvider:
                 pass
 
     def _prune_cache(self) -> None:
-        overflow = len(self._cache) - self.CACHE_MAX_ENTRIES
-        if overflow > 0:
-            for key, _ in sorted(list(self._cache.items()), key=lambda kv: kv[1][0])[:overflow]:
-                self._cache.pop(key, None)
+        while len(self._cache) > self.CACHE_MAX_ENTRIES:
+            self._cache.pop(next(iter(self._cache)), None)
 
     def clear_cache(self) -> None:
-        self._cache.clear()
+        with _PROVIDERS_LOCK:
+            self._cache.clear()
+
+    def _cache_scope(self) -> str:
+        root = self._disk_cache_dir()
+        return _scope_of(str(root)) if root is not None else f"memory:{id(self)}"
+
+    def _publish(self, key: str, record: tuple[float, Any], scope: str) -> None:
+        with _PROVIDERS_LOCK:
+            for provider in list(_PROVIDERS):
+                if provider is not self and (key not in provider._cache or provider._disk_dir is None or provider._cache_scope() != scope):
+                    continue
+                current = provider._cache.pop(key, None)
+                newer = current is not None and current[0] > record[0]
+                provider._cache[key] = current if newer else (record[0], deepcopy(record[1]))
+                provider._prune_cache()
+
+    @staticmethod
+    def _retryable(exc: BaseException) -> bool:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        return status is None or status == 429 or 500 <= int(status) < 600
 
     def _backoff_params(self) -> tuple[int, float, float]:
         cfg = self.load_cfg() or {}
@@ -192,31 +236,119 @@ class TmdbProvider:
             return self._get(url, params, quiet_404=quiet_404)
 
     def _get(self, url: str, params: dict[str, Any] | None = None, *, quiet_404: bool = False, fresh: bool = False) -> Any:
+        return self.get_response(url, params, quiet_404=quiet_404, fresh=fresh, copy=False).data
+
+    def get_response(
+        self, url: str, params: dict[str, Any] | None = None, *, quiet_404: bool = False,
+        fresh: bool = False, max_age: float | None = None, timeout: float = 15,
+        request: Callable[..., Any] | None = None, max_retries: int | None = None, copy: bool = True,
+    ) -> TmdbResponse:
         q = dict(params or {})
         q["api_key"] = self._apikey()
         ck = url + "?" + "&".join(sorted(f"{k}={v}" for k, v in q.items()))
         h = hashlib.sha1(ck.encode("utf-8")).hexdigest()
+        scope = self._cache_scope()
+        retries = self._backoff_params()[0] if max_retries is None else max(0, max_retries)
+        identity = (scope, h, retries, timeout, request, quiet_404)
+        lock = _REQUEST_LOCKS[hash((scope, h)) % len(_REQUEST_LOCKS)]
+        with lock:
+            with _PROVIDERS_LOCK:
+                shared = _INFLIGHT.get(identity)
+                hit = self._cache.pop(h, None) if not fresh else None
+                if hit is not None:
+                    self._cache[h] = hit
+            if hit is None and not fresh:
+                hit = self._disk_read(h)
+                if hit is not None:
+                    self._publish(h, hit, scope)
+            if hit is not None:
+                timestamp, data = hit
+                recent = max_age is None or (timestamp > 0 and time.time() - timestamp <= max(0, max_age))
+                if recent:
+                    return TmdbResponse(deepcopy(data) if copy else data, timestamp, "cache")
+            pending: Future[TmdbResponse] = shared if shared is not None else Future()
+            if shared is None:
+                with _PROVIDERS_LOCK:
+                    _INFLIGHT[identity] = pending
+        if shared is not None:
+            result = shared.result()
+            return TmdbResponse(deepcopy(result.data), result.fetched_at, "shared")
+        try:
+            result = self._fetch(url, q, h, scope, lock, quiet_404=quiet_404, timeout=timeout, request=request, retries=retries)
+            pending.set_result(TmdbResponse(deepcopy(result.data), result.fetched_at, "network"))
+            return result
+        except BaseException as exc:
+            pending.set_exception(exc if isinstance(exc, Exception) else requests.ConnectionError("TMDb shared lookup was interrupted"))
+            raise
+        finally:
+            with lock, _PROVIDERS_LOCK:
+                _INFLIGHT.pop(identity, None)
 
-        if not fresh:
-            hit = self._cache.get(h)
-            if hit:
-                return hit[1]
+    def _fetch(
+        self, url: str, q: dict[str, Any], key: str, scope: str, lock: Any, *, quiet_404: bool,
+        timeout: float, request: Callable[..., Any] | None, retries: int,
+    ) -> TmdbResponse:
+        data = self._request_json(url, q, quiet_404=quiet_404, timeout=timeout, request=request, max_retries=retries)
+        fetched_at = time.time()
+        with lock:
+            self._disk_write(key, data, fetched_at)
+            self._publish(key, (fetched_at, data), scope)
+        return TmdbResponse(data, fetched_at, "network")
 
-            stored = self._disk_read(h)
-            if stored is not None:
-                self._prune_cache()
-                self._cache[h] = (time.time(), stored)
-                return stored
+    def lookup(
+        self, entity: str, tmdb_id: str | int, *, season: int | None = None,
+        episode: int | None = None, locale: str | None = "en-US", fresh: bool = False,
+        max_age: float | None = None, timeout: float = 15, max_retries: int | None = None,
+    ) -> TmdbResponse:
+        kind = {"movie": "movie", "show": "tv", "tv": "tv"}.get(entity)
+        identifier = str(tmdb_id)
+        if kind is None or not identifier.isascii() or not identifier.isdecimal() or int(identifier) <= 0:
+            raise ValueError("A movie or show and a positive TMDb ID are required")
+        if season is not None and (kind != "tv" or type(season) is not int or season < 0):
+            raise ValueError("A show season must be a nonnegative integer")
+        if episode is not None and (season is None or type(episode) is not int or episode <= 0):
+            raise ValueError("An episode requires a season and a positive episode number")
+        path = f"{kind}/{int(identifier)}"
+        if season is not None:
+            path += f"/season/{season}"
+        if episode is not None:
+            path += f"/episode/{episode}"
+        result = self.get_response(f"https://api.themoviedb.org/3/{path}", {"language": locale} if locale else None,
+                                   quiet_404=True, fresh=fresh, max_age=max_age, timeout=timeout, max_retries=max_retries)
+        data = result.data
+        if not isinstance(data, dict) or not isinstance(data.get("id"), int) or isinstance(data["id"], bool) or data["id"] <= 0:
+            raise ValueError("TMDb returned incomplete metadata")
+        if season is None and data["id"] != int(identifier):
+            raise ValueError("TMDb returned a different title")
+        if season is None and not isinstance(data.get("title" if kind == "movie" else "name"), str):
+            raise ValueError("TMDb returned incomplete title metadata")
+        if season is not None and (type(data.get("season_number")) is not int or data["season_number"] != season):
+            raise ValueError("TMDb returned a different season")
+        if episode is not None and (type(data.get("episode_number")) is not int or data["episode_number"] != episode):
+            raise ValueError("TMDb returned a different episode")
+        if season is not None and episode is None and not isinstance(data.get("episodes"), list):
+            raise ValueError("TMDb returned an incomplete season")
+        if season is not None and episode is None and any(
+            not isinstance(row, dict) or type(row.get("episode_number")) is not int or row["episode_number"] <= 0
+            or row.get("season_number", season) != season for row in data["episodes"]
+        ):
+            raise ValueError("TMDb returned incomplete episode metadata")
+        return result
 
-        max_retries, base_s, max_s = self._backoff_params()
+    def _request_json(
+        self, url: str, q: dict[str, Any], *, quiet_404: bool, timeout: float,
+        request: Callable[..., Any] | None, max_retries: int | None,
+    ) -> Any:
+        retries, base_s, max_s = self._backoff_params()
+        max_retries = retries if max_retries is None else max(0, max_retries)
         attempt = 0
         while True:
             try:
-                r = requests.get(
+                r = (request or requests.get)(
                     url,
                     params=q,
                     headers={"User-Agent": self.UA, "Accept": "application/json"},
-                    timeout=15,
+                    timeout=timeout,
                 )
                 status = r.status_code
 
@@ -238,15 +370,11 @@ class TmdbProvider:
 
                 r.raise_for_status()
                 data = r.json()
-                self._prune_cache()
-                self._cache[h] = (time.time(), data)
-                self._disk_write(h, data)
                 return data
 
             except requests.exceptions.RequestException as e:
                 status = getattr(getattr(e, "response", None), "status_code", None)
-                retryable = (status == 429) or (status is None) or (500 <= int(status or 0) < 600)
-                if (not retryable) or (attempt >= max_retries):
+                if (not self._retryable(e)) or (attempt >= max_retries):
                     if not (quiet_404 and int(status or 0) == 404):
                         lvl = "INFO" if int(status or 0) == 404 else "WARNING"
                         log(

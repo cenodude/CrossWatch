@@ -272,20 +272,18 @@ def _cfg() -> dict[str, Any]:
 
 
 def _tmdb_key() -> str:
-    cfg = _cfg()
-    for root_key in ("tmdb", "tmdb_sync"):
-        blk = cfg.get(root_key)
-        if isinstance(blk, dict):
-            k = str(blk.get("api_key") or "").strip()
-            if k:
-                return k
-            insts = blk.get("instances")
-            if isinstance(insts, dict):
-                for _, ib in insts.items():
-                    if isinstance(ib, dict):
-                        k2 = str(ib.get("api_key") or "").strip()
-                        if k2:
-                            return k2
+    blk = _cfg().get("tmdb")
+    if isinstance(blk, dict):
+        k = str(blk.get("api_key") or "").strip()
+        if k:
+            return k
+        insts = blk.get("instances")
+        if isinstance(insts, dict):
+            for _, ib in insts.items():
+                if isinstance(ib, dict):
+                    k2 = str(ib.get("api_key") or "").strip()
+                    if k2:
+                        return k2
     return ""
 
 def _trakt_headers() -> dict[str, str]:
@@ -4178,7 +4176,7 @@ def _rekey(b: dict[str, Any], old_key: str, it: dict[str, Any]) -> str:
 def _tmdb(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     k = _tmdb_key()
     if not k:
-        raise HTTPException(400, "tmdb.api_key missing in config.json (tmdb or tmdb_sync)")
+        raise HTTPException(400, "tmdb.api_key missing in config.json")
 
     query: dict[str, Any] = {}
     if params:

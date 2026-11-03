@@ -9,6 +9,7 @@ from urllib.parse import quote
 
 import requests
 from fastapi import HTTPException
+from providers.metadata._meta_TMDB import TmdbProvider
 
 from services.interactive_sync_catalogs import configured, provider_block
 
@@ -20,7 +21,7 @@ def metadata_key(cfg, row):
     block = provider_block(cfg, provider, row.get("instance") or "default")
     if not configured(provider, block):
         return None
-    return block.get("api_key") if provider == "TMDB" else (cfg.get("tmdb") or {}).get("api_key")
+    return (cfg.get("tmdb") or {}).get("api_key")
 
 
 def _number(value, minimum=0):
@@ -48,6 +49,7 @@ def suggest_episodes(cfg, edits):
     requests_left = 60
     deadline = time.monotonic() + 45
     results = []
+    providers = {}
     with requests.Session() as client:
         def get(key, path, **params):
             nonlocal requests_left
@@ -56,14 +58,17 @@ def suggest_episodes(cfg, edits):
                 if requests_left <= 0 or time.monotonic() >= deadline:
                     raise HTTPException(409, "Episode lookup limit reached. Try a smaller batch.")
                 requests_left -= 1
-                response = client.get(f"https://api.themoviedb.org/3/{path}",
-                                      params={"api_key": key, **params}, timeout=8)
-                if response.status_code == 404:
+                if key not in providers:
+                    providers[key] = TmdbProvider(lambda key=key: {"tmdb": {"api_key": key}}, lambda _: None)
+                try:
+                    body = providers[key].get_response(f"https://api.themoviedb.org/3/{path}", params,
+                                                       fresh=True, quiet_404=True, timeout=8,
+                                                       request=client.get, max_retries=0).data
+                except requests.HTTPError as exc:
+                    status = getattr(exc.response, "status_code", None)
+                    if status != 404:
+                        raise HTTPException(502, f"TMDb episode lookup returned HTTP {status}.") from None
                     body = {}
-                elif response.status_code >= 400:
-                    raise HTTPException(502, f"TMDb episode lookup returned HTTP {response.status_code}.")
-                else:
-                    body = response.json()
                 if not isinstance(body, dict):
                     raise HTTPException(502, "TMDb returned an unreadable episode response.")
                 cache[identity] = body
