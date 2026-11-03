@@ -22,6 +22,7 @@ from providers.sync._log import log as cw_log
 COLLECTION = "libraryItem"
 DEFAULT_STREMIO_PROFILE_ID = "default"
 EPISODE_DATE_TOLERANCE_MS = 2 * 24 * 60 * 60 * 1000
+READ_PROGRESS_SECONDS = 5.0
 _GENERIC_EPISODE_TITLE = re.compile(r"(episode|ep|chapter)?\d+")
 _CINEMETA_WRITE_LOCK = threading.Lock()
 
@@ -508,6 +509,24 @@ def datastore_meta(adapter: Any) -> list[Mapping[str, Any]]:
 
 def datastore_put(adapter: Any, changes: list[Mapping[str, Any]]) -> Any:
     return adapter.client.request_json("datastorePut", {"collection": COLLECTION, "changes": [dict(x) for x in changes]})
+
+
+def read_progress(adapter: Any, feature: str, total: int, *, enabled: bool = True) -> Callable[[int], None]:
+    factory = getattr(adapter, "progress_factory", None)
+    progress: Any = factory(feature) if enabled and callable(factory) else None
+    last = time.monotonic()
+
+    def tick(done: int) -> None:
+        nonlocal last
+        if progress is None:
+            return
+        now = time.monotonic()
+        due = now - last >= READ_PROGRESS_SECONDS
+        if due:
+            last = now
+        progress.tick(done, total=total, force=due)
+
+    return tick
 
 
 def library_records(adapter: Any, *, incremental: bool = False) -> list[Mapping[str, Any]]:

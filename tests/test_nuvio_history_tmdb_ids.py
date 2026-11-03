@@ -1,6 +1,7 @@
 # CrossWatch test scripts
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -8,7 +9,8 @@ from typing import Any
 import pytest
 
 from providers.sync import _mod_NUVIO as mod
-from providers.sync.nuvio import _history as nuvio
+from providers.sync._mod_common import make_snapshot_progress
+from providers.sync.nuvio import _history as nuvio, _progress as nuvio_progress, _watchlist as nuvio_watchlist
 from providers.sync.scrob import _history as scrob
 from providers.sync.stremio import _common as stremio_common
 
@@ -204,3 +206,90 @@ def test_add_does_not_duplicate_an_existing_imdb_row(world: SimpleNamespace, mon
 def test_module_reads_history_through_the_sync_index(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(mod.feat_history, "sync_index", lambda _adapter: {"synced": {}})
     assert mod.NUVIOModule.build_index(SimpleNamespace(), "history") == {"synced": {}}
+
+
+@pytest.mark.parametrize(("feature", "module"), [("watchlist", nuvio_watchlist), ("progress", nuvio_progress)])
+def test_module_reads_with_progress_reporting(monkeypatch: pytest.MonkeyPatch, feature: str, module: Any) -> None:
+    calls: list[bool] = []
+    monkeypatch.setattr(module, "build_index", lambda _adapter, *, reporting=False: calls.append(reporting) or {})
+    assert mod.NUVIOModule.build_index(SimpleNamespace(), feature) == {}
+    assert calls == [True]
+
+
+@pytest.mark.parametrize(("lookup_seconds", "expected"), [(6.0, [(4, 5), (5, 5)]), (0.1, [(5, 5)])], ids=["slow", "cached"])
+def test_title_lookups_report_progress_while_they_run(world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, lookup_seconds: float, expected: list[tuple[int, int]]) -> None:
+    now = [100.0]
+    monkeypatch.setattr(stremio_common, "time", SimpleNamespace(monotonic=lambda: now[0], time=time.time))
+    find_imdb = world.tmdb.find_imdb
+
+    def timed(imdb: str, entity: str) -> dict[str, str]:
+        now[0] += lookup_seconds
+        return find_imdb(imdb, entity)
+
+    world.tmdb.find_imdb = timed
+    events: list[dict[str, Any]] = []
+    world.adapter.progress_factory = lambda feature: make_snapshot_progress(lambda event, **data: events.append({"event": event, **data}), dst="NUVIO", feature=feature)
+    world.rows = [movie_row(), episode_row(WESTWORLD, 1, 1), episode_row(WESTWORLD, 1, 2)]
+    nuvio.sync_index(world.adapter)
+    assert [(event["done"], event["total"]) for event in events] == expected
+    assert {(event["dst"], event["feature"]) for event in events} == {("NUVIO", "history")}
+
+
+@pytest.mark.parametrize(("module", "feature", "pull"), [(nuvio_watchlist, "watchlist", "pull_library_rows"), (nuvio_progress, "progress", "pull_watch_progress_rows")], ids=["watchlist", "progress"])
+def test_reads_report_but_write_verification_stays_silent(monkeypatch: pytest.MonkeyPatch, module: Any, feature: str, pull: str) -> None:
+    now = [100.0]
+    monkeypatch.setattr(stremio_common, "time", SimpleNamespace(monotonic=lambda: now[0], time=time.time))
+    monkeypatch.setattr(module, pull, lambda _adapter: [{}, {}, {}])
+
+    def slow_row(_adapter: Any, _row: Any) -> tuple[None, None, None]:
+        now[0] += 6
+        return None, None, None
+
+    monkeypatch.setattr(module, "_item_from_row", slow_row)
+    events: list[dict[str, Any]] = []
+    adapter = SimpleNamespace(progress_factory=lambda name: make_snapshot_progress(lambda event, **data: events.append({"event": event, **data}), dst="NUVIO", feature=name))
+    module.build_index(adapter)
+    assert events == []
+    module.build_index(adapter, reporting=True)
+    assert [event["done"] for event in events] == [1, 2, 3]
+    assert {(event["feature"], event["total"]) for event in events} == {(feature, 3)}
+
+
+def test_history_counts_rows_and_lookups_as_one_climbing_total(world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+    now = [100.0]
+    monkeypatch.setattr(stremio_common, "time", SimpleNamespace(monotonic=lambda: now[0], time=time.time))
+    original = nuvio._item_from_row
+
+    def slow_row(adapter: Any, row: Any) -> Any:
+        now[0] += 6
+        return original(adapter, row)
+
+    monkeypatch.setattr(nuvio, "_item_from_row", slow_row)
+    find_imdb = world.tmdb.find_imdb
+
+    def slow_find(imdb: str, entity: str) -> dict[str, str]:
+        now[0] += 6
+        return find_imdb(imdb, entity)
+
+    world.tmdb.find_imdb = slow_find
+    events: list[dict[str, Any]] = []
+    world.adapter.progress_factory = lambda feature: make_snapshot_progress(lambda event, **data: events.append(data), dst="NUVIO", feature=feature)
+    world.rows = [movie_row(), episode_row(WESTWORLD, 1, 1), episode_row(WESTWORLD, 1, 2)]
+    nuvio.sync_index(world.adapter)
+    assert [(event["done"], event["total"]) for event in events] == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)]
+
+
+def test_write_verification_reads_history_silently(world: SimpleNamespace) -> None:
+    events: list[dict[str, Any]] = []
+    world.adapter.progress_factory = lambda feature: make_snapshot_progress(lambda event, **data: events.append(data), dst="NUVIO", feature=feature)
+    world.rows = [movie_row()]
+    assert list(nuvio.build_index(world.adapter)) == [f"imdb:{SHAWSHANK}"]
+    assert events == []
+
+
+def test_rows_without_imdb_titles_report_nothing(world: SimpleNamespace) -> None:
+    events: list[dict[str, Any]] = []
+    world.adapter.progress_factory = lambda feature: make_snapshot_progress(lambda event, **data: events.append(data), dst="NUVIO", feature=feature)
+    world.rows = []
+    assert nuvio.sync_index(world.adapter) == {}
+    assert events == []

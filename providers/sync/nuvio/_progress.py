@@ -13,6 +13,7 @@ from cw_platform.id_map import minimal as id_minimal
 
 from providers.sync._log import log as cw_log
 from providers.sync._progress_policy import decide_progress_write, progress_materially_equal, select_progress_record
+from providers.sync.stremio._common import read_progress
 
 from ._common import (
     NuvioAuthError,
@@ -149,11 +150,13 @@ def _item_from_row(adapter: Any, row: Mapping[str, Any]) -> tuple[str | None, di
     return key, item, None
 
 
-def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
+def build_index(adapter: Any, *, reporting: bool = False) -> dict[str, dict[str, Any]]:
     rows = pull_watch_progress_rows(adapter)
     out: dict[str, dict[str, Any]] = {}
     skipped = 0
-    for row in rows:
+    tick = read_progress(adapter, "progress", len(rows), enabled=reporting)
+    for done, row in enumerate(rows):
+        tick(done)
         key, item, reason = _item_from_row(adapter, row)
         if not key or not item:
             if reason:
@@ -162,6 +165,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             continue
         chosen, _action = select_progress_record(out.get(key), item)
         out[key] = chosen
+    tick(len(rows))
     _info("index_done", count=len(out), rows=len(rows), skipped=skipped)
     return out
 

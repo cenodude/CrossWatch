@@ -10,7 +10,7 @@ from typing import Any
 
 from cw_platform.provider_instances import normalize_instance_id
 from providers.auth._auth_STREMIO import StremioClient, StremioAuthError
-from providers.sync._mod_common import SimpleRateLimiter, build_op_result, build_session
+from providers.sync._mod_common import SimpleRateLimiter, build_op_result, build_session, make_snapshot_progress
 from providers.sync.stremio import _history as feat_history
 from providers.sync.stremio import _progress as feat_progress
 from providers.sync.stremio import _ratings as feat_ratings
@@ -136,6 +136,7 @@ class STREMIOModule:
         except Exception:
             pass
         self.client = StremioClient(self.config, instance_id=self.instance_id, session=session)
+        self.progress_factory = lambda feature: make_snapshot_progress(ctx, dst="STREMIO", feature=feature)
 
     @staticmethod
     def supported_features() -> dict[str, bool]:

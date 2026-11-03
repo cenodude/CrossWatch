@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,10 +18,12 @@ from cw_platform.orchestrator._interactive import InteractivePlan
 from cw_platform.orchestrator.facade import Orchestrator
 from cw_platform.reason_labels import friendly_reason, reason_message
 from providers.metadata._meta_TMDB import TmdbProvider
+from providers.sync import _mod_STREMIO as mod_stremio
 from providers.sync._mod_SCROB import OPS as SCROB_OPS
 from providers.sync._mod_STREMIO import OPS as STREMIO_OPS
+from providers.sync._mod_common import make_snapshot_progress
 from providers.sync.scrob import _common as scrob_common, _history as scrob
-from providers.sync.stremio import _common as stremio_common, _history as stremio
+from providers.sync.stremio import _common as stremio_common, _history as stremio, _progress as stremio_progress, _watchlist as stremio_watchlist
 
 SHAWSHANK = "tt0111161"
 WELLNESS = "tt4731136"
@@ -1042,3 +1045,53 @@ def test_cinemeta_outage_fails_the_read_instead_of_removing_the_title(world: Sim
     Orchestrator(removal_config(mode)).run()
     assert tracker.removes == []
     assert "tmdb:63247#s01e03" in tracker.adds
+
+
+def reading_adapter(tmdb: Any, events: list[dict[str, Any]]) -> SimpleNamespace:
+    read = adapter(tmdb)
+    read.progress_factory = lambda feature: make_snapshot_progress(lambda event, **data: events.append({"event": event, **data}), dst="STREMIO", feature=feature)
+    return read
+
+
+@pytest.mark.parametrize(("lookup_seconds", "expected"), [(6.0, [1, 2, 3]), (0.1, [3])], ids=["slow", "cached"])
+def test_read_reports_lookups_while_they_run_and_stays_quiet_when_cached(library: Library, monkeypatch: pytest.MonkeyPatch, lookup_seconds: float, expected: list[int]) -> None:
+    now = [100.0]
+    monkeypatch.setattr(stremio_common, "time", SimpleNamespace(monotonic=lambda: now[0], time=time.time))
+
+    class TimedTmdb(FakeTmdb):
+        def find_imdb(self, imdb: str, entity: str) -> dict[str, str]:
+            now[0] += lookup_seconds
+            return super().find_imdb(imdb, entity)
+
+    events: list[dict[str, Any]] = []
+    stremio.build_index(reading_adapter(TimedTmdb(), events))
+    assert [event["done"] for event in events] == expected
+    assert {(event["event"], event["dst"], event["feature"], event["total"]) for event in events} == {("snapshot:progress", "STREMIO", "history", 3)}
+
+
+@pytest.mark.parametrize(("module", "feature"), [(stremio_watchlist, "watchlist"), (stremio_progress, "progress")], ids=["watchlist", "progress"])
+def test_other_features_report_lookups_while_they_run(monkeypatch: pytest.MonkeyPatch, module: Any, feature: str) -> None:
+    now = [100.0]
+    monkeypatch.setattr(stremio_common, "time", SimpleNamespace(monotonic=lambda: now[0], time=time.time))
+    monkeypatch.setattr(module, "library_records", lambda _adapter, incremental=False: [{**record, "removed": False, "temp": False} for record in default_library()])
+
+    def slow_ids(_adapter: Any, _record: Any) -> tuple[dict[str, str], str]:
+        now[0] += 6
+        return {}, "unsupported_stremio_id"
+
+    monkeypatch.setattr(module, "native_record_ids", slow_ids)
+    events: list[dict[str, Any]] = []
+    module.build_index(reading_adapter(FakeTmdb(), events))
+    assert [event["done"] for event in events] == [1, 2, 3]
+    assert {(event["dst"], event["feature"], event["total"]) for event in events} == {("STREMIO", feature, 3)}
+
+
+def test_read_without_a_progress_factory_still_works(library: Library) -> None:
+    assert stremio.build_index(adapter(FakeTmdb()))
+
+
+def test_module_sends_read_progress_to_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+    monkeypatch.setattr(mod_stremio, "ctx", SimpleNamespace(emit=lambda event, **data: events.append((event, data))))
+    mod_stremio.STREMIOModule({}).progress_factory("history").tick(2, total=2)
+    assert events == [("snapshot:progress", {"dst": "STREMIO", "feature": "history", "done": 2, "total": 2})]

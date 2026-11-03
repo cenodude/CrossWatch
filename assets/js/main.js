@@ -583,11 +583,12 @@
 
       const feat = mapFeat(obj.feature);
       if (feat) lastFeatHint = feat;
+      if (obj.event === "snapshot:start") sync.snapStart(obj);
       if (obj.event === "snapshot:progress" || obj.event === "progress:snapshot") sync.snap({ done: obj.done, total: obj.total, final: !!obj.final, dst: obj.dst, feature: obj.feature });
       if (/^apply:/.test(obj.event || "")) {
-        if (/:start$/.test(obj.event)) sync.applyStart({ feature: lastFeatHint, total: obj.total });
-        if (/:progress$/.test(obj.event)) sync.applyProg({ feature: lastFeatHint, done: obj.done, total: obj.total });
-        if (/:done$/.test(obj.event)) sync.applyDone({ feature: lastFeatHint, count: obj.result?.count || obj.count });
+        if (/:start$/.test(obj.event)) sync.applyStart({ ...obj, feature: lastFeatHint });
+        if (/:progress$/.test(obj.event)) sync.applyProg({ ...obj, feature: lastFeatHint });
+        if (/:done$/.test(obj.event)) sync.applyDone({ ...obj, feature: lastFeatHint, count: obj.result?.count || obj.count });
         const lane = ensureLane(lastFeatHint || feat || obj.feature);
         const cnt = +(obj.result?.count || obj.count || 0);
         let bucket = null;
@@ -746,6 +747,9 @@
       on(esSummary, ["run:start", "run:pair", "feature:start"], () => safe(sync.markInit?.bind(sync)));
       on(esSummary, ["one:plan", "two:plan"], (e) => {
         try { sync.setPair(JSON.parse(e.data || "{}")); } catch {}
+      });
+      on(esSummary, ["snapshot:start"], (e) => {
+        try { sync.snapStart(JSON.parse(e.data || "{}")); } catch {}
       });
       on(esSummary, ["progress:snapshot", "snapshot:progress"], (e) => {
         try { sync.snap(JSON.parse(e.data || "{}")); } catch {}

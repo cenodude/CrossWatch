@@ -11,6 +11,7 @@ from typing import Any
 from cw_platform.id_map import ids_from, minimal as id_minimal, unified_keys_from_ids
 
 from providers.sync._log import log as cw_log
+from providers.sync.stremio._common import read_progress
 
 from ._common import canonical_item_key, enrich_external_ids, epoch_ms, library_lock, make_item, payload_item_key, pull_library_rows, resolve_content_id_for_item, rpc, selected_profile_id, unresolved_result_keys
 
@@ -214,11 +215,13 @@ def _verify_key_for_item(adapter: Any, item: Mapping[str, Any]) -> str:
     return payload_item_key({"content_id": content_id, "content_type": content_type}) or canonical_item_key(item)
 
 
-def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
+def build_index(adapter: Any, *, reporting: bool = False) -> dict[str, dict[str, Any]]:
     rows = pull_library_rows(adapter)
     out: dict[str, dict[str, Any]] = {}
     skipped = 0
-    for row in rows:
+    tick = read_progress(adapter, "watchlist", len(rows), enabled=reporting)
+    for done, row in enumerate(rows):
+        tick(done)
         key, item, reason = _item_from_row(adapter, row)
         if not key or not item:
             if reason:
@@ -226,6 +229,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
                 _warn("row_skipped", reason=reason)
             continue
         out[key] = item
+    tick(len(rows))
     _info("index_done", count=len(out), rows=len(rows), skipped=skipped)
     return out
 

@@ -24,6 +24,7 @@ from ._common import (
     now_iso,
     poster_url_from_item,
     read_drop_summary,
+    read_progress,
     record_read_drop,
     reset_read_drop_report,
     stremio_id_for_item,
@@ -107,7 +108,10 @@ def _metadata_enriched(adapter: Any, item: Mapping[str, Any], typ: str) -> dict[
 def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     reset_read_drop_report(adapter, "watchlist")
-    for record in library_records(adapter, incremental=bool(kwargs.get("incremental"))):
+    records = library_records(adapter, incremental=bool(kwargs.get("incremental")))
+    tick = read_progress(adapter, "watchlist", len(records))
+    for done, record in enumerate(records):
+        tick(done)
         if not _is_listed(record):
             continue
         typ = str(record.get("type") or "").strip().lower()
@@ -121,6 +125,7 @@ def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
         if item:
             item = _metadata_enriched(adapter, item, "show" if typ in {"series", "show"} else "movie")
             out[canonical_item_key(item)] = item
+    tick(len(records))
     summary = read_drop_summary(adapter, "watchlist")
     if int(summary.get("dropped") or 0):
         cw_log("STREMIO", "watchlist", "warn", "index_rows_dropped", indexed=len(out), **summary)

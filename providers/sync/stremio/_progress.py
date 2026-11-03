@@ -25,6 +25,7 @@ from ._common import (
     season_int,
     native_record_ids,
     read_drop_summary,
+    read_progress,
     read_merge_write,
     record_read_drop,
     reset_read_drop_report,
@@ -263,7 +264,10 @@ def parse_episode_progress_record(record: Mapping[str, Any]) -> dict[str, Any] |
 def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     reset_read_drop_report(adapter, "progress")
-    for record in library_records(adapter, incremental=bool(kwargs.get("incremental"))):
+    records = library_records(adapter, incremental=bool(kwargs.get("incremental")))
+    tick = read_progress(adapter, "progress", len(records))
+    for done, record in enumerate(records):
+        tick(done)
         typ = str(record.get("type") or "").strip().lower()
         if typ not in {"movie", "series", "show"}:
             continue
@@ -288,6 +292,7 @@ def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
         key = canonical_item_key(item)
         selected, _reason = select_progress_record(out.get(key), item)
         out[key] = selected
+    tick(len(records))
     summary = read_drop_summary(adapter, "progress")
     if int(summary.get("dropped") or 0):
         cw_log("STREMIO", "progress", "warn", "index_rows_dropped", indexed=len(out), **summary)

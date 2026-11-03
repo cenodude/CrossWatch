@@ -1848,6 +1848,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         adds = review.filter(feature, dst, dst_inst, "add", adds, **review_args)
         updates = review.filter(feature, dst, dst_inst, "update", updates, **review_args)
         removes = review.filter(feature, dst, dst_inst, "remove", removes, **review_args)
+        if not review.preview:
+            emit("plan:selected", feature=feature, count=len(adds) + len(updates) + len(removes))
         if review.preview:
             if src_tags_dropped and not src_down:
                 planned_target = dict(groups.restore(1, dst_full))
