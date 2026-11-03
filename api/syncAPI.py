@@ -325,6 +325,13 @@ def _norm_instance_id(v: Any) -> str:
 
 # Orchestrator state loading
 SUMMARY_LOCK = threading.Lock()
+_PLAN_CHANGE_FIELDS = ("adds", "removes", "updates", "add_to_A", "add_to_B", "upd_to_A", "upd_to_B", "rem_from_A", "rem_from_B")
+_APPLY_TRACKED_EVENTS = frozenset({
+    "run:pair", "run:feature", "feature:done", "one:plan", "two:plan", "plan:selected",
+    "apply:add:start", "apply:update:start", "apply:remove:start",
+    "apply:add:progress", "apply:update:progress", "apply:remove:progress",
+    "apply:add:done", "apply:update:done", "apply:remove:done",
+})
 SUMMARY: dict[str, Any] = {}
 
 def _summary_reset() -> None:
@@ -1169,34 +1176,68 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None, *, interactive
 def _lanes_enabled_defaults() -> dict[str, bool]:
     return {"watchlist": True, "ratings": True, "history": True, "progress": True, "playlists": True, "collection": True}
 
+def _count_of(value: Any) -> int:
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+def _run_fraction(phase: Mapping[str, Any]) -> float:
+    planned = _count_of(phase.get("step_planned"))
+    step = min(1.0, (_count_of(phase.get("step_settled")) + _count_of(phase.get("current"))) / planned) if planned else 0.0
+    if phase.get("step_finished"):
+        step = 1.0
+    features = max(1, _count_of(phase.get("feature_count")))
+    pairs = max(1, _count_of(phase.get("pair_count")))
+    earlier = min(features - 1, max(0, _count_of(phase.get("feature_index")) - 1))
+    return min(1.0, (max(0, _count_of(phase.get("pair_index")) - 1) + (earlier + step) / features) / pairs)
+
+def _track_apply_progress(ev: str, o: Mapping[str, Any]) -> None:
+    if ev not in _APPLY_TRACKED_EVENTS:
+        return
+    with SUMMARY_LOCK:
+        phase = SUMMARY.setdefault("_phase", {}).setdefault("apply", {"total": 0, "done": 0, "final": False})
+        if ev == "run:pair":
+            features = o.get("features")
+            phase.update(pair_index=_count_of(o.get("i")), pair_count=_count_of(o.get("n")), feature_count=len(features) if isinstance(features, list) else 1,
+                         feature_index=0, step_planned=0, step_settled=0, step_finished=False, current=0)
+        elif ev == "run:feature":
+            phase.update(feature_index=_count_of(o.get("i")), feature_count=_count_of(o.get("n")), step_planned=0, step_settled=0, step_finished=False, current=0)
+        elif ev == "feature:done":
+            phase["step_finished"] = True
+        elif ev in ("one:plan", "two:plan"):
+            planned = sum(_count_of(o.get(field)) for field in _PLAN_CHANGE_FIELDS)
+            phase["total"] = _count_of(phase.get("total")) + planned
+            phase["step_planned"] = _count_of(phase.get("step_planned")) + planned
+        elif ev == "plan:selected":
+            selected = _count_of(o.get("count"))
+            phase["total"] = max(0, _count_of(phase.get("total")) - _count_of(phase.get("step_planned")) + selected)
+            phase["step_planned"] = selected
+        elif ev.endswith(":start"):
+            phase["current"] = 0
+        elif ev.endswith(":progress"):
+            phase["current"] = _count_of(o.get("done"))
+        else:
+            finished = max(_count_of(o.get("attempted")), _count_of(o.get("count")))
+            phase["settled"] = _count_of(phase.get("settled")) + finished
+            phase["step_settled"] = _count_of(phase.get("step_settled")) + finished
+            phase["current"] = 0
+        phase["done"] = _count_of(phase.get("settled")) + _count_of(phase.get("current"))
+        phase["progress"] = max(float(phase.get("progress") or 0.0), round(_run_fraction(phase), 4))
+
 def _parse_sync_line(line: str) -> None:
     s = _rt()[7](line).strip()
     try:
         o = json.loads(s)
         if isinstance(o, dict) and o.get("event"):
             ev = str(o.get("event") or "")
-            
+            _track_apply_progress(ev, o)
+            if ev == "snapshot:start":
+                _summary_set_timeline("pre", True)
+            elif ev in ("apply:add:start", "apply:update:start", "apply:remove:start"):
+                _summary_set_timeline("post", True)
+
             if ev in ("one:plan", "two:plan"):
-                phase = SUMMARY.setdefault("_phase", {})
-                apply_phase = phase.setdefault(
-                    "apply", {"total": 0, "done": 0, "final": False}
-                )
-
-                if ev == "one:plan":
-                    adds = int(o.get("adds") or 0)
-                    rems = int(o.get("removes") or 0)
-                    upds = int(o.get("updates") or 0)
-                    delta = max(0, adds) + max(0, rems) + max(0, upds)
-                else:
-                    delta = 0
-                    for k in ("add_to_A", "add_to_B", "upd_to_A", "upd_to_B", "rem_from_A", "rem_from_B"):
-                        try:
-                            delta += max(0, int(o.get(k) or 0))
-                        except Exception:
-                            pass
-
-                apply_phase["total"] = int(apply_phase.get("total") or 0) + delta
-                _summary_set("_phase", phase)
                 return
 
             if ev == "history:episode_identity":
@@ -1293,13 +1334,6 @@ def _parse_sync_line(line: str) -> None:
                         _merge_spotlight_items(cur_bucket, spotlight, limit=25)
                     except Exception:
                         pass
-
-                    phase = SUMMARY.setdefault("_phase", {})
-                    apply_phase = phase.setdefault(
-                        "apply", {"total": 0, "done": 0, "final": False}
-                    )
-                    apply_phase["done"] = int(apply_phase.get("done") or 0) + cnt
-                    _summary_set("_phase", phase)
                     return
 
                 if ev == "debug" and str(o.get("msg") or "") == "apply:add:corrected":
@@ -3273,6 +3307,12 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             )
         return tuple(out)
 
+    def _phase_key(phase: Any) -> tuple[Any, ...]:
+        apply_phase = phase.get("apply") if isinstance(phase, Mapping) else None
+        if not isinstance(apply_phase, Mapping):
+            return ()
+        return (apply_phase.get("total"), apply_phase.get("done"), apply_phase.get("progress"))
+
     def _enabled_key(enabled: Any) -> tuple[Any, ...]:
         if not isinstance(enabled, dict):
             return ()
@@ -3353,6 +3393,9 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
                 snap.get("result"),
                 snap.get("duration_sec"),
                 (snap.get("timeline", {}) or {}).get("done"),
+                (snap.get("timeline", {}) or {}).get("pre"),
+                (snap.get("timeline", {}) or {}).get("post"),
+                _phase_key(snap.get("_phase")),
                 _lane_key(snap.get("features")),
                 _enabled_key(snap.get("enabled")),
             )

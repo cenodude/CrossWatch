@@ -2115,6 +2115,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         upd_to_B = review.filter(feature, b, dst_inst, "update", upd_to_B, **args_B)
         rem_from_A = review.filter(feature, a, src_inst, "remove", rem_from_A, **args_A)
         rem_from_B = review.filter(feature, b, dst_inst, "remove", rem_from_B, **args_B)
+        if not review.preview:
+            emit("plan:selected", feature=feature, count=len(add_to_A) + len(add_to_B) + len(upd_to_A) + len(upd_to_B) + len(rem_from_A) + len(rem_from_B))
         if review.preview:
             if (a_tags_dropped or b_tags_dropped) and not (a_down or b_down):
                 view_A = groups.restore(0, A_eff)

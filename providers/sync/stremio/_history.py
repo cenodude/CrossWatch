@@ -38,6 +38,7 @@ from ._common import (
     season_int,
     read_cinemeta_entry,
     read_drop_summary,
+    read_progress,
     record_read_drop,
     record_id,
     reset_read_drop_report,
@@ -707,7 +708,10 @@ def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
     setattr(adapter, "_stremio_tmdb_lookup_failed", False)
     unresolved_titles = 0
     held_episodes = 0
-    for record in library_records(adapter, incremental=bool(kwargs.get("incremental"))):
+    records = library_records(adapter, incremental=bool(kwargs.get("incremental")))
+    tick = read_progress(adapter, "history", len(records))
+    for done, record in enumerate(records):
+        tick(done)
         typ = str(record.get("type") or "").strip().lower()
         if typ == "movie":
             state = state_of(record)
@@ -772,6 +776,7 @@ def build_index(adapter: Any, **kwargs: Any) -> dict[str, dict[str, Any]]:
                 key = canonical_item_key(item)
                 _apply_episode_watched_at(item, key, record, previous_dates)
                 out[key] = item
+    tick(len(records))
     summary = read_drop_summary(adapter, "history")
     if int(summary.get("dropped") or 0):
         cw_log("STREMIO", "history", "warn", "index_rows_dropped", indexed=len(out), **summary)

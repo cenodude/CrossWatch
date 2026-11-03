@@ -3,10 +3,45 @@
 /* SyncBar UI component for showing sync progress in the header. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (() => {
-  const Anch = Object.freeze({ start0: 0, preStart: 35, preEnd: 57, postEnd: 67, done: 100 });
+  const Anch = Object.freeze({ start0: 0, preStart: 35, preEnd: 57, postEnd: 67, applyEnd: 97, done: 100 });
   const clamp = (n, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, Math.round(n)));
   const POST_DONE_GRACE_MS = 20000;
   const AGE_REFRESH_MS = 30000;
+  const REPLAY_BURST_MS = 500;
+  const ETA_MIN_SECONDS = 10;
+  const FLY_BADGE_GAP = 12;
+  const WRITE_VERBS = { add: "Adding to", update: "Updating", remove: "Removing from" };
+  const writeOp = (d) => (String(d.event || "").match(/^apply:(add|update|remove):/) || [])[1] || "";
+  const writeState = (d, prev) => {
+    const now = Date.now();
+    const done = +d.done || 0;
+    const burst = !!prev && now - prev.seen < REPLAY_BURST_MS;
+    return {
+      op: writeOp(d) || prev?.op || "",
+      dst: d.dst || prev?.dst || "",
+      feature: d.feature || prev?.feature || "",
+      total: +(d.total ?? d.count ?? prev?.total) || 0,
+      done,
+      seen: now,
+      at: !prev || burst ? now : prev.at,
+      base: !prev || burst ? done : prev.base
+    };
+  };
+  const timeLeft = (w) => {
+    const seconds = (Date.now() - w.at) / 1000;
+    if (!w.total || w.done >= w.total || w.done <= w.base || seconds < ETA_MIN_SECONDS) return "";
+    const remaining = (w.total - w.done) * seconds / (w.done - w.base);
+    return remaining < 60 ? "under a minute left" : `about ${Math.round(remaining / 60)} min left`;
+  };
+  const readLabel = (d) => [
+    [d.provider || d.dst, d.feature].filter(Boolean).join(" "),
+    +d.total > 0 ? `${(+d.done || 0).toLocaleString()} of ${(+d.total).toLocaleString()}` : ""
+  ].filter(Boolean).join(" · ");
+  const writeLabel = (w) => [
+    [WRITE_VERBS[w.op] || "Writing to", w.dst, w.feature].filter(Boolean).join(" "),
+    w.total ? `${w.done.toLocaleString()} of ${w.total.toLocaleString()}` : "",
+    timeLeft(w)
+  ].filter(Boolean).join(" · ");
   const asEpochSec = (v) => {
     if (v == null || v === "") return 0;
     const n = typeof v === "number" ? v : Date.parse(v);
@@ -16,7 +51,7 @@
 
   const PhaseAgg = {
     snap: { done: 0, total: 0, started: false, finished: false },
-    apply: { done: 0, total: 0, started: false, finished: false }
+    apply: { done: 0, total: 0, progress: 0, started: false, finished: false }
   };
 
   const SnapAgg = {
@@ -41,60 +76,15 @@
     }
   };
 
-  const ApplyAgg = {
-    buckets: Object.create(null),
-    reset() {
-      this.buckets = Object.create(null);
-      PhaseAgg.apply = { done: 0, total: 0, started: false, finished: false };
-    },
-    _ensure(k) { return (this.buckets[k] ||= { done: 0, total: 0, final: false }); },
-    start({ feature = "__global__", total = 0 }) {
-      const b = this._ensure(feature);
-      b.total = +total || 0;
-      this._recalc();
-    },
-    prog({ feature = "__global__", done, total }) {
-      const b = this._ensure(feature);
-      if (typeof done === "number") b.done = +done || 0;
-      if (typeof total === "number") b.total = +total || 0;
-      this._recalc();
-    },
-    done({ feature = "__global__", count }) {
-      const b = this._ensure(feature);
-      const c = +(count || b.total || 0);
-      b.done = c;
-      b.total = Math.max(b.total, c);
-      b.final = true;
-      this._recalc();
-    },
-    _recalc() {
-      let tot = 0;
-      let don = 0;
-      let allFinal = true;
-      let any = false;
-      for (const v of Object.values(this.buckets)) {
-        any = true;
-        tot += +v.total || 0;
-        don += Math.min(+v.done || 0, +v.total || 0);
-        allFinal = allFinal && (!!v.final || ((+v.total || 0) > 0 && (+v.done || 0) >= (+v.total || 0)));
-      }
-      PhaseAgg.apply.total = tot;
-      PhaseAgg.apply.done = don;
-      PhaseAgg.apply.started = any && tot > 0;
-      PhaseAgg.apply.finished = any && allFinal && tot > 0 && don >= tot;
-    }
-  };
-
   const phaseIdx = (tl) => tl?.done ? 3 : tl?.post ? 2 : tl?.pre ? 1 : tl?.start ? 0 : -1;
   const asPctFromTimeline = (tl, allowDone = false) => ((allowDone && tl?.done) ? Anch.done : tl?.post ? Anch.postEnd : tl?.pre ? Anch.preStart : tl?.start ? Anch.start0 : 0);
   const pctFromPhase = () => {
     const sTot = PhaseAgg.snap.total | 0;
     const sDone = PhaseAgg.snap.done | 0;
     const aTot = PhaseAgg.apply.total | 0;
-    const aDone = PhaseAgg.apply.done | 0;
     const snapPct = sTot > 0 ? (Anch.preStart + (Anch.preEnd - Anch.preStart) * Math.max(0, Math.min(1, sDone / sTot))) : null;
-    const appPct = (PhaseAgg.snap.finished && aTot > 0)
-      ? (Anch.preEnd + (Anch.postEnd - Anch.preEnd) * Math.max(0, Math.min(1, aDone / aTot)))
+    const appPct = aTot > 0
+      ? (Anch.postEnd + (Anch.applyEnd - Anch.postEnd) * Math.max(0, Math.min(1, PhaseAgg.apply.progress)))
       : null;
     return appPct != null ? clamp(appPct) : snapPct != null ? clamp(snapPct) : null;
   };
@@ -115,6 +105,8 @@
       this._runKey = null;
       this._pairText = "";
       this._pairMeta = null;
+      this._writing = null;
+      this._reading = "";
       this._streamArmed = false;
       this._pendingDone = false;
       this._pendingDoneTimer = null;
@@ -142,6 +134,8 @@
       clearTimeout(this._pendingDoneTimer);
       this._pendingDone = false;
       this._doneAt = 0;
+      this._writing = null;
+      this._reading = "";
       this.timeline = { start: true, pre: true, post: true, done };
       this._running = false;
       this._streamArmed = false;
@@ -170,6 +164,8 @@
         _holdAtTen: false,
         _pairText: "",
         _pairMeta: null,
+        _writing: null,
+        _reading: "",
         _streamArmed: false,
         _successExit0Seen: false,
         _exitCode: null,
@@ -178,9 +174,8 @@
         _finishedAt: 0
       });
       PhaseAgg.snap = { done: 0, total: 0, started: false, finished: false };
-      PhaseAgg.apply = { done: 0, total: 0, started: false, finished: false };
+      PhaseAgg.apply = { done: 0, total: 0, progress: 0, started: false, finished: false };
       SnapAgg.reset();
-      ApplyAgg.reset();
       this.timeline = { start: false, pre: false, post: false, done: false };
       this.render();
     }
@@ -204,6 +199,7 @@
     setPair(d) {
       this._pairMeta = this._pairData((d && (d.pair || d)) || {});
       this._pairText = this._pairMeta.text;
+      this._reading = "";
       this.render();
     }
 
@@ -225,7 +221,7 @@
     _maybePair(d) {
       if (!this._streamArmed) return;
       const pair = this._pairData(d);
-      if (pair.text) {
+      if (pair.text && (pair.src || !this._pairMeta?.src)) {
         this._pairMeta = pair;
         this._pairText = pair.text;
       }
@@ -266,24 +262,43 @@
       this._holdAtTen = false;
       this._maybePair(d);
       SnapAgg.update(d || {});
+      this._reading = readLabel(d || {});
+      this.timeline.pre = true;
+      this._afterUpdate(true);
+    }
+
+    snapStart(d) {
+      if (!this._streamArmed && !this._pendingDone) return;
+      this._reopenForLateWork();
+      this._holdAtTen = false;
+      this._reading = readLabel(d || {});
       this.timeline.pre = true;
       this._afterUpdate(true);
     }
 
     applyStart(d) {
-      this._touchApply(d, (x) => ApplyAgg.start(x));
+      this._touchApply(d, (x) => {
+        this._reading = "";
+        this._writing = writeState(x);
+      });
     }
 
     applyProg(d) {
-      this._touchApply(d, (x) => ApplyAgg.prog(x));
+      this._touchApply(d, (x) => {
+        this._writing = writeState(x, this._writing);
+      });
     }
 
     applyDone(d) {
-      this._touchApply(d, (x) => ApplyAgg.done(x));
+      this._touchApply(d, () => {
+        this._writing = null;
+      });
     }
 
     done() {
       this._running = false;
+      this._writing = null;
+      this._reading = "";
       this.timeline = { start: true, pre: true, post: true, done: false };
       this._doneAt = Date.now();
       this._stamp();
@@ -349,6 +364,7 @@
       if (ph.apply) {
         PhaseAgg.apply.total = +ph.apply.total || 0;
         PhaseAgg.apply.done = +ph.apply.done || 0;
+        PhaseAgg.apply.progress = Math.max(PhaseAgg.apply.progress, +ph.apply.progress || 0);
         PhaseAgg.apply.started = PhaseAgg.apply.total > 0;
         PhaseAgg.apply.finished = !!ph.apply.final || (PhaseAgg.apply.total > 0 && PhaseAgg.apply.done >= PhaseAgg.apply.total);
       }
@@ -470,7 +486,7 @@
       } else {
         if (base == null || (this.timeline.post && !PhaseAgg.apply.started)) base = asPctFromTimeline(this.timeline, allowDone);
         if (this._holdAtTen && !PhaseAgg.snap.started) base = Math.max(base, 10);
-        base = Math.min(base, Anch.postEnd);
+        base = Math.min(base, Anch.applyEnd);
       }
 
       const idx = phaseIdx(this.timeline);
@@ -490,6 +506,8 @@
         ? `Sync failed${this._exitCode != null ? ` (code ${this._exitCode})` : ""}`
         : hardDone ? "Completed successfully"
         : this._pendingDone ? "Wrapping up final tasks"
+        : this._writing ? writeLabel(this._writing)
+        : this._reading ? `Reading ${this._reading}`
         : this.timeline.post ? "Applying changes across enabled features"
         : this.timeline.pre ? "Scanning current state before applying changes"
         : "Waiting for the next sync run") + (doneAge ? ` · ${doneAge}` : "");
@@ -536,10 +554,10 @@
         step.classList.toggle("current", key === currentStep);
       }
 
-      const pct = this._pctMemo / 100;
-      const railW = host.clientWidth || 1;
-      const left = Math.max(8, Math.min(railW - 8, railW * pct));
-      fly.style.left = left + "px";
+      const railW = rail.clientWidth || host.clientWidth || 1;
+      const flyHalf = (fly.offsetWidth || 0) / 2;
+      const flyMax = railW - (badge.offsetWidth || 0) - FLY_BADGE_GAP - flyHalf;
+      fly.style.left = Math.max(flyHalf, Math.min(flyMax, railW * this._pctMemo / 100)) + "px";
       fly.classList.toggle("hide", !(isRunning && this._pairText));
     }
   }

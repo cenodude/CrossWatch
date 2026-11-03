@@ -6,13 +6,13 @@ from __future__ import annotations
 from cw_platform.interactive_reads import accepted_result, replaying, replace_retained
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from cw_platform.id_map import minimal as id_minimal
 
 from providers.sync._log import log as cw_log
-from providers.sync.stremio._common import imdb_id, read_cinemeta_entry, update_cinemeta_entry
+from providers.sync.stremio._common import imdb_id, read_cinemeta_entry, read_progress, update_cinemeta_entry
 from providers.sync.stremio._history import cinemeta_refreshed, cinemeta_videos, tmdb_ids_for_record, verified_video_ids
 
 from ._common import (
@@ -88,11 +88,11 @@ def _item_from_row(adapter: Any, row: Mapping[str, Any]) -> tuple[str | None, di
     return key, item, None
 
 
-def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
-    rows = pull_watched_rows(adapter)
+def _index_rows(adapter: Any, rows: list[Mapping[str, Any]], tick: Callable[[int], None]) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     skipped = 0
-    for row in rows:
+    for done, row in enumerate(rows):
+        tick(done)
         key, item, reason = _item_from_row(adapter, row)
         if not key or not item:
             if reason:
@@ -106,6 +106,10 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
+def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
+    return _index_rows(adapter, pull_watched_rows(adapter), lambda _done: None)
+
+
 def _videos_covering(adapter: Any, imdb: str, watched: set[str]) -> list[Mapping[str, Any]]:
     videos = cinemeta_videos(adapter, imdb)
     missing = ",".join(sorted(watched - {str(video.get("id") or "").strip() for video in videos}))
@@ -117,14 +121,15 @@ def _videos_covering(adapter: Any, imdb: str, watched: set[str]) -> list[Mapping
     return videos
 
 
-def _add_tmdb_ids(adapter: Any, items: Iterable[dict[str, Any]]) -> None:
+def _add_tmdb_ids(adapter: Any, items: Iterable[dict[str, Any]], tick: Callable[[int], None], start: int) -> None:
     titles: dict[str, list[dict[str, Any]]] = {}
     for item in items:
         imdb = imdb_id(item.get("_nuvio_content_id"))
         if imdb and item.get("type") in {"movie", "episode"}:
             titles.setdefault(imdb, []).append(item)
     setattr(adapter, "_stremio_tmdb_lookup_failed", False)
-    for imdb, rows in titles.items():
+    for done, (imdb, rows) in enumerate(titles.items(), start):
+        tick(done)
         movies = [item for item in rows if item["type"] == "movie"]
         episodes = {f"{imdb}:{item['season']}:{item['episode']}": item for item in rows if item["type"] == "episode"}
         native = tmdb_ids_for_record(adapter, {"_id": imdb}, "movie" if movies else "tv")
@@ -144,8 +149,12 @@ def _add_tmdb_ids(adapter: Any, items: Iterable[dict[str, Any]]) -> None:
 
 
 def sync_index(adapter: Any) -> dict[str, dict[str, Any]]:
-    index = build_index(adapter)
-    _add_tmdb_ids(adapter, index.values())
+    rows = pull_watched_rows(adapter)
+    total = len(rows) + len({imdb for row in rows if (imdb := imdb_id(row.get("content_id")))})
+    tick = read_progress(adapter, "history", total)
+    index = _index_rows(adapter, rows, tick)
+    _add_tmdb_ids(adapter, index.values(), tick, len(rows))
+    tick(total)
     out: dict[str, dict[str, Any]] = {}
     for item in index.values():
         key = canonical_item_key(item)

@@ -602,10 +602,11 @@ def run_pairs(ctx) -> dict[str, Any]:
 
         injected = False
 
-        for feature in features:
+        for feature_index, feature in enumerate(features, 1):
             if cancel_requested():
                 cancelled = True
                 break
+            emit("run:feature", pair_id=str(pair.get('id') or ''), i=feature_index, n=len(features), feature=feature)
             fcfg = feat_map.get(feature) or {}
             if isinstance(fcfg, dict) and not coerce_bool(fcfg.get("enable", True), True):
                 continue
