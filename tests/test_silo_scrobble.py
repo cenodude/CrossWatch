@@ -152,6 +152,71 @@ def test_watcher_episode_reported_as_series(monkeypatch: pytest.MonkeyPatch, ser
     assert ev.title == "Line of Fire (2026)" and ev.ids["tvdb_show"] == "477711" and ev.ids["tvdb_episode"] == "9001"
 
 
+@pytest.mark.parametrize("completed_at,expected", [("2026-10-27T17:58:20.000Z", 100.0), ("2026-10-20T10:00:00.000Z", 88.0), (None, 88.0)])
+def test_watcher_stop_uses_silo_completion_in_session(monkeypatch: pytest.MonkeyPatch, server: FakeServer, completed_at: str | None, expected: float) -> None:
+    rows: list[dict[str, Any]] = []
+    done = [{"media_item_id": "movie-tmdb-100", "completed": True, "position_seconds": 0, "updated_at": completed_at}] if completed_at else []
+    server.on("GET", "/profiles/household/sessions", lambda kw: ResponseStub(200, {"items": rows}))
+    server.on("GET", "/catalog/items/movie-tmdb-100", lambda kw: ResponseStub(200, {"content_id": "movie-tmdb-100", "tmdb_id": "100"}))
+    server.on("GET", "/progress", lambda kw: ResponseStub(200, {"items": done, "page": {}}))
+    monkeypatch.setattr(watch_mod(), "COMPLETION_RECHECK_SECONDS", 0.0)
+    svc, got = _watcher(monkeypatch)
+
+    rows[:] = [_session(position_seconds=5280.0)]
+    svc._tick()
+    rows[:] = []
+    svc._tick()
+
+    stop = got.events[-1]
+    assert stop.action == "stop" and stop.progress == pytest.approx(expected)
+    assert stop.raw["_cw_preserve_stop"] is (expected == 100.0)
+    assert stop.position_ms == (6_000_000 if expected == 100.0 else 5_280_000)
+    from providers.scrobble.floppy.sink import _payload
+
+    assert _payload(stop)["completed"] is (expected == 100.0)
+
+
+def watch_mod() -> Any:
+    from providers.scrobble.silo import watch
+
+    return watch
+
+
+@pytest.mark.parametrize("position,expected,progress_calls", [(5280.0, 100.0, 2), (1200.0, 20.0, 1)])
+def test_watcher_rechecks_late_silo_completion(monkeypatch: pytest.MonkeyPatch, server: FakeServer, position: float, expected: float, progress_calls: int) -> None:
+    rows: list[dict[str, Any]] = []
+    calls: list[int] = []
+    late = [{"media_item_id": "movie-tmdb-100", "completed": True, "position_seconds": 0, "updated_at": "2026-10-27T17:58:20.000Z"}]
+
+    def progress(kw: dict[str, Any]) -> ResponseStub:
+        calls.append(1)
+        return ResponseStub(200, {"items": late if len(calls) > 1 else [], "page": {}})
+
+    server.on("GET", "/profiles/household/sessions", lambda kw: ResponseStub(200, {"items": rows}))
+    server.on("GET", "/catalog/items/movie-tmdb-100", lambda kw: ResponseStub(200, {"content_id": "movie-tmdb-100", "tmdb_id": "100"}))
+    server.on("GET", "/progress", progress)
+    monkeypatch.setattr(watch_mod(), "COMPLETION_RECHECK_SECONDS", 0.0)
+    svc, got = _watcher(monkeypatch)
+
+    rows[:] = [_session(position_seconds=position)]
+    svc._tick()
+    rows[:] = []
+    svc._tick()
+
+    assert got.events[-1].action == "stop" and got.events[-1].progress == pytest.approx(expected)
+    assert len(calls) == progress_calls
+
+
+def test_watcher_skips_recheck_when_stopping(monkeypatch: pytest.MonkeyPatch, server: FakeServer) -> None:
+    calls: list[int] = []
+    server.on("GET", "/progress", lambda kw: calls.append(1) or ResponseStub(200, {"items": [], "page": {}}))
+    svc, _got = _watcher(monkeypatch)
+    svc._stop.set()
+
+    assert svc._completed_after_stop({"content_id": "movie-tmdb-100", "started_at": "2026-10-27T17:51:01.012Z", "profile_id": PROFILE}, 88.0) is False
+    assert len(calls) == 1
+
+
 def test_watcher_marks_offline_on_server_error(monkeypatch: pytest.MonkeyPatch, server: FakeServer) -> None:
     server.on("GET", "/profiles/household/sessions", lambda kw: ResponseStub(403, {"type": "x/permission_denied"}))
     svc, got = _watcher(monkeypatch)

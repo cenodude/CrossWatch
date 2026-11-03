@@ -52,6 +52,9 @@ SESSIONS_PATH = "/profiles/household/sessions"
 PROGRESS_PATH = "/progress"
 MARK_PAGE = 50
 MARK_MAX_PAGES = 4
+COMPLETION_SLACK_SECONDS = 2.0
+COMPLETION_RECHECK_SECONDS = 5.0
+COMPLETION_RECHECK_MIN_PROGRESS = 50.0
 
 
 def _log(msg: str, level: str = "INFO") -> None:
@@ -338,6 +341,7 @@ class SiloWatchService:
             "position_ms": position_ms,
             "duration_ms": duration_ms,
             "seek_pending": False,
+            "started_at": str(row.get("started_at") or ""),
         }
         self._sessions[source_key] = session
         return session
@@ -383,7 +387,49 @@ class SiloWatchService:
         self._missing.pop(source_key, None)
         if not session:
             return
-        self._dispatch_event(self._event(session, "stop", float(session.get("last_progress") or 0.0)), session.get("duration_ms"))
+        progress = float(session.get("last_progress") or 0.0)
+        if progress < 100.0 and self._completed_after_stop(session, progress):
+            _log(f"Silo finished content={session.get('content_id')} at last seen p={progress:.1f}; stop sent as 100", "DEBUG")
+            progress = 100.0
+            if session.get("duration_ms"):
+                session["position_ms"] = session["duration_ms"]
+        self._dispatch_event(self._event(session, "stop", progress), session.get("duration_ms"))
+
+    def _instance_for_profile(self, cfg: Mapping[str, Any], profile_id: str) -> str:
+        if str(self._block(cfg).get("profile_id") or "") == profile_id:
+            return self._instance_id
+        for user_inst in list_sync_user_ids(cfg, "silo", self._instance_id):
+            if str(get_instance_block(cfg, "silo", user_inst).get("profile_id") or "") == profile_id:
+                return user_inst
+        return ""
+
+    def _completed_after_stop(self, session: Mapping[str, Any], progress: float) -> bool:
+        if self._completed_in_session(session):
+            return True
+        if progress < COMPLETION_RECHECK_MIN_PROGRESS:
+            return False
+        if self._stop.wait(COMPLETION_RECHECK_SECONDS):
+            return False
+        return self._completed_in_session(session)
+
+    def _completed_in_session(self, session: Mapping[str, Any]) -> bool:
+        cid = str(session.get("content_id") or "")
+        started = parse_epoch(session.get("started_at"))
+        inst = self._instance_for_profile(self._active_cfg(), str(session.get("profile_id") or ""))
+        if not cid or started is None or not inst:
+            return False
+        try:
+            rows = self._completed_rows(inst, None)
+        except Exception as exc:
+            _log(f"Silo completion check failed content={cid}: {exc}", "DEBUG")
+            return False
+        for row in rows:
+            if str(row.get("media_item_id") or "") != cid or not row.get("completed"):
+                continue
+            done = parse_epoch(row.get("updated_at"))
+            if done is not None and done >= started - COMPLETION_SLACK_SECONDS:
+                return True
+        return False
 
     def _fetch_sessions(self) -> list[dict[str, Any]]:
         resp = silo_request(self, "GET", SESSIONS_PATH)
