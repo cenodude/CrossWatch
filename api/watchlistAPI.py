@@ -299,11 +299,7 @@ def _tmdb_api_key(cfg: dict[str, Any]) -> str:
                     return kk
         return ""
 
-    for key in ("tmdb", "tmdb_sync"):
-        found = _pick_from_block(cfg.get(key))
-        if found:
-            return found
-    return ""
+    return _pick_from_block(cfg.get("tmdb"))
 
 def _type_from_item_or_guess(item: dict[str, Any], key: str = "") -> str:
     t = str(item.get("type") or item.get("media_type") or item.get("entity") or "").lower().strip()

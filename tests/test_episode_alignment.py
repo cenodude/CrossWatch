@@ -254,11 +254,18 @@ def test_generic_episode_titles_never_create_a_match():
     assert _title_key({"title": "Strong Kitty"}) == "strongkitty"
 
 
-def test_a_missing_season_on_tmdb_is_not_reported_as_unreachable(monkeypatch):
-    from types import SimpleNamespace
+def test_a_missing_season_on_tmdb_is_not_reported_as_unreachable(monkeypatch, tmp_path):
+    import requests
     from services import episode_alignment
 
-    reply = lambda status: lambda *a, **k: SimpleNamespace(status_code=status, json=lambda: {})
+    monkeypatch.setattr("providers.metadata._meta_TMDB.TmdbProvider._disk_cache_dir", lambda _: tmp_path)
+
+    def reply(status):
+        response = requests.Response()
+        response.status_code = status
+        response._content = b"{}"
+        return lambda *a, **k: response
+
     monkeypatch.setattr(episode_alignment.requests, "get", reply(404))
     assert episode_alignment.tmdb_season("key", "1", 4) == {}
     monkeypatch.setattr(episode_alignment.requests, "get", reply(500))

@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 import requests
 
+from providers.metadata._meta_TMDB import TmdbProvider
 from services.interactive_sync_catalogs import configured, provider_block
 
 TIMEOUT = 10
@@ -75,8 +76,16 @@ def _tmdb(client, cfg, instance, show_ids, seasons):
     key = str((cfg.get("tmdb") or {}).get("api_key") or "").strip()
     if not key:
         return None
-    return _tmdb_shaped(lambda path, **params: _body(client.get(
-        f"https://api.themoviedb.org/3/{path}", params={"api_key": key, **params}, timeout=TIMEOUT)), show_ids, seasons)
+    provider = TmdbProvider(lambda: cfg, lambda _: None)
+    return _tmdb_shaped(lambda path, **params: _tmdb_body(provider, client, path, params), show_ids, seasons)
+
+
+def _tmdb_body(provider, client, path, params):
+    try:
+        return provider.get_response(f"https://api.themoviedb.org/3/{path}", params, fresh=True,
+                                     quiet_404=True, timeout=TIMEOUT, request=client.get, max_retries=0).data
+    except (requests.HTTPError, ValueError):
+        return None
 
 
 def _flicklist(client, cfg, instance, show_ids, seasons):
@@ -225,8 +234,8 @@ def _tmdb_shaped_movie(get, ids):
 
 def _tmdb_movie(client, cfg, instance, ids):
     key = str((cfg.get("tmdb") or {}).get("api_key") or "").strip()
-    return _tmdb_shaped_movie(lambda path, **params: _body(client.get(
-        f"https://api.themoviedb.org/3/{path}", params={"api_key": key, **params}, timeout=TIMEOUT)), ids) if key else None
+    provider = TmdbProvider(lambda: cfg, lambda _: None)
+    return _tmdb_shaped_movie(lambda path, **params: _tmdb_body(provider, client, path, params), ids) if key else None
 
 
 def _flicklist_movie(client, cfg, instance, ids):
