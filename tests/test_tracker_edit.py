@@ -278,24 +278,26 @@ def test_summary_explains_where_a_delete_goes(client, cfg):
         {"source": "JELLYFIN", "target": "CROSSWATCH", "target_instance": "CW-P01", "features": {"history": {"enable": True}}},
     ]
     effects = client.get("/api/tracker/summary").json()["delete_effects"]
-    assert effects["history"] == {"spreads": [{"provider": "TRAKT", "instance": "default"}], "returns": [{"provider": "PLEX", "instance": "default"}]}
-    assert effects["ratings"] == {"spreads": [], "returns": [{"provider": "SIMKL", "instance": "default"}]}
-    assert effects["watchlist"] == {"spreads": [], "returns": []}
+    assert effects["history"] == {"spreads": [{"provider": "TRAKT", "instance": "default"}], "returns": [{"provider": "PLEX", "instance": "default"}], "adds": [{"provider": "TRAKT", "instance": "default"}]}
+    assert effects["ratings"] == {"spreads": [], "returns": [{"provider": "SIMKL", "instance": "default"}], "adds": [{"provider": "SIMKL", "instance": "default"}]}
+    assert effects["watchlist"] == {"spreads": [], "returns": [], "adds": []}
 
 
-def test_tracker_writes_are_admin_only():
+def test_tracker_writes_need_write_access_for_managed_users():
     from api.appAuthAPI import non_admin_api_allowed
+    from crosswatch import _non_admin_permission_allowed
 
-    for path in ("/api/tracker/edit", "/api/tracker/delete", "/api/tracker/undo"):
-        assert not non_admin_api_allowed(path, "POST")
-    assert not non_admin_api_allowed("/api/tracker/changes", "GET")
+    for method, path in (("POST", "/api/tracker/edit"), ("POST", "/api/tracker/delete"), ("POST", "/api/tracker/undo"), ("GET", "/api/tracker/changes")):
+        assert non_admin_api_allowed(path, method)
+        assert _non_admin_permission_allowed({"permissions": {"write": True}}, path, method)
+        assert not _non_admin_permission_allowed({"permissions": {"write": False}}, path, method)
 
 
 def test_tracker_page_wires_edit_delete_and_undo():
     from pathlib import Path
 
     js = (Path(__file__).resolve().parents[1] / "assets" / "js" / "tracker.js").read_text("utf-8")
-    for endpoint in ("/api/tracker/edit", "/api/tracker/delete", "/api/tracker/undo", "/api/tracker/changes", "/api/metadata/search"):
+    for endpoint in ("/api/tracker/edit", "/api/tracker/delete", "/api/tracker/undo", "/api/tracker/changes", "/api/tracker/replace", "/api/editor/mapping"):
         assert endpoint in js
     assert '"cw-ia-sheet-wrap cw-page-item-actions trk-sheet-wrap"' in js
 
@@ -345,3 +347,116 @@ def test_api_reports_a_corrupt_row_as_unreadable(client, base):
         conn.execute("UPDATE items SET data='{bad' WHERE item_key='tmdb:949' AND feature='history'")
     res = client.get("/api/tracker/items", params={"feature": "history"})
     assert res.status_code == 503 and res.json()["error"] == "tracker_unreadable"
+
+
+def test_api_replace_takes_the_mapped_identity_and_keeps_the_watch(client, base):
+    mapped = {"type": "movie", "title": "The Matrix", "year": 1999, "ids": {"tmdb": "603", "imdb": "tt0133093"}}
+    res = client.post("/api/tracker/replace", json={"feature": "history", "key": "tmdb:949", "item": mapped})
+    assert res.status_code == 200, res.text
+    assert res.json()["key"] == "tmdb:603"
+    row = _items(base, "history")["tmdb:603"]
+    assert (row["title"], row["year"], row["ids"]) == ("The Matrix", 1999, {"tmdb": "603", "imdb": "tt0133093"})
+    assert row["watched_at"] == MOVIE["watched_at"]
+    assert client.post("/api/tracker/replace", json={"feature": "history", "key": "tmdb:603", "item": {"title": "x"}}).status_code == 400
+
+
+def test_change_log_filters_by_kind_and_searches_titles(client, base):
+    store = TrackerStore(base)
+    store.change_items("history", [("tmdb:949", None, None)], action="delete")
+    store.change_items("history", [("tmdb:95396#s01e02", None, None)], action="delete")
+    edit = store.change_items("history", [("tmdb:329865", "tmdb:329865", {**ARRIVAL, "watched_at": "2026-02-02T00:00:00.000Z"})], action="edit")
+    store.save_note("movie:tmdb:949", {"type": "movie", "title": "Heat", "status": "completed"})
+    store.undo(edit)
+
+    def actions(query: str) -> list[str]:
+        return [c["action"] for c in client.get(f"/api/tracker/changes?{query}").json()["changes"]]
+
+    every = client.get("/api/tracker/changes").json()
+    assert (every["total"], every["all"]) == (5, 5)
+    assert actions("kind=deleted") == ["delete", "delete"]
+    assert actions("kind=edited") == actions("kind=undone") == ["edit"]
+    assert actions("kind=notes") == ["note"]
+    heat = client.get("/api/tracker/changes?q=HEAT").json()
+    assert (heat["total"], heat["all"]) == (2, 5) and actions("q=HEAT") == ["note", "delete"]
+    assert actions("q=sever") == ["delete"]
+    assert actions("q=arrival&kind=edited") == ["edit"]
+    assert client.get("/api/tracker/changes?kind=bogus").status_code == 422
+
+
+def test_older_change_logs_become_searchable_after_the_upgrade(base):
+    store = TrackerStore(base)
+    store.change_items("history", [("tmdb:949", None, None)], action="delete")
+    conn = sqlite3.connect(str(store.db_path))
+    conn.execute("DROP INDEX changes_filter")
+    conn.execute("ALTER TABLE changes DROP COLUMN find")
+    conn.execute("CREATE INDEX changes_batch ON changes(batch)")
+    conn.execute("PRAGMA user_version=5")
+    conn.commit()
+    conn.close()
+
+    total, log = TrackerStore(base).change_log(text="heat")
+    assert total == 1 and log[0].action == "delete"
+    conn = sqlite3.connect(str(store.db_path))
+    try:
+        names = {row[1] for row in conn.execute("PRAGMA index_list(changes)")}
+    finally:
+        conn.close()
+    assert "changes_filter" in names and "changes_batch" not in names
+
+
+def test_title_edit_changes_every_record_of_a_movie_in_one_undoable_batch(client, base):
+    res = client.post("/api/tracker/edit-title", json={"feature": "history", "key": "tmdb:949", "changes": {"title": "Heat (1995)", "year": 1996}}).json()
+
+    assert res["count"] == 4 and res["key"] == "tmdb:949"
+    for feature in ("history", "ratings", "watchlist", "progress"):
+        item = _items(base, feature)["tmdb:949"]
+        assert (item["title"], item["year"]) == ("Heat (1995)", 1996), feature
+    assert _items(base, "history")["tmdb:329865"]["title"] == "Arrival"
+    total, log = TrackerStore(base).change_log()
+    assert log[0].count == 4
+
+    client.post("/api/tracker/undo", json={"batch": res["batch"]})
+    assert _items(base, "ratings")["tmdb:949"] == RATED
+
+
+def test_title_edit_of_a_show_reaches_every_episode_and_the_show_itself(client, base):
+    store = TrackerStore(base)
+    store.write_state("history", {**_items(base, "history"), "tmdb:95396#s01e03": {**EPISODE, "title": "S01E03", "episode": 3}})
+    store.write_state("watchlist", {**_items(base, "watchlist"), "tmdb:95396": {"type": "show", "title": "Severance", "ids": {"tmdb": "95396"}}})
+
+    res = client.post("/api/tracker/edit-title", json={"show": "tmdb:95396", "changes": {"title": "Severance (US)", "ids": {"tvdb": "371980"}}}).json()
+
+    assert res["count"] == 3 and res["show_key"] == "tmdb:95396"
+    history = _items(base, "history")
+    for key in ("tmdb:95396#s01e02", "tmdb:95396#s01e03"):
+        assert history[key]["series_title"] == "Severance (US)"
+        assert history[key]["show_ids"] == {"tmdb": "95396", "tvdb": "371980"}
+        assert history[key]["ids"] == {}
+    show = next(v for v in _items(base, "watchlist").values() if v["type"] == "show")
+    assert (show["title"], show["ids"]) == ("Severance (US)", {"tmdb": "95396", "tvdb": "371980"})
+
+
+def test_fix_match_for_every_record_rekeys_movies_and_keeps_episode_numbers(client, base):
+    movie = client.post("/api/tracker/edit-title", json={
+        "feature": "history", "key": "tmdb:329865",
+        "item": {"type": "movie", "title": "Arrival", "year": 2016, "ids": {"tmdb": "329865", "imdb": "tt2543164"}},
+    }).json()
+    assert movie["count"] == 1 and movie["key"] == "tmdb:329865"
+    assert _items(base, "history")["tmdb:329865"]["ids"] == {"tmdb": "329865", "imdb": "tt2543164"}
+
+    show = client.post("/api/tracker/edit-title", json={
+        "show": "tmdb:95396",
+        "item": {"type": "episode", "series_title": "Severance", "series_year": 2022, "season": 2, "episode": 9, "show_ids": {"tmdb": "1"}},
+    }).json()
+    assert show["show_key"] == "tmdb:1"
+    episode = next(v for v in _items(base, "history").values() if v.get("series_title") == "Severance")
+    assert (episode["show_ids"], episode["season"], episode["episode"], episode["series_year"]) == ({"tmdb": "1"}, 1, 2, 2022)
+
+
+def test_title_edit_refuses_unknown_fields_and_missing_titles(client):
+    bad = client.post("/api/tracker/edit-title", json={"feature": "history", "key": "tmdb:949", "changes": {"rating": 3}})
+    assert (bad.status_code, bad.json()["error"]) == (400, "unknown_field")
+    gone = client.post("/api/tracker/edit-title", json={"feature": "history", "key": "tmdb:1", "changes": {"year": 2000}})
+    assert gone.status_code == 404
+    empty = client.post("/api/tracker/edit-title", json={"feature": "history", "key": "tmdb:949", "changes": {"title": ""}})
+    assert empty.json()["error"] == "invalid_title"

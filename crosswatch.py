@@ -447,6 +447,8 @@ def _non_admin_permission_allowed(user: dict, path: str, method: str = "GET") ->
         return bool(perms.get("scrobbler"))
     if path == "/api/scheduling/profiles" or path.startswith("/api/scheduling/profiles/"):
         return bool(perms.get("schedule"))
+    if path == "/api/tracker" or path.startswith("/api/tracker/"):
+        return write
     if m in {"POST", "PUT", "PATCH", "DELETE"}:
         if not write:
             return False
