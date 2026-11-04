@@ -13,7 +13,7 @@ export function pageBackLink(returnTo, currentHref, source = 'logs') {
     const labels = new Map([
       ['', 'Main'], ['main', 'Main'],
       ['snapshots', 'Captures'], ['playlists', 'Playlists'], ['editor', 'Editor'], ['analyzer', 'Sync Analyzer'],
-      ['maintenance', 'Maintenance tools'], ['events', 'Events'], ['logs', 'Logs'], ['import_export', 'Import and Export'], ['interactive_sync', 'Interactive Sync'],
+      ['maintenance', 'Maintenance tools'], ['tracker', 'Tracker'], ['events', 'Events'], ['logs', 'Logs'], ['import_export', 'Import and Export'], ['interactive_sync', 'Interactive Sync'],
       ['settings', 'Settings'], ['settings/overview', 'Settings'], ['settings/providers', 'Connections'],
       ['settings/sync', 'Sync pairs'], ['settings/pairs', 'Sync pairs'], ['settings/scrobbler', 'Scrobbler'],
       ['settings/scheduling', 'Scheduling'], ['settings/app', 'UI and Security'], ['settings/maintenance', 'Maintenance'],

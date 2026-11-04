@@ -45,13 +45,13 @@ def test_webkit_text_fill_keeps_standard_color_fallbacks() -> None:
 def test_editor_layout_has_firefox_safe_wrap_points() -> None:
     css = _read("assets/css/pages.css")
 
-    assert "#page-editor .cw-root,#page-editor .cw-wrap,#page-editor .cw-main,#page-editor .cw-side,#page-editor .cw-controls,#page-editor .cw-topline.cw-page-hero{box-sizing:border-box;max-width:100%;min-width:0}" in css
-    assert "#page-editor .cw-controls{flex-wrap:wrap !important}" in css
-    assert "#page-editor .cw-topline.cw-page-hero{grid-template-columns:minmax(0,1fr)minmax(0,auto) !important}" in css
-    assert "@media(max-width:1560px){#page-editor .cw-editor-hero-summary{justify-self:end;flex-wrap:nowrap}" in css
+    assert "#page-editor .cw-root,#page-editor .cw-wrap,#page-editor .cw-main,#page-editor .cw-side,#page-editor .cw-controls,#page-editor .cw-topline.cw-page-hero,#page-tracker .cw-root,#page-tracker .cw-wrap,#page-tracker .cw-main,#page-tracker .cw-side,#page-tracker .cw-controls,#page-tracker .cw-topline.cw-page-hero{box-sizing:border-box;max-width:100%;min-width:0}" in css
+    assert "#page-editor .cw-controls,#page-tracker .cw-controls{flex-wrap:wrap !important}" in css
+    assert "#page-editor .cw-topline.cw-page-hero,#page-tracker .cw-topline.cw-page-hero{grid-template-columns:minmax(0,1fr)minmax(0,auto) !important}" in css
+    assert "@media(max-width:1560px){#page-editor .cw-editor-hero-summary,#page-tracker .cw-editor-hero-summary{justify-self:end;flex-wrap:nowrap}" in css
     assert "@media(max-width:1560px){#page-editor .cw-topline.cw-page-hero{grid-template-columns:1fr !important}" not in css
-    assert "@media(max-width:1320px){#page-editor .cw-wrap{grid-template-columns:minmax(0,1fr)}" in css
-    assert "#page-editor .cw-side{display:none}}" in css
+    assert "@media(max-width:1320px){#page-editor .cw-wrap,#page-tracker .cw-wrap{grid-template-columns:minmax(0,1fr)}" in css
+    assert "#page-editor .cw-side,#page-tracker .cw-side{display:none}}" in css
 
 
 def test_editor_empty_state_keeps_icon_centered_in_firefox() -> None:

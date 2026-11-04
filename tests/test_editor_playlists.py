@@ -700,7 +700,7 @@ def test_editor_uses_page_scroll_for_table() -> None:
     assert 'const tableScroll = host.querySelector(".cw-table-scroll");' not in js
     assert "function wireLinkedTableScroll()" not in js
     assert "scrollDocumentByTableDelta(delta)" not in js
-    assert '#page-editor .cw-table-scroll{position:static!important;inset:auto!important;overflow:visible!important;border-radius:22px!important}' in css
+    assert '#page-editor .cw-table-scroll,#page-tracker .cw-table-scroll{position:static!important;inset:auto!important;overflow:visible!important;border-radius:22px!important}' in css
     assert "cw-table-overflow-x" in css
     assert ".cw-pop.cw-columns-pop{width:min(370px" not in css
     popup_pos = js[js.index("function positionPopup(pop, anchor)"):js.index("function openPopup(anchor, builder, opts = {})")]

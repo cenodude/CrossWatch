@@ -1,5 +1,5 @@
 /* assets/js/tracker-notifications.js */
-/* CrossWatch - Tracker database move and metadata check in notifications */
+/* CrossWatch - Tracker database move, metadata check and import in notifications */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 (() => {
@@ -11,7 +11,7 @@
   let timer, controller, current = {};
   const plural = (n, one, many) => `${Number(n || 0).toLocaleString()} ${n === 1 ? one : many}`;
   const mb = bytes => (Number(bytes || 0) / 1e6).toLocaleString(undefined, {maximumFractionDigits: bytes < 1e7 ? 1 : 0});
-  const running = data => data?.job?.state === "running" || data?.migration?.state === "running";
+  const running = data => [data?.job, data?.migration, data?.import].some(job => job?.state === "running");
 
   function checkItem(job) {
     if (!job?.id) return null;
@@ -21,7 +21,7 @@
     let title = "Metadata check", detail = "", icon = "fact_check", href = "/#tracker", action = "Open tracker";
     if (busy) {
       title += ` - running${where}`;
-      detail = `${plural(job.done, "record", "records")} of ${Number(job.total || 0).toLocaleString()} checked. You can leave this page.`;
+      detail = `${Number(job.done || 0).toLocaleString()} of ${plural(job.total, "record", "records")} checked.`;
       icon = "sync";
       action = "View progress";
     } else if (job.state === "completed") {
@@ -39,6 +39,27 @@
       icon = "error_outline";
     }
     return {id: job.id, revision: busy ? "running" : `${job.state}:${attention}`, title, detail, icon, href, action, time: job.finished_at || job.started_at};
+  }
+
+  function importItem(job) {
+    if (!job?.id || job.state === "idle") return null;
+    const from = `${job.source_label || job.source || "a service"}${job.source_instance && job.source_instance !== "default" ? ` (${job.source_instance_label || job.source_instance})` : ""}`;
+    const into = job.instance && job.instance !== "default" ? ` into ${job.label || job.instance}` : "";
+    const base = {id: `import:${job.id}`, href: "/#tracker", action: "Open tracker", time: job.finished_at || job.started_at};
+    if (job.state === "running") {
+      const detail = job.phase === "writing" && job.total ? `Writing ${Number(job.done || 0).toLocaleString()} of ${Number(job.total).toLocaleString()}.` : job.phase === "reading" ? `Reading ${from} and matching IDs.` : "Starting.";
+      return {...base, revision: "running", icon: "download", action: "View progress", title: `Import - running${into}`, detail: `From ${from}. ${detail}`};
+    }
+    const added = Number(job.added || 0);
+    if (job.state === "completed") {
+      const missed = Number(job.unresolved || 0) ? ` ${plural(job.unresolved, "record", "records")} could not be matched.` : "";
+      return {...base, revision: `completed:${added}`, icon: "check_circle", title: `Import - completed${into}`, detail: `${plural(added, "record", "records")} added from ${from}.${missed}`};
+    }
+    if (job.state === "cancelled") {
+      return {...base, revision: "cancelled", icon: "block", title: `Import - stopped${into}`, detail: `${plural(added, "record was", "records were")} added from ${from} before it stopped.`};
+    }
+    return {...base, revision: job.state, icon: "error_outline", title: `Import - did not finish${into}`,
+      detail: job.state === "interrupted" ? "CrossWatch restarted during the import. Run it again from the Tracker." : "The import stopped with an error. See the sync log for details."};
   }
 
   function migrationItem(move) {
@@ -65,7 +86,7 @@
 
   function render(data = {}, error = "") {
     current = data || {};
-    const items = [migrationItem(current.migration), checkItem(current.job)].filter(Boolean);
+    const items = [migrationItem(current.migration), importItem(current.import), checkItem(current.job)].filter(Boolean);
     window.CW?.Notifications?.setSource("tracker-check", {scope: "account", error, items});
   }
 
@@ -78,14 +99,15 @@
     try {
       await window.__cwAuthBootstrapPromise;
       if (request.signal.aborted) return;
-      if (window.cwIsAuthSetupPending?.() || document.documentElement.dataset.cwRole === "user") { allowed = false; render(); return; }
+      const role = document.documentElement.dataset;
+      if (window.cwIsAuthSetupPending?.() || (role.cwRole === "user" && role.cwPermTracker !== "on")) { allowed = false; render(); return; }
       const response = await fetch("/api/tracker/check/current", {credentials: "same-origin", cache: "no-store", signal: request.signal});
       if ([401, 403].includes(response.status)) { allowed = false; render(); return; }
       if (!response.ok) throw new Error("Tracker status unavailable");
       const data = await response.json();
       if (!request.signal.aborted) {
         const wasMoving = current.migration?.state === "running";
-        render({job: data.job || null, migration: data.migration || null});
+        render({job: data.job || null, migration: data.migration || null, import: data.import || null});
         if (wasMoving && data.migration?.state !== "running") window.dispatchEvent(new CustomEvent("cw:tracker-migrated"));
       }
     } catch {

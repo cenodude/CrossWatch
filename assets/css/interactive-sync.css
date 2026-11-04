@@ -134,9 +134,9 @@ html:has(dialog.is-mapping-dialog[open]) { overflow: hidden; }
 .is-mapping-dialog::backdrop { background: color-mix(in srgb, #05070c 62%, transparent); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 .is-mapping-dialog .is-mapping-head { display: flex; justify-content: space-between; gap: 20px; padding: 18px 24px; border-bottom: 1px solid var(--is-line); position: static; background: var(--is-surface); box-shadow: none; }
 .is-mapping-dialog .is-mapping-head p { margin: 0; }
-.is-mapping-dialog h2 { margin: 6px 0; font-size: 24px; }
-.is-mapping-dialog h3 { margin: 0 0 16px; font-size: 17px; }
-.is-mapping-dialog p, .is-mapping-dialog small { color: var(--is-muted); font-size: 13px; line-height: 1.5; }
+.is-mapping-dialog h2:where(:not(.cw-mm *)) { margin: 6px 0; font-size: 24px; }
+.is-mapping-dialog h3:where(:not(.cw-mm *)) { margin: 0 0 16px; font-size: 17px; }
+.is-mapping-dialog p:where(:not(.cw-mm *)), .is-mapping-dialog small:where(:not(.cw-mm *)) { color: var(--is-muted); font-size: 13px; line-height: 1.5; }
 .is-mapping-body { min-height: 0; min-width: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 0 24px 24px; }
 .is-map-intro, .is-map-search-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .is-map-intro { flex-wrap: wrap; justify-content: flex-start; margin: 14px 0; color: var(--is-muted); font-size: 12px; }
@@ -155,14 +155,17 @@ html:has(dialog.is-mapping-dialog[open]) { overflow: hidden; }
 .is-map-bulk [data-search-status] { margin: 12px 0 0; }
 .is-map-bulk { border: 1px solid var(--is-line); border-radius: 10px; padding: 18px; background: var(--is-card); }
 .is-map-search-bar, .is-map-numbering-fields, .is-map-row-tools { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
-.is-mapping-dialog label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--is-muted); }
-.is-mapping-dialog input:not([type=checkbox]), .is-mapping-dialog select { box-sizing: border-box; width: 100%; min-height: 38px; border: 1px solid var(--is-line); border-radius: 6px; padding: 7px 10px; background: var(--is-field); color: var(--fg); }
+.is-mapping-dialog label:where(:not(.cw-mm *)) { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--is-muted); }
+.is-mapping-dialog input:not([type=checkbox]):where(:not(.cw-mm *)), .is-mapping-dialog select:where(:not(.cw-mm *)) { box-sizing: border-box; width: 100%; min-height: 38px; border: 1px solid var(--is-line); border-radius: 6px; padding: 7px 10px; background: var(--is-field); color: var(--fg); }
 .is-map-candidates { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 8px; }
 .is-map-candidate { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 68px; padding: 12px 14px; white-space: normal; text-align: left; }
 .is-map-candidate-art { flex-shrink: 0; width: 34px; height: 51px; border-radius: 4px; object-fit: cover; }
 .is-map-candidate strong { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; line-height: 1.4; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .is-map-candidate-year { flex-shrink: 0; border-radius: 5px; padding: 3px 7px; background: color-mix(in srgb, var(--is-muted) 9%, transparent); color: var(--is-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .is-map-candidate[aria-pressed=true] { border-color: var(--is-accent); background: color-mix(in srgb, var(--is-accent) 14%, var(--is-surface)); }
+.is-map-candidate-wrap { display: flex; gap: 6px; min-width: 0; }
+.is-map-candidate-wrap .is-map-candidate { flex: 1 1 auto; min-width: 0; }
+.is-map-candidate-info { flex: 0 0 auto; display: grid; place-items: center; width: 44px; padding: 0; }
 .is-map-row-tools { align-items: center; margin: 20px 0 12px; font-size: 12px; color: var(--is-muted); }
 .is-map-row-tools strong { margin-right: auto; }
 .is-mapping-dialog .is-map-row-tools h3 { margin: 0 auto 0 0; font-size: 15px; }
