@@ -3,39 +3,28 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import json
-import time
 from collections.abc import Iterable, Mapping
-from pathlib import Path
 from typing import Any
 
 from cw_platform.id_map import migrate_media_key, canonical_key, merge_ids
 
 from ._common import (
-    _atomic_write,
     _capture_mode,
     _maybe_restore,
     _pair_scope,
     _record_unresolved,
-    _root,
     _snapshot_state,
     current_state_only,
-    fallback_snapshot_file,
-    fallback_state_file,
     make_logger,
     may_persist,
     merge_tracker_identity,
+    read_state,
     readonly,
-    scoped_file,
-    state_file_for_read,
     tracker_minimal,
+    write_state,
 )
 
 _dbg, _info, _warn, _error = make_logger("collection")
-
-
-def _collection_path(adapter: Any) -> Path:
-    return scoped_file(_root(adapter), "collection.json")
 
 
 def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
@@ -52,41 +41,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
     if _pair_scope() is None:
         return {"ts": 0, "items": {}}
 
-    root = _root(adapter)
-    path = _collection_path(adapter)
-
-    unreadable: list[str] = []
-
-    def _read_json(p: Path) -> Any | None:
-        try:
-            return json.loads(p.read_text("utf-8"))
-        except FileNotFoundError:
-            return None
-        except Exception:
-            unreadable.append(p.name)
-            return None
-
-    read_path = state_file_for_read(root, "collection", path)
-    raw = _read_json(read_path)
+    raw = read_state(adapter, "collection", snapshot_fallback=not current_state_only(adapter))
     if raw is None:
-        alt = fallback_state_file(root, "collection")
-        if alt and alt != path:
-            raw = _read_json(alt)
-    if raw is None and current_state_only(adapter):
-        if unreadable:
-            _warn("state_unreadable", files=unreadable)
-            raise RuntimeError(f"crosswatch_collection_state_unreadable:{unreadable[0]}")
-        return {"ts": 0, "items": {}}
-    if raw is None:
-        snap = fallback_snapshot_file(root, "collection")
-        if snap:
-            raw = _read_json(snap)
-            if raw is not None:
-                _warn("state_restored_from_snapshot", snapshot=snap.name)
-    if raw is None:
-        if unreadable:
-            _warn("state_unreadable", files=unreadable)
-            raise RuntimeError(f"crosswatch_collection_state_unreadable:{unreadable[0]}")
         return {"ts": 0, "items": {}}
 
     if isinstance(raw, list):
@@ -102,8 +58,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             if key:
                 items[key] = accepted
         state = {"ts": 0, "items": items}
-        if items and may_persist(adapter, path):
-            _atomic_write(path, {"ts": int(time.time()), "items": items})
+        if items and may_persist(adapter, "collection"):
+            write_state(adapter, "collection", items)
         return state
 
     if isinstance(raw, Mapping):
@@ -122,8 +78,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 if ck:
                     items2[ck] = accepted
             state = {"ts": ts, "items": items2}
-            if items2 and may_persist(adapter, path):
-                _atomic_write(path, {"ts": ts or int(time.time()), "items": items2})
+            if items2 and may_persist(adapter, "collection"):
+                write_state(adapter, "collection", items2, ts=ts)
             return state
 
         items3: dict[str, dict[str, Any]] = {}
@@ -138,8 +94,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             if ck:
                 items3[ck] = accepted
         state = {"ts": 0, "items": items3}
-        if items3 and may_persist(adapter, path):
-            _atomic_write(path, {"ts": int(time.time()), "items": items3})
+        if items3 and may_persist(adapter, "collection"):
+            write_state(adapter, "collection", items3)
         return state
 
     return {"ts": 0, "items": {}}
@@ -148,7 +104,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
 def _save_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> None:
     if _capture_mode() or readonly(adapter) or _pair_scope() is None:
         return
-    _atomic_write(_collection_path(adapter), {"ts": int(time.time()), "items": dict(items or {})})
+    write_state(adapter, "collection", items)
 
 
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:

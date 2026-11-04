@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import io
+import sqlite3
 import zipfile
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from cw_platform.tracker_store import TrackerStore
 
 
 def test_importer_rejects_zip_member_size() -> None:
@@ -708,14 +711,15 @@ def test_preview_never_writes_to_the_target_tracker(tmp_path: Path) -> None:
         [{"type": "movie", "title": "Heat", "ids": {"tmdb": "949"}, "watched_at": "2026-01-01T00:00:00Z"}],
         feature="history",
     )
-    state = root / "history.json"
-    snapshots = sorted((root / "snapshots").glob("*-history.json"))
-    assert state.exists() and snapshots
+    store = TrackerStore(root)
+    assert store.has_state("history") and store.restore_points("history")
 
-    state.unlink()
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("DELETE FROM states WHERE feature='history'")
+        conn.execute("DELETE FROM items WHERE feature='history'")
     existing = importer._existing_keys(cfg, "default")
 
-    assert not state.exists(), "preview recreated the tracker state file from a snapshot"
+    assert not store.has_state("history"), "preview recreated the tracker state from a restore point"
     assert existing["history"] == {}
 
 

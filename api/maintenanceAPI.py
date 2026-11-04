@@ -10,7 +10,6 @@ import logging
 import os
 import shutil
 import threading
-import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from fnmatch import fnmatch
@@ -41,6 +40,7 @@ from cw_platform.local_db.sync_reports import (
 )
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.tracker_store import FEATURES as TRACKER_FEATURES, TrackerStore, tracker_context
 
 _LOG = logging.getLogger("crosswatch.api.maintenance")
 
@@ -212,123 +212,17 @@ def _cw_tracker_config(config_dir: Path) -> dict[str, Any]:
     return cfg if isinstance(cfg, dict) else {}
 
 
-def _cw_tracker_configured_instance(cfg: Mapping[str, Any], provider_instance: Any = None) -> str:
-    requested = normalize_instance_id(provider_instance)
-    if requested == "default":
-        return "default"
-    node = cfg.get("crosswatch") if isinstance(cfg, Mapping) else {}
-    instances = node.get("instances") if isinstance(node, Mapping) else {}
-    if not isinstance(instances, Mapping):
-        return "default"
-    for key in instances.keys():
-        candidate = normalize_instance_id(key)
-        if candidate == requested:
-            return candidate
-    return "default"
-
-
-def _cw_tracker_base_root(config_dir: Path, cfg: Mapping[str, Any]) -> Path:
-    cw_cfg = cfg.get("crosswatch") if isinstance(cfg, Mapping) else {}
-    root = (
-        cw_cfg.get("root_dir")
-        or cw_cfg.get("root")
-        or cw_cfg.get("dir")
-        or None
-    ) if isinstance(cw_cfg, Mapping) else None
-    if not root:
-        root = ".cw_provider"
-
-    p = Path(root)
-    if not p.is_absolute():
-        p = config_dir / p
-    return p
-
-
 def _cw_tracker_root(config_dir: Path, provider_instance: Any = None) -> Path:
-    cfg = _cw_tracker_config(config_dir)
-    inst = _cw_tracker_configured_instance(cfg, provider_instance)
-    base = _cw_tracker_base_root(config_dir, cfg)
-    if inst == "default":
-        return base
-    return base / "profiles" / inst
+    return _cw_tracker_context(config_dir, provider_instance)[1]
 
 
 def _cw_tracker_context(config_dir: Path, provider_instance: Any = None) -> tuple[str, Path]:
-    cfg = _cw_tracker_config(config_dir)
-    inst = _cw_tracker_configured_instance(cfg, provider_instance)
-    base = _cw_tracker_base_root(config_dir, cfg)
-    root = base if inst == "default" else base / "profiles" / inst
+    from services.tracker_migration import migrating
+
+    inst, root = tracker_context(_cw_tracker_config(config_dir), config_dir, provider_instance)
+    if migrating(root):
+        raise HTTPException(status_code=503, detail="tracker_migrating")
     return inst, root
-
-
-def _json_files_in_dir(root: Path) -> list[Path]:
-    safe_root = root.resolve(strict=False)
-    if not safe_root.exists():
-        return []
-    out: list[Path] = []
-    for path in safe_root.glob("*.json"):
-        resolved = path.resolve(strict=False)
-        try:
-            resolved.relative_to(safe_root)
-        except ValueError:
-            continue
-        if resolved.is_file():
-            out.append(resolved)
-    return out
-
-
-_TRACKER_FEATURE_STEMS = ("history", "ratings", "watchlist", "progress", "collection")
-
-
-_TRACKER_SIDECAR_MARKERS = frozenset({
-    "unresolved", "restore_state", "shadow", "blackbox", "flap", "hidden", "tomb", "tombstones", "pending",
-})
-
-
-def _is_tracker_feature_state(path: Path) -> bool:
-    parts = path.name.split(".")
-    if parts[-1] != "json" or parts[0] not in _TRACKER_FEATURE_STEMS:
-        return False
-    if len(parts) == 2:
-        return True
-    return len(parts) == 3 and parts[1] not in _TRACKER_SIDECAR_MARKERS
-
-
-def _empty_tracker_state(path: Path) -> bool:
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_name(f"{path.name}.tmp")
-        tmp.write_text(json.dumps({"ts": int(time.time()), "items": {}}), "utf-8")
-        os.replace(tmp, path)
-        return True
-    except Exception:
-        return False
-
-
-def _snapshot_files_in_dir(root: Path) -> list[Path]:
-    safe_root = root.resolve(strict=False)
-    if not safe_root.exists():
-        return []
-    out: list[Path] = []
-    for path in safe_root.rglob("*.json"):
-        resolved = path.resolve(strict=False)
-        try:
-            resolved.relative_to(safe_root)
-        except ValueError:
-            continue
-        if resolved.is_file():
-            out.append(resolved)
-    return out
-
-
-def _cw_tracker_snapshot_dir(root: Path) -> Path:
-    safe_root = root.resolve(strict=False)
-    snaps = (safe_root / "snapshots").resolve(strict=False)
-    try:
-        snaps.relative_to(safe_root)
-    except ValueError as exc:
-        raise ValueError("Invalid tracker snapshot path") from exc
-    return snaps
 
 
 def _file_meta(path: Path) -> dict[str, Any]:
@@ -870,7 +764,7 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
         )
     elif action == "tracker":
         root = _cw_tracker_root(CONFIG_DIR)
-        info = _scan_cw_tracker(root)
+        info = TrackerStore(root).inventory()
         usage = _path_usage(root)
         counts = info.get("counts") or {}
         response.update(
@@ -986,7 +880,7 @@ def maintenance_action_status(action: str) -> dict[str, Any]:
             CONFIG_DIR / LEGACY_DIR,
             CW_STATE_DIR,
             CONFIG_DIR / ".cw_databases",
-            _cw_tracker_root(CONFIG_DIR),
+            tracker_context(_cw_tracker_config(CONFIG_DIR), CONFIG_DIR)[1],
             CACHE_DIR,
             CONFIG_DIR / "tls",
         ]
@@ -1148,44 +1042,6 @@ def clear_metadata_cache() -> dict[str, Any]:
     }
 
 
-def _scan_cw_tracker(root: Path) -> dict[str, Any]:
-    out: dict[str, Any] = {
-        "exists": root.exists(),
-        "state_files": [],
-        "snapshots": [],
-        "counts": {"state_files": 0, "snapshots": 0},
-    }
-    if not root.exists():
-        return out
-
-    state_files: list[dict[str, Any]] = []
-    for p in root.glob("*.json"):
-        if p.is_file():
-            state_files.append(_file_meta(p))
-
-    snaps_dir = root / "snapshots"
-    snapshots: list[dict[str, Any]] = []
-    if snaps_dir.exists():
-        for p in _snapshot_files_in_dir(snaps_dir):
-            snapshots.append(_file_meta(p))
-
-    state_files.sort(key=lambda x: x.get("name") or "")
-    snapshots.sort(key=lambda x: x.get("mtime") or "")
-    core_names = {"history.json", "ratings.json", "watchlist.json", "progress.json", "collection.json"}
-    state_count = sum(
-        1 for f in state_files
-        if (f.get("name") or "") in core_names
-    )
-
-    out["state_files"] = state_files
-    out["snapshots"] = snapshots
-    out["counts"] = {
-        "state_files": state_count,
-        "snapshots": len(snapshots),
-    }
-    return out
-
-
 @router.get("/crosswatch-tracker")
 def crosswatch_tracker_status(
     provider_instance: str | None = Query("default"),
@@ -1193,12 +1049,26 @@ def crosswatch_tracker_status(
     """Inspect CrossWatch tracker folder (.cw_provider)."""
     _, CONFIG_DIR, *_ = _cw()
     inst, root = _cw_tracker_context(CONFIG_DIR, provider_instance)
-    info = _scan_cw_tracker(root)
+    info = TrackerStore(root).inventory()
     return {
         "ok": True,
         "provider_instance": inst,
         "root": str(root),
         **info,
+    }
+
+
+@router.get("/crosswatch-tracker/restore-points")
+def crosswatch_tracker_restore_points(
+    provider_instance: str | None = Query("default"),
+) -> dict[str, Any]:
+    _, CONFIG_DIR, *_ = _cw()
+    inst, root = _cw_tracker_context(CONFIG_DIR, provider_instance)
+    store = TrackerStore(root)
+    return {
+        "ok": True,
+        "provider_instance": inst,
+        "restore_points": {feature: sorted(p.name for p in store.restore_points(feature)) for feature in TRACKER_FEATURES},
     }
 
 
@@ -1505,49 +1375,12 @@ def crosswatch_tracker_clear(
 ) -> dict[str, Any]:
     _, CONFIG_DIR, *_ = _cw()
     inst, root = _cw_tracker_context(CONFIG_DIR, provider_instance)
-    state_paths = _json_files_in_dir(root)
-    snapshot_paths = _snapshot_files_in_dir(_cw_tracker_snapshot_dir(root)) if clear_snapshots else []
-
-    before = _scan_cw_tracker(root)
-    selected_before_paths = []
-    if clear_state:
-        selected_before_paths.extend(state_paths)
-    if clear_snapshots:
-        selected_before_paths.extend(snapshot_paths)
-    before_usage = _paths_usage(list(selected_before_paths))
-    removed_state: list[str] = []
-    removed_snapshots: list[str] = []
-
-    emptied_state: list[str] = []
-    if clear_state:
-        for p in state_paths:
-            if not p.is_file():
-                continue
-            # Feature state is emptied, not deleted: a missing file makes the tracker
-            # restore itself from the newest snapshot on the next run.
-            if _is_tracker_feature_state(p):
-                if _empty_tracker_state(p):
-                    emptied_state.append(p.name)
-            elif _safe_remove_path(p):
-                removed_state.append(p.name)
-
-        for stem in _TRACKER_FEATURE_STEMS:
-            path = root / f"{stem}.json"
-            if not path.exists() and not path.is_symlink() and _empty_tracker_state(path):
-                emptied_state.append(path.name)
-
-    if clear_snapshots:
-        for p in snapshot_paths:
-            if p.is_file() and _safe_remove_path(p):
-                removed_snapshots.append(p.name)
-
-    after = _scan_cw_tracker(root)
-    selected_after_paths = []
-    if clear_state:
-        selected_after_paths.extend(_json_files_in_dir(root))
-    if clear_snapshots:
-        selected_after_paths.extend(_snapshot_files_in_dir(_cw_tracker_snapshot_dir(root)))
-    after_usage = _paths_usage(list(selected_after_paths))
+    store = TrackerStore(root)
+    before = store.inventory()
+    before_usage = _paths_usage(store.files(state=clear_state, snapshots=clear_snapshots))
+    removed = store.clear(state=clear_state, snapshots=clear_snapshots)
+    after = store.inventory()
+    after_usage = _paths_usage(store.files(state=clear_state, snapshots=clear_snapshots))
     clear_caches()
     release_memory()
 
@@ -1555,11 +1388,7 @@ def crosswatch_tracker_clear(
         "ok": True,
         "provider_instance": inst,
         "root": str(root),
-        "removed": {
-            "state_files": removed_state,
-            "emptied_state_files": emptied_state,
-            "snapshots": removed_snapshots,
-        },
+        "removed": removed,
         "before": before,
         "after": after,
         "summary": _cleanup_summary(before_usage, after_usage),

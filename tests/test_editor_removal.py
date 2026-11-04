@@ -13,6 +13,7 @@ from cw_platform.history_events import history_event_key
 from cw_platform.id_map import canonical_key
 from cw_platform.local_db import manual_policy, state as database
 from cw_platform.pair_scope import pair_feature_scope
+from cw_platform.tracker_store import TrackerStore
 from services import editor_removal as removal
 
 
@@ -446,7 +447,7 @@ def test_crosswatch_watched_status_preserves_unrelated_repeat_viewings(config_ba
     target = dict(provider="CROSSWATCH", instance="default", records={"tmdb:1": movie()})
     result = removal._remove_target(cfg, "history", target, dry_run=False)
     assert result["confirmed"] == 1
-    saved = json.loads(path.read_text(encoding="utf-8"))["items"]
+    saved = TrackerStore(root).read_current("history")["items"]
     assert set(saved) == {key for key, item in rows.items() if item["ids"]["tmdb"] == "2"}
     assert len(saved) == 2
 

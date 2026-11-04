@@ -88,7 +88,7 @@
       '<button id="cw-mobile-more" type="button" aria-controls="cw-mobile-navigation" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span><span>More</span></button>';
     document.body.appendChild(nav);
     document.body.classList.add('cw-has-bottom-nav');
-    const icons = {'tab-main':'home','tab-snapshots':'photo_library','tab-playlists':'queue_music','tab-editor':'edit_note','tab-settings':'settings','tab-about':'info'};
+    const icons = {'tab-main':'home','tab-snapshots':'photo_library','tab-playlists':'queue_music','tab-tracker':'inventory_2','tab-editor':'edit_note','tab-settings':'settings','tab-about':'info'};
     document.querySelectorAll('#cw-mobile-navigation .tab').forEach(tab => {
       const icon = document.createElement('span');
       icon.className = 'material-symbols-rounded cw-mobile-destination-icon';

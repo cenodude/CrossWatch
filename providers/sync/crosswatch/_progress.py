@@ -3,39 +3,28 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import json
-import time
 from collections.abc import Iterable, Mapping
-from pathlib import Path
 from typing import Any
 
 from cw_platform.id_map import migrate_media_key, canonical_key
 
 from ._common import (
-    _atomic_write,
     _capture_mode,
     _maybe_restore,
     _pair_scope,
     _record_unresolved,
-    _root,
     _snapshot_state,
-    fallback_snapshot_file,
-    fallback_state_file,
     make_logger,
     may_persist,
     merge_tracker_identity,
     pair_scoped,
+    read_state,
     readonly,
-    scoped_file,
-    state_file_for_read,
     tracker_minimal,
+    write_state,
 )
 
 _dbg, _info, _warn, _error = make_logger("progress")
-
-
-def _progress_path(adapter: Any) -> Path:
-    return scoped_file(_root(adapter), "progress.json")
 
 
 def _as_int(v: Any) -> int | None:
@@ -192,37 +181,8 @@ def _accepted(obj: Mapping[str, Any], adapter: Any | None = None) -> dict[str, A
 def _load_state(adapter: Any) -> dict[str, Any]:
     if _pair_scope() is None:
         return {"ts": 0, "items": {}}
-    root = _root(adapter)
-    path = _progress_path(adapter)
-    raw: Any | None
-
-    unreadable: list[str] = []
-
-    def _read_json(p: Path) -> Any | None:
-        try:
-            return json.loads(p.read_text("utf-8"))
-        except FileNotFoundError:
-            return None
-        except Exception:
-            unreadable.append(p.name)
-            return None
-
-    read_path = state_file_for_read(root, "progress", path)
-    raw = _read_json(read_path)
+    raw = read_state(adapter, "progress")
     if raw is None:
-        alt = fallback_state_file(root, "progress")
-        if alt and alt != path:
-            raw = _read_json(alt)
-    if raw is None:
-        snap = fallback_snapshot_file(root, "progress")
-        if snap:
-            raw = _read_json(snap)
-            if raw is not None:
-                _warn("state_restored_from_snapshot", snapshot=snap.name)
-    if raw is None:
-        if unreadable:
-            _warn("state_unreadable", files=unreadable)
-            raise RuntimeError(f"crosswatch_progress_state_unreadable:{unreadable[0]}")
         return {"ts": 0, "items": {}}
 
     if isinstance(raw, list):
@@ -239,8 +199,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 continue
             items[key] = accepted
         state = {"ts": 0, "items": items}
-        if items and may_persist(adapter, path):
-            _atomic_write(path, {"ts": int(time.time()), "items": items})
+        if items and may_persist(adapter, "progress"):
+            write_state(adapter, "progress", items)
         return state
 
     if isinstance(raw, Mapping):
@@ -260,8 +220,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                     continue
                 items2[ck] = accepted
             state = {"ts": ts, "items": items2}
-            if items2 and may_persist(adapter, path):
-                _atomic_write(path, {"ts": ts or int(time.time()), "items": items2})
+            if items2 and may_persist(adapter, "progress"):
+                write_state(adapter, "progress", items2, ts=ts)
             return state
 
         items3: dict[str, dict[str, Any]] = {}
@@ -277,8 +237,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 continue
             items3[ck] = accepted
         state = {"ts": 0, "items": items3}
-        if items3 and may_persist(adapter, path):
-            _atomic_write(path, {"ts": int(time.time()), "items": items3})
+        if items3 and may_persist(adapter, "progress"):
+            write_state(adapter, "progress", items3)
         return state
 
     return {"ts": 0, "items": {}}
@@ -287,8 +247,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
 def _save_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> None:
     if _capture_mode() or readonly(adapter) or _pair_scope() is None:
         return
-    payload = {"ts": int(time.time()), "items": dict(items or {})}
-    _atomic_write(_progress_path(adapter), payload)
+    write_state(adapter, "progress", items)
 
 
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:

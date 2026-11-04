@@ -161,30 +161,15 @@ def _dashboard_tracker_stamp(
     if not tracker_features:
         return []
     try:
-        from cw_platform.provider_instances import normalize_instance_id
+        from cw_platform.tracker_store import TrackerStore, tracker_roots
+        from services.tracker_migration import migrating
 
-        node = cfg.get("crosswatch") if isinstance(cfg, Mapping) else {}
-        raw_root = str(node.get("root_dir") or "").strip() if isinstance(node, Mapping) else ""
-        root = Path(raw_root or ".cw_provider")
-        if not root.is_absolute():
-            root = Path(base_path) / root
-        roots: list[tuple[str, Path]] = [("default", root)]
-        instances = node.get("instances") if isinstance(node, Mapping) else {}
-        if isinstance(instances, Mapping):
-            for raw_id in instances.keys():
-                inst = normalize_instance_id(raw_id)
-                if inst != "default":
-                    roots.append((inst, root / "profiles" / inst))
-        stamp: list[tuple[str, int, int]] = []
-        for inst, base in roots:
-            for feature in sorted(tracker_features):
-                path = base / f"{feature}.json"
-                try:
-                    st = path.stat()
-                    stamp.append((f"{inst}:{feature}", int(st.st_mtime_ns), int(st.st_size)))
-                except OSError:
-                    stamp.append((f"{inst}:{feature}", 0, 0))
-        return stamp
+        return [
+            (f"{inst}:{feature}", mtime, size)
+            for inst, base in tracker_roots(cfg, base_path)
+            if not migrating(base)
+            for feature, mtime, size in TrackerStore(base).stamp(tracker_features)
+        ]
     except Exception:
         return []
 

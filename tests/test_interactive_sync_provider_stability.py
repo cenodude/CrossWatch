@@ -5,13 +5,13 @@ from __future__ import annotations
 
 from copy import deepcopy
 import importlib
-import json
 from types import SimpleNamespace
 
 import pytest
 
 from cw_platform.id_map import canonical_key, minimal
 from cw_platform.orchestrator._interactive import InteractivePlan
+from cw_platform.tracker_store import TrackerStore
 
 
 def assert_stable(feature, provider, first, second):
@@ -125,14 +125,14 @@ def test_crosswatch_readonly_feature_reread_is_stable(config_base, monkeypatch, 
     monkeypatch.setenv("CW_CROSSWATCH_PAIR_SCOPED", "1")
     monkeypatch.setenv("CW_PAIR_KEY", "stability")
     current = feature_item(feature, 1)
-    path = config_base / f"{feature}.stability.json"
-    path.write_text(json.dumps({"items": {canonical_key(current): current}}), encoding="utf-8")
+    store = TrackerStore(config_base, scope="stability", chained=False)
+    store.write_state(feature, {canonical_key(current): current})
     cfg = dict(_cfg(config_base), _cw_readonly=True, _cw_interactive_planned_at=1788650000)
-    before = path.read_bytes()
+    before = store.read_current(feature)
     first = CROSSWATCHModule(cfg).build_index(feature)
     second = CROSSWATCHModule(cfg).build_index(feature)
     assert_stable(feature, "CROSSWATCH", first, second)
-    assert path.read_bytes() == before
+    assert store.read_current(feature) == before
 
 
 @pytest.mark.parametrize("feature", ["ratings", "progress"])
@@ -206,10 +206,9 @@ def test_crosswatch_readonly_ratings_without_dates_are_stable(config_base, monke
     if interactive:
         cfg["_cw_interactive_planned_at"] = 1788650000
     adapter = CROSSWATCHModule(cfg)
-    path = ratings._ratings_path(adapter)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"items": {"tmdb:123": dict(type="movie", ids={"tmdb": "123"}, rating=8)}}), encoding="utf-8")
-    before = path.read_bytes()
+    store = TrackerStore(config_base, scope="stability", chained=False)
+    store.write_state("ratings", {"tmdb:123": dict(type="movie", ids={"tmdb": "123"}, rating=8)})
+    before = store.read_current("ratings")
     monkeypatch.setattr(ratings, "_now_iso_z", lambda: "2026-09-01T12:00:00Z")
     first = ratings.build_index(adapter)
     monkeypatch.setattr(ratings, "_now_iso_z", lambda: "2026-09-01T13:00:00Z")
@@ -219,7 +218,7 @@ def test_crosswatch_readonly_ratings_without_dates_are_stable(config_base, monke
     else:
         assert next(iter(first.values()))["rated_at"] == "2026-09-01T12:00:00Z"
         assert next(iter(second.values()))["rated_at"] == "2026-09-01T13:00:00Z"
-    assert path.read_bytes() == before
+    assert store.read_current("ratings") == before
 
 
 def test_interactive_clock_does_not_leak_to_other_orchestrators(config_base, monkeypatch):

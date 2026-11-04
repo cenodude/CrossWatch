@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from cw_platform.tracker_store import TrackerStore
+
 
 def _adapter(root: Path) -> Any:
     return type("Adapter", (), {"cfg": type("Cfg", (), {"base_path": str(root)})()})()
@@ -83,9 +85,9 @@ def test_crosswatch_target_ignores_other_pair_snapshots(tmp_path: Path, monkeypa
 
     assert _watchlist.build_index(_adapter(tmp_path)) == {}
 
-    own = tmp_path / "snapshots" / "newpair"
-    own.mkdir(parents=True)
-    _write_state(own / "20260101-000000-watchlist.json", "tmdb:1", "1", 100)
+    TrackerStore(tmp_path, scope="newpair", chained=False).add_restore_point(
+        "watchlist", {"tmdb:1": {"type": "movie", "ids": {"tmdb": "1"}}},
+    )
 
     assert "tmdb:1" in _watchlist.build_index(_adapter(tmp_path))
 

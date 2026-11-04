@@ -75,7 +75,7 @@
   const statusCacheKey = () => `${STATUS_CACHE_KEY}.${String(window.CW?.OverviewProfile?.id || "").trim() || "all"}`;
   const DETAILS_MAX_LINES = 300;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
-  const ROUTE_TABS = new Set(["main", "snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
+  const ROUTE_TABS = new Set(["main", "snapshots", "capture_compare", "playlists", "tracker", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
   const SETTINGS_PANES = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
   let routeSyncing = false;
 
@@ -144,6 +144,7 @@
     if (tab === "capture_compare") return "#capture_compare" + (window.location.hash.startsWith("#capture_compare?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "events") return "#events" + (window.location.hash.startsWith("#events?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "maintenance") return "#maintenance" + (window.location.hash.startsWith("#maintenance?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
+    if (tab === "tracker") return "#tracker" + (window.location.hash.startsWith("#tracker?") ? window.location.hash.slice(window.location.hash.indexOf("?")) : "");
     if (tab === "main") return "";
     if (tab === "settings") {
       const settingsPane = normalizeSettingsPane(pane || window.__cwSettingsPane || "overview");
@@ -921,7 +922,7 @@
   }
 
   function setTabHeaderState(tab) {
-    ["main", "snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "maintenance", "settings"].forEach((name) => {
+    ["main", "snapshots", "capture_compare", "playlists", "tracker", "editor", "analyzer", "events", "logs", "import_export", "maintenance", "settings"].forEach((name) => {
       byId(`tab-${name}`)?.classList.toggle("active", name === tab || (name === "snapshots" && tab === "capture_compare"));
     });
   }
@@ -934,6 +935,7 @@
     byId("page-snapshots")?.classList.toggle("hidden", tab !== "snapshots");
     byId("page-capture_compare")?.classList.toggle("hidden", tab !== "capture_compare");
     byId("page-playlists")?.classList.toggle("hidden", tab !== "playlists");
+    byId("page-tracker")?.classList.toggle("hidden", tab !== "tracker");
     byId("page-editor")?.classList.toggle("hidden", tab !== "editor");
     byId("page-analyzer")?.classList.toggle("hidden", tab !== "analyzer");
     byId("page-maintenance")?.classList.toggle("hidden", tab !== "maintenance");
@@ -1056,6 +1058,21 @@
         }
       }
       if (!isCurrentNavigation()) return;
+      return;
+    }
+
+    if (tab === "tracker") {
+      try {
+        await ensurePageModule("tracker", "/assets/js/tracker.js", "TrackerPage");
+        if (!isCurrentNavigation()) return;
+        await window.TrackerPage?.mount?.(byId("page-tracker"));
+      } catch (e) {
+        console.warn("Tracker load failed:", e);
+        const root = byId("page-tracker");
+        if (root && !root.children.length) {
+          root.innerHTML = '<div class="cw-page-load-error">The tracker failed to load. Refresh the page and try again.</div>';
+        }
+      }
       return;
     }
 

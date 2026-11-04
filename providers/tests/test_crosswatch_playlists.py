@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from cw_platform.playlists import supports_playlists
+from cw_platform.tracker_store import TrackerStore
 from providers.sync import _mod_CROSSWATCH as mod
 from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
 
@@ -64,7 +64,7 @@ def test_crosswatch_playlist_local_crud_and_order(tmp_path: Any) -> None:
 
     deleted = mod.feat_playlists.delete(adapter, res.id)
     assert deleted["ok"] is True
-    payload = json.loads((tmp_path / "playlists.json").read_text("utf-8"))
+    payload = TrackerStore(tmp_path).read_playlists()
     assert payload["lists"] == {}
 
 

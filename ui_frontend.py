@@ -138,7 +138,7 @@ _HELPER_SCRIPTS = (
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
-    "syncbar.js", "run-summary-stream.js", "overview-profile.js", "settings-scope.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js", "scheduler-profiles.js",
+    "syncbar.js", "run-summary-stream.js", "overview-profile.js", "settings-scope.js", "sync-reviews.js", "plex-recovery-notifications.js", "tracker-notifications.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js", "scheduler-profiles.js",
     "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "item-actions.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
     "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js", "assistant-settings.js",
 )
@@ -211,6 +211,8 @@ _ADMIN_ONLY_MARKERS: tuple[tuple[str, str], ...] = (
     ('id="app_user_manager"', "user manager"),
     ("app_auth_oidc_client_secret", "OIDC credentials form"),
     ("cwAboutMenuSelect('assistant')", "assistant menu item"),
+    ('id="page-tracker"', "tracker page"),
+    ('id="tab-tracker"', "tracker tab"),
 )
 _ASSISTANT_MENU_ITEM = (
     '        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect(\'assistant\')">'
@@ -604,6 +606,8 @@ __CW_NAV_PROFILE_ITEMS__
 
 def _managed_user_shell(html: str, user: dict | None = None) -> str:
     html = html.replace('  <section id="page-maintenance" class="card hidden tab-page"></section>\n\n', "")
+    html = html.replace('  <section id="page-tracker" class="card hidden tab-page cw-themed-page"></section>\n\n', "")
+    html = html.replace('    <button id="tab-tracker" class="tab" type="button" onclick="showTab(\'tracker\')">Tracker</button>\n', "")
     perms = _managed_user_permissions(user)
     write_allowed = bool(perms.get("write"))
     dashboard_allowed = bool(perms.get("dashboard")) and write_allowed
@@ -925,6 +929,7 @@ html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #log-panel{display:n
 html[data-cw-initial-tab="snapshots"] #page-snapshots,
 html[data-cw-initial-tab="capture_compare"] #page-capture_compare,
 html[data-cw-initial-tab="playlists"] #page-playlists,
+html[data-cw-initial-tab="tracker"] #page-tracker,
 html[data-cw-initial-tab="editor"] #page-editor,
 html[data-cw-initial-tab="analyzer"] #page-analyzer,
 html[data-cw-initial-tab="maintenance"] #page-maintenance,
@@ -981,6 +986,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
     <button id="tab-main" class="tab active" type="button" onclick="showTab('main')">Main</button>
     <button id="tab-snapshots" class="tab" type="button" onclick="showTab('snapshots')">Captures</button>
     <button id="tab-playlists" class="tab" type="button" onclick="showTab('playlists')">Playlists</button>
+    <button id="tab-tracker" class="tab" type="button" onclick="showTab('tracker')">Tracker</button>
     <button id="tab-editor" class="tab" type="button" onclick="showTab('editor')">Editor</button>
     <div class="cw-tabmenu" id="tab-settings-menu">
       <button id="tab-settings" class="tab" type="button"
@@ -1280,6 +1286,8 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
   <section id="page-capture_compare" class="card hidden tab-page"></section>
 
   <section id="page-playlists" class="card hidden tab-page cw-themed-page"></section>
+
+  <section id="page-tracker" class="card hidden tab-page cw-themed-page"></section>
 
   <section id="page-editor" class="card hidden tab-page cw-themed-page"></section>
 

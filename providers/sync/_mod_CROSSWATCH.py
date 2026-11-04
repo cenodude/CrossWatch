@@ -109,12 +109,14 @@ except Exception as e:
     feat_playlists = None
     cw_log("CROSSWATCH", "module", "warn", "feature_import_failed", import_feature="playlists", error=str(e))
 
+from .crosswatch._common import tracker_store
+
 try:
     from ._mod_common import make_snapshot_progress
 except Exception:
     make_snapshot_progress = None  # type: ignore[assignment]
 
-__VERSION__ = "1.4"
+__VERSION__ = "2.0"
 __all__ = ["get_manifest", "CROSSWATCHModule", "OPS"]
 
 _FEATURES: dict[str, Any] = {}
@@ -343,7 +345,8 @@ class CROSSWATCHModule:
             _info(feature, "index_skipped", reason="module_missing")
             return {}
         started = time.perf_counter()
-        out = mod.build_index(self, **kwargs)
+        with tracker_store(self).mutation():
+            out = mod.build_index(self, **kwargs)
         _info(feature, "index_done", count=len(out), dur_ms=int((time.perf_counter() - started) * 1000))
         return out
 
@@ -368,7 +371,8 @@ class CROSSWATCHModule:
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             started = time.perf_counter()
-            cnt, unresolved = mod.add(self, lst)
+            with tracker_store(self).mutation():
+                cnt, unresolved = mod.add(self, lst)
             _info(feature, "write_done", op="add", ok=len(unresolved) == 0, applied=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
             confirmed_keys = _confirmed_keys(_crosswatch_key_of, lst, unresolved)
             return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
@@ -397,7 +401,8 @@ class CROSSWATCHModule:
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             started = time.perf_counter()
-            cnt, unresolved = mod.remove(self, lst)
+            with tracker_store(self).mutation():
+                cnt, unresolved = mod.remove(self, lst)
             _info(feature, "write_done", op="remove", ok=len(unresolved) == 0, applied=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
             confirmed_keys = _confirmed_keys(_crosswatch_key_of, lst, unresolved)
             return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}

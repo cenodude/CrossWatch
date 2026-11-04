@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import json
 from types import SimpleNamespace
 from typing import Any
 
+from cw_platform.tracker_store import TrackerStore
 from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
 
 
@@ -40,8 +40,7 @@ def test_crosswatch_collection_is_pair_scoped_and_read_write(monkeypatch: Any, t
     assert added["count"] == 1
     assert added["confirmed_keys"] == ["tmdb:95396#s01e02"]
 
-    state_path = tmp_path / "collection.plex-mdblist.json"
-    payload = json.loads(state_path.read_text("utf-8"))
+    payload = TrackerStore(tmp_path, scope="plex-mdblist", chained=False).read_current("collection")
     assert payload["items"]["tmdb:95396#s01e02"]["show_ids"] == {"tmdb": "95396"}
     assert payload["items"]["tmdb:95396#s01e02"]["collected_at"] == "2026-08-24T20:00:00Z"
 
@@ -67,5 +66,5 @@ def test_crosswatch_collection_reuses_history_style_snapshot_window(monkeypatch:
     assert adapter.add("collection", [first])["count"] == 1
     assert adapter.add("collection", [second])["count"] == 1
 
-    snaps = sorted((tmp_path / "snapshots" / "plex-trakt").glob("*-collection.json"))
+    snaps = TrackerStore(tmp_path, scope="plex-trakt").restore_points("collection")
     assert len(snaps) == 1
