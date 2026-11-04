@@ -9,6 +9,7 @@ import pytest
 from api import maintenanceAPI
 from cw_platform.local_db.legacy_files import STATE_JSON, STATISTICS_JSON, legacy_path, legacy_root
 from cw_platform.orchestrator._state_store import StateStore
+from cw_platform.tracker_store import TrackerStore
 
 
 def _save_state(base, payload) -> None:
@@ -662,9 +663,8 @@ def test_crosswatch_tracker_clear_rejects_profile_path_input(tmp_path, monkeypat
     assert result["ok"] is True
     assert result["provider_instance"] == "default"
     # Feature state is emptied in place so the tracker cannot restore it from a snapshot.
-    assert (root / "watchlist.json").exists()
-    assert json.loads((root / "watchlist.json").read_text(encoding="utf-8")).get("items") == {}
-    assert not (snaps / "20260101T000000Z-watchlist.json").exists()
+    assert TrackerStore(root).read_current("watchlist")["items"] == {}
+    assert TrackerStore(root).restore_points("watchlist") == []
     assert (profile_root / "watchlist.json").exists()
     assert (outside / "watchlist.json").exists()
 
@@ -704,14 +704,14 @@ def test_tracker_clear_keeps_missing_state_empty_with_retained_snapshots(
     module = import_module(f"providers.sync.crosswatch._{feature}")
     adapter = SimpleNamespace(cfg=SimpleNamespace(base_path=root, auto_snapshot=False), config={"_cw_readonly": True})
     assert module._load_state(adapter)["items"]
-    assert not (root / f"{feature}.json").exists()
+    assert not TrackerStore(root).has_state(feature)
 
     result = maintenanceAPI.crosswatch_tracker_clear(clear_state=True, clear_snapshots=False, provider_instance=instance)
 
     assert result["ok"] is True
     assert f"{feature}.json" in result["removed"]["emptied_state_files"]
     assert module._load_state(adapter)["items"] == {}
-    assert snapshot.read_text(encoding="utf-8") == payload
+    assert TrackerStore(root).read_restore_point(feature, snapshot.name)["items"] == {"tmdb:1": item}
     assert other_state.read_text(encoding="utf-8") == payload
     if feature == "history":
         adapter.config = {}
@@ -735,6 +735,7 @@ def test_tracker_clear_snapshots_only_preserves_current_state(tmp_path, monkeypa
     result = maintenanceAPI.crosswatch_tracker_clear(clear_state=False, clear_snapshots=True, provider_instance="default")
 
     assert result["ok"] is True
-    assert state.read_text(encoding="utf-8") == payload
-    assert not snapshot.exists()
-    assert not (root / "ratings.json").exists()
+    store = TrackerStore(root)
+    assert store.read_current("history")["items"] == {"tmdb:1": {"type": "movie", "ids": {"tmdb": "1"}}}
+    assert store.restore_points("history") == []
+    assert not store.has_state("ratings")

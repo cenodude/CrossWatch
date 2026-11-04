@@ -9,6 +9,8 @@ import pytest
 
 from starlette.requests import Request
 
+from cw_platform.tracker_store import TrackerStore
+
 PROFILE_ID = "11111111111141118111111111111111"
 USER_ID = "aaaaaaaaaaaa4aaa8aaaaaaaaaaaaaaa"
 
@@ -336,7 +338,7 @@ def test_crosswatch_delete_clears_cached_row_already_gone_from_tracker(tmp_path,
     assert out["ok"] is True
     assert out["deleted"] == 1
     assert not cached
-    assert json.loads((tmp_path / "watchlist.json").read_text(encoding="utf-8")) == tracker
+    assert TrackerStore(tmp_path).read_current("watchlist") == tracker
 
 
 def test_crosswatch_delete_clears_cached_row_for_an_empty_tracker(tmp_path, monkeypatch) -> None:

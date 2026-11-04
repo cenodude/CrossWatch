@@ -3,17 +3,15 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from collections.abc import Mapping, Sequence
-from pathlib import Path
 from typing import Any
 
 from cw_platform.id_map import canonical_key, merge_ids
 from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PlaylistItem, PlaylistResource, PlaylistSnapshot
 
-from ._common import _atomic_write, _capture_mode, _root, make_logger, merge_tracker_identity, readonly, tracker_minimal
+from ._common import _capture_mode, make_logger, merge_tracker_identity, readonly, tracker_minimal, tracker_store
 
 _dbg, _info, _warn, _error = make_logger("playlists")
 
@@ -34,19 +32,12 @@ def _instance_id(adapter: Any) -> str:
     return str(getattr(adapter, "instance_id", None) or "default").strip() or "default"
 
 
-def _path(adapter: Any) -> Path:
-    return _root(adapter) / "playlists.json"
-
-
 def _empty_state() -> dict[str, Any]:
     return {"version": _VERSION, "ts": 0, "lists": {}}
 
 
 def _read_state(adapter: Any) -> dict[str, Any]:
-    try:
-        raw = json.loads(_path(adapter).read_text("utf-8"))
-    except Exception:
-        return _empty_state()
+    raw = tracker_store(adapter).read_playlists()
     if not isinstance(raw, Mapping):
         return _empty_state()
     lists = raw.get("lists")
@@ -86,7 +77,7 @@ def _write_state(adapter: Any, state: Mapping[str, Any]) -> None:
         "ts": int(time.time()),
         "lists": dict(state.get("lists") or {}),
     }
-    _atomic_write(_path(adapter), payload)
+    tracker_store(adapter).write_playlists(payload)
 
 
 def _clean_list_row(list_id: str, row: Mapping[str, Any]) -> dict[str, Any]:

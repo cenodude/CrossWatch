@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 import io
 import json
+import shutil
 import zipfile
 
 import api.providerInstancesAPI as provider_api
@@ -22,6 +23,7 @@ import api.scrobbleAPI as scrobble_api
 import services.editor as editor_service
 import services.export as export_service
 import cw_platform.tracker_storage as tracker_storage
+from cw_platform.tracker_store import TrackerStore
 from cw_platform.orchestrator._state_store import StateStore
 import cw_platform.provider_instances as provider_instances
 from cw_platform.provider_instances import build_pair_config_view, get_provider_block
@@ -1175,8 +1177,8 @@ def test_tracker_archive_json_import_uses_crosswatch_profile_snapshot_dir(tmp_pa
     )
 
     assert stats["target"] == "snapshot"
-    assert (root / "profiles" / "CW-P04" / "snapshots" / "20260101T000000Z-watchlist.json").exists()
-    assert not (root / "snapshots" / "20260101T000000Z-watchlist.json").exists()
+    assert [p.name for p in TrackerStore(root / "profiles" / "CW-P04").restore_points("watchlist")] == ["20260101T000000Z-watchlist.json"]
+    assert TrackerStore(root).restore_points("watchlist") == []
 
 
 def test_tracker_archive_ignores_unconfigured_profile_path_input(tmp_path: Path, monkeypatch) -> None:
@@ -1193,7 +1195,7 @@ def test_tracker_archive_ignores_unconfigured_profile_path_input(tmp_path: Path,
     )
 
     assert stats["target"] == "state"
-    assert (root / "watchlist.json").exists()
+    assert TrackerStore(root).read_current("watchlist")["items"] == {"movie:x": {"title": "X"}}
     assert not outside.exists()
 
 
@@ -1519,8 +1521,7 @@ def test_maintenance_tracker_archive_exports_and_imports_profile_storage(tmp_pat
             "snapshots/20260101T000000Z-watchlist.json",
         }
 
-    for path in profile_root.rglob("*.json"):
-        path.unlink()
+    shutil.rmtree(profile_root)
 
     imported = client.post(
         "/api/maintenance/crosswatch-tracker/import",
@@ -1531,9 +1532,10 @@ def test_maintenance_tracker_archive_exports_and_imports_profile_storage(tmp_pat
     assert imported["ok"] is True
     assert imported["states"] == 2
     assert imported["snapshots"] == 1
-    assert (profile_root / "watchlist.json").exists()
-    assert (profile_root / "progress.json").exists()
-    assert (snapshot_root / "20260101T000000Z-watchlist.json").exists()
+    store = TrackerStore(profile_root)
+    assert store.read_current("watchlist")["items"] == {"tmdb:1": {"title": "One"}}
+    assert store.read_current("progress")["items"] == {"tmdb:2": {"title": "Two"}}
+    assert [p.name for p in store.restore_points("watchlist")] == ["20260101T000000Z-watchlist.json"]
 
 
 def test_crosswatch_profile_delete_removes_profile_storage(tmp_path: Path, monkeypatch) -> None:

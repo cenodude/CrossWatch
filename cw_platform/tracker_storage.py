@@ -19,6 +19,7 @@ _TRACKER_MARKERS = {
     "ratings.json",
     "progress.json",
     "playlists.json",
+    "tracker.db",
     "snapshots",
     "profiles",
 }

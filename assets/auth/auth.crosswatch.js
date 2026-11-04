@@ -33,15 +33,6 @@
     return profile?.getInstance?.() || "default";
   }
 
-  function baseRoot(cfg) {
-    return txt(cfg?.crosswatch?.root_dir || cfg?.CrossWatch?.root_dir || "/config/.cw_provider") || "/config/.cw_provider";
-  }
-
-  function derivedRoot(cfg, inst) {
-    if (!inst || inst === "default") return baseRoot(cfg);
-    return `${baseRoot(cfg).replace(/[\\/]+$/, "")}/profiles/${inst}`;
-  }
-
   function selectedBlock(cfg) {
     const root = cfg?.crosswatch && typeof cfg.crosswatch === "object" ? cfg.crosswatch : {};
     const inst = selectedInstance();
@@ -76,8 +67,7 @@
     return name || "";
   }
 
-  async function loadSnapshotOptions(cfg) {
-    const root = derivedRoot(cfg || {}, selectedInstance());
+  async function loadSnapshotOptions() {
     const wanted = {
       watchlist: txt($("cw_tracker_restore_watchlist")?.dataset?.wanted) || "latest",
       history: txt($("cw_tracker_restore_history")?.dataset?.wanted) || "latest",
@@ -87,14 +77,11 @@
     };
     const groups = { watchlist: [], history: [], ratings: [], progress: [], collection: [] };
     try {
-      const res = await fetch(`/api/files?path=${encodeURIComponent(`${root.replace(/[\\/]+$/, "")}/snapshots`)}`, { cache: "no-store" });
-      const files = res.ok ? await res.json().catch(() => []) : [];
-      (Array.isArray(files) ? files : []).forEach((f) => {
-        const name = txt(f?.name);
-        if (!name.endsWith(".json")) return;
-        Object.keys(groups).forEach((feature) => {
-          if (name.endsWith(`-${feature}.json`)) groups[feature].push(name);
-        });
+      const res = await fetch(`/api/maintenance/crosswatch-tracker/restore-points?provider_instance=${encodeURIComponent(selectedInstance())}`, { cache: "no-store" });
+      const data = res.ok ? await res.json().catch(() => ({})) : {};
+      const points = data?.restore_points && typeof data.restore_points === "object" ? data.restore_points : {};
+      Object.keys(groups).forEach((feature) => {
+        if (Array.isArray(points[feature])) groups[feature] = points[feature].map(txt).filter(Boolean);
       });
     } catch {}
     Object.keys(groups).forEach((feature) => groups[feature].sort());
@@ -149,7 +136,7 @@
     });
     if ((merged || {}).connected === true) setAuthStatus("Connected", true);
     else setAuthStatus("", true);
-    await loadSnapshotOptions(cfg || {});
+    await loadSnapshotOptions();
     try { w.CW?.ProvidersUI?.refreshAuthPresentation?.(false); } catch {}
   }
 

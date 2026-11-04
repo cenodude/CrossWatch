@@ -15,6 +15,7 @@ from .manualAPI import router as manual_router
 from .insightAPI import register_insights
 from .watchlistAPI import router as watchlist_router
 from .playlistsAPI import router as playlists_router
+from .trackerAPI import router as tracker_router
 from .publishedListsAPI import public_router as published_public_router, router as published_lists_router
 from .snapshotsAPI import router as snapshots_router
 from .backupsAPI import router as backups_router
@@ -107,6 +108,7 @@ def register(
     app.include_router(published_lists_router)
     app.include_router(published_public_router)
     app.include_router(playlists_router)
+    app.include_router(tracker_router)
     app.include_router(snapshots_router)
     app.include_router(backups_router)
     app.include_router(maintenance_router)

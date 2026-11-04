@@ -808,7 +808,6 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const inst = crosswatchSnapshotProfileId(cwSnapshots, profileId);
     const profile = profiles.find(p => String(p.id || "default") === inst) || profiles[0] || { id: "default", label: "Default", root_dir: "/config/.cw_provider" };
     const info = crosswatchSnapshotProfileInfo(cwSnapshots, inst, feature);
-    const rootDir = String(info?.root_dir || profile.root_dir || "/config/.cw_provider").replace(/[\\/]+$/, "");
     const selected = String(info?.selected || "latest");
     modal.dataset.providerInstance = inst;
     try { localStorage.setItem(CW_SNAPSHOT_PROFILE_KEY, inst); } catch {}
@@ -819,8 +818,9 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const list = $(".cw-snap-list", body);
 
     try {
-      const data = await fetchJSON(`/api/files?path=${encodeURIComponent(`${rootDir}/snapshots`)}`);
-      const files = (Array.isArray(data?.files) ? data.files : data || []).filter(f => !f.is_dir && f.name?.endsWith(`-${feature}.json`)).sort((a, b) => a.name.localeCompare(b.name)).slice(-10).reverse();
+      const data = await fetchJSON(`/api/maintenance/crosswatch-tracker/restore-points?provider_instance=${encodeURIComponent(inst)}`);
+      const names = Array.isArray(data?.restore_points?.[feature]) ? data.restore_points[feature] : [];
+      const files = names.map(name => ({ name: String(name) })).sort((a, b) => a.name.localeCompare(b.name)).slice(-10).reverse();
       if (!files.length) list.innerHTML = '<div class="cw-snap-empty muted">No snapshots found for this feature yet.</div>';
       else list.innerHTML = [{ name: "latest", label: "Latest snapshot", meta: selected === "latest" ? "Active" : "Live" }, ...files.map(f => ({ name: f.name, label: snapLabel(f.name), meta: f.name === selected ? "Active" : "Saved" }))].map(o => `<button class="snap-btn${o.name === "latest" ? " is-latest" : ""}${o.meta === "Active" ? " is-active" : ""}" data-name="${esc(o.name)}" data-profile="${esc(inst)}" type="button"><span class="snap-name">${esc(o.label)}</span><span class="snap-meta">${esc(o.meta)}</span></button>`).join("");
     } catch (e) {

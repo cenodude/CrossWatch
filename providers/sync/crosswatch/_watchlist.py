@@ -3,9 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import json
-import time
-from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
@@ -14,24 +11,21 @@ from cw_platform.id_map import ID_KEYS, ids_from, migrate_media_key, canonical_k
 from cw_platform.metadata import MetadataManager
 
 from ._common import (
-    _atomic_write,
     _capture_mode,
     _maybe_restore,
     _pair_scope,
     _record_unresolved,
-    _root,
     _snapshot_state,
     current_state_only,
-    fallback_snapshot_file,
-    fallback_state_file,
     make_logger,
     may_persist,
     merge_tracker_identity,
     pair_scoped,
+    read_state,
     readonly,
-    scoped_file,
-    state_file_for_read,
     tracker_minimal,
+    tracker_store,
+    write_state,
 )
 
 _dbg, _info, _warn, _error = make_logger("watchlist")
@@ -104,50 +98,12 @@ def _ensure_tmdb_for_item(item: dict[str, Any]) -> bool:
         return False
 
 
-def _watchlist_path(adapter: Any) -> Path:
-    return scoped_file(_root(adapter), "watchlist.json")
-
-
 def _load_state(adapter: Any) -> dict[str, Any]:
     if _pair_scope() is None:
         return {"ts": 0, "items": {}}
 
-    root = _root(adapter)
-    path = _watchlist_path(adapter)
-    raw: Any | None
-
-    unreadable: list[str] = []
-
-    def _read_json(p: Path) -> Any | None:
-        try:
-            return json.loads(p.read_text("utf-8"))
-        except FileNotFoundError:
-            return None
-        except Exception:
-            unreadable.append(p.name)
-            return None
-
-    read_path = state_file_for_read(root, "watchlist", path)
-    raw = _read_json(read_path)
+    raw = read_state(adapter, "watchlist", snapshot_fallback=not current_state_only(adapter))
     if raw is None:
-        alt = fallback_state_file(root, "watchlist")
-        if alt and alt != path:
-            raw = _read_json(alt)
-    if raw is None and current_state_only(adapter):
-        if unreadable:
-            _warn("state_unreadable", files=unreadable)
-            raise RuntimeError(f"crosswatch_watchlist_state_unreadable:{unreadable[0]}")
-        return {"ts": 0, "items": {}}
-    if raw is None:
-        snap = fallback_snapshot_file(root, "watchlist")
-        if snap:
-            raw = _read_json(snap)
-            if raw is not None:
-                _warn("state_restored_from_snapshot", snapshot=snap.name)
-    if raw is None:
-        if unreadable:
-            _warn("state_unreadable", files=unreadable)
-            raise RuntimeError(f"crosswatch_watchlist_state_unreadable:{unreadable[0]}")
         return {"ts": 0, "items": {}}
 
     if isinstance(raw, list):
@@ -160,8 +116,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 continue
             items[key] = tracker_minimal(obj)
         state = {"ts": 0, "items": items}
-        if items and may_persist(adapter, path):
-            _atomic_write(path, {"ts": int(time.time()), "items": items})
+        if items and may_persist(adapter, "watchlist"):
+            write_state(adapter, "watchlist", items)
         return state
     if isinstance(raw, Mapping):
         if "items" in raw and isinstance(raw.get("items"), Mapping):
@@ -176,8 +132,8 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                     continue
                 items2[ck] = tracker_minimal(value)
             state = {"ts": ts, "items": items2}
-            if items2 and may_persist(adapter, path):
-                _atomic_write(path, {"ts": ts or int(time.time()), "items": items2})
+            if items2 and may_persist(adapter, "watchlist"):
+                write_state(adapter, "watchlist", items2, ts=ts)
             return state
         items3: dict[str, dict[str, Any]] = {}
         for key, value in raw.items():
@@ -188,15 +144,14 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 continue
             items3[ck] = tracker_minimal(value)
         state = {"ts": 0, "items": items3}
-        if items3 and may_persist(adapter, path):
-            _atomic_write(path, {"ts": int(time.time()), "items": items3})
+        if items3 and may_persist(adapter, "watchlist"):
+            write_state(adapter, "watchlist", items3)
         return state
     return {"ts": 0, "items": {}}
 
 
 def read_items_strict(adapter: Any) -> dict[str, dict[str, Any]]:
-    path = state_file_for_read(_root(adapter), "watchlist", _watchlist_path(adapter))
-    raw = json.loads(path.read_text("utf-8"))
+    raw = tracker_store(adapter).read_current("watchlist")
     if isinstance(raw, Mapping):
         rows = raw["items"] if "items" in raw else raw
         if not isinstance(rows, Mapping):
@@ -241,8 +196,7 @@ def absent_flags(adapter: Any, items: Iterable[Mapping[str, Any]]) -> list[bool]
 def _save_state(adapter: Any, items: Mapping[str, Mapping[str, Any]]) -> None:
     if _capture_mode() or readonly(adapter) or _pair_scope() is None:
         return
-    payload = {"ts": int(time.time()), "items": dict(items or {})}
-    _atomic_write(_watchlist_path(adapter), payload)
+    write_state(adapter, "watchlist", items)
 
 
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
