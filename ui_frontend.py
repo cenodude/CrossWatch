@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from starlette.staticfiles import StaticFiles
 from api.versionAPI import CURRENT_VERSION
-from cw_platform.access_policy import clean_managed_permissions, managed_settings_access, reconnect_connection_keys
+from cw_platform.access_policy import clean_managed_permissions, managed_profile_instances, managed_settings_access, provider_display_key, reconnect_connection_keys
 
 __all__ = ["register_assets_and_favicons", "register_ui_root", "get_index_html"]
 
@@ -134,7 +134,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 _HELPER_SCRIPTS = (
     "help-links.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js", "details-log.js",
-    "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
+    "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js", "month-bar.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
@@ -235,6 +235,17 @@ _SETTINGS_PANE_CLASSES = frozenset({"cw-settings-pane", "cw-settings-nav-btn"})
 _SETTINGS_NAV_BUTTON = re.compile(r'          <button type="button" class="cw-settings-nav-btn(?: active)?" data-pane="(?P<pane>[a-z]+)"[^\n]*\n.*?          </button>\n', re.S)
 
 
+def _managed_tracker_allowed(user: dict | None) -> bool:
+    if not _managed_user_permissions(user).get("write"):
+        return False
+    try:
+        from cw_platform.config_base import load_config
+
+        return bool(managed_profile_instances(load_config() or {}, user).get(provider_display_key("CROSSWATCH")))
+    except Exception:
+        return False
+
+
 def _managed_settings_panes(user: dict | None) -> set[str]:
     perms = _managed_user_permissions(user)
     return {pane for key, pane in _MANAGED_SETTINGS_PANES if perms.get(key)}
@@ -269,9 +280,10 @@ def _remaining_settings_panes(html: str) -> set[str]:
     return scanner.panes
 
 
-def _assert_admin_shell_stripped(html: str, *, settings_panes: set[str] | None = None) -> None:
+def _assert_admin_shell_stripped(html: str, *, settings_panes: set[str] | None = None, tracker: bool = False) -> None:
     allowed = settings_panes or set()
-    leaked = [label for marker, label in _ADMIN_ONLY_MARKERS if marker in html and not (allowed and marker == 'id="page-settings"')]
+    kept = {'id="page-tracker"', 'id="tab-tracker"'} if tracker else set()
+    leaked = [label for marker, label in _ADMIN_ONLY_MARKERS if marker in html and marker not in kept and not (allowed and marker == 'id="page-settings"')]
     if allowed:
         leaked += [f"settings pane {pane or '?'}" for pane in sorted(_remaining_settings_panes(html) - allowed)]
     if not leaked:
@@ -606,7 +618,9 @@ __CW_NAV_PROFILE_ITEMS__
 
 def _managed_user_shell(html: str, user: dict | None = None) -> str:
     html = html.replace('  <section id="page-maintenance" class="card hidden tab-page"></section>\n\n', "")
-    html = html.replace('  <section id="page-tracker" class="card hidden tab-page cw-themed-page"></section>\n\n', "")
+    tracker = _managed_tracker_allowed(user)
+    if not tracker:
+        html = html.replace('  <section id="page-tracker" class="card hidden tab-page cw-themed-page"></section>\n\n', "")
     html = html.replace('    <button id="tab-tracker" class="tab" type="button" onclick="showTab(\'tracker\')">Tracker</button>\n', "")
     perms = _managed_user_permissions(user)
     write_allowed = bool(perms.get("write"))
@@ -617,6 +631,7 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
             '    <button id="tab-main" class="tab active" type="button" onclick="showTab(\'main\')">Main</button>',
             '    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">Captures</button>',
             '    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>',
+            *(['    <button id="tab-tracker" class="tab" type="button" onclick="showTab(\'tracker\')">Tracker</button>'] if tracker else []),
             '    <button id="tab-editor" class="tab" type="button" onclick="showTab(\'editor\')">Editor</button>',
             *(['    <button id="tab-settings" class="tab" type="button" onclick="showTab(\'settings\')">Settings</button>'] if settings_panes else []),
             _nav_profile_link(user),
@@ -676,7 +691,7 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
             "\n\n</main>",
         )
     html = _remove_line(html, _ASSISTANT_MENU_ITEM)
-    _assert_admin_shell_stripped(html, settings_panes=settings_panes)
+    _assert_admin_shell_stripped(html, settings_panes=settings_panes, tracker=tracker)
     return html
 
 
@@ -701,6 +716,9 @@ def _asset_block(include_admin: bool = True, user: dict | None = None) -> str:
             *(("scrobbler.js",) if "scrobbler" in panes else ()),
             *(("scheduler-profiles.js",) if "scheduling" in panes else ()),
         )
+    if full_user and _managed_tracker_allowed(user):
+        helper_scripts = (*helper_scripts, "month-bar.js")
+        app_scripts = (*app_scripts, "tracker-notifications.js")
     helper_tags = "\n".join(f'<script src="/assets/helpers/{name}?v=__CW_VERSION__" defer></script>' for name in helper_scripts)
     app_tags = "\n".join(f'<script src="/assets/js/{name}?v=__CW_VERSION__" defer></script>' for name in app_scripts)
     admin_only_tags = (
@@ -2463,6 +2481,7 @@ def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:
             f'data-cw-perm-watchlist="{"on" if perms.get("watchlist") else "off"}" '
             f'data-cw-perm-playback="{"on" if perms.get("playback") else "off"}" '
             f'data-cw-perm-write="{"on" if perms.get("write") else "off"}" '
+            f'data-cw-perm-tracker="{"on" if _managed_tracker_allowed(user) else "off"}" '
             f'data-cw-profile-id="{profile_id}"'
         )
         html = html.replace('<html lang="en"', attrs, 1)
@@ -2716,7 +2735,7 @@ def get_profile_html(user: dict | None = None) -> str:
           <span id="profile-last-provider"></span>
         </div>
       </div>
-      <img id="profile-last-poster" class="cw-profile-last-poster" src="/assets/img/placeholder_poster.svg" alt="">
+      <img id="profile-last-poster" class="cw-profile-last-poster" src="/assets/img/placeholder_poster.svg?v=2" alt="">
     </article>
     <div id="profile-now" class="cw-profile-now hidden" aria-live="polite">
       <div class="cw-profile-now-copy">
@@ -2729,7 +2748,7 @@ def get_profile_html(user: dict | None = None) -> str:
         <div class="cw-profile-now-track"><span id="profile-now-fill"></span></div>
         <div class="cw-profile-now-times"><span id="profile-now-pct"></span><span id="profile-now-left"></span></div>
       </div>
-      <img id="profile-now-poster" class="cw-profile-now-poster" src="/assets/img/placeholder_poster.svg" alt="">
+      <img id="profile-now-poster" class="cw-profile-now-poster" src="/assets/img/placeholder_poster.svg?v=2" alt="">
     </div>
   </section>
 {view_as_banner}
@@ -3095,6 +3114,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <script src="/assets/helpers/profile-datetime.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/item-actions.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/profile-media-modal.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/month-bar.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/profile-page.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>
 </body>

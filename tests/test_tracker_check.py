@@ -196,19 +196,22 @@ def test_current_check_names_the_instance_for_the_bell(client, base):
     assert (job["instance"], job["label"], job["state"], job["attention"]) == ("default", "Default", "completed", 2)
 
 
-def test_check_endpoints_are_admin_only():
+def test_check_endpoints_need_write_access_for_managed_users():
     from api.appAuthAPI import non_admin_api_allowed
+    from crosswatch import _non_admin_permission_allowed
 
-    assert not non_admin_api_allowed("/api/tracker/check", "POST")
-    assert not non_admin_api_allowed("/api/tracker/check/current", "GET")
+    for method, path in (("POST", "/api/tracker/check"), ("GET", "/api/tracker/check/current")):
+        assert non_admin_api_allowed(path, method)
+        assert not _non_admin_permission_allowed({"permissions": {"monitor": True}}, path, method)
 
 
-def test_bell_feeder_is_loaded_for_admins_only():
+def test_bell_feeder_is_loaded_for_admins_and_managed_tracker_users():
     import ui_frontend
 
     assert "tracker-notifications.js" in ui_frontend._APP_SCRIPTS
     assert "tracker-notifications.js" not in ui_frontend._USER_APP_SCRIPTS
     assert "tracker-notifications.js" not in ui_frontend._FULL_USER_APP_SCRIPTS
+    assert 'app_scripts = (*app_scripts, "tracker-notifications.js")' in (REPO / "ui_frontend.py").read_text("utf-8")
     feeder = (REPO / "assets" / "js" / "tracker-notifications.js").read_text("utf-8")
     assert "/api/tracker/check/current" in feeder and '"/#tracker?attention=1"' in feeder
     core = (REPO / "assets" / "helpers" / "core.js").read_text("utf-8")
@@ -240,3 +243,15 @@ def test_run_cache_stays_bounded(monkeypatch):
     for n in range(1, 10):
         lookups.get("movie", str(n))
     assert list(lookups.cache) == [("movie", "7", None), ("movie", "8", None), ("movie", "9", None)]
+
+
+def test_health_counts_and_filter_cover_unchecked_records(client):
+    before = client.get("/api/tracker/summary").json()["health"]["history"]
+    assert before == {"ok": 0, "attention": 0, "unchecked": 3}
+    client.post("/api/tracker/check", json={})
+    after = client.get("/api/tracker/summary").json()["health"]
+    assert after["history"] == {"ok": 1, "attention": 2, "unchecked": 0}
+    assert after["ratings"] == {"ok": 1, "attention": 0, "unchecked": 0}
+    ok = client.get("/api/tracker/items", params={"feature": "history", "health": "ok"}).json()["items"]
+    assert [row["key"] for row in ok] == ["tmdb:949"]
+    assert client.get("/api/tracker/items", params={"feature": "history", "health": "unchecked"}).json()["total"] == 0

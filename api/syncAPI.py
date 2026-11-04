@@ -266,7 +266,7 @@ def _enforce_pair_feature_constraints(pair: dict[str, Any]) -> None:
     if isinstance(plex_history, Mapping) and plex_history.get("discover_fallback") is True and isinstance(feats.get("history"), dict):
         feats["history"]["library_only"] = False
 
-_DROPPED_SHOW_PROVIDERS = frozenset({"trakt", "mdblist", "simkl", "wetrakr", "flicklist"})
+_DROPPED_SHOW_PROVIDERS = frozenset({"trakt", "mdblist", "simkl", "wetrakr", "flicklist", "crosswatch"})
 
 
 def _normalize_pair_providers(p: Any) -> dict[str, Any]:
@@ -814,6 +814,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None, *, interactive
     rt = _rt()
     LOG_BUFFERS, RUNNING_PROCS, _append_log, strip_ansi = rt[0], rt[1], rt[8], rt[7]
     overrides = overrides or {}
+    import_pair = overrides.get("import_pair") if isinstance(overrides.get("import_pair"), dict) else None
     scheduler_context = dict(overrides)
     scheduler_context["run_id"] = str(run_id)
     scheduler_webhook_cfg: dict[str, Any] | None = None
@@ -832,6 +833,8 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None, *, interactive
                      for p in log_cfg.get("pairs", []) if isinstance(p, dict) and coerce_bool(p.get("enabled", True), True)
                      and (not requested or str(p.get("id")) == requested)
                      and (not scope or str(p.get("id") or '').strip() in scope)]
+        if import_pair:
+            log_pairs = [{key: import_pair.get(key) for key in ("id", "source", "source_instance", "target", "target_instance", "mode", "features")}]
         archived_run = archive().start(str(run_id), log_pairs)
     except Exception:
         pass
@@ -935,6 +938,8 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None, *, interactive
     try:
         load_config, _save = _env()
         cfg = load_config()
+        if import_pair:
+            cfg = {**cfg, "pairs": [dict(import_pair)]}
         if interactive is not None:
             from cw_platform.orchestrator._interactive import fingerprint
 
@@ -1033,7 +1038,7 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None, *, interactive
             write_state_json = coerce_bool(
                 sync_cfg.get("write_state_json", runtime_cfg.get("write_state_json", True)),
                 True,
-            )
+            ) and not import_pair
             def report_progress(line):
                 _sync_progress_ui(line)
                 if interactive is not None and interactive.on_progress is not None:
@@ -3142,11 +3147,49 @@ def api_cancel_sync(request: Request = cast(Request, None)) -> Any:
                 return JSONResponse({"ok": False, "error": "profile_scope_denied"}, status_code=403)
         except Exception:
             return JSONResponse({"ok": False, "error": "profile_scope_denied"}, status_code=403)
+    state = _request_run_cancel()
+    return {"ok": True, "running": True, "run_id": state.get("run_id"), "requested_at": state.get("requested_at")}
+
+
+def _request_run_cancel() -> dict[str, Any]:
     run_id = str(_summary_snapshot().get("run_id") or "")
     state = request_cancel(run_id, reason="user")
     _summary_set("cancel_requested", True)
     _rt()[8]("SYNC", "[!] Cancel requested; stopping after the current batch.")
-    return {"ok": True, "running": True, "run_id": state.get("run_id"), "requested_at": state.get("requested_at")}
+    return state
+
+
+def start_import_run(pair: Mapping[str, Any], run_id: str, on_done: Any) -> dict[str, Any]:
+    rt = _rt()
+    RUNNING_PROCS, SYNC_PROC_LOCK = rt[1], rt[2]
+
+    def run() -> None:
+        try:
+            _run_pairs_thread_entry(run_id, {"import_pair": dict(pair), "source": "tracker-import"})
+        finally:
+            on_done(_summary_snapshot())
+
+    with SYNC_PROC_LOCK:
+        if _is_sync_running():
+            return {"ok": False, "error": "sync_running"}
+        clear_queue_stop()
+        th = threading.Thread(target=run, name="tracker-import", daemon=True)
+        th.start()
+        RUNNING_PROCS["SYNC"] = th
+        rt[8]("SYNC", f"[i] Triggered tracker import {run_id}")
+        return {"ok": True, "run_id": run_id}
+
+
+def import_run_snapshot(run_id: str) -> dict[str, Any] | None:
+    snap = _summary_snapshot()
+    return snap if str(snap.get("run_id") or "") == str(run_id) else None
+
+
+def cancel_import_run(run_id: str) -> bool:
+    if not _is_sync_running() or import_run_snapshot(run_id) is None:
+        return False
+    _request_run_cancel()
+    return True
 
 
 @router.get("/run/cancel")

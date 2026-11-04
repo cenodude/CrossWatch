@@ -28,7 +28,7 @@ MAX_FAILURES = 25
 NETWORK_PAUSE = 0.03
 CACHE_LIMIT = 5000
 _ANIME_FIELDS = ("_anime_absolute", "_cw_anime_map", "_simkl_episode_number", "_trakt_number_abs", "anime_type")
-_KEEP = ("title", "name", "original_title", "original_name", "release_date", "first_air_date")
+_KEEP = ("title", "name", "original_title", "original_name", "release_date", "first_air_date", "runtime", "episode_run_time")
 _FAILED = object()
 
 
@@ -77,6 +77,9 @@ def _trim(data: Any) -> dict[str, Any]:
     if not isinstance(data, Mapping):
         return {}
     out = {field: data.get(field) for field in _KEEP if field in data}
+    last = data.get("last_episode_to_air")
+    if isinstance(last, Mapping) and last.get("runtime"):
+        out["last_episode_to_air"] = {"runtime": last.get("runtime")}
     if isinstance(data.get("episodes"), list):
         out["episodes"] = [{"episode_number": row.get("episode_number")} for row in data["episodes"] if isinstance(row, Mapping)]
     return out
@@ -131,6 +134,16 @@ class Lookups:
             self.cache.popitem(last=False)
 
 
+def _runtime(data: Mapping[str, Any], movie: bool) -> int | None:
+    if movie:
+        return _int(data.get("runtime")) or None
+    per_episode = data.get("episode_run_time")
+    if isinstance(per_episode, list) and per_episode:
+        return _int(per_episode[0]) or None
+    last = data.get("last_episode_to_air")
+    return (_int(last.get("runtime")) or None) if isinstance(last, Mapping) else None
+
+
 def classify(item: Mapping[str, Any], lookups: Lookups) -> tuple[str, dict[str, Any]] | None:
     typ = str(item.get("type") or "").lower()
     child = typ in ("season", "episode")
@@ -162,6 +175,9 @@ def classify(item: Mapping[str, Any], lookups: Lookups) -> tuple[str, dict[str, 
         "fetched_at": found.fetched_at,
         "source": found.source,
     }
+    runtime = _runtime(data, movie)
+    if runtime:
+        detail["runtime"] = runtime
     stored_title = item.get("series_title" if child else "title")
     stored_year = _int(item.get("series_year" if child else "year"))
     if (
