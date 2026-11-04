@@ -211,8 +211,15 @@ def test_a_corrupt_row_is_unreadable_everywhere(tmp_path):
 
 def test_legacy_list_entries_without_identity_keep_their_position(tmp_path):
     item = {"type": "movie", "title": "Heat", "ids": {"tmdb": "949"}}
-    (tmp_path / "watchlist.json").write_text(json.dumps([item, "junk", {"type": "movie"}]), "utf-8")
-    assert set(TrackerStore(tmp_path).read_current("watchlist")["items"]) == {"tmdb:949", "1", "2"}
+    (tmp_path / "watchlist.json").write_text(json.dumps([item, {"type": "movie"}]), "utf-8")
+    assert set(TrackerStore(tmp_path).read_current("watchlist")["items"]) == {"tmdb:949", "1"}
+
+
+def test_legacy_entries_that_are_not_records_block_the_import(tmp_path):
+    (tmp_path / "watchlist.json").write_text(json.dumps([{"type": "movie", "ids": {"tmdb": "949"}}, "junk"]), "utf-8")
+    with pytest.raises(TrackerUnreadable):
+        TrackerStore(tmp_path).read_current("watchlist")
+    assert (tmp_path / "watchlist.json").exists()
 
 
 @pytest.mark.parametrize(("rewatches", "count"), [(True, 2), (False, 1)])
