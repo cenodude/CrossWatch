@@ -74,8 +74,8 @@
 
   const buildArtUrl = (p) => {
     const id = tmdbIdOf(p);
-    if (!id) return p?.cover || "/assets/img/placeholder_poster.svg";
-    return `/art/tmdb/${artTypeOf(p)}/${encodeURIComponent(String(id))}?size=w342${artEvidenceOf(p)}`;
+    if (!id) return p?.cover || "/assets/img/placeholder_poster.svg?v=2";
+    return `/art/tmdb/${artTypeOf(p)}/${encodeURIComponent(String(id))}?fallback=2&size=w342${artEvidenceOf(p)}`;
   };
 
   const runtimeLabel = (mins) => FMT?.runtimeLabel(mins) || "";
@@ -163,7 +163,7 @@
     if (!id) return "";
     const resolved = meta?.resolved_type || meta?.type || window.CW?.Meta?.peek(p)?.resolved_type;
     const type = String(resolved || p?.media_type || p?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
-    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?kind=backdrop&size=w1280${artEvidenceOf(p)}`;
+    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?fallback=2&kind=backdrop&size=w1280${artEvidenceOf(p)}`;
   };
 
   const SHARED_WATCH_KEY = "__CW_CURRENT_WATCHING_SHARED__";

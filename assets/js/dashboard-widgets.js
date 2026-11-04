@@ -1199,12 +1199,12 @@
     const src = String(item?.poster || "");
     if (src) return src;
     const tmdb = item?.tmdb;
-    if (!tmdb) return "/assets/img/placeholder_poster.svg";
+    if (!tmdb) return "/assets/img/placeholder_poster.svg?v=2";
     const kind = String(item?.art_type || item?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
     const isEpisode = String(item?.type || "").toLowerCase() === "episode";
     const title = item?.title && !isEpisode ? `&title=${encodeURIComponent(String(item.title))}` : "";
     const year = item?.year && !isEpisode ? `&year=${encodeURIComponent(String(item.year))}` : "";
-    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?size=${encodeURIComponent(size)}${title}${year}`;
+    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?fallback=2&size=${encodeURIComponent(size)}${title}${year}`;
   }
 
   function coverPoster(item, size = "w342") {
@@ -1215,7 +1215,7 @@
     const kind = String(item?.art_type || item?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
     const title = item?.title ? `&title=${encodeURIComponent(String(item.title))}` : "";
     const year = item?.year ? `&year=${encodeURIComponent(String(item.year))}` : "";
-    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?size=${encodeURIComponent(size)}${title}${year}`;
+    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?fallback=2&size=${encodeURIComponent(size)}${title}${year}`;
   }
 
   function backdropPoster(item, meta = null, size = "w1280") {
@@ -1225,7 +1225,7 @@
     const kind = resolved ? (resolved === "movie" ? "movie" : "tv") : (String(item?.art_type || item?.type || "").toLowerCase() === "movie" ? "movie" : "tv");
     const title = item?.title ? `&title=${encodeURIComponent(String(item.title))}` : "";
     const year = item?.year ? `&year=${encodeURIComponent(String(item.year))}` : "";
-    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?kind=backdrop&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${title}${year}`;
+    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${title}${year}`;
   }
 
   function tmdbLink(item) {
@@ -1276,7 +1276,7 @@
         { text: meta?.certification || meta?.release?.cert || meta?.detail?.certification || "" },
       ],
       overview: meta?.overview || meta?.detail?.overview || meta?.detail?.tagline || (loading ? "Loading details..." : "No description available."),
-      poster: coverPoster(item, "w342") || "/assets/img/placeholder_poster.svg",
+      poster: coverPoster(item, "w342") || "/assets/img/placeholder_poster.svg?v=2",
       posterHref: tmdbLink(item),
       backdrop: backdropPoster(item, meta),
       information: meta ? window.CW?.PlayingCard?.fmt?.informationFor?.(meta, isMovie) || "loading" : "loading",
@@ -1434,7 +1434,7 @@
     return `
       <${tag} class="cw-history-widget-item cw-history-widget-item--stack"${hrefAttr}${artStyle}${widgetItemAttrs("history", index)}>
         <span class="cw-history-thumb">
-          <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
+          <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
           ${age ? `<span class="cw-rating-grid-age">${esc(age)}</span>` : ""}
           ${item?.episode_label ? `<span class="cw-history-episode">${esc(item.episode_label)}</span>` : ""}
         </span>
@@ -1480,7 +1480,7 @@
     return `
       <${tag} class="cw-history-widget-item cw-history-widget-item--stack cw-history-widget-item--activity"${hrefAttr}${artStyle}${widgetItemAttrs("scrobble", index)}>
         <span class="cw-history-thumb">
-          <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
+          <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
           ${age ? `<span class="cw-rating-grid-age">${esc(age)}</span>` : ""}
           ${activityMethodPill(item)}
           ${item?.episode_label ? `<span class="cw-history-episode">${esc(item.episode_label)}</span>` : ""}
@@ -1510,7 +1510,7 @@
     return `
       <${tag} class="cw-history-widget-item cw-history-widget-item--stack cw-history-widget-item--progress"${hrefAttr}${widgetItemAttrs("progress", index)}>
         <span class="cw-history-thumb">
-          <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
+          <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
           ${age ? `<span class="cw-rating-grid-age">${esc(age)}</span>` : ""}
           ${item?.episode_label ? `<span class="cw-history-episode">${esc(item.episode_label)}</span>` : ""}
         </span>
@@ -1569,7 +1569,7 @@
     const episodeChip = rawType === "episode" && item?.episode_label ? String(item.episode_label) : "";
     return `
       <${tag} class="cw-rating-widget-card cw-widget-poster-card cw-widget-poster-card--${esc(kind)}"${hrefAttr}${widgetItemAttrs(kind, index)} title="${esc([title, meta].filter(Boolean).join(" | "))}">
-        <img src="${esc(coverPoster(item, "w342"))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
+        <img src="${esc(coverPoster(item, "w342"))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
         ${corner ? `<span class="cw-widget-poster-chip">${esc(corner)}</span>` : ""}
         ${episodeChip ? `<span class="cw-widget-poster-chip cw-widget-poster-chip--episode">${esc(episodeChip)}</span>` : ""}
         <span class="cw-rating-provider-icons" title="${esc(route.route || "Sources")}" aria-label="${esc(route.route || "Sources")}">${route.html}</span>
@@ -1602,7 +1602,7 @@
       : { html: sourceIcons(item?.sources, 3, iconActions(kind)), route: sourceRouteTitle(item?.sources) };
     return `
       <${tag} class="cw-media-card cw-media-card--${esc(kind)}"${hrefAttr}${widgetItemAttrs(kind, index)} title="${esc([title, meta].filter(Boolean).join(" | "))}">
-        <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
+        <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
         ${chips.length ? `<span class="cw-media-card-chips">${chips.map((chip) => `<span class="cw-media-card-chip">${esc(chip)}</span>`).join("")}</span>` : ""}
         ${kind === "scrobble" ? `<span class="cw-media-card-method">${activityMethodPill(item)}</span>` : ""}
         ${kind === "ratings" && item?.rating ? `<span class="cw-media-card-score"><span>${esc(item.rating)}</span></span>` : ""}
@@ -1632,7 +1632,7 @@
     const titleParts = [title, mediaDetail ? `${rawType === "season" ? "Season" : "Episode"}: ${mediaDetail}` : "", ratedLabel ? `Rated ${ratedLabel}` : ""].filter(Boolean);
     return `
       <${tag} class="cw-rating-widget-card"${hrefAttr}${widgetItemAttrs("ratings", index)} title="${esc(titleParts.join(" | "))}">
-        <img src="${esc(coverPoster(item, "w342"))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
+        <img src="${esc(coverPoster(item, "w342"))}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
         <span class="cw-rating-score"><span>${esc(item?.rating || "")}</span></span>
         ${ratedLabel ? `<span class="cw-rating-age-badge">${esc(ratedLabel)}</span>` : ""}
         <span class="cw-rating-provider-icons" title="${esc(route)}" aria-label="${esc(route || "Sources")}">${ratingSourceIcons(item?.sources, 3, iconActions("ratings"))}</span>
@@ -1651,7 +1651,7 @@
     return `
       <${tag} class="cw-history-widget-item cw-history-widget-item--stack cw-history-widget-item--rating"${hrefAttr}${widgetItemAttrs("ratings", index)}>
         <span class="cw-history-thumb">
-          <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg'">
+          <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
           ${ratedLabel ? `<span class="cw-rating-grid-age">${esc(ratedLabel)}</span>` : ""}
           ${item?.rating ? `<span class="cw-rating-grid-score"><span>${esc(item.rating)}</span></span>` : ""}
           ${item?.episode_label ? `<span class="cw-history-episode">${esc(item.episode_label)}</span>` : ""}

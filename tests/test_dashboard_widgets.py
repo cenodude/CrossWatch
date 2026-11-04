@@ -105,10 +105,10 @@ def test_latest_ratings_widget_dedupes_and_sorts_provider_state() -> None:
     assert [item["title"] for item in payload["items"]] == ["Arrival", "Severance"]
     assert payload["items"][0]["rating"] == 9
     assert {source["provider"] for source in payload["items"][0]["sources"]} == {"PLEX", "TRAKT"}
-    assert payload["items"][0]["poster"] == "/art/tmdb/movie/10?kind=backdrop&size=w300"
-    assert payload["items"][0]["cover"] == "/art/tmdb/movie/10?size=w342"
-    assert payload["items"][1]["poster"] == "/art/tmdb/tv/20?kind=backdrop&size=w300"
-    assert payload["items"][1]["cover"] == "/art/tmdb/tv/20?size=w342"
+    assert payload["items"][0]["poster"] == "/art/tmdb/movie/10?fallback=2&kind=backdrop&size=w300"
+    assert payload["items"][0]["cover"] == "/art/tmdb/movie/10?fallback=2&size=w342"
+    assert payload["items"][1]["poster"] == "/art/tmdb/tv/20?fallback=2&kind=backdrop&size=w300"
+    assert payload["items"][1]["cover"] == "/art/tmdb/tv/20?fallback=2&size=w342"
 
 
 def test_latest_ratings_widget_uses_tracker_items_without_runtime_state() -> None:
@@ -180,12 +180,12 @@ def test_dashboard_widgets_merge_flattened_provider_rows_across_providers(monkey
 
     assert history["total"] == 1
     assert history["items"][0]["title"] == "Behind the Attraction"
-    assert history["items"][0]["poster"] == "/art/tmdb/tv/100?kind=still&season=3&episode=2&size=w300&artv=2"
+    assert history["items"][0]["poster"] == "/art/tmdb/tv/100?fallback=2&kind=still&season=3&episode=2&size=w300&artv=2"
     assert {source["provider"] for source in history["items"][0]["sources"]} == set(FLATTENED_PROVIDERS)
     assert ratings["total"] == 1
     assert ratings["items"][0]["title"] == "Heat"
-    assert ratings["items"][0]["poster"] == "/art/tmdb/movie/949?kind=backdrop&size=w300"
-    assert ratings["items"][0]["cover"] == "/art/tmdb/movie/949?size=w342"
+    assert ratings["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&size=w300"
+    assert ratings["items"][0]["cover"] == "/art/tmdb/movie/949?fallback=2&size=w342"
     assert {source["provider"] for source in ratings["items"][0]["sources"]} == set(FLATTENED_PROVIDERS)
 
 
@@ -221,8 +221,8 @@ def test_latest_ratings_widget_handles_nested_provider_movie_rows(provider: str)
     assert payload["items"][0]["title"] == "Heat"
     assert payload["items"][0]["year"] == 1995
     assert payload["items"][0]["tmdb"] == 949
-    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?kind=backdrop&size=w300"
-    assert payload["items"][0]["cover"] == "/art/tmdb/movie/949?size=w342"
+    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&size=w300"
+    assert payload["items"][0]["cover"] == "/art/tmdb/movie/949?fallback=2&size=w342"
 
 
 def test_recent_history_widget_includes_latest_state_history(monkeypatch) -> None:
@@ -488,7 +488,7 @@ def test_recent_history_widget_merges_provider_local_episode_ids_and_inherits_ar
     assert payload["total"] == 1
     assert payload["items"][0]["title"] == "Behind the Attraction"
     assert payload["items"][0]["episode_label"] == "S03E02"
-    assert payload["items"][0]["poster"] == "/art/tmdb/tv/100?kind=still&season=3&episode=2&size=w300&artv=2"
+    assert payload["items"][0]["poster"] == "/art/tmdb/tv/100?fallback=2&kind=still&season=3&episode=2&size=w300&artv=2"
     assert {source["provider"] for source in payload["items"][0]["sources"]} == {"SIMKL", "TRAKT"}
 
 
@@ -660,7 +660,7 @@ def test_recent_history_widget_resolves_missing_art_from_metadata(monkeypatch) -
 
     assert payload["total"] == 1
     assert payload["items"][0]["tmdb"] == 100
-    assert payload["items"][0]["poster"] == "/art/tmdb/tv/100?kind=still&season=3&episode=2&size=w300&artv=2"
+    assert payload["items"][0]["poster"] == "/art/tmdb/tv/100?fallback=2&kind=still&season=3&episode=2&size=w300&artv=2"
     assert fake.calls[0]["entity"] == "show"
     assert fake.calls[0]["ids"]["title"] == "Behind the Attraction"
     assert fake.calls[0]["ids"]["trakt"] == 123
@@ -707,8 +707,8 @@ def test_latest_ratings_widget_merges_provider_local_movie_ids_and_inherits_art(
 
     assert payload["total"] == 1
     assert payload["items"][0]["title"] == "Heat"
-    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?kind=backdrop&size=w300"
-    assert payload["items"][0]["cover"] == "/art/tmdb/movie/949?size=w342"
+    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&size=w300"
+    assert payload["items"][0]["cover"] == "/art/tmdb/movie/949?fallback=2&size=w342"
     assert {source["provider"] for source in payload["items"][0]["sources"]} == {"SIMKL", "TRAKT"}
 
 
@@ -895,8 +895,8 @@ def test_latest_ratings_widget_resolves_missing_art_from_metadata(monkeypatch) -
 
     assert payload["total"] == 1
     assert payload["items"][0]["tmdb"] == 949
-    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?kind=backdrop&size=w300"
-    assert payload["items"][0]["cover"] == "/art/tmdb/movie/949?size=w342"
+    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&size=w300"
+    assert payload["items"][0]["cover"] == "/art/tmdb/movie/949?fallback=2&size=w342"
     assert fake.calls[0]["entity"] == "movie"
 
 
@@ -971,7 +971,7 @@ def test_recent_history_widget_uses_nested_show_tmdb_for_episode_art(monkeypatch
     assert payload["items"][0]["title"] == "Behind the Attraction"
     assert payload["items"][0]["episode_label"] == "S03E02"
     assert payload["items"][0]["tmdb"] == 100
-    assert payload["items"][0]["poster"] == "/art/tmdb/tv/100?kind=still&season=3&episode=2&size=w300&artv=2"
+    assert payload["items"][0]["poster"] == "/art/tmdb/tv/100?fallback=2&kind=still&season=3&episode=2&size=w300&artv=2"
 
 
 def test_recent_history_widget_uses_show_tmdb_for_episode_art_when_episode_has_tmdb(monkeypatch) -> None:
@@ -1015,7 +1015,7 @@ def test_recent_history_widget_uses_show_tmdb_for_episode_art_when_episode_has_t
 
     assert payload["total"] == 1
     assert payload["items"][0]["tmdb"] == "95738"
-    assert payload["items"][0]["poster"] == "/art/tmdb/tv/95738?kind=still&season=3&episode=2&size=w300&artv=2"
+    assert payload["items"][0]["poster"] == "/art/tmdb/tv/95738?fallback=2&kind=still&season=3&episode=2&size=w300&artv=2"
 
 
 def test_existing_tmdb_art_does_not_emit_debug_log(monkeypatch) -> None:
@@ -1028,7 +1028,7 @@ def test_existing_tmdb_art_does_not_emit_debug_log(monkeypatch) -> None:
         "season": 3,
         "episode": 2,
         "tmdb": "95738",
-        "poster": "/art/tmdb/tv/95738?kind=still&season=3&episode=2&size=w300&artv=2",
+        "poster": "/art/tmdb/tv/95738?fallback=2&kind=still&season=3&episode=2&size=w300&artv=2",
     }
 
     dashboard_widgets._resolve_missing_art(row, size="w300", episode_still=True)
@@ -1094,7 +1094,7 @@ def test_recent_scrobble_widget_uses_activity_log_rows(monkeypatch) -> None:
     assert payload["ok"] is True
     assert payload["total"] == 1
     assert payload["items"][0]["title"] == "Heat"
-    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?size=w300"
+    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&size=w300"
     assert payload["items"][0]["sources"] == [
         {"provider": "PLEX", "instance": "default"},
         {"provider": "TRAKT", "instance": "default"},
@@ -1127,7 +1127,7 @@ def test_recent_scrobble_widget_uses_nested_history_sync_item_art(tmp_path, monk
     assert payload["total"] == 1
     assert payload["items"][0]["title"] == "Behind the Attraction"
     assert payload["items"][0]["episode_label"] == "S03E02"
-    assert payload["items"][0]["poster"] == "/art/tmdb/tv/100?kind=still&season=3&episode=2&size=w300&artv=2"
+    assert payload["items"][0]["poster"] == "/art/tmdb/tv/100?fallback=2&kind=still&season=3&episode=2&size=w300&artv=2"
     assert payload["items"][0]["sources"] == [
         {"provider": "TRAKT", "instance": "default"},
         {"provider": "CROSSWATCH", "instance": "default"},

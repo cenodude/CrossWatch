@@ -2096,7 +2096,7 @@ def test_profile_last_watched_uses_provider_branding_icons() -> None:
     assert 'const art = watchlistPreviewArt(item) || poster(item, "w780");' in js
     helper = js[js.index("const watchlistPreviewArt ="):js.index("const heroBackdrop =")]
     assert "backdrop_url" not in helper and "background_url" not in helper and "fanart" not in helper
-    assert 'return `/art/tmdb/${kind}/${encodeURIComponent(String(id))}?kind=backdrop&size=${encodeURIComponent(size)}&locale=${locale}${watchlistArtEvidence(item)}`;' in js
+    assert 'return `/art/tmdb/${kind}/${encodeURIComponent(String(id))}?fallback=2&kind=backdrop&size=${encodeURIComponent(size)}&locale=${locale}${watchlistArtEvidence(item)}`;' in js
     assert "updated ${relTime(when)}" in js
     assert "cw-profile-watchlist-status" in js
     assert "cw-profile-watchlist-sync" in js
@@ -2130,12 +2130,12 @@ def test_profile_watchlist_rows_reuse_widget_art_url() -> None:
     css = Path("assets/css/profile-page.css").read_text("utf-8")
 
     assert "artUrl,\n    gridArtUrl," in helper
-    assert 'const cover = preview?.artUrl?.(item, "w342") || "/assets/img/placeholder_poster.svg";' in js
+    assert 'const cover = preview?.artUrl?.(item, "w342") || "/assets/img/placeholder_poster.svg?v=2";' in js
     assert "return preview?.gridArtUrl?.(item, size) || cover;" in js
     row = js[js.index("function watchlistRow(item, fallbackSyncEpoch = 0)"):js.index("function posterCard(item)")]
     assert "const art = watchlistWidgetArt(item);" in row
     assert "backdrop(item)" not in row
-    assert "this.src='/assets/img/placeholder_poster.svg'" in row
+    assert "this.src='/assets/img/placeholder_poster.svg?v=2'" in row
     assert "body.cw-profile-page #dashboard-widgets-card #placeholder-card .poster *{text-decoration:none!important}" in css
 
 
