@@ -6,12 +6,13 @@ const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({"&":"&amp
 const number = value => Number(value || 0).toLocaleString();
 const labels = {ready:"Ready to import",needs_review:"Review title match",exists:"Already in tracker",missing_identity:"Needs a match",invalid:"Invalid history",duplicate:"Duplicate in scan",unsupported:"Unsupported"};
 const selectable = row => ["ready","needs_review"].includes(row.status);
+const option = (value, label) => `<option value="${esc(value)}">${esc(label)}</option>`;
 const field = (id, title) => `<label class="ie-field" for="${id}"><span id="${id}-label">${title}</span><select id="${id}" data-cw-native-select="true"></select></label>`;
 
-export function mountPlexRecovery(host) {
+export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOptions }) {
   host.innerHTML = `<section class="ie-panel cw-page-panel">
     <div class="ie-section-heading"><div><h2>Recover Plex history</h2><p>Recover watched movies and episodes removed from Plex into your CW tracker.</p></div></div>
-    <div class="ie-fields">${field("pr-kind","History source")}${field("pr-db","Database")}${field("pr-tautulli","Tautulli instance")}${field("pr-tracearr","Tracearr instance")}${field("pr-source","Plex instance")}${field("pr-db-account","Plex account in the database")}${field("pr-target","CrossWatch tracker instance")}</div>
+    <div class="ie-fields">${field("pr-kind","History source")}${field("pr-db","Database")}${field("pr-tautulli","Tautulli instance")}${field("pr-tracearr","Tracearr instance")}${field("pr-source","Plex instance")}${field("pr-db-account","Plex account in the database")}${field("pr-target","CrossWatch tracker instance")}<label class="ie-field" for="pr-new-name" id="pr-new-name-wrap" hidden><span>New instance name</span><input id="pr-new-name" type="text" maxlength="24" autocomplete="off" placeholder="Plex recovery"></label></div>
     <div class="ie-export-extras"><label id="pr-live-wrap" hidden><input id="pr-live" type="checkbox" checked>Ignore Plex Live TV</label></div>
     <p id="pr-access">Plex server owner access required.</p>
     <div class="pr-actions"><button class="ie-button" id="pr-browse" hidden>Choose database file</button><input id="pr-file" type="file" hidden><button class="ie-button ie-primary" id="pr-start">Scan older history</button><button class="ie-button" id="pr-cancel" hidden>Cancel scan</button><button class="ie-button" id="pr-close" hidden>Close recovery</button></div>
@@ -99,9 +100,10 @@ export function mountPlexRecovery(host) {
     host.querySelectorAll("button,input,select").forEach(el => { if (!el.closest("dialog")) el.disabled = busy || reading || (loading && !el.closest(".ie-filters")); });
     $("#pr-cancel").disabled = false;
     $("#pr-cancel").hidden = !reading;
-    $("#pr-start").disabled = locked || !!job || otherRecovery || !$("#pr-source").value || ($("#pr-kind").value === "tautulli" && !$("#pr-tautulli").value) || ($("#pr-kind").value === "tracearr" && !(options?.tracearr?.find(t=>t.id === $("#pr-tracearr").value)?.user)) || ($("#pr-kind").value === "plex_db" && $("#pr-db").value === "upload" && !(upload && $("#pr-db-account").value)) || !options?.targets?.find(t => t.id === $("#pr-target").value)?.connected;
+    $("#pr-start").disabled = locked || !!job || otherRecovery || !$("#pr-source").value || ($("#pr-kind").value === "tautulli" && !$("#pr-tautulli").value) || ($("#pr-kind").value === "tracearr" && !(options?.tracearr?.find(t=>t.id === $("#pr-tracearr").value)?.user)) || ($("#pr-kind").value === "plex_db" && $("#pr-db").value === "upload" && !(upload && $("#pr-db-account").value)) || !($("#pr-target").value === NEW_TRACKER || options?.targets?.find(t => t.id === $("#pr-target").value)?.connected);
     $("#pr-close").hidden = !job || reading;
-    for (const id of ["pr-kind","pr-db","pr-tautulli","pr-tracearr","pr-source","pr-db-account","pr-target","pr-browse","pr-live"]) $(`#${id}`).disabled = locked || !!job;
+    for (const id of ["pr-kind","pr-db","pr-tautulli","pr-tracearr","pr-source","pr-db-account","pr-target","pr-new-name","pr-browse","pr-live"]) $(`#${id}`).disabled = locked || !!job;
+    $("#pr-new-name-wrap").hidden = !!job || $("#pr-target").value !== NEW_TRACKER;
     $("#pr-import").disabled = locked || job?.auto_match?.status === "running" || !count();
     $("#pr-accept-titles").hidden = !data?.summary?.by_status?.needs_review || !["all","needs_review"].includes(filters().status);
     $("#pr-accept-titles").disabled = locked || job?.auto_match?.status === "running";
@@ -200,6 +202,13 @@ export function mountPlexRecovery(host) {
   async function start() {
     busy=true; controls(); message();
     try {
+      if ($("#pr-target").value === NEW_TRACKER) {
+        const made = await createTracker($("#pr-new-name").value.trim() || "Plex recovery");
+        options.targets.push(made);
+        $("#pr-target").innerHTML = trackerOptions(options.targets, option);
+        $("#pr-target").value = made.id;
+        $("#pr-new-name").value = "";
+      }
       const sourceKind=$("#pr-kind").value, fromFile=sourceKind === "plex_db" && $("#pr-db").value === "upload";
       job = await request("",{source_instance:$("#pr-source").value,target_instance:$("#pr-target").value,ignore_live_tv:$("#pr-live").checked,
         ...(sourceKind === "tautulli" ? {source:"tautulli",tautulli_instance:$("#pr-tautulli").value} : {}),
@@ -461,7 +470,7 @@ export function mountPlexRecovery(host) {
   }
   on(window,"cw:open-plex-recovery",openRequestedSource);
   host.querySelectorAll("select").forEach(input=>{
-    const wrap=window.CW?.IconSelect?.enhance(input,{className:"ie-select",menuClassName:"ie-select-menu",sortAlphabetically:["pr-source","pr-target","pr-tautulli","pr-tracearr"].includes(input.id)});
+    const wrap=window.CW?.IconSelect?.enhance(input,{className:"ie-select",menuClassName:"ie-select-menu",sortAlphabetically:["pr-source","pr-target","pr-tautulli","pr-tracearr"].includes(input.id),sortFirstValues:[NEW_TRACKER]});
     wrap?.querySelector("button")?.setAttribute("aria-labelledby",`${input.id}-label`);
     wrap?.__cwMenu?.setAttribute("aria-labelledby",`${input.id}-label`);
   });
@@ -474,7 +483,7 @@ export function mountPlexRecovery(host) {
     $("#pr-tautulli").innerHTML=(result.tautulli || []).map(t=>`<option value="${esc(t.id)}">${esc(t.label)}</option>`).join("");
     $("#pr-tracearr").innerHTML=(result.tracearr || []).map(t=>`<option value="${esc(t.id)}">${esc(t.label)}</option>`).join("");
     $("#pr-kind").closest(".ie-field").hidden=false;
-    $("#pr-target").innerHTML=result.targets.map(t=>`<option value="${esc(t.id)}">${esc(t.label)}${t.connected ? "" : " (not connected)"}</option>`).join("");
+    $("#pr-target").innerHTML=trackerOptions(result.targets, option);
     const connected=result.targets.find(t=>t.connected);if(connected) $("#pr-target").value=connected.id;
     if(!sources.length && !(result.lookups || []).length) message("Connect a Plex server in Settings to recover its history.");
     updateScope();
