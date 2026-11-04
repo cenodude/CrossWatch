@@ -84,7 +84,7 @@ export function mappingAppliesToRow(rule, row, pairId) {
     && [rule.key, rule.original_key].includes(row.key);
 }
 
-export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false, scope = "pair", scopes = [{id:"pair", label:"This sync pair"}, {id:"shared", label:"All pairs using this provider instance"}], staged = false, direct = false, recovery = false, onEpisodeGroup, pairId = session.pair_id, onRemoved}) {
+export function openMappingWorkspace({rows, session = {}, json, post, onSaved, onClose, total, mappingApi, standalone = false, scope = "pair", scopes = [{id:"pair", label:"This sync pair"}, {id:"shared", label:"All pairs using this provider instance"}], scopeNote = null, staged = false, direct = false, recovery = false, onEpisodeGroup, pairId = session.pair_id, onRemoved}) {
   const api = mappingApi || {
     catalogs: row => json(`/api/interactive-sync/${session.id}/mapping-catalogs?${new URLSearchParams({revision:session.revision, row_id:row.id})}`),
     search: (row, q, catalog, options) => json(`/api/interactive-sync/${session.id}/mapping-search?${new URLSearchParams({revision:session.revision, row_id:row.id, q, catalog})}`, options),
@@ -173,6 +173,10 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     $("[data-language]").onchange = searchOptionsChanged;
   }
   function updateScopeNote() {
+    if (typeof scopeNote === "function") {
+      $("[data-scope-note]").textContent = scopeNote($("[data-mapping-scope]").value);
+      return;
+    }
     const shared = $("[data-mapping-scope]").value === "shared";
     $("[data-scope-note]").textContent = (shared
       ? "Shared correction for every pair using this provider instance."
@@ -329,7 +333,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
         }
         const conflict = candidateConflict(row.item, match);
         button.title = [match.title, match.year, match.mapping_unavailable, conflict].filter(Boolean).join(" · ");
-        button.innerHTML = `${match.ids?.tmdb ? `<img class="is-map-candidate-art" src="/art/tmdb/${row.item.type === "movie" ? "movie" : "tv"}/${encodeURIComponent(match.ids.tmdb)}?size=w92" alt="" loading="lazy">` : ""}<strong>${esc(match.title)}</strong>${match.year ? `<span class="is-map-candidate-year">${esc(match.year)}</span>` : ""}`;
+        button.innerHTML = `${match.ids?.tmdb ? `<img class="is-map-candidate-art" src="/art/tmdb/${row.item.type === "movie" ? "movie" : "tv"}/${encodeURIComponent(match.ids.tmdb)}?fallback=2&size=w92" alt="" loading="lazy">` : ""}<strong>${esc(match.title)}</strong>${match.year ? `<span class="is-map-candidate-year">${esc(match.year)}</span>` : ""}`;
         if (conflict) {
           const warning = document.createElement("span");
           warning.textContent = conflict;
@@ -379,7 +383,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
           $("[data-chosen]").hidden = false;
           $("[data-search-panel]").hidden = true;
           $("[data-change-match]").focus();
-          $(".is-map-candidates").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b === button)));
+          $(".is-map-candidates").querySelectorAll(".is-map-candidate").forEach(b => b.setAttribute("aria-pressed", String(b === button)));
           searchController = new AbortController(); searching = true; lock(true);
           status("Checking episode numbering…");
           try {
@@ -388,7 +392,22 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
           } catch (error) { if (!closed) status(error.name === "AbortError" ? "Stopped. Your changes are kept; check episode numbers before saving." : `Title updated. Could not check episode numbers: ${error.message}`); }
           finally { searching = false; if (!closed) lock(false); }
         };
-        $(".is-map-candidates").append(button);
+        const card = window.CW?.ProfileMediaModal;
+        const preview = match.ids?.tmdb ? {type: row.item.type === "movie" ? "movie" : "show", title: match.title || "", year: match.year || "", ids: {tmdb: String(match.ids.tmdb)}} : null;
+        if (preview && card?.canOpen?.(preview)) {
+          const wrap = document.createElement("div");
+          wrap.className = "is-map-candidate-wrap";
+          const info = document.createElement("button");
+          info.type = "button"; info.className = "is-btn is-map-candidate-info";
+          info.title = `Details for ${match.title}`;
+          info.setAttribute("aria-label", info.title);
+          info.innerHTML = icon("info");
+          info.onclick = () => card.open(preview, {host: dialog});
+          wrap.append(button, info);
+          $(".is-map-candidates").append(wrap);
+        } else {
+          $(".is-map-candidates").append(button);
+        }
       });
     } catch (error) { status(error.name === "AbortError" ? "Search stopped. Your drafts are kept." : error.message); }
     finally { searching = false; lock(false); }

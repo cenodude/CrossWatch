@@ -1,5 +1,5 @@
 /* assets/js/tracker.js */
-/* CrossWatch - Local tracker browser */
+/* CrossWatch - Local tracker */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
   const FEATURES = [
@@ -9,16 +9,46 @@
     { id: "progress", label: "Progress", icon: "play_circle", date: "Last played" },
     { id: "collection", label: "Collection", icon: "video_library", date: "Collected" },
   ];
+  const VIEWS = [
+    { id: "history", label: "History", icon: "history" },
+    { id: "shows", label: "Shows", icon: "tv" },
+    { id: "titles", label: "My titles", icon: "bookmarks" },
+    { id: "watchlist", label: "Watchlist", icon: "bookmark" },
+    { id: "ratings", label: "Ratings", icon: "star" },
+    { id: "progress", label: "Progress", icon: "play_circle" },
+    { id: "collection", label: "Collection", icon: "video_library" },
+    { id: "cleanup", label: "Clean up", icon: "health_and_safety" },
+  ];
   const MEDIA = [
-    { id: "", label: "All titles", icon: "apps" },
+    { id: "", label: "All", icon: "" },
     { id: "movie", label: "Movies", icon: "movie" },
-    { id: "show", label: "Shows", icon: "tv" },
+    { id: "show", label: "TV", icon: "tv" },
   ];
-  const SORTS = [
-    { id: "recent", label: "Newest first" },
-    { id: "oldest", label: "Oldest first" },
-    { id: "title", label: "Title" },
+  const HEALTH = [
+    { id: "attention", label: "Need attention", icon: "report" },
+    { id: "unchecked", label: "Not checked", icon: "help" },
+    { id: "ok", label: "Match TMDB", icon: "verified" },
   ];
+  const STATUSES = [
+    { id: "watching", label: "Watching", icon: "play_circle" },
+    { id: "planned", label: "Plan to watch", icon: "schedule" },
+    { id: "completed", label: "Completed", icon: "task_alt" },
+    { id: "on_hold", label: "On hold", icon: "pause_circle" },
+    { id: "dropped", label: "Dropped", icon: "do_not_disturb_on" },
+  ];
+  const FIELD_TYPES = [
+    { id: "text", label: "Text" },
+    { id: "number", label: "Number" },
+    { id: "date", label: "Date" },
+    { id: "bool", label: "Yes / no" },
+    { id: "choice", label: "Pick from a list" },
+  ];
+  const NOTE_LABELS = { status: "status", started: "start date", finished: "finish date", notes: "notes", tags: "tags", fields: "your fields", title: "title", year: "year", tmdb: "match" };
+  const NOTES_VIEW = { label: "My titles", icon: "bookmarks" };
+  const MAX_TAGS = 30;
+  const MAX_FIELDS = 20;
+  const PAGE_SIZES = [50, 100, 150, 200];
+  const TIMELINE_PAGE = 200;
   const ID_FIELDS = [
     { id: "imdb", label: "IMDb" },
     { id: "tmdb", label: "TMDB" },
@@ -34,7 +64,7 @@
   const FIELD_LABELS = {
     watched_at: "watched date", rated_at: "rated date", progress_at: "played date", collected_at: "collected date",
     rating: "rating", progress_percent: "progress", progress_ms: "progress", ids: "IDs", show_ids: "show IDs",
-    title: "title", series_title: "title", year: "year", series_year: "year",
+    title: "title", series_title: "title", year: "year", series_year: "year", type: "type", season: "season", episode: "episode",
   };
   const ERRORS = {
     sync_running: "A sync is running. Try again when it has finished.",
@@ -49,65 +79,120 @@
     invalid_ids: "Check the IDs: IMDb IDs start with tt, the others are numbers. Keep at least one ID.",
     invalid_title: "Enter a title.",
     invalid_year: "Enter a valid year.",
+    invalid_type: "Pick a movie or an episode.",
+    invalid_episode: "Pick a season and episode.",
     no_changes: "Nothing changed.",
+    already_there: "That's already in the tracker.",
     too_many: "Select fewer records at once.",
     tracker_unreadable: "The tracker database could not be read. Nothing was changed; check the logs for details.",
     check_running: "Another metadata check is already running.",
     tracker_migrating: "The tracker is being moved to its new database. This page opens as soon as that's done.",
     pair_scoped: "Editing is off while the tracker keeps separate data per sync pair (CW_CROSSWATCH_PAIR_SCOPED).",
     tmdb_key_missing: "Add a TMDB API key in Settings first.",
+    tmdb_key_invalid: "TMDB rejected the API key. Check it in Settings.",
+    tmdb_unreachable: "TMDB could not be reached. Try again later.",
+    import_running: "An import is already running.",
+    profile_scope_denied: "That tracker or account is not assigned to your profile.",
+    unknown_source: "That service is no longer connected. Reopen Import and pick again.",
+    unknown_instance: "That tracker instance no longer exists. Refresh the page and pick another one.",
+    same_instance: "Pick a different instance to import into.",
+    unsupported_feature: "Pick what to bring in.",
+    profile_limit_reached: "No more instances can be created. Remove one in Settings first.",
+    invalid_status: "Pick one of the statuses.",
+    invalid_note_date: "Enter the dates as full dates.",
+    finished_before_started: "The finish date is before the start date.",
+    invalid_tags: "Tags can be up to 40 characters and can't contain commas.",
+    too_many_tags: `Use ${MAX_TAGS} tags or fewer.`,
+    notes_too_long: "Notes can be up to 10,000 characters.",
+    invalid_field_value: "One of your fields has a value that doesn't fit. Check it and try again.",
+    invalid_field: "Give every field a different name, and give list fields at least one choice.",
+    too_many_fields: `You can have up to ${MAX_FIELDS} fields.`,
+    invalid_note_key: "This title can't hold notes.",
   };
-  const PAGE = 60;
-  const STORE_KEY = "cw.tracker.view.v1";
+  const IMPORT_SEEN_KEY = "cw.tracker.import.seen";
+  const STORE_KEY = "cw.tracker.view.v3";
+  const NARROW = "(max-width: 1320px)";
 
   const state = {
     root: null,
     instance: "default",
     instances: [],
     counts: {},
+    health: {},
     effects: {},
-    feature: "history",
+    stats: null,
+    view: "history",
+    cleanFeature: "history",
     media: "",
+    byDay: false,
+    hideDropped: false,
+    statusMenu: false,
+    month: "",
+    months: [],
+    zoom: 0,
+    healthFilter: "attention",
     sort: "recent",
     q: "",
+    pageSize: 50,
+    offset: 0,
     items: [],
+    shows: [],
+    noteRows: [],
+    notes: { total: 0, statuses: {}, tags: [] },
+    noteFields: [],
+    noteStatus: "",
+    noteTag: "",
     total: 0,
     loading: false,
     error: "",
     request: 0,
     wired: false,
-    selecting: false,
-    selected: new Set(),
-    attention: false,
-    attentionCounts: {},
+    picked: new Set(),
+    open: new Set(),
+    progress: {},
+    ref: null,
+    title: null,
+    titleRequest: 0,
+    seasonOpen: new Set(),
     check: null,
+    imp: null,
     tmdbKey: true,
     fromLink: false,
-    scanHidden: "",
+    moving: false,
     migration: null,
   };
-  const sheet = { el: null, mode: "", item: null, busy: false, error: "", confirm: false, keys: [], changes: [], changesTotal: 0, search: null, lastFocus: null, token: 0 };
+  const sheet = { el: null, mode: "", item: null, feature: "history", busy: false, error: "", keys: [], changes: [], changesTotal: 0, changesAll: 0, changeKind: "", changeQ: "", lastFocus: null, token: 0, log: null };
 
   const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const icon = (name) => `<span class="material-symbols-rounded" aria-hidden="true">${esc(name)}</span>`;
+  const symbol = (name, cls = "") => `<span class="material-symbol${cls ? ` ${cls}` : ""}" aria-hidden="true">${esc(name)}</span>`;
   const featureOf = (id) => FEATURES.find((f) => f.id === id) || FEATURES[0];
   const pad = (n) => String(n).padStart(2, "0");
-  const plural = (n, one, many) => `${Number(n).toLocaleString()} ${n === 1 ? one : many}`;
+  const num = (n) => Number(n || 0).toLocaleString();
+  const plural = (n, one, many) => `${num(n)} ${Number(n) === 1 ? one : many}`;
   const providerName = (p) => window.CW?.ProviderMeta?.label?.(p) || String(p || "");
+  const narrow = () => !!window.matchMedia?.(NARROW)?.matches;
+  const listFeature = () => (state.view === "cleanup" ? state.cleanFeature : FEATURES.some((f) => f.id === state.view) ? state.view : "history");
+  const se = (s, e) => `S${pad(s)}E${pad(e)}`;
+  const inst = () => `provider_instance=${encodeURIComponent(state.instance)}`;
+  const timelineOn = () => state.view === "history" && state.byDay;
 
   function loadView() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
-      if (FEATURES.some((f) => f.id === saved.feature)) state.feature = saved.feature;
+      if (VIEWS.some((v) => v.id === saved.view)) state.view = saved.view;
       if (MEDIA.some((m) => m.id === saved.media)) state.media = saved.media;
-      if (SORTS.some((s) => s.id === saved.sort)) state.sort = saved.sort;
+      if (PAGE_SIZES.includes(saved.pageSize)) state.pageSize = saved.pageSize;
+      state.byDay = saved.byDay === true;
+      state.hideDropped = saved.hideDropped === true;
+      if (Number.isInteger(saved.zoom)) state.zoom = saved.zoom;
       if (typeof saved.instance === "string" && saved.instance) state.instance = saved.instance;
     } catch {}
   }
 
   function saveView() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ feature: state.feature, media: state.media, sort: state.sort, instance: state.instance }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ view: state.view, media: state.media, byDay: state.byDay, hideDropped: state.hideDropped, zoom: state.zoom, pageSize: state.pageSize, instance: state.instance }));
     } catch {}
   }
 
@@ -118,20 +203,16 @@
     const res = await fetch(url, init);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data?.ok === false) {
-      const err = new Error(data?.error || `HTTP ${res.status}`);
-      err.code = data?.error || (typeof data?.detail === "string" ? data.detail : "");
+      const detail = typeof data?.detail === "string" ? data.detail : "";
+      const err = new Error(data?.error || detail || `HTTP ${res.status}`);
+      err.code = data?.error || detail;
       throw err;
     }
     return data;
   }
 
-  function errorText(err) {
-    return ERRORS[err?.code] || "The tracker could not be loaded. Try again in a moment.";
-  }
-
-  function writeError(err) {
-    return ERRORS[err?.code] || "The change could not be saved. Try again in a moment.";
-  }
+  const errorText = (err) => ERRORS[err?.code] || "The tracker could not be loaded. Try again in a moment.";
+  const writeError = (err) => ERRORS[err?.code] || err?.message || "The change could not be saved. Try again in a moment.";
 
   function dateText(value) {
     if (!value) return "";
@@ -146,6 +227,32 @@
     return d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   }
 
+  function timeText(value) {
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+
+  function dayLabel(value) {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "Unknown date";
+    const today = new Date();
+    const diff = Math.round((new Date(today.getFullYear(), today.getMonth(), today.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 86400000);
+    if (diff === 0) return "Today";
+    if (diff === 1) return "Yesterday";
+    return d.toLocaleDateString(undefined, { weekday: "long", day: "numeric", month: "long", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+  }
+
+  function agoText(value) {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "";
+    const mins = Math.round((Date.now() - d.getTime()) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return `${mins} min ago`;
+    if (mins < 60 * 24) return `${Math.round(mins / 60)} h ago`;
+    if (mins < 60 * 24 * 14) return `${Math.round(mins / 1440)} d ago`;
+    return dateText(value);
+  }
+
   function localInput(value) {
     const d = new Date(value || "");
     if (!value || Number.isNaN(d.getTime())) return "";
@@ -157,7 +264,7 @@
     if (!art?.tmdb) return "";
     const title = item.series_title || item.title;
     const year = item.type === "movie" ? item.year : item.series_year || item.year;
-    return `/art/tmdb/${art.kind}/${encodeURIComponent(art.tmdb)}?size=${size}${title ? `&title=${encodeURIComponent(title)}` : ""}${year ? `&year=${encodeURIComponent(year)}` : ""}`;
+    return `/art/tmdb/${art.kind}/${encodeURIComponent(art.tmdb)}?fallback=2&size=${size}${title ? `&title=${encodeURIComponent(title)}` : ""}${year ? `&year=${encodeURIComponent(year)}` : ""}`;
   }
 
   const isChild = (item) => item?.type === "episode" || item?.type === "season";
@@ -166,19 +273,79 @@
     return isChild(item) ? item.series_title || item.title || item.key : item.title || item.series_title || item.key;
   }
 
-  function cardSub(item) {
-    const parts = [];
-    if (item.type === "episode" && item.season != null && item.episode != null) parts.push(`S${pad(item.season)}E${pad(item.episode)}`);
-    else if (item.type === "season" && item.season != null) parts.push(`Season ${item.season}`);
-    const year = isChild(item) ? item.series_year : item.year;
-    if (year) parts.push(String(year));
-    return parts.join(" · ");
+  function episodeLabel(item) {
+    if (item.type === "episode" && item.season != null && item.episode != null) return `S${pad(item.season)} · E${pad(item.episode)}`;
+    if (item.type === "season" && item.season != null) return `Season ${item.season}`;
+    return "";
   }
 
-  function typeIcon(item) {
-    if (item?.type === "movie") return "movie";
-    if (item?.type === "episode") return "live_tv";
-    return "tv";
+  function episodeCode(item) {
+    if (item.type === "episode" && item.season != null && item.episode != null) return se(item.season, item.episode);
+    return episodeLabel(item);
+  }
+
+  function cardSub(item) {
+    const year = isChild(item) ? item.series_year : item.year;
+    return [episodeLabel(item), year ? String(year) : ""].filter(Boolean).join(" · ");
+  }
+
+  function typeMeta(item) {
+    const t = String(item?.type || "").toLowerCase();
+    if (t === "movie") return { label: "Movie", icon: "movie" };
+    if (t === "episode") return { label: "Episode", icon: "play_circle" };
+    if (t === "season") return { label: "Season", icon: "layers" };
+    if (t === "anime") return { label: "Anime", icon: "theater_comedy" };
+    return { label: "Show", icon: "tv" };
+  }
+
+  function typePill(item) {
+    const t = typeMeta(item);
+    return `<span class="cw-extra-display cw-type-display type-${esc(String(item?.type || "show").toLowerCase())}"><span class="cw-extra-display-label cw-extra-display-value">${esc(t.label)}</span>${symbol(t.icon, "cw-extra-display-icon")}</span>`;
+  }
+
+  const statusOf = (id) => STATUSES.find((s) => s.id === id) || null;
+
+  function statusPill(id) {
+    const s = statusOf(id);
+    return s ? `<span class="trk-status" data-status="${esc(s.id)}">${symbol(s.icon)}<span>${esc(s.label)}</span></span>` : "";
+  }
+
+  function tagChips(tags, limit = MAX_TAGS) {
+    const list = Array.isArray(tags) ? tags : [];
+    if (!list.length) return "";
+    const more = list.length > limit ? `<span class="trk-label is-more">+${esc(list.length - limit)}</span>` : "";
+    return `<span class="trk-tags">${list.slice(0, limit).map((t) => `<span class="trk-label">${esc(t)}</span>`).join("")}${more}</span>`;
+  }
+
+  function dayText(value) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ""));
+    if (!m) return dateText(value);
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  }
+
+  function today() {
+    const d = new Date();
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  function fieldText(field, value) {
+    if (field.type === "bool") return value ? "Yes" : "No";
+    if (field.type === "date") return dayText(value);
+    if (field.type === "number") return Number(value).toLocaleString();
+    return String(value);
+  }
+
+  function fieldOk(field, value) {
+    if (value === null || value === undefined || value === "") return false;
+    if (field.type === "choice") return (field.choices || []).includes(value);
+    if (field.type === "number") return Number.isFinite(Number(value));
+    if (field.type === "bool") return typeof value === "boolean";
+    return true;
+  }
+
+  function showKeyOf(item) {
+    const tmdb = item?.show_ids?.tmdb;
+    return tmdb ? `tmdb:${tmdb}` : `title:${String(item?.series_title || "").toLowerCase()}`;
   }
 
   function checkedText(check) {
@@ -190,260 +357,941 @@
 
   function checkInfo(item) {
     const c = item?.check;
-    if (!c) return null;
+    if (!c) return { state: "unchecked", icon: "help", title: "Not checked yet", text: "Run Check all in Clean up to compare this record with TMDB.", fix: [] };
     const tm = c.title ? `"${c.title}"${c.year ? ` (${c.year})` : ""}` : "this title";
     const what = c.kind === "movie" ? "movie" : "show";
-    const spot = c.episode != null ? `S${pad(c.season)}E${pad(c.episode)}` : c.season != null ? `season ${c.season}` : "this episode";
+    const spot = c.episode != null ? se(c.season, c.episode) : c.season != null ? `season ${c.season}` : "this episode";
     switch (c.code) {
       case "no_tmdb":
-        return { icon: "link_off", title: "No TMDB ID", text: `Add ${isChild(item) ? "the show's" : "a"} TMDB ID under Identity so covers and checks work.`, fix: ["find"] };
+        return { state: "attention", icon: "link_off", title: "No TMDB ID", text: `Without ${isChild(item) ? "the show's" : "a"} TMDB ID there is no cover and nothing to check against.`, fix: ["map"] };
       case "not_found":
-        return { icon: "search_off", title: "TMDB doesn't know this ID", text: `TMDB has no ${what} with ID ${c.tmdb}. Find the right title under Identity.`, fix: ["find"] };
+        return { state: "attention", icon: "search_off", title: "TMDB doesn't know this ID", text: `TMDB has no ${what} with ID ${c.tmdb}.`, fix: ["map"] };
       case "mismatch":
-        return { icon: "compare_arrows", title: "Looks like a different title", text: `TMDB ${what} ${c.tmdb} is ${tm}. Fix the IDs if this record is something else, or use the TMDB title if only the name is off.`, fix: ["find", "tmdb"] };
+        return { state: "attention", icon: "compare_arrows", title: "Looks like a different title", text: `TMDB ${what} ${c.tmdb} is ${tm}. Fix the match if this record is something else, or take the TMDB title if only the name is off.`, fix: ["map", "tmdb"] };
       case "incomplete":
-        return { icon: "edit_note", title: "Title or year missing", text: `TMDB has ${tm}.`, fix: ["tmdb"] };
+        return { state: "attention", icon: "edit_note", title: "Title or year missing", text: `TMDB has ${tm}.`, fix: ["tmdb"] };
       case "episode_missing":
-        return { icon: "playlist_remove", title: "Episode not on TMDB", text: `TMDB has no ${spot} for this show. Check the show IDs or the episode number.`, fix: ["find"] };
+        return { state: "attention", icon: "playlist_remove", title: "Episode not on TMDB", text: `TMDB has no ${spot} for this show. Check the match or the episode number.`, fix: ["map"] };
       case "ok":
-        return { ok: true, icon: "verified", title: "Matches TMDB", text: "", fix: [] };
+        return { state: "ok", icon: "verified", title: "Matches TMDB", text: "", fix: [] };
       default:
-        return null;
+        return { state: "ok", icon: "do_not_disturb_on", title: "Not checked", text: "TMDB has nothing to compare for this type.", fix: [] };
     }
   }
 
-  function renderCard(item, index) {
-    const title = cardTitle(item);
-    const sub = cardSub(item);
-    const when = dateText(item.date);
-    const url = artUrl(item);
-    const progress = typeof item.progress_percent === "number" ? Math.max(0, Math.min(100, item.progress_percent)) : null;
-    const rating = typeof item.rating === "number" ? item.rating : null;
-    const label = [title, sub, when].filter(Boolean).join(", ");
-    const picked = state.selected.has(item.key);
-    const action = state.selecting ? (picked ? `Deselect ${label}` : `Select ${label}`) : `Edit ${label}`;
-    return `
-      <article class="trk-card${picked ? " is-selected" : ""}" title="${esc(label)}">
-        <button type="button" class="trk-cover${url ? "" : " is-empty"}" data-trk-open="${index}" aria-label="${esc(action)}"${state.selecting ? ` aria-pressed="${picked}"` : ""}>
-          <span class="trk-cover-fallback">${icon(typeIcon(item))}</span>
-          ${url ? `<img class="trk-img" src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}
-          <span class="trk-type" title="${esc(item.type || "item")}">${icon(typeIcon(item))}</span>
-          ${(() => { const info = checkInfo(item); return info && !info.ok ? `<span class="trk-flag" title="${esc(info.title)}" aria-label="${esc(info.title)}">${icon("report")}</span>` : ""; })()}
-          ${state.selecting ? `<span class="trk-check">${icon(picked ? "check_circle" : "radio_button_unchecked")}</span>` : `<span class="trk-edit">${icon("edit")}</span>`}
-          ${rating != null ? `<span class="trk-rating" aria-label="Rated ${esc(rating)}">${icon("star")}<b>${esc(rating)}</b></span>` : ""}
-          ${progress != null ? `<span class="trk-progress" aria-label="${esc(Math.round(progress))}% watched"><i style="width:${progress}%"></i></span>` : ""}
-        </button>
-        <div class="trk-meta">
-          <div class="trk-title">${esc(title)}</div>
-          <div class="trk-sub">${sub ? `<span>${esc(sub)}</span>` : ""}${when ? `<span class="trk-when">${icon(featureOf(state.feature).icon)}${esc(when)}</span>` : ""}</div>
-        </div>
-      </article>`;
+  function healthIcon(item, always = false) {
+    const info = checkInfo(item);
+    if (!always && info.state !== "attention") return "";
+    const label = [info.title, info.text, checkedText(item.check)].filter(Boolean).join(" · ");
+    return `<span class="trk-health is-${info.state}" title="${esc(label)}" aria-label="${esc(info.title)}">${symbol(info.state === "attention" ? "report" : info.state === "ok" ? "verified" : "help")}</span>`;
   }
 
-  function renderSummary() {
-    const total = FEATURES.reduce((sum, f) => sum + Number(state.counts[f.id] || 0), 0);
+  function healthOf(feature = listFeature()) {
+    return state.health?.[feature] || { ok: 0, attention: 0, unchecked: Number(state.counts[feature] || 0) };
+  }
+
+  function attentionTotal() {
+    return FEATURES.reduce((sum, f) => sum + Number(state.health?.[f.id]?.attention || 0), 0);
+  }
+
+  function renderHero() {
+    const s = state.stats || {};
+    const hours = s.timed ? num(Math.round((s.minutes || 0) / 60)) : "–";
     return `
-      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(total.toLocaleString())}</strong><span>records</span></div>
+      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.week))}</strong><span>last 7 days</span></div>
+      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.month))}</strong><span>last 30 days</span></div>
+      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.year))}</strong><span>this year</span></div>
+      <div class="cw-editor-hero-seg cw-editor-hero-count" title="${esc(s.timed ? `Runtime known for ${num(s.timed)} of ${num(s.total)} plays` : "Run Check all in Clean up to learn runtimes")}"><strong>${esc(hours)}</strong><span>hours</span></div>
+      <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.streak))}</strong><span>day streak</span></div>
       <button class="cw-editor-refresh" type="button" data-trk-action="refresh" title="Refresh tracker" aria-label="Refresh tracker">${icon("refresh")}</button>`;
   }
 
-  function renderToolbar() {
-    const instances = state.instances.length > 1
-      ? `<label class="trk-instance" title="Tracker instance">${icon("person")}<select class="cw-select" data-trk-input="instance" aria-label="Tracker instance">${state.instances.map((i) => `<option value="${esc(i.id)}"${i.id === state.instance ? " selected" : ""}>${esc(i.label)}</option>`).join("")}</select></label>`
-      : "";
-    const features = FEATURES.map((f) => {
-      const count = Number((state.attention ? state.attentionCounts : state.counts)[f.id] || 0);
-      const active = f.id === state.feature;
-      return `<button type="button" class="cw-btn trk-feature" data-trk-feature="${f.id}" aria-pressed="${active}" title="${esc(f.label)}" aria-label="${esc(`${f.label}, ${count} records`)}">${icon(f.icon)}<span class="trk-feature-label">${esc(f.label)}</span><b class="trk-count">${esc(count.toLocaleString())}</b></button>`;
+  function viewCount(view) {
+    if (view === "cleanup") return attentionTotal();
+    if (view === "titles") return state.notes.total || null;
+    if (view === "shows" || view === "history") return null;
+    return state.counts[view] ?? null;
+  }
+
+  function statusText() {
+    if (state.loading && !state.items.length && !state.shows.length && !state.noteRows.length) return "Loading...";
+    if (state.view === "shows") return plural(state.total, "show", "shows");
+    if (state.view === "titles") return plural(state.total, "title", "titles");
+    if (state.view === "history") return plural(state.total, "play", "plays");
+    return plural(state.total, "record", "records");
+  }
+
+  function chip(attrs, label, { active = false, iconName = "", count = 0, title = "" } = {}) {
+    return `<button type="button" class="cw-filter-chip${active ? " active" : ""}" ${attrs} aria-pressed="${active}"${title ? ` title="${esc(title)}"` : ""}>${iconName ? symbol(iconName, "cw-type-icon") : ""}<span>${esc(label)}</span>${count ? `<b class="trk-chip-count">${esc(num(count))}</b>` : ""}</button>`;
+  }
+
+  function renderTabs() {
+    return VIEWS.map((v) => {
+      const count = viewCount(v.id);
+      const active = state.view === v.id;
+      const warn = v.id === "cleanup" && count;
+      const badge = count ? `<small class="trk-tab-count"${warn ? ` title="${esc(plural(count, "record needs", "records need"))} attention"` : ""}>${warn ? '<i aria-hidden="true"></i>' : ""}${esc(num(count))}</small>` : "";
+      return `<button type="button" role="tab" class="trk-tab${active ? " active" : ""}${warn ? " is-warn" : ""}" data-trk-view="${v.id}" aria-selected="${active}" tabindex="${active ? 0 : -1}">${symbol(v.icon)}<span>${esc(v.label)}</span>${badge}</button>`;
     }).join("");
-    const media = MEDIA.map((m) => `<button type="button" class="cw-btn trk-icon-btn" data-trk-media="${m.id}" aria-pressed="${m.id === state.media}" title="${esc(m.label)}" aria-label="${esc(m.label)}">${icon(m.icon)}</button>`).join("");
-    const sorts = SORTS.map((s) => `<option value="${s.id}"${s.id === state.sort ? " selected" : ""}>${esc(s.label)}</option>`).join("");
+  }
+
+  function renderFilters() {
+    if (state.view === "cleanup") {
+      const lists = FEATURES.map((f) => `<option value="${f.id}"${f.id === state.cleanFeature ? " selected" : ""}>${esc(f.label)} · ${esc(num(state.health?.[f.id]?.attention))}</option>`).join("");
+      const health = HEALTH.map((h) => chip(`data-trk-health="${h.id}"`, `${h.label} · ${num(healthOf()[h.id])}`, { active: state.healthFilter === h.id, iconName: h.icon })).join("");
+      return `<select class="cw-select trk-clean-list" data-trk-input="clean-feature" aria-label="List to clean up">${lists}</select><div class="trk-seg" role="group" aria-label="TMDB health">${health}</div>`;
+    }
+    if (state.view === "shows") {
+      return chip('data-trk-action="hide-dropped"', "Hide dropped", { active: state.hideDropped, iconName: "do_not_disturb_on", title: "Leave out shows you dropped" });
+    }
+    if (state.view === "titles") {
+      const counts = state.notes.statuses || {};
+      const statuses = [{ id: "", label: "All", icon: "", count: state.notes.total }, ...STATUSES.map((s) => ({ ...s, count: counts[s.id] }))]
+        .map((s) => chip(`data-trk-note-filter="${s.id}"`, s.label, { active: state.noteStatus === s.id, count: s.count }))
+        .join("");
+      const tags = state.notes.tags || [];
+      const picked = state.noteTag.toLowerCase();
+      const tagSelect = tags.length || state.noteTag
+        ? `<select class="cw-select trk-tag-filter" data-trk-input="note-tag" aria-label="Filter by tag"><option value="">Every tag</option>${tags.map((t) => `<option value="${esc(t.tag)}"${t.tag.toLowerCase() === picked ? " selected" : ""}>${esc(t.tag)} · ${esc(num(t.count))}</option>`).join("")}</select>`
+        : "";
+      return `<div class="trk-seg" role="group" aria-label="Status">${statuses}</div>${tagSelect}`;
+    }
+    let out = `<div class="trk-seg" role="group" aria-label="Type">${MEDIA.map((m) => chip(`data-trk-media="${m.id}"`, m.label, { active: state.media === m.id, iconName: m.icon })).join("")}</div>`;
+    if (state.view === "history") out += chip('data-trk-action="by-day"', "By day", { active: state.byDay, iconName: "calendar_view_day", title: "Group plays by day and show the timeline" });
+    if (timelineOn() && state.month) {
+      out += `<button type="button" class="cw-filter-chip active" data-trk-action="month-clear" title="Back to the latest plays">${symbol("event", "cw-type-icon")}<span>${esc(monthName(state.month))} and older</span>${symbol("close", "cw-type-icon")}</button>`;
+    }
+    return out;
+  }
+
+  function renderControls() {
+    const placeholder = state.view === "shows" ? "Filter shows..." : state.view === "titles" ? "Filter my titles..." : "Filter by title...";
+    const picked = state.picked.size;
+    const middle = picked
+      ? `<div class="cw-bulk trk-bulk" role="group" aria-label="Selection">
+          <span class="cw-bulk-count">${esc(plural(picked, "selected", "selected"))}</span>
+          <button type="button" class="cw-btn danger" data-trk-action="delete-picked">${icon("delete")}<span>Delete</span></button>
+          <button type="button" class="cw-btn" data-trk-action="clear-picked">Clear</button>
+        </div>`
+      : `<div class="trk-filters" role="group" aria-label="Filter">${renderFilters()}</div>`;
     return `
-      ${instances}
-      <div class="trk-features" role="group" aria-label="Tracker feature">${features}</div>
-      <div class="trk-filters">
-        <label class="trk-search">${icon("search")}<input type="search" class="cw-input" data-trk-input="q" value="${esc(state.q)}" placeholder="Search titles" aria-label="Search titles"></label>
-        <div class="trk-media" role="group" aria-label="Media type">${media}</div>
-        <label class="trk-sort" title="Sort">${icon("sort")}<select class="cw-select" data-trk-input="sort" aria-label="Sort">${sorts}</select></label>
-        <button type="button" class="cw-btn trk-icon-btn" data-trk-action="select" aria-pressed="${state.selecting}" title="Select records" aria-label="Select records">${icon("checklist")}</button>
-        <button type="button" class="cw-btn trk-icon-btn" data-trk-action="changes" title="Change history" aria-label="Change history">${icon("manage_history")}</button>
-        ${renderCheckButtons()}
+      <nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav>
+      <div class="trk-toolbar">
+        <input class="cw-input trk-search" data-trk-input="q" value="${esc(state.q)}" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}">
+        ${middle}
+        <div class="trk-actions">
+          <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="changes" title="Changes: everything you logged, edited or deleted" aria-label="Changes">${icon("manage_history")}</button>
+          <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="import" title="Import from a connected service" aria-label="Import">${icon("download")}</button>
+          <button type="button" class="cw-btn primary trk-log-btn" data-trk-action="log" aria-label="Log a watch">${icon("add_circle")}<span>Log a watch</span></button>
+        </div>
       </div>`;
   }
 
-  function renderSelectBar() {
-    if (!state.selecting) return "";
-    const n = state.selected.size;
-    const all = state.items.length > 0 && state.items.every((i) => state.selected.has(i.key));
-    return `
-      <div class="trk-selbar" role="region" aria-label="Selection">
-        <span class="trk-selcount">${esc(plural(n, "record", "records"))} selected</span>
-        <button type="button" class="cw-btn" data-trk-action="select-all"${state.items.length ? "" : " disabled"}>${icon(all ? "deselect" : "select_all")}<span>${all ? "Clear" : "Select shown"}</span></button>
-        <button type="button" class="cw-btn danger" data-trk-action="delete-selected"${n ? "" : " disabled"}>${icon("delete")}<span>Delete</span></button>
-        <button type="button" class="cw-btn" data-trk-action="select">${icon("close")}<span>Done</span></button>
-      </div>`;
-  }
-
-  function renderCheckButtons() {
-    const flagged = Object.values(state.attentionCounts || {}).reduce((sum, n) => sum + Number(n || 0), 0);
-    const here = Number(state.attentionCounts?.[state.feature] || 0);
-    const running = state.check?.state === "running";
-    const checkTitle = !state.tmdbKey ? "Add a TMDB API key in Settings to check metadata" : running ? "A metadata check is running" : "Check metadata with TMDB";
-    const attention = flagged || state.attention
-      ? `<button type="button" class="cw-btn trk-icon-btn trk-attn" data-trk-action="attention" aria-pressed="${state.attention}" title="Needs attention" aria-label="${esc(`Needs attention, ${here} records`)}">${icon("report")}<b class="trk-attn-count">${esc(here.toLocaleString())}</b></button>`
+  function pager() {
+    const shown = state.view === "shows" ? state.shows.length : state.view === "titles" ? state.noteRows.length : state.items.length;
+    if (!shown) return "";
+    const sizes = PAGE_SIZES.map((n) => `<option value="${n}"${n === state.pageSize ? " selected" : ""}>${n}</option>`).join("");
+    const start = state.offset + 1;
+    const end = state.offset + shown;
+    const nav = state.total > state.pageSize
+      ? `<div class="trk-pager-nav">
+          <button type="button" class="cw-btn" data-trk-action="prev"${state.offset > 0 && !state.loading ? "" : " disabled"}>Previous</button>
+          <span class="cw-page-info">${esc(num(start))}–${esc(num(end))} of ${esc(num(state.total))}</span>
+          <button type="button" class="cw-btn" data-trk-action="next"${end < state.total && !state.loading ? "" : " disabled"}>Next</button>
+        </div>`
       : "";
-    return `${attention}<button type="button" class="cw-btn trk-icon-btn" data-trk-action="check" title="${esc(checkTitle)}" aria-label="${esc(checkTitle)}"${!state.tmdbKey || running ? " disabled" : ""}>${icon("fact_check")}</button>`;
+    return `<div class="cw-pager trk-pager">
+        <span class="cw-status-text">${esc(statusText())}</span>
+        <label class="cw-page-size-control"><span>Rows</span><select class="cw-select" data-trk-input="size" aria-label="Rows per page">${sizes}</select></label>
+        ${nav}
+      </div>`;
   }
 
-  function renderScan() {
-    const job = state.check;
-    if (!job || job.state === "idle" || (job.id && state.scanHidden === job.id && job.state !== "running")) return "";
-    const total = Number(job.total || 0);
-    const done = Number(job.done || 0);
-    const attention = Number(job.attention || 0);
+  function emptyState(text, symbolName = "table_rows") {
+    return `<div class="cw-empty" role="status">${icon(symbolName)}<div class="cw-empty-text">${esc(text)}</div></div>`;
+  }
+
+  function tableWrap(head, body, cls, cols) {
+    const colgroup = `<colgroup>${cols.map((c) => `<col class="trk-c-${c}">`).join("")}</colgroup>`;
+    return `<div class="cw-table-wrap cw-page-table"><div class="cw-table-scroll"><table class="cw-table trk-table ${cls}">${colgroup}<thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div></div>`;
+  }
+
+  const th = (label, cls = "") => `<th class="${cls}"><span class="cw-th-inner"><span class="cw-th-label">${esc(label)}</span></span></th>`;
+
+  function timelineGroups() {
+    const days = [];
+    for (const item of state.items) {
+      const day = dayLabel(item.date);
+      let bucket = days[days.length - 1];
+      if (!bucket || bucket.label !== day) {
+        bucket = { label: day, plays: 0, rows: [], shows: new Map() };
+        days.push(bucket);
+      }
+      bucket.plays += 1;
+      if (isChild(item)) {
+        const key = showKeyOf(item);
+        const group = bucket.shows.get(key);
+        if (group) {
+          group.items.push(item);
+          continue;
+        }
+        const fresh = { kind: "show", key, items: [item] };
+        bucket.shows.set(key, fresh);
+        bucket.rows.push(fresh);
+      } else {
+        bucket.rows.push({ kind: "movie", key: item.key, items: [item] });
+      }
+    }
+    return days;
+  }
+
+  function episodeSummary(items) {
+    const eps = items.filter((i) => i.season != null && i.episode != null).sort((a, b) => a.season - b.season || a.episode - b.episode);
+    if (!eps.length) return plural(items.length, "episode", "episodes");
+    if (eps.length === 1) return se(eps[0].season, eps[0].episode);
+    const seasons = new Set(eps.map((e) => e.season));
+    if (seasons.size === 1) {
+      const nums = eps.map((e) => e.episode);
+      const contiguous = nums.every((n, i) => i === 0 || n === nums[i - 1] + 1);
+      return contiguous ? `${se(eps[0].season, nums[0])}–E${pad(nums[nums.length - 1])}` : `S${pad(eps[0].season)} · ${plural(eps.length, "episode", "episodes")}`;
+    }
+    return plural(eps.length, "episode", "episodes");
+  }
+
+  function renderTimeline() {
+    if (!state.items.length) {
+      return emptyState(state.loading ? "Loading your history..." : state.q || state.media ? "No plays match these filters." : "Nothing watched yet. Use Log a watch to add your first play.", state.loading ? "hourglass_empty" : "history");
+    }
+    const body = timelineGroups().map((day) => {
+      const header = `<tr class="trk-day"><td colspan="4"><span>${esc(day.label)}</span><small>${esc(plural(day.plays, "play", "plays"))}</small></td></tr>`;
+      const rows = day.rows.map((group) => {
+        const lead = group.items[0];
+        const many = group.items.length > 1;
+        const selected = state.ref && (group.kind === "show" ? state.ref.show === group.key : state.ref.key === lead.key);
+        const ref = group.kind === "show" ? `data-trk-ref-show="${esc(group.key)}"` : `data-trk-ref-key="${esc(lead.key)}"`;
+        const flagged = group.items.find((i) => checkInfo(i).state === "attention");
+        const inline = group.kind === "show"
+          ? `<span class="trk-ep">${esc(episodeSummary(group.items))}</span>${many ? `<span class="trk-inline-sub">${esc(plural(group.items.length, "episode", "episodes"))}</span>` : ""}`
+          : lead.year ? `<span class="trk-inline-sub">${esc(lead.year)}</span>` : "";
+        const openKey = `${day.label}|${group.key}`;
+        const expanded = many && state.open.has(openKey);
+        const toggle = many ? `<button type="button" class="trk-fold" data-trk-fold="${esc(openKey)}" aria-expanded="${expanded}" aria-label="${expanded ? "Hide" : "Show"} episodes">${symbol(expanded ? "expand_less" : "expand_more")}</button>` : "";
+        const row = `<tr class="trk-play${selected ? " is-selected" : ""}" ${ref} tabindex="0" aria-selected="${!!selected}">
+            <td class="trk-col-time">${esc(timeText(lead.date))}</td>
+            <td class="cw-col-type">${typePill(group.kind === "show" ? { type: "show" } : lead)}</td>
+            <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(cardTitle(lead))}</strong>${inline}${toggle}</div></div></td>
+            <td class="trk-col-health">${flagged ? healthIcon(flagged) : ""}</td>
+          </tr>`;
+        const children = expanded ? group.items.map((i) => `<tr class="trk-play trk-child" data-trk-ref-key="${esc(i.key)}" tabindex="0"><td class="trk-col-time">${esc(timeText(i.date))}</td><td></td><td class="cw-col-title"><span class="trk-child-title">${esc(episodeLabel(i) || cardTitle(i))}</span></td><td class="trk-col-health">${healthIcon(i)}</td></tr>`).join("") : "";
+        return row + children;
+      }).join("");
+      return header + rows;
+    }).join("");
+    const more = state.items.length < state.total
+      ? `<div class="cw-pager"><button type="button" class="cw-btn" data-trk-action="more"${state.loading ? " disabled" : ""}>${icon("expand_more")}<span>Show older plays</span></button><span class="cw-page-info">${esc(num(state.items.length))} of ${esc(num(state.total))}</span></div>`
+      : "";
+    return tableWrap(`${th("Time", "trk-col-time")}${th("Type", "cw-col-type")}${th("Title", "cw-col-title")}${th("", "trk-col-health")}`, body, "trk-timeline", ["time", "type", "title", "health"]) + more;
+  }
+
+  function progressCell(show) {
+    const tmdb = show.art?.tmdb;
+    const p = tmdb ? state.progress[tmdb] : null;
+    if (!p || !p.available) return `<span class="trk-sub">${tmdb && !p ? "…" : esc(plural(show.episodes, "episode", "episodes"))}</span>`;
+    const pct = p.total ? Math.min(100, Math.round((p.watched / p.total) * 100)) : 0;
+    return `<span class="trk-progress"><i style="width:${pct}%"></i></span><span class="trk-progress-text">${esc(num(p.watched))}/${esc(num(p.total))}</span>`;
+  }
+
+  function nextCell(show) {
+    if (show.status === "dropped") return `<span class="trk-sub">Dropped</span>`;
+    const p = show.art?.tmdb ? state.progress[show.art.tmdb] : null;
+    if (!p || !p.available) return "";
+    if (p.next) return `<span class="trk-next">${esc(se(p.next.season, p.next.episode))}</span>`;
+    if (p.completed) return `<span class="trk-sub">Completed</span>`;
+    if (p.next_air) return `<span class="trk-sub">Airs ${esc(dateText(p.next_air.date))}</span>`;
+    return `<span class="trk-sub">Up to date</span>`;
+  }
+
+  function renderShows() {
+    if (!state.shows.length) return emptyState(state.loading ? "Loading shows..." : state.q ? "No shows match this filter." : "No episodes in your history yet.", state.loading ? "hourglass_empty" : "tv");
+    const body = state.shows.map((show) => {
+      const selected = state.ref?.show === show.key;
+      const last = show.last_season != null ? `last ${se(show.last_season, show.last_episode)}` : "";
+      return `<tr class="trk-play${selected ? " is-selected" : ""}" data-trk-ref-show="${esc(show.key)}" tabindex="0" aria-selected="${selected}">
+          <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(show.title || show.key)}</strong>${statusPill(show.status)}</div><span class="trk-sub">${esc([show.year, last].filter(Boolean).join(" · "))}</span></div></td>
+          <td class="trk-col-progress">${progressCell(show)}</td>
+          <td class="trk-col-next">${nextCell(show)}</td>
+          <td class="trk-col-date">${esc(agoText(show.last_watched))}</td>
+        </tr>`;
+    }).join("");
+    return tableWrap(`${th("Show", "cw-col-title")}${th("Progress", "trk-col-progress")}${th("Next up", "trk-col-next")}${th("Last watched", "trk-col-date")}`, body, "trk-shows", ["title", "progress", "next", "date"]) + pager();
+  }
+
+  function renderTitles() {
+    if (!state.noteRows.length) {
+      const filtered = state.q || state.noteStatus || state.noteTag;
+      const text = state.loading ? "Loading..." : filtered
+        ? "No titles match these filters."
+        : "Nothing here yet. Open any title and add a status, dates, tags or notes. They stay in CrossWatch and never sync.";
+      return emptyState(text, state.loading ? "hourglass_empty" : "bookmarks");
+    }
+    const body = state.noteRows.map((n) => {
+      const selected = state.ref?.note === n.key;
+      const dates = [n.started ? `Started ${dayText(n.started)}` : "", n.finished ? `Finished ${dayText(n.finished)}` : ""].filter(Boolean).join(" · ");
+      return `<tr class="trk-play${selected ? " is-selected" : ""}" data-trk-ref-note="${esc(n.key)}" tabindex="0" aria-selected="${selected}">
+          <td class="cw-col-type">${typePill({ type: n.type })}</td>
+          <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(n.title || n.key)}</strong>${n.year ? `<span class="trk-inline-sub">${esc(n.year)}</span>` : ""}</div>${dates ? `<span class="trk-sub">${esc(dates)}</span>` : ""}${tagChips(n.tags, 5)}</div></td>
+          <td class="trk-col-status">${statusPill(n.status)}</td>
+          <td class="trk-col-date">${esc(agoText(n.updated))}</td>
+        </tr>`;
+    }).join("");
+    return tableWrap(`${th("Type", "cw-col-type")}${th("Title", "cw-col-title")}${th("Status", "trk-col-status")}${th("Updated", "trk-col-date")}`, body, "trk-titles", ["type", "title", "status", "date"]) + pager();
+  }
+
+  function extraColumn(feature) {
+    if (feature === "ratings") return "Rating";
+    if (feature === "progress") return "Progress";
+    return "";
+  }
+
+  function extraCell(item, feature) {
+    if (feature === "ratings") return item.rating != null ? `<span class="trk-rating">${symbol("star")}${esc(item.rating)}</span>` : "";
+    if (feature === "progress") {
+      const pct = typeof item.progress_percent === "number" ? Math.max(0, Math.min(100, item.progress_percent)) : null;
+      return pct != null ? `<span class="trk-progress"><i style="width:${pct}%"></i></span><span class="trk-progress-text">${esc(Math.round(pct))}%</span>` : "";
+    }
+    return "";
+  }
+
+  function renderList() {
+    const feature = listFeature();
+    const f = featureOf(feature);
+    const clean = state.view === "cleanup";
+    if (!state.items.length) {
+      const text = state.loading ? "Loading..." : clean ? (state.healthFilter === "attention" ? `Nothing in ${f.label.toLowerCase()} needs attention.` : "No records match this filter.") : state.q || state.media ? "No records match these filters." : `Your ${f.label.toLowerCase()} is empty.`;
+      return emptyState(text, state.loading ? "hourglass_empty" : clean ? "verified" : f.icon);
+    }
+    const allPicked = state.items.every((i) => state.picked.has(i.key));
+    const body = state.items.map((item, index) => {
+      const ep = episodeCode(item);
+      const year = isChild(item) ? item.series_year : item.year;
+      const selected = state.ref?.key === item.key && state.ref?.feature === feature;
+      return `<tr class="trk-play${selected ? " is-selected" : ""}" data-trk-ref-key="${esc(item.key)}" tabindex="0" aria-selected="${selected}">
+          <td class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(cardTitle(item))}"></td>
+          <td class="cw-col-type">${typePill(item)}</td>
+          <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(cardTitle(item))}</strong>${ep ? `<span class="trk-ep">${esc(ep)}</span>` : ""}</div></div></td>
+          <td class="cw-col-year"><span class="cw-merged-year">${esc(year || "")}</span></td>
+          ${f.date ? `<td class="trk-col-date">${esc(feature === "history" ? whenText(item.date) : dateText(item.date))}</td>` : ""}
+          ${extraColumn(feature) ? `<td class="trk-col-extra">${extraCell(item, feature)}</td>` : ""}
+          <td class="trk-col-health"><span class="trk-row-tools"><button type="button" class="trk-icon trk-row-edit" data-trk-row-edit="${index}" title="Edit" aria-label="Edit ${esc(cardTitle(item))}">${icon("edit")}</button>${healthIcon(item, clean)}</span></td>
+        </tr>`;
+    }).join("");
+    const head = `<th class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="page"${allPicked ? " checked" : ""} aria-label="Select this page"></th>`
+      + th("Type", "cw-col-type") + th("Title", "cw-col-title") + th("Year", "cw-col-year")
+      + (f.date ? th(f.date, "trk-col-date") : "") + (extraColumn(feature) ? th(extraColumn(feature), "trk-col-extra") : "")
+      + th(clean ? "TMDB" : "", "trk-col-health");
+    const cols = ["pick", "type", "title", "year", ...(f.date ? ["date"] : []), ...(extraColumn(feature) ? ["extra"] : []), "health"];
+    return tableWrap(head, body, "trk-list", cols) + pager();
+  }
+
+  function importSource(job) {
+    return `${job.source_label || providerName(job.source)}${job.source_instance && job.source_instance !== "default" ? ` (${job.source_instance_label || job.source_instance})` : ""}`;
+  }
+
+  function importSeen() {
+    try {
+      return localStorage.getItem(IMPORT_SEEN_KEY) || "";
+    } catch {
+      return "";
+    }
+  }
+
+  function renderImportBanner() {
+    const job = state.imp;
+    if (!job?.id || job.state === "idle" || (job.state !== "running" && importSeen() === job.id)) return "";
+    const from = importSource(job);
     if (job.state === "running") {
-      const pct = total ? Math.round((done / total) * 100) : 0;
-      return `<div class="trk-scan cw-page-panel is-running" role="status">${icon("sync")}<span class="trk-scan-copy"><b>Checking metadata with TMDB</b><small>${esc(done.toLocaleString())} of ${esc(total.toLocaleString())} records · you can leave this page</small></span><span class="trk-scan-bar" aria-hidden="true"><i style="width:${pct}%"></i></span><button type="button" class="cw-btn" data-trk-action="check-cancel">${icon("stop_circle")}<span>Stop</span></button></div>`;
+      const writing = job.phase === "writing" && job.total;
+      const step = Number(job.feature_count) > 1 ? ` · list ${num(job.feature_index)} of ${num(job.feature_count)}` : "";
+      const text = job.cancel_requested ? "Stopping after the current batch..."
+        : writing ? `Writing ${num(job.done)} of ${num(job.total)}${step}`
+        : job.phase === "reading" ? `Reading ${from} and matching IDs${step}. Large libraries can take a while.`
+        : "Starting...";
+      const pct = writing ? Math.min(100, Math.round(Number(job.progress || 0) * 100)) : 0;
+      return `<div class="trk-detail-health trk-import is-running" role="status">${symbol("download")}<div><strong>Importing from ${esc(from)}</strong><span>${esc(text)}</span><div class="trk-meter${writing ? "" : " is-busy"}" aria-hidden="true"><i${writing ? ` style="width:${pct}%"` : ""}></i></div></div><button type="button" class="cw-btn" data-trk-action="import-cancel"${job.cancel_requested ? " disabled" : ""}>${icon("stop_circle")}<span>Stop</span></button></div>`;
     }
-    const close = `<button type="button" class="cw-btn trk-icon-btn" data-trk-action="check-hide" title="Hide" aria-label="Hide">${icon("close")}</button>`;
-    if (job.state === "completed" || job.state === "cancelled") {
-      const when = job.finished_at ? whenText(job.finished_at * 1000) : "";
-      const head = job.state === "cancelled" ? "Metadata check stopped" : attention ? `${plural(attention, "record needs", "records need")} attention` : "Every record matches TMDB";
-      const sub = [when && `Checked ${when}`, job.state === "cancelled" ? "results so far are kept" : "", job.failed ? `${plural(job.failed, "record", "records")} could not be checked` : ""].filter(Boolean).join(" · ");
-      const show = attention && !state.attention ? `<button type="button" class="cw-btn" data-trk-action="attention">${icon("report")}<span>Show them</span></button>` : "";
-      return `<div class="trk-scan cw-page-panel${attention ? " is-warn" : " is-ok"}" role="status">${icon(attention ? "report" : "verified")}<span class="trk-scan-copy"><b>${esc(head)}</b><small>${esc(sub)}</small></span>${show}${close}</div>`;
+    const added = Number(job.added || 0);
+    const extra = [Number(job.unresolved) ? `${num(job.unresolved)} could not be matched` : "", Number(job.errors) ? `${plural(job.errors, "error", "errors")}` : ""].filter(Boolean).join(" · ");
+    let title, text, tone = "is-ok", mark = "check_circle";
+    if (job.state === "completed") {
+      title = `Import from ${from} finished`;
+      text = added ? `${plural(added, "record", "records")} added${extra ? ` · ${extra}` : ""}.` : extra ? `Nothing new added · ${extra}.` : "Nothing new to add. Everything was already here.";
+    } else if (job.state === "cancelled") {
+      title = `Import from ${from} stopped`;
+      text = `${plural(added, "record was", "records were")} added before it stopped. Run it again to continue; records already here are skipped.`;
+      tone = "is-attention";
+      mark = "block";
+    } else {
+      title = `Import from ${from} did not finish`;
+      text = job.state === "interrupted" ? "CrossWatch restarted during the import. Run it again; records already here are skipped." : "The import stopped with an error. See the sync log for details.";
+      tone = "is-attention";
+      mark = "error_outline";
     }
-    const why = job.state === "interrupted" ? "CrossWatch restarted during the check." : ERRORS[job.error] || (job.error === "tmdb_key_invalid" ? "TMDB rejected the API key. Check it in Settings." : job.error === "tmdb_unreachable" ? "TMDB could not be reached. Try again later." : "The check stopped.");
-    return `<div class="trk-scan cw-page-panel is-bad" role="status">${icon("error")}<span class="trk-scan-copy"><b>Metadata check stopped</b><small>${esc(why)}</small></span><button type="button" class="cw-btn" data-trk-action="check"${state.tmdbKey ? "" : " disabled"}>${icon("refresh")}<span>Run again</span></button>${close}</div>`;
+    const check = added && state.tmdbKey ? `<button type="button" class="cw-btn" data-trk-action="import-check">${icon("health_and_safety")}<span>Check with TMDB</span></button>` : "";
+    return `<div class="trk-detail-health trk-import ${tone}" role="status">${symbol(mark)}<div><strong>${esc(title)}</strong><span>${esc(text)}</span></div>${check}<button type="button" class="trk-icon" data-trk-action="import-dismiss" title="Dismiss" aria-label="Dismiss">${icon("close")}</button></div>`;
   }
 
-  function renderResults() {
+  function renderMain() {
     if (state.moving) {
       const move = state.migration;
       const total = Number(move?.files_total || 0);
       const pct = total ? Math.round((Number(move.files_done || 0) / total) * 100) : 0;
-      return `<div class="trk-state">${icon("database")}<span>${esc(state.error)}</span>${total ? `<small>${esc(Number(move.files_done || 0).toLocaleString())} of ${esc(total.toLocaleString())} files</small><span class="trk-scan-bar trk-move-bar" aria-hidden="true"><i style="width:${pct}%"></i></span>` : ""}</div>`;
+      return `<div class="cw-empty" role="status">${icon("database")}<div class="cw-empty-text">${esc(state.error)}</div>${total ? `<div class="trk-meter" aria-hidden="true"><i style="width:${pct}%"></i></div><div class="cw-status-text">${esc(num(move.files_done))} of ${esc(num(total))} files</div>` : ""}</div>`;
     }
-    if (state.error) return `<div class="trk-state is-error">${icon("error")}<span>${esc(state.error)}</span></div>`;
-    if (!state.items.length && state.loading) return `<div class="trk-state">${icon("hourglass_empty")}<span>Loading tracker...</span></div>`;
-    if (!state.items.length) {
-      const f = featureOf(state.feature);
-      const filtered = state.q || state.media;
-      if (state.attention && !filtered) return `${renderSelectBar()}<div class="trk-state">${icon("verified")}<span>Nothing in ${esc(f.label.toLowerCase())} needs attention.</span></div>`;
-      return `${renderSelectBar()}<div class="trk-state">${icon(filtered ? "filter_alt_off" : f.icon)}<span>${filtered ? "No records match these filters." : `No ${esc(f.label.toLowerCase())} records in the tracker yet.`}</span></div>`;
+    if (state.error) return emptyState(state.error, "error");
+    if (timelineOn()) return renderTimeline();
+    if (state.view === "shows") return renderShows();
+    if (state.view === "titles") return renderTitles();
+    return renderList();
+  }
+
+  function renderSource() {
+    if (state.instances.length < 2) return "";
+    const instances = state.instances.map((i) => `<option value="${esc(i.id)}"${i.id === state.instance ? " selected" : ""}>${esc(i.label)}</option>`).join("");
+    return `<div class="ins-row"><div class="ins-kv"><label for="trk-instance">Tracker</label><select id="trk-instance" class="cw-select" data-trk-input="instance">${instances}</select></div></div>`;
+  }
+
+  function renderTitle() {
+    if (!state.ref) {
+      return `<div class="ins-row"><div class="ins-icon">${symbol("info")}</div><div class="ins-title">Title</div></div>
+        <div class="trk-detail-empty">${symbol("touch_app")}<span>Pick a row to see the cover, every play, your rating and what to watch next.</span></div>`;
     }
-    const more = state.items.length < state.total;
-    return `
-      ${renderSelectBar()}
-      <div class="trk-grid">${state.items.map(renderCard).join("")}</div>
-      <div class="trk-foot">
-        <span class="trk-shown">${esc(state.items.length.toLocaleString())} of ${esc(state.total.toLocaleString())}</span>
-        ${more ? `<button type="button" class="cw-btn trk-more" data-trk-action="more"${state.loading ? " disabled" : ""}>${icon("expand_more")}<span>Show more</span></button>` : ""}
+    if (!state.title) return `<div class="trk-detail-empty">${symbol("hourglass_empty")}<span>Loading...</span></div>`;
+    return titleBody(state.title);
+  }
+
+  function seasonBlock(data) {
+    const tmdb = data.title?.art?.tmdb;
+    const progress = tmdb ? state.progress[tmdb] : null;
+    const watched = new Map(data.seasons.map((s) => [s.season, new Map(s.episodes.map((e) => [e.episode, e.watched_at]))]));
+    const counts = progress?.available ? progress.seasons : data.seasons.map((s) => ({ season: s.season, episodes: Math.max(...s.episodes.map((e) => e.episode)) }));
+    if (!counts.length) return "";
+    const pct = progress?.available && progress.total ? Math.min(100, Math.round((progress.watched / progress.total) * 100)) : 0;
+    const next = data.note?.status === "dropped" ? `<span class="trk-sub">You dropped this show</span>` : progress?.next ? `<span class="trk-next">Next ${esc(se(progress.next.season, progress.next.episode))}</span>` : progress?.next_air ? `<span class="trk-sub">Next airs ${esc(dateText(progress.next_air.date))}</span>` : progress?.completed ? `<span class="trk-sub">Completed</span>` : "";
+    const head = progress?.available ? `<div class="trk-show-progress"><span class="trk-progress"><i style="width:${pct}%"></i></span><span>${esc(num(progress.watched))} of ${esc(plural(progress.total, "episode", "episodes"))}</span>${next}</div>` : "";
+    const rows = counts.map((s) => {
+      const seen = watched.get(s.season) || new Map();
+      const done = [...seen.keys()].filter((e) => e <= s.episodes).length;
+      const open = state.seasonOpen.has(s.season);
+      const chips = open ? `<div class="trk-eps">${Array.from({ length: s.episodes }, (_, i) => i + 1).map((e) => {
+        const when = seen.get(e);
+        return when
+          ? `<span class="trk-ep-chip is-watched" title="${esc(`Watched ${whenText(when)}`)}">${e}</span>`
+          : `<button type="button" class="trk-ep-chip" data-trk-log-ep="${s.season}:${e}" title="${esc(`Log ${se(s.season, e)} as watched now`)}">${e}</button>`;
+      }).join("")}</div>` : "";
+      return `<div class="trk-season"><button type="button" class="trk-season-head" data-trk-season="${s.season}" aria-expanded="${open}"><span>${esc(s.season ? `Season ${s.season}` : "Specials")}</span><span class="trk-progress"><i style="width:${Math.round((done / s.episodes) * 100)}%"></i></span><small>${esc(`${done}/${s.episodes}`)}</small>${symbol(open ? "expand_less" : "expand_more")}</button>${chips}</div>`;
+    }).join("");
+    return `<div class="trk-section"><div class="trk-section-title">Progress</div>${head}<div class="trk-seasons">${rows}</div></div>`;
+  }
+
+  const cardModal = () => window.CW?.ProfileMediaModal || null;
+
+  function cardItem(head, show) {
+    const tmdb = head?.art?.tmdb || head?.ids?.tmdb;
+    if (!tmdb) return null;
+    return { type: show ? "show" : "movie", title: head.title || "", year: head.year || "", ids: { tmdb: String(tmdb), ...(head.ids?.imdb && !show ? { imdb: head.ids.imdb } : {}) } };
+  }
+
+  const canCard = (item) => !!item && !!cardModal()?.canOpen?.(item);
+  const instanceLabel = () => state.instances.find((i) => i.id === state.instance)?.label || (state.instance === "default" ? "Default" : state.instance);
+
+  function openCard() {
+    const data = state.title;
+    const item = data ? cardItem(data.title, data.show) : null;
+    if (!canCard(item)) return;
+    if (sheet.mode === "title") closeSheet();
+    cardModal().open(item, { tracker: { label: instanceLabel(), data, onAction: cardAction } });
+  }
+
+  function cardAction(action, key) {
+    if (action === "edit") {
+      const record = findRecord(key, "history");
+      if (record) openSheet("edit", { item: record, feature: record.feature || "history" });
+    } else if (action === "delete") {
+      openSheet("delete", { keys: [key], feature: "history" });
+    } else {
+      if (action === "map") cardModal()?.close?.();
+      detailAction(action);
+    }
+  }
+
+  function previewCard(item) {
+    if (canCard(item)) cardModal().open(item, { stacked: true });
+  }
+
+  function statusPicker(current) {
+    const s = statusOf(current);
+    const open = state.statusMenu;
+    const label = s ? `${symbol(s.icon)}<span>${esc(s.label)}</span>` : `${symbol("flag")}<span>Set a status</span>`;
+    const items = [...STATUSES, ...(s ? [{ id: "", label: "No status", icon: "remove" }] : [])].map((o) => {
+      const on = o.id === current;
+      return `<button type="button" class="trk-status-item${on ? " is-current" : ""}" role="menuitemradio" aria-checked="${on}" data-trk-set-status="${o.id}"${o.id ? ` data-status="${o.id}"` : ""}>${symbol(o.icon)}<span>${esc(o.label)}</span>${on ? symbol("check", "trk-status-check") : ""}</button>`;
+    }).join("");
+    return `<div class="trk-status-pick">
+        <button type="button" class="trk-status-btn${s ? "" : " is-empty"}"${s ? ` data-status="${s.id}"` : ""} data-trk-detail="status-menu" aria-haspopup="menu" aria-expanded="${open}">${label}${symbol(open ? "expand_less" : "expand_more", "trk-status-caret")}</button>
+        ${open ? `<div class="trk-status-menu" role="menu" aria-label="Status">${items}</div>` : ""}
       </div>`;
+  }
+
+  function statusHost() {
+    return sheet.mode === "title" && sheet.el && !sheet.el.hidden ? sheet.el : state.root;
+  }
+
+  function setStatusMenu(open, { focus = true } = {}) {
+    if (state.statusMenu === open) return;
+    state.statusMenu = open;
+    setSlot("title", renderTitle());
+    if (sheet.mode === "title") renderSheet();
+    if (!focus) return;
+    const host = statusHost();
+    const target = open
+      ? host?.querySelector('.trk-status-menu [aria-checked="true"]') || host?.querySelector(".trk-status-menu [data-trk-set-status]")
+      : host?.querySelector(".trk-status-btn");
+    target?.focus();
+  }
+
+  let statusWired = false;
+
+  function wireStatusMenu() {
+    if (statusWired) return;
+    statusWired = true;
+    document.addEventListener("click", (event) => {
+      if (state.statusMenu && !event.target.closest?.(".trk-status-pick")) setStatusMenu(false, { focus: false });
+    }, true);
+    document.addEventListener("keydown", (event) => {
+      if (!state.statusMenu || event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setStatusMenu(false);
+    }, true);
+  }
+
+  async function quickStatus(status) {
+    const data = state.title;
+    if (!data?.note_key) return;
+    state.statusMenu = false;
+    const draft = noteDraft(data);
+    if (draft.status === status) {
+      setSlot("title", renderTitle());
+      if (sheet.mode === "title") renderSheet();
+      return;
+    }
+    draft.status = status;
+    if (status === "completed" && !draft.finished) draft.finished = today();
+    if (status === "watching" && !draft.started) draft.started = today();
+    const name = draft.title || "this title";
+    const text = status ? `Marked ${name} as ${statusOf(status).label.toLowerCase()}` : `Cleared the status of ${name}`;
+    try {
+      await postNote(draft, text);
+    } catch (err) {
+      toast.show(writeError(err), { tone: "bad" });
+      setSlot("title", renderTitle());
+    }
+  }
+
+  function noteBlock(data) {
+    if (!data.note_key) return "";
+    const n = data.note;
+    const done = data.show && state.progress[data.title?.art?.tmdb]?.completed && !["completed", "dropped"].includes(n?.status);
+    const suggest = done ? `<button type="button" class="trk-note-suggest" data-trk-detail="complete">${symbol("task_alt")}<span>Every episode is watched. Mark it as completed?</span></button>` : "";
+    const head = `<div class="trk-section-title trk-note-head"><span>My notes</span>${n ? `<button type="button" class="trk-icon" data-trk-detail="notes" title="Edit my notes" aria-label="Edit my notes">${icon("edit")}</button>` : ""}</div>`;
+    const picker = statusPicker(n?.status || "");
+    if (!n) {
+      return `<div class="trk-section trk-note-block">${head}${suggest}${picker}<button type="button" class="trk-note-empty" data-trk-detail="notes">${symbol("edit_note")}<span>Add dates, tags or notes. They stay in CrossWatch and never sync.</span></button></div>`;
+    }
+    const dates = [n.started ? `Started ${dayText(n.started)}` : "", n.finished ? `Finished ${dayText(n.finished)}` : ""].filter(Boolean).join(" · ");
+    const fields = state.noteFields
+      .filter((f) => fieldOk(f, n.fields?.[f.id]))
+      .map((f) => `<div class="trk-note-field"><dt>${esc(f.name)}</dt><dd>${esc(fieldText(f, n.fields[f.id]))}</dd></div>`)
+      .join("");
+    return `<div class="trk-section trk-note-block">${head}${suggest}${picker}
+        ${dates ? `<div class="trk-note-line"><span class="trk-sub">${esc(dates)}</span></div>` : ""}
+        ${tagChips(n.tags)}
+        ${n.notes ? `<p class="trk-note-text">${esc(n.notes)}</p>` : ""}
+        ${fields ? `<dl class="trk-note-fields">${fields}</dl>` : ""}
+      </div>`;
+  }
+
+  function listBlock(data) {
+    const rows = [];
+    const add = (feature, r, label, when) => rows.push({ feature, r, label, when });
+    for (const r of data.ratings) add("ratings", r, `Rated ${r.rating ?? "?"}/10`, r.date);
+    for (const r of data.watchlist) add("watchlist", r, "On your watchlist", r.date);
+    for (const r of data.collection) add("collection", r, "In your collection", r.date);
+    for (const r of data.progress) add("progress", r, `${Math.round(Number(r.progress_percent) || 0)}% watched`, r.date);
+    if (!rows.length) return "";
+    const limit = 8;
+    const items = rows.slice(0, limit).map(({ feature, r, label, when }) => {
+      const f = featureOf(feature);
+      const ep = data.show && isChild(r) ? episodeLabel(r) : "";
+      const ref = esc(`${feature}|${r.key}`);
+      return `<li class="trk-play-row"><span class="trk-play-when">${symbol(f.icon)}${esc(label)}${ep ? ` · ${esc(ep)}` : ""}${when ? `<small>${esc(dateText(when))}</small>` : ""}</span><span class="trk-play-actions"><button type="button" class="trk-icon" data-trk-rec-edit="${ref}" title="Edit" aria-label="Edit ${esc(f.label.toLowerCase())} entry">${icon("edit")}</button><button type="button" class="trk-icon is-danger" data-trk-rec-delete="${ref}" title="Remove" aria-label="Remove from ${esc(f.label.toLowerCase())}">${icon("delete")}</button></span></li>`;
+    }).join("");
+    const more = rows.length > limit ? `<li class="trk-sub">${esc(plural(rows.length - limit, "more entry", "more entries"))}</li>` : "";
+    return `<div class="trk-section"><div class="trk-section-title">In your lists</div><ul class="trk-play-list trk-record-list">${items}${more}</ul></div>`;
+  }
+
+  function titleBody(data) {
+    const head = data.title || {};
+    const url = artUrl(head);
+    const card = canCard(cardItem(head, data.show));
+    const t = data.show ? { label: "Show", icon: "tv" } : typeMeta(head);
+    const rating = data.ratings[0]?.rating ?? null;
+    const listed = data.watchlist.length > 0;
+    const badges = [
+      rating != null ? `<span class="trk-badge">${symbol("star")}${esc(rating)}/10</span>` : "",
+      listed ? `<span class="trk-badge">${symbol("bookmark")}Watchlist</span>` : "",
+      data.collection.length ? `<span class="trk-badge">${symbol("video_library")}Collection</span>` : "",
+      data.progress[0]?.progress_percent != null ? `<span class="trk-badge">${symbol("play_circle")}${esc(Math.round(data.progress[0].progress_percent))}%</span>` : "",
+    ].filter(Boolean).join("");
+    const issue = data.attention[0];
+    const info = issue ? checkInfo(issue) : null;
+    const attention = info ? `<div class="trk-detail-health is-attention">${symbol(info.icon)}<div><strong>${esc(info.title)}</strong>${info.text ? `<span>${esc(info.text)}</span>` : ""}<small>${esc(checkedText(issue.check))}</small><span class="trk-inline-actions"><button type="button" class="cw-btn" data-trk-detail="map">${icon("compare_arrows")}<span>Fix match</span></button>${info.fix.includes("tmdb") ? `<button type="button" class="cw-btn" data-trk-detail="use-tmdb">${icon("auto_fix_high")}<span>Use TMDB title</span></button>` : ""}</span></div></div>` : "";
+    const limit = data.show ? 12 : 20;
+    const plays = data.plays.slice(0, limit).map((p) => `<li class="trk-play-row"><span class="trk-play-when">${esc(whenText(p.date))}</span>${data.show ? `<span class="trk-next">${esc(episodeLabel(p))}</span>` : ""}<span class="trk-play-actions"><button type="button" class="trk-icon" data-trk-play-edit="${esc(p.key)}" title="Change date" aria-label="Change date">${icon("edit_calendar")}</button><button type="button" class="trk-icon is-danger" data-trk-play-delete="${esc(p.key)}" title="Delete play" aria-label="Delete play">${icon("delete")}</button></span></li>`).join("");
+    const morePlays = data.plays.length > limit ? `<li class="trk-sub">${esc(plural(data.plays.length - limit, "older play", "older plays"))}</li>` : "";
+    const watchedLine = data.plays.length ? `${plural(data.plays.length, data.show ? "episode play" : "play", data.show ? "episode plays" : "plays")} · last ${agoText(data.plays[0].date)}` : "Not watched yet";
+    return `
+      <div class="trk-detail-top">
+        ${card ? `<button type="button" class="trk-poster is-link${url ? "" : " is-empty"}" data-trk-detail="card" title="Open details" aria-label="Open details for ${esc(head.title || "")}">` : `<div class="trk-poster${url ? "" : " is-empty"}">`}${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-poster-fallback">${symbol(t.icon)}</span>${card ? "</button>" : "</div>"}
+        <div class="trk-detail-copy">
+          <span class="trk-detail-kind">${symbol(t.icon)}${esc(t.label)}</span>
+          <span class="trk-detail-head"><strong class="trk-detail-title">${esc(head.title || "")}</strong>${recordCount(data) ? `<button type="button" class="trk-icon trk-title-edit" data-trk-detail="edit-title" title="Edit title, year and IDs on every record" aria-label="Edit title, year and IDs">${icon("edit")}</button>` : ""}</span>
+          ${head.year ? `<span class="trk-detail-sub">${esc(head.year)}</span>` : ""}
+          <span class="trk-detail-sub">${esc(watchedLine)}</span>
+          ${badges ? `<div class="trk-badges">${badges}</div>` : ""}
+        </div>
+      </div>
+      ${attention}
+      <div class="trk-detail-actions">
+        <button type="button" class="cw-btn primary" data-trk-detail="log">${icon("add_circle")}<span>${data.show ? "Log episode" : data.plays.length ? "Log rewatch" : "Mark watched"}</span></button>
+        <button type="button" class="cw-btn" data-trk-detail="rate" title="${rating != null ? "Change rating" : "Rate"}" aria-label="${rating != null ? "Change rating" : "Rate"}">${icon(rating != null ? "star" : "star_outline")}</button>
+        <button type="button" class="cw-btn" data-trk-detail="list" title="${listed ? "Remove from watchlist" : "Add to watchlist"}" aria-label="${listed ? "Remove from watchlist" : "Add to watchlist"}">${icon(listed ? "bookmark_remove" : "bookmark_add")}</button>
+        ${info ? "" : `<button type="button" class="cw-btn" data-trk-detail="map" title="Fix match" aria-label="Fix match">${icon("compare_arrows")}</button>`}
+        ${card ? `<button type="button" class="cw-btn" data-trk-detail="card" title="Open details" aria-label="Open details">${icon("info")}</button>` : ""}
+      </div>
+      ${noteBlock(data)}
+      ${data.show ? seasonBlock(data) : ""}
+      ${plays ? `<div class="trk-section"><div class="trk-section-title">${esc(data.show ? "Recent plays" : "Plays")}</div><ul class="trk-play-list">${plays}${morePlays}</ul></div>` : ""}
+      ${listBlock(data)}`;
+  }
+
+  function renderHealth() {
+    const h = healthOf();
+    const job = state.check;
+    const running = job?.state === "running";
+    const tag = running ? ["Checking", "is-running"] : job?.state === "failed" || job?.state === "interrupted" ? ["Stopped", "is-bad"] : job?.state === "completed" || job?.state === "cancelled" ? ["Done", "is-ok"] : ["Idle", ""];
+    const metrics = [HEALTH[2], HEALTH[0], HEALTH[1]].map((m) => `<button type="button" class="metric trk-metric is-${m.id}" data-trk-health="${m.id}" aria-pressed="${state.healthFilter === m.id}">${symbol(m.icon)}<div><div class="m-val">${esc(num(h[m.id]))}</div><div class="m-lbl">${esc(m.label)}</div></div></button>`).join("");
+    let footer;
+    if (running) {
+      const pct = job.total ? Math.round((Number(job.done || 0) / job.total) * 100) : 0;
+      footer = `<div class="trk-meter" aria-hidden="true"><i style="width:${pct}%"></i></div>
+        <div class="trk-health-foot"><span class="cw-status-text">${esc(num(job.done))} of ${esc(plural(job.total, "record", "records"))} checked</span><button type="button" class="cw-btn" data-trk-action="check-cancel">${icon("stop_circle")}<span>Stop</span></button></div>`;
+    } else {
+      const why = job?.state === "interrupted" ? "CrossWatch restarted during the last check." : job?.state === "failed" ? ERRORS[job.error] || "The last check stopped." : job?.finished_at ? `Last check ${agoText(job.finished_at * 1000)}${job.failed ? ` · ${plural(job.failed, "record", "records")} could not be checked` : ""}` : "Not checked yet.";
+      footer = `<div class="trk-health-foot"><span class="cw-status-text">${esc(state.tmdbKey ? why : "Add a TMDB API key in Settings to check metadata.")}</span><button type="button" class="cw-btn primary" data-trk-action="check"${state.tmdbKey ? "" : " disabled"}>${icon("health_and_safety")}<span>Check all</span></button></div>`;
+    }
+    return `
+      <div class="ins-row"><div class="ins-icon">${symbol("health_and_safety")}</div><div class="ins-title">TMDB health</div><span class="cw-tag trk-tag ${tag[1]}"><span class="cw-tag-dot"></span><span>${esc(tag[0])}</span></span></div>
+      <p class="trk-note trk-health-note">Compares your records with TMDB to catch wrong matches, missing IDs and episodes TMDB doesn't know.</p>
+      <div class="ins-row"><div class="ins-metrics"><div class="metric-row trk-metrics">${metrics}</div></div></div>
+      ${footer}`;
   }
 
   function render() {
     const root = state.root;
     if (!root) return;
-    if (!root.querySelector(".trk-page")) {
+    if (!root.querySelector(".cw-root")) {
       root.innerHTML = `
-        <div class="trk-page">
-          <div class="cw-page-hero cw-page-hero-tracker" data-hero-icon="inventory_2">
-            <div class="cw-page-hero-copy">
+        <div class="cw-root">
+          <div class="cw-topline cw-page-hero cw-page-hero-tracker" data-hero-icon="inventory_2">
+            <div class="cw-head-copy cw-page-hero-copy">
               <div class="cw-page-hero-kicker">CW TRACKER</div>
-              <h2 class="cw-page-hero-title">Tracker</h2>
-              <div class="cw-page-hero-sub">Everything CrossWatch keeps in its own local tracker.</div>
+              <div class="cw-title-row"><div>
+                <div class="cw-title cw-page-hero-title">Tracker</div>
+                <div class="cw-sub cw-page-hero-sub">Everything you watched, rated and want to watch</div>
+              </div></div>
             </div>
-            <div class="cw-page-hero-actions">
-              <div class="cw-editor-hero-summary" data-trk-slot="summary" aria-label="Tracker summary"></div>
-            </div>
+            <div class="cw-editor-hero-summary cw-page-hero-actions" data-trk-slot="hero" aria-label="Watching stats"></div>
           </div>
-          <div class="trk-toolbar cw-page-toolbar" data-trk-slot="toolbar"></div>
-          <div data-trk-slot="scan"></div>
-          <section class="trk-results cw-page-panel" data-trk-slot="results" aria-live="polite"></section>
+          <div class="cw-wrap">
+            <div class="cw-main">
+              <div class="cw-controls cw-page-toolbar" data-trk-slot="controls"></div>
+              <div data-trk-slot="import"></div>
+              <div class="cw-hist-timeline trk-months" data-trk-slot="months" hidden></div>
+              <div data-trk-slot="main"></div>
+            </div>
+            <details class="cw-editor-filters" data-trk-slot="filters">
+              <summary>Title and tracker</summary>
+              <aside class="cw-side">
+                <div class="ins-card cw-page-panel" data-trk-slot="source"></div>
+                <div class="ins-card cw-page-panel trk-detail" data-trk-slot="title"></div>
+                <div class="ins-card cw-page-panel" data-trk-slot="health"></div>
+              </aside>
+            </details>
+          </div>
         </div>`;
       sheet.el = null;
+      const filters = root.querySelector('[data-trk-slot="filters"]');
+      const media = window.matchMedia?.(NARROW);
+      const fold = () => { filters.open = !media?.matches; };
+      fold();
+      media?.addEventListener?.("change", fold);
+      monthBar = null;
+      bar()?.wire();
     }
     renderSlots(true);
   }
 
-  function renderSlots(toolbar) {
-    const root = state.root;
-    if (!root) return;
-    const summary = root.querySelector('[data-trk-slot="summary"]');
-    if (summary) summary.innerHTML = renderSummary();
-    const bar = root.querySelector('[data-trk-slot="toolbar"]');
-    if (bar && toolbar) {
+  function setSlot(name, html) {
+    const slot = state.root?.querySelector(`[data-trk-slot="${name}"]`);
+    if (!slot) return;
+    if (slot.innerHTML !== html) slot.innerHTML = html;
+    if (name === "source" || name === "health") slot.hidden = !html;
+  }
+
+  function renderSlots(controls) {
+    if (!state.root) return;
+    setSlot("hero", renderHero());
+    if (controls) {
       const focused = document.activeElement?.dataset?.trkInput === "q";
-      bar.innerHTML = renderToolbar();
+      setSlot("controls", renderControls());
       if (focused) {
-        const input = bar.querySelector('[data-trk-input="q"]');
+        const input = state.root.querySelector('[data-trk-input="q"]');
         input?.focus();
         input?.setSelectionRange?.(input.value.length, input.value.length);
       }
     }
-    const scan = root.querySelector('[data-trk-slot="scan"]');
-    if (scan) scan.innerHTML = renderScan();
-    const results = root.querySelector('[data-trk-slot="results"]');
-    if (results) results.innerHTML = renderResults();
+    setSlot("import", renderImportBanner());
+    setSlot("main", renderMain());
+    setSlot("source", renderSource());
+    setSlot("title", renderTitle());
+    setSlot("health", state.view === "cleanup" ? renderHealth() : "");
+  }
+
+  let monthBar = null;
+  const monthFmt = new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" });
+  const monthName = (key) => {
+    const [y, m] = String(key).split("-").map(Number);
+    return y && m ? monthFmt.format(new Date(Date.UTC(y, m - 1, 1))) : key;
+  };
+
+  function bar() {
+    if (!monthBar && window.CW?.MonthBar) {
+      monthBar = window.CW.MonthBar.create({
+        host: () => state.root?.querySelector('[data-trk-slot="months"]'),
+        noun: (n) => plural(n, "play", "plays"),
+        zoom: state.zoom,
+        onZoom: (level) => {
+          state.zoom = level;
+          saveView();
+        },
+        onJump: (month) => {
+          state.month = month;
+          renderSlots(true);
+          loadMain();
+        },
+      });
+    }
+    return monthBar;
+  }
+
+  function renderMonths() {
+    bar()?.render(timelineOn() ? state.months : [], {
+      visible: new Set(state.items.map((i) => String(i.date || "").slice(0, 7))),
+      key: `${state.instance}|${state.media}|${state.q}`,
+    });
+  }
+
+  let monthsRequest = 0;
+
+  async function loadMonths() {
+    const id = ++monthsRequest;
+    if (!timelineOn()) {
+      state.months = [];
+      renderMonths();
+      return;
+    }
+    let months = [];
+    try {
+      const params = new URLSearchParams({ feature: "history", provider_instance: state.instance, q: state.q, media: state.media });
+      const data = await getJSON(`/api/tracker/months?${params}`);
+      months = Array.isArray(data.months) ? data.months : [];
+    } catch {
+      months = [];
+    }
+    if (id !== monthsRequest) return;
+    state.months = months;
+    renderMonths();
   }
 
   let summaryRequest = 0;
 
   async function loadSummary() {
     const id = ++summaryRequest;
-    const data = await getJSON(`/api/tracker/summary?provider_instance=${encodeURIComponent(state.instance)}`);
+    const [data, stats] = await Promise.all([
+      getJSON(`/api/tracker/summary?${inst()}`),
+      getJSON(`/api/tracker/stats?${inst()}`).catch(() => null),
+    ]);
     if (id !== summaryRequest) throw Object.assign(new Error("stale"), { code: "stale" });
     state.instances = Array.isArray(data.instances) ? data.instances : [];
     state.instance = data.provider_instance || "default";
     state.counts = data.counts || {};
+    state.health = data.health || {};
     state.effects = data.delete_effects || {};
-    state.attentionCounts = data.attention || {};
     state.check = data.check || null;
+    state.imp = data.import || null;
+    state.notes = data.notes || { total: 0, statuses: {}, tags: [] };
+    state.noteFields = Array.isArray(data.note_fields) ? data.note_fields : [];
     state.tmdbKey = data.tmdb_key !== false;
+    state.stats = stats;
     if (state.fromLink) {
       state.fromLink = false;
-      if (!Number(state.attentionCounts[state.feature] || 0)) {
-        const first = FEATURES.find((f) => Number(state.attentionCounts[f.id] || 0) > 0);
-        if (first) state.feature = first.id;
+      if (!Number(healthOf().attention || 0)) {
+        const first = FEATURES.find((f) => Number(state.health?.[f.id]?.attention || 0) > 0);
+        if (first) state.cleanFeature = first.id;
       }
     }
   }
 
-  async function loadItems(append) {
+  async function loadMain(append = false) {
     const id = ++state.request;
     state.loading = true;
+    state.error = "";
     if (!append) {
       state.items = [];
-      state.total = 0;
+      state.shows = [];
+      state.noteRows = [];
     }
-    state.error = "";
     renderSlots(false);
-    const params = new URLSearchParams({
-      feature: state.feature,
-      provider_instance: state.instance,
-      q: state.q,
-      media: state.media,
-      sort: state.sort,
-      offset: String(append ? state.items.length : 0),
-      limit: String(PAGE),
-    });
-    if (state.attention) params.set("attention", "true");
     try {
-      const data = await getJSON(`/api/tracker/items?${params}`);
-      if (id !== state.request) return;
-      const rows = Array.isArray(data.items) ? data.items : [];
-      state.items = append ? state.items.concat(rows) : rows;
-      state.total = Number(data.total || 0);
+      if (state.view === "titles") {
+        const params = new URLSearchParams({
+          provider_instance: state.instance,
+          q: state.q,
+          status: state.noteStatus,
+          tag: state.noteTag,
+          offset: String(state.offset),
+          limit: String(state.pageSize),
+        });
+        const data = await getJSON(`/api/tracker/notes?${params}`);
+        if (id !== state.request) return;
+        state.noteRows = Array.isArray(data.notes) ? data.notes : [];
+        state.total = Number(data.total || 0);
+        if (data.summary) state.notes = data.summary;
+      } else if (state.view === "shows") {
+        const data = await getJSON(`/api/tracker/shows?${inst()}&q=${encodeURIComponent(state.q)}&offset=${state.offset}&limit=${state.pageSize}${state.hideDropped ? "&hide_dropped=true" : ""}`);
+        if (id !== state.request) return;
+        state.shows = Array.isArray(data.shows) ? data.shows : [];
+        state.total = Number(data.total || 0);
+        loadProgress(state.shows.map((s) => s.art?.tmdb).filter(Boolean));
+      } else {
+        const timeline = timelineOn();
+        const params = new URLSearchParams({
+          feature: listFeature(),
+          provider_instance: state.instance,
+          q: state.q,
+          media: state.view === "cleanup" ? "" : state.media,
+          sort: state.view === "cleanup" ? "title" : state.sort,
+          offset: String(timeline ? (append ? state.items.length : 0) : state.offset),
+          limit: String(timeline ? TIMELINE_PAGE : state.pageSize),
+        });
+        if (state.view === "cleanup" && state.healthFilter) params.set("health", state.healthFilter);
+        if (timeline && state.month) params.set("month", state.month);
+        const data = await getJSON(`/api/tracker/items?${params}`);
+        if (id !== state.request) return;
+        const rows = Array.isArray(data.items) ? data.items : [];
+        state.items = append ? state.items.concat(rows) : rows;
+        state.total = Number(data.total || 0);
+      }
     } catch (err) {
       if (id !== state.request) return;
+      state.items = [];
+      state.shows = [];
+      state.noteRows = [];
       state.error = errorText(err);
     } finally {
       if (id === state.request) {
         state.loading = false;
-        renderSlots(false);
+        renderSlots(true);
+        renderMonths();
       }
     }
+  }
+
+  let progressQueue = [];
+  let progressActive = 0;
+
+  function loadProgress(ids) {
+    const wanted = ids.filter((id) => !(id in state.progress));
+    progressQueue = wanted.concat(progressQueue.filter((id) => !wanted.includes(id)));
+    while (progressActive < 3 && progressQueue.length) pumpProgress();
+  }
+
+  async function pumpProgress() {
+    const tmdb = progressQueue.shift();
+    if (!tmdb) return;
+    progressActive += 1;
+    try {
+      state.progress[tmdb] = await getJSON(`/api/tracker/show-progress?${inst()}&tmdb=${encodeURIComponent(tmdb)}`);
+    } catch {
+      state.progress[tmdb] = { available: false };
+    } finally {
+      progressActive -= 1;
+      if (state.view === "shows") setSlot("main", renderMain());
+      if (state.title?.title?.art?.tmdb === tmdb) {
+        setSlot("title", renderTitle());
+        if (sheet.mode === "title") renderSheet();
+      }
+      if (progressQueue.length) pumpProgress();
+    }
+  }
+
+  async function loadTitle() {
+    const ref = state.ref;
+    if (!ref) return;
+    const id = ++state.titleRequest;
+    const params = ref.note
+      ? `note=${encodeURIComponent(ref.note)}`
+      : ref.show ? `show=${encodeURIComponent(ref.show)}` : `feature=${encodeURIComponent(ref.feature)}&key=${encodeURIComponent(ref.key)}`;
+    try {
+      const data = await getJSON(`/api/tracker/title?${inst()}&${params}`);
+      if (id !== state.titleRequest) return;
+      state.title = data;
+      cardModal()?.updateTracker?.(data);
+      if (data.show && data.title?.art?.tmdb) loadProgress([data.title.art.tmdb]);
+    } catch (err) {
+      if (id !== state.titleRequest) return;
+      state.title = null;
+      state.ref = null;
+      if (err?.code !== "not_found") toast.show(errorText(err), { tone: "bad" });
+    }
+    setSlot("title", renderTitle());
+    if (sheet.mode === "title") renderSheet();
+  }
+
+  function selectRef(ref) {
+    state.ref = ref;
+    state.statusMenu = false;
+    state.title = null;
+    state.seasonOpen.clear();
+    state.root.querySelectorAll("tr.trk-play").forEach((tr) => {
+      const on = ref.note ? tr.dataset.trkRefNote === ref.note : ref.show ? tr.dataset.trkRefShow === ref.show : tr.dataset.trkRefKey === ref.key;
+      tr.classList.toggle("is-selected", on);
+      tr.setAttribute("aria-selected", String(on));
+    });
+    setSlot("title", renderTitle());
+    if (narrow()) openSheet("title");
+    loadTitle();
   }
 
   let moveTimer = 0;
@@ -468,6 +1316,7 @@
       if (err?.code === "stale") return;
       state.error = errorText(err);
       state.moving = err?.code === "tracker_migrating";
+      state.items = [];
       render();
       if (state.moving) waitForMove();
       return;
@@ -477,18 +1326,24 @@
     saveView();
     render();
     pollCheck();
-    await loadItems(false);
+    pollImport();
+    state.month = "";
+    loadMonths();
+    await loadMain();
+    if (state.ref) loadTitle();
+  }
+
+  function reload(resetPage = true) {
+    if (resetPage) state.offset = 0;
+    state.month = "";
+    loadMonths();
+    state.picked.clear();
+    saveView();
+    renderSlots(true);
+    loadMain();
   }
 
   let pollTimer = 0;
-
-  function renderScanSlot() {
-    const slot = state.root?.querySelector('[data-trk-slot="scan"]');
-    if (slot) slot.innerHTML = renderScan();
-    const bar = state.root?.querySelector('[data-trk-slot="toolbar"]');
-    const check = bar?.querySelector('[data-trk-action="check"]');
-    if (check) check.disabled = !state.tmdbKey || state.check?.state === "running";
-  }
 
   function pollCheck() {
     clearTimeout(pollTimer);
@@ -496,10 +1351,10 @@
     pollTimer = setTimeout(async () => {
       if (!state.root || state.root.classList.contains("hidden") || document.hidden) return;
       try {
-        const data = await getJSON(`/api/tracker/check?provider_instance=${encodeURIComponent(state.instance)}`);
+        const data = await getJSON(`/api/tracker/check?${inst()}`);
         state.check = data.job || null;
       } catch {}
-      renderScanSlot();
+      setSlot("health", state.view === "cleanup" ? renderHealth() : "");
       if (state.check?.state === "running") {
         pollCheck();
         return;
@@ -513,7 +1368,6 @@
     try {
       const data = await getJSON("/api/tracker/check", { provider_instance: state.instance });
       state.check = data.job || null;
-      state.scanHidden = "";
       renderSlots(true);
       window.dispatchEvent(new CustomEvent("cw:tracker-check-changed"));
       pollCheck();
@@ -522,16 +1376,50 @@
     }
   }
 
+  let importTimer = 0;
+
+  function pollImport() {
+    clearTimeout(importTimer);
+    if (state.imp?.state !== "running") return;
+    importTimer = setTimeout(async () => {
+      if (!state.root || state.root.classList.contains("hidden") || document.hidden) return;
+      try {
+        const data = await getJSON(`/api/tracker/import?${inst()}`);
+        state.imp = data.job || null;
+      } catch {}
+      setSlot("import", renderImportBanner());
+      if (state.imp?.state === "running") {
+        pollImport();
+        return;
+      }
+      window.dispatchEvent(new CustomEvent("cw:tracker-check-changed"));
+      await refresh();
+    }, 2000);
+  }
+
+  async function cancelImport() {
+    try {
+      await getJSON("/api/tracker/import/cancel", { provider_instance: state.instance });
+      if (state.imp) state.imp.cancel_requested = true;
+      setSlot("import", renderImportBanner());
+    } catch (err) {
+      toast.show(writeError(err), { tone: "bad" });
+    }
+    pollImport();
+  }
+
+  function dismissImport() {
+    try {
+      if (state.imp?.id) localStorage.setItem(IMPORT_SEEN_KEY, state.imp.id);
+    } catch {}
+    setSlot("import", "");
+  }
+
   async function cancelCheck() {
     try {
       await getJSON("/api/tracker/check/cancel", { provider_instance: state.instance });
     } catch {}
     pollCheck();
-  }
-
-  function clearSelection() {
-    state.selecting = false;
-    state.selected.clear();
   }
 
   const toast = (() => {
@@ -569,11 +1457,14 @@
     return { show, hide };
   })();
 
+  function targetNames(list) {
+    return (Array.isArray(list) ? list : []).map((t) => `${providerName(t.provider)}${t.instance && t.instance !== "default" ? ` (${t.instance})` : ""}`);
+  }
+
   function effectHtml(feature, count) {
     const fx = state.effects?.[feature] || {};
-    const names = (list) => (Array.isArray(list) ? list : []).map((t) => `${providerName(t.provider)}${t.instance && t.instance !== "default" ? ` (${t.instance})` : ""}`);
-    const spreads = names(fx.spreads);
-    const returns = names(fx.returns);
+    const spreads = targetNames(fx.spreads);
+    const returns = targetNames(fx.returns);
     const it = count === 1 ? "it" : "them";
     const lines = [];
     if (spreads.length) lines.push(`<p class="trk-effect is-danger">${icon("sync_problem")}<span>The next sync also removes ${it} from <b>${esc(spreads.join(", "))}</b>.</span></p>`);
@@ -582,8 +1473,23 @@
     return lines.join("");
   }
 
+  function addEffectHtml(feature) {
+    const adds = targetNames(state.effects?.[feature]?.adds);
+    return adds.length ? `<p class="trk-effect">${icon("sync")}<span>The next sync also adds this to <b>${esc(adds.join(", "))}</b>.</span></p>` : "";
+  }
+
+  let escapeWired = false;
+
   function ensureSheet() {
     if (sheet.el && state.root?.contains(sheet.el)) return sheet.el;
+    if (!escapeWired) {
+      escapeWired = true;
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || !sheet.el || sheet.el.hidden || sheet.el.contains(event.target)) return;
+        event.preventDefault();
+        closeSheet();
+      });
+    }
     const el = document.createElement("div");
     el.className = "cw-ia-sheet-wrap cw-page-item-actions trk-sheet-wrap";
     el.hidden = true;
@@ -592,6 +1498,8 @@
     el.addEventListener("click", onSheetClick);
     el.addEventListener("submit", onSheetSubmit);
     el.addEventListener("keydown", onSheetKey);
+    el.addEventListener("input", onSheetInput);
+    el.addEventListener("change", onSheetChange);
     sheet.el = el;
     return el;
   }
@@ -600,7 +1508,7 @@
     const item = typeof symbolOrItem === "object" ? symbolOrItem : null;
     const url = item ? artUrl(item, "w185") : "";
     const lead = item
-      ? `<div class="cw-ia-sheet-poster">${url ? `<img src="${esc(url)}" alt="">` : `<span class="trk-sheet-icon">${icon(typeIcon(item))}</span>`}</div>`
+      ? `<div class="cw-ia-sheet-poster">${url ? `<img src="${esc(url)}" alt="">` : `<span class="trk-sheet-icon">${icon(typeMeta(item).icon)}</span>`}</div>`
       : `<span class="trk-sheet-icon">${icon(symbolOrItem)}</span>`;
     return `<header class="cw-ia-sheet-head">${lead}<div class="cw-ia-sheet-title"><h2 id="trk-sheet-title">${esc(title)}</h2>${sub ? `<small>${esc(sub)}</small>` : ""}</div><button type="button" class="cw-ia-icon-btn" data-trk-sheet="close" aria-label="Close">${icon("close")}</button></header>`;
   }
@@ -617,135 +1525,627 @@
     return Array.from(new Set([...BASE_IDS, ...present]));
   }
 
-  function renderFinding(item) {
-    const info = checkInfo(item);
-    if (!info) return "";
-    const when = checkedText(item.check);
-    if (info.ok) return `<p class="trk-finding is-ok">${icon(info.icon)}<span class="trk-finding-copy"><b>${esc(info.title)}</b>${when ? `<small>${esc(when)}</small>` : ""}</span></p>`;
-    const buttons = info.fix.map((fix) => fix === "tmdb"
-      ? `<button type="button" class="cw-btn" data-trk-sheet="use-tmdb">${icon("auto_fix_high")}<span>Use TMDB title</span></button>`
-      : `<button type="button" class="cw-btn" data-trk-sheet="find"${sheet.busy ? " disabled" : ""}>${icon("travel_explore")}<span>Find on TMDB</span></button>`).join("");
-    return `<div class="trk-finding" role="note">${icon(info.icon)}<span class="trk-finding-copy"><b>${esc(info.title)}</b><span>${esc(info.text)}</span>${when ? `<small>${esc(when)}</small>` : ""}</span>${buttons ? `<span class="trk-finding-actions">${buttons}</span>` : ""}</div>`;
-  }
-
   function renderEdit() {
     const item = sheet.item;
-    const f = featureOf(state.feature);
+    const f = featureOf(sheet.feature);
     const child = isChild(item);
-    const title = cardTitle(item);
-    const sub = [cardSub(item), f.label].filter(Boolean).join(" · ");
     const dateRow = item.date_field
       ? `<label class="trk-field"><span>${esc(f.date)}</span><input type="datetime-local" class="cw-input" data-trk-edit="date" value="${esc(localInput(item.date))}" max="${esc(localInput(new Date().toISOString()))}"></label>`
       : "";
-    const ratingRow = state.feature === "ratings"
+    const ratingRow = sheet.feature === "ratings"
       ? `<label class="trk-field"><span>Rating</span><select class="cw-select" data-trk-edit="rating">${Array.from({ length: 10 }, (_, i) => i + 1).map((n) => `<option value="${n}"${Number(item.rating) === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>`
       : "";
-    const progressRow = state.feature === "progress"
+    const progressRow = sheet.feature === "progress"
       ? `<label class="trk-field"><span>Progress %</span><input type="number" class="cw-input" data-trk-edit="progress_percent" min="0" max="100" step="1" value="${esc(item.progress_percent != null ? Math.round(item.progress_percent) : "")}"></label>`
       : "";
-    const titleValue = child ? item.series_title : item.title;
-    const yearValue = child ? item.series_year : item.year;
-    const search = sheet.search;
-    const results = search?.results?.length
-      ? `<div class="trk-matches" role="listbox" aria-label="TMDB matches">${search.results.map((r, i) => `<button type="button" class="trk-match" data-trk-match="${i}"><span class="trk-match-poster">${r.poster_path ? `<img src="/art/tmdb/${item.type === "movie" ? "movie" : "tv"}/${esc(encodeURIComponent(r.tmdb))}?size=w92" alt="" loading="lazy">` : icon(item.type === "movie" ? "movie" : "tv")}</span><span class="trk-match-copy"><b>${esc(r.title)}</b><small>${esc([r.year, `TMDB ${r.tmdb}`].filter(Boolean).join(" · "))}</small></span></button>`).join("")}</div>`
-      : search?.message ? `<p class="trk-note">${esc(search.message)}</p>` : "";
     return `
-      ${sheetHead(item, title, sub)}
+      ${sheetHead(item, cardTitle(item), [cardSub(item), f.label].filter(Boolean).join(" · "))}
       <form class="trk-form" data-trk-form="edit" novalidate>
-        ${renderFinding(item)}
-        ${dateRow || ratingRow || progressRow ? `<div class="trk-fields">${dateRow}${ratingRow}${progressRow}</div>` : ""}
-        <details class="trk-identity"${sheet.search ? " open" : ""}>
-          <summary>${icon("fingerprint")}<span>Identity</span><small>Fix a wrong match</small></summary>
+        <div class="trk-fields">
+          ${dateRow}${ratingRow}${progressRow}
+          <label class="trk-field trk-field-wide"><span>${child ? "Show title" : "Title"}</span><input type="text" class="cw-input" data-trk-edit="title" value="${esc((child ? item.series_title : item.title) ?? "")}" maxlength="300"></label>
+          <label class="trk-field"><span>Year</span><input type="number" class="cw-input" data-trk-edit="year" min="1870" max="2100" value="${esc((child ? item.series_year : item.year) ?? "")}"></label>
+        </div>
+        <details class="trk-identity">
+          <summary>${icon("fingerprint")}<span>IDs</span><small>Change by hand, or use Fix match</small></summary>
           <div class="trk-identity-body">
-          <div class="trk-fields">
-            <label class="trk-field trk-field-wide"><span>${child ? "Show title" : "Title"}</span><input type="text" class="cw-input" data-trk-edit="title" value="${esc(titleValue ?? "")}" maxlength="300"></label>
-            <label class="trk-field"><span>Year</span><input type="number" class="cw-input" data-trk-edit="year" min="1870" max="2100" value="${esc(yearValue ?? "")}"></label>
-          </div>
-          <div class="trk-find">
-            <button type="button" class="cw-btn" data-trk-sheet="find"${sheet.busy ? " disabled" : ""}>${icon("travel_explore")}<span>Find on TMDB</span></button>
-            <span class="trk-note">Searches by the title above and fills in the IDs.</span>
-          </div>
-          ${results}
-          ${child ? `<div class="trk-group-label">Show IDs</div><div class="trk-fields trk-ids">${idInputs("show_ids", item.show_ids, idList(item.show_ids))}</div><div class="trk-group-label">${item.type === "episode" ? "Episode IDs" : "Season IDs"}</div>` : `<div class="trk-group-label">IDs</div>`}
-          <div class="trk-fields trk-ids">${idInputs("ids", item.ids, idList(item.ids))}</div>
+            ${child ? `<div class="trk-group-label">Show IDs</div><div class="trk-fields">${idInputs("show_ids", item.show_ids, idList(item.show_ids))}</div><div class="trk-group-label">${item.type === "episode" ? "Episode IDs" : "Season IDs"}</div>` : ""}
+            <div class="trk-fields">${idInputs("ids", item.ids, idList(item.ids))}</div>
           </div>
         </details>
         ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : ""}
-        ${sheet.confirm ? `<div class="trk-confirm">${effectHtml(state.feature, 1)}</div>` : ""}
         <footer class="trk-sheet-foot">
-          ${sheet.confirm
-            ? `<button type="button" class="cw-btn" data-trk-sheet="cancel-delete"${sheet.busy ? " disabled" : ""}>Keep</button><button type="button" class="cw-btn danger" data-trk-sheet="delete"${sheet.busy ? " disabled" : ""}>${icon("delete")}<span>Delete record</span></button>`
-            : `<button type="button" class="cw-btn danger trk-foot-delete" data-trk-sheet="ask-delete"${sheet.busy ? " disabled" : ""}>${icon("delete")}<span>Delete</span></button><button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button><button type="submit" class="cw-btn primary"${sheet.busy ? " disabled" : ""}>${icon("save")}<span>Save</span></button>`}
+          <button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button>
+          <button type="submit" class="cw-btn primary"${sheet.busy ? " disabled" : ""}>${icon("save")}<span>Save</span></button>
         </footer>
       </form>`;
   }
 
-  function renderBulkDelete() {
-    const n = sheet.keys.length;
-    const f = featureOf(state.feature);
+  function renderTitleEdit() {
+    const data = state.title;
+    if (!data) return `${sheetHead("edit", "Edit title", "")}<div class="trk-form">${emptyState("Loading...", "hourglass_empty")}</div>`;
+    const head = data.title || {};
+    const n = recordCount(data);
     return `
-      ${sheetHead("delete", `Delete ${plural(n, "record", "records")}?`, `From ${f.label}`)}
+      ${sheetHead(head, `Edit ${head.title || "title"}`, data.show ? "The show on every episode and list entry" : "Every play and list entry of this title")}
+      <form class="trk-form" data-trk-form="title-edit" novalidate>
+        <div class="trk-fields">
+          <label class="trk-field trk-field-wide"><span>${data.show ? "Show title" : "Title"}</span><input type="text" class="cw-input" data-trk-te="title" value="${esc(head.title ?? "")}" maxlength="300"></label>
+          <label class="trk-field"><span>Year</span><input type="number" class="cw-input" data-trk-te="year" min="1870" max="2100" value="${esc(head.year ?? "")}"></label>
+        </div>
+        <details class="trk-identity">
+          <summary>${icon("fingerprint")}<span>${data.show ? "Show IDs" : "IDs"}</span><small>Or use Fix match to pick the right title</small></summary>
+          <div class="trk-identity-body"><div class="trk-fields">${idInputs("ids", head.ids, idList(head.ids))}</div></div>
+        </details>
+        <p class="trk-effect">${icon("info")}<span>Changes ${esc(plural(n, "record", "records"))} in this tracker at once. Episode numbers, dates and ratings stay as they are. You can undo it from Changes.</span></p>
+        ${sheetError()}
+        <footer class="trk-sheet-foot">
+          <button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button>
+          <button type="submit" class="cw-btn primary"${sheet.busy ? " disabled" : ""}>${icon("save")}<span>Save for all ${esc(num(n))}</span></button>
+        </footer>
+      </form>`;
+  }
+
+  async function saveTitleEdit() {
+    const data = state.title;
+    const form = sheet.el.querySelector('[data-trk-form="title-edit"]');
+    if (!data || !form) return;
+    const head = data.title || {};
+    const changes = {};
+    const title = (form.querySelector('[data-trk-te="title"]')?.value ?? "").trim();
+    if (title !== String(head.title ?? "")) changes.title = title;
+    const year = (form.querySelector('[data-trk-te="year"]')?.value ?? "").trim();
+    if (year !== String(head.year ?? "")) changes.year = year === "" ? null : Number(year);
+    const ids = {};
+    form.querySelectorAll('[data-trk-id^="ids:"]').forEach((input) => {
+      const name = input.dataset.trkId.split(":")[1];
+      const now = input.value.trim();
+      if (now !== String(head.ids?.[name] ?? "")) ids[name] = now;
+    });
+    if (Object.keys(ids).length) changes.ids = ids;
+    if (!Object.keys(changes).length) {
+      closeSheet();
+      return;
+    }
+    const anchor = titleAnchor(data);
+    sheet.busy = true;
+    sheet.error = "";
+    renderSheet();
+    try {
+      const target = data.show ? { show: data.show_key } : { feature: anchor?.feature || "history", key: anchor?.key };
+      const res = await getJSON("/api/tracker/edit-title", { provider_instance: state.instance, changes, ...target });
+      state.ref = res.show_key ? { show: res.show_key } : { feature: res.feature, key: res.key };
+      await afterWrite(res, `Updated ${plural(res.count, "record", "records")} of ${title || head.title}`);
+    } catch (err) {
+      sheet.busy = false;
+      sheet.error = err?.code === "changed_since" ? "This title changed while you were editing it. Close this and open it again to see the latest version." : writeError(err);
+      renderSheet();
+    }
+  }
+
+  function renderDelete() {
+    const n = sheet.keys.length;
+    const f = featureOf(sheet.feature);
+    return `
+      ${sheetHead("delete", n === 1 ? `Delete this ${sheet.feature === "history" ? "play" : "record"}?` : `Delete ${plural(n, "record", "records")}?`, `From ${f.label}`)}
       <div class="trk-form">
-        <div class="trk-confirm">${effectHtml(state.feature, n)}</div>
-        <p class="trk-note">You can undo this from the change history.</p>
+        <div class="trk-confirm">${effectHtml(sheet.feature, n)}</div>
+        <p class="trk-note">You can undo this from Changes.</p>
         ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : ""}
         <footer class="trk-sheet-foot">
           <button type="button" class="cw-btn" data-trk-sheet="close">Keep</button>
-          <button type="button" class="cw-btn danger" data-trk-sheet="bulk-delete"${sheet.busy ? " disabled" : ""}>${icon("delete")}<span>Delete ${esc(plural(n, "record", "records"))}</span></button>
+          <button type="button" class="cw-btn danger" data-trk-sheet="delete"${sheet.busy ? " disabled" : ""}>${icon("delete")}<span>Delete</span></button>
         </footer>
       </div>`;
   }
 
+  function renderRate() {
+    const head = state.title?.title || {};
+    const current = state.title?.ratings?.[0]?.rating ?? null;
+    const pills = Array.from({ length: 10 }, (_, i) => i + 1).map((n) => `<button type="button" class="trk-rate${current === n ? " is-current" : ""}" data-trk-rate="${n}" aria-pressed="${current === n}"${sheet.busy ? " disabled" : ""}>${n}</button>`).join("");
+    return `
+      ${sheetHead(head, `Rate ${head.title || ""}`, current != null ? `Now ${current}/10` : "Not rated yet")}
+      <div class="trk-form">
+        <div class="trk-rates" role="group" aria-label="Rating">${pills}</div>
+        ${addEffectHtml("ratings")}
+        ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : ""}
+        <footer class="trk-sheet-foot">
+          ${current != null ? `<button type="button" class="cw-btn danger" data-trk-sheet="unrate"${sheet.busy ? " disabled" : ""}>${icon("star_half")}<span>Remove rating</span></button>` : ""}
+          <button type="button" class="cw-btn" data-trk-sheet="close">Close</button>
+        </footer>
+      </div>`;
+  }
+
+  function logCardItem(log, r) {
+    return r?.tmdb ? { type: log.type === "movie" ? "movie" : "show", title: r.title || "", year: r.year || "", ids: { tmdb: String(r.tmdb) } } : null;
+  }
+
+  function renderLog() {
+    const log = sheet.log;
+    const picked = log.pick;
+    let body;
+    if (!picked) {
+      const results = log.results.map((r, i) => {
+        const pick = `<button type="button" class="trk-match" data-trk-log-pick="${i}"><span class="trk-match-poster">${r.poster_path ? `<img src="/art/tmdb/${log.type === "movie" ? "movie" : "tv"}/${esc(encodeURIComponent(r.tmdb))}?fallback=2&size=w92" alt="" loading="lazy">` : symbol(log.type === "movie" ? "movie" : "tv")}</span><span class="trk-match-copy"><b>${esc(r.title)}</b><small>${esc(r.year || "")}</small></span></button>`;
+        const info = canCard(logCardItem(log, r)) ? `<button type="button" class="trk-icon trk-match-info" data-trk-log-info="${i}" title="Details" aria-label="Details for ${esc(r.title)}">${icon("info")}</button>` : "";
+        return `<div class="trk-match-wrap">${pick}${info}</div>`;
+      }).join("");
+      body = `
+        <div class="cw-type-filter" role="group" aria-label="Kind">
+          <button type="button" class="cw-filter-chip${log.type === "movie" ? " active" : ""}" data-trk-log-type="movie" aria-pressed="${log.type === "movie"}">${symbol("movie", "cw-type-icon")}<span>Movie</span></button>
+          <button type="button" class="cw-filter-chip${log.type === "show" ? " active" : ""}" data-trk-log-type="show" aria-pressed="${log.type === "show"}">${symbol("tv", "cw-type-icon")}<span>Show</span></button>
+        </div>
+        <input type="search" class="cw-input" data-trk-log-q value="${esc(log.q)}" placeholder="Search TMDB by title..." aria-label="Search TMDB">
+        ${log.message ? `<p class="trk-note">${esc(log.message)}</p>` : ""}
+        ${results ? `<div class="trk-matches" role="list">${results}</div>` : ""}`;
+    } else {
+      const targets = [["history", "Watched", "history"], ["watchlist", "Watchlist", "bookmark"], ["collection", "Collection", "video_library"]]
+        .map(([id, label, ic]) => `<button type="button" class="cw-filter-chip${log.target === id ? " active" : ""}" data-trk-log-target="${id}" aria-pressed="${log.target === id}">${symbol(ic, "cw-type-icon")}<span>${esc(label)}</span></button>`).join("");
+      const count = log.seasons?.find((s) => s.season === log.season)?.episodes || 0;
+      const seasonSel = picked.type === "show" && log.target === "history"
+        ? (log.seasons
+          ? `<div class="trk-fields"><label class="trk-field"><span>Season</span><select class="cw-select" data-trk-log-season>${log.seasons.map((s) => `<option value="${s.season}"${s.season === log.season ? " selected" : ""}>${esc(s.name)} (${s.episodes})</option>`).join("")}</select></label>
+              <label class="trk-field"><span>Episode</span><select class="cw-select" data-trk-log-episode><option value="all"${log.episode === "all" ? " selected" : ""}>All ${count} episodes</option>${Array.from({ length: count }, (_, i) => i + 1).map((e) => `<option value="${e}"${String(log.episode) === String(e) ? " selected" : ""}>Episode ${e}</option>`).join("")}</select></label></div>`
+          : `<p class="trk-note">Loading seasons...</p>`)
+        : "";
+      const whenRow = log.target === "history" ? `<div class="trk-fields"><label class="trk-field"><span>When</span><input type="datetime-local" class="cw-input" data-trk-log-when value="${esc(log.when)}" max="${esc(localInput(new Date().toISOString()))}"></label></div>` : "";
+      const unlist = log.target === "history" && log.watchlistKey ? `<label class="trk-check"><input type="checkbox" class="cw-checkbox" data-trk-log-unlist${log.unlist ? " checked" : ""}><span>Remove from watchlist</span></label>` : "";
+      body = `
+        <div class="trk-picked">${symbol(picked.type === "movie" ? "movie" : "tv")}<div><b>${esc(picked.title)}</b><small>${esc([picked.year, picked.type === "movie" ? "Movie" : "Show"].filter(Boolean).join(" · "))}</small></div>${log.fixed ? "" : `<button type="button" class="cw-btn" data-trk-log-repick>${icon("search")}<span>Change</span></button>`}</div>
+        <div class="cw-type-filter" role="group" aria-label="Add to">${targets}</div>
+        ${seasonSel}
+        ${whenRow}
+        ${unlist}
+        ${addEffectHtml(log.target)}`;
+    }
+    return `
+      ${sheetHead("add_circle", "Log a watch", picked ? "Pick where it goes and when" : "Find the movie or show")}
+      <form class="trk-form" data-trk-form="log" novalidate>
+        ${body}
+        ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : ""}
+        <footer class="trk-sheet-foot">
+          <button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button>
+          ${picked ? `<button type="submit" class="cw-btn primary"${sheet.busy || (picked.type === "show" && log.target === "history" && !log.seasons?.length) ? " disabled" : ""}>${icon("check")}<span>${log.target === "history" ? "Log it" : "Add it"}</span></button>` : ""}
+        </footer>
+      </form>`;
+  }
+
   function changeText(change) {
     const first = change.items?.[0];
-    const sub = first?.row ? cardSub(first.row) : "";
+    const sub = first?.row ? episodeLabel(first.row) || first.row.year || "" : "";
     const name = first?.row ? `${cardTitle(first.row)}${sub ? ` (${sub})` : ""}` : "a record";
     const others = change.count > 1 ? ` and ${plural(change.count - 1, "other", "others")}` : "";
+    if (change.action === "note") {
+      if (!first?.before) return `Added your notes for ${name}`;
+      if (!first.after) return `Removed your notes for ${name}`;
+      if (first.old_key !== first.key) return `Moved your notes to ${name}`;
+      const fields = Array.from(new Set((first.fields || []).map((f) => NOTE_LABELS[f]).filter(Boolean)));
+      return `Changed ${fields.length ? fields.join(", ") : "your notes"} for ${name}`;
+    }
+    if (change.action === "add") return `Logged ${name}${others}`;
     if (change.action === "delete") return `Deleted ${name}${others}`;
     if (change.action === "undo") return `Undid a change to ${name}${others}`;
     const fields = Array.from(new Set((first?.fields || []).map((f) => FIELD_LABELS[f]).filter(Boolean)));
     return `Changed ${fields.length ? fields.join(", ") : "details"} of ${name}${others}`;
   }
 
+  const CHANGE_KINDS = [
+    { id: "", label: "All" },
+    { id: "logged", label: "Logged", icon: "add_circle" },
+    { id: "edited", label: "Edited", icon: "edit" },
+    { id: "deleted", label: "Deleted", icon: "delete" },
+    { id: "notes", label: "Notes", icon: "edit_note" },
+    { id: "undone", label: "Undone", icon: "undo" },
+  ];
+
+  function changeRow(c) {
+    const f = c.feature === "notes" ? NOTES_VIEW : featureOf(c.feature);
+    const mark = c.action === "delete" ? "delete" : c.action === "undo" ? "undo" : c.action === "add" ? "add_circle" : c.action === "note" ? "edit_note" : "edit";
+    const status = c.undone ? `<span class="trk-change-tag">${icon("undo")}Undone</span>` : "";
+    const undo = c.undoable ? `<button type="button" class="cw-btn" data-trk-undo="${esc(c.batch)}"${sheet.busy ? " disabled" : ""}>${icon("undo")}<span>Undo</span></button>` : "";
+    return `<li class="trk-change${c.undone ? " is-undone" : ""}"><span class="trk-change-icon">${icon(mark)}</span><span class="trk-change-copy"><b>${esc(changeText(c))}</b><small>${icon(f.icon)}${esc(f.label)} · ${esc(timeText(c.at))}</small></span>${status}${undo}</li>`;
+  }
+
   function renderChanges() {
-    const rows = sheet.changes.map((c) => {
-      const f = featureOf(c.feature);
-      const symbol = c.action === "delete" ? "delete" : c.action === "undo" ? "undo" : "edit";
-      const status = c.undone ? `<span class="trk-change-tag">${icon("undo")}Undone</span>` : "";
-      const undo = c.undoable ? `<button type="button" class="cw-btn" data-trk-undo="${esc(c.batch)}"${sheet.busy ? " disabled" : ""}>${icon("undo")}<span>Undo</span></button>` : "";
-      return `<li class="trk-change${c.undone ? " is-undone" : ""}"><span class="trk-change-icon">${icon(symbol)}</span><span class="trk-change-copy"><b>${esc(changeText(c))}</b><small>${icon(f.icon)}${esc(f.label)} · ${esc(whenText(c.at))}</small></span>${status}${undo}</li>`;
-    }).join("");
-    const more = sheet.changes.length < sheet.changesTotal;
+    const days = [];
+    for (const c of sheet.changes) {
+      const label = dayLabel(c.at);
+      if (days[days.length - 1]?.label !== label) days.push({ label, rows: [] });
+      days[days.length - 1].rows.push(changeRow(c));
+    }
+    const filtered = !!(sheet.changeKind || sheet.changeQ.trim());
+    const list = days.map((d) => `<h3 class="trk-change-day">${esc(d.label)}</h3><ul class="trk-changes">${d.rows.join("")}</ul>`).join("");
+    const chips = CHANGE_KINDS.map((k) => chip(`data-trk-change-kind="${k.id}"`, k.label, { active: sheet.changeKind === k.id, iconName: k.icon || "" })).join("");
+    const empty = sheet.busy && !sheet.changes.length
+      ? emptyState("Loading...", "hourglass_empty")
+      : emptyState(filtered ? "No changes match these filters." : "No changes yet.", filtered ? "search_off" : "history_toggle_off");
+    const more = sheet.changes.length < sheet.changesTotal
+      ? `<div class="trk-changes-more" data-trk-changes-more><button type="button" class="cw-btn" data-trk-sheet="more-changes"${sheet.busy ? " disabled" : ""}>${icon(sheet.busy ? "hourglass_empty" : "expand_more")}<span>${sheet.busy ? "Loading..." : "Show more"}</span></button></div>`
+      : "";
+    const sub = sheet.changesAll ? `${plural(sheet.changesAll, "change", "changes")} in the last 90 days` : "Everything you logged, edited or deleted in the last 90 days";
+    const count = filtered && !sheet.busy ? `<p class="trk-note trk-change-count" role="status">${esc(`${num(sheet.changesTotal)} of ${num(sheet.changesAll)} match`)}</p>` : "";
     return `
-      ${sheetHead("manage_history", "Change history", "Edits and deletes from the last 90 days")}
-      <div class="trk-form">
+      ${sheetHead("manage_history", "Changes", sub)}
+      <div class="trk-form trk-change-form">
+        <div class="trk-change-filters">
+          <input type="search" class="cw-input" data-trk-change-q value="${esc(sheet.changeQ)}" placeholder="Search by title..." aria-label="Search changes by title" autocomplete="off">
+          <div class="trk-seg" role="group" aria-label="Kind of change">${chips}</div>
+        </div>
+        ${count}
         ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : ""}
-        ${rows ? `<ul class="trk-changes">${rows}</ul>` : sheet.busy ? `<p class="trk-note">Loading...</p>` : `<div class="trk-state">${icon("history_toggle_off")}<span>No changes yet. Edits and deletes you make here show up in this list.</span></div>`}
-        ${more ? `<footer class="trk-sheet-foot"><button type="button" class="cw-btn trk-more" data-trk-sheet="more-changes"${sheet.busy ? " disabled" : ""}>${icon("expand_more")}<span>Show more</span></button></footer>` : ""}
+        ${list || empty}
+        ${more}
       </div>`;
+  }
+
+  let changesObserver = null;
+
+  function watchMoreChanges(dialog) {
+    changesObserver?.disconnect();
+    changesObserver = null;
+    const sentinel = dialog.querySelector("[data-trk-changes-more]");
+    if (!sentinel || typeof IntersectionObserver !== "function") return;
+    changesObserver = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting) || sheet.busy || sheet.mode !== "changes") return;
+      if (sheet.changes.length < sheet.changesTotal) loadChanges(true);
+    }, { root: dialog, rootMargin: "240px" });
+    changesObserver.observe(sentinel);
+  }
+
+  function importPick(imp) {
+    const [id, instance] = String(imp.source || "").split("|");
+    const row = imp.sources.find((r) => r.id === id);
+    return { row, id, instance, label: row ? `${row.label}${instance !== "default" ? ` (${row.instances.find((i) => i.id === instance)?.label || instance})` : ""}` : "" };
+  }
+
+  function importTargets(imp) {
+    const pick = importPick(imp);
+    return imp.instances.filter((i) => !(pick.id === "CROSSWATCH" && pick.instance === i.id));
+  }
+
+  function renderImport() {
+    const imp = sheet.imp;
+    let body;
+    if (imp.loading) body = `<p class="trk-note">Loading connected services...</p>`;
+    else if (!imp.sources.length) body = emptyState("No connected service can be imported yet. Connect one in Settings first.", "link_off");
+    else {
+      const pick = importPick(imp);
+      const options = imp.sources.flatMap((r) => r.instances.map((i) => {
+        const value = `${r.id}|${i.id}`;
+        return `<option value="${esc(value)}"${value === imp.source ? " selected" : ""}>${esc(r.label)}${i.id === "default" ? "" : ` · ${esc(i.label)}`}</option>`;
+      })).join("");
+      const chips = FEATURES.filter((f) => pick.row?.features.includes(f.id)).map((f) => {
+        const on = imp.features.has(f.id);
+        return `<button type="button" class="cw-filter-chip${on ? " active" : ""}" data-trk-imp-feature="${f.id}" aria-pressed="${on}">${symbol(f.icon, "cw-type-icon")}<span>${esc(f.label)}</span></button>`;
+      }).join("");
+      const targets = importTargets(imp).map((i) => `<option value="${esc(i.id)}"${i.id === imp.target ? " selected" : ""}>${esc(i.label)}</option>`).join("");
+      const fileLink = `#import_export?target=${encodeURIComponent(imp.target === "new" ? state.instance : imp.target)}&returnTo=${encodeURIComponent("/#tracker")}`;
+      body = `
+        <div class="trk-fields">
+          <label class="trk-field trk-field-wide"><span>From</span><select class="cw-select" data-trk-imp="source" aria-label="Import from">${options}</select></label>
+        </div>
+        <div class="trk-group-label">What to bring in</div>
+        <div class="cw-type-filter" role="group" aria-label="What to bring in">${chips}</div>
+        ${pick.row?.dropped && imp.features.has("history") ? `<label class="trk-check trk-imp-dropped"><input type="checkbox" class="cw-checkbox" data-trk-imp="dropped"${imp.dropped ? " checked" : ""}><span>Also bring in shows you dropped. They show up as Dropped under My titles.</span></label>` : ""}
+        <div class="trk-fields">
+          <label class="trk-field"><span>Into</span><select class="cw-select" data-trk-imp="target" aria-label="Import into">${targets}${imp.canCreate ? `<option value="new"${imp.target === "new" ? " selected" : ""}>New instance</option>` : ""}</select></label>
+          ${imp.target === "new" ? `<label class="trk-field"><span>Name</span><input type="text" class="cw-input" data-trk-imp="name" value="${esc(imp.name)}" maxlength="24" placeholder="${esc(`${pick.row?.label || "Import"} import`)}"></label>` : ""}
+        </div>
+        <p class="trk-effect">${icon("info")}<span>Only adds. Nothing is removed, and nothing is written back to ${esc(pick.label)}. It runs in the background with progress in the bell; large libraries can take a while.</span></p>
+        ${imp.busy ? `<p class="trk-effect is-danger">${icon("sync")}<span>A sync is running. Start the import when it has finished.</span></p>` : ""}
+        <p class="trk-note">Have an export file instead? <a href="${esc(fileLink)}" data-trk-sheet="close">Import a file</a></p>`;
+    }
+    const ready = !imp.loading && imp.sources.length && imp.features.size && !imp.busy && imp.target;
+    return `
+      ${sheetHead("download", "Import", "Bring a connected service into a tracker")}
+      <form class="trk-form" data-trk-form="import" novalidate>
+        ${body}
+        ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : ""}
+        <footer class="trk-sheet-foot">
+          <button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button>
+          ${imp.sources.length ? `<button type="submit" class="cw-btn primary"${ready && !sheet.busy ? "" : " disabled"}>${icon("download")}<span>Start import</span></button>` : ""}
+        </footer>
+      </form>`;
+  }
+
+  function setImportSource(imp, value) {
+    imp.source = value;
+    const pick = importPick(imp);
+    imp.features = new Set(pick.row?.features || []);
+    if (imp.target !== "new" && !importTargets(imp).some((i) => i.id === imp.target)) imp.target = importTargets(imp)[0]?.id || (imp.canCreate ? "new" : "");
+  }
+
+  async function openImport() {
+    const imp = { loading: true, sources: [], instances: [], source: "", features: new Set(), target: state.instance, name: "", busy: false, canCreate: false, dropped: false };
+    openSheet("import", { imp });
+    try {
+      const data = await getJSON("/api/tracker/import/sources");
+      imp.sources = Array.isArray(data.sources) ? data.sources : [];
+      imp.instances = Array.isArray(data.instances) ? data.instances : [];
+      imp.busy = !!data.busy;
+      imp.canCreate = data.can_create !== false;
+      const first = imp.sources.find((r) => r.id !== "CROSSWATCH") || imp.sources[0];
+      if (first) setImportSource(imp, `${first.id}|${first.instances[0].id}`);
+    } catch (err) {
+      sheet.error = writeError(err);
+    }
+    imp.loading = false;
+    if (sheet.mode === "import" && sheet.imp === imp) renderSheet();
+  }
+
+  async function startImport() {
+    const imp = sheet.imp;
+    const pick = importPick(imp);
+    if (!pick.row || !imp.features.size) return;
+    sheet.busy = true;
+    sheet.error = "";
+    renderSheet();
+    try {
+      if (imp.target === "new") {
+        const label = imp.name.trim() || `${pick.row.label} import`;
+        const made = await getJSON("/api/provider-instances/CROSSWATCH/next", { label, template: { connected: true } });
+        imp.instances.push({ id: made.id, label });
+        imp.target = made.id;
+      }
+      const dropped = !!(pick.row.dropped && imp.features.has("history") && imp.dropped);
+      const data = await getJSON("/api/tracker/import", { source: pick.id, source_instance: pick.instance, provider_instance: imp.target, features: Array.from(imp.features), dropped });
+      closeSheet();
+      state.instance = data.provider_instance || imp.target;
+      state.imp = data.job || null;
+      state.ref = null;
+      state.title = null;
+      state.progress = {};
+      state.picked.clear();
+      toast.show(`Import from ${pick.label} started`);
+      window.dispatchEvent(new CustomEvent("cw:tracker-check-changed"));
+      await refresh();
+    } catch (err) {
+      sheet.busy = false;
+      sheet.error = writeError(err);
+      if (err?.code === "sync_running") imp.busy = true;
+      renderSheet();
+    }
+  }
+
+  function noteDraft(data) {
+    const n = data?.note || {};
+    const fields = {};
+    for (const f of state.noteFields) if (fieldOk(f, n.fields?.[f.id])) fields[f.id] = n.fields[f.id];
+    return {
+      key: data.note_key,
+      title: data.title?.title || n.title || "",
+      year: data.title?.year || n.year || null,
+      status: n.status || "",
+      started: n.started || "",
+      finished: n.finished || "",
+      notes: n.notes || "",
+      tags: [...(n.tags || [])],
+      fields,
+      expected: data.note || null,
+      tagInput: "",
+    };
+  }
+
+  function addTags(draft, raw) {
+    for (const part of String(raw || "").split(",")) {
+      const tag = part.split(/\s+/).filter(Boolean).join(" ").slice(0, 40);
+      if (!tag || draft.tags.length >= MAX_TAGS || draft.tags.some((t) => t.toLowerCase() === tag.toLowerCase())) continue;
+      draft.tags.push(tag);
+    }
+  }
+
+  function fieldInput(field, value) {
+    const attr = `data-trk-note-field="${esc(field.id)}"`;
+    if (field.type === "bool") {
+      return `<label class="trk-field trk-check"><input type="checkbox" class="cw-checkbox" ${attr}${value ? " checked" : ""}><span>${esc(field.name)}</span></label>`;
+    }
+    const v = value ?? "";
+    const control = field.type === "choice"
+      ? `<select class="cw-select" ${attr}><option value=""></option>${(field.choices || []).map((c) => `<option value="${esc(c)}"${c === v ? " selected" : ""}>${esc(c)}</option>`).join("")}</select>`
+      : field.type === "number"
+        ? `<input type="number" class="cw-input" ${attr} value="${esc(v)}" step="any">`
+        : field.type === "date"
+          ? `<input type="date" class="cw-input" ${attr} value="${esc(v)}">`
+          : `<input type="text" class="cw-input" ${attr} value="${esc(v)}" maxlength="500">`;
+    return `<label class="trk-field"><span>${esc(field.name)}</span>${control}</label>`;
+  }
+
+  function sheetError() {
+    return sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : "";
+  }
+
+  function renderNotes() {
+    const d = sheet.draft;
+    const head = state.title?.title || { title: d.title };
+    const busy = sheet.busy ? " disabled" : "";
+    const chips = [{ id: "", label: "No status", icon: "remove" }, ...STATUSES]
+      .map((s) => `<button type="button" class="cw-filter-chip${d.status === s.id ? " active" : ""}" data-trk-note-status="${s.id}" aria-pressed="${d.status === s.id}">${symbol(s.icon, "cw-type-icon")}<span>${esc(s.label)}</span></button>`)
+      .join("");
+    const known = (state.notes.tags || []).map((t) => t.tag).filter((t) => !d.tags.some((x) => x.toLowerCase() === t.toLowerCase()));
+    const tags = d.tags.map((t, i) => `<span class="trk-label">${esc(t)}<button type="button" data-trk-note-untag="${i}" aria-label="Remove tag ${esc(t)}">${icon("close")}</button></span>`).join("");
+    const fields = state.noteFields.map((f) => fieldInput(f, d.fields[f.id])).join("");
+    return `
+      ${sheetHead(head, head.title || d.title || "My notes", "My notes · kept in CrossWatch, never synced")}
+      <form class="trk-form" data-trk-form="notes" novalidate>
+        <div class="trk-group-label">Status</div>
+        <div class="trk-note-statuses" role="group" aria-label="Status">${chips}</div>
+        <div class="trk-fields">
+          <label class="trk-field"><span>Started</span><input type="date" class="cw-input" data-trk-note="started" value="${esc(d.started)}"></label>
+          <label class="trk-field"><span>Finished</span><input type="date" class="cw-input" data-trk-note="finished" value="${esc(d.finished)}"></label>
+        </div>
+        <div class="trk-field trk-field-wide trk-note-tags">
+          <span id="trk-note-tags-label">Tags</span>
+          ${tags ? `<span class="trk-tags">${tags}</span>` : ""}
+          <input type="text" class="cw-input" data-trk-note-tag list="trk-note-tag-list" value="${esc(d.tagInput)}" placeholder="${d.tags.length ? "Add another tag" : "Type a tag and press Enter"}" maxlength="40" autocomplete="off" aria-labelledby="trk-note-tags-label"${d.tags.length >= MAX_TAGS ? " disabled" : ""}>
+          <datalist id="trk-note-tag-list">${known.slice(0, 200).map((t) => `<option value="${esc(t)}"></option>`).join("")}</datalist>
+        </div>
+        <label class="trk-field trk-field-wide"><span>Notes</span><textarea class="cw-input trk-note-area" data-trk-note="notes" rows="5" maxlength="10000">${esc(d.notes)}</textarea></label>
+        ${fields ? `<div class="trk-group-label">Your fields</div><div class="trk-fields">${fields}</div>` : ""}
+        <button type="button" class="trk-link-btn" data-trk-sheet="fields">${icon("tune")}<span>${state.noteFields.length ? "Manage your fields" : "Add your own fields"}</span></button>
+        ${sheetError()}
+        <footer class="trk-sheet-foot">
+          ${d.expected ? `<button type="button" class="cw-btn danger" data-trk-sheet="note-clear"${busy}>${icon("delete")}<span>Clear</span></button>` : ""}
+          <button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button>
+          <button type="submit" class="cw-btn primary"${busy}>${icon("save")}<span>Save</span></button>
+        </footer>
+      </form>`;
+  }
+
+  function renderFields() {
+    const busy = sheet.busy ? " disabled" : "";
+    const rows = sheet.defs.map((f, i) => `<div class="trk-def">
+        <label class="trk-field trk-def-name"><span>Name</span><input type="text" class="cw-input" data-trk-def="${i}:name" value="${esc(f.name)}" maxlength="40"></label>
+        <label class="trk-field trk-def-type"><span>Type</span><select class="cw-select" data-trk-def="${i}:type">${FIELD_TYPES.map((t) => `<option value="${t.id}"${t.id === f.type ? " selected" : ""}>${esc(t.label)}</option>`).join("")}</select></label>
+        ${f.type === "choice" ? `<label class="trk-field trk-def-choices"><span>Choices, separated by commas</span><input type="text" class="cw-input" data-trk-def="${i}:choicesText" value="${esc(f.choicesText || "")}"></label>` : ""}
+        <button type="button" class="trk-icon is-danger" data-trk-def-remove="${i}" title="Remove field" aria-label="Remove ${esc(f.name || "field")}">${icon("delete")}</button>
+      </div>`).join("");
+    return `
+      ${sheetHead("tune", "Your fields", "Extra fields for your notes, on every title")}
+      <form class="trk-form" data-trk-form="fields" novalidate>
+        ${rows ? `<div class="trk-defs">${rows}</div>` : `<p class="trk-note">No fields yet. Add one for anything you want to keep, like who you watched with or where.</p>`}
+        ${sheet.defs.length < MAX_FIELDS ? `<button type="button" class="cw-btn" data-trk-sheet="def-add">${icon("add")}<span>Add a field</span></button>` : ""}
+        <p class="trk-note">Changing a field's type or removing it also clears what you filled in for it.</p>
+        ${sheetError()}
+        <footer class="trk-sheet-foot">
+          <button type="button" class="cw-btn" data-trk-sheet="${sheet.back ? "fields-back" : "close"}">${sheet.back ? "Back" : "Cancel"}</button>
+          <button type="submit" class="cw-btn primary"${busy}>${icon("save")}<span>Save fields</span></button>
+        </footer>
+      </form>`;
+  }
+
+  function openNotes() {
+    if (state.title?.note_key) openSheet("notes", { draft: noteDraft(state.title) });
+  }
+
+  function openFields() {
+    const back = sheet.mode === "notes";
+    openSheet("fields", { back, draft: back ? sheet.draft : null, defs: state.noteFields.map((f) => ({ ...f, choicesText: (f.choices || []).join(", ") })) });
+  }
+
+  async function postNote(draft, text) {
+    addTags(draft, draft.tagInput);
+    draft.tagInput = "";
+    const body = {
+      provider_instance: state.instance,
+      key: draft.key,
+      title: draft.title,
+      year: draft.year,
+      status: draft.status,
+      started: draft.started,
+      finished: draft.finished,
+      notes: draft.notes,
+      tags: draft.tags,
+      fields: draft.fields,
+      expected: draft.expected,
+    };
+    const data = await getJSON("/api/tracker/note", body);
+    if (!data.batch) {
+      closeSheet();
+      return;
+    }
+    await afterWrite(data, text || (data.note ? `Saved your notes for ${draft.title}` : `Removed your notes for ${draft.title}`));
+  }
+
+  async function saveNotes(clear = false) {
+    const draft = clear ? { ...sheet.draft, status: "", started: "", finished: "", notes: "", tags: [], fields: {}, tagInput: "" } : sheet.draft;
+    sheet.busy = true;
+    sheet.error = "";
+    renderSheet();
+    try {
+      await postNote(draft);
+    } catch (err) {
+      sheet.busy = false;
+      sheet.error = err?.code === "changed_since" ? "Your notes for this title changed somewhere else. Close this and open it again to see the latest version." : writeError(err);
+      renderSheet();
+    }
+  }
+
+  async function completeNote() {
+    if (!state.title?.note_key) return;
+    const draft = noteDraft(state.title);
+    draft.status = "completed";
+    if (!draft.finished) draft.finished = today();
+    try {
+      await postNote(draft, `Marked ${draft.title} as completed`);
+    } catch (err) {
+      toast.show(writeError(err), { tone: "bad" });
+    }
+  }
+
+  async function saveFields() {
+    const fields = sheet.defs.map((f) => ({
+      id: f.id || "",
+      name: f.name,
+      type: f.type,
+      ...(f.type === "choice" ? { choices: String(f.choicesText || "").split(",").map((c) => c.trim()).filter(Boolean) } : {}),
+    }));
+    sheet.busy = true;
+    sheet.error = "";
+    renderSheet();
+    try {
+      const data = await getJSON("/api/tracker/note-fields", { provider_instance: state.instance, fields });
+      state.noteFields = Array.isArray(data.fields) ? data.fields : [];
+      if (sheet.back && sheet.draft) {
+        const draft = sheet.draft;
+        const kept = {};
+        for (const f of state.noteFields) if (fieldOk(f, draft.fields[f.id])) kept[f.id] = draft.fields[f.id];
+        draft.fields = kept;
+        openSheet("notes", { draft });
+      } else {
+        closeSheet();
+        toast.show("Saved your fields");
+      }
+      setSlot("title", renderTitle());
+    } catch (err) {
+      sheet.busy = false;
+      sheet.error = writeError(err);
+      renderSheet();
+    }
+  }
+
+  function renderTitleSheet() {
+    const head = state.title?.title || {};
+    return `${sheetHead(head, head.title || "Title", "")}<div class="trk-form trk-detail">${state.title ? titleBody(state.title) : `<div class="trk-detail-empty">${symbol("hourglass_empty")}<span>Loading...</span></div>`}</div>`;
   }
 
   function renderSheet(focusFirst) {
     const el = ensureSheet();
     const dialog = el.querySelector(".trk-sheet");
     const scroll = dialog.scrollTop;
-    dialog.innerHTML = sheet.mode === "edit" ? renderEdit() : sheet.mode === "bulk" ? renderBulkDelete() : renderChanges();
+    const active = dialog.contains(document.activeElement) ? document.activeElement : null;
+    const keep = ["data-trk-log-q", "data-trk-note-tag", "data-trk-change-q"].find((name) => active?.hasAttribute?.(name));
+    const renderers = {
+      edit: renderEdit, delete: renderDelete, rate: renderRate, log: renderLog, title: renderTitleSheet,
+      changes: renderChanges, import: renderImport, notes: renderNotes, fields: renderFields, "title-edit": renderTitleEdit,
+    };
+    dialog.innerHTML = (renderers[sheet.mode] || renderChanges)();
     dialog.scrollTop = scroll;
     if (el.hidden) {
       el.hidden = false;
       document.documentElement.classList.add("cw-ia-sheet-open");
     }
-    if (focusFirst) dialog.focus({ preventScroll: true });
+    const search = dialog.querySelector("[data-trk-log-q]");
+    const kept = keep ? dialog.querySelector(`[${keep}]`) : null;
+    if (kept && !kept.disabled) {
+      kept.focus();
+      kept.setSelectionRange?.(kept.value.length, kept.value.length);
+    } else if (focusFirst) {
+      (search || dialog).focus({ preventScroll: true });
+    }
+    if (sheet.mode === "changes") watchMoreChanges(dialog);
+    else changesObserver?.disconnect();
   }
 
   function openSheet(mode, extra = {}) {
-    sheet.lastFocus = document.activeElement;
-    Object.assign(sheet, { mode, item: null, busy: false, error: "", confirm: false, keys: [], search: null, token: sheet.token + 1 }, extra);
+    if (!sheet.el || sheet.el.hidden) sheet.lastFocus = document.activeElement;
+    Object.assign(sheet, { mode, item: null, feature: "history", busy: false, error: "", keys: [], token: sheet.token + 1 }, extra);
     renderSheet(true);
   }
 
   function closeSheet() {
     if (!sheet.el || sheet.el.hidden) return;
+    changesObserver?.disconnect();
+    changesObserver = null;
     sheet.el.hidden = true;
     sheet.mode = "";
     document.documentElement.classList.remove("cw-ia-sheet-open");
@@ -784,6 +2184,13 @@
     return changes;
   }
 
+  async function afterWrite(data, text) {
+    closeSheet();
+    toast.show(text, { undo: data?.batch ? () => undo(data.batch) : null });
+    state.progress = {};
+    await refresh();
+  }
+
   async function saveEdit() {
     const changes = formChanges();
     if (!Object.keys(changes).length) {
@@ -794,10 +2201,9 @@
     sheet.error = "";
     renderSheet();
     try {
-      const data = await getJSON("/api/tracker/edit", { feature: state.feature, provider_instance: state.instance, key: sheet.item.key, changes });
-      closeSheet();
-      toast.show(`Saved ${cardTitle(data.item || sheet.item)}`, { undo: () => undo(data.batch) });
-      await refresh();
+      const data = await getJSON("/api/tracker/edit", { feature: sheet.feature, provider_instance: state.instance, key: sheet.item.key, changes });
+      if (state.ref && !state.ref.show && state.ref.key === sheet.item.key && data.key) state.ref = { ...state.ref, key: data.key };
+      await afterWrite(data, `Saved ${cardTitle(data.item || sheet.item)}`);
     } catch (err) {
       sheet.busy = false;
       sheet.error = err?.code === "changed_since" ? "This record changed while you were editing it. Close it and open it again to see the latest version." : writeError(err);
@@ -805,15 +2211,17 @@
     }
   }
 
-  async function deleteKeys(keys) {
+  async function deleteKeys(keys, feature) {
     sheet.busy = true;
     sheet.error = "";
     renderSheet();
     try {
-      const data = await getJSON("/api/tracker/delete", { feature: state.feature, provider_instance: state.instance, keys });
+      const data = await getJSON("/api/tracker/delete", { feature, provider_instance: state.instance, keys });
       closeSheet();
-      clearSelection();
+      state.picked.clear();
+      if (state.ref && !state.ref.show && keys.includes(state.ref.key)) state.ref = null;
       toast.show(`Deleted ${plural(data.count || keys.length, "record", "records")}`, { undo: () => undo(data.batch) });
+      state.progress = {};
       await refresh();
     } catch (err) {
       sheet.busy = false;
@@ -827,6 +2235,7 @@
       await getJSON("/api/tracker/undo", { provider_instance: state.instance, batch });
       toast.show("Change undone");
       if (sheet.mode === "changes") await loadChanges(false);
+      state.progress = {};
       await refresh();
     } catch (err) {
       const text = writeError(err);
@@ -841,101 +2250,390 @@
   }
 
   async function loadChanges(append) {
+    const token = ++changesRequest;
     sheet.busy = true;
     sheet.error = "";
+    if (!append) {
+      sheet.changes = [];
+      sheet.changesTotal = 0;
+    }
     renderSheet();
     try {
-      const offset = append ? sheet.changes.length : 0;
-      const data = await getJSON(`/api/tracker/changes?provider_instance=${encodeURIComponent(state.instance)}&offset=${offset}&limit=30`);
+      const params = new URLSearchParams({
+        provider_instance: state.instance,
+        offset: String(append ? sheet.changes.length : 0),
+        limit: "40",
+        kind: sheet.changeKind,
+        q: sheet.changeQ.trim(),
+      });
+      const data = await getJSON(`/api/tracker/changes?${params}`);
+      if (token !== changesRequest) return;
       const rows = Array.isArray(data.changes) ? data.changes : [];
       sheet.changes = append ? sheet.changes.concat(rows) : rows;
       sheet.changesTotal = Number(data.total || 0);
+      sheet.changesAll = Number(data.all ?? data.total ?? 0);
     } catch (err) {
+      if (token !== changesRequest) return;
       sheet.error = writeError(err);
     }
     sheet.busy = false;
     if (sheet.mode === "changes") renderSheet();
   }
 
-  async function findMatches() {
-    const item = sheet.item;
-    const input = sheet.el.querySelector('[data-trk-edit="title"]');
-    const q = (input?.value || cardTitle(item) || "").trim();
-    const yearRaw = sheet.el.querySelector('[data-trk-edit="year"]')?.value || "";
-    const typ = item.type === "movie" ? "movie" : "show";
-    const keep = formChanges();
-    const token = ++sheet.token;
-    sheet.busy = true;
-    sheet.search = { results: [], message: "Searching TMDB..." };
-    renderSheet();
-    restoreForm(keep);
-    let search;
+  let changesRequest = 0;
+  let changeSearchTimer = 0;
+
+  function headItem() {
+    const data = state.title;
+    const head = data?.title || {};
+    const ids = { ...(head.ids || {}) };
+    if (head.art?.tmdb) ids.tmdb = head.art.tmdb;
+    return { type: data?.show ? "show" : "movie", title: head.title, year: head.year, ids };
+  }
+
+  function openLog(prefill) {
+    const log = { type: "movie", q: "", results: [], message: "", pick: null, fixed: false, target: "history", when: localInput(new Date().toISOString()), seasons: null, season: 1, episode: "all", watchlistKey: "", unlist: true, searchToken: 0 };
+    if (prefill) Object.assign(log, prefill, { fixed: true });
+    openSheet("log", { log });
+    if (log.pick?.type === "show") loadSeasons(log);
+  }
+
+  function logFromTitle() {
+    const data = state.title;
+    if (!data) return;
+    const head = headItem();
+    const next = state.progress[head.ids.tmdb]?.next;
+    openLog({
+      type: head.type,
+      pick: { type: head.type, tmdb: head.ids.tmdb, title: head.title, year: head.year, ids: head.ids },
+      watchlistKey: data.watchlist[0]?.key || "",
+      season: next?.season || 1,
+      episode: next?.episode || "all",
+    });
+  }
+
+  async function loadSeasons(log) {
+    if (!log.pick?.tmdb) {
+      log.seasons = [];
+      sheet.error = "This show has no TMDB ID yet. Use Fix match first.";
+      renderSheet();
+      return;
+    }
     try {
-      if (q.length < 2) throw Object.assign(new Error("short"), { code: "short" });
-      const data = await getJSON(`/api/metadata/search?q=${encodeURIComponent(q)}&typ=${typ}&limit=8${/^\d{4}$/.test(yearRaw) ? `&year=${yearRaw}` : ""}`);
-      const results = Array.isArray(data.results) ? data.results : [];
-      search = { results, typ, message: results.length ? "" : "No TMDB matches for this title." };
+      const data = await getJSON(`/api/tracker/seasons?${inst()}&tmdb=${encodeURIComponent(log.pick.tmdb)}`);
+      log.seasons = (data.seasons || []).filter((s) => s.episodes > 0);
+      if (!log.seasons.some((s) => s.season === log.season)) log.season = log.seasons.find((s) => s.season > 0)?.season ?? log.seasons[0]?.season ?? 1;
     } catch (err) {
-      search = { results: [], message: err?.code === "short" ? "Enter a title to search for." : err?.message === "TMDb key missing" ? "Add a TMDB API key in Settings to search." : "TMDB search failed. Try again in a moment." };
+      log.seasons = [];
+      sheet.error = writeError(err);
     }
-    if (token !== sheet.token || sheet.mode !== "edit" || sheet.item !== item) return;
-    sheet.search = search;
-    const current = formChanges();
-    sheet.busy = false;
+    if (sheet.mode === "log" && sheet.log === log) renderSheet();
+  }
+
+  let logSearchTimer = 0;
+
+  function searchLog() {
+    const log = sheet.log;
+    clearTimeout(logSearchTimer);
+    logSearchTimer = setTimeout(async () => {
+      const q = log.q.trim();
+      const token = ++log.searchToken;
+      if (q.length < 2) {
+        log.results = [];
+        log.message = "";
+        renderSheet();
+        return;
+      }
+      log.message = "Searching...";
+      renderSheet();
+      try {
+        const data = await getJSON(`/api/metadata/search?q=${encodeURIComponent(q)}&typ=${log.type}&limit=8`);
+        if (token !== log.searchToken || sheet.log !== log) return;
+        log.results = Array.isArray(data.results) ? data.results : [];
+        log.message = log.results.length ? "" : "No matches on TMDB.";
+      } catch (err) {
+        if (token !== log.searchToken) return;
+        log.results = [];
+        log.message = err?.message === "TMDb key missing" ? "Add a TMDB API key in Settings to search." : "TMDB search failed. Try again in a moment.";
+      }
+      if (sheet.log === log) renderSheet();
+    }, 300);
+  }
+
+  async function pickLog(index) {
+    const log = sheet.log;
+    const r = log.results[index];
+    if (!r) return;
+    const tmdb = String(r.tmdb);
+    log.pick = { type: log.type, tmdb, title: r.title, year: r.year, ids: { tmdb } };
+    log.seasons = null;
     renderSheet();
-    restoreForm(current);
-  }
-
-  function restoreForm(changes) {
-    const form = sheet.el?.querySelector('[data-trk-form="edit"]');
-    if (!form) return;
-    const set = (sel, value) => {
-      const input = form.querySelector(sel);
-      if (input) input.value = value ?? "";
-    };
-    if ("date" in changes) set('[data-trk-edit="date"]', localInput(changes.date));
-    if ("rating" in changes) set('[data-trk-edit="rating"]', changes.rating);
-    if ("progress_percent" in changes) set('[data-trk-edit="progress_percent"]', changes.progress_percent);
-    if ("title" in changes) set('[data-trk-edit="title"]', changes.title);
-    if ("year" in changes) set('[data-trk-edit="year"]', changes.year);
-    for (const group of ["ids", "show_ids"]) {
-      for (const [name, value] of Object.entries(changes[group] || {})) set(`[data-trk-id="${group}:${name}"]`, value);
-    }
-  }
-
-  async function pickMatch(index) {
-    const match = sheet.search?.results?.[index];
-    if (!match) return;
-    const item = sheet.item;
-    const token = ++sheet.token;
-    const group = isChild(item) ? "show_ids" : "ids";
-    const form = sheet.el.querySelector('[data-trk-form="edit"]');
-    const fill = (name, value) => {
-      const input = form.querySelector(`[data-trk-id="${group}:${name}"]`);
-      if (input && value != null && value !== "") input.value = String(value);
-    };
-    form.querySelector('[data-trk-edit="title"]').value = match.title || "";
-    form.querySelector('[data-trk-edit="year"]').value = match.year || "";
-    for (const name of BASE_IDS) {
-      const input = form.querySelector(`[data-trk-id="${group}:${name}"]`);
-      if (input) input.value = "";
-    }
-    fill("tmdb", match.tmdb);
-    form.querySelectorAll(".trk-match").forEach((b, i) => b.setAttribute("aria-selected", String(i === index)));
+    if (log.type === "show") loadSeasons(log);
     try {
-      const data = await getJSON("/api/metadata/resolve", { entity: item.type === "movie" ? "movie" : "show", ids: { tmdb: match.tmdb } });
-      if (token !== sheet.token || sheet.mode !== "edit" || sheet.item !== item || !form.isConnected) return;
+      const data = await getJSON("/api/metadata/resolve", { entity: log.type, ids: { tmdb: r.tmdb } });
       const ids = data?.result?.ids || {};
-      for (const name of ["imdb", "tvdb", "trakt"]) fill(name, ids[name]);
+      if (sheet.log === log && log.pick?.tmdb === tmdb) {
+        for (const name of ["imdb", "tvdb", "trakt"]) if (ids[name]) log.pick.ids[name] = String(ids[name]);
+      }
     } catch {}
   }
 
-  function onSheetClick(event) {
-    const match = event.target.closest("[data-trk-match]");
-    if (match) {
-      pickMatch(Number(match.dataset.trkMatch));
-      return;
+  async function saveLog() {
+    const log = sheet.log;
+    const p = log.pick;
+    if (!p) return;
+    const when = log.when ? new Date(log.when).toISOString() : new Date().toISOString();
+    let items;
+    if (log.target === "history" && p.type === "show") {
+      const season = Number(log.season);
+      const count = log.seasons?.find((s) => s.season === season)?.episodes || 0;
+      const eps = log.episode === "all" ? Array.from({ length: count }, (_, i) => i + 1) : [Number(log.episode)];
+      items = eps.map((e) => ({ type: "episode", series_title: p.title, series_year: p.year, season, episode: e, show_ids: { ...p.ids }, watched_at: when }));
+    } else {
+      items = [{ type: p.type, title: p.title, year: p.year, ids: { ...p.ids }, ...(log.target === "history" ? { watched_at: when } : {}) }];
     }
+    sheet.busy = true;
+    sheet.error = "";
+    renderSheet();
+    try {
+      const data = await getJSON("/api/tracker/add", {
+        feature: log.target,
+        provider_instance: state.instance,
+        items,
+        remove_from_watchlist: log.target === "history" && log.unlist ? log.watchlistKey : "",
+      });
+      const what = items.length > 1 ? plural(data.count, "episode", "episodes") : p.title;
+      await afterWrite(data, log.target === "history" ? `Logged ${what}` : `Added ${what} to your ${log.target}`);
+    } catch (err) {
+      sheet.busy = false;
+      sheet.error = writeError(err);
+      renderSheet();
+    }
+  }
+
+  async function quickLog(season, episode) {
+    const head = headItem();
+    try {
+      const data = await getJSON("/api/tracker/add", {
+        feature: "history",
+        provider_instance: state.instance,
+        items: [{ type: "episode", series_title: head.title, series_year: head.year, season, episode, show_ids: { ...head.ids }, watched_at: new Date().toISOString() }],
+      });
+      await afterWrite(data, `Logged ${head.title} ${se(season, episode)}`);
+    } catch (err) {
+      toast.show(writeError(err), { tone: "bad" });
+    }
+  }
+
+  async function rate(value) {
+    const data = state.title;
+    if (!data) return;
+    sheet.busy = true;
+    sheet.error = "";
+    renderSheet();
+    try {
+      const existing = data.ratings[0];
+      const res = existing
+        ? await getJSON("/api/tracker/edit", { feature: "ratings", provider_instance: state.instance, key: existing.key, changes: { rating: value } })
+        : await getJSON("/api/tracker/add", { feature: "ratings", provider_instance: state.instance, item: { ...headItem(), rating: value } });
+      await afterWrite(res, `Rated ${data.title.title} ${value}/10`);
+    } catch (err) {
+      sheet.busy = false;
+      sheet.error = err?.code === "no_changes" ? "That's already your rating." : writeError(err);
+      renderSheet();
+    }
+  }
+
+  async function unrate() {
+    const existing = state.title?.ratings?.[0];
+    if (!existing) return;
+    sheet.busy = true;
+    renderSheet();
+    try {
+      const res = await getJSON("/api/tracker/delete", { feature: "ratings", provider_instance: state.instance, keys: [existing.key] });
+      await afterWrite(res, "Rating removed");
+    } catch (err) {
+      sheet.busy = false;
+      sheet.error = writeError(err);
+      renderSheet();
+    }
+  }
+
+  async function toggleWatchlist() {
+    const data = state.title;
+    if (!data) return;
+    try {
+      const listed = data.watchlist[0];
+      const res = listed
+        ? await getJSON("/api/tracker/delete", { feature: "watchlist", provider_instance: state.instance, keys: [listed.key] })
+        : await getJSON("/api/tracker/add", { feature: "watchlist", provider_instance: state.instance, item: headItem() });
+      await afterWrite(res, listed ? `Removed ${data.title.title} from your watchlist` : `Added ${data.title.title} to your watchlist`);
+    } catch (err) {
+      toast.show(writeError(err), { tone: "bad" });
+    }
+  }
+
+  async function postRaw(url, body, options = {}) {
+    const res = await fetch(url, { method: "POST", cache: "no-store", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal: options.signal });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error((typeof data?.detail === "string" && data.detail) || data?.error || `Request failed (${res.status})`);
+    return data;
+  }
+
+  async function openMapping() {
+    const data = state.title;
+    const record = titleAnchor(data);
+    if (!record) return;
+    const count = recordCount(data);
+    const perEpisode = record.check?.code === "episode_missing";
+    const feature = record.feature || "history";
+    const version = encodeURIComponent(window.APP_VERSION || "1");
+    const original = {
+      type: record.type, title: record.title, year: record.year, season: record.season, episode: record.episode,
+      series_title: record.series_title, series_year: record.series_year, ids: { ...record.ids }, show_ids: { ...record.show_ids },
+    };
+    Object.keys(original).forEach((k) => (original[k] == null || original[k] === "") && delete original[k]);
+    const reference = { provider: "CROSSWATCH", instance: state.instance || "default", pair_id: "", feature, key: record.key, original };
+    const request = (action, extra = {}, options = {}) => postRaw("/api/editor/mapping", { ...reference, action, ...extra }, options);
+    try {
+      if (!document.querySelector('link[href*="/assets/css/interactive-sync.css"]')) {
+        const style = document.createElement("link");
+        style.rel = "stylesheet";
+        style.href = `/assets/css/interactive-sync.css?v=${version}`;
+        document.head.append(style);
+      }
+      const { openMappingWorkspace } = await import(`/assets/js/interactive-sync-mapping.js?v=${version}`);
+      const context = await request("catalogs");
+      closeSheet();
+      return openMappingWorkspace({
+        rows: [context.row],
+        total: 1, standalone: true, staged: true, direct: true,
+        scope: count > 1 && !perEpisode ? "title" : "record",
+        scopes: count > 1
+          ? [{ id: "title", label: `Every record of this title (${num(count)})` }, { id: "record", label: data.show ? "Only this episode" : "Only this record" }]
+          : [{ id: "record", label: "This tracker record" }],
+        scopeNote: (value) => value === "title"
+          ? `Changes the match on ${plural(count, "record", "records")} at once. Episode numbers stay as they are. You can undo it from Changes.`
+          : "Changes only this record. You can undo it from Changes.",
+        mappingApi: {
+          catalogs: async () => context,
+          search: (_row, q, catalog, options) => request("search", { q, catalog }, options),
+          episodes: (edits, options) => request("episodes", { item: edits[0].item }, options),
+          parts: (_row, simklId, options) => request("parts", { simkl_id: simklId }, options),
+          save: async (edits, scope) => {
+            const prepared = await request("prepare", { item: edits[0].item });
+            if (scope === "title") {
+              const target = data.show ? { show: data.show_key } : { feature, key: record.key };
+              const res = await getJSON("/api/tracker/edit-title", { provider_instance: state.instance, item: prepared.item, ...target });
+              state.ref = res.show_key ? { show: res.show_key } : { feature: res.feature, key: res.key };
+              await afterWrite(res, `Fixed the match for ${plural(res.count, "record", "records")}`);
+              return prepared;
+            }
+            const res = await getJSON("/api/tracker/replace", { feature, provider_instance: state.instance, key: record.key, item: prepared.item });
+            if (state.ref && !state.ref.show) state.ref = { feature, key: res.key };
+            await afterWrite(res, `Fixed the match for ${cardTitle(res.item || record)}`);
+            return prepared;
+          },
+        },
+      });
+    } catch (err) {
+      toast.show(err?.message || "Mapping could not be opened.", { tone: "bad" });
+    }
+  }
+
+  function findRecord(key, feature = "history") {
+    const list = state.title?.[feature === "history" ? "plays" : feature];
+    return Array.isArray(list) ? list.find((r) => r.key === key) || null : null;
+  }
+
+  function recordCount(data) {
+    return ["plays", "ratings", "watchlist", "collection", "progress"].reduce((n, name) => n + (data?.[name]?.length || 0), 0);
+  }
+
+  function titleAnchor(data) {
+    return data?.attention?.[0] || data?.plays?.[0] || data?.ratings?.[0] || data?.watchlist?.[0] || data?.collection?.[0] || data?.progress?.[0] || null;
+  }
+
+  function detailAction(action) {
+    const data = state.title;
+    if (!data) return;
+    if (action === "card") openCard();
+    else if (action === "log") logFromTitle();
+    else if (action === "rate") openSheet("rate");
+    else if (action === "list") toggleWatchlist();
+    else if (action === "map") openMapping();
+    else if (action === "notes") openNotes();
+    else if (action === "status-menu") setStatusMenu(!state.statusMenu);
+    else if (action === "edit-title") openSheet("title-edit");
+    else if (action === "complete") completeNote();
+    else if (action === "use-tmdb") {
+      const issue = data.attention[0];
+      const c = issue?.check || {};
+      const changes = {};
+      if (c.title) changes.title = c.title;
+      if (c.year) changes.year = c.year;
+      if (issue && Object.keys(changes).length) {
+        getJSON("/api/tracker/edit", { feature: issue.feature, provider_instance: state.instance, key: issue.key, changes })
+          .then((res) => afterWrite(res, `Took the TMDB title for ${cardTitle(issue)}`))
+          .catch((err) => toast.show(writeError(err), { tone: "bad" }));
+      }
+    }
+  }
+
+  function handlePanelClick(event) {
+    const pick = event.target.closest("[data-trk-set-status]");
+    if (pick) {
+      quickStatus(pick.dataset.trkSetStatus);
+      return true;
+    }
+    const detail = event.target.closest("[data-trk-detail]");
+    if (detail) {
+      detailAction(detail.dataset.trkDetail);
+      return true;
+    }
+    const season = event.target.closest("[data-trk-season]");
+    if (season) {
+      const n = Number(season.dataset.trkSeason);
+      if (state.seasonOpen.has(n)) state.seasonOpen.delete(n);
+      else state.seasonOpen.add(n);
+      setSlot("title", renderTitle());
+      if (sheet.mode === "title") renderSheet();
+      return true;
+    }
+    const ep = event.target.closest("[data-trk-log-ep]");
+    if (ep) {
+      const [s, e] = ep.dataset.trkLogEp.split(":").map(Number);
+      quickLog(s, e);
+      return true;
+    }
+    const edit = event.target.closest("[data-trk-play-edit]");
+    if (edit) {
+      const record = findRecord(edit.dataset.trkPlayEdit, "history");
+      if (record) openSheet("edit", { item: record, feature: record.feature || "history" });
+      return true;
+    }
+    const recEdit = event.target.closest("[data-trk-rec-edit]");
+    if (recEdit) {
+      const [feature, ...rest] = recEdit.dataset.trkRecEdit.split("|");
+      const record = findRecord(rest.join("|"), feature);
+      if (record) openSheet("edit", { item: record, feature });
+      return true;
+    }
+    const recDelete = event.target.closest("[data-trk-rec-delete]");
+    if (recDelete) {
+      const [feature, ...rest] = recDelete.dataset.trkRecDelete.split("|");
+      openSheet("delete", { keys: [rest.join("|")], feature });
+      return true;
+    }
+    const del = event.target.closest("[data-trk-play-delete]");
+    if (del) {
+      openSheet("delete", { keys: [del.dataset.trkPlayDelete], feature: "history" });
+      return true;
+    }
+    return false;
+  }
+
+  function onSheetClick(event) {
     const undoBtn = event.target.closest("[data-trk-undo]");
     if (undoBtn) {
       sheet.busy = true;
@@ -943,39 +2641,203 @@
       undo(undoBtn.dataset.trkUndo);
       return;
     }
+    if (sheet.mode === "title" && handlePanelClick(event)) {
+      event.stopPropagation();
+      return;
+    }
+    const changeKind = sheet.mode === "changes" ? event.target.closest("[data-trk-change-kind]") : null;
+    if (changeKind) {
+      if (changeKind.dataset.trkChangeKind !== sheet.changeKind) {
+        sheet.changeKind = changeKind.dataset.trkChangeKind;
+        loadChanges(false);
+      }
+      return;
+    }
+    const rateBtn = event.target.closest("[data-trk-rate]");
+    if (rateBtn) {
+      rate(Number(rateBtn.dataset.trkRate));
+      return;
+    }
+    if (sheet.mode === "notes") {
+      const status = event.target.closest("[data-trk-note-status]");
+      if (status) {
+        sheet.draft.status = status.dataset.trkNoteStatus;
+        if (sheet.draft.status === "completed" && !sheet.draft.finished) sheet.draft.finished = today();
+        if (sheet.draft.status === "watching" && !sheet.draft.started) sheet.draft.started = today();
+        renderSheet();
+        return;
+      }
+      const untag = event.target.closest("[data-trk-note-untag]");
+      if (untag) {
+        sheet.draft.tags.splice(Number(untag.dataset.trkNoteUntag), 1);
+        renderSheet();
+        sheet.el.querySelector("[data-trk-note-tag]")?.focus();
+        return;
+      }
+    }
+    const removeDef = sheet.mode === "fields" ? event.target.closest("[data-trk-def-remove]") : null;
+    if (removeDef) {
+      sheet.defs.splice(Number(removeDef.dataset.trkDefRemove), 1);
+      renderSheet();
+      return;
+    }
+    const feat = sheet.mode === "import" ? event.target.closest("[data-trk-imp-feature]") : null;
+    if (feat) {
+      const id = feat.dataset.trkImpFeature;
+      if (sheet.imp.features.has(id)) sheet.imp.features.delete(id);
+      else sheet.imp.features.add(id);
+      renderSheet();
+      return;
+    }
+    const log = sheet.log;
+    if (sheet.mode === "log" && log) {
+      const type = event.target.closest("[data-trk-log-type]");
+      if (type) {
+        log.type = type.dataset.trkLogType;
+        log.results = [];
+        renderSheet();
+        searchLog();
+        return;
+      }
+      const info = event.target.closest("[data-trk-log-info]");
+      if (info) {
+        previewCard(logCardItem(log, log.results[Number(info.dataset.trkLogInfo)]));
+        return;
+      }
+      const pick = event.target.closest("[data-trk-log-pick]");
+      if (pick) {
+        pickLog(Number(pick.dataset.trkLogPick));
+        return;
+      }
+      const target = event.target.closest("[data-trk-log-target]");
+      if (target) {
+        log.target = target.dataset.trkLogTarget;
+        renderSheet();
+        return;
+      }
+      if (event.target.closest("[data-trk-log-repick]")) {
+        log.pick = null;
+        renderSheet(true);
+        return;
+      }
+    }
     const action = event.target.closest("[data-trk-sheet]")?.dataset.trkSheet;
     if (!action) return;
     if (action === "close") closeSheet();
-    else if (action === "find") findMatches();
-    else if (action === "use-tmdb") {
-      const check = sheet.item?.check || {};
-      const form = sheet.el.querySelector('[data-trk-form="edit"]');
-      const title = form?.querySelector('[data-trk-edit="title"]');
-      const year = form?.querySelector('[data-trk-edit="year"]');
-      if (title && check.title) title.value = check.title;
-      if (year && check.year) year.value = check.year;
-      const identity = form?.querySelector(".trk-identity");
-      if (identity) identity.open = true;
-      title?.focus();
-    }
-    else if (action === "ask-delete" || action === "cancel-delete") {
-      const keep = formChanges();
-      sheet.confirm = action === "ask-delete";
-      sheet.error = "";
-      renderSheet();
-      restoreForm(keep);
-      sheet.el.querySelector(`[data-trk-sheet="${sheet.confirm ? "delete" : "ask-delete"}"]`)?.focus();
-    } else if (action === "delete") deleteKeys([sheet.item.key]);
-    else if (action === "bulk-delete") deleteKeys(sheet.keys);
+    else if (action === "delete") deleteKeys(sheet.keys, sheet.feature);
+    else if (action === "unrate") unrate();
     else if (action === "more-changes") loadChanges(true);
+    else if (action === "fields") openFields();
+    else if (action === "fields-back") openSheet("notes", { draft: sheet.draft });
+    else if (action === "note-clear" && !sheet.busy) saveNotes(true);
+    else if (action === "def-add" && sheet.defs.length < MAX_FIELDS) {
+      sheet.defs.push({ id: "", name: "", type: "text", choicesText: "" });
+      renderSheet();
+      sheet.el.querySelectorAll('[data-trk-def$=":name"]')[sheet.defs.length - 1]?.focus();
+    }
+  }
+
+  function noteInput(target) {
+    const d = sheet.draft;
+    if (target.matches("[data-trk-note]")) d[target.dataset.trkNote] = target.value;
+    else if (target.matches("[data-trk-note-field]")) {
+      const id = target.dataset.trkNoteField;
+      const value = target.type === "checkbox" ? target.checked : target.value;
+      if (value === "" || value === false) delete d.fields[id];
+      else d.fields[id] = value;
+    } else if (target.matches("[data-trk-note-tag]")) {
+      d.tagInput = target.value;
+      if (target.value.includes(",")) {
+        addTags(d, target.value);
+        d.tagInput = "";
+        renderSheet();
+      }
+    }
+  }
+
+  function defInput(target, rerender) {
+    const [index, prop] = String(target.dataset.trkDef || "").split(":");
+    const def = sheet.defs[Number(index)];
+    if (!def || !prop) return;
+    def[prop] = target.value;
+    if (rerender) renderSheet();
+  }
+
+  function onSheetInput(event) {
+    if (sheet.mode === "changes" && event.target.matches("[data-trk-change-q]")) {
+      sheet.changeQ = event.target.value;
+      clearTimeout(changeSearchTimer);
+      changeSearchTimer = setTimeout(() => loadChanges(false), 250);
+      return;
+    }
+    if (sheet.mode === "notes") noteInput(event.target);
+    if (sheet.mode === "fields" && event.target.matches("input[data-trk-def]")) defInput(event.target, false);
+    if (sheet.mode === "import" && event.target.matches('[data-trk-imp="name"]')) sheet.imp.name = event.target.value;
+    if (sheet.mode === "log" && event.target.matches("[data-trk-log-q]")) {
+      sheet.log.q = event.target.value;
+      searchLog();
+    }
+  }
+
+  function onSheetChange(event) {
+    if (sheet.mode === "notes" && event.target.matches("select[data-trk-note-field], input[type=checkbox][data-trk-note-field]")) {
+      noteInput(event.target);
+      return;
+    }
+    if (sheet.mode === "fields" && event.target.matches("select[data-trk-def]")) {
+      defInput(event.target, true);
+      return;
+    }
+    const field = sheet.mode === "import" ? event.target.dataset?.trkImp : "";
+    if (field === "dropped") {
+      sheet.imp.dropped = event.target.checked;
+      return;
+    }
+    if (field === "source" || field === "target") {
+      if (field === "source") setImportSource(sheet.imp, event.target.value);
+      else sheet.imp.target = event.target.value;
+      renderSheet();
+      return;
+    }
+    const log = sheet.log;
+    if (sheet.mode !== "log" || !log) return;
+    if (event.target.matches("[data-trk-log-season]")) {
+      log.season = Number(event.target.value);
+      log.episode = "all";
+      renderSheet();
+    } else if (event.target.matches("[data-trk-log-episode]")) log.episode = event.target.value;
+    else if (event.target.matches("[data-trk-log-when]")) log.when = event.target.value;
+    else if (event.target.matches("[data-trk-log-unlist]")) log.unlist = event.target.checked;
   }
 
   function onSheetSubmit(event) {
     event.preventDefault();
-    if (!sheet.busy && sheet.mode === "edit") saveEdit();
+    if (sheet.busy) return;
+    if (sheet.mode === "edit") saveEdit();
+    else if (sheet.mode === "log") saveLog();
+    else if (sheet.mode === "import") startImport();
+    else if (sheet.mode === "notes") saveNotes();
+    else if (sheet.mode === "fields") saveFields();
+    else if (sheet.mode === "title-edit") saveTitleEdit();
   }
 
   function onSheetKey(event) {
+    if (sheet.mode === "notes" && event.target.matches?.("[data-trk-note-tag]")) {
+      const d = sheet.draft;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (!event.target.value.trim()) return;
+        addTags(d, event.target.value);
+        d.tagInput = "";
+        renderSheet();
+        return;
+      }
+      if (event.key === "Backspace" && !event.target.value && d.tags.length) {
+        d.tags.pop();
+        renderSheet();
+        return;
+      }
+    }
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -984,7 +2846,7 @@
     }
     if (event.key !== "Tab") return;
     const dialog = sheet.el.querySelector(".trk-sheet");
-    const nodes = Array.from(dialog.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [tabindex]:not([tabindex='-1'])")).filter((n) => n.offsetParent !== null);
+    const nodes = Array.from(dialog.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])")).filter((n) => n.offsetParent !== null);
     if (!nodes.length) return;
     const first = nodes[0];
     const last = nodes[nodes.length - 1];
@@ -997,74 +2859,158 @@
     }
   }
 
+  function rowRef(tr) {
+    if (tr.dataset.trkRefNote) return { note: tr.dataset.trkRefNote };
+    if (tr.dataset.trkRefShow) return { show: tr.dataset.trkRefShow };
+    return { feature: listFeature(), key: tr.dataset.trkRefKey };
+  }
+
   let searchTimer = 0;
 
   function wire(root) {
     if (state.wired) return;
     state.wired = true;
+    wireStatusMenu();
     root.addEventListener("click", (event) => {
       if (sheet.el?.contains(event.target)) return;
-      const feature = event.target.closest("[data-trk-feature]");
-      if (feature) {
-        if (feature.dataset.trkFeature === state.feature) return;
-        state.feature = feature.dataset.trkFeature;
-        state.selected.clear();
-        saveView();
-        renderSlots(true);
-        loadItems(false);
+      if (event.target.closest("[data-trk-pick]")) return;
+      if (handlePanelClick(event)) return;
+      const view = event.target.closest("[data-trk-view]");
+      if (view) {
+        if (view.dataset.trkView === state.view) return;
+        state.view = view.dataset.trkView;
+        state.q = "";
+        if (state.view === "cleanup" && !state.healthFilter) state.healthFilter = "attention";
+        reload();
         return;
       }
       const media = event.target.closest("[data-trk-media]");
       if (media) {
         if (media.dataset.trkMedia === state.media) return;
         state.media = media.dataset.trkMedia;
-        saveView();
-        renderSlots(true);
-        loadItems(false);
+        reload();
         return;
       }
-      const open = event.target.closest("[data-trk-open]");
-      if (open) {
-        const item = state.items[Number(open.dataset.trkOpen)];
-        if (!item) return;
-        if (state.selecting) {
-          if (state.selected.has(item.key)) state.selected.delete(item.key);
-          else state.selected.add(item.key);
-          renderSlots(false);
-          state.root.querySelector(`[data-trk-open="${open.dataset.trkOpen}"]`)?.focus({ preventScroll: true });
-        } else {
-          openSheet("edit", { item });
-        }
+      const noteFilter = event.target.closest("[data-trk-note-filter]");
+      if (noteFilter) {
+        if (noteFilter.dataset.trkNoteFilter === state.noteStatus) return;
+        state.noteStatus = noteFilter.dataset.trkNoteFilter;
+        reload();
+        return;
+      }
+      const health = event.target.closest("[data-trk-health]");
+      if (health) {
+        state.healthFilter = health.dataset.trkHealth;
+        state.view = "cleanup";
+        reload();
+        return;
+      }
+      const fold = event.target.closest("[data-trk-fold]");
+      if (fold) {
+        const key = fold.dataset.trkFold;
+        if (state.open.has(key)) state.open.delete(key);
+        else state.open.add(key);
+        setSlot("main", renderMain());
+        return;
+      }
+      const rowEdit = event.target.closest("[data-trk-row-edit]");
+      if (rowEdit) {
+        const item = state.items[Number(rowEdit.dataset.trkRowEdit)];
+        if (item) openSheet("edit", { item, feature: listFeature() });
+        return;
+      }
+      const row = event.target.closest("tr.trk-play");
+      if (row) {
+        selectRef(rowRef(row));
         return;
       }
       const action = event.target.closest("[data-trk-action]")?.dataset.trkAction;
-      if (action === "refresh") refresh();
-      else if (action === "more" && !state.loading) loadItems(true);
+      if (action === "refresh") {
+        state.progress = {};
+        refresh();
+      } else if (action === "prev" || action === "next") {
+        state.offset = Math.max(0, state.offset + (action === "next" ? state.pageSize : -state.pageSize));
+        reload(false);
+      } else if (action === "more" && !state.loading) loadMain(true);
       else if (action === "changes") {
-        openSheet("changes", { changes: [], changesTotal: 0 });
+        openSheet("changes", { changes: [], changesTotal: 0, changesAll: 0, changeKind: "", changeQ: "" });
         loadChanges(false);
-      } else if (action === "attention") {
-        state.attention = !state.attention;
-        state.selected.clear();
+      } else if (action === "log") openLog();
+      else if (action === "import") openImport();
+      else if (action === "month-clear") {
+        state.month = "";
         renderSlots(true);
-        loadItems(false);
-      } else if (action === "check") {
+        loadMain();
+      } else if (action === "by-day") {
+        state.byDay = !state.byDay;
+        reload();
+      } else if (action === "hide-dropped") {
+        state.hideDropped = !state.hideDropped;
+        saveView();
+        reload();
+      }
+      else if (action === "import-cancel") cancelImport();
+      else if (action === "import-dismiss") dismissImport();
+      else if (action === "import-check") {
+        dismissImport();
+        state.view = "cleanup";
+        state.healthFilter = "attention";
         startCheck();
-      } else if (action === "check-cancel") {
-        cancelCheck();
-      } else if (action === "check-hide") {
-        state.scanHidden = state.check?.id || "";
-        renderScanSlot();
-      } else if (action === "select") {
-        state.selecting = !state.selecting;
-        state.selected.clear();
+        reload();
+      }
+      else if (action === "check") startCheck();
+      else if (action === "check-cancel") cancelCheck();
+      else if (action === "delete-picked" && state.picked.size) openSheet("delete", { keys: Array.from(state.picked), feature: listFeature() });
+      else if (action === "clear-picked") {
+        state.picked.clear();
         renderSlots(true);
-      } else if (action === "select-all") {
-        const all = state.items.every((i) => state.selected.has(i.key));
-        state.items.forEach((i) => (all ? state.selected.delete(i.key) : state.selected.add(i.key)));
-        renderSlots(false);
-      } else if (action === "delete-selected" && state.selected.size) {
-        openSheet("bulk", { keys: Array.from(state.selected) });
+      }
+    });
+    root.addEventListener("keydown", (event) => {
+      const tab = event.target.closest?.('.trk-tabs [role="tab"]');
+      if (tab && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+        const tabs = Array.from(tab.parentElement.querySelectorAll('[role="tab"]'));
+        const at = tabs.indexOf(tab);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (at + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        event.preventDefault();
+        tabs[next].click();
+        state.root.querySelector(`.trk-tabs [data-trk-view="${tabs[next].dataset.trkView}"]`)?.focus();
+        return;
+      }
+      const row = event.target.closest?.("tr.trk-play");
+      if (!row || (event.key !== "Enter" && event.key !== " ") || event.target.closest("input, button")) return;
+      event.preventDefault();
+      selectRef(rowRef(row));
+    });
+    root.addEventListener("change", (event) => {
+      const pick = event.target.dataset?.trkPick;
+      if (pick !== undefined) {
+        if (pick === "page") state.items.forEach((i) => (event.target.checked ? state.picked.add(i.key) : state.picked.delete(i.key)));
+        else {
+          const item = state.items[Number(pick)];
+          if (item && event.target.checked) state.picked.add(item.key);
+          else if (item) state.picked.delete(item.key);
+        }
+        renderSlots(true);
+        return;
+      }
+      const input = event.target.dataset?.trkInput;
+      if (input === "size") {
+        state.pageSize = PAGE_SIZES.includes(Number(event.target.value)) ? Number(event.target.value) : 50;
+        reload();
+      } else if (input === "note-tag") {
+        state.noteTag = event.target.value;
+        reload();
+      } else if (input === "clean-feature") {
+        state.cleanFeature = event.target.value;
+        reload();
+      } else if (input === "instance") {
+        state.instance = event.target.value;
+        state.ref = null;
+        state.title = null;
+        state.progress = {};
+        state.picked.clear();
+        refresh();
       }
     });
     root.addEventListener("input", (event) => {
@@ -1072,36 +3018,26 @@
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => {
         state.q = event.target.value;
-        loadItems(false);
+        reload();
       }, 250);
     });
-    root.addEventListener("change", (event) => {
-      const input = event.target.dataset?.trkInput;
-      if (input === "sort") {
-        state.sort = event.target.value;
-        saveView();
-        loadItems(false);
-      }
-      if (input === "instance") {
-        state.instance = event.target.value;
-        clearSelection();
-        refresh();
-      }
-    });
+    root.addEventListener("error", (event) => {
+      const img = event.target;
+      if (!(img instanceof HTMLImageElement) || !img.closest(".trk-poster")) return;
+      img.closest(".trk-poster").classList.add("is-empty");
+      img.remove();
+    }, true);
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) return;
       if (state.moving) waitForMove();
-      else pollCheck();
+      else {
+        pollCheck();
+        pollImport();
+      }
     });
     window.addEventListener("cw:tracker-migrated", () => {
       if (state.moving) refresh();
     });
-    root.addEventListener("error", (event) => {
-      const img = event.target;
-      if (!(img instanceof HTMLImageElement) || !img.classList.contains("trk-img")) return;
-      img.closest(".trk-cover")?.classList.add("is-empty");
-      img.remove();
-    }, true);
   }
 
   function readLink() {
@@ -1109,7 +3045,9 @@
     if (!hash.startsWith("#tracker?")) return;
     const query = new URLSearchParams(hash.slice(hash.indexOf("?") + 1));
     if (query.get("attention") === "1") {
-      state.attention = true;
+      state.view = "cleanup";
+      state.healthFilter = "attention";
+      state.offset = 0;
       state.fromLink = true;
     }
     try {
@@ -1127,6 +3065,9 @@
     }
     readLink();
     wire(root);
+    try {
+      await window.__cwAuthBootstrapPromise;
+    } catch {}
     await refresh();
   }
 

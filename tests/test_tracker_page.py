@@ -106,15 +106,108 @@ def test_managed_users_never_get_the_tracker(perms):
     assert 'id="page-tracker"' not in html
 
 
-def test_tracker_api_is_admin_only_for_managed_users():
+def test_tracker_api_is_open_to_managed_users_with_write_access():
     from api.appAuthAPI import non_admin_api_allowed
+    from crosswatch import _non_admin_permission_allowed
 
-    assert not non_admin_api_allowed("/api/tracker/items", "GET")
-    assert not non_admin_api_allowed("/api/tracker/summary", "GET")
+    for path in ("/api/tracker/items", "/api/tracker/summary"):
+        assert non_admin_api_allowed(path, "GET")
+        assert _non_admin_permission_allowed({"permissions": {"write": True}}, path, "GET")
+        assert not _non_admin_permission_allowed({"permissions": {"write": False}}, path, "GET")
 
 
-def test_tracker_page_uses_icons_and_shared_controls():
+def test_tracker_page_uses_the_editor_layout():
     js = (REPO / "assets" / "js" / "tracker.js").read_text("utf-8")
-    assert 'class="cw-btn trk-feature"' in js
-    assert "cw-page-hero" in js and "cw-page-toolbar" in js and "cw-page-panel" in js
+    for markup in ('class="cw-topline cw-page-hero', 'class="cw-controls cw-page-toolbar"', 'class="cw-table-wrap cw-page-table"',
+                   '<aside class="cw-side">', 'class="cw-merged-title"', 'class="cw-editor-filters"'):
+        assert markup in js
     assert json.dumps("/api/tracker/items")[1:-1] in js
+    assert "__cwAuthBootstrapPromise" in js
+
+
+def test_tracker_shares_the_editor_styles_without_editor_only_rules():
+    pages = (REPO / "assets" / "css" / "pages.css").read_text("utf-8")
+    flat = (REPO / "assets" / "themes" / "flat.css").read_text("utf-8")
+    assert "#page-editor,#page-editor.card,#page-tracker,#page-tracker.card{" in pages
+    assert "html[data-cw-theme] #page-tracker .cw-side{width:340px" in flat
+    for css in (pages, flat):
+        assert "#page-tracker #cw-" not in css
+        assert "#page-tracker.cw-editor-wide" not in css
+
+
+def test_profile_and_tracker_share_the_month_timeline():
+    import ui_frontend
+
+    root = Path(__file__).resolve().parents[1]
+    profile = (root / "assets/js/profile-page.js").read_text(encoding="utf-8")
+    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
+    components = (root / "assets/css/components.css").read_text(encoding="utf-8")
+    assert "window.CW.MonthBar.create(" in profile and "function syncZoomUi" not in profile
+    assert "window.CW.MonthBar.create(" in tracker
+    assert ".cw-hist-bars{" in components and ".cw-hist-tip{" in components
+    assert ".cw-hist-bars{" not in (root / "assets/css/profile-page.css").read_text(encoding="utf-8")
+    assert "month-bar.js" in ui_frontend.get_index_html()
+    page = (root / "ui_frontend.py").read_text(encoding="utf-8")
+    assert page.index("/assets/helpers/month-bar.js") < page.index("/assets/js/profile-page.js")
+
+
+def test_tracker_views_are_tabs_and_paging_sits_under_the_table():
+    root = Path(__file__).resolve().parents[1]
+    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
+    pages = (root / "assets/css/pages.css").read_text(encoding="utf-8")
+    controls = tracker[tracker.index("  function renderControls()"):tracker.index("  function pager()")]
+    pager = tracker[tracker.index("  function pager()"):tracker.index("  function emptyState(")]
+    assert '<nav class="trk-tabs" role="tablist"' in controls and 'role="tab" class="trk-tab' in tracker
+    assert 'data-trk-input="size"' not in controls and 'data-trk-input="size"' in pager
+    assert 'class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="changes"' in controls
+    assert '{ id: "show", label: "TV", icon: "tv" }' in tracker
+    assert "#page-tracker .trk-toolbar{display:grid;grid-template-columns:minmax(160px,280px) minmax(0,1fr) auto" in pages
+
+
+def test_every_record_and_whole_titles_can_be_edited():
+    root = Path(__file__).resolve().parents[1]
+    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
+    mapping = (root / "assets/js/interactive-sync-mapping.js").read_text(encoding="utf-8")
+    assert 'data-trk-row-edit="${index}"' in tracker and 'openSheet("edit", { item, feature: listFeature() })' in tracker
+    assert "data-trk-rec-edit" in tracker and "function findRecord(key, feature = \"history\")" in tracker
+    assert '"/api/tracker/edit-title"' in tracker and '"title-edit": renderTitleEdit' in tracker
+    assert 'scope === "title"' in tracker and "scopeNote" in mapping
+
+
+def test_title_panel_sets_a_status_in_one_click():
+    root = Path(__file__).resolve().parents[1]
+    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
+    theme = (root / "assets/css/page-theme.css").read_text(encoding="utf-8")
+    assert 'data-trk-detail="status-menu" aria-haspopup="menu"' in tracker and 'role="menuitemradio"' in tracker
+    assert "data-trk-set-status" in tracker and "async function quickStatus(status)" in tracker
+    assert "if (sheet.mode === \"title\" && handlePanelClick(event)) {\n      event.stopPropagation();" in tracker
+    assert ":is(#page-tracker :is(.trk-status,.trk-status-btn,.trk-status-item),.cw-mm-trk-status)[data-status=\"dropped\"]" in theme
+
+
+def test_tracker_has_my_titles_and_personal_notes():
+    root = Path(__file__).resolve().parents[1]
+    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
+    modal = (root / "assets/js/profile-media-modal.js").read_text(encoding="utf-8")
+    pages = (root / "assets/css/pages.css").read_text(encoding="utf-8")
+    theme = (root / "assets/css/page-theme.css").read_text(encoding="utf-8")
+    assert '{ id: "titles", label: "My titles", icon: "bookmarks" }' in tracker
+    assert "/api/tracker/notes?" in tracker and '"/api/tracker/note"' in tracker and '"/api/tracker/note-fields"' in tracker
+    assert "notes: renderNotes, fields: renderFields" in tracker and 'data-trk-detail="complete"' in tracker
+    assert 'data-mm-trk="notes"' not in modal and 'button("notes", "edit_note"' in modal
+    assert "#page-tracker .trk-label{display:inline-flex" in pages and "#page-tracker .trk-label{border:" in theme
+    assert '[data-status="dropped"]{--trk-status:var(--cw-theme-danger)}' in theme
+
+
+def test_tracker_opens_the_shared_media_card():
+    root = Path(__file__).resolve().parents[1]
+    tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
+    modal = (root / "assets/js/profile-media-modal.js").read_text(encoding="utf-8")
+    mapping = (root / "assets/js/interactive-sync-mapping.js").read_text(encoding="utf-8")
+    mapping_css = (root / "assets/css/interactive-sync.css").read_text(encoding="utf-8")
+    assert "cardModal().open(item, { tracker: { label: instanceLabel(), data, onAction: cardAction } })" in tracker
+    assert "cardModal()?.updateTracker?.(data)" in tracker
+    assert "cardModal().open(item, { stacked: true })" in tracker
+    assert 'data-trk-detail="card"' in tracker and "data-trk-log-info" in tracker
+    assert "updateTracker" in modal and "state.stacked" in modal
+    assert "card.open(preview, {host: dialog})" in mapping
+    assert ".is-mapping-dialog h2:where(:not(.cw-mm *))" in mapping_css

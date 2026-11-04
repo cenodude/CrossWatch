@@ -107,7 +107,7 @@ function applyPairRemoveMode(features, mode){
 }
 function isTwoWayMode(state){return !!ID("cx-mode-two")?.checked||String(state?.mode||"").toLowerCase().startsWith("two")}
 function allCopiesAllowed(state){return same(state?.dst,"jellyfin")||(isTwoWayMode(state)&&same(state?.src,"jellyfin"))}
-const DROPPED_PROVIDERS=["trakt","mdblist","simkl","wetrakr","flicklist"];
+const DROPPED_PROVIDERS=["trakt","mdblist","simkl","wetrakr","flicklist","crosswatch"];
 function droppedProviders(state){return [...new Set([state?.src,state?.dst].map(p=>String(p||"").trim().toLowerCase()))].filter(p=>DROPPED_PROVIDERS.includes(p))}
 function droppedTagAllowed(state,key){
   const src=String(state?.src||"").trim().toLowerCase(), dst=String(state?.dst||"").trim().toLowerCase();

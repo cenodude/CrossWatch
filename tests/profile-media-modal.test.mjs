@@ -152,7 +152,7 @@ function deferred() {
 
 function loadingModal() {
   const metas = [], requests = [], body = {innerHTML:"",scrollTop:0}, panel = {innerHTML:""};
-  const root = {hidden:true,addEventListener(){},querySelector:selector => selector === ".cw-mm-body" ? body : selector === ".cw-mm-panel" ? panel : {style:{},focus(){}},querySelectorAll:()=>[]};
+  const root = {hidden:true,classList:{toggle(){}},addEventListener(){},querySelector:selector => selector === ".cw-mm-body" ? body : selector === ".cw-mm-panel" ? panel : {style:{},focus(){}},querySelectorAll:()=>[]};
   const context = {
     window:{addEventListener(){},CW:{Meta:{get:() => {const d=deferred();metas.push(d);return d.promise;}},ProfileDateTime:{format:date=>date.toISOString()}}},
     navigator:{language:"en-US"},
@@ -327,4 +327,41 @@ test("a show lists each paused episode with its provider", () => {
   assert.match(html, /48%/);
   api.state.progress = [];
   assert.equal(api.showResumePoints(), "");
+});
+
+test("opened from the tracker the card shows that instance's plays and hands actions back", async () => {
+  const f=loadingModal();
+  const actions=[];
+  const plays=[{key:"tmdb:1",date:"2026-11-04T08:56:00Z"},{key:"tmdb:1@1",date:"2026-08-13T06:56:00Z"}];
+  const data={title:{art:{tmdb:"1"}},plays,ratings:[{rating:8}],watchlist:[],collection:[]};
+  const opening=f.api.open({type:"movie",tmdb:"1",title:"Example"},{tracker:{label:"Desk",data,onAction:(action,key)=>actions.push([action,key])}});
+  await tick();
+  assert.match(f.body.innerHTML,/In your tracker <small>Desk<\/small>/);
+  assert.match(f.body.innerHTML,/Watched 2 times/);
+  assert.doesNotMatch(f.body.innerHTML,/Checking watch status/);
+  assert.match(f.body.innerHTML,/8\/10/);
+  const target=selector=>({closest:wanted=>wanted.split(",").some(part=>selector.includes(part.replace(/^\[|\]$/g,"").split("=")[0]))?{dataset:selector.includes("edit")?{mmTrkEdit:"tmdb:1"}:{mmTrk:"rate"}}:null});
+  f.extra.onClick({target:target("data-mm-trk")});
+  f.extra.onClick({target:target("data-mm-trk-edit")});
+  assert.deepEqual(actions,[["rate",""],["edit","tmdb:1"]]);
+  f.api.updateTracker({...data,plays:plays.slice(0,1)});
+  assert.match(f.body.innerHTML,/Watched once/);
+  f.api.updateTracker({...data,title:{art:{tmdb:"2"}},plays:[]});
+  assert.match(f.body.innerHTML,/Watched once/);
+  f.metas[0].resolve({});
+  f.requests[0].resolve(response({ok:true}));
+  await opening;
+});
+
+test("a stacked preview has no tracker box and no write actions", async () => {
+  const f=loadingModal();
+  const opening=f.api.open({type:"movie",tmdb:"1",title:"Example"},{stacked:true});
+  assert.equal(f.extra.state.stacked,true);
+  assert.equal(f.extra.state.tracker,null);
+  f.metas[0].resolve({});
+  f.requests[0].resolve(response({ok:true}));
+  await opening;
+  assert.doesNotMatch(f.body.innerHTML,/In your tracker/);
+  f.api.close();
+  assert.equal(f.extra.state.tracker,null);
 });
