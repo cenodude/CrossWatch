@@ -4,6 +4,7 @@
 
 import { mountPlexRecovery } from "./plex-recovery.js";
 import { pageBackLink } from "../page-return.js";
+import { NEW_TRACKER, createTracker, trackerOptions } from "./tracker-instance.js";
 
 const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 const icon = name => `<span class="material-symbols-rounded" aria-hidden="true">${name}</span>`;
@@ -44,7 +45,7 @@ const template = `
         <div id="ie-file-info" class="ie-file-info" hidden></div>
       </div>
       <div class="ie-panel ie-destination"><span class="ie-eyebrow">IMPORT DESTINATION</span><h2>Your CrossWatch tracker</h2><p>Preview the file, choose what to keep, then import. Your sync pairs can send these items to other providers afterward.</p>
-        <div class="ie-fields">${select("ie-target", "Target instance")}${select("ie-source", "File source")}</div>
+        <div class="ie-fields">${select("ie-target", "Target instance")}${select("ie-source", "File source")}<label class="ie-field" for="ie-new-name" id="ie-new-name-wrap" hidden><span>New instance name</span><input id="ie-new-name" type="text" maxlength="24" autocomplete="off" placeholder="File import"></label></div>
         <details class="ie-guide"><summary>How do I get an export file?</summary><div id="ie-guide"></div></details>
       </div>
     </section>
@@ -124,7 +125,7 @@ const ImportExport = {
     $("#ie-page-size").value = "50";
     function refreshSelects() {
       $$("select").forEach(input => {
-        const wrap = window.CW?.IconSelect?.enhance(input, {className:"ie-select",menuClassName:"ie-select-menu",sortAlphabetically:["ie-source","ie-target","ie-provider","ie-instance"].includes(input.id),sortFirstValues:["all"]});
+        const wrap = window.CW?.IconSelect?.enhance(input, {className:"ie-select",menuClassName:"ie-select-menu",sortAlphabetically:["ie-source","ie-target","ie-provider","ie-instance"].includes(input.id),sortFirstValues:["all",NEW_TRACKER]});
         const label = input.closest("label").querySelector("span");
         label.id = `${input.id}-label`;
         wrap?.querySelector("button")?.setAttribute("aria-labelledby", label.id);
@@ -265,6 +266,18 @@ const ImportExport = {
       if (chosen.size > max) { notice(`This file exceeds the ${number(max/1024/1024)} MB upload limit.`,"error"); return; }
       file=chosen;
       invalidatePreview();
+      if ($("#ie-target").value === NEW_TRACKER) {
+        try {
+          const made = await createTracker($("#ie-new-name").value.trim() || "File import");
+          importOptions.targets.push(made);
+          $("#ie-target").innerHTML = trackerOptions(importOptions.targets, option);
+          $("#ie-target").value = made.id;
+          $("#ie-new-name").value = "";
+          $("#ie-new-name-wrap").hidden = true;
+        } catch (error) {
+          notice("Could not create the new tracker instance.","error",error.message); return;
+        }
+      }
       if (!importOptions?.targets?.find(target => target.id === $("#ie-target").value)?.connected) {
         notice("Connect a CrossWatch tracker before importing.","error","Choose a connected target instance, or connect one in Settings → Connections."); return;
       }
@@ -314,7 +327,7 @@ const ImportExport = {
       $("#ie-recovery").hidden=mode !== "recovery";
       if (mode === "recovery") {
         $$("[data-mode]").forEach(button => button.setAttribute("aria-pressed",String(button.dataset.mode===mode)));
-        recoveryCleanup ||= mountPlexRecovery($("#ie-recovery"));
+        recoveryCleanup ||= mountPlexRecovery($("#ie-recovery"), { NEW_TRACKER, createTracker, trackerOptions });
         return;
       }
       $("#ie-search").value="";
@@ -382,7 +395,7 @@ const ImportExport = {
         else input.checked ? selected.add(key) : selected.delete(key);
         input.closest("tr").classList.toggle("ie-row-selected",input.checked); updateSelection();
       } else if (input.id==="ie-file") { previewFile(input.files[0]); input.value=""; }
-      else if (["ie-target","ie-source"].includes(input.id)) { invalidatePreview(); notice(); guide(); }
+      else if (["ie-target","ie-source"].includes(input.id)) { $("#ie-new-name-wrap").hidden = $("#ie-target").value !== NEW_TRACKER; invalidatePreview(); notice(); guide(); }
       else if (input.id==="ie-page") loadPage((Math.min(Math.max(1,Number(input.value)||1),Math.max(1,Math.ceil(total()/pageSize)))-1)*pageSize);
       else if (input.id==="ie-page-size") { pageSize=Number(input.value); loadPage(); }
       else {
@@ -417,8 +430,9 @@ const ImportExport = {
       [importOptions,exportOptions]=await Promise.all([json("/api/import/options",{signal:lifetime.signal}),json("/api/export/options",{signal:lifetime.signal})]);
       if (lifetime.signal.aborted) return;
       $("#ie-source").innerHTML=importOptions.sources.map(source=>option(source.id,source.label)).join("");
-      $("#ie-target").innerHTML=importOptions.targets.map(target=>option(target.id,`${target.label}${target.connected ? "" : " (not connected)"}`)).join("");
-      const connected=importOptions.targets.find(target=>target.connected);
+      $("#ie-target").innerHTML=trackerOptions(importOptions.targets, option);
+      const wanted=new URLSearchParams(window.location.hash.split("?")[1] || "").get("target");
+      const connected=importOptions.targets.find(target=>target.id===wanted) || importOptions.targets.find(target=>target.connected);
       if (connected) $("#ie-target").value=connected.id;
       $("#ie-provider").innerHTML=exportOptions.providers.map(provider=>option(provider,provider)).join("");
       $("#ie-limit").textContent=`${number(importOptions.limits.upload_bytes/1024/1024)} MB`;

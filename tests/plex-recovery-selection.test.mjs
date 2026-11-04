@@ -132,7 +132,7 @@ function searchFixture() {
   };
   $("#pr-source").value=$("#pr-target").value="default";
   $("#pr-result").value="all";
-  const sandbox=vm.createContext({$,window:{},host:{querySelectorAll:()=>[...nodes.values()]},URLSearchParams,
+  const sandbox=vm.createContext({$,window:{},host:{querySelectorAll:()=>[...nodes.values()]},URLSearchParams,NEW_TRACKER:"new",
     busy:false,reading:false,loading:false,otherRecovery:false,all:false,chosen:new Set(["0"]),excluded:new Set(),
     job:{id:"scan"},data:{summary:{ready:1},filtered_total:1},rows:[],offset:0,sequence:0,searchTimer:null,
     options:{targets:[{id:"default",connected:true}]},receipt:null,lifetime:{signal:{aborted:false}},
@@ -420,7 +420,7 @@ test("Plex database scans send the upload and account, or ask the server for its
                                ["server",{source_instance:"default",target_instance:"default",source:"plex_db"}]]) {
     const values={"#pr-kind":"plex_db","#pr-db":db,"#pr-db-account":"7","#pr-source":"default","#pr-target":"default"};
     const bodies=[];
-    const sandbox=vm.createContext({$:id=>({value:values[id]}),upload:{upload_id:"u1"},busy:false,reading:false,data:null,rows:[],receipt:null,
+    const sandbox=vm.createContext({$:id=>({value:values[id]}),upload:{upload_id:"u1"},busy:false,reading:false,data:null,rows:[],receipt:null,NEW_TRACKER:"new",
       all:false,chosen:new Set(),excluded:new Set(),CustomEvent:function(){},window:{dispatchEvent(){}},controls(){},message(){},render(){},
       async poll(){},async request(path,body){bodies.push(JSON.stringify(body));return {id:"scan",status:"reading"};}});
     vm.runInContext(source.slice(source.indexOf("  async function start()"),source.indexOf("  async function resume()")),sandbox);
