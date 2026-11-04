@@ -204,7 +204,7 @@ export default {
     };
     const renderPoster = (item) => !item?.tmdb
       ? `<div class="cw-mw-poster"><div class="cw-mw-ghost">No art</div></div>`
-      : `<div class="cw-mw-poster"><img src="/art/tmdb/${artType(item.type)}/${encodeURIComponent(String(item.tmdb))}?size=w185" alt=""></div>`;
+      : `<div class="cw-mw-poster"><img src="/art/tmdb/${artType(item.type)}/${encodeURIComponent(String(item.tmdb))}?fallback=2&size=w185" alt=""></div>`;
     const selectedTargets = () => state.providers.filter((item) => state.selectedProviders.has(providerKey(item)));
     const selectedActionKeys = () => ACTIONS.map(([key]) => key).filter((key) => !!state.actions[key]);
     const supportsAction = (item, key) => {

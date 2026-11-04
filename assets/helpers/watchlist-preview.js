@@ -220,7 +220,7 @@
     const tmdb = item?.tmdb;
     if (!tmdb) return null;
     const kind = isTV(item.type || item.entity || item.media_type) ? "tv" : "movie";
-    return `/art/tmdb/${kind}/${tmdb}?size=${encodeURIComponent(size)}${artEvidenceOf(item)}`;
+    return `/art/tmdb/${kind}/${tmdb}?fallback=2&size=${encodeURIComponent(size)}${artEvidenceOf(item)}`;
   }
 
   function asNumber(value) {
@@ -251,7 +251,7 @@
     const season = seasonNumber(item);
     const episode = episodeNumber(item);
     if (!tmdb || season < 0 || !episode || artTypeOf(item) !== "tv") return "";
-    return `/art/tmdb/tv/${encodeURIComponent(String(tmdb))}?kind=still&season=${encodeURIComponent(String(season))}&episode=${encodeURIComponent(String(episode))}&size=${encodeURIComponent(size)}${artEvidenceOf(item)}`;
+    return `/art/tmdb/tv/${encodeURIComponent(String(tmdb))}?fallback=2&kind=still&season=${encodeURIComponent(String(season))}&episode=${encodeURIComponent(String(episode))}&size=${encodeURIComponent(size)}${artEvidenceOf(item)}`;
   }
 
   function gridArtUrl(item, size = "w300") {
@@ -259,7 +259,7 @@
     if (still) return still;
     const tmdb = tmdbIdOf(item);
     if (!tmdb) return "";
-    return `/art/tmdb/${artTypeOf(item)}/${encodeURIComponent(String(tmdb))}?kind=backdrop&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
+    return `/art/tmdb/${artTypeOf(item)}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
   }
 
   function applyWidgetView(view = "") {
@@ -381,7 +381,7 @@
   function backdropUrl(item, meta = null) {
     const tmdb = tmdbIdOf(item, meta);
     if (!tmdb) return "";
-    return `/art/tmdb/${artTypeOf(item, meta)}/${encodeURIComponent(String(tmdb))}?kind=backdrop&size=w1280&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
+    return `/art/tmdb/${artTypeOf(item, meta)}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&size=w1280&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
   }
 
   function runtimeLabel(mins) {
@@ -477,7 +477,7 @@
       chips,
       overview: meta?.overview || meta?.detail?.overview || meta?.detail?.tagline
         || (loading ? "Loading details..." : "No description available."),
-      poster: artUrl(item, "w342") || "/assets/img/placeholder_poster.svg",
+      poster: artUrl(item, "w342") || "/assets/img/placeholder_poster.svg?v=2",
       posterHref: tmdbUrl(item, meta),
       backdrop: backdropUrl(item, meta),
       information: meta ? window.CW.PlayingCard.fmt.informationFor(meta, isMovie) : "loading",
@@ -714,12 +714,12 @@
       const widgetCard = document.getElementById("placeholder-card");
       const currentView = widgetCard?.dataset?.widgetView || "icon";
       const horizontal = widgetCard?.dataset?.widgetSize === "large";
-      const coverSrc = artUrl(item, "w342") || "/assets/img/placeholder_poster.svg";
+      const coverSrc = artUrl(item, "w342") || "/assets/img/placeholder_poster.svg?v=2";
       const gridSrc = gridArtUrl(item, horizontal ? "w780" : "w300") || coverSrc;
       img.src = (currentView === "media" || currentView === "grid") ? gridSrc : coverSrc;
       img.dataset.coverSrc = coverSrc;
       img.dataset.gridSrc = gridSrc;
-      img.onerror = function () { this.onerror = null; this.src = "/assets/img/placeholder_poster.svg"; };
+      img.onerror = function () { this.onerror = null; this.src = "/assets/img/placeholder_poster.svg?v=2"; };
       link.appendChild(img);
 
       const timeLabel = relWallTime(getTs(item) || lastSyncEpoch);

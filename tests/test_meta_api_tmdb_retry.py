@@ -114,3 +114,18 @@ def test_tmdb_art_route_rejects_file_outside_art_cache(monkeypatch, tmp_path) ->
     response = metaAPI.api_tmdb_art(request, typ="movie", tmdb_id=1, size="w342", kind="poster")
 
     assert response.status_code == 404
+
+
+def test_tmdb_art_route_does_not_cache_missing_artwork(monkeypatch, tmp_path) -> None:
+    img = metaAPI._placeholder_poster()
+    monkeypatch.setattr(metaAPI, "load_config", lambda: {"tmdb": {"api_key": "key"}})
+    monkeypatch.setattr(metaAPI, "_env", lambda: (None, tmp_path, lambda: {}))
+    monkeypatch.setattr(metaAPI, "get_art_file", lambda *a, **k: (str(img), "image/svg+xml"))
+
+    request = SimpleNamespace(headers={}, url=SimpleNamespace(path="/art/tmdb/movie/1"))
+    response = metaAPI.api_tmdb_art(request, typ="movie", tmdb_id=1, size="w342", kind="poster")
+
+    assert response.status_code == 200
+    assert response.media_type == "image/svg+xml"
+    assert response.headers["cache-control"] == "no-store"
+    assert str(response.path) == str(img.resolve())

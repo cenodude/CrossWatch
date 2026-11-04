@@ -227,7 +227,7 @@
 
             if (item.poster_path) {
               const img = document.createElement("img");
-              img.src = `/art/tmdb/${item.type === "show" ? "tv" : "movie"}/${encodeURIComponent(String(item.tmdb))}?size=w92`;
+              img.src = `/art/tmdb/${item.type === "show" ? "tv" : "movie"}/${encodeURIComponent(String(item.tmdb))}?fallback=2&size=w92`;
               img.alt = "";
               img.onerror = () => {
                 img.remove();

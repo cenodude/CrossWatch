@@ -1,59 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="329.77792" height="406.00739" viewBox="0 0 329.77792 406.00738" role="img" aria-label="No image available">
-  <defs>
-    <!-- Neon cyan glow -->
-    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="4" result="blur"/>
-      <feMerge>
-        <feMergeNode in="blur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-    <!-- Softer text glow -->
-    <filter id="textGlow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="1.8" result="tBlur"/>
-      <feMerge>
-        <feMergeNode in="tBlur"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-    <linearGradient id="borderGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#00e5ff"/>
-      <stop offset="100%" stop-color="#00b8d4"/>
-    </linearGradient>
-  </defs>
-
-  <!-- Background -->
-  <rect x="0" y="0" width="329.77792" height="406.00739" fill="#000000"/>
-
-  <!-- Neon border -->
-  <rect x="6" y="6" width="317.7779" height="394.0074" rx="18" ry="18"
-        fill="none" stroke="url(#borderGrad)" stroke-width="3.5" filter="url(#glow)"/>
-
-  <!-- Camera icon group -->
-  <g transform="translate(164.8890, 165.0037)" filter="url(#glow)">
-    <!-- Body -->
-    <rect x="-62" y="-38" width="124" height="86" rx="12" fill="#0a0a0a" stroke="#00d1ff" stroke-width="2"/>
-    <!-- Top prism / viewfinder -->
-    <path d="M -35 -48 L -10 -48 L 0 -38 L -45 -38 Z" fill="#0a0a0a" stroke="#00d1ff" stroke-width="2"/>
-    <!-- Lens outer -->
-    <circle cx="0" cy="6" r="22" fill="none" stroke="#00e5ff" stroke-width="3"/>
-    <!-- Lens inner -->
-    <circle cx="0" cy="6" r="8" fill="#001921" stroke="#7fffff" stroke-width="1.2"/>
-    <!-- Flash dot -->
-    <circle cx="44" cy="-14" r="4" fill="#00e5ff"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="270" viewBox="0 0 180 270" role="img" aria-labelledby="title">
+  <title id="title">No artwork</title>
+  <style>
+    svg { color: #667085; }
+    @media (prefers-color-scheme: dark) { svg { color: #a6adc0; } }
+  </style>
+  <g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="73" y="109" width="34" height="28" rx="3"/>
+    <path d="M79 109v28m22-28v28m-22-14h22m-28-7h6m-6 14h6m22-14h6m-6 14h6"/>
   </g>
-
-  <!-- Main text -->
-  <text x="50%" y="251.0037" text-anchor="middle"
-        font-family="Inter, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
-        font-size="18" letter-spacing="2.4" fill="#e6f9ff" opacity="0.9" filter="url(#textGlow)">
-    NO IMAGE AVAILABLE
-  </text>
-
-  <!-- Subtitle -->
-  <text x="50%" y="275.0037" text-anchor="middle"
-        font-family="Inter, system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
-        font-size="12.5" letter-spacing="0.6" fill="#ffffff" opacity="0.74">
-    Configure Metadata provider
-  </text>
+  <text x="90" y="158" fill="currentColor" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-size="12">No artwork</text>
 </svg>

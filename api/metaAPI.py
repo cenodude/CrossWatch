@@ -1213,7 +1213,7 @@ def api_tmdb_art(
             safe_path,
             media_type=mime,
             headers={
-                "Cache-Control": "public, max-age=31536000, immutable"
+                "Cache-Control": "no-store" if _is_placeholder_art(safe_path) else "public, max-age=31536000, immutable"
             },
         )
     except Exception as e:

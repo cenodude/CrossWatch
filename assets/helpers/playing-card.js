@@ -2,7 +2,7 @@
 /* Shared Playing Card renderer: one card, per-variant regions */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
-  const PLACEHOLDER_POSTER = "/assets/img/placeholder_poster.svg";
+  const PLACEHOLDER_POSTER = "/assets/img/placeholder_poster.svg?v=2";
   const TEMPLATE = `
     <div class="pc-inner">
       <a class="pc-poster-link" target="_blank" rel="noopener noreferrer">

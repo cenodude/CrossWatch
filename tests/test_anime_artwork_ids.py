@@ -100,7 +100,7 @@ def test_dashboard_episode_uses_show_level_anime_ids(monkeypatch: Any) -> None:
 
     assert row["tmdb"] == "1429"
     assert row["ids"]["show_ids"]["tmdb"] == "1429"
-    assert row["poster"] == "/art/tmdb/tv/1429?kind=still&season=3&episode=15&size=w300&artv=2"
+    assert row["poster"] == "/art/tmdb/tv/1429?fallback=2&kind=still&season=3&episode=15&size=w300&artv=2"
     assert lookups == []
 
 
