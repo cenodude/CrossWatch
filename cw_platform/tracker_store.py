@@ -14,7 +14,7 @@ import zipfile
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -25,7 +25,18 @@ from .provider_instances import _safe_profile_dir_name, normalize_instance_id
 
 FEATURES: tuple[str, ...] = ("watchlist", "history", "ratings", "progress", "collection")
 DB_NAME = "tracker.db"
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 6
+NOTES = "notes"
+NOTE_STATUSES: tuple[str, ...] = ("watching", "planned", "completed", "on_hold", "dropped")
+_NOTES_FILE = "notes.json"
+CHANGE_KINDS: dict[str, str] = {
+    "logged": "action='add'",
+    "edited": "action='edit'",
+    "deleted": "action='delete'",
+    "notes": "action='note'",
+    "undone": "undone_ns IS NOT NULL",
+}
+_NOTE_FIELDS: tuple[str, ...] = ("type", "title", "year", "tmdb", "status", "started", "finished", "notes", "tags", "fields")
 CHANGE_RETENTION_DAYS = 90
 CHANGE_LIMIT = 50_000
 _SIDECAR_MARKERS = frozenset({
@@ -37,13 +48,30 @@ _IMPORT_LOCK = threading.Lock()
 _MUTATION_GUARD = threading.Lock()
 _MUTATION_LOCKS: dict[str, threading.RLock] = {}
 _READY: set[str] = set()
+_CACHE: dict[tuple[Any, ...], tuple[str, Any]] = {}
+_CACHE_LOCK = threading.Lock()
+_GUARD = threading.local()
+_MISSING = object()
+_CACHE_LIMIT = 256
+_WHEN_FIELDS: tuple[str, ...] = ("watched_at", "rated_at", "progress_at", "collected_at", "listed_at", "added_at")
+_ITEM_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("kind", "TEXT"), ("when_at", "TEXT"), ("show_key", "TEXT"), ("season", "INTEGER"), ("episode", "INTEGER"),
+    ("find", "TEXT"), ("sort_title", "TEXT"), ("tmdb", "TEXT"), ("imdb", "TEXT"),
+)
+_UPSERT_ITEM = (
+    f"INSERT INTO items(scope, feature, item_key, data, {', '.join(n for n, _ in _ITEM_COLUMNS)})"
+    f" VALUES(?, ?, ?, ?, {', '.join('?' for _ in _ITEM_COLUMNS)})"
+    " ON CONFLICT(scope, feature, item_key) DO UPDATE SET data=excluded.data, "
+    + ", ".join(f"{n}=excluded.{n}" for n, _ in _ITEM_COLUMNS)
+)
+_SHOW_KINDS = ("show", "season", "episode")
 
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS states(scope TEXT NOT NULL, feature TEXT NOT NULL, ts INTEGER NOT NULL,"
     " updated_ns INTEGER NOT NULL, PRIMARY KEY(scope, feature))",
     "CREATE TABLE IF NOT EXISTS items(scope TEXT NOT NULL, feature TEXT NOT NULL, item_key TEXT NOT NULL,"
-    " data TEXT NOT NULL, PRIMARY KEY(scope, feature, item_key))",
+    f" data TEXT NOT NULL, {', '.join(f'{n} {t}' for n, t in _ITEM_COLUMNS)}, PRIMARY KEY(scope, feature, item_key))",
     "CREATE TABLE IF NOT EXISTS docs(scope TEXT NOT NULL, name TEXT NOT NULL, data TEXT NOT NULL,"
     " updated_ns INTEGER NOT NULL, PRIMARY KEY(scope, name))",
     "CREATE TABLE IF NOT EXISTS restore_points(id INTEGER PRIMARY KEY AUTOINCREMENT, scope TEXT NOT NULL,"
@@ -51,10 +79,30 @@ _SCHEMA = (
     " data TEXT NOT NULL, UNIQUE(scope, feature, name))",
     "CREATE TABLE IF NOT EXISTS changes(id INTEGER PRIMARY KEY AUTOINCREMENT, batch TEXT NOT NULL, scope TEXT NOT NULL,"
     " feature TEXT NOT NULL, action TEXT NOT NULL, old_key TEXT NOT NULL, new_key TEXT, before TEXT, after TEXT,"
-    " created_ns INTEGER NOT NULL, undone_ns INTEGER, undo_of TEXT)",
-    "CREATE INDEX IF NOT EXISTS changes_batch ON changes(batch)",
+    " created_ns INTEGER NOT NULL, undone_ns INTEGER, undo_of TEXT, find TEXT)",
     "CREATE TABLE IF NOT EXISTS checks(scope TEXT NOT NULL, feature TEXT NOT NULL, item_key TEXT NOT NULL,"
-    " code TEXT NOT NULL, detail TEXT NOT NULL, checked_ns INTEGER NOT NULL, PRIMARY KEY(scope, feature, item_key))",
+    " code TEXT NOT NULL, detail TEXT NOT NULL, checked_ns INTEGER NOT NULL, runtime INTEGER,"
+    " PRIMARY KEY(scope, feature, item_key))",
+    "CREATE TABLE IF NOT EXISTS notes(title_key TEXT PRIMARY KEY, type TEXT NOT NULL, title TEXT NOT NULL, year INTEGER,"
+    " tmdb TEXT, status TEXT, started TEXT, finished TEXT, body TEXT, fields TEXT NOT NULL, find TEXT NOT NULL,"
+    " updated_ns INTEGER NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS note_tags(title_key TEXT NOT NULL, tag TEXT NOT NULL COLLATE NOCASE,"
+    " PRIMARY KEY(title_key, tag)) WITHOUT ROWID",
+)
+_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS items_when ON items(scope, feature, when_at, item_key, kind, find)",
+    "CREATE INDEX IF NOT EXISTS items_show ON items(scope, feature, show_key, kind, season, episode, when_at, sort_title)"
+    " WHERE show_key IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS items_title ON items(scope, feature, sort_title, season, episode, item_key)",
+    "CREATE INDEX IF NOT EXISTS items_tmdb ON items(scope, tmdb) WHERE tmdb IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS items_imdb ON items(scope, imdb) WHERE imdb IS NOT NULL",
+    "CREATE INDEX IF NOT EXISTS notes_status ON notes(status, updated_ns)",
+    "CREATE INDEX IF NOT EXISTS notes_recent ON notes(updated_ns)",
+    "CREATE INDEX IF NOT EXISTS note_tags_tag ON note_tags(tag, title_key)",
+    "DROP INDEX IF EXISTS changes_batch",
+    "DROP INDEX IF EXISTS changes_batch_scope",
+    "CREATE INDEX IF NOT EXISTS changes_filter ON changes(batch, scope, action, undone_ns, find)",
+    "CREATE INDEX IF NOT EXISTS changes_created ON changes(created_ns)",
 )
 ATTENTION_CODES: tuple[str, ...] = ("no_tmdb", "not_found", "mismatch", "incomplete", "episode_missing")
 _EDIT_FIELDS: tuple[str, ...] = (
@@ -144,19 +192,16 @@ def _json_filename(name: str, *, label: str) -> str:
     return raw
 
 
-def _import_items(data: Any) -> dict[str, Any]:
-    if isinstance(data, dict):
-        return {str(k): v for k, v in data.items()}
-    if isinstance(data, list):
-        out: dict[str, Any] = {}
-        for row in data:
-            if not isinstance(row, dict):
-                continue
-            key = str(row.get("key") or "").strip()
-            if key:
-                out[key] = {k: v for k, v in row.items() if k != "key"}
-        return out
-    return {}
+def _upload_items(raw: Mapping[str, Any], feature: str) -> dict[str, Any]:
+    body = raw.get("items") if "items" in raw else None
+    if isinstance(body, list) and body and all(isinstance(row, Mapping) and str(row.get("key") or "").strip() for row in body):
+        return {str(row["key"]).strip(): {k: v for k, v in row.items() if k != "key"} for row in body}
+    return _state_payload(raw, feature)[1]
+
+
+def _snapshot_payload(text: str, feature: str) -> dict[str, Any]:
+    ts, items = _state_payload(json.loads(text), feature)
+    return {"ts": ts, "items": items}
 
 
 def _list_key(feature: str, item: Mapping[str, Any]) -> str:
@@ -166,22 +211,109 @@ def _list_key(feature: str, item: Mapping[str, Any]) -> str:
         return ""
 
 
+def _list_items(feature: str, raw: list[Any]) -> dict[str, Any]:
+    items: dict[str, Any] = {}
+    for pos, value in enumerate(raw):
+        key = _list_key(feature, value) if isinstance(value, Mapping) else ""
+        items[key if key and not key.startswith("unknown:") else str(pos)] = value
+    return items
+
+
 def _state_payload(raw: Any, feature: str) -> tuple[int, dict[str, Any]]:
-    if isinstance(raw, Mapping) and isinstance(raw.get("items"), Mapping):
+    ts = 0
+    if isinstance(raw, Mapping) and "items" in raw:
         try:
             ts = int(raw.get("ts") or 0)
         except Exception:
             ts = 0
-        return ts, {str(k): v for k, v in raw["items"].items()}
-    if isinstance(raw, Mapping):
-        return 0, {str(k): v for k, v in raw.items()}
-    if isinstance(raw, list):
-        items: dict[str, Any] = {}
-        for pos, value in enumerate(raw):
-            key = _list_key(feature, value) if isinstance(value, Mapping) else ""
-            items[key if key and not key.startswith("unknown:") else str(pos)] = value
-        return 0, items
-    raise ValueError("Tracker state is not an object or a list")
+        body = raw.get("items")
+        if not isinstance(body, Mapping):
+            raise ValueError("Tracker state has no item map")
+        items = {str(k): v for k, v in body.items()}
+    elif isinstance(raw, Mapping):
+        items = {str(k): v for k, v in raw.items()}
+    elif isinstance(raw, list):
+        items = _list_items(feature, raw)
+    else:
+        raise ValueError("Tracker state is not an object or a list")
+    if any(not isinstance(v, Mapping) for v in items.values()):
+        raise ValueError("Tracker state holds a value that is not a record")
+    return ts, items
+
+
+def _text(value: Any) -> str | None:
+    if value is None or isinstance(value, (dict, list)):
+        return None
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    return str(value)
+
+
+def _number(value: Any) -> Any:
+    return value if isinstance(value, (int, float, str)) and not isinstance(value, bool) else None
+
+
+def _columns(key: str, data: Any) -> tuple[Any, ...]:
+    item = _map_of(data)
+    ids = _map_of(item.get("ids"))
+    show_ids = _map_of(item.get("show_ids"))
+    title, series, show_tmdb = _text(item.get("title")), _text(item.get("series_title")), _text(show_ids.get("tmdb"))
+    if show_tmdb is not None:
+        show_key: str | None = f"tmdb:{show_tmdb}"
+    else:
+        show_key = f"title:{series.lower()}" if series is not None else None
+    when = next((t for t in (_text(item.get(f)) for f in _WHEN_FIELDS) if t is not None), "")
+    name = series if series is not None else title if title is not None else key
+    kind = _text(item.get("type"))
+    own = kind not in ("episode", "season")
+    return (
+        kind, when, show_key, _number(item.get("season")), _number(item.get("episode")),
+        f"{title or ''} {series or ''}".lower(), name.lower(),
+        _text(ids.get("tmdb")) if own else None, _text(ids.get("imdb")) if own else None,
+    )
+
+
+def _map_of(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _change_find(*rows: Any) -> str:
+    names: list[str] = []
+    for row in rows:
+        data = _safe_loads(row) if isinstance(row, str) else row
+        if not isinstance(data, Mapping):
+            continue
+        for field in ("series_title", "title"):
+            text = _text(data.get(field))
+            if text and text.strip() and text.lower() not in names:
+                names.append(text.lower())
+    return " ".join(names)
+
+
+def _note_norm(note: Mapping[str, Any]) -> dict[str, Any]:
+    tags: dict[str, str] = {}
+    for tag in note.get("tags") or []:
+        tags.setdefault(str(tag).lower(), str(tag))
+    fields = note.get("fields")
+    out = {name: note.get(name) or None for name in _NOTE_FIELDS}
+    out.update(
+        type=str(note.get("type") or "movie"), title=str(note.get("title") or ""),
+        tags=sorted(tags.values(), key=str.lower), fields=dict(fields) if isinstance(fields, Mapping) else {},
+    )
+    return out
+
+
+def _rev(conn: sqlite3.Connection) -> str:
+    row = conn.execute("SELECT value FROM meta WHERE key='rev'").fetchone()
+    return str(row[0]) if row else ""
+
+
+def _runtime(detail: Mapping[str, Any]) -> int | None:
+    try:
+        value = int(detail.get("runtime"))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def _size(path: Path) -> int:
@@ -189,6 +321,13 @@ def _size(path: Path) -> int:
         return path.stat().st_size
     except OSError:
         return 0
+
+
+def _safe_loads(text: Any) -> Any:
+    try:
+        return json.loads(text)
+    except Exception:
+        return None
 
 
 def _loads(text: Any) -> Any:
@@ -285,6 +424,7 @@ class TrackerStore:
         self.chained = chained
         self._scope = scope or ""
         self._log = log or _default_log
+        self._shared: sqlite3.Connection | None = None
 
     @property
     def db_path(self) -> Path:
@@ -306,22 +446,81 @@ class TrackerStore:
         self.root.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self.db_path), timeout=30.0, isolation_level=None, check_same_thread=False)
         try:
-            conn.execute("PRAGMA busy_timeout=30000")
-            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA cache_size=-32768")
             if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+                conn.execute("PRAGMA journal_mode=WAL")
                 conn.execute("BEGIN IMMEDIATE")
-                for statement in _SCHEMA:
-                    conn.execute(statement)
-                conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+                    self._upgrade(conn)
+                    conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                 conn.execute("COMMIT")
         except Exception:
             conn.close()
             raise
         return conn
 
+    @staticmethod
+    def _upgrade(conn: sqlite3.Connection) -> None:
+        for statement in _SCHEMA:
+            conn.execute(statement)
+        have = {str(row[1]) for row in conn.execute("PRAGMA table_info(items)").fetchall()}
+        missing = [(name, typ) for name, typ in _ITEM_COLUMNS if name not in have]
+        for name, typ in missing:
+            conn.execute(f"ALTER TABLE items ADD COLUMN {name} {typ}")
+        if missing:
+            fill = f"UPDATE items SET {', '.join(f'{n}=?' for n, _ in _ITEM_COLUMNS)} WHERE rowid=?"
+            after = 0
+            while rows := conn.execute(
+                "SELECT rowid, item_key, data FROM items WHERE rowid > ? ORDER BY rowid LIMIT 5000", (after,)
+            ).fetchall():
+                conn.executemany(fill, [(*_columns(str(key), _safe_loads(data)), rowid) for rowid, key, data in rows])
+                after = int(rows[-1][0])
+        if "runtime" not in {str(row[1]) for row in conn.execute("PRAGMA table_info(checks)").fetchall()}:
+            conn.execute("ALTER TABLE checks ADD COLUMN runtime INTEGER")
+            rows = conn.execute("SELECT rowid, detail FROM checks").fetchall()
+            conn.executemany(
+                "UPDATE checks SET runtime=? WHERE rowid=?",
+                [(_runtime(d), rowid) for rowid, d in ((r[0], _safe_loads(r[1])) for r in rows) if isinstance(d, Mapping)],
+            )
+        if "find" not in {str(row[1]) for row in conn.execute("PRAGMA table_info(changes)").fetchall()}:
+            conn.execute("ALTER TABLE changes ADD COLUMN find TEXT")
+            rows = conn.execute("SELECT id, before, after FROM changes").fetchall()
+            conn.executemany("UPDATE changes SET find=? WHERE id=?", [(_change_find(b, a), i) for i, b, a in rows])
+        for statement in _INDEXES:
+            conn.execute(statement)
+
+    def _cached(self, conn: sqlite3.Connection, name: str, args: tuple[Any, ...], compute: Callable[[], Any]) -> Any:
+        rev = _rev(conn)
+        key = (str(self.db_path), name, args)
+        with _CACHE_LOCK:
+            hit = _CACHE.get(key)
+        if hit is not None and hit[0] == rev:
+            return hit[1]
+        value = compute()
+        with _CACHE_LOCK:
+            if len(_CACHE) >= _CACHE_LIMIT:
+                _CACHE.clear()
+            _CACHE[key] = (rev, value)
+        return value
+
+    @contextmanager
+    def session(self) -> Generator[TrackerStore]:
+        if self._shared is not None:
+            yield self
+            return
+        with self._db() as conn:
+            self._shared = conn
+            try:
+                yield self
+            finally:
+                self._shared = None
+
     @contextmanager
     def _db(self, *, create: bool = False) -> Generator[sqlite3.Connection | None]:
+        if self._shared is not None:
+            yield self._shared
+            return
         key = str(self.db_path)
         if key not in _READY or not self.db_path.exists():
             files, snaps = self._legacy_files()
@@ -352,6 +551,13 @@ class TrackerStore:
             conn.execute("ROLLBACK")
             raise
         conn.execute("COMMIT")
+
+    @staticmethod
+    def _bump(conn: sqlite3.Connection) -> None:
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('rev', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (uuid.uuid4().hex,),
+        )
 
     def needs_migration(self) -> bool:
         files, snaps = self._legacy_files()
@@ -429,7 +635,7 @@ class TrackerStore:
                         continue
                     try:
                         text = path.read_text("utf-8")
-                        json.loads(text)
+                        _snapshot_payload(text, feature)
                         mtime_ns = path.stat().st_mtime_ns
                     except Exception:
                         raise TrackerUnreadable(feature, ["/".join(["snapshots", *rel])])
@@ -463,11 +669,16 @@ class TrackerStore:
         ts: int,
         updated_ns: int | None = None,
     ) -> None:
-        conn.execute("DELETE FROM items WHERE scope=? AND feature=?", (scope, feature))
-        conn.executemany(
-            "INSERT INTO items(scope, feature, item_key, data) VALUES(?, ?, ?, ?)",
-            [(scope, feature, str(key), _dumps(value)) for key, value in items.items()],
-        )
+        if any(not isinstance(value, Mapping) for value in items.values()):
+            raise ValueError(f"{feature} state holds a value that is not a record")
+        fresh = {str(key): (_dumps(value), value) for key, value in items.items()}
+        stored = dict(conn.execute("SELECT item_key, data FROM items WHERE scope=? AND feature=?", (scope, feature)).fetchall())
+        gone = [(scope, feature, key) for key in stored.keys() - fresh.keys()]
+        put = [(scope, feature, key, text, *_columns(key, value)) for key, (text, value) in fresh.items() if stored.get(key) != text]
+        conn.executemany("DELETE FROM items WHERE scope=? AND feature=? AND item_key=?", gone)
+        conn.executemany(_UPSERT_ITEM, put)
+        if gone or put:
+            TrackerStore._bump(conn)
         conn.execute(
             "INSERT INTO states(scope, feature, ts, updated_ns) VALUES(?, ?, ?, ?)"
             " ON CONFLICT(scope, feature) DO UPDATE SET ts=excluded.ts, updated_ns=excluded.updated_ns",
@@ -511,9 +722,12 @@ class TrackerStore:
             "SELECT item_key, data FROM items WHERE scope=? AND feature=? ORDER BY item_key", (scope, feature)
         ).fetchall()
         try:
-            return {str(key): json.loads(data) for key, data in rows}
+            out = {str(key): json.loads(data) for key, data in rows}
         except Exception:
             raise TrackerUnreadable(feature, [DB_NAME])
+        if any(not isinstance(value, Mapping) for value in out.values()):
+            raise TrackerUnreadable(feature, [DB_NAME])
+        return out
 
     def _own_state(self, conn: sqlite3.Connection, feature: str) -> tuple[int, int] | None:
         own = self._state_row(conn, self._scope, feature)
@@ -563,9 +777,44 @@ class TrackerStore:
             ).fetchone()
         return (str(row[0]), str(row[1])) if row else None
 
+    @contextmanager
+    def guarded(self) -> Generator[None]:
+        revs = getattr(_GUARD, "revs", None)
+        owner = revs is None
+        if owner:
+            revs = _GUARD.revs = {}
+        key = str(self.db_path)
+        nested = key in revs
+        if not nested:
+            revs[key] = None
+        try:
+            yield
+        finally:
+            if not nested:
+                revs.pop(key, None)
+            if owner:
+                _GUARD.revs = None
+
+    def _guard_read(self, conn: sqlite3.Connection | None) -> None:
+        revs = getattr(_GUARD, "revs", None)
+        key = str(self.db_path)
+        if revs is not None and key in revs and revs[key] is None:
+            revs[key] = _rev(conn) if conn is not None else ""
+
+    def _guard_write(self, conn: sqlite3.Connection, *, after: bool) -> None:
+        revs = getattr(_GUARD, "revs", None)
+        key = str(self.db_path)
+        if revs is None or key not in revs:
+            return
+        if after:
+            revs[key] = _rev(conn)
+        elif revs[key] is not None and _rev(conn) != revs[key]:
+            raise TrackerConflict("changed_since")
+
     def read_state(self, feature: str, *, snapshot_fallback: bool = True) -> StateRead | None:
         try:
             with self._db() as conn:
+                self._guard_read(conn)
                 if conn is None:
                     return None
                 scope = self._read_scope(conn, feature)
@@ -577,7 +826,7 @@ class TrackerStore:
                 if point is None:
                     return None
                 try:
-                    return StateRead(json.loads(point[1]), point[0])
+                    return StateRead(_snapshot_payload(point[1], feature), point[0])
                 except Exception:
                     raise TrackerUnreadable(feature, [point[0]])
         except sqlite3.Error as e:
@@ -600,8 +849,12 @@ class TrackerStore:
             with self._db(create=True) as conn:
                 assert conn is not None
                 with self._write(conn):
+                    self._guard_write(conn, after=False)
                     self._put_state(conn, self._scope, feature, dict(items or {}), ts=int(ts or time.time()))
+                    self._guard_write(conn, after=True)
             return True
+        except TrackerConflict:
+            raise
         except Exception as e:
             self._log(feature, "warn", "store_write_failed", path=str(self.db_path), error=str(e))
             return False
@@ -677,7 +930,10 @@ class TrackerStore:
             ).fetchone()
         if row is None:
             raise ValueError("Snapshot not found")
-        return json.loads(row[0])
+        try:
+            return _snapshot_payload(row[0], feature)
+        except Exception:
+            raise TrackerUnreadable(feature, [name])
 
     def add_restore_point(
         self,
@@ -742,7 +998,7 @@ class TrackerStore:
                 if row is None:
                     raise ValueError("Snapshot not found")
                 try:
-                    data = json.loads(row[0])
+                    data = _snapshot_payload(row[0], feature)
                 except Exception:
                     raise TrackerUnreadable(feature, [name])
             elif conn is not None and self._state_row(conn, "", feature) is not None:
@@ -774,9 +1030,9 @@ class TrackerStore:
         out = {feature: 0 for feature in FEATURES}
         with self._db() as conn:
             if conn is not None:
-                for feature, count in conn.execute(
+                for feature, count in self._cached(conn, "counts", (), lambda: tuple(conn.execute(
                     "SELECT feature, COUNT(*) FROM items WHERE scope='' GROUP BY feature"
-                ).fetchall():
+                ).fetchall())):
                     if feature in out:
                         out[str(feature)] = int(count)
         return out
@@ -791,44 +1047,26 @@ class TrackerStore:
         offset: int = 0,
         limit: int = 60,
         attention: bool = False,
+        health: str = "",
+        until: str = "",
     ) -> tuple[int, list[tuple[str, Any]]]:
-        if feature not in FEATURES:
-            raise ValueError(f"Unsupported kind: {feature!r}")
-        where = ["scope=''", "feature=?"]
-        args: list[Any] = [feature]
-        if attention:
-            where.append(
-                "item_key IN (SELECT item_key FROM checks WHERE scope='' AND feature=? AND code IN ("
-                + ", ".join("?" for _ in ATTENTION_CODES) + "))"
-            )
-            args.extend([feature, *ATTENTION_CODES])
-        if media == "movie":
-            where.append("json_extract(data, '$.type')='movie'")
-        elif media == "show":
-            where.append("json_extract(data, '$.type') IN ('show', 'season', 'episode')")
-        needle = text.strip().lower()
-        if needle:
-            where.append(
-                "lower(coalesce(json_extract(data, '$.title'), '') || ' ' || coalesce(json_extract(data, '$.series_title'), '')) LIKE ? ESCAPE '\\'"
-            )
-            args.append("%" + needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
-        when = (
-            "coalesce(json_extract(data, '$.watched_at'), json_extract(data, '$.rated_at'),"
-            " json_extract(data, '$.progress_at'), json_extract(data, '$.collected_at'),"
-            " json_extract(data, '$.listed_at'), json_extract(data, '$.added_at'), '')"
-        )
-        title = "lower(coalesce(json_extract(data, '$.series_title'), json_extract(data, '$.title'), item_key))"
+        where, args = self._filters(feature, text=text, media=media, attention=attention, health=health)
+        if until:
+            where.append("when_at < ?")
+            args.append(until)
         order = {
-            "recent": f"{when} DESC, item_key",
-            "oldest": f"{when} ASC, item_key",
-            "title": f"{title}, json_extract(data, '$.season'), json_extract(data, '$.episode'), item_key",
-        }.get(sort, f"{when} DESC, item_key")
+            "recent": "when_at DESC, item_key DESC",
+            "oldest": "when_at ASC, item_key ASC",
+            "title": "sort_title, season, episode, item_key",
+        }.get(sort, "when_at DESC, item_key DESC")
         clause = " AND ".join(where)
         with self._db() as conn:
             if conn is None:
                 return 0, []
             try:
-                total = int(conn.execute(f"SELECT COUNT(*) FROM items WHERE {clause}", args).fetchone()[0])
+                total = int(self._cached(conn, "count", (clause, *args), lambda: conn.execute(
+                    f"SELECT COUNT(*) FROM items WHERE {clause}", args
+                ).fetchone()[0]))
                 rows = conn.execute(
                     f"SELECT item_key, data FROM items WHERE {clause} ORDER BY {order} LIMIT ? OFFSET ?",
                     [*args, max(1, min(int(limit), 200)), max(0, int(offset))],
@@ -839,6 +1077,48 @@ class TrackerStore:
             return total, [(str(key), json.loads(data)) for key, data in rows]
         except Exception:
             raise TrackerUnreadable(feature, [DB_NAME])
+
+    def months(self, feature: str, *, text: str = "", media: str = "") -> list[dict[str, Any]]:
+        where, args = self._filters(feature, text=text, media=media)
+        clause = " AND ".join(where)
+        with self._db() as conn:
+            if conn is None:
+                return []
+            try:
+                rows = self._cached(conn, "months", (clause, *args), lambda: tuple(conn.execute(
+                    f"SELECT substr(when_at, 1, 7) AS m, COUNT(*) FROM items WHERE {clause}"
+                    " AND m GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]' GROUP BY m ORDER BY m DESC",
+                    args,
+                ).fetchall()))
+            except sqlite3.Error as exc:
+                raise TrackerUnreadable(feature, [DB_NAME]) from exc
+        return [{"month": str(m), "count": int(c)} for m, c in rows]
+
+    @staticmethod
+    def _filters(feature: str, *, text: str = "", media: str = "", attention: bool = False, health: str = "") -> tuple[list[str], list[Any]]:
+        if feature not in FEATURES:
+            raise ValueError(f"Unsupported kind: {feature!r}")
+        where = ["scope=''", "feature=?"]
+        args: list[Any] = [feature]
+        marks = ", ".join("?" for _ in ATTENTION_CODES)
+        if attention or health == "attention":
+            where.append(f"item_key IN (SELECT item_key FROM checks WHERE scope='' AND feature=? AND code IN ({marks}))")
+            args.extend([feature, *ATTENTION_CODES])
+        elif health == "ok":
+            where.append(f"item_key IN (SELECT item_key FROM checks WHERE scope='' AND feature=? AND code NOT IN ({marks}))")
+            args.extend([feature, *ATTENTION_CODES])
+        elif health == "unchecked":
+            where.append("item_key NOT IN (SELECT item_key FROM checks WHERE scope='' AND feature=?)")
+            args.append(feature)
+        if media == "movie":
+            where.append("kind='movie'")
+        elif media == "show":
+            where.append(f"kind IN ({', '.join(repr(k) for k in _SHOW_KINDS)})")
+        needle = text.strip().lower()
+        if needle:
+            where.append("instr(find, ?) > 0")
+            args.append(needle)
+        return where, args
 
     def record_count(self) -> int:
         with self._db() as conn:
@@ -866,7 +1146,7 @@ class TrackerStore:
 
     def save_checks(self, rows: Iterable[tuple[str, str, str, Mapping[str, Any], str]], *, checked_ns: int | None = None) -> None:
         now = int(checked_ns or time.time_ns())
-        values = [(f, k, code, _dumps(dict(detail)), now, f, k, text) for f, k, code, detail, text in rows]
+        values = [(f, k, code, _dumps(dict(detail)), now, _runtime(detail), f, k, text) for f, k, code, detail, text in rows]
         if not values:
             return
         with self._db() as conn:
@@ -874,22 +1154,24 @@ class TrackerStore:
                 return
             with self._write(conn):
                 conn.executemany(
-                    "INSERT INTO checks(scope, feature, item_key, code, detail, checked_ns)"
-                    " SELECT '', ?, ?, ?, ?, ? WHERE EXISTS(SELECT 1 FROM items WHERE scope='' AND feature=? AND item_key=? AND data=?)"
+                    "INSERT INTO checks(scope, feature, item_key, code, detail, checked_ns, runtime)"
+                    " SELECT '', ?, ?, ?, ?, ?, ? WHERE EXISTS(SELECT 1 FROM items WHERE scope='' AND feature=? AND item_key=? AND data=?)"
                     " ON CONFLICT(scope, feature, item_key) DO UPDATE SET code=excluded.code, detail=excluded.detail,"
-                    " checked_ns=excluded.checked_ns",
+                    " checked_ns=excluded.checked_ns, runtime=excluded.runtime",
                     values,
                 )
+                self._bump(conn)
 
     def prune_checks(self) -> None:
         with self._db() as conn:
             if conn is None:
                 return
             with self._write(conn):
-                conn.execute(
+                if conn.execute(
                     "DELETE FROM checks WHERE NOT EXISTS(SELECT 1 FROM items i WHERE i.scope=checks.scope"
                     " AND i.feature=checks.feature AND i.item_key=checks.item_key)"
-                )
+                ).rowcount:
+                    self._bump(conn)
 
     def checks_for(self, feature: str, keys: Iterable[str]) -> dict[str, tuple[str, dict[str, Any], int]]:
         wanted = list(dict.fromkeys(str(k) for k in keys))
@@ -914,16 +1196,34 @@ class TrackerStore:
                     out[str(key)] = (str(code), parsed if isinstance(parsed, dict) else {}, int(checked_ns))
         return out
 
+    def health_counts(self) -> dict[str, dict[str, int]]:
+        out = {feature: {"ok": 0, "attention": 0, "unchecked": 0} for feature in FEATURES}
+        marks = ", ".join("?" for _ in ATTENTION_CODES)
+        with self._db() as conn:
+            if conn is None:
+                return out
+            rows = self._cached(conn, "health", (), lambda: tuple(conn.execute(
+                "SELECT i.feature, CASE WHEN c.code IS NULL THEN 'unchecked'"
+                f" WHEN c.code IN ({marks}) THEN 'attention' ELSE 'ok' END AS bucket, COUNT(*)"
+                " FROM items i LEFT JOIN checks c ON c.scope=i.scope AND c.feature=i.feature AND c.item_key=i.item_key"
+                " WHERE i.scope='' GROUP BY i.feature, bucket",
+                ATTENTION_CODES,
+            ).fetchall()))
+        for feature, bucket, count in rows:
+            if feature in out:
+                out[str(feature)][str(bucket)] = int(count)
+        return out
+
     def attention_counts(self) -> dict[str, int]:
         out = {feature: 0 for feature in FEATURES}
         with self._db() as conn:
             if conn is not None:
-                for feature, count in conn.execute(
+                for feature, count in self._cached(conn, "attention", (), lambda: tuple(conn.execute(
                     "SELECT c.feature, COUNT(*) FROM checks c JOIN items i ON i.scope=c.scope AND i.feature=c.feature"
                     " AND i.item_key=c.item_key WHERE c.scope='' AND c.code IN ("
                     + ", ".join("?" for _ in ATTENTION_CODES) + ") GROUP BY c.feature",
                     ATTENTION_CODES,
-                ).fetchall():
+                ).fetchall())):
                     if feature in out:
                         out[str(feature)] = int(count)
         return out
@@ -973,6 +1273,7 @@ class TrackerStore:
                 " ON CONFLICT(scope, feature) DO UPDATE SET ts=excluded.ts, updated_ns=excluded.updated_ns",
                 (feature, now_ns // 1_000_000_000, now_ns),
             )
+        TrackerStore._bump(conn)
 
     @staticmethod
     def _prune_changes(conn: sqlite3.Connection, now_ns: int) -> None:
@@ -989,43 +1290,426 @@ class TrackerStore:
         *,
         action: str,
         expected: Mapping[str, Any] | None = None,
+        follow: Mapping[str, Any] | None = None,
     ) -> str:
         if feature not in FEATURES:
             raise ValueError(f"Unsupported kind: {feature!r}")
+        return self.apply([(feature, key, new_key, data) for key, new_key, data in changes], action=action, expected=expected, follow=follow)
+
+    def apply(
+        self,
+        changes: Iterable[tuple[str, str | None, str | None, Mapping[str, Any] | None]],
+        *,
+        action: str,
+        expected: Mapping[Any, Any] | None = None,
+        follow: Mapping[str, Any] | None = None,
+    ) -> str:
         rows = list(changes)
         if not rows:
             raise ValueError("no_changes")
+        if any(feature not in FEATURES for feature, *_ in rows):
+            raise ValueError("Unsupported kind")
         batch = uuid.uuid4().hex
         now = time.time_ns()
-        with self.mutation(), self._db() as conn:
-            if conn is None:
-                raise KeyError(rows[0][0])
+        with self.mutation(), self._db(create=True) as conn:
+            assert conn is not None
             with self._write(conn):
-                for key, new_key, data in rows:
-                    before = self._item_text(conn, feature, key)
-                    if before is None:
+                for feature, key, new_key, data in rows:
+                    before = self._item_text(conn, feature, key) if key else None
+                    if key and before is None:
                         raise KeyError(key)
-                    if expected is not None and key in expected and _loads(before) != expected[key]:
+                    want = _MISSING if expected is None else expected.get((feature, key), expected.get(key, _MISSING))
+                    if key and want is not _MISSING and _loads(before) != want:
                         raise TrackerConflict("changed_since", key)
                     target = (new_key or key) if data is not None else None
+                    if not key and not target:
+                        raise ValueError("no_changes")
                     if target and target != key and self._item_text(conn, feature, target) is not None:
                         raise TrackerConflict("key_exists", target)
                     after = _dumps(dict(data)) if data is not None else None
-                    conn.execute("DELETE FROM items WHERE scope='' AND feature=? AND item_key=?", (feature, key))
-                    if target:
-                        conn.execute(
-                            "INSERT INTO items(scope, feature, item_key, data) VALUES('', ?, ?, ?)", (feature, target, after)
-                        )
+                    if key:
+                        conn.execute("DELETE FROM items WHERE scope='' AND feature=? AND item_key=?", (feature, key))
+                    if target and data is not None:
+                        conn.execute(_UPSERT_ITEM, ("", feature, target, after, *_columns(target, data)))
                     conn.execute(
-                        "INSERT INTO changes(batch, scope, feature, action, old_key, new_key, before, after, created_ns)"
-                        " VALUES(?, '', ?, ?, ?, ?, ?, ?, ?)",
-                        (batch, feature, action, key, target, before, after, now),
+                        "INSERT INTO changes(batch, scope, feature, action, old_key, new_key, before, after, created_ns, find)"
+                        " VALUES(?, '', ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (batch, feature, action, key or target, target, before, after, now, _change_find(before, after)),
                     )
                     self._forget_checks(conn, feature, [key, target])
-                self._touch(conn, [feature], now)
+                if follow:
+                    self._follow_note(conn, follow, batch, now)
+                self._touch(conn, [row[0] for row in rows], now)
                 self._prune_changes(conn, now)
-        self._log(feature, "info", "tracker_items_changed", action=action, count=len(rows), batch=batch)
+        self._log(rows[0][0], "info", "tracker_items_changed", action=action, count=len(rows), batch=batch)
         return batch
+
+    def history_event_mode(self) -> bool:
+        with self._db() as conn:
+            if conn is None:
+                return False
+            return bool(self._cached(conn, "event_mode", (), lambda: conn.execute(
+                "SELECT 1 FROM items WHERE scope='' AND feature='history' AND item_key LIKE '%@%' LIMIT 1"
+            ).fetchone() is not None))
+
+    def related(
+        self, *, show: bool, tmdb: str = "", imdb: str = "", title: str = "", base: str = "", limit: int | None = 5000,
+    ) -> list[tuple[str, str, Any]]:
+        queries = self._related_queries(show=show, tmdb=tmdb, imdb=imdb, title=title, base=base)
+        with self._db() as conn:
+            if conn is None:
+                return []
+            try:
+                return self._related_rows(conn, queries, limit)
+            except (sqlite3.Error, ValueError) as exc:
+                raise TrackerUnreadable("history", [DB_NAME]) from exc
+
+    @staticmethod
+    def _related_queries(*, show: bool, tmdb: str = "", imdb: str = "", title: str = "", base: str = "") -> list[tuple[str, list[Any]]]:
+        features = ", ".join("?" for _ in FEATURES)
+        base_sql = f"SELECT feature, item_key, data FROM items WHERE scope='' AND feature IN ({features})"
+        queries: list[tuple[str, list[Any]]] = []
+        if show:
+            queries.append((f"{base_sql} AND show_key=?", [*FEATURES, f"tmdb:{tmdb}" if tmdb else f"title:{title.lower()}"]))
+            if tmdb:
+                queries.append(("SELECT feature, item_key, data FROM items WHERE scope='' AND tmdb=? AND kind IN ('show', 'anime')", [tmdb]))
+            else:
+                queries.append((f"{base_sql} AND sort_title=? AND kind IN ('show', 'anime')", [*FEATURES, title.lower()]))
+        else:
+            movie = " AND kind='movie'"
+            if tmdb:
+                queries.append((f"SELECT feature, item_key, data FROM items WHERE scope='' AND tmdb=?{movie}", [tmdb]))
+            if imdb:
+                queries.append((f"SELECT feature, item_key, data FROM items WHERE scope='' AND imdb=?{movie}", [imdb]))
+            if base:
+                queries.append((f"{base_sql} AND item_key=?{movie}", [*FEATURES, base]))
+                queries.append((f"{base_sql} AND item_key >= ? AND item_key < ?{movie}", [*FEATURES, f"{base}@", f"{base}A"]))
+        return queries
+
+    @staticmethod
+    def _related_rows(conn: sqlite3.Connection, queries: list[tuple[str, list[Any]]], limit: int | None) -> list[tuple[str, str, Any]]:
+        found: dict[tuple[str, str], Any] = {}
+        cap = f" LIMIT {int(limit)}" if limit else ""
+        for sql, args in queries:
+            for feature, key, data in conn.execute(f"{sql}{cap}", args).fetchall():
+                if feature in FEATURES:
+                    found.setdefault((str(feature), str(key)), data)
+        rows = sorted(found.items())
+        if limit:
+            rows = rows[:limit]
+        out: list[tuple[str, str, Any]] = []
+        for (feature, key), data in rows:
+            value = json.loads(data)
+            if not isinstance(value, Mapping):
+                raise ValueError(f"{feature}:{key} is not a record")
+            out.append((feature, key, value))
+        return out
+
+    def status_keys(self, status: str) -> set[str]:
+        with self._db() as conn:
+            if conn is None:
+                return set()
+            return {str(k) for (k,) in conn.execute("SELECT title_key FROM notes WHERE status=?", (status,)).fetchall()}
+
+    def show_summaries(self, *, text: str = "", offset: int = 0, limit: int = 50, exclude: Iterable[str] = ()) -> tuple[int, list[dict[str, Any]]]:
+        skip = {str(k) for k in exclude}
+        needle = text.strip().lower()
+        clause = "scope='' AND feature='history' AND show_key IS NOT NULL AND kind='episode'"
+        with self._db() as conn:
+            if conn is None:
+                return 0, []
+            try:
+                def compute() -> tuple[tuple[str, int, int, str, Any, Any], ...]:
+                    shows: dict[str, list[Any]] = {}
+                    rows = conn.execute(
+                        f"SELECT show_key, season, episode, when_at, sort_title FROM items WHERE {clause}"
+                        + (" AND instr(sort_title, ?) > 0" if needle else ""),
+                        [needle] if needle else [],
+                    ).fetchall()
+                    for show_key, season, episode, when, _ in rows:
+                        row = shows.get(show_key)
+                        if row is None:
+                            shows[show_key] = [{(season, episode)}, 1, when, season, episode]
+                            continue
+                        row[0].add((season, episode))
+                        row[1] += 1
+                        if when > row[2]:
+                            row[2:5] = [when, season, episode]
+                    ordered = sorted(shows.items(), key=lambda kv: (kv[1][2], kv[0]), reverse=True)
+                    return tuple((k, len(v[0]), v[1], v[2], v[3], v[4]) for k, v in ordered)
+
+                summary = self._cached(conn, "shows", (needle,), compute)
+                if skip:
+                    summary = tuple(row for row in summary if row[0] not in skip)
+                page = summary[max(0, int(offset)):max(0, int(offset)) + max(1, min(int(limit), 200))]
+                out = []
+                for show_key, episodes, plays, last, season, episode in page:
+                    head = conn.execute(
+                        f"SELECT data FROM items WHERE {clause} AND show_key=? ORDER BY when_at DESC LIMIT 1", (show_key,)
+                    ).fetchone()
+                    data = _safe_loads(head[0]) if head else None
+                    data = data if isinstance(data, Mapping) else {}
+                    out.append({
+                        "key": str(show_key), "title": data.get("series_title"), "year": data.get("series_year"),
+                        "episodes": int(episodes), "plays": int(plays), "last_watched": last or None,
+                        "last_season": season, "last_episode": episode,
+                    })
+                return len(summary), out
+            except sqlite3.Error as exc:
+                raise TrackerUnreadable("history", [DB_NAME]) from exc
+
+    def history_stats(self, now: datetime | None = None) -> dict[str, Any]:
+        moment = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        stamp = "%Y-%m-%dT%H:%M:%S"
+        week = (moment - timedelta(days=7)).strftime(stamp)
+        month = (moment - timedelta(days=30)).strftime(stamp)
+        year = f"{moment.year:04d}-01-01"
+        next_year = f"{moment.year + 1:04d}-01-01"
+        dated = "i.scope='' AND i.feature='history' AND i.when_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*'"
+        with self._db() as conn:
+            if conn is None:
+                return {"total": 0, "movies": 0, "episodes": 0, "week": 0, "month": 0, "year": 0, "minutes": 0, "timed": 0, "days": []}
+            try:
+                def compute() -> dict[str, Any]:
+                    total, movies, episodes, in_week, in_month, in_year, minutes, timed = conn.execute(
+                        "SELECT COUNT(*), COUNT(*) FILTER (WHERE i.kind='movie'), COUNT(*) FILTER (WHERE i.kind='episode'),"
+                        " COUNT(*) FILTER (WHERE i.when_at >= ?), COUNT(*) FILTER (WHERE i.when_at >= ?),"
+                        " COUNT(*) FILTER (WHERE i.when_at >= ? AND i.when_at < ?),"
+                        " coalesce(SUM(c.runtime), 0), COUNT(c.runtime)"
+                        " FROM items i LEFT JOIN checks c ON c.scope=i.scope AND c.feature=i.feature AND c.item_key=i.item_key"
+                        f" WHERE {dated}",
+                        (week, month, year, next_year),
+                    ).fetchone()
+                    days = [str(d) for (d,) in conn.execute(
+                        f"SELECT DISTINCT substr(i.when_at, 1, 10) AS d FROM items i WHERE {dated} ORDER BY d DESC"
+                    ).fetchall()]
+                    return {
+                        "total": int(total), "movies": int(movies), "episodes": int(episodes), "week": int(in_week),
+                        "month": int(in_month), "year": int(in_year), "minutes": int(minutes), "timed": int(timed), "days": days,
+                    }
+
+                return dict(self._cached(conn, "stats", (week[:16], month[:16], year), compute))
+            except sqlite3.Error as exc:
+                raise TrackerUnreadable("history", [DB_NAME]) from exc
+
+    @staticmethod
+    def _note_get(conn: sqlite3.Connection, key: str) -> dict[str, Any] | None:
+        row = conn.execute(
+            "SELECT type, title, year, tmdb, status, started, finished, body, fields FROM notes WHERE title_key=?", (key,)
+        ).fetchone()
+        if row is None:
+            return None
+        tags = [str(t) for (t,) in conn.execute("SELECT tag FROM note_tags WHERE title_key=?", (key,)).fetchall()]
+        typ, title, year, tmdb, status, started, finished, body, fields = row
+        return _note_norm({
+            "type": typ, "title": title, "year": year, "tmdb": tmdb, "status": status, "started": started,
+            "finished": finished, "notes": body, "tags": tags, "fields": _safe_loads(fields),
+        })
+
+    @staticmethod
+    def _note_put(conn: sqlite3.Connection, key: str, note: Mapping[str, Any] | None, now: int) -> None:
+        conn.execute("DELETE FROM note_tags WHERE title_key=?", (key,))
+        if note is None:
+            conn.execute("DELETE FROM notes WHERE title_key=?", (key,))
+            return
+        conn.execute(
+            "INSERT INTO notes(title_key, type, title, year, tmdb, status, started, finished, body, fields, find, updated_ns)"
+            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(title_key) DO UPDATE SET type=excluded.type,"
+            " title=excluded.title, year=excluded.year, tmdb=excluded.tmdb, status=excluded.status, started=excluded.started,"
+            " finished=excluded.finished, body=excluded.body, fields=excluded.fields, find=excluded.find,"
+            " updated_ns=excluded.updated_ns",
+            (
+                key, note["type"], note["title"], note["year"], note["tmdb"], note["status"], note["started"],
+                note["finished"], note["notes"], _dumps(note["fields"]), str(note["title"]).lower(), now,
+            ),
+        )
+        conn.executemany("INSERT OR IGNORE INTO note_tags(title_key, tag) VALUES(?, ?)", [(key, t) for t in note["tags"]])
+
+    @staticmethod
+    def _note_change(conn: sqlite3.Connection, batch: str, old_key: str, new_key: str | None, before: Any, after: Any, now: int) -> None:
+        conn.execute(
+            "INSERT INTO changes(batch, scope, feature, action, old_key, new_key, before, after, created_ns, find)"
+            " VALUES(?, '', ?, 'note', ?, ?, ?, ?, ?, ?)",
+            (
+                batch, NOTES, old_key, new_key, None if before is None else _dumps(before),
+                None if after is None else _dumps(after), now, _change_find(before, after),
+            ),
+        )
+
+    def note(self, key: str) -> dict[str, Any] | None:
+        with self._db() as conn:
+            return None if conn is None else self._note_get(conn, key)
+
+    def notes_for(self, keys: Iterable[str]) -> dict[str, dict[str, Any]]:
+        wanted = list(dict.fromkeys(str(k) for k in keys))
+        out: dict[str, dict[str, Any]] = {}
+        with self._db() as conn:
+            if conn is None or not wanted:
+                return out
+            for start in range(0, len(wanted), 500):
+                chunk = wanted[start:start + 500]
+                found = conn.execute(
+                    f"SELECT title_key FROM notes WHERE title_key IN ({', '.join('?' for _ in chunk)})", chunk
+                ).fetchall()
+                for (key,) in found:
+                    note = self._note_get(conn, str(key))
+                    if note is not None:
+                        out[str(key)] = note
+        return out
+
+    def save_note(self, key: str, note: Mapping[str, Any] | None, *, expected: Any = ...) -> str | None:
+        after = _note_norm(note) if note is not None else None
+        now = time.time_ns()
+        batch = uuid.uuid4().hex
+        with self.mutation(), self._db(create=True) as conn:
+            assert conn is not None
+            with self._write(conn):
+                before = self._note_get(conn, key)
+                if expected is not ... and before != (_note_norm(expected) if expected is not None else None):
+                    raise TrackerConflict("changed_since", key)
+                if before == after:
+                    return None
+                self._note_put(conn, key, after, now)
+                self._note_change(conn, batch, key, key if after is not None else None, before, after, now)
+                self._bump(conn)
+                self._prune_changes(conn, now)
+        return batch
+
+    def _follow_note(self, conn: sqlite3.Connection, follow: Mapping[str, Any], batch: str, now: int) -> None:
+        old, new = str(follow.get("old") or ""), str(follow.get("new") or "")
+        if not old or not new or old == new:
+            return
+        before = self._note_get(conn, old)
+        if before is None or self._note_get(conn, new) is not None:
+            return
+        if self._related_rows(conn, self._related_queries(**dict(follow.get("ident") or {})), 1):
+            return
+        meta = {k: v for k, v in dict(follow.get("meta") or {}).items() if k in ("type", "title", "year", "tmdb")}
+        after = _note_norm({**before, **meta})
+        self._note_put(conn, old, None, now)
+        self._note_put(conn, new, after, now)
+        self._note_change(conn, batch, old, new, before, after, now)
+
+    def notes(self, *, status: str = "", tag: str = "", text: str = "", offset: int = 0, limit: int = 50) -> tuple[int, list[tuple[str, dict[str, Any], int]]]:
+        where: list[str] = []
+        args: list[Any] = []
+        if status:
+            where.append("status=?")
+            args.append(status)
+        if tag:
+            where.append("title_key IN (SELECT title_key FROM note_tags WHERE tag=?)")
+            args.append(tag)
+        needle = text.strip().lower()
+        if needle:
+            where.append("instr(find, ?) > 0")
+            args.append(needle)
+        clause = f" WHERE {' AND '.join(where)}" if where else ""
+        with self._db() as conn:
+            if conn is None:
+                return 0, []
+            total = int(conn.execute(f"SELECT COUNT(*) FROM notes{clause}", args).fetchone()[0])
+            keys = conn.execute(
+                f"SELECT title_key, updated_ns FROM notes{clause} ORDER BY updated_ns DESC, title_key LIMIT ? OFFSET ?",
+                [*args, max(1, min(int(limit), 200)), max(0, int(offset))],
+            ).fetchall()
+            rows = []
+            for key, updated in keys:
+                note = self._note_get(conn, str(key))
+                if note is not None:
+                    rows.append((str(key), note, int(updated)))
+        return total, rows
+
+    def note_summary(self) -> dict[str, Any]:
+        with self._db() as conn:
+            if conn is None:
+                return {"total": 0, "statuses": {}, "tags": []}
+            statuses = {str(s or ""): int(n) for s, n in conn.execute("SELECT status, COUNT(*) FROM notes GROUP BY status").fetchall()}
+            tags = [
+                {"tag": str(t), "count": int(n)}
+                for t, n in conn.execute("SELECT tag, COUNT(*) FROM note_tags GROUP BY tag ORDER BY COUNT(*) DESC, tag LIMIT 500").fetchall()
+            ]
+        return {"total": sum(statuses.values()), "statuses": {k: v for k, v in statuses.items() if k}, "tags": tags}
+
+    @staticmethod
+    def _show_rows(conn: sqlite3.Connection, show_key: str) -> list[Any]:
+        features = ", ".join("?" for _ in FEATURES)
+        rows = conn.execute(
+            f"SELECT data FROM items WHERE scope='' AND feature IN ({features}) AND show_key=? LIMIT 1", (*FEATURES, show_key)
+        ).fetchall()
+        kind, _, value = show_key.partition(":")
+        if kind == "tmdb" and value:
+            rows += conn.execute(
+                "SELECT data FROM items WHERE scope='' AND tmdb=? AND kind IN ('show', 'anime') LIMIT 1", (value,)
+            ).fetchall()
+        return [data for data in (_safe_loads(r[0]) for r in rows) if isinstance(data, Mapping)]
+
+    def note_show_tokens(self, status: str) -> set[str]:
+        out: set[str] = set()
+        with self._db() as conn:
+            if conn is None:
+                return out
+            keys = [str(k) for (k,) in conn.execute("SELECT title_key FROM notes WHERE status=?", (status,)).fetchall()]
+            for key in keys:
+                kind, _, show_key = key.partition(":")
+                if kind != "show":
+                    continue
+                if show_key.startswith("tmdb:"):
+                    out.add(show_key.lower())
+                for data in self._show_rows(conn, show_key):
+                    ids = data.get("show_ids") if data.get("type") in ("episode", "season") else data.get("ids")
+                    for name, value in _map_of(ids).items():
+                        text = _text(value)
+                        if text and text.strip():
+                            out.add(f"{str(name).lower()}:{text.strip().lower()}")
+        return out
+
+    def set_show_status(self, rows: Iterable[tuple[str, Mapping[str, Any]]], status: str) -> tuple[str | None, int, int]:
+        now = time.time_ns()
+        batch = uuid.uuid4().hex
+        changed = same = 0
+        with self.mutation(), self._db(create=True) as conn:
+            assert conn is not None
+            with self._write(conn):
+                for key, meta in rows:
+                    before = self._note_get(conn, key)
+                    base = dict(before) if before is not None else {"type": "show", **{k: v for k, v in meta.items() if k in ("title", "year", "tmdb")}}
+                    if not base.get("title"):
+                        head = next(iter(self._show_rows(conn, key.partition(":")[2])), {})
+                        child = head.get("type") in ("episode", "season")
+                        base["title"] = head.get("series_title" if child else "title") or ""
+                        base["year"] = base.get("year") or head.get("series_year" if child else "year")
+                    after = _note_norm({**base, "status": status})
+                    if after == before:
+                        same += 1
+                        continue
+                    self._note_put(conn, key, after, now)
+                    self._note_change(conn, batch, key, key, before, after, now)
+                    changed += 1
+                if changed:
+                    self._bump(conn)
+                    self._prune_changes(conn, now)
+        return (batch if changed else None), changed, same
+
+    def note_fields(self) -> list[dict[str, Any]]:
+        with self._db() as conn:
+            row = None if conn is None else conn.execute("SELECT value FROM meta WHERE key='note_fields'").fetchone()
+        data = _safe_loads(row[0]) if row else None
+        return [dict(f) for f in data if isinstance(f, Mapping)] if isinstance(data, list) else []
+
+    def save_note_fields(self, fields: Iterable[Mapping[str, Any]]) -> None:
+        with self._db(create=True) as conn:
+            assert conn is not None
+            with self._write(conn):
+                conn.execute(
+                    "INSERT INTO meta(key, value) VALUES('note_fields', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (_dumps([dict(f) for f in fields]),),
+                )
+
+    def batch_features(self, batch: str) -> set[str]:
+        with self._db() as conn:
+            if conn is None:
+                return set()
+            return {str(f) for (f,) in conn.execute("SELECT DISTINCT feature FROM changes WHERE batch=?", (batch,)).fetchall()}
 
     def undo(self, batch: str) -> str:
         now = time.time_ns()
@@ -1046,46 +1730,96 @@ class TrackerStore:
                 if any(row[6] is not None for row in rows):
                     raise TrackerConflict("already_undone")
                 for feature, old_key, new_key, before, after in (row[:1] + row[2:6] for row in rows):
+                    if feature == NOTES:
+                        self._undo_note(conn, old_key, new_key, _safe_loads(before), _safe_loads(after), now)
+                        conn.execute(
+                            "INSERT INTO changes(batch, scope, feature, action, old_key, new_key, before, after, created_ns, undo_of, find)"
+                            " VALUES(?, '', ?, 'undo', ?, ?, ?, ?, ?, ?, ?)",
+                            (
+                                undo_batch, feature, new_key or old_key, old_key if before is not None else None, after, before,
+                                now, batch, _change_find(before, after),
+                            ),
+                        )
+                        continue
                     if new_key:
                         current = self._item_text(conn, feature, new_key)
                         if current is None or _edit_view(_loads(current)) != _edit_view(_loads(after)):
                             raise TrackerConflict("changed_since", new_key)
                         conn.execute("DELETE FROM items WHERE scope='' AND feature=? AND item_key=?", (feature, new_key))
-                    if self._item_text(conn, feature, old_key) is not None:
-                        raise TrackerConflict("changed_since", old_key)
+                    if before is not None:
+                        if self._item_text(conn, feature, old_key) is not None:
+                            raise TrackerConflict("changed_since", old_key)
+                        conn.execute(_UPSERT_ITEM, ("", feature, old_key, before, *_columns(old_key, _safe_loads(before))))
                     conn.execute(
-                        "INSERT INTO items(scope, feature, item_key, data) VALUES('', ?, ?, ?)", (feature, old_key, before)
-                    )
-                    conn.execute(
-                        "INSERT INTO changes(batch, scope, feature, action, old_key, new_key, before, after, created_ns, undo_of)"
-                        " VALUES(?, '', ?, 'undo', ?, ?, ?, ?, ?, ?)",
-                        (undo_batch, feature, new_key or old_key, old_key, after, before, now, batch),
+                        "INSERT INTO changes(batch, scope, feature, action, old_key, new_key, before, after, created_ns, undo_of, find)"
+                        " VALUES(?, '', ?, 'undo', ?, ?, ?, ?, ?, ?, ?)",
+                        (undo_batch, feature, new_key or old_key, old_key, after, before, now, batch, _change_find(before, after)),
                     )
                     self._forget_checks(conn, feature, [old_key, new_key])
                 conn.execute("UPDATE changes SET undone_ns=? WHERE batch=?", (now, batch))
-                self._touch(conn, [str(row[0]) for row in rows], now)
+                self._touch(conn, [str(row[0]) for row in rows if row[0] in FEATURES], now)
                 self._prune_changes(conn, now)
         self._log(str(rows[0][0]), "info", "tracker_change_undone", batch=batch, count=len(rows))
         return undo_batch
 
-    def change_log(self, *, offset: int = 0, limit: int = 50, preview: int = 4) -> tuple[int, list[ChangeBatch]]:
+    def _undo_note(self, conn: sqlite3.Connection, old_key: str, new_key: str | None, before: Any, after: Any, now: int) -> None:
+        if new_key:
+            if self._note_get(conn, new_key) != (_note_norm(after) if isinstance(after, Mapping) else None):
+                raise TrackerConflict("changed_since", new_key)
+            self._note_put(conn, new_key, None, now)
+        if isinstance(before, Mapping):
+            if self._note_get(conn, old_key) is not None:
+                raise TrackerConflict("changed_since", old_key)
+            self._note_put(conn, old_key, _note_norm(before), now)
+
+    def change_count(self) -> int:
+        with self._db() as conn:
+            if conn is None:
+                return 0
+            return int(conn.execute("SELECT COUNT(DISTINCT batch) FROM changes WHERE scope=''").fetchone()[0])
+
+    def change_log(
+        self, *, offset: int = 0, limit: int = 50, preview: int = 4, kind: str = "", text: str = "",
+    ) -> tuple[int, list[ChangeBatch]]:
+        where = ["scope=''"]
+        args: list[Any] = []
+        if kind in CHANGE_KINDS:
+            where.append(CHANGE_KINDS[kind])
+        needle = text.strip().lower()
+        if needle:
+            where.append("instr(find, ?) > 0")
+            args.append(needle)
+        clause = " AND ".join(where)
         with self._db() as conn:
             if conn is None:
                 return 0, []
-            total = int(conn.execute("SELECT COUNT(DISTINCT batch) FROM changes WHERE scope=''").fetchone()[0])
-            heads = conn.execute(
-                "SELECT batch, min(feature), min(action), min(created_ns), max(undone_ns), max(undo_of), COUNT(*)"
-                " FROM changes WHERE scope='' GROUP BY batch ORDER BY max(id) DESC LIMIT ? OFFSET ?",
-                (max(1, min(int(limit), 200)), max(0, int(offset))),
-            ).fetchall()
-            out: list[ChangeBatch] = []
-            for batch, feature, action, created_ns, undone_ns, undo_of, count in heads:
-                rows = conn.execute(
-                    "SELECT old_key, new_key, before, after FROM changes WHERE batch=? ORDER BY id LIMIT ?",
-                    (batch, max(1, int(preview))),
+            order: tuple[str, ...] = self._cached(conn, "changes", (clause, *args), lambda: tuple(
+                str(row[0]) for row in conn.execute(
+                    f"SELECT batch, max(id) AS last FROM changes WHERE {clause} GROUP BY batch ORDER BY last DESC", args
                 ).fetchall()
+            ))
+            total = len(order)
+            page = list(order[max(0, int(offset)):max(0, int(offset)) + max(1, min(int(limit), 200))])
+            found = {
+                str(row[0]): row[1:] for row in conn.execute(
+                    "SELECT batch, min(created_ns), max(undone_ns), max(undo_of), COUNT(*), COUNT(*) FILTER (WHERE feature<>?)"
+                    f" FROM changes WHERE scope='' AND batch IN ({', '.join('?' for _ in page)}) GROUP BY batch",
+                    (NOTES, *page),
+                ).fetchall()
+            } if page else {}
+            heads = [(batch, *found[batch]) for batch in page if batch in found]
+            out: list[ChangeBatch] = []
+            for batch, created_ns, undone_ns, undo_of, count, records in heads:
+                rows = conn.execute(
+                    "SELECT feature, action, old_key, new_key, before, after FROM changes WHERE batch=?"
+                    " ORDER BY feature=?, id LIMIT ?",
+                    (batch, NOTES, max(1, int(preview))),
+                ).fetchall()
+                feature, action = str(rows[0][0]), str(rows[0][1])
+                count = records or count
+                rows = [r for r in rows if (r[0] == NOTES) == (feature == NOTES)]
                 try:
-                    parsed = [(str(o), None if n is None else str(n), _loads(b), _loads(a)) for o, n, b, a in rows]
+                    parsed = [(str(o), None if n is None else str(n), _loads(b), _loads(a)) for _, _, o, n, b, a in rows]
                 except Exception:
                     raise TrackerUnreadable(str(feature), [DB_NAME])
                 out.append(ChangeBatch(
@@ -1151,6 +1885,7 @@ class TrackerStore:
                 if state:
                     conn.execute("DELETE FROM changes")
                     conn.execute("DELETE FROM checks")
+                    self._bump(conn)
             conn.execute("VACUUM")
             conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         return result
@@ -1165,7 +1900,27 @@ class TrackerStore:
                     zf.writestr(_file_name(str(scope), str(name)), str(data))
                 for scope, name, data in conn.execute("SELECT scope, name, data FROM restore_points ORDER BY created_ns, id").fetchall():
                     zf.writestr("/".join(["snapshots", *([str(scope)] if scope else []), str(name)]), str(data))
+                keys = [str(k) for (k,) in conn.execute("SELECT title_key FROM notes ORDER BY title_key").fetchall()]
+                fields = conn.execute("SELECT value FROM meta WHERE key='note_fields'").fetchone()
+                if keys or fields:
+                    zf.writestr(_NOTES_FILE, _dumps({
+                        "fields": _safe_loads(fields[0]) if fields else [],
+                        "notes": {key: self._note_get(conn, key) for key in keys},
+                    }))
         return buf.getvalue()
+
+    def _import_notes(self, conn: sqlite3.Connection, raw: Mapping[str, Any]) -> None:
+        now = time.time_ns()
+        fields = raw.get("fields")
+        if isinstance(fields, list):
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES('note_fields', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (_dumps([dict(f) for f in fields if isinstance(f, Mapping)]),),
+            )
+        for key, note in _map_of(raw.get("notes")).items():
+            if isinstance(note, Mapping):
+                self._note_put(conn, str(key), _note_norm(note), now)
+        self._bump(conn)
 
     def import_zip(self, fp: Any) -> dict[str, Any]:
         stats: dict[str, Any] = {"files": 0, "overwritten": 0, "states": 0, "snapshots": 0}
@@ -1183,11 +1938,18 @@ class TrackerStore:
                     except Exception as e:
                         raise ValueError(f"{info.filename} is not valid JSON") from e
                     parts = rel.parts
-                    if parts[0] == "snapshots" and len(parts) in (2, 3):
+                    if parts == (_NOTES_FILE,):
+                        if not isinstance(raw, Mapping):
+                            raise ValueError(f"{info.filename} is not a notes export")
+                        existed = conn.execute("SELECT 1 FROM notes LIMIT 1").fetchone()
+                        self._import_notes(conn, raw)
+                        stats["notes"] = len(_map_of(raw.get("notes")))
+                    elif parts[0] == "snapshots" and len(parts) in (2, 3):
                         feature = _snapshot_feature(parts[-1])
                         if feature is None:
                             continue
                         scope = parts[1] if len(parts) == 3 else ""
+                        _snapshot_payload(text, feature)
                         existed = conn.execute(
                             "SELECT 1 FROM restore_points WHERE scope=? AND feature=? AND name=?", (scope, feature, parts[-1])
                         ).fetchone()
@@ -1225,7 +1987,6 @@ class TrackerStore:
             raise ValueError(f"File is not valid JSON: {e}") from e
         if not isinstance(raw, dict):
             raise ValueError("JSON root must be an object")
-        items = _import_items(raw.get("items") if "items" in raw else raw)
         ts_val = raw.get("ts")
         ts = int(ts_val) if isinstance(ts_val, int) else int(datetime.now(timezone.utc).timestamp())
         name = (filename or "upload.json").strip()
@@ -1245,6 +2006,10 @@ class TrackerStore:
             kind = found
             target = "snapshot"
             dest = _json_filename(name, label="snapshot name")
+        try:
+            items = _upload_items(raw, kind)
+        except ValueError as e:
+            raise ValueError(f"{name} is not a tracker export: {e}") from e
         with self._db(create=True) as conn:
             assert conn is not None
             with self._write(conn):

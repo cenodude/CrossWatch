@@ -109,7 +109,16 @@ except Exception as e:
     feat_playlists = None
     cw_log("CROSSWATCH", "module", "warn", "feature_import_failed", import_feature="playlists", error=str(e))
 
+try:
+    from .crosswatch import _dropped as feat_dropped
+except Exception as e:
+    feat_dropped = None
+    cw_log("CROSSWATCH", "module", "warn", "feature_import_failed", import_feature="dropped", error=str(e))
+
 from .crosswatch._common import tracker_store
+from cw_platform.tracker_store import TrackerConflict
+
+_WRITE_ATTEMPTS = 3
 
 try:
     from ._mod_common import make_snapshot_progress
@@ -317,6 +326,18 @@ class CROSSWATCHModule:
 
         self.progress_factory: Callable[[str], Any] = _mk_prog
 
+    def _guarded(self, feature: str, run: Callable[[], Any]) -> Any:
+        store = tracker_store(self)
+        for attempt in range(1, _WRITE_ATTEMPTS + 1):
+            try:
+                with store.mutation(), store.guarded():
+                    return run()
+            except TrackerConflict:
+                if attempt == _WRITE_ATTEMPTS:
+                    raise
+                _info(feature, "write_retry", reason="changed_by_another_writer", attempt=attempt)
+        raise TrackerConflict("changed_since")
+
     @staticmethod
     def supported_features() -> dict[str, bool]:
         toggles = {
@@ -345,8 +366,7 @@ class CROSSWATCHModule:
             _info(feature, "index_skipped", reason="module_missing")
             return {}
         started = time.perf_counter()
-        with tracker_store(self).mutation():
-            out = mod.build_index(self, **kwargs)
+        out = self._guarded(feature, lambda: mod.build_index(self, **kwargs))
         _info(feature, "index_done", count=len(out), dur_ms=int((time.perf_counter() - started) * 1000))
         return out
 
@@ -371,8 +391,7 @@ class CROSSWATCHModule:
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             started = time.perf_counter()
-            with tracker_store(self).mutation():
-                cnt, unresolved = mod.add(self, lst)
+            cnt, unresolved = self._guarded(feature, lambda: mod.add(self, lst))
             _info(feature, "write_done", op="add", ok=len(unresolved) == 0, applied=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
             confirmed_keys = _confirmed_keys(_crosswatch_key_of, lst, unresolved)
             return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
@@ -401,8 +420,7 @@ class CROSSWATCHModule:
             return {"ok": True, "count": 0, "unresolved": []}
         try:
             started = time.perf_counter()
-            with tracker_store(self).mutation():
-                cnt, unresolved = mod.remove(self, lst)
+            cnt, unresolved = self._guarded(feature, lambda: mod.remove(self, lst))
             _info(feature, "write_done", op="remove", ok=len(unresolved) == 0, applied=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
             confirmed_keys = _confirmed_keys(_crosswatch_key_of, lst, unresolved)
             return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
@@ -532,6 +550,16 @@ class _CrossWatchOPS:
 
     def health(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
         return self._adapter(cfg).health()
+
+    def dropped_show_tokens(self, cfg: Mapping[str, Any]) -> set[str]:
+        if not feat_dropped:
+            raise RuntimeError("CrossWatch dropped shows are unavailable")
+        return feat_dropped.dropped_show_tokens(self._adapter(cfg))
+
+    def tag_dropped_shows(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+        if not feat_dropped:
+            raise RuntimeError("CrossWatch dropped shows are unavailable")
+        return feat_dropped.tag_dropped_shows(self._adapter(cfg), items)
 
     def list_playlist_resources(self, cfg: Mapping[str, Any], *, instance: str | None = None):
         return list(feat_playlists.list_resources(self._playlist_adapter(cfg, instance))) if feat_playlists else []
