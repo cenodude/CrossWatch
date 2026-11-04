@@ -159,6 +159,39 @@ def test_floppy_sink_sends_completed_episode_stop(monkeypatch: Any) -> None:
     assert activities[0]["target"] == "floppy"
 
 
+@pytest.mark.parametrize(
+    ("ids", "expected"),
+    [
+        ({"tmdb_show": "125988", "imdb_show": "tt14688458", "tvdb_show": "403245", "tvdb_episode": "9999"}, {"tmdb": "125988"}),
+        ({"imdb_show": "tt14688458", "tvdb_show": "403245"}, {"imdb": "tt14688458"}),
+        ({"tvdb_show": "403245"}, {"tvdb": "403245"}),
+        ({"tmdb": "5001", "tvdb": "6001"}, {"tmdb": "5001", "tvdb": "6001"}),
+    ],
+)
+def test_floppy_episode_scrobble_names_show_by_one_id(ids: dict[str, str], expected: dict[str, str]) -> None:
+    ev = ScrobbleEvent(**{**_episode().__dict__, "ids": ids})
+
+    assert floppy_sink._payload(ev)["ids"] == expected
+
+
+def test_floppy_movie_scrobble_keeps_all_ids() -> None:
+    ev = ScrobbleEvent(**{**_movie().__dict__, "ids": {"tmdb": "550", "imdb": "tt0137523", "tvdb": "123"}})
+
+    assert floppy_sink._payload(ev)["ids"] == {"tmdb": "550", "imdb": "tt0137523", "tvdb": "123"}
+
+
+def test_floppy_auto_remove_keeps_all_show_ids(monkeypatch: Any) -> None:
+    removed: list[dict[str, str]] = []
+    monkeypatch.setattr(floppy_sink, "_auto_remove_enabled", lambda cfg, mt: True)
+    monkeypatch.setattr(floppy_sink, "once_per_ttl", lambda *args, **kwargs: True)
+    monkeypatch.setattr(floppy_sink, "_rm_across", lambda ids, mt, scope="": removed.append(ids))
+    ev = ScrobbleEvent(**{**_episode().__dict__, "ids": {"tmdb_show": "125988", "tvdb_show": "403245"}})
+
+    floppy_sink._auto_remove_across(ev, {})
+
+    assert removed == [{"tmdb": "125988", "tvdb": "403245"}]
+
+
 def test_floppy_sink_sends_completed_false_for_resume_stop(monkeypatch: Any) -> None:
     calls: list[dict[str, Any]] = []
     monkeypatch.setattr(floppy_sink, "api_post", lambda _adapter, path, **kwargs: calls.append({"path": path, "body": kwargs.get("json")}) or {"detail": "ok"})

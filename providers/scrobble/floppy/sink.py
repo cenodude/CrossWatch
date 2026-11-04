@@ -150,9 +150,20 @@ def _ids(ev: ScrobbleEvent) -> dict[str, str]:
     return out
 
 
+def _scrobble_ids(ev: ScrobbleEvent) -> dict[str, str]:
+    ids = _ids(ev)
+    source = ev.ids or {}
+    if ev.media_type != "episode" or not any(str(source.get(f"{key}_show") or "").strip() for key in ("tmdb", "imdb", "tvdb")):
+        return ids
+    for key in ("tmdb", "imdb", "tvdb"):
+        if ids.get(key):
+            return {key: ids[key]}
+    return ids
+
+
 def _payload(ev: ScrobbleEvent, watched_at: float = DEFAULT_WATCHED_AT) -> dict[str, Any] | None:
     progress = _clamp(ev.progress)
-    ids = _ids(ev)
+    ids = _scrobble_ids(ev)
     if not ids:
         return None
     body: dict[str, Any] = {
