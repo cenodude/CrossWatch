@@ -93,7 +93,7 @@
 .sch-adv .chipdays label:focus-within{outline:2px solid rgba(142,164,255,.42);outline-offset:2px}
 .sch-adv .chipdays label:has(input:checked){color:#fff;border-color:rgba(154,125,255,.62);background:#3b236f;box-shadow:none}
 .sch-adv .chipdays .chipspacer{display:none}
-.sch-adv input[type=time]::-webkit-calendar-picker-indicator{filter:invert(1) brightness(1.6);opacity:.95}
+.sch-adv input[type=time]::-webkit-calendar-picker-indicator{opacity:.95}
 .sch-adv .stack{display:grid;gap:8px}
 .sch-adv .stack.two{grid-template-columns:repeat(2,minmax(0,1fr))}
 .sch-adv .stack.three{grid-template-columns:repeat(3,minmax(0,1fr))}
