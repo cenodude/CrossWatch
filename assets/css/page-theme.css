@@ -126,17 +126,24 @@ dialog.cw-page-panel {
 }
 
 #layout .cw-themed-page :is(.ss-hero-summary, .cw-editor-hero-summary) {
-  background: var(--cw-page-toolbar-bg);
-  border: 1px solid var(--cw-theme-border);
-  border-color: var(--cw-theme-border);
+  background: var(--cw-hero-summary-bg, var(--cw-page-toolbar-bg));
+  border: 1px solid var(--cw-hero-summary-border, var(--cw-theme-border));
   border-radius: var(--cw-page-control-radius);
   box-shadow: none;
   color: var(--cw-theme-text);
 }
 #layout .cw-themed-page :is(.ss-hero-seg, .cw-editor-hero-seg, .ss-hero-refresh, .cw-editor-refresh) {
   background: transparent;
-  border-color: var(--cw-theme-border);
+  border-color: var(--cw-hero-summary-border, var(--cw-theme-border));
   color: var(--cw-theme-text);
+}
+#page-tracker .cw-page-hero:has(.trk-hero-backdrop:not([hidden])) {
+  --cw-hero-summary-bg: color-mix(in srgb, var(--cw-page-toolbar-bg) 55%, transparent);
+  --cw-hero-summary-border: color-mix(in srgb, var(--cw-theme-border) 45%, transparent);
+}
+#page-tracker .cw-page-hero:has(.trk-hero-backdrop:not([hidden])) .cw-editor-hero-summary {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
 }
 #layout .cw-themed-page :is(.ss-hero-seg, .cw-editor-hero-seg) strong {
   color: var(--cw-theme-text);
@@ -770,10 +777,12 @@ button.cw-mm-provider[data-ia-chip]:hover,button.cw-mm-provider[data-mm-episode]
 .cw-page-item-actions .cw-ia-btn.is-quiet-danger:hover{background:var(--cw-page-danger-bg)}
 .cw-page-item-actions .cw-ia-note{color:var(--cw-theme-muted);font-size:13px}
 .cw-page-item-actions .cw-ia-note .material-symbols-rounded{font-size:18px}
-.cw-page-item-actions .cw-ia-score>span,.cw-page-item-actions .cw-ia-score small{color:var(--cw-theme-muted)}
-.cw-page-item-actions .cw-ia-score>span{font-size:13px}
-.cw-page-item-actions .cw-ia-score button{border:0;border-radius:9px;background:var(--cw-theme-surface);color:var(--cw-theme-text)}
-.cw-page-item-actions .cw-ia-score button:hover{background:var(--cw-page-hover-bg)}
+.is-map-candidate-warning{color:var(--cw-theme-warning)}
+.cw-page-item-actions .cw-ia-score-summary>span,.cw-page-item-actions .cw-ia-score small{color:var(--cw-theme-muted)}
+.cw-page-item-actions .cw-ia-score-summary>span{font-size:13px}
+.cw-page-item-actions .cw-ia-score button{border:0;border-radius:0;background:transparent;color:var(--cw-theme-muted)}
+.cw-page-item-actions .cw-ia-score button.is-lit{color:var(--cw-theme-accent)}
+.cw-page-item-actions .cw-ia-score button:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:-2px}
 .cw-page-item-actions .cw-ia-score strong{font-size:18px}
 .cw-page-item-actions .cw-ia-score small{font-size:12px;font-weight:600}
 .cw-page-item-actions .cw-ia-sheet-backdrop{background:var(--cw-page-overlay-backdrop)}
@@ -881,7 +890,7 @@ button.cw-mm-provider[data-ia-chip]:hover,button.cw-mm-provider[data-mm-episode]
 #page-tracker .trk-identity summary{color:var(--cw-theme-text)}
 #page-tracker :is(.trk-field>span,.trk-group-label,.trk-note,.trk-identity summary small,.trk-change-copy small){color:var(--cw-theme-muted)}
 input:is([type="date"],[type="datetime-local"],[type="time"],[type="month"],[type="week"]){color-scheme:var(--cw-page-input-scheme)}
-input.cw-timestamp-input::-webkit-datetime-edit-second-field{font-style:italic}
+input.cw-timestamp-input::-webkit-datetime-edit-second-field{font-family:Arial,sans-serif;font-style:italic;font-synthesis:style;transform:skewX(-6deg)}
 #page-tracker :is(.trk-match,.trk-identity summary,.trk-sheet .cw-btn,.trk-sheet input,.trk-sheet select):focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:2px}
 #page-tracker .trk-effect{color:var(--cw-theme-text)}
 #page-tracker .trk-effect .material-symbols-rounded{color:var(--cw-theme-muted)}
@@ -926,9 +935,15 @@ input.cw-timestamp-input::-webkit-datetime-edit-second-field{font-style:italic}
 #page-tracker .trk-table .trk-row-tools .trk-row-edit{color:var(--cw-theme-muted)}
 #page-tracker .trk-table .trk-row-tools .trk-row-edit:hover{color:var(--cw-theme-text)}
 #page-tracker .trk-icon.is-danger:hover{background:var(--cw-page-danger-bg);color:var(--cw-page-danger-text)}
-#page-tracker .trk-rate{border:1px solid var(--cw-theme-border-strong);background:var(--cw-theme-surface);color:var(--cw-theme-text)}
-#page-tracker .trk-rate:hover{background:var(--cw-page-hover-bg)}
-#page-tracker .trk-rate.is-current{border-color:var(--cw-page-selected-border);background:var(--cw-page-selected-bg);color:var(--cw-page-selected-text)}
+#page-tracker .trk-rate{border:0;background:transparent;color:var(--cw-theme-muted)}
+#page-tracker .trk-rate:hover{background:transparent}
+#page-tracker .trk-community{border:1px solid var(--cw-theme-border);background:var(--cw-theme-surface);color:var(--cw-theme-text)}
+#page-tracker .trk-community-ring{background:conic-gradient(var(--cw-theme-accent) var(--rating-progress),var(--cw-theme-border) 0)}
+#page-tracker .trk-community-ring>span{background:var(--cw-theme-surface)}
+#page-tracker .trk-community-ring small{color:var(--cw-theme-muted)}
+#page-tracker .trk-rate.is-lit{color:var(--cw-theme-accent)}
+#page-tracker .trk-rate:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:2px}
+#page-tracker .trk-rate:disabled{opacity:.55;cursor:wait}
 #page-tracker .trk-picked{border:1px solid var(--cw-theme-border);background:var(--cw-theme-surface);color:var(--cw-theme-text)}
 #page-tracker .trk-picked .material-symbol{color:var(--cw-theme-muted)}
 #page-tracker .trk-check{color:var(--cw-theme-text)}
@@ -990,4 +1005,4 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-months{--hist-tone-rgb:70,86
 #page-tracker button.trk-poster:hover{border-color:var(--cw-theme-accent)}
 #page-tracker button.trk-poster:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:2px}
 
-#page-tracker .trk-hero-backdrop{opacity:.22;mask-image:linear-gradient(90deg,transparent,rgba(0,0,0,.35) 30%,#000 65%)}
+#page-tracker .trk-hero-backdrop{opacity:.55;-webkit-mask-image:linear-gradient(90deg,transparent 0%,transparent 24%,rgba(0,0,0,.12) 40%,rgba(0,0,0,.65) 68%,#000 100%);mask-image:linear-gradient(90deg,transparent 0%,transparent 24%,rgba(0,0,0,.12) 40%,rgba(0,0,0,.65) 68%,#000 100%)}

@@ -784,6 +784,7 @@ def _get_index_html_static() -> str:
     snapshots: "Captures",
     capture_compare: "Capture Compare",
     playlists: "Playlists",
+    tracker: "Tracker",
     editor: "Editor",
     analyzer: "Analyzer",
     events: "Events",
@@ -2573,6 +2574,7 @@ def get_profile_html(user: dict | None = None) -> str:
             _profile_nav_tab("Main", "/"),
             _profile_nav_tab("Captures", "/#snapshots"),
             _profile_nav_tab("Playlists", "/#playlists"),
+            _profile_nav_tab("Tracker", "/#tracker"),
             _profile_nav_tab("Editor", "/#editor"),
             settings_nav,
             about_nav,
@@ -2582,6 +2584,7 @@ def get_profile_html(user: dict | None = None) -> str:
             _profile_nav_tab("Main", "/?main=1#main"),
             _profile_nav_tab("Captures", "/?main=1#snapshots"),
             _profile_nav_tab("Playlists", "/?main=1#playlists"),
+            *([_profile_nav_tab("Tracker", "/?main=1#tracker")] if _managed_tracker_allowed(user) else []),
             _profile_nav_tab("Editor", "/?main=1#editor"),
         ])
     else:

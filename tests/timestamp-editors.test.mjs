@@ -118,6 +118,8 @@ test("inline Editor dates open the picker and stage valid changes without a popu
     const input = app.ExtraEditors.createDateTimeEditor(row, {
       state: { kind }, finishExtraChange: () => { saves++; },
     });
+    assert.equal(input.value.length, 19);
+    assert.equal(input.step, 1);
     input.checkValidity = () => true;
     input.showPicker = () => { opens++; };
     input.onclick();

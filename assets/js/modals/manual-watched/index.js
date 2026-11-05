@@ -275,7 +275,7 @@ export default {
         const targets = selectedCompatibleTargets();
         if (targets.length !== 1 || providerKey(targets[0]) !== state.listSource) return `Episodes from the ${sourceLabel()} list can only be sent to ${sourceLabel()}.`;
       }
-      if (state.actions.rating && !(Number(state.rating) >= 1 && Number(state.rating) <= 10)) return "Choose a rating from 1 to 10.";
+      if (state.actions.rating && !(Number(state.rating) >= 0.5 && Number(state.rating) <= 10)) return "Choose a rating from 0.5 to 10.";
       return "";
     };
     const setStatus = (text = "", tone = "") => {
@@ -474,7 +474,7 @@ export default {
           ${state.dateMode === "custom" ? `<input type="date" class="cw-mw-date" data-role="custom-date" value="${esc(state.watchedOn || "")}">` : ""}
         </div></div>` : ""}
         ${state.actions.rating ? `<div class="cw-mw-field"><span class="cw-mw-label">Rating</span><div class="cw-mw-chips">
-          ${Array.from({ length: 10 }, (_, i) => i + 1).map((score) => `<button type="button" class="cw-mw-chip cw-mw-score ${score <= Number(state.rating) ? "active" : ""}" data-rating="${score}" aria-pressed="${score === Number(state.rating) ? "true" : "false"}" aria-label="Rate ${score} out of 10">${score}</button>`).join("")}
+          ${Array.from({ length: 20 }, (_, i) => (i + 1) / 2).map((score) => `<button type="button" class="cw-mw-chip cw-mw-score ${score <= Number(state.rating) ? "active" : ""}" data-rating="${score}" aria-pressed="${score === Number(state.rating) ? "true" : "false"}" aria-label="Rate ${score} out of 10">${score}</button>`).join("")}
         </div></div>` : ""}
         ${episodeChoice() ? episodesCard() : ""}
       </div>
@@ -858,7 +858,7 @@ export default {
       }
       const scoreBtn = target.closest("[data-rating]");
       if (scoreBtn) {
-        state.rating = Math.max(1, Math.min(10, Number(scoreBtn.getAttribute("data-rating") || 8)));
+        state.rating = Math.max(0.5, Math.min(10, Number(scoreBtn.getAttribute("data-rating") || 8)));
         render();
         return true;
       }

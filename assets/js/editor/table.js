@@ -61,7 +61,7 @@
         chip.appendChild(text);
       }
       if (entry) {
-        chip.title = [unverified ? `Sent to ${name}` : `On ${name}`, entry[1] > 1 ? `${entry[1]} entries` : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" Ã‚Â· ")
+        chip.title = [unverified ? `Sent to ${name}` : `On ${name}`, entry[1] > 1 ? `${entry[1]} entries` : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" · ")
           + (unverified ? ". Not validated, missing sync pair." : "");
         chip.setAttribute("role", "img");
         chip.setAttribute("aria-label", chip.title);

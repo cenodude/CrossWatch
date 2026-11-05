@@ -812,7 +812,14 @@
     const plays = data.plays || [];
     const rating = data.ratings?.[0]?.rating ?? null;
     const listed = (data.watchlist || []).length > 0;
-    const button = (action, symbol, label, primary = false) => `<button type="button" class="cw-mm-btn${primary ? " is-primary" : ""}" data-mm-trk="${action}">${icon(symbol)}${esc(label)}</button>`;
+    const hints = {
+      log: show ? "Choose episodes and a watch date to add to this tracker" : "Choose a watch date and add a play to this tracker",
+      rate: rating != null ? "Change or remove your rating in this tracker" : "Add your rating to this tracker",
+      list: listed ? "Remove this title from this tracker watchlist" : "Add this title to this tracker watchlist",
+      map: "Choose the correct movie or show for this tracker entry",
+      notes: "Edit personal dates, status, tags and notes. These stay in CrossWatch and do not sync",
+    };
+    const button = (action, symbol, label, primary = false) => `<button type="button" class="cw-mm-btn${primary ? " is-primary" : ""}" data-mm-trk="${action}" title="${esc(hints[action])}">${icon(symbol)}${esc(label)}</button>`;
     const actions = [
       button("log", "add_circle", show ? "Log episode" : plays.length ? "Log rewatch" : "Mark watched", true),
       button("rate", rating != null ? "star" : "star_outline", rating != null ? `${rating}/10` : "Rate"),

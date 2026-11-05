@@ -1353,9 +1353,11 @@ class TrackerStore:
             ).fetchone() is not None))
 
     def related(
-        self, *, show: bool, tmdb: str = "", imdb: str = "", title: str = "", base: str = "", limit: int | None = 5000,
+        self, *, show: bool, tmdb: str = "", imdb: str = "", title: str = "", base: str = "", limit: int | None = 5000, feature: str = "",
     ) -> list[tuple[str, str, Any]]:
         queries = self._related_queries(show=show, tmdb=tmdb, imdb=imdb, title=title, base=base)
+        if feature:
+            queries = [(f"{sql} AND feature=?", [*args, feature]) for sql, args in queries]
         with self._db() as conn:
             if conn is None:
                 return []

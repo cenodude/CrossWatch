@@ -72,6 +72,24 @@ def _items(base, feature):
     return TrackerStore(base).read_current(feature)["items"]
 
 
+def test_history_rows_include_saved_half_point_ratings(client, base):
+    store = TrackerStore(base)
+    store.write_state("ratings", {"tmdb:949": {**HEAT, "rating": 7.5, "rated_at": _at(1)}})
+    rows = client.get("/api/tracker/items", params={"feature": "history"}).json()["items"]
+    heat = next(row for row in rows if row["title"] == "Heat")
+    assert heat["user_rating"] == 7.5
+    assert heat["rating"] is None
+    assert all(row["user_rating"] is None for row in rows if row["type"] == "episode")
+
+
+def test_history_episode_rating_does_not_leak_to_other_episodes(client, base):
+    store = TrackerStore(base)
+    store.write_state("ratings", {"tmdb:95396#s01e01": {**_ep(1, 1, 1), "rating": 8.5, "rated_at": _at(1)}})
+    rows = client.get("/api/tracker/items", params={"feature": "history"}).json()["items"]
+    assert next(row for row in rows if row["key"] == "tmdb:95396#s01e01")["user_rating"] == 8.5
+    assert next(row for row in rows if row["key"] == "tmdb:95396#s01e02")["user_rating"] is None
+
+
 def test_log_a_movie_watch_and_undo_it(client, base):
     res = client.post("/api/tracker/add", json={"feature": "history", "item": {**MATRIX, "watched_at": _at(1)}})
     assert res.status_code == 200, res.text

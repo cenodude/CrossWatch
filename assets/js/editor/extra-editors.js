@@ -216,7 +216,7 @@
       grid.className = "cw-rating-grid";
       const current = row.raw && row.raw.rating != null ? Number(row.raw.rating) : null;
 
-      for (let i = 1; i <= 10; i += 1) {
+      for (let i = 0.5; i <= 10; i += 0.5) {
         const pill = document.createElement("button");
         pill.type = "button";
         pill.className = "cw-rating-pill" + (current === i ? " active" : "");
