@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -378,15 +379,47 @@ def test_disconnect_logs_out_and_clears_session(monkeypatch: pytest.MonkeyPatch)
     cfg = _connected(profile_token="ptok")
     _store(monkeypatch, cfg)
     session = FakeSession([ResponseStub(204, None)])
+    cleanup = []
+    monkeypatch.setattr(silo.threading, "Thread", lambda **kw: SimpleNamespace(start=lambda: cleanup.append(kw)))
 
     silo.SiloClient(cfg, session=session).disconnect(cfg)
 
-    assert session.calls[0]["url"] == f"{SERVER}/api/v2/auth/logout"
+    assert session.calls == []
     block = cfg["silo"]
     assert block["access_token"] == "" and block["refresh_token"] == "" and block["profile_token"] == ""
     assert block["profile_id"] == ""
     assert block["server_url"] == SERVER
     assert silo.status_for_block(block)["connected"] is False
+    assert cleanup[0]["daemon"] is True
+    cleanup[0]["target"](*cleanup[0]["args"])
+    assert session.calls[0]["url"] == f"{SERVER}/api/v2/auth/logout"
+
+
+def test_disconnect_unreachable_server_preserves_later_connection(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.auth import _auth_SILO as silo
+
+    cfg = _connected(_pending_device={"device_code": "old-device"})
+    holder = _store(monkeypatch, cfg)
+    cleanup = []
+    calls = []
+    monkeypatch.setattr(silo.threading, "Thread", lambda **kw: SimpleNamespace(start=lambda: cleanup.append(kw)))
+
+    def unavailable(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        raise silo.requests.ConnectionError("offline")
+
+    silo.SiloClient(cfg, session=SimpleNamespace(post=unavailable)).disconnect(cfg)
+
+    assert calls == []
+    assert not holder["cfg"]["silo"].get("access_token")
+    assert not holder["cfg"]["silo"].get("_pending_device")
+    cfg["silo"].update(access_token="new-access", server_url="http://new-silo.local", _pending_device={"device_code": "new-device"})
+    cleanup[0]["target"](*cleanup[0]["args"])
+    assert [call["url"] for call in calls] == [f"{SERVER}/api/v2/auth/logout", f"{SERVER}/api/v2/auth/device/cancel"]
+    assert calls[0]["headers"]["Authorization"] == "Bearer access-1"
+    assert calls[1]["json"] == {"device_code": "old-device"}
+    assert cfg["silo"]["access_token"] == "new-access"
+    assert cfg["silo"]["_pending_device"] == {"device_code": "new-device"}
 
 
 def test_request_with_auth_resolves_named_profile_from_narrowed_view(monkeypatch: pytest.MonkeyPatch) -> None:

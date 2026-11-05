@@ -17,6 +17,7 @@ import requests
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.simkl_http import paced_request, record_outcome, transfer_token_state
 
+from ._cleanup import cleanup_remote
 from ._auth_base import AuthManifest, AuthProvider, AuthStatus
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, ensure_provider_block, normalize_instance_id
@@ -703,7 +704,7 @@ class SimklAuth(AuthProvider):
 
         # If this profile was connected via PIN, clear the baked app id too so the
         # OAuth pane doesn't show it; leave user-supplied OAuth creds untouched.
-        revoke_block(target)
+        remote = dict(target)
         try:
             if str(target.get("client_id") or "").strip() in baked_client_ids():
                 target.pop("client_id", None)
@@ -723,6 +724,7 @@ class SimklAuth(AuthProvider):
         except Exception:
             pass
 
+        cleanup_remote(revoke_block, remote)
         log("SIMKL: disconnected", level="INFO", module="AUTH", extra={"instance": inst})
         return self.get_status(cfg, inst)
 

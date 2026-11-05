@@ -17,6 +17,7 @@ from _logging import log as _app_log
 from cw_platform.app_version import user_agent
 from cw_platform.config_base import load_config, save_config
 from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id, resolve_provider_block
+from ._cleanup import cleanup_remote
 from ._auth_base import AuthManifest, AuthStatus
 
 __VERSION__ = "0.1"
@@ -27,6 +28,7 @@ LOGIN_TTL = 600
 _LOCKS: dict[str, Any] = {}
 _LOCKS_GUARD = threading.Lock()
 _CONFIG_LOCK = threading.RLock()
+_GENERATIONS: dict[str, int] = {}
 _PENDING: dict[str, dict[str, Any]] = {}
 _REFRESH_RETRY_AT: dict[str, float] = {}
 _TOKEN_FIELDS = ("access_token", "refresh_token", "token_type", "expires_at", "username", "user_id", "auth_broker", "reauth_required")
@@ -155,7 +157,7 @@ def clear_oauth(block: MutableMapping[str, Any]) -> None:
 
 
 def _require_reauth(instance_id: str, rejected_token: str) -> None:
-    with _lock(instance_id):
+    with _CONFIG_LOCK:
         if provider_block(load_config(), instance_id).get("access_token") != rejected_token:
             return
         cleared: dict[str, Any] = {}
@@ -194,29 +196,35 @@ def valid_account(account: Mapping[str, Any]) -> bool:
 def start_oauth(cfg: Mapping[str, Any] | None = None, *, instance_id: Any = None) -> dict[str, Any]:
     inst = normalize_instance_id(instance_id)
     with _lock(inst):
-        if inst in _PENDING:
-            cancel_oauth(flow_id=_PENDING[inst]["flow_id"], instance_id=inst)
+        generation = _GENERATIONS.get(inst, 0)
+        pending = _PENDING.get(inst)
+        if pending:
+            cancel_oauth(flow_id=pending["flow_id"], instance_id=inst)
         origin = BROKER_URL
         result = _post(origin, "start", {})
-        if not result.get("ok"):
-            return {"ok": False, "error": result.get("error", "invalid_response"), "reason": result.get("reason", ""), "instance": inst}
-        url = str(result.get("authorization_url") or "")
-        parsed = urlsplit(url)
-        session_id, poll_token = result.get("session_id"), result.get("poll_token")
-        expires = _int(result.get("expires_in"))
-        if parsed.scheme != "https" or parsed.netloc != "myanimelist.net" or parsed.path != "/v1/oauth2/authorize" or parsed.fragment or not isinstance(session_id, str) or not session_id or not isinstance(poll_token, str) or len(poll_token) < 32 or expires <= 0:
-            return {"ok": False, "error": "invalid_response", "instance": inst}
-        flow_id = secrets.token_urlsafe(32)
-        interval = max(3, min(30, _int(result.get("interval"), 5)))
-        expires_at = int(time.time()) + min(LOGIN_TTL, expires)
-        _PENDING[inst] = {"flow_id": flow_id, "session_id": session_id, "poll_token": poll_token,
-                          "origin": origin, "expires_at": expires_at, "interval": interval, "next_poll": 0}
-        return {"ok": True, "flow_id": flow_id, "authorization_url": url, "expires_at": expires_at, "interval": interval, "instance": inst}
+        with _CONFIG_LOCK:
+            if generation != _GENERATIONS.get(inst, 0):
+                return {"ok": False, "error": "connection_changed", "instance": inst}
+            if not result.get("ok"):
+                return {"ok": False, "error": result.get("error", "invalid_response"), "reason": result.get("reason", ""), "instance": inst}
+            url = str(result.get("authorization_url") or "")
+            parsed = urlsplit(url)
+            session_id, poll_token = result.get("session_id"), result.get("poll_token")
+            expires = _int(result.get("expires_in"))
+            if parsed.scheme != "https" or parsed.netloc != "myanimelist.net" or parsed.path != "/v1/oauth2/authorize" or parsed.fragment or not isinstance(session_id, str) or not session_id or not isinstance(poll_token, str) or len(poll_token) < 32 or expires <= 0:
+                return {"ok": False, "error": "invalid_response", "instance": inst}
+            flow_id = secrets.token_urlsafe(32)
+            interval = max(3, min(30, _int(result.get("interval"), 5)))
+            expires_at = int(time.time()) + min(LOGIN_TTL, expires)
+            _PENDING[inst] = {"flow_id": flow_id, "session_id": session_id, "poll_token": poll_token,
+                              "origin": origin, "expires_at": expires_at, "interval": interval, "next_poll": 0}
+            return {"ok": True, "flow_id": flow_id, "authorization_url": url, "expires_at": expires_at, "interval": interval, "instance": inst}
 
 
 def poll_oauth(cfg: Mapping[str, Any] | None = None, *, flow_id: str = "", instance_id: Any = None) -> dict[str, Any]:
     inst = normalize_instance_id(instance_id)
     with _lock(inst):
+        generation = _GENERATIONS.get(inst, 0)
         pending = _PENDING.get(inst)
         if not pending or not secrets.compare_digest(pending["flow_id"].encode(), flow_id.encode()):
             return {"ok": False, "error": "invalid_flow"}
@@ -258,10 +266,13 @@ def poll_oauth(cfg: Mapping[str, Any] | None = None, *, flow_id: str = "", insta
             _log(f"Account verification rejected: HTTP {response.status_code}; invalid account response")
             _PENDING.pop(inst, None)
             return {"ok": False, "error": "invalid_account"}
-        _update(inst, {**values, **account_info(account), "auth_broker": pending["origin"], "auth_method": "hosted_oauth"})
-        _PENDING.pop(inst, None)
-        _REFRESH_RETRY_AT.pop(inst, None)
-        return {"ok": True, "status": "authorized", "instance": inst, **account_info(account)}
+        with _CONFIG_LOCK:
+            if generation != _GENERATIONS.get(inst, 0):
+                return {"ok": False, "error": "connection_changed", "instance": inst}
+            _update(inst, {**values, **account_info(account), "auth_broker": pending["origin"], "auth_method": "hosted_oauth"})
+            _PENDING.pop(inst, None)
+            _REFRESH_RETRY_AT.pop(inst, None)
+            return {"ok": True, "status": "authorized", "instance": inst, **account_info(account)}
 
 
 def cancel_oauth(cfg: Mapping[str, Any] | None = None, *, flow_id: str = "", instance_id: Any = None) -> dict[str, Any]:
@@ -278,6 +289,7 @@ def refresh_token(cfg: Mapping[str, Any] | None = None, *, instance_id: Any = No
                   rejected_token: str = "", timeout: float = HTTP_TIMEOUT) -> dict[str, Any]:
     inst = normalize_instance_id(instance_id)
     with _lock(inst):
+        generation = _GENERATIONS.get(inst, 0)
         block = provider_block(load_config(), inst)
         access = str(block.get("access_token") or "")
         if access and ((rejected_token and access != rejected_token) or (not force and _int(block.get("expires_at")) > time.time() + 300)):
@@ -290,16 +302,19 @@ def refresh_token(cfg: Mapping[str, Any] | None = None, *, instance_id: Any = No
             return {"ok": False, "error": "rate_limited"}
         _REFRESH_RETRY_AT[inst] = time.time() + 30
         data = _post(str(block.get("auth_broker") or ""), "refresh", {"refresh_token": block["refresh_token"]}, timeout=timeout)
-        if not data.get("ok"):
-            _REFRESH_RETRY_AT[inst] = time.time() + max(30, _int(data.get("retry_after")))
-            if data.get("error") == "invalid_grant":
-                _require_reauth(inst, access)
-            return {"ok": False, "error": data.get("error", "invalid_response")}
-        values = _token_values(data)
-        if values is None:
-            return {"ok": False, "error": "invalid_response"}
-        _update(inst, values)
-        return {"ok": True, "status": "refreshed"}
+        with _CONFIG_LOCK:
+            if generation != _GENERATIONS.get(inst, 0):
+                return {"ok": False, "error": "connection_changed", "instance": inst}
+            if not data.get("ok"):
+                _REFRESH_RETRY_AT[inst] = time.time() + max(30, _int(data.get("retry_after")))
+                if data.get("error") == "invalid_grant":
+                    _require_reauth(inst, access)
+                return {"ok": False, "error": data.get("error", "invalid_response")}
+            values = _token_values(data)
+            if values is None:
+                return {"ok": False, "error": "invalid_response"}
+            _update(inst, values)
+            return {"ok": True, "status": "refreshed"}
 
 
 def request_with_auth(session: requests.Session, method: str, url: str, *, cfg: Mapping[str, Any] | None,
@@ -384,13 +399,15 @@ class MyAnimeListAuth:
 
     def disconnect(self, cfg: Any = None, *, instance_id: Any = None) -> AuthStatus:
         inst = normalize_instance_id(instance_id)
-        with _lock(inst):
-            if inst in _PENDING:
-                cancel_oauth(flow_id=_PENDING[inst]["flow_id"], instance_id=inst)
+        with _CONFIG_LOCK:
+            _GENERATIONS[inst] = _GENERATIONS.get(inst, 0) + 1
+            pending = _PENDING.pop(inst, None)
             cleared: dict[str, Any] = {}
             clear_oauth(cleared)
             _update(inst, cleared)
             _REFRESH_RETRY_AT.pop(inst, None)
+        if pending:
+            cleanup_remote(_post, pending["origin"], "cancel", {"session_id": pending["session_id"]}, credential=pending["poll_token"])
         return self.get_status(instance_id=inst)
 
     def html(self, cfg: Any = None) -> str:
