@@ -1818,18 +1818,6 @@
     appendPopupActions(pop, [{ label: "Close", kind: "primary", onClick: close }]);
   }
 
-  function fillDateTimeInputs(iso, dateInput, timeInput) {
-    editorDateTime.fillDateTimeInputs(iso, dateInput, timeInput);
-  }
-
-  function dateTimeInputsToIso(dateValue, timeValue) {
-    return editorDateTime.dateTimeInputsToIso(dateValue, timeValue);
-  }
-
-  function appendUtcHint(pop) {
-    editorDateTime.appendUtcHint(pop);
-  }
-
   function finishExtraChange(row, displayEl, close) {
     const promoted = promoteBaselineEdit(row);
     updateExtraDisplay(row, displayEl);
