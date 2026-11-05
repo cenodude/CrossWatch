@@ -12,9 +12,9 @@ from cw_platform.provider_instances import get_provider_block
 
 
 PROVIDERS = frozenset(("PLEX", "JELLYFIN", "EMBY", "KODI", "SCROB", "TRAKT", "MDBLIST", "SIMKL",
-                       "PUNCHPLAY", "FLICKLIST", "TMDB", "PUBLICMETADB", "NUVIO", "STREMIO", "FLOPPY", "WETRAKR", "SILO"))
+                       "PUNCHPLAY", "FLICKLIST", "TMDB", "PUBLICMETADB", "NUVIO", "STREMIO", "FLOPPY", "WETRAKR", "SILO", "TOFA"))
 NATIVE = PROVIDERS - {"FLICKLIST", "PUBLICMETADB", "NUVIO", "STREMIO", "WETRAKR"}
-LIBRARY = {"JELLYFIN", "EMBY", "KODI", "SILO"}
+LIBRARY = {"JELLYFIN", "EMBY", "KODI", "SILO", "TOFA"}
 
 
 def provider_block(cfg, provider, instance):
@@ -30,7 +30,7 @@ def provider_block(cfg, provider, instance):
 def configured(provider, block):
     if provider not in PROVIDERS or not block:
         return False
-    if provider in {"SCROB", "PUNCHPLAY", "FLICKLIST", "NUVIO", "STREMIO", "FLOPPY", "WETRAKR", "SILO"}:
+    if provider in {"SCROB", "PUNCHPLAY", "FLICKLIST", "NUVIO", "STREMIO", "FLOPPY", "WETRAKR", "SILO", "TOFA"}:
         return import_module(f"providers.auth._auth_{provider}").is_configured(block)
     if provider == "MDBLIST":
         from providers.sync.mdblist._auth import is_configured
@@ -111,6 +111,14 @@ def destination_rows(client, cfg, row, block, query, entity):
             ids = {**ids_from_content_id(cid)[1], **item_ids(adapter, cid, feature="search")}
             found.append(dict(title=r.get("title"), year=r.get("year"), ids=ids))
         return found
+    if provider == "TOFA":
+        from providers.sync._mod_TOFA import TOFAModule
+        from providers.sync.tofa._common import tofa_request
+        adapter = TOFAModule({**cfg, "tofa": block, "_cw_provider_instance": instance})
+        response = tofa_request(adapter, "GET", "/media", params={"q": query, "media_type": "movie" if entity == "movie" else "tv", "per_page": 20})
+        body = checked_json(response, provider)
+        return [dict(title=r.get("title"), year=str(r.get("release_date") or "")[:4] or None, ids={"tmdb": r.get("tmdb_id")})
+                for r in body.get("items", []) if isinstance(r, dict) and r.get("tmdb_id")]
     if provider == "SCROB":
         from providers.auth._auth_SCROB import request_with_auth
         from providers.sync.scrob._common import url_for
@@ -184,8 +192,11 @@ def plex_library_rows(cfg, row, block, query, entity):
         overrides = pair_feature_libraries((pair.get("features") or {}).get(row["feature"]) or {}, "PLEX", row.get("instance") or "default")
         if overrides:
             allowed = set(overrides)
+        server = adapter.client.server
+        if server is None:
+            raise HTTPException(502, "Plex server is not reachable. Try again or use manual IDs.")
         found = []
-        for section in adapter.client.server.library.sections():
+        for section in server.library.sections():
             if section.type != entity or (allowed and str(section.key) not in allowed):
                 continue
             for obj in section.search(title=query, libtype=entity, maxresults=20):

@@ -34,6 +34,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_auth_FLICKLIST": "providers.auth._auth_FLICKLIST",
         "_auth_SCROB":    "providers.auth._auth_SCROB",
         "_auth_SILO":     "providers.auth._auth_SILO",
+        "_auth_TOFA":     "providers.auth._auth_TOFA",
     },
     "SYNC": {
         "_mod_PLEX":       "providers.sync._mod_PLEX",
@@ -58,6 +59,7 @@ MODULES: dict[str, dict[str, str]] = {
         "_mod_FLICKLIST":  "providers.sync._mod_FLICKLIST",
         "_mod_SCROB":      "providers.sync._mod_SCROB",
         "_mod_SILO":       "providers.sync._mod_SILO",
+        "_mod_TOFA":       "providers.sync._mod_TOFA",
         "_mod_WETRAKR":    "providers.sync._mod_WETRAKR",
     },
 }
@@ -81,6 +83,7 @@ PROVIDER_CONNECTION_FIELDS: dict[str, tuple[tuple[str, ...], ...]] = {
     "wetrakr": (("access_token",),),
     "punchplay": (("access_token",),),
     "silo": (("server_url",), ("access_token", "refresh_token"), ("profile_id",), ("verify_ssl",)),
+    "tofa": (("server_url",), ("server_id",), ("access_token", "refresh_token"), ("profile_id",), ("verify_ssl",)),
     "scrob": (("server_url",), ("api_prefix",), ("api_key",), ("access_token",), ("username",), ("password",), ("verify_ssl",)),
     "simkl": (("client_id", "api_key"), ("access_token", "token")),
     "stremio": (("auth_key", "authKey"), ("stremio_profile_id",)),

@@ -15,6 +15,7 @@ PROVIDERS: dict[str, str] = {
     "SIMKL": "providers.auth._auth_SIMKL",
     "TRAKT": "providers.auth._auth_TRAKT",
     "SILO": "providers.auth._auth_SILO",
+    "TOFA": "providers.auth._auth_TOFA",
 }
 
 _worker: threading.Thread | None = None

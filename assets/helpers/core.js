@@ -222,6 +222,18 @@
     return Object.values(instances).some(match);
   }
 
+  function hasTofaConfig(root) {
+    if (!root || typeof root !== "object") return false;
+    const match = (block) => {
+      if (!block || typeof block !== "object") return false;
+      return hasValue(block.server_url) && hasValue(block.profile_id) && (hasValue(block.access_token) || hasValue(block.refresh_token)) && block.auth_error !== "reconnect_required";
+    };
+    if (match(root)) return true;
+    const instances = root.instances;
+    if (!instances || typeof instances !== "object") return false;
+    return Object.values(instances).some(match);
+  }
+
   function hasKodiConfig(root) {
     if (!root || typeof root !== "object") return false;
     const match = (block) => {
@@ -313,6 +325,7 @@
 
     if ([cfg?.nuvio, cfg?.auth?.nuvio].some(hasNuvioConfig)) set.add("NUVIO");
     if ([cfg?.silo].some(hasSiloConfig)) set.add("SILO");
+    if ([cfg?.tofa].some(hasTofaConfig)) set.add("TOFA");
     if ([cfg?.kodi, cfg?.auth?.kodi].some(hasKodiConfig)) set.add("KODI");
     if ([cfg?.floppy, cfg?.auth?.floppy].some(hasFloppyConfig)) set.add("FLOPPY");
     if ([cfg?.scrob, cfg?.auth?.scrob].some(hasScrobConfig)) set.add("SCROB");

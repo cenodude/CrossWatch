@@ -9,6 +9,7 @@
     emby: "crosswatch/settings/connections/media-servers/emby",
     jellyfin: "crosswatch/settings/connections/media-servers/jellyfin",
     silo: "crosswatch/settings/connections/media-servers/silo",
+    tofa: "crosswatch/settings/connections/media-servers/tofa",
     trakt: "crosswatch/settings/connections/trackers/trakt",
     simkl: "crosswatch/settings/connections/trackers/simkl",
     tmdb: "crosswatch/settings/connections/trackers/tmdb",

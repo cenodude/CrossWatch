@@ -45,7 +45,7 @@ from .scrobbleAPI import _ensure_media_profile_webhook_ids, _ensure_route_rating
 router = APIRouter(prefix="/api/scrobbler", tags=["scrobbler-management"])
 
 SOURCE_PROVIDERS = tuple(WEBHOOK_SOURCE_PROVIDERS)
-WATCHER_SOURCE_PROVIDERS = ("plex", "jellyfin", "emby", "kodi", "scrob", "stremio", "silo")
+WATCHER_SOURCE_PROVIDERS = ("plex", "jellyfin", "emby", "kodi", "scrob", "stremio", "silo", "tofa")
 SINK_PROVIDERS = tuple(sorted(ROUTE_SINKS))
 ALLOWED_FILTER_KEYS = {
     "username_whitelist",
@@ -166,6 +166,10 @@ def _scrobble_source_connected(cfg: Mapping[str, Any], provider: str, instance: 
         from providers.auth._auth_SILO import is_configured as silo_configured, provider_block as silo_block
 
         return silo_configured(silo_block(_dict(cfg), normalize_instance_id(instance)))
+    if key == "tofa":
+        from providers.auth._auth_TOFA import is_configured as tofa_configured, provider_block as tofa_block
+
+        return tofa_configured(tofa_block(_dict(cfg), normalize_instance_id(instance)))
     return media_source_connected(cfg, key, instance)
 
 

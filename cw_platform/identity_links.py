@@ -15,7 +15,7 @@ from cw_platform.provider_instances import (
     user_profiles_for_instance,
 )
 
-IDENTITY_PROVIDERS = frozenset({"plex", "emby", "jellyfin", "silo"})
+IDENTITY_PROVIDERS = frozenset({"plex", "emby", "jellyfin", "silo", "tofa"})
 WEBHOOK_IDENTITY_PROVIDERS = frozenset({"plex", "emby", "jellyfin"})
 
 

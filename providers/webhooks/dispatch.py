@@ -152,6 +152,10 @@ def _make_sink(name: str, instance_id: str, cfg_provider: Callable[[], dict[str,
         from providers.scrobble.silo.sink import SiloSink
 
         cls = SiloSink
+    elif sink == "tofa":
+        from providers.scrobble.tofa.sink import TofaSink
+
+        cls = TofaSink
     else:
         raise ValueError(f"Unknown sink: {sink}")
     for kwargs in (

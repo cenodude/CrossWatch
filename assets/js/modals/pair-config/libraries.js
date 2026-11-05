@@ -9,6 +9,7 @@ export function createLibraryController({
   hasEmby,
   hasKodi,
   hasSilo,
+  hasTofa,
   getOpts,
   onLibrariesChanged,
   instanceFor,
@@ -46,6 +47,7 @@ export function createLibraryController({
     if (kind === "EMBY") return "emby";
     if (kind === "KODI") return "kodi";
     if (kind === "SILO") return "silo";
+    if (kind === "TOFA") return "tofa";
     return "";
   }
 
@@ -127,6 +129,9 @@ export function createLibraryController({
     else if (kind === "SILO" && feature === "ratings") hostId = "silo-rate-libs";
     else if (kind === "SILO" && feature === "progress") hostId = "silo-prog-libs";
     else if (kind === "SILO" && feature === "collection") hostId = "silo-coll-libs";
+    else if (kind === "TOFA" && feature === "history") hostId = "tofa-hist-libs";
+    else if (kind === "TOFA" && feature === "progress") hostId = "tofa-prog-libs";
+    else if (kind === "TOFA" && feature === "collection") hostId = "tofa-coll-libs";
     const host = ID(hostId);
     if (!host) return;
     host.innerHTML = "";
@@ -193,7 +198,8 @@ export function createLibraryController({
       kind === "JELLYFIN" ? "jf-libs-load" :
       kind === "EMBY" ? "em-libs-load" :
       kind === "KODI" ? "kodi-libs-load" :
-      kind === "SILO" ? "silo-libs-load" : "";
+      kind === "SILO" ? "silo-libs-load" :
+      kind === "TOFA" ? "tofa-libs-load" : "";
     const btn = ID(btnId);
     if (!btn) return;
     const load = () => {
@@ -236,6 +242,7 @@ export function createLibraryController({
     const hasEM = hasEmby(state);
     const hasKO = hasKodi(state);
     const hasSI = hasSilo(state);
+    const hasTF = hasTofa(state);
     const plBox = ID("plx-pair-libs");
     const jfBox = ID("jf-pair-libs");
     const emBox = ID("em-pair-libs");
@@ -246,6 +253,8 @@ export function createLibraryController({
     if (koBox) koBox.style.display = hasKO ? "" : "none";
     const siBox = ID("silo-pair-libs");
     if (siBox) siBox.style.display = hasSI ? "" : "none";
+    const tfBox = ID("tofa-pair-libs");
+    if (tfBox) tfBox.style.display = hasTF ? "" : "none";
 
     if (hasPL) wireProviderLibraries(state, "PLEX");
     else if (ID("plx-libs-load")) ID("plx-libs-load").disabled = true;
@@ -261,6 +270,9 @@ export function createLibraryController({
 
     if (hasSI) wireProviderLibraries(state, "SILO");
     else if (ID("silo-libs-load")) ID("silo-libs-load").disabled = true;
+
+    if (hasTF) wireProviderLibraries(state, "TOFA");
+    else if (ID("tofa-libs-load")) ID("tofa-libs-load").disabled = true;
   }
 
   return {

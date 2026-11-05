@@ -57,6 +57,7 @@ RECONNECT_ROUTES: dict[str, tuple[tuple[str, str], ...]] = {
     "flicklist": (("POST", "/api/flicklist/device/start"), ("POST", "/api/flicklist/device/poll"), ("POST", "/api/flicklist/device/cancel"), ("POST", "/api/flicklist/refresh"), ("GET", "/api/flicklist/status")),
     "nuvio": (("POST", "/api/nuvio/device/start"), ("POST", "/api/nuvio/device/poll"), ("POST", "/api/nuvio/device/finish"), ("POST", "/api/nuvio/refresh"), ("GET", "/api/nuvio/status"), ("GET", "/api/nuvio/profiles"), ("POST", "/api/nuvio/profile/select")),
     "silo": (("POST", "/api/silo/device/start"), ("POST", "/api/silo/device/poll"), ("POST", "/api/silo/device/cancel"), ("POST", "/api/silo/refresh"), ("GET", "/api/silo/status"), ("GET", "/api/silo/profiles"), ("POST", "/api/silo/profile/select")),
+    "tofa": (("POST", "/api/tofa/device/start"), ("POST", "/api/tofa/device/poll"), ("POST", "/api/tofa/device/cancel"), ("POST", "/api/tofa/refresh"), ("GET", "/api/tofa/status"), ("GET", "/api/tofa/profiles"), ("POST", "/api/tofa/profile/select")),
     "tmdb_sync": (("POST", "/api/tmdb_sync/connect/start"), ("POST", "/api/tmdb_sync/connect/finish"), ("GET", "/api/tmdb_sync/verify")),
     "crosswatch": (("POST", "/api/crosswatch/connect"),),
 }
@@ -67,6 +68,7 @@ RECONNECT_LOCKED_FIELDS: dict[str, frozenset[str]] = {
     "/api/jellyfin/quickconnect/start": frozenset({"server", "verify_ssl"}),
     "/api/emby/login": frozenset({"server", "verify_ssl", "timeout"}),
     "/api/silo/device/start": frozenset({"server_url", "verify_ssl"}),
+    "/api/tofa/device/start": frozenset({"server_url", "verify_ssl"}),
     "/api/flicklist/device/start": frozenset({"client_id"}),
     "/api/tmdb_sync/connect/start": frozenset({"api_key", "read_token"}),
     "/api/tmdb_sync/connect/finish": frozenset({"api_key"}),

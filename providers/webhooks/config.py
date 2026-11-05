@@ -30,6 +30,7 @@ _SINK_CREDENTIALS: dict[str, tuple[str, ...]] = {
     "flicklist": ("api_key", "access_token", "token"),
     "scrob": ("api_key",),
     "silo": ("access_token", "refresh_token"),
+    "tofa": ("access_token", "refresh_token"),
 }
 
 _MEDIA_CREDENTIALS: dict[str, tuple[str, ...]] = {
@@ -122,6 +123,10 @@ def sink_configured(cfg: Mapping[str, Any] | None, sink: str, instance_id: Any =
         from providers.auth._auth_SILO import is_configured, provider_block
 
         return is_configured(provider_block(_dict(cfg), normalize_instance_id(instance_id)))
+    if key == "tofa":
+        from providers.auth._auth_TOFA import is_configured as tofa_configured, provider_block as tofa_block
+
+        return tofa_configured(tofa_block(_dict(cfg), normalize_instance_id(instance_id)))
     if key == "crosswatch":
         block = get_provider_block(_dict(cfg), key, normalize_instance_id(instance_id))
         value = block.get("enabled")

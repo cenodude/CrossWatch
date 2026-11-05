@@ -100,7 +100,7 @@ def _config_with_pair_feature_options(
     provider_keys: list[str] = []
     for provider in providers:
         name = str(provider or "").upper().strip()
-        if name not in {"PLEX", "EMBY", "JELLYFIN", "KODI", "SILO"}:
+        if name not in {"PLEX", "EMBY", "JELLYFIN", "KODI", "SILO", "TOFA"}:
             continue
         provider_key = name.lower()
         if provider_key not in provider_keys:
@@ -350,7 +350,7 @@ def _pair_scope_ids(ctx) -> set[str]:
     return {str(x).strip() for x in raw if str(x).strip()}
 
 
-_SYNC_USER_PROVIDERS = frozenset({"PLEX", "EMBY", "JELLYFIN", "SILO"})
+_SYNC_USER_PROVIDERS = frozenset({"PLEX", "EMBY", "JELLYFIN", "SILO", "TOFA"})
 
 
 def _expand_sync_user_pair(cfg: Mapping[str, Any], pair: Mapping[str, Any]) -> list[Mapping[str, Any]]:

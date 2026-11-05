@@ -596,7 +596,7 @@ def _remove_titles(cfg, feature, target, *, dry_run):
                 dry_run=dry_run)
 
 
-DIRECT_REMOVE_LIVE_MATCH = frozenset({"PLEX", "EMBY", "JELLYFIN", "KODI", "SILO", "CROSSWATCH"})
+DIRECT_REMOVE_LIVE_MATCH = frozenset({"PLEX", "EMBY", "JELLYFIN", "KODI", "SILO", "TOFA", "CROSSWATCH"})
 
 
 def _direct_supported(provider, feature, selected):

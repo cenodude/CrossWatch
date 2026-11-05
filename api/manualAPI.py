@@ -24,7 +24,7 @@ _LOG = logging.getLogger("crosswatch.api.manual")
 
 MANUAL_EPISODES_MAX = 500
 EPISODE_LIST_PROVIDERS = frozenset({"SIMKL"})
-COLLECTION_READ_ONLY_PROVIDERS = frozenset({"PLEX", "EMBY", "JELLYFIN", "KODI", "SILO"})
+COLLECTION_READ_ONLY_PROVIDERS = frozenset({"PLEX", "EMBY", "JELLYFIN", "KODI", "SILO", "TOFA"})
 FEATURE_FLAGS = {"history": "history_enabled", "ratings": "ratings_enabled", "watchlist": "watchlist_enabled", "collection": "collection_enabled"}
 _EPISODE_LIST_TTL = 3600
 _EPISODE_LIST_CACHE: dict[tuple[str, str, int], tuple[float, list[dict[str, Any]]]] = {}

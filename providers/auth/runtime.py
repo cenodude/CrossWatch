@@ -58,6 +58,10 @@ def _backend(provider: Any) -> Any:
         from providers.auth import _auth_SILO as silo_auth
 
         return silo_auth
+    if name == "tofa":
+        from providers.auth import _auth_TOFA as tofa_auth
+
+        return tofa_auth
     if name == "scrob":
         from providers.auth import _auth_SCROB as scrob_auth
 

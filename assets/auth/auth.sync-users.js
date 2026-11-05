@@ -1,11 +1,11 @@
 /* assets/auth/auth.sync-users.js */
-/* CrossWatch - Identities tab for media server connections (Plex, Emby, Jellyfin, Silo) */
+/* CrossWatch - Identities tab for media server connections (Plex, Emby, Jellyfin, Silo, Tofa) */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function (w, d) {
   if (w.CW?.SyncUsers) return;
 
-  const PROVIDERS = new Set(["plex", "emby", "jellyfin", "silo"]);
-  const LABELS = { plex: "Plex", emby: "Emby", jellyfin: "Jellyfin", silo: "Silo" };
+  const PROVIDERS = new Set(["plex", "emby", "jellyfin", "silo", "tofa"]);
+  const LABELS = { plex: "Plex", emby: "Emby", jellyfin: "Jellyfin", silo: "Silo", tofa: "Tofa" };
   const KIND_CLASS = { Owner: "is-owner", Admin: "is-owner", Connected: "is-owner", Home: "is-home", Child: "is-home", Friend: "is-friend", Disabled: "is-disabled" };
 
   const pending = new Map();
@@ -42,7 +42,7 @@
       const kind = type === "owner" ? "Owner" : type === "friend" ? "Friend" : "Home";
       return key ? { key, username: txt(u?.username), kind, home: kind === "Home", disabled: false, cloud: txt(u?.cloud_account_id) } : null;
     }
-    if (provider === "silo") {
+    if (provider === "silo" || provider === "tofa") {
       const key = txt(u?.id);
       const kind = u?.connected ? "Connected" : u?.is_child ? "Child" : "";
       return key ? { key, username: txt(u?.username), kind, home: u?.has_pin === true, disabled: false } : null;
@@ -64,6 +64,7 @@
     if (code === "invalid_pin") return "A profile PIN was not accepted.";
     if (code === "pin_locked") return "Too many incorrect PINs. Try again later.";
     if (code === "silo_unavailable") return "Could not reach the Silo server.";
+    if (code === "tofa_unavailable") return "Could not reach the Tofa server.";
     return code || "Something went wrong.";
   }
 
@@ -82,8 +83,8 @@
     const savedPin = state.saved.find((s) => s.key === u.key)?.has_pin;
     const initial = esc((u.username || u.key).charAt(0).toUpperCase());
     const tag = u.missing ? `<span class="cw-su-tag is-missing">Not on server</span>` : u.kind ? `<span class="cw-su-tag ${KIND_CLASS[u.kind] || ""}">${esc(u.kind)}</span>` : "";
-    const pin = (state.provider === "plex" || state.provider === "silo") && u.home
-      ? `<input type="password" class="cw-su-pin" inputmode="numeric" maxlength="8" autocomplete="off" data-pin="${esc(u.key)}" placeholder="${savedPin ? "PIN saved" : state.provider === "silo" ? "Profile PIN" : "PIN if needed"}" ${on ? "" : "hidden"} data-lpignore="true" data-1p-ignore="true" data-bwignore="true">`
+    const pin = (state.provider === "plex" || state.provider === "silo" || state.provider === "tofa") && u.home
+      ? `<input type="password" class="cw-su-pin" inputmode="numeric" maxlength="8" autocomplete="off" data-pin="${esc(u.key)}" placeholder="${savedPin ? "PIN saved" : (state.provider === "silo" || state.provider === "tofa") ? "Profile PIN" : "PIN if needed"}" ${on ? "" : "hidden"} data-lpignore="true" data-1p-ignore="true" data-bwignore="true">`
       : "";
     const usedIn = state.saved.find((s) => s.key === u.key)?.used_in || [];
     const usage = state.saved.some((s) => s.key === u.key)
