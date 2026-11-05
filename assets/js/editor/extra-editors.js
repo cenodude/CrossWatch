@@ -76,31 +76,12 @@
     const dt = DT();
     ctx.openPopup(anchor, (pop, close) => {
       ctx.appendPopupTitle(pop, "Watched at");
-      const grid = document.createElement("div");
-      grid.className = "cw-datetime-grid";
-
-      const dateInput = document.createElement("input");
-      dateInput.type = "date";
-      dateInput.id = "cw_history_date";
-      dateInput.name = dateInput.id;
-      const timeInput = document.createElement("input");
-      timeInput.type = "time";
-      timeInput.id = "cw_history_time";
-      timeInput.name = timeInput.id;
-      timeInput.step = 60;
-
-      dt.fillDateTimeInputs?.(row.raw && row.raw.watched_at, dateInput, timeInput);
-
-      grid.appendChild(dateInput);
-      grid.appendChild(timeInput);
-      pop.appendChild(grid);
-      dt.appendUtcHint?.(pop);
-      const secondsInput = dt.appendSecondsControl(pop, row.raw && row.raw.watched_at);
+      const dateInput = dt.appendDateTimeInput(pop, row.raw && row.raw.watched_at, "Watched at");
 
       ctx.appendPopupActions(pop, [
         { label: "Clear", kind: "ghost", onClick: () => { row.raw.watched_at = null; ctx.finishExtraChange(row, displayEl, close); } },
         { label: "Close", kind: "ghost", onClick: close },
-        { label: "Save", kind: "primary", onClick: () => { row.raw.watched_at = dt.dateTimeInputsToIso?.(dateInput.value, timeInput.value, secondsInput.value) || null; ctx.finishExtraChange(row, displayEl, close); } },
+        { label: "Save", kind: "primary", onClick: () => { row.raw.watched_at = dt.dateTimeInputToIso(dateInput.value, row.raw.watched_at) || null; ctx.finishExtraChange(row, displayEl, close); } },
       ]);
 
       dateInput.focus();
@@ -111,31 +92,12 @@
     const dt = DT();
     ctx.openPopup(anchor, (pop, close) => {
       ctx.appendPopupTitle(pop, "Collected at");
-      const grid = document.createElement("div");
-      grid.className = "cw-datetime-grid";
-
-      const dateInput = document.createElement("input");
-      dateInput.type = "date";
-      dateInput.id = "cw_collection_date";
-      dateInput.name = dateInput.id;
-      const timeInput = document.createElement("input");
-      timeInput.type = "time";
-      timeInput.id = "cw_collection_time";
-      timeInput.name = timeInput.id;
-      timeInput.step = 60;
-
-      dt.fillDateTimeInputs?.(row.raw && row.raw.collected_at, dateInput, timeInput);
-
-      grid.appendChild(dateInput);
-      grid.appendChild(timeInput);
-      pop.appendChild(grid);
-      dt.appendUtcHint?.(pop);
-      const secondsInput = dt.appendSecondsControl(pop, row.raw && row.raw.collected_at);
+      const dateInput = dt.appendDateTimeInput(pop, row.raw && row.raw.collected_at, "Collected at");
 
       ctx.appendPopupActions(pop, [
         { label: "Clear", kind: "ghost", onClick: () => { row.raw.collected_at = null; ctx.finishExtraChange(row, displayEl, close); } },
         { label: "Close", kind: "ghost", onClick: close },
-        { label: "Save", kind: "primary", onClick: () => { row.raw.collected_at = dt.dateTimeInputsToIso?.(dateInput.value, timeInput.value, secondsInput.value) || null; ctx.finishExtraChange(row, displayEl, close); } },
+        { label: "Save", kind: "primary", onClick: () => { row.raw.collected_at = dt.dateTimeInputToIso(dateInput.value, row.raw.collected_at) || null; ctx.finishExtraChange(row, displayEl, close); } },
       ]);
 
       dateInput.focus();
@@ -184,19 +146,7 @@
 
       ctx.appendPopupTitle(pop, "Updated at", "10px");
 
-      const whenGrid = document.createElement("div");
-      whenGrid.className = "cw-datetime-grid";
-
-      const dateInput = makeInput("date");
-      const timeInput = makeInput("time", { step: 60 });
-
-      dt.fillDateTimeInputs?.(row.raw && row.raw.progress_at, dateInput, timeInput);
-
-      whenGrid.appendChild(dateInput);
-      whenGrid.appendChild(timeInput);
-      pop.appendChild(whenGrid);
-      dt.appendUtcHint?.(pop);
-      const secondsInput = dt.appendSecondsControl(pop, row.raw && row.raw.progress_at);
+      const dateInput = dt.appendDateTimeInput(pop, row.raw && row.raw.progress_at, "Updated at");
 
       const saveProgress = () => {
         const posMs = dt.parseTimeToMs ? dt.parseTimeToMs(posInput.value) : null;
@@ -208,7 +158,7 @@
         row.raw.progress_percent = row.raw.progress_ms != null && row.raw.duration_ms != null
           ? Math.round((row.raw.progress_ms / row.raw.duration_ms) * 1000) / 10
           : percent;
-        row.raw.progress_at = dt.dateTimeInputsToIso?.(dateInput.value, timeInput.value, secondsInput.value) || null;
+        row.raw.progress_at = dt.dateTimeInputToIso(dateInput.value, row.raw.progress_at) || null;
         if (!row.raw.progress_at && (row.raw.progress_ms != null || row.raw.progress_percent != null)) row.raw.progress_at = new Date().toISOString().replace(/\.\d{3}Z$/, ".000Z");
         ctx.finishExtraChange(row, displayEl, close);
       };
@@ -246,8 +196,8 @@
         pill.textContent = String(i);
         pill.onclick = () => {
           row.raw.rating = i;
-          if (dateInput.value !== initialDate || timeInput.value !== initialTime || secondsInput.value !== initialSeconds) {
-            row.raw.rated_at = dt.dateTimeInputsToIso(dateInput.value, timeInput.value, secondsInput.value);
+          if (dateInput.value !== initialDate) {
+            row.raw.rated_at = dt.dateTimeInputToIso(dateInput.value, row.raw.rated_at);
           }
           ctx.finishExtraChange(row, displayEl, close);
         };
@@ -259,30 +209,11 @@
       const summary = document.createElement("summary");
       summary.textContent = "Rated at";
       dates.appendChild(summary);
-      const dateGrid = document.createElement("div");
-      dateGrid.className = "cw-datetime-grid";
-      const dateLabel = document.createElement("label");
-      dateLabel.textContent = "Date ";
-      const dateInput = document.createElement("input");
-      dateInput.type = "date";
-      const timeLabel = document.createElement("label");
-      timeLabel.textContent = "Time ";
-      const timeInput = document.createElement("input");
-      timeInput.type = "time";
-      timeInput.step = 60;
-      dt.fillDateTimeInputs(row.raw && row.raw.rated_at, dateInput, timeInput);
-      dateLabel.appendChild(dateInput);
-      timeLabel.appendChild(timeInput);
-      dateGrid.append(dateLabel, timeLabel);
-      dates.appendChild(dateGrid);
-      dt.appendUtcHint(dates);
-      const secondsInput = dt.appendSecondsControl(dates, row.raw && row.raw.rated_at);
+      const dateInput = dt.appendDateTimeInput(dates, row.raw && row.raw.rated_at, "Rated at");
       const initialDate = dateInput.value;
-      const initialTime = timeInput.value;
-      const initialSeconds = secondsInput.value;
       ctx.appendPopupActions(dates, [
         { label: "Save date", kind: "primary", onClick: () => {
-          row.raw.rated_at = dt.dateTimeInputsToIso(dateInput.value, timeInput.value, secondsInput.value);
+          row.raw.rated_at = dt.dateTimeInputToIso(dateInput.value, row.raw.rated_at);
           ctx.finishExtraChange(row, displayEl, close);
         } },
       ]);
