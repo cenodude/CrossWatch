@@ -7,6 +7,7 @@ import copy
 
 import pytest
 
+from cw_platform.id_map import canonical_key
 from cw_platform.local_db import manual_policy as sqlite_manual_policy
 from cw_platform.local_db.db import get_conn
 from cw_platform.mapping_policy import effective_policy, update_mappings
@@ -16,6 +17,26 @@ from services.mapping_transfer import RuleBundle, _typed_rules
 
 MOVIE = {"type": "movie", "title": "The Two Towers", "year": 2002, "ids": {"tmdb": "121", "imdb": "tt0167261"}}
 SHOW = {"type": "show", "title": "Doctor Who", "year": 1963, "ids": {"tmdb": "121", "imdb": "tt0056751"}}
+COLLIDING_MOVIE = {"type": "movie", "title": "The Woman in Black", "ids": {"tmdb": "65086", "imdb": "tt1596365"}}
+EPISODE = {"type": "episode", "title": "Back to School", "ids": {"tmdb": "65086", "imdb": "tt1627766"},
+           "show_ids": {"tmdb": "1422"}, "season": 2, "episode": 1}
+SEASON = {"type": "season", "ids": {"tmdb": "65086"}, "show_ids": {"tmdb": "1422"}, "season": 2}
+
+
+@pytest.mark.parametrize("blocked,remaining", [
+    (canonical_key(COLLIDING_MOVIE), [EPISODE, SEASON]),
+    (canonical_key(EPISODE), [COLLIDING_MOVIE, SEASON]),
+    ("tmdb:65086#episode", [COLLIDING_MOVIE, SEASON]),
+    ("tmdb:65086#season", [COLLIDING_MOVIE, EPISODE]),
+    ("imdb:tt1627766", [COLLIDING_MOVIE, SEASON]),
+])
+def test_manual_blocks_separate_movie_and_tv_tmdb_ids(blocked, remaining):
+    assert filter_manual_block([COLLIDING_MOVIE, EPISODE, SEASON], {blocked}) == remaining
+
+
+def test_episode_without_coordinates_keeps_its_canonical_block():
+    episode = {"type": "episode", "ids": {"tmdb": "65086"}, "show_ids": {"tmdb": "1422"}}
+    assert filter_manual_block([episode], {canonical_key(episode)}) == []
 
 
 def _legacy_db(tmp_path, policy):

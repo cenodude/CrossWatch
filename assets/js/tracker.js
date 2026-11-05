@@ -122,6 +122,7 @@
     effects: {},
     stats: null,
     view: "history",
+    layouts: {},
     cleanFeature: "history",
     media: "",
     byDay: false,
@@ -183,6 +184,8 @@
       if (VIEWS.some((v) => v.id === saved.view)) state.view = saved.view;
       if (MEDIA.some((m) => m.id === saved.media)) state.media = saved.media;
       if (PAGE_SIZES.includes(saved.pageSize)) state.pageSize = saved.pageSize;
+      state.layouts = Object.fromEntries(VIEWS.map(({ id }) => [id, saved.layouts?.[id] === "grid" ? "grid" : "list"]));
+      if (!saved.layouts && saved.layout === "grid") state.layouts[state.view] = "grid";
       state.byDay = saved.byDay === true;
       state.hideDropped = saved.hideDropped === true;
       if (Number.isInteger(saved.zoom)) state.zoom = saved.zoom;
@@ -192,7 +195,7 @@
 
   function saveView() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ view: state.view, media: state.media, byDay: state.byDay, hideDropped: state.hideDropped, zoom: state.zoom, pageSize: state.pageSize, instance: state.instance }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ view: state.view, layouts: state.layouts, media: state.media, byDay: state.byDay, hideDropped: state.hideDropped, zoom: state.zoom, pageSize: state.pageSize, instance: state.instance }));
     } catch {}
   }
 
@@ -457,7 +460,6 @@
       return `<div class="trk-seg" role="group" aria-label="Status">${statuses}</div>${tagSelect}`;
     }
     let out = `<div class="trk-seg" role="group" aria-label="Type">${MEDIA.map((m) => chip(`data-trk-media="${m.id}"`, m.label, { active: state.media === m.id, iconName: m.icon })).join("")}</div>`;
-    if (state.view === "history") out += chip('data-trk-action="by-day"', "By day", { active: state.byDay, iconName: "calendar_view_day", title: "Group plays by day and show the timeline" });
     if (timelineOn() && state.month) {
       out += `<button type="button" class="cw-filter-chip active" data-trk-action="month-clear" title="Back to the latest plays">${symbol("event", "cw-type-icon")}<span>${esc(monthName(state.month))} and older</span>${symbol("close", "cw-type-icon")}</button>`;
     }
@@ -465,7 +467,7 @@
   }
 
   function renderControls() {
-    const placeholder = state.view === "shows" ? "Filter shows..." : state.view === "titles" ? "Filter my titles..." : "Filter by title...";
+    const placeholder = state.view === "shows" ? "Filter shows / S01 / S01E02..." : state.view === "titles" ? "Filter my titles..." : "Filter by title...";
     const picked = state.picked.size;
     const middle = picked
       ? `<div class="cw-bulk trk-bulk" role="group" aria-label="Selection">
@@ -480,6 +482,8 @@
         <input class="cw-input trk-search" data-trk-input="q" value="${esc(state.q)}" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}">
         ${middle}
         <div class="trk-actions">
+          ${state.view === "history" ? `<button type="button" class="cw-filter-chip trk-icon-btn${state.byDay ? " active" : ""}" data-trk-action="by-day" aria-pressed="${state.byDay}" aria-label="Group by day" title="By day">${symbol("calendar_view_day", "cw-type-icon")}</button>` : ""}
+          <div class="cw-type-filter trk-layout" role="group" aria-label="Display layout">${[['list', 'view_list', 'List'], ['grid', 'grid_view', 'Grid']].map(([value, glyph, label]) => `<button type="button" class="cw-filter-chip trk-icon-btn${(state.layouts[state.view] || "list") === value ? " active" : ""}" data-trk-layout="${value}" aria-pressed="${(state.layouts[state.view] || "list") === value}" aria-label="${label} view" title="${label} view">${symbol(glyph, "cw-type-icon")}</button>`).join("")}</div>
           <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="changes" title="Changes: everything you logged, edited or deleted" aria-label="Changes">${icon("manage_history")}</button>
           <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="import" title="Import from a connected service" aria-label="Import">${icon("download")}</button>
           <button type="button" class="cw-btn primary trk-log-btn" data-trk-action="log" aria-label="Log a watch">${icon("add_circle")}<span>Log a watch</span></button>
@@ -615,15 +619,16 @@
     if (!state.shows.length) return emptyState(state.loading ? "Loading shows..." : state.q ? "No shows match this filter." : "No episodes in your history yet.", state.loading ? "hourglass_empty" : "tv");
     const body = state.shows.map((show) => {
       const selected = state.ref?.show === show.key;
-      const last = show.last_season != null ? `last ${se(show.last_season, show.last_episode)}` : "";
+      const last = show.last_season != null ? se(show.last_season, show.last_episode) : "";
       return `<tr class="trk-play${selected ? " is-selected" : ""}" data-trk-ref-show="${esc(show.key)}" tabindex="0" aria-selected="${selected}">
-          <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(show.title || show.key)}</strong>${statusPill(show.status)}</div><span class="trk-sub">${esc([show.year, last].filter(Boolean).join(" · "))}</span></div></td>
+          <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(show.title || show.key)}</strong>${statusPill(show.status)}</div>${show.year ? `<span class="trk-sub">${esc(show.year)}</span>` : ""}</div></td>
           <td class="trk-col-progress">${progressCell(show)}</td>
           <td class="trk-col-next">${nextCell(show)}</td>
+          <td class="trk-col-last-episode">${esc(last)}</td>
           <td class="trk-col-date">${esc(agoText(show.last_watched))}</td>
         </tr>`;
     }).join("");
-    return tableWrap(`${th("Show", "cw-col-title")}${th("Progress", "trk-col-progress")}${th("Next up", "trk-col-next")}${th("Last watched", "trk-col-date")}`, body, "trk-shows", ["title", "progress", "next", "date"]) + pager();
+    return tableWrap(`${th("Show", "cw-col-title")}${th("Progress", "trk-col-progress")}${th("Next up", "trk-col-next")}${th("Last episode", "trk-col-last-episode")}${th("Last watched", "trk-col-date")}`, body, "trk-shows", ["title", "progress", "next", "last-episode", "date"]) + pager();
   }
 
   function renderTitles() {
@@ -663,6 +668,42 @@
       return pct != null ? `<span class="trk-progress"><i style="width:${pct}%"></i></span><span class="trk-progress-text">${esc(Math.round(pct))}%</span>` : "";
     }
     return "";
+  }
+
+  function renderGrid() {
+    const shows = state.view === "shows", notes = state.view === "titles";
+    const rows = shows ? state.shows : notes ? state.noteRows : state.items;
+    if (!rows.length) return shows ? renderShows() : notes ? renderTitles() : renderList();
+    const feature = listFeature();
+    let previousDay = "";
+    const cards = rows.map((item, index) => {
+      const refName = shows ? "show" : notes ? "note" : "key";
+      const selected = state.ref?.[refName] === item.key && (shows || notes || state.ref?.feature === feature);
+      const title = shows || notes ? item.title || item.key : cardTitle(item);
+      const art = item.art || (item.ids?.tmdb ? {kind: item.type === "movie" ? "movie" : "tv", tmdb: item.ids.tmdb} : null);
+      const url = artUrl({...item, art}, "w500");
+      const image = url ? `${url}&kind=${isChild(item) && item.season != null && item.episode != null ? `still&season=${encodeURIComponent(item.season)}&episode=${encodeURIComponent(item.episode)}` : "backdrop"}` : "";
+      const rating = feature === "ratings" && !shows && !notes ? item.rating : item.user_rating;
+      const date = shows ? item.last_watched : notes ? item.updated : item.date;
+      const episode = shows ? item.last_season != null ? `Last ${se(item.last_season, item.last_episode)}` : "" : episodeCode(item);
+      const meta = [isChild(item) ? item.series_year : item.year, shows ? "Show" : typeMeta(item).label, episode].filter(Boolean).join(" · ");
+      let heading = "";
+      if (timelineOn()) {
+        const day = dayLabel(date);
+        if (day !== previousDay) { heading = `<h3 class="trk-grid-day">${esc(day)}</h3>`; previousDay = day; }
+      }
+      return `${heading}<article class="trk-play trk-grid-card${selected ? " is-selected" : ""}" data-trk-ref-${refName}="${esc(item.key)}" tabindex="0" aria-label="${esc(title)}" aria-selected="${selected}">
+        <div class="trk-grid-art"><span class="trk-grid-placeholder" aria-hidden="true">${symbol(shows ? "tv" : typeMeta(item).icon)}</span>${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}
+          ${!shows && !notes ? `<input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}">` : ""}
+          ${rating != null ? `<span class="cw-media-card-score" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}
+          ${date ? `<span class="trk-grid-date">${esc(timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}
+        </div>
+        <div class="trk-grid-copy"><strong>${esc(title)}</strong><small>${esc(meta)}</small>${shows ? `<div class="trk-grid-progress">${progressCell(item)}${nextCell(item)}</div>` : notes ? `${statusPill(item.status)}${tagChips(item.tags, 3)}` : feature === "progress" ? extraCell(item, feature) : ""}
+          ${!shows && !notes ? `<div class="trk-grid-tools">${healthIcon(item, state.view === "cleanup")}<button type="button" class="trk-icon" data-trk-row-edit="${index}" title="Edit" aria-label="Edit ${esc(title)}">${icon("edit")}</button></div>` : ""}
+        </div></article>`;
+    }).join("");
+    const more = timelineOn() ? state.items.length < state.total ? `<div class="cw-pager"><button type="button" class="cw-btn" data-trk-action="more"${state.loading ? " disabled" : ""}>Show older plays</button></div>` : "" : pager();
+    return `<div class="trk-cover-grid">${cards}</div>${more}`;
   }
 
   function renderList() {
@@ -751,6 +792,7 @@
       return `<div class="cw-empty" role="status">${icon("database")}<div class="cw-empty-text">${esc(state.error)}</div>${total ? `<div class="trk-meter" aria-hidden="true"><i style="width:${pct}%"></i></div><div class="cw-status-text">${esc(num(move.files_done))} of ${esc(num(total))} files</div>` : ""}</div>`;
     }
     if (state.error) return emptyState(state.error, "error");
+    if (state.layouts[state.view] === "grid") return renderGrid();
     if (timelineOn()) return renderTimeline();
     if (state.view === "shows") return renderShows();
     if (state.view === "titles") return renderTitles();
@@ -960,6 +1002,48 @@
     return `<div class="trk-section"><div class="trk-section-title">In your lists</div><ul class="trk-play-list trk-record-list">${items}${more}</ul></div>`;
   }
 
+  const episodePreviewSeasons = new Map();
+
+  async function loadEpisodePreview(tmdb, season) {
+    const key = `${tmdb}:${season}`;
+    if (episodePreviewSeasons.has(key)) return;
+    episodePreviewSeasons.set(key, null);
+    try {
+      const data = await getJSON(`/api/metadata/tmdb/season?tmdb=${encodeURIComponent(tmdb)}&season=${encodeURIComponent(season)}`);
+      episodePreviewSeasons.set(key, data.episodes || []);
+    } catch {
+      episodePreviewSeasons.set(key, []);
+    }
+    if (String(state.title?.title?.art?.tmdb) === String(tmdb)) {
+      setSlot("title", renderTitle());
+      if (sheet.mode === "title") renderSheet();
+    }
+  }
+
+  function episodePreviews(data) {
+    const tmdb = data.title?.art?.tmdb;
+    const progress = state.progress[tmdb];
+    if (!data.show || !tmdb || !progress?.available) return "";
+    const first = progress.next || progress.next_air;
+    if (!first) return "";
+    const seasons = [...(progress.seasons || [])].sort((a, b) => a.season - b.season);
+    const index = seasons.findIndex(row => Number(row.season) === Number(first.season));
+    const second = index < 0 ? null : Number(first.episode) < Number(seasons[index].episodes)
+      ? {season: first.season, episode: Number(first.episode) + 1}
+      : seasons[index + 1] ? {season: seasons[index + 1].season, episode: 1} : null;
+    const cards = [first, second].filter(Boolean).map((pos, i) => {
+      const key = `${tmdb}:${pos.season}`;
+      if (!episodePreviewSeasons.has(key)) void loadEpisodePreview(tmdb, pos.season);
+      const ep = episodePreviewSeasons.get(key)?.find(row => Number(row.episode) === Number(pos.episode));
+      if (!ep) return "";
+      const future = ep.air_date && ep.air_date > new Date().toISOString().slice(0, 10);
+      const label = i ? "Next episode" : future ? "Upcoming episode" : progress.watched ? "Continue watching" : "Start watching";
+      const art = `/art/tmdb/tv/${encodeURIComponent(tmdb)}?fallback=2&kind=still&season=${encodeURIComponent(pos.season)}&episode=${encodeURIComponent(pos.episode)}&size=w300`;
+      return `<article class="trk-episode-preview"><strong class="trk-episode-heading">${label}</strong><img class="trk-episode-backdrop" src="${esc(art)}" alt="" loading="lazy" decoding="async"><div class="trk-episode-copy"><strong>${esc(se(pos.season, pos.episode))}${ep.name ? ` · ${esc(ep.name)}` : ""}</strong><small>${esc([ep.air_date ? `${future ? "Airs " : ""}${dayText(ep.air_date)}` : "", ep.runtime ? `${ep.runtime} min` : ""].filter(Boolean).join(" · "))}</small>${ep.overview ? `<p>${esc(ep.overview)}</p>` : ""}</div></article>`;
+    }).join("");
+    return cards ? `<div class="trk-episode-previews">${cards}</div>` : "";
+  }
+
   function titleBody(data) {
     const head = data.title || {};
     const url = artUrl(head);
@@ -984,7 +1068,7 @@
       <div class="trk-detail-top">
         ${card ? `<button type="button" class="trk-poster is-link${url ? "" : " is-empty"}" data-trk-detail="card" title="Open details" aria-label="Open details for ${esc(head.title || "")}">` : `<div class="trk-poster${url ? "" : " is-empty"}">`}${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-poster-fallback">${symbol(t.icon)}</span>${rating != null ? `<span class="cw-rating-score trk-cover-rating" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}${card ? "</button>" : "</div>"}
         <div class="trk-detail-copy">
-          <span class="trk-detail-kind">${symbol(t.icon)}${esc(t.label)}</span>
+          <div class="trk-detail-meta"><span class="trk-detail-kind">${symbol(t.icon)}${esc(t.label)}</span>${statusPill(data.note?.status)}</div>
           <span class="trk-detail-head"><strong class="trk-detail-title">${esc(head.title || "")}</strong>${recordCount(data) ? `<button type="button" class="trk-icon trk-title-edit" data-trk-detail="edit-title" title="Edit title, year and IDs on every record" aria-label="Edit title, year and IDs">${icon("edit")}</button>` : ""}</span>
           ${head.year ? `<span class="trk-detail-sub">${esc(head.year)}</span>` : ""}
           <span class="trk-detail-sub">${esc(watchedLine)}</span>
@@ -999,6 +1083,7 @@
         ${info ? "" : `<button type="button" class="cw-btn" data-trk-detail="map" title="Choose the correct movie or show for this tracker entry" aria-label="Fix match">${icon("compare_arrows")}</button>`}
         ${card ? `<button type="button" class="cw-btn" data-trk-detail="card" title="Open details" aria-label="Open details">${icon("info")}</button>` : ""}
       </div>
+      ${episodePreviews(data)}
       ${noteBlock(data)}
       ${data.show ? seasonBlock(data) : ""}
       ${plays ? `<div class="trk-section"><div class="trk-section-title">${esc(data.show ? "Recent plays" : "Plays")}</div><ul class="trk-play-list">${plays}${morePlays}</ul></div>` : ""}
@@ -1305,7 +1390,7 @@
     state.statusMenu = false;
     state.title = null;
     state.seasonOpen.clear();
-    state.root.querySelectorAll("tr.trk-play").forEach((tr) => {
+    state.root.querySelectorAll(".trk-play").forEach((tr) => {
       const on = ref.note ? tr.dataset.trkRefNote === ref.note : ref.show ? tr.dataset.trkRefShow === ref.show : tr.dataset.trkRefKey === ref.key;
       tr.classList.toggle("is-selected", on);
       tr.setAttribute("aria-selected", String(on));
@@ -3014,6 +3099,13 @@
       if (sheet.el?.contains(event.target)) return;
       if (event.target.closest("[data-trk-pick]")) return;
       if (handlePanelClick(event)) return;
+      const layout = event.target.closest("[data-trk-layout]");
+      if (layout) {
+        state.layouts[state.view] = layout.dataset.trkLayout === "grid" ? "grid" : "list";
+        saveView();
+        renderSlots(true);
+        return;
+      }
       const view = event.target.closest("[data-trk-view]");
       if (view) {
         if (view.dataset.trkView === state.view) return;
@@ -3058,7 +3150,7 @@
         if (item) openSheet("edit", { item, feature: listFeature() });
         return;
       }
-      const row = event.target.closest("tr.trk-play");
+      const row = event.target.closest(".trk-play");
       if (row) {
         selectRef(rowRef(row));
         return;
@@ -3116,7 +3208,7 @@
         state.root.querySelector(`.trk-tabs [data-trk-view="${tabs[next].dataset.trkView}"]`)?.focus();
         return;
       }
-      const row = event.target.closest?.("tr.trk-play");
+      const row = event.target.closest?.(".trk-play");
       if (!row || (event.key !== "Enter" && event.key !== " ") || event.target.closest("input, button")) return;
       event.preventDefault();
       selectRef(rowRef(row));
@@ -3168,6 +3260,8 @@
         cover.innerHTML = symbol(cover.dataset.trkLogCover === "movie" ? "movie" : "tv");
         return;
       }
+      if (img.closest(".trk-grid-art")) { img.remove(); return; }
+      if (img.classList.contains("trk-episode-backdrop")) { img.remove(); return; }
       if (!img.closest(".trk-poster")) return;
       img.closest(".trk-poster").classList.add("is-empty");
       img.remove();

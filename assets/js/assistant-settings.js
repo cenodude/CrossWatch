@@ -178,7 +178,7 @@
   }
 
   async function refresh() {
-    if (!$("assistant_settings")) return;
+    if (!$("assistant_settings") && !$("cw-nav-profile-menu")) return;
     try { await w.__cwAuthBootstrapPromise; } catch {}
     try {
       render(await api("/settings"));

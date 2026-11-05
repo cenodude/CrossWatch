@@ -128,3 +128,15 @@ def test_managed_shell_has_the_tracker_tab_only_with_an_assigned_instance(monkey
         assert 'id="tab-tracker"' not in html and 'id="page-tracker"' not in html
         assert 'data-cw-perm-tracker="off"' in html
         assert "tracker-notifications.js" not in html
+
+
+def test_profile_header_loads_authorized_assistant_and_tracker_feeds(monkeypatch):
+    monkeypatch.setattr(ui_frontend, "_managed_tracker_allowed", lambda user: user.get("profile_id") == "allowed")
+    admin = ui_frontend.get_profile_html({"is_admin": True, "username": "admin"})
+    assert "assistant-settings.js" in admin
+    assert "ai-settings.css" in admin
+    assert "tracker-notifications.js" in admin
+    for profile, allowed in (("allowed", True), ("denied", False)):
+        html = ui_frontend.get_profile_html({"is_admin": False, "username": "user", "profile_id": profile})
+        assert ("tracker-notifications.js" in html) is allowed
+        assert "assistant-settings.js" not in html

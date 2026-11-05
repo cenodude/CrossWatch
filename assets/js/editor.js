@@ -799,7 +799,7 @@
 
   function columnWidth(column) {
     const width = clampColumnWidth(column, state.columnWidths[column]);
-    return column === "extra" && ["history", "collection"].includes(state.kind) ? Math.max(270, width) : width;
+    return column === "extra" && ["history", "collection"].includes(state.kind) ? Math.max(210, width) : width;
   }
 
   function orderedColumns() {
@@ -877,6 +877,11 @@
     visibleColumns.forEach(column => { total += widths[column]; });
     const containerWidth = Math.floor((scrollEl && scrollEl.clientWidth) || 0);
     const availableWidth = Math.max(0, containerWidth - 1);
+    if (containerWidth > 0 && total > availableWidth && visibleColumns.includes("title")) {
+      const shrink = Math.min(total - availableWidth, Math.max(0, widths.title - MIN_COLUMN_WIDTHS.title));
+      widths.title -= shrink;
+      total -= shrink;
+    }
     const hasHorizontalOverflow = containerWidth > 0 && total > availableWidth + 1;
     const renderedTotal = hasHorizontalOverflow ? total : Math.max(total, availableWidth || total);
     const titleExtra = !hasHorizontalOverflow && renderedTotal > total && visibleColumns.includes("title") ? renderedTotal - total : 0;

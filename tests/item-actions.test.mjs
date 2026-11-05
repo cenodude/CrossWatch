@@ -10,6 +10,7 @@ const source = readFileSync(new URL("../assets/js/item-actions.js", import.meta.
 
 function load(responses, dataset = {}) {
   const calls = [];
+  const focused = [];
   const element = () => ({ setAttribute() {}, addEventListener() {}, appendChild() {}, querySelector: () => null, querySelectorAll: () => [], classList: { add() {}, remove() {}, toggle() {} }, dataset: {}, style: {} });
   const clicks = [];
   const created = [];
@@ -23,6 +24,7 @@ function load(responses, dataset = {}) {
       getElementById: () => null,
       createElement: () => {
         const node = element();
+        node.querySelector = selector => selector.startsWith("[data-ia-score=") ? { focus: () => focused.push(selector) } : null;
         node.addEventListener = (type, handler) => {
           if (type === "click") clicks.push(handler);
         };
@@ -45,7 +47,7 @@ function load(responses, dataset = {}) {
   context.window.addEventListener = () => {};
   vm.runInNewContext(source.replace("  (window.CW ||= {}).ItemActions =", "  window.testActions = { identity, sendAdd, editorRemove, watchlistRemove, progressTask, watchlistKeys };\n  (window.CW ||= {}).ItemActions ="), context);
   context.CSS = { escape: String };
-  return { api: context.window.testActions, actions: context.window.CW.ItemActions, calls, created, clicks };
+  return { api: context.window.testActions, actions: context.window.CW.ItemActions, calls, created, clicks, focused };
 }
 
 test("identity keeps typed ids and drops nested objects", () => {
@@ -199,13 +201,18 @@ test("write access follows the role and view-as mode", () => {
   assert.equal(load([], {}).actions.canWrite(), true);
 });
 
-test("compact stars preserve half scores and select without submitting", async () => {
-  const { actions, created, clicks, calls } = load([{ providers: [paired], hidden: [], others: [], has_pair: true }]);
+test("compact stars preserve half scores and save directly to the focused provider", async () => {
+  const { actions, created, clicks, calls, focused } = load([{ providers: [paired], hidden: [], others: [], has_pair: true }, { results: [{ ok: true, result: { confirmed: 1 } }] }]);
   await actions.openMenu({ anchor: anchor(), feature: "ratings", item: { title: "Movie", type: "movie" }, focus: paired, refs: { present: [{ ...paired, rating: 7.5 }], missing: [] } });
   assert.match(created[0].innerHTML, /data-ia-score-value>7.5</);
+  assert.equal(focused[0], '[data-ia-score="7.5"]');
+  assert.doesNotMatch(created[0].innerHTML, /Rated 7.5\/10/);
   assert.equal((created[0].innerHTML.match(/data-ia-act="score"/g) || []).length, 20);
   assert.doesNotMatch(created[0].innerHTML, /score-down|score-up/);
   clicks[0]({ target: { closest: () => ({ dataset: { iaAct: "score", iaScore: "0.5" } }) } });
-  assert.match(created[0].innerHTML, /Change to 0.5 on/);
-  assert.equal(calls.length, 1);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.doesNotMatch(created[0].innerHTML, /Change to/);
+  assert.equal(calls[1].url, "/api/editor/send");
+  assert.equal(calls[1].body.items[0].rating, 0.5);
+  assert.deepEqual(calls[1].body.providers, [{provider: "TRAKT", instance: "default"}]);
 });

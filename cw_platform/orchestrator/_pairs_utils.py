@@ -7,7 +7,7 @@ from typing import Any
 import importlib
 import threading
 from collections.abc import Mapping as _Mapping
-from ..id_map import canonical_key as _ck, keys_for_item, migrate_media_key, ID_KEYS
+from ..id_map import canonical_key as _ck, keys_for_item, migrate_media_key, _norm_type, ID_KEYS
 from ._planner import _rating_step
 from ..provider_instances import _config_key_for, normalize_instance_id
 
@@ -356,15 +356,16 @@ def filter_manual_block(items: list[dict[str, Any]] | None, blocked: set[str] | 
             pass
 
         ids = it.get("ids") or {}
-        show = str(it.get("type") or "").strip().lower() in ("show", "shows", "series", "tv", "anime")
+        kind = _norm_type(it.get("type"))
+        tmdb_suffix = "show" if kind in ("show", "anime") else kind if kind in ("episode", "season") else ""
         if isinstance(ids, _Mapping):
             for k in ID_KEYS:
                 v = ids.get(k)
                 if v is None or str(v) == "":
                     continue
                 token = f"{str(k).lower()}:{str(v).lower()}"
-                if show and k == "tmdb":
-                    token = f"{token}#show"
+                if tmdb_suffix and k == "tmdb":
+                    token = f"{token}#{tmdb_suffix}"
                 if token in blk:
                     return True
 

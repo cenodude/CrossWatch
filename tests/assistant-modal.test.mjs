@@ -553,6 +553,19 @@ test('the sparkle button opens wiki mode but analyze buttons stay hidden', async
   assert.equal(ask.disabled, false);
 });
 
+test('Profile enables AI help without a settings form', async () => {
+  const source = await readFile(new URL('../assets/js/assistant-settings.js', import.meta.url), 'utf8');
+  const ask = {disabled: true, setAttribute() {}};
+  const root = {dataset: {}};
+  const nodes = {'cw-nav-profile-menu': {}, 'cw-ask-button': ask};
+  const doc = {documentElement: root, getElementById: id => nodes[id] || null, addEventListener() {}, querySelectorAll: () => []};
+  const win = {};
+  runInNewContext(source, {window: win, document: doc, fetch: async () => ({ok: true, json: async () => ({mode: 'full', ready: true})})});
+  await win.cwAssistantSettings.refresh();
+  assert.equal(ask.disabled, false);
+  assert.equal(root.dataset.cwAssistant, 'on');
+});
+
 test('the context line only shows in full mode for a selected item or pair', async () => {
   modal.default.unmount();
   const page = makeRoot();

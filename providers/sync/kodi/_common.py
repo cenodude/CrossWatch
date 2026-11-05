@@ -330,11 +330,13 @@ def episode_item(row: Mapping[str, Any], show_ids_by_id: Mapping[int, Mapping[st
         return None
     tvshow_id = to_int(row.get("tvshowid")) or -1
     show_ids = dict((show_ids_by_id or {}).get(tvshow_id) or {})
+    if not show_ids:
+        return None
     ep_ids = normalize_uniqueids(row.get("uniqueid"))
     item: dict[str, Any] = {
         "type": "episode",
         "ids": ep_ids,
-        "show_ids": show_ids or ep_ids,
+        "show_ids": show_ids,
         "title": row.get("title") or row.get("showtitle"),
         "series_title": row.get("showtitle"),
         "year": to_int(row.get("year")) or (show_year_by_id or {}).get(tvshow_id),
@@ -709,6 +711,7 @@ def library_result_rows(result: Any, key: str) -> list[Mapping[str, Any]]:
 class LibraryIndex:
     def __init__(self, movies: Iterable[Mapping[str, Any]], episodes: Iterable[Mapping[str, Any]], tvshows: Iterable[Mapping[str, Any]]):
         self.items: list[dict[str, Any]] = []
+        self.unidentified_shows: Counter[str] = Counter()
         show_ids_by_id: dict[int, dict[str, str]] = {}
         show_year_by_id: dict[int, int] = {}
         for row in tvshows:
@@ -725,6 +728,9 @@ class LibraryIndex:
                 item["_kodi_raw"] = dict(row)
                 self.items.append(item)
         for row in episodes:
+            if kodi_item_id(row, "episode") is not None and (to_int(row.get("tvshowid")) or -1) not in show_ids_by_id:
+                self.unidentified_shows[str(row.get("showtitle") or "").strip() or "Unknown show"] += 1
+                continue
             item = episode_item(row, show_ids_by_id, show_year_by_id)
             if item:
                 item["_kodi_raw"] = dict(row)
@@ -813,6 +819,15 @@ def library_index(adapter: Any, feature: str = "") -> LibraryIndex:
             tvshows=tvshow_count,
         )
     idx = LibraryIndex(movies, episodes, tvshows)
+    if idx.unidentified_shows:
+        log(
+            str(feature or "library"),
+            "warning",
+            "show_ids_missing",
+            episodes=sum(idx.unidentified_shows.values()),
+            shows=sorted(idx.unidentified_shows)[:20],
+            hint="Refresh these shows in Kodi so they get TMDb, TVDb or IMDb IDs; their episodes are skipped until then.",
+        )
     setattr(adapter, cache_name, idx)
     return idx
 
