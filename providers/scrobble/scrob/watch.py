@@ -29,6 +29,8 @@ from providers.auth._auth_SCROB import normalize_server_url
 from providers.sync.scrob._common import (
     PATH_NOW_PLAYING,
     as_int,
+    media_show_ids,
+    media_to_ids,
     ok_status,
     positive_int,
     safe_json,
@@ -77,20 +79,10 @@ def _stable_server_uuid(server: str) -> str:
 
 
 def _ids_from_media(media: Mapping[str, Any], media_type: str) -> dict[str, str]:
-    ids: dict[str, str] = {}
-    tmdb = positive_int(media.get("tmdb_id"))
+    ids = media_to_ids(media)
     if media_type == "episode":
-        if tmdb:
-            ids["tmdb_episode"] = str(tmdb)
-        show_tmdb = positive_int(media.get("show_tmdb_id"))
-        if show_tmdb:
-            ids["tmdb_show"] = str(show_tmdb)
-        show_tvdb = positive_int(media.get("show_tvdb_id"))
-        if show_tvdb:
-            ids["tvdb_show"] = str(show_tvdb)
-        return ids
-    if tmdb:
-        ids["tmdb"] = str(tmdb)
+        return {**{f"{key}_episode": value for key, value in ids.items()},
+                **{f"{key}_show": value for key, value in media_show_ids(media).items()}}
     return ids
 
 

@@ -288,21 +288,18 @@ def media_type_of(item: Mapping[str, Any]) -> str:
 
 def media_to_ids(media: Mapping[str, Any]) -> dict[str, str]:
     out: dict[str, str] = {}
-    tmdb = positive_int(media.get("tmdb_id"))
-    if tmdb:
-        out["tmdb"] = str(tmdb)
+    for namespace in ("tmdb", "tvdb"):
+        value = positive_int(media.get(f"{namespace}_id"))
+        if value:
+            out[namespace] = str(value)
+    imdb = as_imdb(media.get("imdb_id"))
+    if imdb and positive_int(imdb[2:]):
+        out["imdb"] = imdb
     return out
 
 
 def media_show_ids(media: Mapping[str, Any]) -> dict[str, str]:
-    out: dict[str, str] = {}
-    tmdb = positive_int(media.get("show_tmdb_id"))
-    if tmdb:
-        out["tmdb"] = str(tmdb)
-    tvdb = positive_int(media.get("show_tvdb_id"))
-    if tvdb:
-        out["tvdb"] = str(tvdb)
-    return out
+    return media_to_ids({namespace + "_id": media.get("show_" + namespace + "_id") for namespace in ("tmdb", "tvdb", "imdb")})
 
 
 def show_tvdb_for(adapter: Any, tmdb_id: Any) -> int | None:
