@@ -88,8 +88,8 @@ test("Tracker watch logging sends the selected seconds", async () => {
     getJSON: async (url, body) => { calls.push(body); return {}; },
     afterWrite() {}, writeError: String,
   });
-  const start = source.indexOf("  async function saveLog()");
-  const end = source.indexOf("\n  async function ", start + 1);
+  const start = source.indexOf("  async function logWatchTimes(");
+  const end = source.indexOf("\n  async function ", source.indexOf("  async function saveLog()") + 1);
   vm.runInContext(source.slice(start, end), context);
   await vm.runInContext("saveLog()", context);
   assert.equal(new Date(calls[0].items[0].watched_at).getSeconds(), 47);
@@ -108,4 +108,62 @@ test("Editor and Tracker use the same local timestamp and preserve unchanged val
   }
   assert.equal(app.DateTime.dateTimeInputToIso(""), null);
   assert.equal(app.DateTime.dateTimeInputToIso("invalid"), null);
+});
+
+test("inline Editor dates open the picker and stage valid changes without a popup", () => {
+  const app = editor();
+  for (const [kind, field] of [["history", "watched_at"], ["collection", "collected_at"]]) {
+    const row = { raw: { [field]: "2026-11-03T02:32:25.000Z" } };
+    let saves = 0, opens = 0;
+    const input = app.ExtraEditors.createDateTimeEditor(row, {
+      state: { kind }, finishExtraChange: () => { saves++; },
+    });
+    input.checkValidity = () => true;
+    input.showPicker = () => { opens++; };
+    input.onclick();
+    assert.equal(opens, 1);
+    input.onchange();
+    assert.equal(saves, 0);
+    input.value = app.DateTime.localInput("2026-11-04T02:32:59.000Z");
+    input.onchange();
+    assert.equal(row.raw[field], "2026-11-04T02:32:59.000Z");
+    assert.equal(saves, 1);
+    input.checkValidity = () => false;
+    input.value = "";
+    input.onchange();
+    assert.equal(saves, 1);
+    input.checkValidity = () => true;
+    input.onchange();
+    assert.equal(row.raw[field], null);
+    assert.equal(saves, 2);
+  }
+});
+
+test("Tracker release dates use movie metadata and each episode air date", async () => {
+  const source = read("../assets/js/tracker.js");
+  let response = { result: { detail: { release_date: "2025-08-20" } } };
+  const context = vm.createContext({ getJSON: async () => response });
+  vm.runInContext(source.slice(source.indexOf("  async function logWatchTimes("), source.indexOf("  async function saveLog()")), context);
+  context.log = { whenMode: "release", pick: { type: "movie", ids: { tmdb: "1" } } };
+  context.items = [{ type: "movie" }];
+  let result = await vm.runInContext("logWatchTimes(log, items)", context);
+  assert.equal(result[0].watched_at, "2025-08-20T12:00:00Z");
+  context.log = { whenMode: "release", pick: { type: "show", tmdb: "2" }, season: 1 };
+  context.items = [{ type: "episode", episode: 1 }, { type: "episode", episode: 2 }];
+  response = { episodes: [{ episode: 1, air_date: "2025-01-01" }, { episode: 2, air_date: "2025-01-08" }] };
+  result = await vm.runInContext("logWatchTimes(log, items)", context);
+  assert.equal(result[0].watched_at, "2025-01-01T12:00:00Z");
+  assert.equal(result[1].watched_at, "2025-01-08T12:00:00Z");
+  response.episodes.pop();
+  await assert.rejects(vm.runInContext("logWatchTimes(log, items)", context), /No release date/);
+  response.episodes.push({ episode: 2, air_date: "2999-01-01" });
+  await assert.rejects(vm.runInContext("logWatchTimes(log, items)", context), /future/);
+  context.log.whenMode = "today";
+  const before = Date.now();
+  result = await vm.runInContext("logWatchTimes(log, items)", context);
+  assert.ok(Date.parse(result[0].watched_at) >= before);
+  assert.equal(result[0].watched_at, result[1].watched_at);
+  context.log.whenMode = "custom";
+  context.log.when = "";
+  await assert.rejects(vm.runInContext("logWatchTimes(log, items)", context), /valid watch date/);
 });

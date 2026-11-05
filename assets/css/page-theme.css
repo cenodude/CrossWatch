@@ -881,6 +881,7 @@ button.cw-mm-provider[data-ia-chip]:hover,button.cw-mm-provider[data-mm-episode]
 #page-tracker .trk-identity summary{color:var(--cw-theme-text)}
 #page-tracker :is(.trk-field>span,.trk-group-label,.trk-note,.trk-identity summary small,.trk-change-copy small){color:var(--cw-theme-muted)}
 input:is([type="date"],[type="datetime-local"],[type="time"],[type="month"],[type="week"]){color-scheme:var(--cw-page-input-scheme)}
+input.cw-timestamp-input::-webkit-datetime-edit-second-field{font-style:italic}
 #page-tracker :is(.trk-match,.trk-identity summary,.trk-sheet .cw-btn,.trk-sheet input,.trk-sheet select):focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:2px}
 #page-tracker .trk-effect{color:var(--cw-theme-text)}
 #page-tracker .trk-effect .material-symbols-rounded{color:var(--cw-theme-muted)}
@@ -988,3 +989,5 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-months{--hist-tone-rgb:70,86
 #page-tracker :is(.trk-note-empty,.trk-note-suggest,.trk-link-btn,.trk-label button):focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:2px}
 #page-tracker button.trk-poster:hover{border-color:var(--cw-theme-accent)}
 #page-tracker button.trk-poster:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:2px}
+
+#page-tracker .trk-hero-backdrop{opacity:.22;mask-image:linear-gradient(90deg,transparent,rgba(0,0,0,.35) 30%,#000 65%)}

@@ -1776,7 +1776,7 @@
         appendPopupTitle(pop, "Choose a mapping provider");
         const note = document.createElement("p");
         note.textContent = targets.length
-          ? "Open this provider’s items, then use the row’s mapping icon to create or edit a mapping."
+          ? "Open this providerâ€™s items, then use the rowâ€™s mapping icon to create or edit a mapping."
           : "No confirmed provider has this item. Select a provider in the Editor to create a mapping.";
         pop.appendChild(note);
         const select = document.createElement("select");
@@ -1934,6 +1934,7 @@
       syncSelectPageCheckbox,
       updateTypeDisplay,
       updateExtraDisplay,
+      createDateTimeEditor: row => editorExtraEditors.createDateTimeEditor(row, extraEditorContext()),
       formatEpisodeVisualTitle,
       formatSxxEyy,
       openTypeEditor,
