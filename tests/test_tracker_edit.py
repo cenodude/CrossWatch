@@ -228,7 +228,7 @@ def test_api_progress_edit_keeps_milliseconds_in_step(client, base):
 
 @pytest.mark.parametrize(("feature", "key", "changes", "error"), [
     ("ratings", "tmdb:949", {"rating": 11}, "invalid_rating"),
-    ("ratings", "tmdb:949", {"rating": 7.5}, "invalid_rating"),
+    ("ratings", "tmdb:949", {"rating": 7.25}, "invalid_rating"),
     ("history", "tmdb:949", {"rating": 7}, "invalid_rating"),
     ("history", "tmdb:949", {"date": "2999-01-01T00:00:00Z"}, "invalid_date"),
     ("history", "tmdb:949", {"date": "yesterday"}, "invalid_date"),
@@ -481,3 +481,17 @@ def test_title_edit_refuses_unknown_fields_and_missing_titles(client):
     assert gone.status_code == 404
     empty = client.post("/api/tracker/edit-title", json={"feature": "history", "key": "tmdb:949", "changes": {"title": ""}})
     assert empty.json()["error"] == "invalid_title"
+
+
+@pytest.mark.parametrize("rating", [0.5, 4.5, 9.5, 10])
+def test_half_star_rating_edit_roundtrip(client, base, rating):
+    response = client.post("/api/tracker/edit", json={"feature": "ratings", "key": "tmdb:949", "changes": {"rating": rating}})
+    assert response.status_code == 200, response.text
+    assert _items(base, "ratings")["tmdb:949"]["rating"] == rating
+
+
+@pytest.mark.parametrize("rating", [0.5, 4.5, 9.5, 10])
+def test_half_star_rating_add_roundtrip(client, base, rating):
+    response = client.post("/api/tracker/add", json={"feature": "ratings", "item": {"type": "movie", "title": "New movie", "ids": {"tmdb": "12345"}, "rating": rating}})
+    assert response.status_code == 200, response.text
+    assert _items(base, "ratings")["tmdb:12345"]["rating"] == rating

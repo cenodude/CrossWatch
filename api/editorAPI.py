@@ -1660,12 +1660,12 @@ def _normalize_send_item(raw: Any, feature: str, *, operation: str = "add") -> d
     elif feature == "ratings":
         rating = item.get("rating", item.get("user_rating", item.get("score")))
         try:
-            rating_i = int(float(str(rating).strip()))
+            rating_i = float(str(rating).strip())
         except Exception:
             return None
-        if rating_i < 1 or rating_i > 10:
+        if isinstance(rating, bool) or not 0.5 <= rating_i <= 10 or not (rating_i * 2).is_integer():
             return None
-        item["rating"] = rating_i
+        item["rating"] = int(rating_i) if rating_i.is_integer() else rating_i
     elif feature == "history":
         watched_at = item.get("watched_at") or item.get("last_watched_at")
         if not watched_at:

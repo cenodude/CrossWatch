@@ -414,7 +414,7 @@
   function ratingOf(ctx, ref) {
     const hit = (ctx.refs?.present || []).find((entry) => refKey(entry) === refKey(ref));
     const value = Number(hit?.rating ?? ctx.rating);
-    return Number.isFinite(value) && value >= 1 && value <= 10 ? Math.round(value) : null;
+    return Number.isFinite(value) && value >= 0.5 && value <= 10 ? value : null;
   }
 
   const REASONS = {
@@ -504,6 +504,31 @@
       el.hidden = true;
       document.body.appendChild(el);
       el.addEventListener("click", onClick);
+      el.addEventListener("pointerover", event => {
+        const star = event.target.closest("[data-ia-score]");
+        if (star) previewScore(Number(star.dataset.iaScore));
+      });
+      el.addEventListener("pointerout", event => {
+        if (event.target.closest(".cw-ia-stars") && !event.relatedTarget?.closest?.(".cw-ia-stars")) previewScore(score);
+      });
+      el.addEventListener("focusin", event => {
+        const star = event.target.closest("[data-ia-score]");
+        if (star) previewScore(Number(star.dataset.iaScore));
+      });
+      el.addEventListener("focusout", event => {
+        if (event.target.closest(".cw-ia-stars") && !event.relatedTarget?.closest?.(".cw-ia-stars")) previewScore(score);
+      });
+      el.addEventListener("keydown", event => {
+        const star = event.target.closest("[data-ia-score]");
+        if (!star) return;
+        const value = Number(star.dataset.iaScore);
+        const next = event.key === "ArrowRight" || event.key === "ArrowUp" ? Math.min(10, value + 0.5)
+          : event.key === "ArrowLeft" || event.key === "ArrowDown" ? Math.max(0.5, value - 0.5)
+          : event.key === "Home" ? 0.5 : event.key === "End" ? 10 : null;
+        if (next === null) return;
+        event.preventDefault();
+        el.querySelector(`[data-ia-score="${next}"]`)?.focus();
+      });
       el.addEventListener("change", (event) => {
         if (!event.target?.matches?.("[data-ia-act=date]")) return;
         customDate = String(event.target.value || "");
@@ -579,7 +604,13 @@
 
     const item = (action, symbol, label, tone = "", extra = "") => `<button type="button" class="cw-ia-item${tone ? ` is-${tone}` : ""}" data-ia-act="${action}"${extra}>${icon(symbol)}<span>${esc(label)}</span></button>`;
     const section = (label) => `<div class="cw-ia-section">${esc(label)}</div>`;
-    const stepper = () => `<div class="cw-ia-score"><span>Your score</span><button type="button" data-ia-act="score-down" aria-label="Lower score">${icon("remove")}</button><strong>${esc(score)}<small>/10</small></strong><button type="button" data-ia-act="score-up" aria-label="Raise score">${icon("add")}</button></div>`;
+    const ratingStars = () => `<div class="cw-ia-score"><div class="cw-ia-score-summary"><span>Your score</span><strong><b data-ia-score-value>${esc(score)}</b><small>/10</small></strong></div><div class="cw-ia-stars" role="group" aria-label="Your rating">${Array.from({ length: 20 }, (_, i) => (i + 1) / 2).map(value => `<button type="button" class="cw-ia-star${Number.isInteger(value) ? " is-right" : ""}${value <= score ? " is-lit" : ""}" data-ia-act="score" data-ia-score="${value}" aria-label="Rate ${value} out of 10" aria-pressed="${value === score}">${icon("star")}</button>`).join("")}</div></div>`;
+
+    function previewScore(value) {
+      el.querySelectorAll("[data-ia-score]").forEach(button => button.classList.toggle("is-lit", Number(button.dataset.iaScore) <= value));
+      const label = el.querySelector("[data-ia-score-value]");
+      if (label) label.textContent = String(value);
+    }
 
     function head(symbol, title, sub, logoProvider = "") {
       const mark = logoProvider ? logoHtml(logoProvider) : `<span class="cw-ia-logo is-icon">${icon(symbol)}</span>`;
@@ -631,13 +662,13 @@
         body.push(`<p class="cw-ia-note">${icon("lock")}${esc(hiddenReason(focus) || "Not one of your accounts for this")}</p>`);
       } else if (present) {
         if (feature === "ratings") {
-          body.push(stepper());
+          body.push(ratingStars());
           if (score !== rating) body.push(item("add-one", "star", `Change to ${score} on ${name}`, "accent"));
         }
         const armed = isArmed("one");
         body.push(item("remove-one", armed ? "warning" : "delete", armed ? "Click again to remove every watch here" : removeLabel(name), "danger"));
       } else {
-        if (feature === "ratings") body.push(stepper());
+        if (feature === "ratings") body.push(ratingStars());
         body.push(whenHtml());
         body.push(item("add-one", feature === "ratings" ? "star" : "add", addLabel(name), "accent", dateReady() ? "" : " disabled"));
       }
@@ -672,7 +703,7 @@
         const armed = isArmed("all");
         foot.push(`<button type="button" class="cw-ia-btn is-danger${armed ? " is-armed" : ""}" data-ia-act="remove-all">${esc(armed ? "Click again to confirm" : "Remove from all")}</button>`);
       }
-      return `${head(FEATURE_ICONS[feature], title, sub)}${feature === "ratings" && missing.length ? `<div class="cw-ia-list">${stepper()}</div>` : ""}${missing.length ? whenHtml() : ""}${section("Your accounts")}<div class="cw-ia-rows">${rows || `<p class="cw-ia-note">${icon("info")}None of your accounts can hold this.</p>`}</div>${links()}${foot.length ? `<div class="cw-ia-foot">${foot.join("")}</div>` : ""}`;
+      return `${head(FEATURE_ICONS[feature], title, sub)}${feature === "ratings" && missing.length ? `<div class="cw-ia-list">${ratingStars()}</div>` : ""}${missing.length ? whenHtml() : ""}${section("Your accounts")}<div class="cw-ia-rows">${rows || `<p class="cw-ia-note">${icon("info")}None of your accounts can hold this.</p>`}</div>${links()}${foot.length ? `<div class="cw-ia-foot">${foot.join("")}</div>` : ""}`;
     }
 
     function progressHtml() {
@@ -785,9 +816,10 @@
         render();
         return;
       }
-      if (action === "score-down" || action === "score-up") {
-        score = Math.max(1, Math.min(10, score + (action === "score-up" ? 1 : -1)));
+      if (action === "score") {
+        score = Number(button.dataset.iaScore);
         render();
+        el.querySelector(`[data-ia-score="${score}"]`)?.focus({ preventScroll: true });
         return;
       }
       if (action === "history") {
@@ -861,7 +893,7 @@
       customDate = "";
       armedUntil = 0;
       armedRow = "";
-      score = ratingOf(ctx, ctx.focus || {}) || Math.round(Number(options.rating)) || 8;
+      score = ratingOf(ctx, ctx.focus || {}) || ratingOf({ rating: options.rating }, {}) || 8;
       list = Object.assign([], { loading: true });
       hidden = [];
       others = [];

@@ -109,14 +109,16 @@ def _manual_watched_at(cfg: dict[str, Any], media_type: str, tmdb_id: Any, mode:
     return None, "invalid_date_mode"
 
 
-def _manual_rating(value: Any) -> int | None:
-    if value in (None, ""):
+def _manual_rating(value: Any) -> int | float | None:
+    if value in (None, "") or isinstance(value, bool):
         return None
     try:
-        rating = int(str(value).strip())
+        rating = float(str(value).strip())
     except Exception:
         return None
-    return rating if 1 <= rating <= 10 else None
+    if not 0.5 <= rating <= 10 or not (rating * 2).is_integer():
+        return None
+    return int(rating) if rating.is_integer() else rating
 
 
 def _manual_external_ids(media_type: str, tmdb_id: Any) -> dict[str, Any]:

@@ -333,11 +333,13 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
         }
         const conflict = candidateConflict(row.item, match);
         button.title = [match.title, match.year, match.mapping_unavailable, conflict].filter(Boolean).join(" · ");
-        button.innerHTML = `${match.ids?.tmdb ? `<img class="is-map-candidate-art" src="/art/tmdb/${row.item.type === "movie" ? "movie" : "tv"}/${encodeURIComponent(match.ids.tmdb)}?fallback=2&size=w92" alt="" loading="lazy">` : ""}<strong>${esc(match.title)}</strong>${match.year ? `<span class="is-map-candidate-year">${esc(match.year)}</span>` : ""}`;
+        button.innerHTML = `${match.ids?.tmdb ? `<img class="is-map-candidate-art" src="/art/tmdb/${row.item.type === "movie" ? "movie" : "tv"}/${encodeURIComponent(match.ids.tmdb)}?fallback=2&size=w92" alt="" loading="lazy">` : ""}<span class="is-map-candidate-copy"><strong>${esc(match.title)}</strong>${match.year ? `<span class="is-map-candidate-year">${esc(match.year)}</span>` : ""}</span>`;
         if (conflict) {
           const warning = document.createElement("span");
-          warning.textContent = conflict;
-          button.append(warning);
+          warning.className = "is-map-candidate-warning";
+          warning.textContent = "Different IDs ? check this match";
+          warning.title = conflict;
+          button.querySelector(".is-map-candidate-copy").append(warning);
         }
         button.querySelector("img")?.addEventListener("error", event => event.target.remove());
         button.onclick = async () => {

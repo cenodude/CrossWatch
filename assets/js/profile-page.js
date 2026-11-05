@@ -3096,7 +3096,7 @@
         return;
       }
       const histogram = counts?.ratings || {};
-      const values = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1];
+      const values = Array.from({ length: 20 }, (_, i) => 10 - i / 2);
       const max = Math.max(1, ...values.map((value) => Number(histogram[value]) || 0));
       const signature = JSON.stringify([counts?.all || 0, histogram]);
       if (signature !== scoresSignature) {

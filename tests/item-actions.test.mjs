@@ -198,3 +198,14 @@ test("write access follows the role and view-as mode", () => {
   assert.equal(load([], { cwRole: "user", cwPermWrite: "on" }).actions.canWrite(), true);
   assert.equal(load([], {}).actions.canWrite(), true);
 });
+
+test("compact stars preserve half scores and select without submitting", async () => {
+  const { actions, created, clicks, calls } = load([{ providers: [paired], hidden: [], others: [], has_pair: true }]);
+  await actions.openMenu({ anchor: anchor(), feature: "ratings", item: { title: "Movie", type: "movie" }, focus: paired, refs: { present: [{ ...paired, rating: 7.5 }], missing: [] } });
+  assert.match(created[0].innerHTML, /data-ia-score-value>7.5</);
+  assert.equal((created[0].innerHTML.match(/data-ia-act="score"/g) || []).length, 20);
+  assert.doesNotMatch(created[0].innerHTML, /score-down|score-up/);
+  clicks[0]({ target: { closest: () => ({ dataset: { iaAct: "score", iaScore: "0.5" } }) } });
+  assert.match(created[0].innerHTML, /Change to 0.5 on/);
+  assert.equal(calls.length, 1);
+});

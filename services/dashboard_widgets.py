@@ -174,17 +174,19 @@ def _art_type(item: Mapping[str, Any]) -> str:
     return "movie" if _media_type(item) == "movie" else "tv"
 
 
-def _rating_value(item: Mapping[str, Any]) -> int | None:
+def _rating_value(item: Mapping[str, Any]) -> int | float | None:
     raw = item.get("rating")
     if raw in (None, ""):
         raw = item.get("user_rating")
     if raw in (None, ""):
         return None
     try:
-        n = int(round(float(raw)))
+        n = float(raw)
     except Exception:
         return None
-    return n if 1 <= n <= 10 else None
+    if isinstance(raw, bool) or not 0 < n <= 10:
+        return None
+    return int(n) if n.is_integer() else n
 
 
 def _text(value: Any) -> str:

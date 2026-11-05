@@ -76,8 +76,8 @@
     if (summary) {
       summary.classList.add("cw-import-summary");
       summary.innerHTML =
-        '<span class="cw-import-title">Import provider state</span>' +
-        '<span class="cw-import-help material-symbol" title="Imports selected Watchlist, History, Ratings, or Progress data from a configured provider instance into Current State. Replace baseline refreshes those datasets from the provider; Merge keeps existing baseline rows and adds or updates provider rows. Provider accounts are not changed." aria-label="Import provider state help">help</span>';
+        '<span class="cw-import-title">Debug settings</span>' +
+        '<span class="cw-import-help material-symbol" title="Refreshes the internal sync baseline from the selected provider. Replace rebuilds the selected datasets; Merge keeps existing rows and adds or updates provider rows. Use Tracker import to copy records into your CrossWatch tracker. Provider accounts are not changed." aria-label="Debug settings help">help</span>';
     }
 
     const body = summary ? summary.nextElementSibling : null;

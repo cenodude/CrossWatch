@@ -238,7 +238,7 @@ def build_history_index(
     ordered = sorted(endpoints)
     counts: dict[str, Any] = {"all": len(rows), **{typ: 0 for typ in _TYPES[wanted]}}
     provider_counts: dict[str, int] = {}
-    rating_counts = {str(value): 0 for value in range(1, 11)}
+    rating_counts = {format(value / 2, "g"): 0 for value in range(1, 21)}
     rating_total = 0
     full = 0
     mismatch = 0
@@ -254,9 +254,9 @@ def build_history_index(
             full += 1
         if row["_mismatch"]:
             mismatch += 1
-        rating = dw._as_int(row.get("rating"))
-        if wanted == "ratings" and rating is not None and 1 <= rating <= 10:
-            rating_counts[str(rating)] += 1
+        rating = dw._rating_value(row)
+        if wanted == "ratings" and rating is not None and 0 < rating <= 10:
+            rating_counts[str(rating)] = rating_counts.get(str(rating), 0) + 1
             rating_total += rating
     if wanted == "ratings":
         counts["ratings"] = rating_counts
@@ -367,9 +367,9 @@ def build_history_payload(
         rows = [row for row in rows if row.get("_coverage_comparable", True) and (len(row["_endpoints"]) >= endpoint_total) is want_full]
     elif source == "ratings" and wanted_coverage == "mismatch":
         rows = [row for row in rows if row["_mismatch"]]
-    wanted_rating = dw._as_int(rating) if str(rating or "").strip() else None
+    wanted_rating = dw._rating_value({"rating": rating}) if str(rating or "").strip() else None
     if source == "ratings" and wanted_rating is not None:
-        rows = [row for row in rows if dw._as_int(row.get("rating")) == wanted_rating]
+        rows = [row for row in rows if dw._rating_value(row) == wanted_rating]
     needle = str(search or "").strip().lower()
     if needle:
         rows = [row for row in rows if needle in _search_text(row)]
@@ -419,7 +419,7 @@ def build_history_payload(
             stats["not_comparable"] = not_comparable
     if source == "ratings":
         stats["mismatch"] = int(index.get("mismatch") or 0)
-        stats["average"] = round(int(index.get("rating_total") or 0) / plays, 1) if plays else 0
+        stats["average"] = round(float(index.get("rating_total") or 0) / plays, 1) if plays else 0
     if source == "scrobble":
         stats["hours"] = round(float(index.get("minutes") or 0.0) / 60.0, 1)
 

@@ -219,6 +219,18 @@ def _delete_effects(cfg: Mapping[str, Any], inst: str) -> dict[str, dict[str, li
     return out
 
 
+def _rating(value: Any) -> int | float:
+    if isinstance(value, bool):
+        raise ValueError("invalid_rating")
+    try:
+        rating = float(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("invalid_rating")
+    if not 0.5 <= rating <= 10 or not (rating * 2).is_integer():
+        raise ValueError("invalid_rating")
+    return int(rating) if rating.is_integer() else rating
+
+
 def _iso(value: Any) -> str:
     raw = str(value or "").strip()
     if not raw:
@@ -266,10 +278,9 @@ def _edited(feature: str, item: Mapping[str, Any], changes: Mapping[str, Any]) -
                 raise ValueError("invalid_date")
             out[date_field] = _iso(value)
         elif field == "rating":
-            rating = _int(value)
-            if feature != "ratings" or rating is None or not 1 <= rating <= 10 or str(value).strip() != str(rating):
+            if feature != "ratings":
                 raise ValueError("invalid_rating")
-            out["rating"] = rating
+            out["rating"] = _rating(value)
         elif field == "progress_percent":
             try:
                 pct = float(value)
@@ -622,11 +633,21 @@ def tracker_items(
                 until=_month_end(month),
             )
             checks = store.checks_for(feature, [key for key, _ in rows])
+            ratings = {}
+            if feature != "ratings":
+                for key, item in rows:
+                    matches = store.related(**_identity_of(item, key), feature="ratings")
+                    candidates = [data for _, _, data in matches if data.get("type") in ("movie", "show", "anime") or (
+                        data.get("type") == item.get("type") and data.get("season") == item.get("season") and data.get("episode") == item.get("episode")
+                    )]
+                    candidates.sort(key=lambda data: (data.get("type") == item.get("type"), str(data.get("rated_at") or "")), reverse=True)
+                    ratings[key] = candidates[0].get("rating") if candidates else None
     except TrackerUnreadable:
         return _unreadable()
     items = []
     for key, item in rows:
         row = _row(key, item, feature)
+        row["user_rating"] = row["rating"] if feature == "ratings" else ratings.get(key)
         row["check"] = _check_row(checks.get(key))
         items.append(row)
     return {
@@ -1367,9 +1388,7 @@ def _new_item(feature: str, raw: Mapping[str, Any]) -> dict[str, Any]:
     if feature == "history":
         item["watched_at"] = _iso(raw.get("watched_at") or now)
     elif feature == "ratings":
-        rating = _int(raw.get("rating"))
-        if rating is None or not 1 <= rating <= 10:
-            raise ValueError("invalid_rating")
+        rating = _rating(raw.get("rating"))
         item.update(rating=rating, rated_at=now)
     elif feature == "collection":
         item["collected_at"] = now
