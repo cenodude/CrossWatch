@@ -19,6 +19,8 @@ from ._common import (
     ids_for_scrob,
     iso_z,
     mapping,
+    media_show_ids,
+    media_to_ids,
     not_future,
     ok_status,
     positive_int,
@@ -98,6 +100,7 @@ def _row_to_minimal(adapter: Any, row: Mapping[str, Any], cache: dict[int, dict[
         return None
 
     media_type = str(media.get("type") or "").strip().lower()
+    ids = media_to_ids(media)
     season = as_int(row.get("season_number"))
     out: dict[str, Any]
 
@@ -111,8 +114,8 @@ def _row_to_minimal(adapter: Any, row: Mapping[str, Any], cache: dict[int, dict[
             return None
         out = {
             "type": "episode",
-            "ids": {"tmdb": str(tmdb)},
-            "show_ids": {"tmdb": str(show_tmdb)},
+            "ids": ids,
+            "show_ids": media_show_ids(detail),
             "season": ep_season,
             "episode": ep_number,
         }
@@ -120,11 +123,11 @@ def _row_to_minimal(adapter: Any, row: Mapping[str, Any], cache: dict[int, dict[
         if series_title:
             out["series_title"] = series_title
     elif media_type == MEDIA_TYPE_SERIES and season is not None:
-        out = {"type": "season", "ids": {"tmdb": str(tmdb)}, "show_ids": {"tmdb": str(tmdb)}, "season": season}
+        out = {"type": "season", "ids": ids, "show_ids": dict(ids), "season": season}
     elif media_type == MEDIA_TYPE_SERIES:
-        out = {"type": "show", "ids": {"tmdb": str(tmdb)}}
+        out = {"type": "show", "ids": ids}
     else:
-        out = {"type": "movie", "ids": {"tmdb": str(tmdb)}}
+        out = {"type": "movie", "ids": ids}
         year = year_of(media)
         if year:
             out["year"] = year
