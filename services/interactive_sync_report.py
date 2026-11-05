@@ -7,9 +7,22 @@ from datetime import datetime, timezone
 import json
 import time
 from cw_platform.orchestrator._interactive import fingerprint
+from cw_platform.matching_details import match_details
+from cw_platform.reason_labels import friendly_reason, reason_hint, reason_message
 
 
 COUNTERS = ("added", "updated", "removed", "skipped", "unresolved", "blocked", "errors")
+
+
+def notice_subject(event):
+    attributed = str(event.get("event") or "") == "feature:error"
+    provider = event.get("provider") if attributed else event.get("dst") or event.get("provider")
+    out = {"provider": str(provider or "")[:80]}
+    if attributed and event.get("side"):
+        out["side"] = str(event["side"])[:32]
+    if attributed and event.get("src") and event.get("dst"):
+        out["route"] = f"{event['src']} to {event['dst']}"[:170]
+    return out
 
 
 def count(value):
@@ -63,7 +76,7 @@ class SyncReport:
         else:
             self.detail_omitted[scope] = self.detail_omitted.get(scope, 0) + count(value.get("omitted"))
         instances = {self.pair.get(side + "_instance") or "default" for side in ("source", "target") if self.pair.get(side) == provider}
-        instance = next(iter(instances)) if len(instances) == 1 else ""
+        instance = str(value.get("destination_instance") or (next(iter(instances)) if len(instances) == 1 else ""))[:160]
         for raw in value.get("items") or []:
             if not isinstance(raw, dict):
                 continue
@@ -73,19 +86,25 @@ class SyncReport:
             safe_item: dict[str, object] = {key: str(item[key])[:500] for key in ("title", "name", "type", "year", "season", "episode", "series_title", "show_title") if item.get(key) is not None}
             ids = item.get("ids") or {}
             safe_item["ids"] = {key: str(ids[key])[:128] for key in ("imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist") if isinstance(ids, dict) and ids.get(key)}
+            show_ids = item.get("show_ids")
+            if isinstance(show_ids, dict):
+                safe_item["show_ids"] = {key: str(show_ids[key])[:128] for key in ("imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist") if show_ids.get(key)}
             reason = str(raw.get("reason") or raw.get("hint") or "The provider did not confirm this change.")[:2000]
-            explanation = {
-                "not_found": "The destination provider could not find this item.",
-                "missing_write_ids": "The item is missing IDs required by the destination provider.",
-                "missing_auth": "The destination provider requires authentication.",
-                "rate_limited": "The provider's request limit was reached.",
-                "apply:add:failed": "The provider did not confirm that this item was added.",
-                "apply:add:unaccounted": "The provider response did not account for this item.",
-            }.get(reason, "")
+            explanation = reason_message(reason, provider=provider, feature=feature)
+            provider_hint = reason_hint(raw.get("hint"), reason)
+            if provider_hint:
+                explanation = reason_message(provider_hint, provider=provider, feature=feature) or explanation
             key = str(raw.get("key") or "")[:500]
             row = dict(provider=provider, instance=instance, feature=feature, operation=operation,
                        result="blocked" if raw.get("promoted") else "unresolved" if provisional else "failed",
                        key=key, item=safe_item, reason=reason, explanation=explanation)
+            row["reason_origin"] = "current_attempt"
+            row["reason_label"] = friendly_reason(provider_hint or reason)
+            if provider_hint:
+                row["hint"] = provider_hint
+            details = match_details(raw.get("match_details"))
+            if details:
+                row["match_details"] = details
             self.store.put_report_issue(fingerprint([scope, key or safe_item]), row, provisional)
 
     def event(self, value):
@@ -122,13 +141,14 @@ class SyncReport:
         if not reason:
             return
         feature = str(value.get("feature") or "")[:32]
-        provider = str(value.get("dst") or value.get("provider") or "")[:80]
-        key = (name, feature, provider)
+        subject = notice_subject(value)
+        provider = subject["provider"]
+        key = (name, feature, provider, subject.get("route", ""), str(value.get("src") or "")[:80], str(value.get("dst") or "")[:80])
         if key in self.notices:
             self.notices[key]["occurrences"] += 1
         elif len(self.notices) < 100:
-            self.notices[key] = dict(event=name, feature=feature, provider=provider, reason=reason, occurrences=1,
-                                     detail=str(value.get("detail") or "")[:300])
+            self.notices[key] = dict(event=name, feature=feature, reason=reason, occurrences=1,
+                                     detail=str(value.get("detail") or "")[:300], **subject)
         else:
             self.notice_overflow += 1
 

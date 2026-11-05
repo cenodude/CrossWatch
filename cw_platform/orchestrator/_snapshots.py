@@ -772,6 +772,10 @@ def build_snapshots_for_feature(
                 f"[!] snapshot.failed provider={name} feature={feature} error={e}"
             )
             dbg("snapshot.failed", provider=name, feature=feature)
+            try:
+                setattr(e, "_cw_failed_provider", name)
+            except Exception:
+                pass
             raise
 
         canon = canonicalize_index(idx_raw, feature=feature)

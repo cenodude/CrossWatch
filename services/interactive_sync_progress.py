@@ -72,7 +72,7 @@ class SyncProgress:
             return
         name = str(event.get("event") or "")
         feature = str(event.get("feature") or "")[:32]
-        provider = str(event.get("provider") or event.get("dst") or "")[:80]
+        provider = str(event.get("provider") or ("" if name == "feature:error" else event.get("dst")) or "")[:80]
         done = self.number(event.get("done"))
         total = self.number(event.get("total"), None)
         subject = " ".join(x for x in (provider, feature) if x) or "provider data"

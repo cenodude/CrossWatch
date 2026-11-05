@@ -12,6 +12,8 @@ import time
 
 from ..history_events import history_epoch_from_item, history_event_key, is_history_event_key
 from ..id_map import migrate_media_key, migrate_media_records
+from ..matching_details import match_details
+from ..reason_labels import reason_hint
 
 __all__ = [
     "load_unresolved_keys",
@@ -281,6 +283,9 @@ def load_unresolved_items(dst: str | None = None) -> list[dict[str, Any]]:
             hint = hints.get(ck) if isinstance(hints, dict) else None
             reason = str(hint.get("reason") or "").strip() if isinstance(hint, Mapping) else ""
             rec: dict[str, Any] = {"key": ck, "reason": reason, "feature": feature}
+            provider_hint = reason_hint(hint.get("hint"), reason) if isinstance(hint, Mapping) else ""
+            if provider_hint:
+                rec["hint"] = provider_hint
             item = items.get(ck) if isinstance(items, dict) else None
             if isinstance(item, Mapping):
                 rec["item"] = dict(item)
@@ -311,6 +316,9 @@ def load_unresolved_pending(dst: str, feature: str, instance: str | None = None)
         hint = hints.get(ck)
         reason = str(hint.get("reason") or "").strip() if isinstance(hint, Mapping) else ""
         rec: dict[str, Any] = {"key": ck, "reason": reason, "feature": str(feature).strip().lower()}
+        provider_hint = reason_hint(hint.get("hint"), reason) if isinstance(hint, Mapping) else ""
+        if provider_hint:
+            rec["hint"] = provider_hint
         item = items.get(ck)
         if isinstance(item, Mapping):
             rec["item"] = dict(item)
@@ -412,6 +420,12 @@ def record_unresolved(
             ):
                 continue
             hints[ck] = {"reason": new_reason, "ts": now}
+            provider_hint = reason_hint(it.get("_cw_provider_hint"), new_reason) if isinstance(it, Mapping) else ""
+            if provider_hint:
+                hints[ck]["hint"] = provider_hint
+            details = match_details(it.get("_cw_match_details")) if isinstance(it, Mapping) else {}
+            if details:
+                hints[ck]["match_details"] = details
 
     ok, error = _atomic_write(path, data)
     return {"ok": ok, "count": added if ok else 0, "path": str(path), **({"error": error} if error else {})}

@@ -12,16 +12,18 @@ import time
 from typing import Any
 import uuid
 
+from _logging import _redact_log_text
 from cw_platform.orchestrator import Orchestrator
 from cw_platform.orchestrator._interactive import InteractivePlan, fingerprint
 from cw_platform.value_coercion import coerce_bool
 from cw_platform.interactive_reads import ReviewReads
 from .interactive_sync_store import ReviewStore
 from .interactive_sync_progress import SyncProgress
-from .interactive_sync_report import SyncReport
+from .interactive_sync_report import SyncReport, notice_subject
 
 SESSION_TTL = 24 * 60 * 60
 MAX_SESSIONS = 24
+PRIORITY_NOTICES = frozenset({"feature:error", "playlist:mapping:error"})
 LOCK = threading.RLock()
 SESSIONS: dict[str, Session] = {}
 LOG = logging.getLogger(__name__)
@@ -104,9 +106,14 @@ def build(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, sto
         name = str(event.get("event") or "")
         feature = str(event.get("feature") or "")
         if name in {"history:cloud_read", "feature:error", "feature:unsupported", "pair:skip", "run:pair:skip", "playlist:mapping:error", "writes:skipped"} or "mass_delete" in name or "massdelete" in name:
+            if name in PRIORITY_NOTICES and len(plan.notices) >= 100:
+                replace = next((i for i, notice in enumerate(plan.notices) if notice.get("event") not in PRIORITY_NOTICES), None)
+                if replace is not None:
+                    plan.notices.pop(replace)
             if len(plan.notices) < 100:
                 plan.notices.append(dict(event=name, feature=feature, reason=str(event.get("reason") or name),
-                                         provider=str(event.get("dst") or event.get("provider") or ""), detail=str(event.get("detail") or "")[:300]))
+                                         detail=str(event.get("detail") or "")[:300],
+                                         error=_redact_log_text(event.get("error") or "")[:500], **notice_subject(event)))
 
     mgr = Orchestrator(preview_cfg, on_progress=progress, interactive=plan)
     summary = mgr.run(dry_run=True, pair_scope_ids=[session.pair_id], write_state_json=False)
@@ -172,7 +179,7 @@ def _finish_review(session, cfg, version, plan, summary, store, *, corrections=(
         session.apply_review = None
         session.report = None
         session.status = "review" if summary.get("ok") else "error"
-        session.message = "Review the proposed changes. Nothing has been applied." if summary.get("ok") else "The plan could not be completed. Check provider status and refresh."
+        session.message = "Review the proposed changes. Nothing has been applied." if summary.get("ok") else "The plan could not be completed. Any displayed proposals are partial. Review the failure notices and refresh the plan to retry."
         if corrections and summary.get("ok"):
             session.message = "Mappings saved and the plan recalculated. Review the corrected changes before applying."
         if summary.get("cancelled"):

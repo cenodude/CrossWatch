@@ -2473,7 +2473,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     if promoted_A:
                         clear_unresolved(a, feature, promoted_A, instance=a_cfg.get("_cw_provider_instance"))
                         
-                    _emit_item_failures(emit, a, feature, pair_key, failed_A, k2i_A, _bb_A, instance=a_cfg.get("_cw_provider_instance"))
+                    _emit_item_failures(emit, a, feature, pair_key, failed_A, k2i_A, _bb_A, instance=a_cfg.get("_cw_provider_instance"), failure_details=(resA_add or {}).get("failure_details", {}))
                
                 if success_A and not dry_run_flag:
                     record_success(a, feature, success_A, pair=pair_key, cfg=cfg, instance=a_cfg.get("_cw_provider_instance"))
@@ -2612,7 +2612,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                     if promoted_B:
                         clear_unresolved(b, feature, promoted_B, instance=b_cfg.get("_cw_provider_instance"))
                         
-                    _emit_item_failures(emit, b, feature, pair_key, failed_B, k2i_B, _bb_B, instance=b_cfg.get("_cw_provider_instance"))
+                    _emit_item_failures(emit, b, feature, pair_key, failed_B, k2i_B, _bb_B, instance=b_cfg.get("_cw_provider_instance"), failure_details=(resB_add or {}).get("failure_details", {}))
                 
                 if success_B and not dry_run_flag:
                     record_success(b, feature, success_B, pair=pair_key, cfg=cfg, instance=b_cfg.get("_cw_provider_instance"))

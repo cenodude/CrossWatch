@@ -225,7 +225,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
         rating = _rating_int(item.get("rating"))
         if payload is None or rating is None:
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "missing_supported_id_or_rating"})
+            unresolved.append({"key": key, "status": "missing_supported_id_or_rating", "reason": "missing_supported_id_or_rating", "item": id_minimal(item)})
             _dbg(FEATURE, "item_unresolved_before_write", key=key)
             continue
 
@@ -245,7 +245,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             continue
         ok = False
         unresolved_keys.append(key)
-        unresolved.append({"key": key, "status": f"http:{int(resp.status_code)}", "error": error_of(resp)})
+        unresolved.append({"key": key, "status": f"http:{int(resp.status_code)}", "reason": f"http:{int(resp.status_code)}", "item": id_minimal(item), "error": error_of(resp)})
         _warn(FEATURE, "rating_add_failed", key=key, status=int(resp.status_code), error=error_of(resp))
 
     _dbg(FEATURE, "write_prepare", action="add", items=planned, skipped=len(unresolved_keys))
@@ -273,7 +273,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
         payload = _payload_for(item)
         if payload is None:
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "missing_supported_id"})
+            unresolved.append({"key": key, "status": "missing_supported_id", "reason": "missing_supported_id", "item": id_minimal(item)})
             continue
         if dry_run:
             confirmed.append(key)
@@ -290,7 +290,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             continue
         ok = False
         unresolved_keys.append(key)
-        unresolved.append({"key": key, "status": f"http:{code}", "error": error_of(resp)})
+        unresolved.append({"key": key, "status": f"http:{code}", "reason": f"http:{code}", "item": id_minimal(item), "error": error_of(resp)})
         _warn(FEATURE, "rating_delete_failed", key=key, status=code, error=error_of(resp))
 
     _info(FEATURE, "write_done", action="remove", confirmed=len(confirmed), unresolved=len(unresolved_keys), dry_run=bool(dry_run))

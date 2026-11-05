@@ -480,7 +480,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                     live_loaded = True
                 if live_coverage is None:
                     unresolved_keys.append(key)
-                    unresolved.append({"key": key, "status": "coverage_unavailable"})
+                    unresolved.append({"key": key, "status": "coverage_unavailable", "reason": "coverage_unavailable", "item": id_minimal(item)})
                     continue
                 covered = _covered(live_coverage, target)
             if covered:
@@ -490,7 +490,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
         payload = _payload_for(item)
         if payload is None:
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "missing_supported_id_or_type"})
+            unresolved.append({"key": key, "status": "missing_supported_id_or_type", "reason": "missing_supported_id_or_type", "item": id_minimal(item)})
             _dbg(FEATURE, "item_unresolved_before_write", key=key)
             continue
         path, body = payload
@@ -511,7 +511,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             continue
         ok = False
         unresolved_keys.append(key)
-        unresolved.append({"key": key, "status": f"http:{int(resp.status_code)}", "error": error_of(resp)})
+        unresolved.append({"key": key, "status": f"http:{int(resp.status_code)}", "reason": f"http:{int(resp.status_code)}", "item": id_minimal(item), "error": error_of(resp)})
         _warn(FEATURE, "collection_add_failed", key=key, status=int(resp.status_code), error=error_of(resp))
     present, unconfirmed = _settle_containers(adapter, pending)
     skipped.extend(present)
@@ -533,7 +533,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
         payload = _remove_params(item)
         if payload is None:
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "missing_supported_id_or_type"})
+            unresolved.append({"key": key, "status": "missing_supported_id_or_type", "reason": "missing_supported_id_or_type", "item": id_minimal(item)})
             continue
         path, params = payload
         if dry_run:
@@ -545,7 +545,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             continue
         ok = False
         unresolved_keys.append(key)
-        unresolved.append({"key": key, "status": f"http:{int(resp.status_code)}", "error": error_of(resp)})
+        unresolved.append({"key": key, "status": f"http:{int(resp.status_code)}", "reason": f"http:{int(resp.status_code)}", "item": id_minimal(item), "error": error_of(resp)})
         _warn(FEATURE, "collection_remove_failed", key=key, status=int(resp.status_code), error=error_of(resp))
     _info(FEATURE, "write_done", action="remove", confirmed=len(confirmed), unresolved=len(unresolved_keys), dry_run=bool(dry_run))
     return {"ok": ok, "count": len(confirmed), "confirmed_keys": confirmed, "unresolved_keys": unresolved_keys, "deferred_keys": [], "unresolved": unresolved}

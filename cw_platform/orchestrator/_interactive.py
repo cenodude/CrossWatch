@@ -13,7 +13,8 @@ from collections.abc import Callable, MutableMapping
 
 from ..id_map import canonical_key
 from ..library_presence import REASON as NOT_IN_LIBRARY
-from ..reason_labels import reason_message
+from ..reason_labels import friendly_reason, reason_hint, reason_message
+from ..matching_details import match_details
 
 
 def fingerprint(value: Any) -> str:
@@ -84,15 +85,34 @@ class InteractivePlan:
             if key == "unknown:":
                 reason = "Missing media identifier"
             known = (unresolved or {}).get(key)
-            hint = str((known or {}).get("hint") or (known or {}).get("reason") or "") if isinstance(known, dict) else ""
+            hint = str((known or {}).get("reason") or (known or {}).get("hint") or "") if isinstance(known, dict) else ""
+            previous_hint = hint
             if "|title:" in key and not hint:
                 hint = "No media ID; provider title resolution is required"
             result = "blocked" if reason else ("unresolved" if hint else operation)
             if self.record_rows:
-                self.rows[rid] = dict(deepcopy(payload) if self.copy_rows else payload,
-                                      id=rid, key=key, result=result,
-                                      reason=reason or reason_message(hint, provider=provider, feature=feature) or hint or (f"History episode group: {item['_cw_episode_group']}" if item.get("_cw_episode_group") else ""),
-                                      selectable=not reason)
+                row: dict[str, Any] = dict(deepcopy(payload) if self.copy_rows else payload,
+                           id=rid, key=key, result=result,
+                           reason=reason or reason_message(hint, provider=provider, feature=feature) or hint or (f"History episode group: {item['_cw_episode_group']}" if item.get("_cw_episode_group") else ""),
+                           selectable=not reason)
+                if previous_hint and not reason and isinstance(known, dict):
+                    row["reason_origin"] = "previous_attempt"
+                    row["previous_attempt"] = {"reason": previous_hint}
+                    if isinstance(known.get("ts"), (int, float)) and not isinstance(known["ts"], bool):
+                        row["previous_attempt"]["ts"] = known["ts"]
+                    provider_hint = reason_hint(known.get("hint"), previous_hint)
+                    row["reason_label"] = friendly_reason(provider_hint or previous_hint)
+                    if provider_hint:
+                        row["previous_attempt"]["hint"] = provider_hint
+                        row["reason"] = reason_message(provider_hint, provider=provider, feature=feature) or row["reason"]
+                    message = row["reason"].rstrip()
+                    if not message.endswith((".", "!", "?")):
+                        message += "."
+                    row["reason"] = f"Previous attempt: {message} Select and apply to retry."
+                    details = match_details(known.get("match_details"))
+                    if details:
+                        row["match_details"] = details
+                self.rows[rid] = row
             if valid and not reason and rid in self.selected:
                 self.seen.add(rid)
             if not self.preview and rid in self.selected and not reason and valid:

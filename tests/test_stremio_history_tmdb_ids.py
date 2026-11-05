@@ -622,9 +622,11 @@ def test_scrob_failed_rows_carry_the_item_and_reason() -> None:
     assert (row["status"], row["reason"], row["item"]["ids"]) == ("missing_supported_id", "missing_supported_id", {"imdb": SHAWSHANK})
 
 
-def test_reason_is_readable_for_scrob_only() -> None:
+def test_reason_keeps_scrob_guidance_and_a_neutral_fallback() -> None:
     assert "TMDB ID" in reason_message("missing_supported_id", provider="SCROB", feature="history")
-    assert reason_message("missing_supported_id", provider="TRAKT", feature="history") == ""
+    fallback = reason_message("missing_supported_id", provider="TRAKT", feature="history")
+    assert "supported by this destination" in fallback
+    assert "TMDB" not in fallback
     assert friendly_reason("missing_supported_id") == "Missing supported ID"
 
 

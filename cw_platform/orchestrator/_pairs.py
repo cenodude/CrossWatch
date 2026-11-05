@@ -45,6 +45,21 @@ _SOURCE_ROOTS = ("providers", "cw_platform", "services", "api")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+def failure_attribution(exc: BaseException, src: str, dst: str, mode: str = "one-way") -> dict[str, str]:
+    failed = str(getattr(exc, "_cw_failed_provider", "") or "").upper()
+    if not failed:
+        parts = str(type(exc).__module__).split(".")
+        if len(parts) >= 3 and parts[:2] == ["providers", "sync"]:
+            failed = parts[2].removeprefix("_mod_").upper()
+    src_u, dst_u = str(src or "").upper(), str(dst or "").upper()
+    if not failed or failed not in (src_u, dst_u):
+        return {}
+    side = ""
+    if src_u != dst_u:
+        side = ("side A" if failed == src_u else "side B") if mode == "two-way" else ("source" if failed == src_u else "destination")
+    return {"provider": failed, "side": side} if side else {"provider": failed}
+
+
 def error_detail(exc: BaseException) -> str:
     parts = [type(exc).__name__]
     try:
@@ -721,7 +736,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                         emit("feature:cancelled", src=src, dst=dst, feature=feature)
                         cancelled = True
                     except Exception as e:
-                        emit("feature:error", src=src, dst=dst, feature=feature, error=str(e), detail=error_detail(e), traceback=traceback.format_exc())
+                        emit("feature:error", src=src, dst=dst, feature=feature, error=str(e), detail=error_detail(e), **failure_attribution(e, src, dst, mode), traceback=traceback.format_exc())
                         errors_total += 1
                         continue
                 finally:

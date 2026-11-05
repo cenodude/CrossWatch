@@ -8,6 +8,8 @@ from ._scope import provider_call
 from . import _unresolved as _unresolved_mod
 from ..run_control import SyncCancelled, cancel_requested
 from ..interactive_reads import replaying
+from ..matching_details import match_details
+from ..reason_labels import reason_hint, reason_message
 record_unresolved = cast(Callable[..., dict[str, Any]], getattr(_unresolved_mod, "record_unresolved"))
 
 _UNRESOLVED_EXAMPLE_CAP = 25
@@ -24,7 +26,7 @@ _PASSTHROUGH_KEY_LISTS = (
     "removed_destination_keys",
 )
 
-_PASSTHROUGH_KEY_MAPS = ("confirmed_destinations", "cloud_outcomes")
+_PASSTHROUGH_KEY_MAPS = ("confirmed_destinations", "cloud_outcomes", "failure_details")
 
 def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5, on_retry: Callable[[int, Exception], None] | None = None) -> Any:
     last = None
@@ -212,6 +214,7 @@ def _normalize(
             confirmed = 0
 
     unresolved_list = res.get("unresolved") or []
+    failure_details: dict[str, dict[str, Any]] = {}
     if isinstance(unresolved_list, list) and unresolved_list:
         unresolved_list = _dedupe_unresolved_rows(unresolved_list, feature=feature)
     unresolved_keys: list[str] = []
@@ -251,11 +254,10 @@ def _normalize(
     if isinstance(unresolved_list, list) and unresolved_list:
         def _unwrap(x: Mapping[str, Any]) -> tuple[Mapping[str, Any], str | None]:
             inner = x.get("item")
-            if isinstance(inner, Mapping):
-                hint = x.get("hint") or x.get("reason") or x.get("error")
-                return inner, (str(hint).strip() or None) if hint is not None else None
-            hint = x.get("hint") or x.get("reason") or x.get("error")
-            return x, (str(hint).strip() or None) if hint is not None else None
+            status = str(x.get("status") or "").strip()
+            status_reason = status if reason_message(status, provider=dst, feature=feature) else None
+            hint = x.get("reason") or x.get("hint") or status_reason or x.get("error")
+            return inner if isinstance(inner, Mapping) else x, (str(hint).strip() or None) if hint is not None else None
 
         unresolved_details: list[dict[str, Any]] = []
         reason_counts: dict[str, int] = {}
@@ -267,15 +269,31 @@ def _normalize(
                 continue
             reason_key = str(hint_u) if hint_u else "unknown"
             reason_counts[reason_key] = reason_counts.get(reason_key, 0) + 1
+            details = match_details(raw.get("match_details"))
+            failure: dict[str, Any] = {"reason": str(hint_u or f"{tag}:provider_unresolved")}
+            provider_hint = reason_hint(raw.get("hint"), hint_u)
+            if provider_hint:
+                failure["hint"] = provider_hint
+            if details:
+                failure["match_details"] = details
+            for failure_key in [str(raw.get("key") or ""), *_accounting_keys(item_u)]:
+                if failure_key and failure_key != "unknown:":
+                    failure_details[failure_key] = failure
             if len(unresolved_details) >= _UNRESOLVED_EXAMPLE_CAP:
                 continue
             detail: dict[str, Any] = {}
-            for field in ("type", "title", "name", "year", "season", "episode", "series_title", "show_title"):
+            for field in ("type", "title", "name", "year", "season", "episode", "series_title", "show_title", "ids", "show_ids"):
                 val = item_u.get(field)
                 if val not in (None, ""):
                     detail[field] = val
             if hint_u:
                 detail["reason"] = str(hint_u)
+                detail["explanation"] = reason_message(hint_u, provider=dst, feature=feature)
+            if provider_hint:
+                detail["hint"] = provider_hint
+                detail["explanation"] = reason_message(provider_hint, provider=dst, feature=feature) or detail.get("explanation", "")
+            if details:
+                detail["match_details"] = details
             unresolved_details.append(detail)
 
         _total = len(unresolved_list)
@@ -346,6 +364,12 @@ def _normalize(
                 d = dict(item_u)
                 if hint_u:
                     d["_cw_unresolved_hint"] = hint_u
+                provider_hint = reason_hint(raw.get("hint"), hint_u)
+                if provider_hint:
+                    d["_cw_provider_hint"] = provider_hint
+                details = match_details(raw.get("match_details"))
+                if details:
+                    d["_cw_match_details"] = details
                 to_store.append(d)
 
             if to_store:
@@ -392,6 +416,9 @@ def _normalize(
                 unresolved_keys.append(item_keys[0])
         if leftover:
             unresolved += len(leftover)
+            for item in leftover:
+                for key in _accounting_keys(item):
+                    failure_details[key] = {"reason": f"{tag}:unaccounted"}
             try:
                 record_unresolved(
                     dst,
@@ -435,6 +462,7 @@ def _normalize(
         v = res.get(f)
         if isinstance(v, Mapping):
             out[f] = {str(k): dict(vv) if isinstance(vv, Mapping) else vv for k, vv in v.items()}
+    out["failure_details"] = failure_details
     rc = res.get("reason_counts")
     if isinstance(rc, Mapping):
         out["reason_counts"] = dict(rc)

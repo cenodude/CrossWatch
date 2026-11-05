@@ -19,6 +19,8 @@ import datetime as _dt
 from ._progress_completion import fcfg_for_progress_target
 from ..run_control import cancel_requested
 from ..interactive_reads import read_once
+from ..matching_details import match_details
+from ..reason_labels import reason_hint, reason_message
 
 
 def load_feature_state(state_store: Any, feature: str) -> dict[str, Any]:
@@ -33,19 +35,21 @@ def load_feature_state(state_store: Any, feature: str) -> dict[str, Any]:
     return {}
 
 
-def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res, instance: str | None = None) -> None:
+def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res, instance: str | None = None, failure_details: Mapping[str, Any] | None = None) -> None:
     try:
         prom = set((bb_res or {}).get("promoted_keys") or [])
         all_keys = [k for k in (keys or [])]
         total = len(all_keys)
-        unresolved_reasons = load_unresolved_map(provider, feature, cross_features=False, instance=instance)
+        unresolved_reasons = failure_details if failure_details is not None else load_unresolved_map(provider, feature, cross_features=False, instance=instance)
 
         def _reason_for_key(k: str) -> str:
-            from_state = unresolved_reasons.get(k) if isinstance(unresolved_reasons, dict) else None
+            from_state = unresolved_reasons.get(k) if isinstance(unresolved_reasons, Mapping) else None
             if isinstance(from_state, Mapping):
                 reason = str(from_state.get("reason") or "").strip()
                 if reason:
                     return reason
+            if failure_details is not None:
+                return "apply:add:failed"
             item = key2item.get(k)
             if isinstance(item, Mapping):
                 for field in ("_cw_unresolved_hint", "hint", "reason", "error"):
@@ -59,9 +63,16 @@ def _emit_item_failures(emit, provider, feature, pair, keys, key2item, bb_res, i
             reason = _reason_for_key(k)
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
         items = [
-            {"key": k, "item": key2item.get(k), "promoted": k in prom, "reason": _reason_for_key(k)}
+            {"key": k, "item": key2item.get(k), "promoted": k in prom, "reason": _reason_for_key(k),
+             "explanation": reason_message(_reason_for_key(k), provider=provider, feature=feature),
+             "match_details": match_details((unresolved_reasons.get(k) or {}).get("match_details"))}
             for k in all_keys
         ]
+        for item in items:
+            provider_hint = reason_hint((unresolved_reasons.get(item["key"]) or {}).get("hint"), item["reason"])
+            if provider_hint:
+                item["hint"] = provider_hint
+                item["explanation"] = reason_message(provider_hint, provider=provider, feature=feature) or item["explanation"]
         if prom:
             reason_counts["promoted"] = len(prom & set(all_keys))
         emit(
@@ -2114,7 +2125,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                     if promoted_keys:
                         clear_unresolved(dst, feature, promoted_keys, instance=dst_cfg.get("_cw_provider_instance"))
                         
-                    _emit_item_failures(emit, dst, feature, pair_key, failed_keys, key2item, _bb, instance=dst_cfg.get("_cw_provider_instance"))
+                    _emit_item_failures(emit, dst, feature, pair_key, failed_keys, key2item, _bb, instance=dst_cfg.get("_cw_provider_instance"), failure_details=(add_res or {}).get("failure_details", {}))
                             
                 if success_keys and not ambiguous_partial and not dry_run_flag:
                     record_success(dst, feature, success_keys, pair=pair_key, cfg=cfg, instance=dst_cfg.get("_cw_provider_instance"))

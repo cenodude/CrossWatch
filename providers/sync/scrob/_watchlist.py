@@ -179,7 +179,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
     confirmed: list[str] = []
     unresolved_keys: list[str] = []
     unresolved: list[dict[str, Any]] = []
-    pending: list[tuple[str, dict[str, Any]]] = []
+    pending: list[tuple[str, dict[str, Any], Mapping[str, Any]]] = []
 
     for item in items or []:
         key = _key_of(item)
@@ -188,10 +188,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
         payload = _payload_for(item)
         if payload is None:
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "missing_supported_id_or_type"})
+            unresolved.append({"key": key, "status": "missing_supported_id_or_type", "reason": "missing_supported_id_or_type", "item": id_minimal(item)})
             _dbg(FEATURE, "item_unresolved_before_write", key=key)
             continue
-        pending.append((key, payload))
+        pending.append((key, payload, item))
 
     if not pending:
         return {
@@ -209,7 +209,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
         return {
             "ok": True,
             "count": len(pending),
-            "confirmed_keys": [key for key, _ in pending],
+            "confirmed_keys": [entry[0] for entry in pending],
             "unresolved_keys": unresolved_keys,
             "deferred_keys": [],
             "unresolved": unresolved,
@@ -217,9 +217,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
 
     list_id = resolve_list_id(adapter, create=True)
     if not list_id:
-        for key, _ in pending:
+        for key, _, item in pending:
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "watchlist_unavailable"})
+            unresolved.append({"key": key, "status": "watchlist_unavailable", "reason": "watchlist_unavailable", "item": id_minimal(item)})
         return {
             "ok": False,
             "count": 0,
@@ -230,7 +230,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
         }
 
     ok = True
-    for key, payload in pending:
+    for key, payload, item in pending:
         resp = scrob_request(adapter, "POST", PATH_LIST_ITEMS.format(list_id=list_id), json=payload)
         code = int(resp.status_code)
         if ok_status(resp) or code == 409:
@@ -238,7 +238,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             continue
         ok = False
         unresolved_keys.append(key)
-        unresolved.append({"key": key, "status": f"http:{code}", "error": error_of(resp)})
+        unresolved.append({"key": key, "status": f"http:{code}", "reason": f"http:{code}", "item": id_minimal(item), "error": error_of(resp)})
         _warn(FEATURE, "watchlist_add_failed", key=key, status=code, error=error_of(resp))
 
     _info(FEATURE, "write_done", action="add", confirmed=len(confirmed), unresolved=len(unresolved_keys))
@@ -266,7 +266,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
         return {
             "ok": True,
             "count": len(pending),
-            "confirmed_keys": [key for key, _ in pending],
+            "confirmed_keys": [entry[0] for entry in pending],
             "unresolved_keys": [],
             "deferred_keys": [],
             "unresolved": [],
@@ -284,7 +284,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             item_id = item_id or positive_int(known.get(LIST_ITEM_ID_FIELD))
         if not (list_id and item_id):
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "missing_list_item_id"})
+            unresolved.append({"key": key, "status": "missing_list_item_id", "reason": "missing_list_item_id", "item": id_minimal(item)})
             _dbg(FEATURE, "item_unresolved_before_write", key=key, reason="missing_list_item_id")
             continue
 
@@ -295,7 +295,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             continue
         ok = False
         unresolved_keys.append(key)
-        unresolved.append({"key": key, "status": f"http:{code}", "error": error_of(resp)})
+        unresolved.append({"key": key, "status": f"http:{code}", "reason": f"http:{code}", "item": id_minimal(item), "error": error_of(resp)})
         _warn(FEATURE, "watchlist_remove_failed", key=key, status=code, error=error_of(resp))
 
     _info(FEATURE, "write_done", action="remove", confirmed=len(confirmed), unresolved=len(unresolved_keys))

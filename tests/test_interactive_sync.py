@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 
 import pytest
 
@@ -379,6 +380,70 @@ def test_failed_preflight_does_not_report_provider_changes(config_base, monkeypa
         assert session.status == "error"
         assert "local plan check could not be completed" in session.message
         assert session.public()["apply_review"]["applied"] == 0
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("prior_notices", [0, 100])
+@pytest.mark.parametrize("error", [
+    "History read could not finish <details>",
+    "HTTPSConnectionPool: request failed for https://example.test/history?apikey=SECRET&page=2",
+    "Request failed for https://example.test/history?apikey=" + "SECRET" * 200 + "&page=2 " + "x" * 1000,
+])
+def test_failed_history_plan_retains_partial_progress_and_error_notice(config_base, monkeypatch, prior_notices, error):
+    from services import interactive_sync as svc
+    from services.interactive_sync_export import build_export, capture_export, export_chunks
+
+    class FailedHistoryPlan:
+        def __init__(self, cfg, *, on_progress, interactive):
+            self.progress = on_progress
+            self.plan = interactive
+
+        def run(self, **kwargs):
+            for _ in range(prior_notices):
+                self.progress(json.dumps(dict(event="writes:skipped", feature="progress", reason="preview")))
+            self.plan.filter("progress", "FLOPPY", "default", "add",
+                             [item(1, progress_percent=25), item(2, progress_percent=40)], source="WETRAKR")
+            self.progress(json.dumps(dict(event="feature:error", feature="history", src="WETRAKR", dst="FLOPPY",
+                                          provider="WETRAKR", side="source",
+                                          error=error, detail="provider diagnostic",
+                                          traceback="internal traceback")))
+            return dict(ok=False, errors=1)
+
+    monkeypatch.setattr(svc, "Orchestrator", FailedHistoryPlan)
+    monkeypatch.setattr(svc, "mapping_version", lambda cfg: "test")
+    monkeypatch.setattr(svc, "apply", lambda *a, **kw: pytest.fail("A partial plan must not execute"))
+    session = svc.Session(pair_id="p1", owner="local", pair=dict(source="WETRAKR", target="FLOPPY"))
+    try:
+        svc.refresh(session, {}, {})
+        public = session.public()
+        assert public["status"] == "error"
+        assert "partial" in public["message"]
+        assert public["counts"]["changes"] == 2
+        assert public["counts"]["attention"] == 0
+        assert public["features"] == ["progress"]
+        assert len(session.plan.rows) == 2
+        notice = next(n for n in public["notices"] if n["event"] == "feature:error")
+        assert notice["feature"] == "history" and notice["provider"] == "WETRAKR"
+        assert notice["side"] == "source" and notice["route"] == "WETRAKR to FLOPPY"
+        if "apikey=" in error:
+            assert "https://example.test/history?apikey=" in notice["error"]
+            assert "&page=2" in notice["error"]
+        else:
+            assert notice["error"] == error
+        assert "SECRET" not in json.dumps(public)
+        assert len(notice["error"]) <= 500
+        assert notice["detail"] == "provider diagnostic"
+        assert "traceback" not in notice
+        assert len(public["notices"]) <= 100
+        snapshot = capture_export(session)
+        try:
+            exported = b"".join(export_chunks(build_export(snapshot, format="json")))
+        finally:
+            snapshot.store.close()
+        assert b"SECRET" not in exported
+        exported_notice = next(n for n in json.loads(exported)["notices"] if n["event"] == "feature:error")
+        assert exported_notice["error"] == notice["error"]
     finally:
         session.close()
 
