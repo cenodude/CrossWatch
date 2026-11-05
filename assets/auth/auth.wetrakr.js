@@ -75,7 +75,7 @@
     const button = el("wetrakr_oauth_start");
     button.classList.add("busy");
     button.disabled = true;
-    try { popup = window.open("about:blank", "_blank"); if (popup) popup.opener = null; } catch (_) {}
+    popup = Shared.openWaitWindow("WeTrakr", "Preparing the WeTrakr approval page...");
     const win = popup;
     try {
       if (previous) await post("oauth/cancel", previous.instance, { flow_id: previous.flow_id });
