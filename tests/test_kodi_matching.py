@@ -10,7 +10,7 @@ import pytest
 
 from cw_platform.id_map import canonical_key
 from cw_platform import library_presence
-from providers.sync.kodi import _history, _presence, _progress, _ratings
+from providers.sync.kodi import _common, _history, _presence, _progress, _ratings
 from providers.sync.kodi._common import LibraryIndex, resolution_keys
 from providers.sync.scrob._common import item_from_media
 
@@ -52,6 +52,50 @@ def test_same_type_duplicate_remains_ambiguous():
     target, reason = library(duplicate=True).resolve({"type": "movie", "ids": {"tmdb": "1236045"}})
     assert target is None
     assert reason == "ambiguous"
+
+
+UNKNOWN_PARENT_EPISODE = {"episodeid": 99, "tvshowid": 5, "showtitle": "Unscraped", "season": 2, "episode": 1,
+                          "uniqueid": {"tmdb": "1422"}}
+OTHER_SHOW_EPISODE = {"type": "episode", "show_ids": {"tmdb": "1422"}, "season": 2, "episode": 1}
+
+
+@pytest.mark.parametrize("shows", [[], [{"tvshowid": 5, "uniqueid": {}}]])
+def test_episode_without_show_ids_is_skipped(shows):
+    index = LibraryIndex([], [UNKNOWN_PARENT_EPISODE], shows)
+    assert index.items == []
+    assert index.unidentified_shows == {"Unscraped": 1}
+    assert index.resolve(OTHER_SHOW_EPISODE) == (None, "not_found")
+    assert index.resolve({"type": "episode", "ids": {"tmdb": "1422"}}) == (None, "not_found")
+
+
+@pytest.mark.parametrize("feature", [_history, _progress, _ratings])
+@pytest.mark.parametrize("operation", ["add", "remove"])
+def test_episode_without_show_ids_never_reaches_a_write(feature, operation):
+    client = Mock()
+    adapter = SimpleNamespace(client=client)
+    setattr(adapter, "_kodi_library_index_" + feature.__name__.rsplit("_", 1)[-1],
+            LibraryIndex([], [UNKNOWN_PARENT_EPISODE], []))
+    result = getattr(feature, operation)(adapter, [OTHER_SHOW_EPISODE])
+    assert result["count"] == 0 and result["reason_counts"] == {"not_found": 1}
+    assert not client.mock_calls
+
+
+def test_episode_with_show_ids_still_matches_by_coordinates():
+    index = LibraryIndex([], [UNKNOWN_PARENT_EPISODE], [{"tvshowid": 5, "uniqueid": {"tmdb": "9999"}}])
+    assert index.unidentified_shows == {}
+    assert canonical_key(index.items[0]) == "tmdb:9999#s02e01"
+    target, reason = index.resolve({"type": "episode", "show_ids": {"tmdb": "9999"}, "season": 2, "episode": 1})
+    assert reason == "ok" and target["_kodi_id"] == 99
+    assert index.resolve(OTHER_SHOW_EPISODE) == (None, "not_found")
+
+
+def test_library_index_warns_about_shows_without_ids(monkeypatch):
+    logs = []
+    monkeypatch.setattr(_common, "log", lambda feature, level, event, **fields: logs.append((feature, level, event, fields)))
+    client = SimpleNamespace(library_rows=lambda feature, path_filter=None: ([], [UNKNOWN_PARENT_EPISODE], []))
+    _common.library_index(SimpleNamespace(client=client, config={}, instance_id="default"), "history")
+    warnings = [fields for _, level, event, fields in logs if level == "warning" and event == "show_ids_missing"]
+    assert warnings == [{"episodes": 1, "shows": ["Unscraped"], "hint": warnings[0]["hint"]}]
 
 
 def test_wrong_media_type_is_not_library_presence():

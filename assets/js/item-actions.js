@@ -614,7 +614,7 @@
 
     function head(symbol, title, sub, logoProvider = "") {
       const mark = logoProvider ? logoHtml(logoProvider) : `<span class="cw-ia-logo is-icon">${icon(symbol)}</span>`;
-      return `<div class="cw-ia-head">${mark}<span class="cw-ia-head-copy"><strong>${esc(title)}</strong><small>${esc(sub)}</small></span></div>`;
+      return `<div class="cw-ia-head">${mark}<span class="cw-ia-head-copy"><strong>${esc(title)}</strong>${sub ? `<small>${esc(sub)}</small>` : ""}</span></div>`;
     }
 
     function links() {
@@ -654,7 +654,7 @@
       const present = (refs.present || []).some((ref) => refKey(ref) === refKey(focus));
       const name = providerName(focus.provider);
       const rating = present && feature === "ratings" ? ratingOf(ctx, focus) : null;
-      const sub = present ? (rating ? `Rated ${rating}/10` : FEATURES[feature].present) : FEATURES[feature].missing;
+      const sub = feature === "ratings" ? "" : present ? FEATURES[feature].present : FEATURES[feature].missing;
       const top = head("", `${name} · ${accountName(focus, list)}`, sub, focus.provider);
       const body = [];
       const unpaired = list.some((row) => refKey(row) === refKey(focus) && row.in_pair === false);
@@ -663,14 +663,13 @@
       } else if (present) {
         if (feature === "ratings") {
           body.push(ratingStars());
-          if (score !== rating) body.push(item("add-one", "star", `Change to ${score} on ${name}`, "accent"));
         }
         const armed = isArmed("one");
         body.push(item("remove-one", armed ? "warning" : "delete", armed ? "Click again to remove every watch here" : removeLabel(name), "danger"));
       } else {
         if (feature === "ratings") body.push(ratingStars());
         body.push(whenHtml());
-        body.push(item("add-one", feature === "ratings" ? "star" : "add", addLabel(name), "accent", dateReady() ? "" : " disabled"));
+        if (feature !== "ratings") body.push(item("add-one", "add", addLabel(name), "accent", dateReady() ? "" : " disabled"));
       }
       if (unpaired) body.push(`<p class="cw-ia-note">${icon("info")}${esc(pairNote())}</p>`);
       return `${top}<div class="cw-ia-list">${body.join("")}</div>${links()}`;
@@ -818,6 +817,13 @@
       }
       if (action === "score") {
         score = Number(button.dataset.iaScore);
+        if (current.focus && writable(current.focus)) {
+          const present = (current.refs.present || []).some(ref => refKey(ref) === refKey(current.focus));
+          const unchanged = present && score === ratingOf(current, current.focus);
+          close(true);
+          if (!unchanged) void run(addJob(current, [current.focus], list, { fields: { rating: score }, noUndo: true }));
+          return;
+        }
         render();
         el.querySelector(`[data-ia-score="${score}"]`)?.focus({ preventScroll: true });
         return;
@@ -921,7 +927,7 @@
         ctx.refs.missing = [...ctx.refs.missing, ...result.rows.filter((row) => !seen.has(refKey(row))).map(cleanRef)];
       }
       render();
-      el.querySelector("button,input")?.focus({ preventScroll: true });
+      (el.querySelector(`[data-ia-score="${score}"]`) || el.querySelector("button,input"))?.focus({ preventScroll: true });
       return true;
     }
 

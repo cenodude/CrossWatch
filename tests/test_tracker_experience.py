@@ -177,6 +177,21 @@ def test_shows_view_lists_progress_per_show(client):
     assert client.get("/api/tracker/shows", params={"q": "thrones"}).json()["shows"][0]["key"] == "tmdb:1399"
 
 
+@pytest.mark.parametrize("query", ["S01E02", "s1e2", "Severance S01E02", "s02 severance", "S02E01 Severance"])
+def test_shows_search_episode_codes_preserves_complete_summary(client, query):
+    data = client.get("/api/tracker/shows", params={"q": query}).json()
+    assert data["total"] == 1
+    show = data["shows"][0]
+    assert show["title"] == "Severance"
+    assert show["episodes"] == 3
+    assert (show["last_season"], show["last_episode"]) == (1, 2)
+
+
+@pytest.mark.parametrize("query", ["S01E03", "Thrones S02E01", "S01E020"])
+def test_shows_search_requires_a_matching_watched_episode(client, query):
+    assert client.get("/api/tracker/shows", params={"q": query}).json()["total"] == 0
+
+
 def test_show_progress_finds_the_next_episode(client):
     data = client.get("/api/tracker/show-progress", params={"tmdb": "95396"}).json()
     assert (data["total"], data["watched"]) == (19, 3)
