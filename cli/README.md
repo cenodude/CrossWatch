@@ -227,6 +227,12 @@ Silo asks for the server URL first, then shows a code to approve on the server's
 cw auth login silo --field silo.server_url=http://silo.local:8090 --profile Alice
 ```
 
+Tofa works the same way, but the code is approved with your Tofa account on app.tofa.tv:
+
+```
+cw auth login tofa --field tofa.server_url=http://tofa.local:33333 --profile Alice
+```
+
 Jellyfin, Emby, Kodi, Stremio, Floppy, Scrob, Tautulli, Tracearr, PublicMetaDB and TMDb ask for fields. Trakt, SIMKL and AniList want a client id and secret first. Pass them instead of typing them if you are scripting:
 
 ```

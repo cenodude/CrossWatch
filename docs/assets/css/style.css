@@ -360,6 +360,10 @@ a[href="#content"],
   border-color: rgba(253, 117, 92, .28);
 }
 
+.cw-provider-card.is-tofa {
+  border-color: rgba(8, 214, 184, .28);
+}
+
 .cw-provider-card.is-plex,
 .cw-provider-card.is-silo,
 .cw-provider-card.is-mdblist,
