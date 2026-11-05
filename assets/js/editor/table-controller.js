@@ -171,6 +171,7 @@
       syncSelectPageCheckbox: ctx.syncSelectPageCheckbox,
       updateTypeDisplay: ctx.updateTypeDisplay,
       updateExtraDisplay: ctx.updateExtraDisplay,
+      createDateTimeEditor: ctx.createDateTimeEditor,
       formatEpisodeVisualTitle: ctx.formatEpisodeVisualTitle,
       formatSxxEyy: ctx.formatSxxEyy,
       openTypeEditor: ctx.openTypeEditor,
@@ -232,7 +233,7 @@
         const label = ctx.empty.querySelector(".cw-empty-text");
         const icon = ctx.empty.querySelector(".cw-empty-icon");
         if (label) label.textContent = state.loadError ? "Could not load Editor data. Try Refresh."
-          : state.loading ? "Loading Editor data…" : "Nothing to show here. Try another list or provider, or use Quick add.";
+          : state.loading ? "Loading Editor dataâ€¦" : "Nothing to show here. Try another list or provider, or use Quick add.";
         if (icon) icon.textContent = state.loadError ? "error_outline" : state.loading ? "hourglass_empty" : "table_rows";
         const main = ctx.empty.closest(".cw-main");
         if (main) main.classList.add("cw-main-empty");
@@ -240,7 +241,7 @@
       if (ctx.pager) ctx.pager.style.display = "none";
       if (ctx.summaryVisible) ctx.summaryVisible.textContent = "0";
       if (ctx.summaryTotal) ctx.summaryTotal.textContent = String(totalAll || 0);
-      ctx.setStatus(state.loading ? "Loading Editor data…" : "0 rows visible");
+      ctx.setStatus(state.loading ? "Loading Editor dataâ€¦" : "0 rows visible");
       state.pageRids = [];
       ctx.syncSelectPageCheckbox();
       ctx.syncBulkBar();
@@ -301,7 +302,7 @@
     if (ctx.summaryVisible) ctx.summaryVisible.textContent = String(vis);
     if (ctx.summaryTotal) ctx.summaryTotal.textContent = String(totalAll);
 
-    if (ctx.pageInfo) ctx.pageInfo.textContent = `Page ${state.page + 1} of ${pageCount} • ${unitLabel === "rows" ? "Rows" : "Titles"} ${first}-${last} of ${totalUnits}`;
+    if (ctx.pageInfo) ctx.pageInfo.textContent = `Page ${state.page + 1} of ${pageCount} â€¢ ${unitLabel === "rows" ? "Rows" : "Titles"} ${first}-${last} of ${totalUnits}`;
     if (ctx.pager) ctx.pager.style.display = pageCount > 1 ? "flex" : "none";
     if (ctx.prevBtn) ctx.prevBtn.disabled = state.page <= 0;
     if (ctx.nextBtn) ctx.nextBtn.disabled = state.page >= pageCount - 1;

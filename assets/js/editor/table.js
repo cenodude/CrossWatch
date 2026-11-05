@@ -61,7 +61,7 @@
         chip.appendChild(text);
       }
       if (entry) {
-        chip.title = [unverified ? `Sent to ${name}` : `On ${name}`, entry[1] > 1 ? `${entry[1]} entries` : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" Â· ")
+        chip.title = [unverified ? `Sent to ${name}` : `On ${name}`, entry[1] > 1 ? `${entry[1]} entries` : "", entry[2] != null ? String(entry[2]) : ""].filter(Boolean).join(" Ã‚Â· ")
           + (unverified ? ". Not validated, missing sync pair." : "");
         chip.setAttribute("role", "img");
         chip.setAttribute("aria-label", chip.title);
@@ -382,15 +382,20 @@
     dataCells.simkl = cell(simklIn, "cw-col-simkl");
     dataCells.anilist = cell(anilistIn, "cw-col-anilist");
 
-    const extraBtn = document.createElement("button");
-    extraBtn.type = "button";
-    extraBtn.className = "cw-extra-display";
-    call(ctx, "updateExtraDisplay", row, extraBtn);
+    const inlineDate = !ctx.merged && (state.kind === "history" || state.kind === "collection") && ctx.createDateTimeEditor;
+    const extraBtn = inlineDate ? ctx.createDateTimeEditor(row) : document.createElement("button");
+    if (!inlineDate) {
+      extraBtn.type = "button";
+      extraBtn.className = "cw-extra-display";
+      call(ctx, "updateExtraDisplay", row, extraBtn);
+    }
 
     if (!call(ctx, "isExtraKindEditable")) {
       extraBtn.disabled = true;
       extraBtn.style.opacity = "0.6";
       extraBtn.style.cursor = "default";
+    } else if (inlineDate) {
+      extraBtn.disabled = false;
     } else if (state.kind === "ratings") {
       extraBtn.onclick = () => call(ctx, "openRatingEditor", row, extraBtn, extraBtn);
     } else if (state.kind === "history") {

@@ -274,7 +274,7 @@
   }
 
   function episodeLabel(item) {
-    if (item.type === "episode" && item.season != null && item.episode != null) return `S${pad(item.season)} · E${pad(item.episode)}`;
+    if (item.type === "episode" && item.season != null && item.episode != null) return `S${pad(item.season)} Ãƒâ€šÃ‚Â· E${pad(item.episode)}`;
     if (item.type === "season" && item.season != null) return `Season ${item.season}`;
     return "";
   }
@@ -286,7 +286,7 @@
 
   function cardSub(item) {
     const year = isChild(item) ? item.series_year : item.year;
-    return [episodeLabel(item), year ? String(year) : ""].filter(Boolean).join(" · ");
+    return [episodeLabel(item), year ? String(year) : ""].filter(Boolean).join(" Ãƒâ€šÃ‚Â· ");
   }
 
   function typeMeta(item) {
@@ -352,7 +352,7 @@
     if (!check?.checked_at) return "";
     const parts = [`Checked ${whenText(check.checked_at)}`];
     if (check.source === "cache" && check.fetched_at) parts.push(`TMDB data from ${dateText(check.fetched_at)}`);
-    return parts.join(" · ");
+    return parts.join(" Ãƒâ€šÃ‚Â· ");
   }
 
   function checkInfo(item) {
@@ -382,7 +382,7 @@
   function healthIcon(item, always = false) {
     const info = checkInfo(item);
     if (!always && info.state !== "attention") return "";
-    const label = [info.title, info.text, checkedText(item.check)].filter(Boolean).join(" · ");
+    const label = [info.title, info.text, checkedText(item.check)].filter(Boolean).join(" Ãƒâ€šÃ‚Â· ");
     return `<span class="trk-health is-${info.state}" title="${esc(label)}" aria-label="${esc(info.title)}">${symbol(info.state === "attention" ? "report" : info.state === "ok" ? "verified" : "help")}</span>`;
   }
 
@@ -396,7 +396,7 @@
 
   function renderHero() {
     const s = state.stats || {};
-    const hours = s.timed ? num(Math.round((s.minutes || 0) / 60)) : "–";
+    const hours = s.timed ? num(Math.round((s.minutes || 0) / 60)) : "ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“";
     return `
       <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.week))}</strong><span>last 7 days</span></div>
       <div class="cw-editor-hero-seg cw-editor-hero-count"><strong>${esc(num(s.month))}</strong><span>last 30 days</span></div>
@@ -437,8 +437,8 @@
 
   function renderFilters() {
     if (state.view === "cleanup") {
-      const lists = FEATURES.map((f) => `<option value="${f.id}"${f.id === state.cleanFeature ? " selected" : ""}>${esc(f.label)} · ${esc(num(state.health?.[f.id]?.attention))}</option>`).join("");
-      const health = HEALTH.map((h) => chip(`data-trk-health="${h.id}"`, `${h.label} · ${num(healthOf()[h.id])}`, { active: state.healthFilter === h.id, iconName: h.icon })).join("");
+      const lists = FEATURES.map((f) => `<option value="${f.id}"${f.id === state.cleanFeature ? " selected" : ""}>${esc(f.label)} Ãƒâ€šÃ‚Â· ${esc(num(state.health?.[f.id]?.attention))}</option>`).join("");
+      const health = HEALTH.map((h) => chip(`data-trk-health="${h.id}"`, `${h.label} Ãƒâ€šÃ‚Â· ${num(healthOf()[h.id])}`, { active: state.healthFilter === h.id, iconName: h.icon })).join("");
       return `<select class="cw-select trk-clean-list" data-trk-input="clean-feature" aria-label="List to clean up">${lists}</select><div class="trk-seg" role="group" aria-label="TMDB health">${health}</div>`;
     }
     if (state.view === "shows") {
@@ -452,7 +452,7 @@
       const tags = state.notes.tags || [];
       const picked = state.noteTag.toLowerCase();
       const tagSelect = tags.length || state.noteTag
-        ? `<select class="cw-select trk-tag-filter" data-trk-input="note-tag" aria-label="Filter by tag"><option value="">Every tag</option>${tags.map((t) => `<option value="${esc(t.tag)}"${t.tag.toLowerCase() === picked ? " selected" : ""}>${esc(t.tag)} · ${esc(num(t.count))}</option>`).join("")}</select>`
+        ? `<select class="cw-select trk-tag-filter" data-trk-input="note-tag" aria-label="Filter by tag"><option value="">Every tag</option>${tags.map((t) => `<option value="${esc(t.tag)}"${t.tag.toLowerCase() === picked ? " selected" : ""}>${esc(t.tag)} Ãƒâ€šÃ‚Â· ${esc(num(t.count))}</option>`).join("")}</select>`
         : "";
       return `<div class="trk-seg" role="group" aria-label="Status">${statuses}</div>${tagSelect}`;
     }
@@ -496,7 +496,7 @@
     const nav = state.total > state.pageSize
       ? `<div class="trk-pager-nav">
           <button type="button" class="cw-btn" data-trk-action="prev"${state.offset > 0 && !state.loading ? "" : " disabled"}>Previous</button>
-          <span class="cw-page-info">${esc(num(start))}–${esc(num(end))} of ${esc(num(state.total))}</span>
+          <span class="cw-page-info">${esc(num(start))}ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“${esc(num(end))} of ${esc(num(state.total))}</span>
           <button type="button" class="cw-btn" data-trk-action="next"${end < state.total && !state.loading ? "" : " disabled"}>Next</button>
         </div>`
       : "";
@@ -553,7 +553,7 @@
     if (seasons.size === 1) {
       const nums = eps.map((e) => e.episode);
       const contiguous = nums.every((n, i) => i === 0 || n === nums[i - 1] + 1);
-      return contiguous ? `${se(eps[0].season, nums[0])}–E${pad(nums[nums.length - 1])}` : `S${pad(eps[0].season)} · ${plural(eps.length, "episode", "episodes")}`;
+      return contiguous ? `${se(eps[0].season, nums[0])}ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“E${pad(nums[nums.length - 1])}` : `S${pad(eps[0].season)} Ãƒâ€šÃ‚Â· ${plural(eps.length, "episode", "episodes")}`;
     }
     return plural(eps.length, "episode", "episodes");
   }
@@ -596,7 +596,7 @@
   function progressCell(show) {
     const tmdb = show.art?.tmdb;
     const p = tmdb ? state.progress[tmdb] : null;
-    if (!p || !p.available) return `<span class="trk-sub">${tmdb && !p ? "…" : esc(plural(show.episodes, "episode", "episodes"))}</span>`;
+    if (!p || !p.available) return `<span class="trk-sub">${tmdb && !p ? "ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦" : esc(plural(show.episodes, "episode", "episodes"))}</span>`;
     const pct = p.total ? Math.min(100, Math.round((p.watched / p.total) * 100)) : 0;
     return `<span class="trk-progress"><i style="width:${pct}%"></i></span><span class="trk-progress-text">${esc(num(p.watched))}/${esc(num(p.total))}</span>`;
   }
@@ -617,7 +617,7 @@
       const selected = state.ref?.show === show.key;
       const last = show.last_season != null ? `last ${se(show.last_season, show.last_episode)}` : "";
       return `<tr class="trk-play${selected ? " is-selected" : ""}" data-trk-ref-show="${esc(show.key)}" tabindex="0" aria-selected="${selected}">
-          <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(show.title || show.key)}</strong>${statusPill(show.status)}</div><span class="trk-sub">${esc([show.year, last].filter(Boolean).join(" · "))}</span></div></td>
+          <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(show.title || show.key)}</strong>${statusPill(show.status)}</div><span class="trk-sub">${esc([show.year, last].filter(Boolean).join(" Ãƒâ€šÃ‚Â· "))}</span></div></td>
           <td class="trk-col-progress">${progressCell(show)}</td>
           <td class="trk-col-next">${nextCell(show)}</td>
           <td class="trk-col-date">${esc(agoText(show.last_watched))}</td>
@@ -636,7 +636,7 @@
     }
     const body = state.noteRows.map((n) => {
       const selected = state.ref?.note === n.key;
-      const dates = [n.started ? `Started ${dayText(n.started)}` : "", n.finished ? `Finished ${dayText(n.finished)}` : ""].filter(Boolean).join(" · ");
+      const dates = [n.started ? `Started ${dayText(n.started)}` : "", n.finished ? `Finished ${dayText(n.finished)}` : ""].filter(Boolean).join(" Ãƒâ€šÃ‚Â· ");
       return `<tr class="trk-play${selected ? " is-selected" : ""}" data-trk-ref-note="${esc(n.key)}" tabindex="0" aria-selected="${selected}">
           <td class="cw-col-type">${typePill({ type: n.type })}</td>
           <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(n.title || n.key)}</strong>${n.year ? `<span class="trk-inline-sub">${esc(n.year)}</span>` : ""}</div>${dates ? `<span class="trk-sub">${esc(dates)}</span>` : ""}${tagChips(n.tags, 5)}</div></td>
@@ -711,7 +711,7 @@
     const from = importSource(job);
     if (job.state === "running") {
       const writing = job.phase === "writing" && job.total;
-      const step = Number(job.feature_count) > 1 ? ` · list ${num(job.feature_index)} of ${num(job.feature_count)}` : "";
+      const step = Number(job.feature_count) > 1 ? ` Ãƒâ€šÃ‚Â· list ${num(job.feature_index)} of ${num(job.feature_count)}` : "";
       const text = job.cancel_requested ? "Stopping after the current batch..."
         : writing ? `Writing ${num(job.done)} of ${num(job.total)}${step}`
         : job.phase === "reading" ? `Reading ${from} and matching IDs${step}. Large libraries can take a while.`
@@ -720,11 +720,11 @@
       return `<div class="trk-detail-health trk-import is-running" role="status">${symbol("download")}<div><strong>Importing from ${esc(from)}</strong><span>${esc(text)}</span><div class="trk-meter${writing ? "" : " is-busy"}" aria-hidden="true"><i${writing ? ` style="width:${pct}%"` : ""}></i></div></div><button type="button" class="cw-btn" data-trk-action="import-cancel"${job.cancel_requested ? " disabled" : ""}>${icon("stop_circle")}<span>Stop</span></button></div>`;
     }
     const added = Number(job.added || 0);
-    const extra = [Number(job.unresolved) ? `${num(job.unresolved)} could not be matched` : "", Number(job.errors) ? `${plural(job.errors, "error", "errors")}` : ""].filter(Boolean).join(" · ");
+    const extra = [Number(job.unresolved) ? `${num(job.unresolved)} could not be matched` : "", Number(job.errors) ? `${plural(job.errors, "error", "errors")}` : ""].filter(Boolean).join(" Ãƒâ€šÃ‚Â· ");
     let title, text, tone = "is-ok", mark = "check_circle";
     if (job.state === "completed") {
       title = `Import from ${from} finished`;
-      text = added ? `${plural(added, "record", "records")} added${extra ? ` · ${extra}` : ""}.` : extra ? `Nothing new added · ${extra}.` : "Nothing new to add. Everything was already here.";
+      text = added ? `${plural(added, "record", "records")} added${extra ? ` Ãƒâ€šÃ‚Â· ${extra}` : ""}.` : extra ? `Nothing new added Ãƒâ€šÃ‚Â· ${extra}.` : "Nothing new to add. Everything was already here.";
     } else if (job.state === "cancelled") {
       title = `Import from ${from} stopped`;
       text = `${plural(added, "record was", "records were")} added before it stopped. Run it again to continue; records already here are skipped.`;
@@ -760,7 +760,23 @@
     return `<div class="ins-row"><div class="ins-kv"><label for="trk-instance">Tracker</label><select id="trk-instance" class="cw-select" data-trk-input="instance">${instances}</select></div></div>`;
   }
 
+  function updateHeroBackdrop() {
+    const image = state.root?.querySelector(".trk-hero-backdrop");
+    if (!image) return;
+    const item = state.ref ? state.title?.title : null;
+    const poster = artUrl(item, "w1280");
+    const url = poster ? `${poster}&kind=backdrop` : "";
+    if (image.dataset.url === url) return;
+    image.dataset.url = url;
+    image.hidden = true;
+    image.onload = () => { image.hidden = image.dataset.url !== url || !url; };
+    image.onerror = () => { image.hidden = true; };
+    if (url) image.src = url;
+    else image.removeAttribute("src");
+  }
+
   function renderTitle() {
+    updateHeroBackdrop();
     if (!state.ref) {
       return `<div class="ins-row"><div class="ins-icon">${symbol("info")}</div><div class="ins-title">Title</div></div>
         <div class="trk-detail-empty">${symbol("touch_app")}<span>Pick a row to see the cover, every play, your rating and what to watch next.</span></div>`;
@@ -908,7 +924,7 @@
     if (!n) {
       return `<div class="trk-section trk-note-block">${head}${suggest}${picker}<button type="button" class="trk-note-empty" data-trk-detail="notes">${symbol("edit_note")}<span>Add dates, tags or notes. They stay in CrossWatch and never sync.</span></button></div>`;
     }
-    const dates = [n.started ? `Started ${dayText(n.started)}` : "", n.finished ? `Finished ${dayText(n.finished)}` : ""].filter(Boolean).join(" · ");
+    const dates = [n.started ? `Started ${dayText(n.started)}` : "", n.finished ? `Finished ${dayText(n.finished)}` : ""].filter(Boolean).join(" Ãƒâ€šÃ‚Â· ");
     const fields = state.noteFields
       .filter((f) => fieldOk(f, n.fields?.[f.id]))
       .map((f) => `<div class="trk-note-field"><dt>${esc(f.name)}</dt><dd>${esc(fieldText(f, n.fields[f.id]))}</dd></div>`)
@@ -934,7 +950,7 @@
       const f = featureOf(feature);
       const ep = data.show && isChild(r) ? episodeLabel(r) : "";
       const ref = esc(`${feature}|${r.key}`);
-      return `<li class="trk-play-row"><span class="trk-play-when">${symbol(f.icon)}${esc(label)}${ep ? ` · ${esc(ep)}` : ""}${when ? `<small>${esc(dateText(when))}</small>` : ""}</span><span class="trk-play-actions"><button type="button" class="trk-icon" data-trk-rec-edit="${ref}" title="Edit" aria-label="Edit ${esc(f.label.toLowerCase())} entry">${icon("edit")}</button><button type="button" class="trk-icon is-danger" data-trk-rec-delete="${ref}" title="Remove" aria-label="Remove from ${esc(f.label.toLowerCase())}">${icon("delete")}</button></span></li>`;
+      return `<li class="trk-play-row"><span class="trk-play-when">${symbol(f.icon)}${esc(label)}${ep ? ` Ãƒâ€šÃ‚Â· ${esc(ep)}` : ""}${when ? `<small>${esc(dateText(when))}</small>` : ""}</span><span class="trk-play-actions"><button type="button" class="trk-icon" data-trk-rec-edit="${ref}" title="Edit" aria-label="Edit ${esc(f.label.toLowerCase())} entry">${icon("edit")}</button><button type="button" class="trk-icon is-danger" data-trk-rec-delete="${ref}" title="Remove" aria-label="Remove from ${esc(f.label.toLowerCase())}">${icon("delete")}</button></span></li>`;
     }).join("");
     const more = rows.length > limit ? `<li class="trk-sub">${esc(plural(rows.length - limit, "more entry", "more entries"))}</li>` : "";
     return `<div class="trk-section"><div class="trk-section-title">In your lists</div><ul class="trk-play-list trk-record-list">${items}${more}</ul></div>`;
@@ -959,7 +975,7 @@
     const limit = data.show ? 12 : 20;
     const plays = data.plays.slice(0, limit).map((p) => `<li class="trk-play-row"><span class="trk-play-when">${esc(whenText(p.date))}</span>${data.show ? `<span class="trk-next">${esc(episodeLabel(p))}</span>` : ""}<span class="trk-play-actions"><button type="button" class="trk-icon" data-trk-play-edit="${esc(p.key)}" title="Change date" aria-label="Change date">${icon("edit_calendar")}</button><button type="button" class="trk-icon is-danger" data-trk-play-delete="${esc(p.key)}" title="Delete play" aria-label="Delete play">${icon("delete")}</button></span></li>`).join("");
     const morePlays = data.plays.length > limit ? `<li class="trk-sub">${esc(plural(data.plays.length - limit, "older play", "older plays"))}</li>` : "";
-    const watchedLine = data.plays.length ? `${plural(data.plays.length, data.show ? "episode play" : "play", data.show ? "episode plays" : "plays")} · last ${agoText(data.plays[0].date)}` : "Not watched yet";
+    const watchedLine = data.plays.length ? `${plural(data.plays.length, data.show ? "episode play" : "play", data.show ? "episode plays" : "plays")} Ãƒâ€šÃ‚Â· last ${agoText(data.plays[0].date)}` : "Not watched yet";
     return `
       <div class="trk-detail-top">
         ${card ? `<button type="button" class="trk-poster is-link${url ? "" : " is-empty"}" data-trk-detail="card" title="Open details" aria-label="Open details for ${esc(head.title || "")}">` : `<div class="trk-poster${url ? "" : " is-empty"}">`}${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-poster-fallback">${symbol(t.icon)}</span>${card ? "</button>" : "</div>"}
@@ -997,7 +1013,7 @@
       footer = `<div class="trk-meter" aria-hidden="true"><i style="width:${pct}%"></i></div>
         <div class="trk-health-foot"><span class="cw-status-text">${esc(num(job.done))} of ${esc(plural(job.total, "record", "records"))} checked</span><button type="button" class="cw-btn" data-trk-action="check-cancel">${icon("stop_circle")}<span>Stop</span></button></div>`;
     } else {
-      const why = job?.state === "interrupted" ? "CrossWatch restarted during the last check." : job?.state === "failed" ? ERRORS[job.error] || "The last check stopped." : job?.finished_at ? `Last check ${agoText(job.finished_at * 1000)}${job.failed ? ` · ${plural(job.failed, "record", "records")} could not be checked` : ""}` : "Not checked yet.";
+      const why = job?.state === "interrupted" ? "CrossWatch restarted during the last check." : job?.state === "failed" ? ERRORS[job.error] || "The last check stopped." : job?.finished_at ? `Last check ${agoText(job.finished_at * 1000)}${job.failed ? ` Ãƒâ€šÃ‚Â· ${plural(job.failed, "record", "records")} could not be checked` : ""}` : "Not checked yet.";
       footer = `<div class="trk-health-foot"><span class="cw-status-text">${esc(state.tmdbKey ? why : "Add a TMDB API key in Settings to check metadata.")}</span><button type="button" class="cw-btn primary" data-trk-action="check"${state.tmdbKey ? "" : " disabled"}>${icon("health_and_safety")}<span>Check all</span></button></div>`;
     }
     return `
@@ -1014,6 +1030,7 @@
       root.innerHTML = `
         <div class="cw-root">
           <div class="cw-topline cw-page-hero cw-page-hero-tracker" data-hero-icon="inventory_2">
+            <img class="trk-hero-backdrop" alt="" aria-hidden="true" hidden>
             <div class="cw-head-copy cw-page-hero-copy">
               <div class="cw-page-hero-kicker">CW TRACKER</div>
               <div class="cw-title-row"><div>
@@ -1530,7 +1547,7 @@
     const f = featureOf(sheet.feature);
     const child = isChild(item);
     const dateRow = item.date_field
-      ? `<label class="trk-field"><span>${esc(f.date)}</span><input type="datetime-local" step="1" class="cw-input" data-trk-edit="date" value="${esc(localInput(item.date))}" max="${esc(localInput(new Date().toISOString()))}"></label>`
+      ? `<label class="trk-field"><span>${esc(f.date)}</span><input type="datetime-local" step="1" class="cw-input cw-timestamp-input" data-trk-edit="date" value="${esc(localInput(item.date))}" max="${esc(localInput(new Date().toISOString()))}"></label>`
       : "";
     const ratingRow = sheet.feature === "ratings"
       ? `<label class="trk-field"><span>Rating</span><select class="cw-select" data-trk-edit="rating">${Array.from({ length: 10 }, (_, i) => i + 1).map((n) => `<option value="${n}"${Number(item.rating) === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>`
@@ -1539,7 +1556,7 @@
       ? `<label class="trk-field"><span>Progress %</span><input type="number" class="cw-input" data-trk-edit="progress_percent" min="0" max="100" step="1" value="${esc(item.progress_percent != null ? Math.round(item.progress_percent) : "")}"></label>`
       : "";
     return `
-      ${sheetHead(item, cardTitle(item), [cardSub(item), f.label].filter(Boolean).join(" · "))}
+      ${sheetHead(item, cardTitle(item), [cardSub(item), f.label].filter(Boolean).join(" Ãƒâ€šÃ‚Â· "))}
       <form class="trk-form" data-trk-form="edit" novalidate>
         <div class="trk-fields">
           ${dateRow}${ratingRow}${progressRow}
@@ -1688,10 +1705,13 @@
               <label class="trk-field"><span>Episode</span><select class="cw-select" data-trk-log-episode><option value="all"${log.episode === "all" ? " selected" : ""}>All ${count} episodes</option>${Array.from({ length: count }, (_, i) => i + 1).map((e) => `<option value="${e}"${String(log.episode) === String(e) ? " selected" : ""}>Episode ${e}</option>`).join("")}</select></label></div>`
           : `<p class="trk-note">Loading seasons...</p>`)
         : "";
-      const whenRow = log.target === "history" ? `<div class="trk-fields"><label class="trk-field"><span>When</span><input type="datetime-local" step="1" class="cw-input" data-trk-log-when value="${esc(log.when)}" max="${esc(localInput(new Date().toISOString()))}"></label></div>` : "";
+      const whenMode = log.whenMode || "today";
+      const whenChoices = [["today", "Today"], ["release", "Release date"], ["custom", "Choose date"]]
+        .map(([id, label]) => `<button type="button" class="cw-filter-chip${whenMode === id ? " active" : ""}" data-trk-log-date-mode="${id}" aria-pressed="${whenMode === id}">${esc(label)}</button>`).join("");
+      const whenRow = log.target === "history" ? `<div class="trk-field"><span>When</span><div class="cw-type-filter" role="group" aria-label="When">${whenChoices}</div>${whenMode === "custom" ? `<input type="datetime-local" step="1" class="cw-input cw-timestamp-input" data-trk-log-when aria-label="Watch date and time" value="${esc(log.when)}" max="${esc(localInput(new Date().toISOString()))}">` : ""}</div>` : "";
       const unlist = log.target === "history" && log.watchlistKey ? `<label class="trk-check"><input type="checkbox" class="cw-checkbox" data-trk-log-unlist${log.unlist ? " checked" : ""}><span>Remove from watchlist</span></label>` : "";
       body = `
-        <div class="trk-picked">${symbol(picked.type === "movie" ? "movie" : "tv")}<div><b>${esc(picked.title)}</b><small>${esc([picked.year, picked.type === "movie" ? "Movie" : "Show"].filter(Boolean).join(" · "))}</small></div>${log.fixed ? "" : `<button type="button" class="cw-btn" data-trk-log-repick>${icon("search")}<span>Change</span></button>`}</div>
+        <div class="trk-picked">${symbol(picked.type === "movie" ? "movie" : "tv")}<div><b>${esc(picked.title)}</b><small>${esc([picked.year, picked.type === "movie" ? "Movie" : "Show"].filter(Boolean).join(" Ãƒâ€šÃ‚Â· "))}</small></div>${log.fixed ? "" : `<button type="button" class="cw-btn" data-trk-log-repick>${icon("search")}<span>Change</span></button>`}</div>
         <div class="cw-type-filter" role="group" aria-label="Add to">${targets}</div>
         ${seasonSel}
         ${whenRow}
@@ -1743,7 +1763,7 @@
     const mark = c.action === "delete" ? "delete" : c.action === "undo" ? "undo" : c.action === "add" ? "add_circle" : c.action === "note" ? "edit_note" : "edit";
     const status = c.undone ? `<span class="trk-change-tag">${icon("undo")}Undone</span>` : "";
     const undo = c.undoable ? `<button type="button" class="cw-btn" data-trk-undo="${esc(c.batch)}"${sheet.busy ? " disabled" : ""}>${icon("undo")}<span>Undo</span></button>` : "";
-    return `<li class="trk-change${c.undone ? " is-undone" : ""}"><span class="trk-change-icon">${icon(mark)}</span><span class="trk-change-copy"><b>${esc(changeText(c))}</b><small>${icon(f.icon)}${esc(f.label)} · ${esc(timeText(c.at))}</small></span>${status}${undo}</li>`;
+    return `<li class="trk-change${c.undone ? " is-undone" : ""}"><span class="trk-change-icon">${icon(mark)}</span><span class="trk-change-copy"><b>${esc(changeText(c))}</b><small>${icon(f.icon)}${esc(f.label)} Ãƒâ€šÃ‚Â· ${esc(timeText(c.at))}</small></span>${status}${undo}</li>`;
   }
 
   function renderChanges() {
@@ -1812,7 +1832,7 @@
       const pick = importPick(imp);
       const options = imp.sources.flatMap((r) => r.instances.map((i) => {
         const value = `${r.id}|${i.id}`;
-        return `<option value="${esc(value)}"${value === imp.source ? " selected" : ""}>${esc(r.label)}${i.id === "default" ? "" : ` · ${esc(i.label)}`}</option>`;
+        return `<option value="${esc(value)}"${value === imp.source ? " selected" : ""}>${esc(r.label)}${i.id === "default" ? "" : ` Ãƒâ€šÃ‚Â· ${esc(i.label)}`}</option>`;
       })).join("");
       const chips = FEATURES.filter((f) => pick.row?.features.includes(f.id)).map((f) => {
         const on = imp.features.has(f.id);
@@ -1965,7 +1985,7 @@
     const tags = d.tags.map((t, i) => `<span class="trk-label">${esc(t)}<button type="button" data-trk-note-untag="${i}" aria-label="Remove tag ${esc(t)}">${icon("close")}</button></span>`).join("");
     const fields = state.noteFields.map((f) => fieldInput(f, d.fields[f.id])).join("");
     return `
-      ${sheetHead(head, head.title || d.title || "My notes", "My notes · kept in CrossWatch, never synced")}
+      ${sheetHead(head, head.title || d.title || "My notes", "My notes Ãƒâ€šÃ‚Â· kept in CrossWatch, never synced")}
       <form class="trk-form" data-trk-form="notes" novalidate>
         <div class="trk-group-label">Status</div>
         <div class="trk-note-statuses" role="group" aria-label="Status">${chips}</div>
@@ -2292,7 +2312,7 @@
   }
 
   function openLog(prefill) {
-    const log = { type: "movie", q: "", results: [], message: "", pick: null, fixed: false, target: "history", when: localInput(new Date().toISOString()), seasons: null, season: 1, episode: "all", watchlistKey: "", unlist: true, searchToken: 0 };
+    const log = { type: "movie", q: "", results: [], message: "", pick: null, fixed: false, target: "history", whenMode: "today", when: localInput(new Date().toISOString()), seasons: null, season: 1, episode: "all", watchlistKey: "", unlist: true, searchToken: 0 };
     if (prefill) Object.assign(log, prefill, { fixed: true });
     openSheet("log", { log });
     if (log.pick?.type === "show") loadSeasons(log);
@@ -2378,25 +2398,49 @@
     } catch {}
   }
 
+  async function logWatchTimes(log, items) {
+    const mode = log.whenMode || "custom";
+    if (mode !== "release") {
+      const date = mode === "today" ? new Date() : new Date(log.when);
+      if (Number.isNaN(date.getTime()) || date.getTime() > Date.now()) throw new Error("Choose a valid watch date that is not in the future.");
+      return items.map(item => ({ ...item, watched_at: date.toISOString() }));
+    }
+    const pick = log.pick;
+    let dates;
+    if (pick.type === "show") {
+      const data = await getJSON(`/api/metadata/tmdb/season?tmdb=${encodeURIComponent(pick.tmdb)}&season=${encodeURIComponent(log.season)}`);
+      dates = items.map(item => data.episodes?.find(ep => Number(ep.episode) === item.episode)?.air_date);
+    } else {
+      const data = await getJSON("/api/metadata/resolve", { entity: "movie", ids: pick.ids });
+      dates = [data.result?.detail?.release_date];
+    }
+    return items.map((item, i) => {
+      const date = String(dates[i] || "").slice(0, 10);
+      const stamp = `${date}T12:00:00Z`;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(stamp))) throw new Error("No release date is available. Choose a date instead.");
+      if (date > new Date().toISOString().slice(0, 10)) throw new Error("The release date is in the future. Choose a date instead.");
+      return { ...item, watched_at: stamp };
+    });
+  }
+
   async function saveLog() {
     const log = sheet.log;
     const p = log.pick;
     if (!p) return;
-    const whenDate = log.when ? new Date(log.when) : new Date();
-    const when = whenDate.toISOString();
     let items;
     if (log.target === "history" && p.type === "show") {
       const season = Number(log.season);
       const count = log.seasons?.find((s) => s.season === season)?.episodes || 0;
       const eps = log.episode === "all" ? Array.from({ length: count }, (_, i) => i + 1) : [Number(log.episode)];
-      items = eps.map((e) => ({ type: "episode", series_title: p.title, series_year: p.year, season, episode: e, show_ids: { ...p.ids }, watched_at: when }));
+      items = eps.map((e) => ({ type: "episode", series_title: p.title, series_year: p.year, season, episode: e, show_ids: { ...p.ids } }));
     } else {
-      items = [{ type: p.type, title: p.title, year: p.year, ids: { ...p.ids }, ...(log.target === "history" ? { watched_at: when } : {}) }];
+      items = [{ type: p.type, title: p.title, year: p.year, ids: { ...p.ids } }];
     }
     sheet.busy = true;
     sheet.error = "";
     renderSheet();
     try {
+      if (log.target === "history") items = await logWatchTimes(log, items);
       const data = await getJSON("/api/tracker/add", {
         feature: log.target,
         provider_instance: state.instance,
@@ -2708,6 +2752,13 @@
       const pick = event.target.closest("[data-trk-log-pick]");
       if (pick) {
         pickLog(Number(pick.dataset.trkLogPick));
+        return;
+      }
+      const dateMode = event.target.closest("[data-trk-log-date-mode]");
+      if (dateMode) {
+        log.whenMode = dateMode.dataset.trkLogDateMode;
+        sheet.error = "";
+        renderSheet();
         return;
       }
       const target = event.target.closest("[data-trk-log-target]");

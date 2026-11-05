@@ -1117,7 +1117,7 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 .cw-ep-series span{display:block;margin-top:6px}
 .cw-ep-copy h2{margin:0 0 12px}
 .cw-ep-meta{display:flex;gap:10px;flex-wrap:wrap}
-.cw-ep-meta span+span:before{content:'·';margin-right:10px}
+.cw-ep-meta span+span:before{content:'Â·';margin-right:10px}
 .cw-ep-synopsis{margin:18px 0 0}
 .cw-ep-activity{margin-top:28px;padding-top:22px;display:flex;align-items:start;justify-content:space-between;gap:24px}
 .cw-ep-status{display:flex;gap:12px;align-items:center}
@@ -1852,3 +1852,5 @@ html:is([data-cw-theme],.cw-theme-original) .cx-modal-shell .scrm-modal .scrm-pa
 #page-tracker .trk-match-info{flex:0 0 auto;width:36px;height:36px}
 
 html body img:is([src*="/assets/img/placeholder_poster.svg"],[src*="/art/tmdb/"]){background:var(--cw-artwork-placeholder-bg);color-scheme:var(--cw-artwork-color-scheme)}
+
+#page-tracker .trk-hero-backdrop{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center 40%;z-index:-1;pointer-events:none}

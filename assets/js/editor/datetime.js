@@ -21,8 +21,7 @@
       " " +
       pad2(d.getHours()) +
       ":" +
-      pad2(d.getMinutes()) +
-      " local"
+      pad2(d.getMinutes())
     );
   }
 
@@ -124,7 +123,7 @@
     const input = document.createElement("input");
     input.type = "datetime-local";
     input.step = 1;
-    input.className = "cw-input";
+    input.className = "cw-input cw-timestamp-input";
     input.setAttribute("aria-label", label);
     input.value = localInput(value);
     grid.appendChild(input);
