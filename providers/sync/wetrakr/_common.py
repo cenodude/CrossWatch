@@ -49,11 +49,12 @@ _WRITE_LOCKS: dict[str, Any] = {}
 
 
 class WeTrakrSyncError(RuntimeError):
-    def __init__(self, reason: str, *, status: int = 0, retry_after: float = 0):
-        super().__init__(reason)
+    def __init__(self, reason: str, *, status: int = 0, retry_after: float = 0, detail: str = ""):
+        super().__init__(f"{reason}: {detail}" if detail else reason)
         self.reason = reason
         self.status_code = status
         self.retry_after = retry_after
+        self.detail = detail
 
 
 def int_value(value: Any, default: int = -1) -> int:
