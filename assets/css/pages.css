@@ -1322,6 +1322,7 @@ html:is([data-cw-theme],.cw-theme-original) #page-settings #auth-providers #cw-a
 }
 
 @media(max-width:760px){
+  html body #layout #page-settings .cw-settings-pane-head:is(.cw-settings-hero-overview,.cw-settings-hero-connections,.cw-settings-hero-sync,.cw-settings-hero-scrobbler),
   html body #layout .cw-page-hero .cw-page-hero-actions,
   html body #page-editor #cw-hero-summary,
   html body #layout .cw-settings-pane-head-actions:not(:has(#sched-pane-tabs)),
@@ -1827,8 +1828,7 @@ html:is([data-cw-theme],.cw-theme-original) .cx-modal-shell .scrm-modal .scrm-fo
 html:is([data-cw-theme],.cw-theme-original) .cx-modal-shell .scrm-modal .scrm-footer>:is(.scrm-footer-error,.scrm-footer-warn){display:flex!important;grid-column:1 / -1;}
 html:is([data-cw-theme],.cw-theme-original) .cx-modal-shell .scrm-modal :is(input:not([type=checkbox]):not([type=radio]),select,textarea){min-width:0;max-width:100%;min-height:44px!important;box-sizing:border-box;font-size:16px!important;}
 html:is([data-cw-theme],.cw-theme-original) .cx-modal-shell .scrm-modal .scrm-close{width:44px;height:44px;}
-html:is([data-cw-theme],.cw-theme-original) .cx-modal-shell .scrm-modal .scrm-journey{grid-template-columns:32px minmax(0,1fr) 32px!important;gap:10px!important;padding:12px!important;min-height:0!important;}
-html:is([data-cw-theme],.cw-theme-original) .cx-modal-shell .scrm-modal :is(.scrm-journey-icon,.scrm-journey-help){width:32px!important;height:32px!important;font-size:22px!important;}
+html:is([data-cw-theme],.cw-theme-original) .cx-modal-shell .scrm-modal .scrm-panel>.scrm-journey{display:none;}
 }
 #page-tracker .trk-months{margin:0 0 12px}
 #page-tracker .trk-table .cw-title-row{align-items:center;gap:8px;flex-wrap:wrap}
