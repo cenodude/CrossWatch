@@ -97,6 +97,15 @@ ENDPOINTS: dict[str, Endpoints] = {
         profiles="/api/silo/profiles",
         select_profile="/api/silo/profile/select",
     ),
+    "TOFA": Endpoints(
+        submit="/api/tofa/server",
+        start="/api/tofa/device/start",
+        poll="/api/tofa/device/poll",
+        cancel="/api/tofa/device/cancel",
+        disconnect="/api/tofa/disconnect",
+        profiles="/api/tofa/profiles",
+        select_profile="/api/tofa/profile/select",
+    ),
     "JELLYFIN": Endpoints(submit="/api/jellyfin/login", disconnect="/api/jellyfin/token/delete"),
     "EMBY": Endpoints(submit="/api/emby/login", disconnect="/api/emby/token/delete"),
     "KODI": Endpoints(submit="/api/kodi/connect", disconnect="/api/kodi/disconnect"),
@@ -529,7 +538,7 @@ def auth_login(
     wait: bool = typer.Option(True, "--wait/--no-wait", help="Wait for a device code to be authorized."),
     timeout: float = typer.Option(300.0, "--timeout", help="How long to wait, in seconds."),
     interval: float = typer.Option(3.0, "--interval", help="Seconds between authorization checks."),
-    profile: str = typer.Option("", "--profile", help="Profile to use after login, by name or id (Silo)."),
+    profile: str = typer.Option("", "--profile", help="Profile to use after login, by name or id (Silo, Tofa)."),
     pin: str = typer.Option("", "--pin", help="PIN of that profile, when it has one."),
 ) -> None:
     """Connect a provider, whichever way that provider authenticates."""

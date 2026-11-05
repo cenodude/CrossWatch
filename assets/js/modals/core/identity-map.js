@@ -2,8 +2,8 @@
 /* Identity mapping card shared by sync pairs, watcher routes and webhooks. */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-const IDENTITY_PROVIDERS = new Set(["plex", "emby", "jellyfin", "silo"]);
-const NAMES = { plex: "Plex", emby: "Emby", jellyfin: "Jellyfin", silo: "Silo" };
+const IDENTITY_PROVIDERS = new Set(["plex", "emby", "jellyfin", "silo", "tofa"]);
+const NAMES = { plex: "Plex", emby: "Emby", jellyfin: "Jellyfin", silo: "Silo", tofa: "Tofa" };
 
 let stylesReady = null;
 

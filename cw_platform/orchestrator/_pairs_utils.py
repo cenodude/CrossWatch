@@ -27,6 +27,7 @@ LIBRARY_PROVIDER_KEYS = {
     "EMBY": "emby",
     "KODI": "kodi",
     "SILO": "silo",
+    "TOFA": "tofa",
 }
 
 

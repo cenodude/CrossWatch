@@ -10,8 +10,8 @@ import { readFileSync } from "node:fs";
 const source = name => readFileSync(new URL(`../assets/auth/auth.${name}.js`, import.meta.url), "utf8");
 
 function setup() {
-  const nodes = new Map(), requests = [], pollers = [];
-  let cfg = {}, instance = "default", response = { ok: true, data: {} };
+  const nodes = new Map(), requests = [], pollers = [], observers = [];
+  let cfg = {}, instance = "default", response = { ok: true, data: {} }, gate = null;
   function node(id, label = "") {
     const classes = new Set(), attrs = new Map();
     let html = label;
@@ -43,12 +43,14 @@ function setup() {
   const window = { CW: {}, open: () => null, addEventListener() {} };
   const context = vm.createContext({
     window, document, console, URL, location: { origin: "https://cw.test" },
-    MutationObserver: class { observe() {} disconnect() {} },
+    MutationObserver: class { constructor(cb) { observers.push(cb); } observe() {} disconnect() {} },
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
     fetch: async (url, options) => {
       requests.push({ url, options });
-      const data = url.startsWith("/api/config") ? cfg : response.data;
-      return { ok: response.ok, status: response.ok ? 200 : 500, json: async () => data };
+      const current = response, wait = gate;
+      if (wait) await wait;
+      const data = url.startsWith("/api/config") ? cfg : current.data;
+      return { ok: current.ok, status: current.ok ? 200 : 500, json: async () => data };
     },
   });
   vm.runInContext(source("shared"), context);
@@ -67,12 +69,13 @@ function setup() {
     return poller;
   };
   return {
-    node, window, shared, profile, requests, pollers,
+    node, window, shared, profile, requests, pollers, observers,
     nodeValue: id => nodes.get(id)?.value,
     load: name => vm.runInContext(source(name), context),
     set config(value) { cfg = value; },
     set instance(value) { instance = value; },
     set response(value) { response = value; },
+    set gate(value) { gate = value; },
   };
 }
 
@@ -260,3 +263,73 @@ for (const instance of ["default", "TRAKT-P01"]) {
     assert.equal(button.textContent, "Connect TRAKT");
   });
 }
+
+
+function tofaApp() {
+  const app = setup();
+  let onSwitch = null;
+  app.shared.createProfileAdapter = () => ({ ...app.profile("tofa"), ensureUI(cb) { onSwitch = cb; } });
+  app.node("tofa_server_url").value = "https://tofa.test";
+  const connect = app.node("tofa_connect", "Connect Tofa");
+  const overlay = app.node("cw-auth-connection-overlay");
+  const status = app.node("tofa_msg");
+  app.response = { ok: true, data: { ok: true, user_code: "ABCD-1234", interval: 5, expires_at: 0 } };
+  app.load("tofa");
+  const hold = () => { let release; app.gate = new Promise(resolve => { release = resolve; }); return release; };
+  const flush = () => new Promise(resolve => setImmediate(resolve));
+  return {
+    app, connect, overlay, status, hold, flush,
+    switchTo(name) { app.instance = name; onSwitch(); },
+    close() { overlay.classList.add("hidden"); app.observers.forEach(cb => cb([])); },
+  };
+}
+
+test("Tofa polls the instance the login was started for", async () => {
+  const { app, connect } = tofaApp();
+  await connect.listeners.click();
+  assert.equal(app.pollers.length, 1);
+  app.instance = "TOFA-P01";
+  assert.equal(app.pollers[0].options.url(), "/api/tofa/device/poll?instance=default");
+  assert.equal(app.pollers[0].isRunning(), true);
+});
+
+test("Tofa drops a login start that returns after an instance switch", async () => {
+  const { app, connect, hold, flush, switchTo } = tofaApp();
+  const release = hold();
+  const pending = connect.listeners.click();
+  app.gate = null;
+  switchTo("TOFA-P01");
+  release();
+  await pending;
+  await flush();
+  assert.equal(app.pollers.some(p => p.isRunning()), false);
+});
+
+test("Tofa drops a login start that returns after the window closed", async () => {
+  const { app, connect, hold, flush, close } = tofaApp();
+  const release = hold();
+  const pending = connect.listeners.click();
+  app.gate = null;
+  close();
+  release();
+  await pending;
+  await flush();
+  assert.equal(app.pollers.some(p => p.isRunning()), false);
+});
+
+test("Tofa keeps the current instance status when an older reply arrives last", async () => {
+  const { app, status, hold, flush, switchTo } = tofaApp();
+  app.response = { ok: true, data: { connected: true, authenticated: false, profile_name: "Old" } };
+  const releaseOld = hold();
+  switchTo("TOFA-P01");
+  app.response = { ok: true, data: { connected: true, authenticated: false, profile_name: "New" } };
+  const releaseNew = hold();
+  switchTo("TOFA-P02");
+  app.gate = null;
+  releaseNew();
+  await flush();
+  assert.equal(status.textContent, "Tofa connected - New");
+  releaseOld();
+  await flush();
+  assert.equal(status.textContent, "Tofa connected - New");
+});

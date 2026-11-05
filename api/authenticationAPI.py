@@ -3161,6 +3161,222 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": _silo_error(e), "instance": inst}
 
 
+    def _tofa_client(cfg: dict[str, Any], inst: str):
+        from providers.auth._auth_TOFA import TofaClient
+
+        return TofaClient(cfg, instance_id=inst)
+
+    _TOFA_PUBLIC_ERRORS: tuple[str, ...] = (
+        "authentication_failed",
+        "connection_failed",
+        "disconnect_first",
+        "http_error",
+        "invalid_connect_url",
+        "invalid_pin",
+        "invalid_profile",
+        "invalid_response",
+        "invalid_url",
+        "missing_authentication",
+        "not_tofa",
+        "pin_failed",
+        "pin_locked",
+        "pin_required",
+        "profile_locked",
+        "profile_unavailable",
+        "rate_limited",
+        "reconnect_required",
+        "server_unclaimed",
+        "service_unavailable",
+        "ssl_error",
+    )
+
+    def _tofa_error(e: Exception) -> str:
+        code = str(e or "").strip()
+        if e.__class__.__name__ == "TofaServiceUnavailable":
+            return "service_unavailable"
+        return next((public for public in _TOFA_PUBLIC_ERRORS if public == code), "tofa_request_failed")
+
+    @app.post("/api/tofa/server", tags=["auth"])
+    def api_tofa_server(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _tofa_client(cfg, inst).configure_server(cfg, (payload or {}).get("server_url"), (payload or {}).get("verify_ssl"))
+            _probe_bust("tofa")
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "TOFA", f"[TOFA] server check failed reason={_tofa_error(e)} instance={inst}")
+            return {"ok": False, "error": _tofa_error(e), "instance": inst}
+
+    @app.post("/api/tofa/device/start", tags=["auth"])
+    def api_tofa_device_start(request: Request, payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        payload = reconnect_payload(request, "/api/tofa/device/start", payload)
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().start_device_code(
+                "tofa",
+                cfg,
+                instance_id=inst,
+                server_url=(payload or {}).get("server_url"),
+                verify_ssl=(payload or {}).get("verify_ssl"),
+            )
+            _safe_log(log_fn, "TOFA", f"[TOFA] device login started instance={inst}")
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "TOFA", f"[TOFA] device start failed reason={_tofa_error(e)} instance={inst}")
+            return {"ok": False, "error": _tofa_error(e), "instance": inst}
+
+    @app.post("/api/tofa/device/poll", tags=["auth"])
+    def api_tofa_device_poll(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().poll_device_code("tofa", cfg, instance_id=inst)
+            if res.get("ok"):
+                _probe_bust("tofa")
+                _safe_log(log_fn, "TOFA", f"[TOFA] device login completed instance={inst}")
+            return res
+        except Exception as e:
+            _safe_log(log_fn, "TOFA", f"[TOFA] device poll failed reason={_tofa_error(e)} instance={inst}")
+            return {"ok": False, "status": _tofa_error(e), "instance": inst}
+
+    @app.post("/api/tofa/device/cancel", tags=["auth"])
+    def api_tofa_device_cancel(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            return _tofa_client(cfg, inst).cancel_device_login(cfg)
+        except Exception as e:
+            _safe_log(log_fn, "TOFA", f"[TOFA] device cancel failed reason={_tofa_error(e)} instance={inst}")
+            return {"ok": False, "error": _tofa_error(e), "instance": inst}
+
+    @app.get("/api/tofa/status", tags=["auth"])
+    def api_tofa_status(instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth._auth_TOFA import provider_block
+
+        cfg = load_config()
+        inst = normalize_instance_id(instance)
+        out = _provider_auth().status_for_block("tofa", provider_block(cfg, inst))
+        out["instance"] = inst
+        return out
+
+    @app.get("/api/tofa/profiles", tags=["auth"])
+    def api_tofa_profiles(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            profiles = _tofa_client(cfg, inst).list_profiles()
+            return {"ok": True, "instance": inst, "profiles": profiles}
+        except Exception as e:
+            _safe_log(log_fn, "TOFA", f"[TOFA] profiles failed reason={_tofa_error(e)} instance={inst}")
+            return {"ok": False, "error": _tofa_error(e), "instance": inst, "profiles": []}
+
+    @app.get("/api/tofa/users", tags=["auth"])
+    def api_tofa_users(instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.auth._auth_TOFA import provider_block
+
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            own = str(provider_block(cfg, inst).get("profile_id") or "")
+            rows = _tofa_client(cfg, inst).list_profiles()
+            users = [{"id": p["id"], "username": p["name"], "has_pin": p["has_pin"], "is_child": p["is_child"], "is_primary": p["is_primary"],
+                      "connected": p["id"] == own} for p in rows]
+            return {"ok": True, "instance": inst, "users": users}
+        except Exception as e:
+            _safe_log(log_fn, "TOFA", f"[TOFA] users failed reason={_tofa_error(e)} instance={inst}")
+            return {"ok": False, "error": _tofa_error(e), "instance": inst, "users": []}
+
+    @app.get("/api/tofa/libraries", tags=["media providers"])
+    def api_tofa_libraries(instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.sync._mod_TOFA import TOFAModule
+        from providers.sync.tofa._common import list_libraries
+
+        inst = normalize_instance_id(instance)
+        try:
+            rows = list_libraries(TOFAModule({**load_config(), "_cw_provider_instance": inst}))
+            return {"ok": True, "instance": inst, "libraries": rows}
+        except Exception as e:
+            _safe_log(log_fn, "TOFA", f"[TOFA] libraries failed reason={_tofa_error(e)} instance={inst}")
+            return {"ok": False, "error": _tofa_error(e), "instance": inst, "libraries": []}
+
+    @app.get("/api/tofa/watched-rule", tags=["media providers"])
+    def api_tofa_watched_rule(instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.sync._mod_TOFA import TOFAModule
+        from providers.sync.tofa._common import watched_rule
+
+        inst = normalize_instance_id(instance)
+        try:
+            rule = watched_rule(TOFAModule({**load_config(), "_cw_provider_instance": inst}))
+            return {"ok": True, "instance": inst, **rule}
+        except Exception as e:
+            _safe_log(log_fn, "TOFA", f"[TOFA] watched rule read failed reason={_tofa_error(e)} instance={inst}")
+            return {"ok": False, "error": _tofa_error(e), "instance": inst}
+
+    @app.post("/api/tofa/watched-rule", tags=["media providers"])
+    def api_tofa_watched_rule_set(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        from providers.sync._mod_TOFA import TOFAModule
+        from providers.sync.tofa._common import set_watched_rule
+
+        inst = normalize_instance_id(instance)
+        try:
+            rule = set_watched_rule(TOFAModule({**load_config(), "_cw_provider_instance": inst}), (payload or {}).get("percent"))
+            _safe_log(log_fn, "TOFA", f"[TOFA] watched rule set to {rule['percent']}% instance={inst}")
+            return {"ok": True, "instance": inst, **rule}
+        except Exception as e:
+            reason = str(e)
+            if reason == "tofa_watched_rule_invalid_percent":
+                code = "tofa_watched_rule_invalid_percent"
+            elif reason == "tofa_watched_rule_not_saved":
+                code = "tofa_watched_rule_not_saved"
+            else:
+                code = _tofa_error(e)
+            _safe_log(log_fn, "TOFA", f"[TOFA] watched rule set failed reason={code} instance={inst}")
+            return {"ok": False, "error": code, "instance": inst}
+
+    @app.post("/api/tofa/profile/select", tags=["auth"])
+    def api_tofa_profile_select(payload: dict[str, Any] = Body(default_factory=dict), instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            selected = _tofa_client(cfg, inst).select_profile(cfg, (payload or {}).get("profile_id"), (payload or {}).get("pin"))
+            _probe_bust("tofa")
+            _safe_log(log_fn, "TOFA", f"[TOFA] profile selected instance={inst}")
+            return {"ok": True, "instance": inst, "profile": selected, "profile_id": selected.get("id"), "profile_name": selected.get("name") or ""}
+        except Exception as e:
+            _safe_log(log_fn, "TOFA", f"[TOFA] profile select failed reason={_tofa_error(e)} instance={inst}")
+            return {"ok": False, "error": _tofa_error(e), "instance": inst}
+
+    @app.post("/api/tofa/refresh", tags=["auth"])
+    def api_tofa_refresh(instance: str | None = Query(None)) -> dict[str, Any]:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            res = _provider_auth().refresh_token("tofa", cfg, instance_id=inst, force=True)
+            _probe_bust("tofa")
+            return {k: v for k, v in res.items() if k not in {"access_token", "refresh_token"}}
+        except Exception as e:
+            _safe_log(log_fn, "TOFA", f"[TOFA] refresh failed reason={_tofa_error(e)} instance={inst}")
+            return {"ok": False, "status": _tofa_error(e), "instance": inst}
+
+    @app.post("/api/tofa/disconnect", tags=["auth"])
+    def api_tofa_disconnect(instance: str | None = Query(None)) -> Any:
+        inst = normalize_instance_id(instance)
+        try:
+            cfg = load_config()
+            conflict = usage_conflict_response(cfg, "tofa", inst)
+            if conflict is not None:
+                return conflict
+            _tofa_client(cfg, inst).disconnect(cfg)
+            _probe_bust("tofa")
+            _safe_log(log_fn, "TOFA", f"[TOFA] disconnected instance={inst}")
+            return {"ok": True, "instance": inst}
+        except Exception as e:
+            _safe_log(log_fn, "TOFA", f"[TOFA] disconnect failed reason={_tofa_error(e)} instance={inst}")
+            return {"ok": False, "error": _tofa_error(e), "instance": inst}
+
+
     # TAUTULLI
     @app.post("/api/tautulli/save", tags=["auth"])
     def api_tautulli_save(payload: dict[str, Any] = Body(...), instance: str | None = Query(None)) -> dict[str, Any]:

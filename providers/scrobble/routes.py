@@ -16,10 +16,10 @@ from cw_platform.identity_links import clean_identity_map, mapped_identities
 
 
 DEFAULT_INSTANCE_ID = "default"
-ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi", "scrob", "stremio", "silo"}
+ROUTE_PROVIDERS = {"plex", "emby", "jellyfin", "kodi", "scrob", "stremio", "silo", "tofa"}
 ROUTE_SINGLE_ACCOUNT_PROVIDERS = {"stremio"}
 ROUTE_PROFILE_NAME_PROVIDERS = {"kodi"}
-ROUTE_SINKS = {"myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob", "silo"}
+ROUTE_SINKS = {"myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob", "silo", "tofa"}
 ROUTE_MEDIA_SINKS = {"plex", "jellyfin", "emby", "kodi"}
 ROUTE_RATING_SINKS = {"kitsu", "myanimelist", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob", "silo"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
@@ -51,7 +51,7 @@ def route_is_self_target(route: dict[str, Any]) -> bool:
     return same_scrobble_endpoint(route.get("provider"), route.get("provider_instance"), route.get("sink"), route.get("sink_instance"))
 
 
-SYNC_USER_ENDPOINTS = {"plex", "emby", "jellyfin", "silo"}
+SYNC_USER_ENDPOINTS = {"plex", "emby", "jellyfin", "silo", "tofa"}
 
 
 def sync_user_endpoints_supported(provider: Any, provider_instance: Any, sink: Any, sink_instance: Any) -> bool:

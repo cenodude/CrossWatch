@@ -81,7 +81,7 @@ def _max_generated_profiles(cfg: Mapping[str, Any] | None = None) -> int:
 
 
 _DEFAULT_MAX_SYNC_USERS = 25
-_SYNC_USER_PROVIDERS = frozenset({"plex", "emby", "jellyfin", "silo"})
+_SYNC_USER_PROVIDERS = frozenset({"plex", "emby", "jellyfin", "silo", "tofa"})
 
 
 def _max_sync_users_per_connection(cfg: Mapping[str, Any] | None = None) -> int:
@@ -544,6 +544,9 @@ def _sync_user_rows(cfg: Mapping[str, Any], provider: str, inst: str) -> list[di
         if provider == "silo":
             row["has_pin"] = bool(str(entry.get("profile_token") or "").strip())
             row["needs_pin"] = bool(entry.get("profile_has_pin")) and not row["has_pin"]
+        if provider == "tofa":
+            row["has_pin"] = bool(str(entry.get("profile_token") or "").strip())
+            row["needs_pin"] = bool(entry.get("profile_locked")) and not row["has_pin"]
         rows.append(row)
     rows.sort(key=lambda row: row["username"].casefold())
     return rows
@@ -562,6 +565,13 @@ def _build_sync_user_entry(provider: str, key: str, raw: Mapping[str, Any], exis
         entry = {"profile_id": key, "profile_name": name, "username": name, "user": name,
                  "profile_has_pin": bool(raw.get("profile_has_pin", existing.get("profile_has_pin")))}
         token = str(raw.get("profile_token") or existing.get("profile_token") or "") if entry["profile_has_pin"] else ""
+        entry["profile_token"] = token
+        entry["profile_token_expires_at"] = int(raw.get("profile_token_expires_at") or existing.get("profile_token_expires_at") or 0) if token else 0
+    elif provider == "tofa":
+        locked = bool(raw.get("profile_locked", existing.get("profile_locked")))
+        entry = {"profile_id": key, "profile_name": name, "username": name, "user": name, "profile_locked": locked,
+                 "profile_primary": bool(raw.get("profile_primary", existing.get("profile_primary"))), "auth_error": ""}
+        token = str(raw.get("profile_token") or existing.get("profile_token") or "") if locked else ""
         entry["profile_token"] = token
         entry["profile_token_expires_at"] = int(raw.get("profile_token_expires_at") or existing.get("profile_token_expires_at") or 0) if token else 0
     else:
@@ -591,6 +601,33 @@ def _silo_prepare_sync_users(cfg: Mapping[str, Any], inst: str, wanted: dict[str
             except SiloRateLimited:
                 return "pin_locked"
             except SiloError:
+                return "invalid_pin"
+        wanted[key] = row
+    return ""
+
+
+def _tofa_prepare_sync_users(cfg: Mapping[str, Any], inst: str, wanted: dict[str, Mapping[str, Any]]) -> str:
+    from providers.auth._auth_TOFA import TofaClient, TofaError, TofaRateLimited
+
+    client = TofaClient(cfg, instance_id=inst)
+    try:
+        profiles = {p["id"]: p for p in client.list_profiles()}
+    except TofaError:
+        return "tofa_unavailable"
+    for key, raw in list(wanted.items()):
+        profile = profiles.get(key)
+        if profile is None:
+            return "not_found"
+        row = {k: v for k, v in raw.items() if k != "home_pin"}
+        row["profile_locked"] = bool(profile["has_pin"])
+        row["profile_primary"] = bool(profile["is_primary"])
+        pin = str(raw.get("home_pin") or "").strip()
+        if profile["has_pin"] and pin:
+            try:
+                row["profile_token"], row["profile_token_expires_at"] = client.verify_pin(key, pin)
+            except TofaRateLimited:
+                return "pin_locked"
+            except TofaError:
                 return "invalid_pin"
         wanted[key] = row
     return ""
@@ -739,6 +776,10 @@ def api_provider_sync_users_update(provider: str, instance_id: str, payload: dic
         silo_error = _silo_prepare_sync_users(cfg, inst, wanted)
         if silo_error:
             return {"ok": False, "error": silo_error}
+    if _cfg_key(provider) == "tofa" and wanted:
+        tofa_error = _tofa_prepare_sync_users(cfg, inst, wanted)
+        if tofa_error:
+            return {"ok": False, "error": tofa_error}
 
     def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
         prov, error = _sync_users_target(latest, provider, inst)

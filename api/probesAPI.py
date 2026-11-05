@@ -88,6 +88,7 @@ PROVIDERS: tuple[str, ...] = (
     "tracearr",
     "nuvio",
     "silo",
+    "tofa",
     "kodi",
     "stremio",
     "floppy",
@@ -288,6 +289,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "TRACEARR": "tracearr",
     "NUVIO": "nuvio",
     "SILO": "silo",
+    "TOFA": "tofa",
     "KODI": "kodi",
     "STREMIO": "stremio",
     "FLOPPY": "floppy",
@@ -435,6 +437,16 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         ptok = str((s.get("profile_token") or "")).strip()
         profile = str((s.get("profile_id") or "")).strip()
         return f"silo|base:{_secret_cache_tag(base)}|tok:{_secret_cache_tag(tok)}|exp:{s.get('expires_at') or 0}|profile:{_secret_cache_tag(profile)}|ptok:{_secret_cache_tag(ptok)}"
+
+    if p == "tofa":
+        s = cfg.get("tofa") or {}
+        if not _provider_auth().is_configured("tofa", s):
+            return "tofa|unconfigured"
+        base = _norm_url(s.get("server_url") or "")
+        tok = str((s.get("access_token") or s.get("refresh_token") or "")).strip()
+        ptok = str((s.get("profile_token") or "")).strip()
+        profile = str((s.get("profile_id") or "")).strip()
+        return f"tofa|base:{_secret_cache_tag(base)}|tok:{_secret_cache_tag(tok)}|exp:{s.get('expires_at') or 0}|profile:{_secret_cache_tag(profile)}|ptok:{_secret_cache_tag(ptok)}"
 
     if p == "stremio":
         s = cfg.get("stremio") or {}
@@ -1320,6 +1332,67 @@ def _probe_silo_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tup
         ok, rsn = False, "Silo: service unavailable"
     except Exception:
         ok, rsn = False, "Silo: service unavailable"
+
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
+@_persistent_probe("tofa")
+def _probe_tofa_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("tofa", cfg)
+    bust_ts = _consume_bust("tofa")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    from providers.auth._auth_TOFA import (
+        TofaAuthError,
+        TofaClient,
+        TofaError,
+        TofaInvalidResponse,
+        TofaProfileLocked,
+        TofaReconnectRequired,
+    )
+
+    s: Mapping[str, Any] = (cfg.get("tofa") or {}) if isinstance(cfg.get("tofa"), Mapping) else {}
+    status = _provider_auth().status_for_block("tofa", s)
+    rsn = ""
+    if status.get("reconnect_required"):
+        rsn = "Tofa: reconnect required"
+    elif not status.get("authenticated"):
+        rsn = "Tofa: missing authentication"
+    elif not status.get("profile_id"):
+        rsn = "Tofa: missing profile"
+    elif status.get("profile_pin_required"):
+        rsn = "Tofa: profile PIN required"
+    if rsn:
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    try:
+        hint = cfg.get("_cw_probe") if isinstance(cfg.get("_cw_probe"), Mapping) else {}
+        inst = normalize_instance_id((hint or {}).get("instance"))
+        client = TofaClient(cfg, instance_id=inst)
+        pid = str(status.get("profile_id") or "")
+        profiles = client.list_profiles()
+        ok = any(p.get("id") == pid for p in profiles)
+        rsn = "" if ok else "Tofa: profile unavailable"
+        if ok:
+            client.account()
+    except TofaReconnectRequired:
+        ok, rsn = False, "Tofa: reconnect required"
+    except TofaProfileLocked:
+        ok, rsn = False, "Tofa: profile PIN required"
+    except TofaAuthError:
+        ok, rsn = False, "Tofa: authentication failed"
+    except TofaInvalidResponse:
+        ok, rsn = False, "Tofa: invalid response"
+    except TofaError:
+        ok, rsn = False, "Tofa: service unavailable"
+    except Exception:
+        ok, rsn = False, "Tofa: service unavailable"
 
     with _CACHE_LOCK:
         PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
@@ -2427,6 +2500,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "silo":
         return _provider_auth().is_configured("silo", blk)
 
+    if ck == "tofa":
+        return _provider_auth().is_configured("tofa", blk)
+
     if ck == "stremio":
         return _provider_auth().is_configured("stremio", blk)
 
@@ -2536,6 +2612,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "TRACEARR": _probe_tracearr_detail,
     "NUVIO": _probe_nuvio_detail,
     "SILO": _probe_silo_detail,
+    "TOFA": _probe_tofa_detail,
     "STREMIO": _probe_stremio_detail,
     "FLOPPY": _probe_floppy_detail,
     "MYANIMELIST": _probe_myanimelist_detail,
@@ -2730,7 +2807,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 }
                 if managed_scope:
                     insts &= set(allowed_instances.get(prov) or [])
-                if managed_scope or prov in {"NUVIO", "SILO"}:
+                if managed_scope or prov in {"NUVIO", "SILO", "TOFA"}:
                     insts = {
                         inst
                         for inst in insts
@@ -2866,6 +2943,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             publicmetadb_ok, publicmetadb_reason, cfg_publicmetadb = _provider_tuple("PUBLICMETADB")
             nuvio_ok, nuvio_reason, cfg_nuvio = _provider_tuple("NUVIO")
             silo_ok, silo_reason, cfg_silo = _provider_tuple("SILO")
+            tofa_ok, tofa_reason, cfg_tofa = _provider_tuple("TOFA")
             stremio_ok, stremio_reason, cfg_stremio = _provider_tuple("STREMIO")
             floppy_ok, floppy_reason, cfg_floppy = _provider_tuple("FLOPPY")
             myanimelist_ok, myanimelist_reason, cfg_myanimelist = _provider_tuple("MYANIMELIST")
@@ -3188,6 +3266,22 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "rep_instance": inst_sum.get("rep"),
                 }
 
+            if "TOFA" in active_providers:
+                inst_map, inst_sum = _instances_payload("TOFA")
+                t_block = (cfg_tofa.get("tofa") or {}) if isinstance(cfg_tofa.get("tofa"), Mapping) else {}
+                t_profile_name = str(t_block.get("profile_name") or "").strip()
+                t_username = str(t_block.get("username") or "").strip()
+                providers_out["TOFA"] = {
+                    "connected": tofa_ok,
+                    **({} if tofa_ok else {"reason": tofa_reason}),
+                    "experimental": True,
+                    **({"profile_name": t_profile_name} if t_profile_name else {}),
+                    **({"username": t_username} if t_username else {}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
+
             if "STREMIO" in active_providers:
                 inst_map, inst_sum = _instances_payload("STREMIO")
                 providers_out["STREMIO"] = {
@@ -3368,6 +3462,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "publicmetadb_connected": publicmetadb_ok,
                 "nuvio_connected": nuvio_ok,
                 "silo_connected": silo_ok,
+                "tofa_connected": tofa_ok,
                 "stremio_connected": stremio_ok,
                 "floppy_connected": floppy_ok,
                 "myanimelist_connected": myanimelist_ok,

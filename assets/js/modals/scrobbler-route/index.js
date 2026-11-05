@@ -1,11 +1,11 @@
 /* CrossWatch - Scrobbler Route Modal */
 import { createIdentityMap, identityMapSupported } from "../core/identity-map.js";
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", anilist: "AniList", myanimelist: "MyAnimeList", kitsu: "Kitsu", scrob: "Scrob", stremio: "Stremio", silo: "Silo" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
-const sources = ["plex", "jellyfin", "emby", "kodi", "scrob", "stremio", "silo"];
-const sinks = ["myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob", "silo"];
+const label = (v) => ({ plex: "Plex", jellyfin: "Jellyfin", emby: "Emby", kodi: "Kodi", trakt: "Trakt", simkl: "SIMKL", mdblist: "MDBList", crosswatch: "CrossWatch", floppy: "Floppy", punchplay: "PunchPlay", bingebase: "BingeBase", flicklist: "FlickList", wetrakr: "WeTrakr", anilist: "AniList", myanimelist: "MyAnimeList", kitsu: "Kitsu", scrob: "Scrob", stremio: "Stremio", silo: "Silo", tofa: "Tofa" }[String(v || "").toLowerCase()] || String(v || "").toUpperCase());
+const sources = ["plex", "jellyfin", "emby", "kodi", "scrob", "stremio", "silo", "tofa"];
+const sinks = ["myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob", "silo", "tofa"];
 const ratingSinks = ["kitsu", "myanimelist", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob", "silo"];
-const mediaSinks = ["plex", "jellyfin", "emby", "kodi", "silo"];
+const mediaSinks = ["plex", "jellyfin", "emby", "kodi", "silo", "tofa"];
 
 function flashCopied(btn) {
   if (!btn) return;
@@ -21,6 +21,7 @@ function flashCopied(btn) {
   }, 1400);
 }
 
+let tofaRule = { key: "", data: null, busy: false };
 let root = null;
 let props = {};
 let draft = null;
@@ -496,9 +497,89 @@ function librariesPanel(r) {
         <div><strong>${esc(label(r.sink))} libraries</strong><p>Only update items in the selected libraries. Leave empty to use the Whitelist libraries of ${esc(label(r.sink))} connection.</p></div>
       </div>
       <div id="scr-destination-libraries"></div>
-      ${r.sink === "silo" ? "" : `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">library_add_check</span><span><strong>Update all copies</strong><small>When the same title exists more than once, for example in a regular and a 4K library, update every copy instead of skipping.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-update-all-copies" ${dest.update_all_copies === false ? "" : "checked"}><span class="scrm-switch-track"></span></span></label>`}
+      ${["silo", "tofa"].includes(r.sink) ? "" : `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">library_add_check</span><span><strong>Update all copies</strong><small>When the same title exists more than once, for example in a regular and a 4K library, update every copy instead of skipping.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-update-all-copies" ${dest.update_all_copies === false ? "" : "checked"}><span class="scrm-switch-track"></span></span></label>`}
     </section>
   `;
+}
+
+async function fetchTofaRule(instance) {
+  try {
+    const res = await fetch(`/api/tofa/watched-rule?instance=${encodeURIComponent(instance || "default")}`, { cache: "no-store", credentials: "same-origin" });
+    return res.ok ? await res.json() : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function routeWatchedThreshold() {
+  const raw = root?.querySelector("#scr-watched")?.value;
+  if (raw !== undefined && raw !== "") return Number(raw);
+  const global = props.overview?.source_state?.watch_defaults?.watched_at;
+  return Number.isFinite(Number(global)) && global !== null && global !== "" ? Number(global) : 90;
+}
+
+function paintTofaRule() {
+  const host = root?.querySelector("#scr-tofa-rule");
+  const data = tofaRule.data;
+  if (!host || !data) return;
+  if (!data.ok) {
+    host.className = "scrm-note is-warn";
+    host.innerHTML = `<span class="material-symbols-rounded">warning</span><span>Could not read the Tofa watched rule for this profile.</span>`;
+    return;
+  }
+  const tofa = Number(data.percent);
+  const route = routeWatchedThreshold();
+  const source = data.custom ? "this Tofa profile" : "the Tofa server default";
+  const credits = data.credits ? " or when the credits start" : "";
+  let detail = "This route uses the same threshold.";
+  if (route < tofa) detail = `This route sends watched at ${route}%, so items stopped between ${route}% and ${tofa}% count as watched on the destination but stay unwatched in Tofa.`;
+  else if (route > tofa) detail = `This route waits for ${route}%. When Tofa marks an item watched first, CrossWatch sends it as watched anyway.`;
+  const choices = Array.isArray(data.choices) ? data.choices.map(Number) : [];
+  const apply = route !== tofa
+    ? (choices.includes(route)
+      ? `<button type="button" class="btn small" data-tofa-apply="${esc(route)}" ${tofaRule.busy ? "disabled" : ""}>${tofaRule.busy ? "Applying..." : `Apply ${esc(route)}% to Tofa`}</button>`
+      : `<small>Tofa only offers ${esc(choices.join(", "))}%.</small>`)
+    : "";
+  host.className = `scrm-note ${route < tofa ? "is-warn" : ""}`.trim();
+  const error = tofaRule.error ? ` <strong>${esc(tofaRule.error)}</strong>` : "";
+  host.innerHTML = `<span class="material-symbols-rounded">${route < tofa ? "warning" : "task_alt"}</span><span>Tofa marks items watched at <strong>${esc(tofa)}%</strong>${credits} (${source}). ${esc(detail)}${error} ${apply}</span>`;
+}
+
+async function mountTofaRule() {
+  const r = ensureDraft();
+  if (!root?.querySelector("#scr-tofa-rule") || r.provider !== "tofa") return;
+  const key = r.provider_instance || "default";
+  if (tofaRule.key !== key) {
+    tofaRule = { key, data: null, busy: false, error: "" };
+    const data = await fetchTofaRule(key);
+    if (tofaRule.key !== key) return;
+    tofaRule.data = data;
+  }
+  paintTofaRule();
+}
+
+async function applyTofaRule(percent) {
+  const key = tofaRule.key;
+  tofaRule.busy = true;
+  paintTofaRule();
+  try {
+    const res = await fetch(`/api/tofa/watched-rule?instance=${encodeURIComponent(key || "default")}`, {
+      method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ percent: Number(percent) }),
+    });
+    const data = res.ok ? await res.json() : { ok: false };
+    if (data?.ok) {
+      tofaRule.data = data;
+      tofaRule.error = "";
+      window.notify?.(`Tofa now marks items watched at ${data.percent}%`);
+    } else {
+      tofaRule.error = "Tofa did not accept the new threshold.";
+    }
+  } catch {
+    tofaRule.error = "Could not reach Tofa to update the threshold.";
+  } finally {
+    tofaRule.busy = false;
+    paintTofaRule();
+  }
 }
 
 async function fetchDestinationLibraries(sink, instance) {
@@ -548,7 +629,7 @@ function optionsPanel(r) {
   const pkcSupport = r.provider === "plex"
     ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">connected_tv</span><span><strong>PlexKodiConnect support</strong><small>Merge the split stop sessions PlexKodiConnect creates for the server owner, so the stop keeps its user and item.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-plexkodiconnect-support" ${r.options.watch?.plexkodiconnect_support === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
     : "";
-  const manualMarks = ["plex", "jellyfin", "emby", "silo"].includes(r.provider)
+  const manualMarks = ["plex", "jellyfin", "emby", "silo", "tofa"].includes(r.provider)
     ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">task_alt</span><span><strong>Detect manual marks</strong><small>Send items marked as played by hand on the media server as watched. Checked every idle poll interval, at most every 30 seconds. Unmarks are not sent. On Plex this covers the account of the connected token only.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-manual-marks" ${r.options.watch?.manual_marks !== false ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`
     : "";
   const animeGlobalOn = globalAnimeMappingEnabled();
@@ -573,6 +654,7 @@ function optionsPanel(r) {
         ${["emby", "jellyfin", "kodi", "scrob", "silo"].includes(r.provider) ? field("Poll interval (s)", `<input class="input" id="scr-watch-poll" type="number" min="5" max="60" value="${esc(r.options.watch?.poll_seconds ?? "")}" placeholder="10">`, "", "Seconds between playback checks while something is playing, from 5 to 60. Higher values lower the load but delay pause and stop detection. Routes sharing this source use the lowest value set.") : ""}
         ${["emby", "jellyfin", "kodi", "scrob", "silo"].includes(r.provider) ? field("Idle poll interval (s)", `<input class="input" id="scr-watch-idle-poll" type="number" min="5" max="120" value="${esc(r.options.watch?.idle_poll_seconds ?? "")}" placeholder="30">`, "", "Seconds between checks while nothing is playing, from 5 to 120. This decides how quickly a new playback is noticed. It never drops below the poll interval. Routes sharing this source use the lowest value set.") : ""}
       </div>
+      ${r.provider === "tofa" ? `<div class="scrm-note" id="scr-tofa-rule"><span class="material-symbols-rounded">sync</span><span>Reading the Tofa watched rule...</span></div>` : ""}
       ${unresolvedFallback}
       ${pkcSupport}
       ${manualMarks}
@@ -715,6 +797,7 @@ function render(errors = []) {
   enableSelectedUnavailableRatingTargets();
   mountDestinationTable();
   mountIdentityMap(r);
+  void mountTofaRule();
 }
 
 function collect() {
@@ -755,7 +838,7 @@ function collect() {
   if (provider === "plex") watch.unresolved_user_fallback = !!root.querySelector("#scr-unresolved-user-fallback")?.checked;
   if (provider === "plex") watch.plexkodiconnect_support = !!root.querySelector("#scr-plexkodiconnect-support")?.checked;
   const manualMarksEl = root.querySelector("#scr-manual-marks");
-  if (manualMarksEl && ["plex", "jellyfin", "emby", "silo"].includes(provider)) watch.manual_marks = !!manualMarksEl.checked;
+  if (manualMarksEl && ["plex", "jellyfin", "emby", "silo", "tofa"].includes(provider)) watch.manual_marks = !!manualMarksEl.checked;
   if (["crosswatch", "simkl"].includes(String(root.querySelector("#scr-sink")?.value || draft.sink || "").toLowerCase())) watch.anime_mapping = !!root.querySelector("#scr-anime-mapping")?.checked;
   if (String(root.querySelector("#scr-sink")?.value || draft.sink || "").toLowerCase() === "simkl") watch.simkl_rewatches = !!root.querySelector("#scr-simkl-rewatches")?.checked;
   const ratingsMode = root.querySelector("#scr-ratings-mode")?.value || "off";
@@ -918,6 +1001,11 @@ export async function mount(shell, incoming = {}) {
       window.cxCloseModal?.();
       return;
     }
+    if (e.target.closest("[data-tofa-apply]")) {
+      e.preventDefault();
+      await applyTofaRule(e.target.closest("[data-tofa-apply]").dataset.tofaApply);
+      return;
+    }
     if (e.target.closest("[data-save]")) {
       e.preventDefault();
       await save(false);
@@ -1002,6 +1090,7 @@ export async function mount(shell, incoming = {}) {
     draft.options.destination = { ...(draft.options.destination || {}), libraries: [] };
   };
   changeHandler = (e) => {
+    if (e.target.id === "scr-watched") paintTofaRule();
     if (["scr-provider", "scr-sink"].includes(e.target.id)) {
       const keepTab = currentActiveTab();
       const beforeKey = destinationKey(ensureDraft().sink, ensureDraft().sink_instance);
@@ -1056,6 +1145,7 @@ export function unmount() {
   userProfiles = [];
   selectedUserProfileId = "";
   activeTab = "route";
+  tofaRule = { key: "", data: null, busy: false };
 }
 
 export default { mount, unmount };

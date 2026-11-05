@@ -760,6 +760,16 @@ DEFAULT_CFG: dict[str, Any] = {
         "profile_name": "",
     },
 
+    "tofa": {
+        "server_url": "",
+        "verify_ssl": False,
+        "access_token": "",
+        "refresh_token": "",
+        "expires_at": 0,
+        "profile_id": "",
+        "profile_name": "",
+    },
+
     "kodi": {
         "server": "",                                   # http(s)://host:port (required)
         "username": "",                                 # Optional HTTP Basic Auth username
@@ -1040,6 +1050,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "jellyfin": {"access_token", "api_key", "password"},
         "emby": {"access_token", "api_key", "password"},
         "silo": {"access_token", "refresh_token", "profile_token", "_pending_device"},
+        "tofa": {"access_token", "refresh_token", "profile_token", "_pending_device"},
         "kodi": {"password"},
         "tmdb": {"api_key"},
         "tmdb_sync": {"api_key", "session_id", "_pending_request_token", "read_token", "access_token", "_pending_access_token"},
@@ -1150,6 +1161,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "jellyfin",
     "emby",
     "silo",
+    "tofa",
     "kodi",
     "tautulli",
     "tracearr",

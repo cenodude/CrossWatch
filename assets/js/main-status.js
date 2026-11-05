@@ -280,6 +280,12 @@
   }
 
   function providerProfileDetail(key, data) {
+    if (up(key) === "TOFA" && data && typeof data === "object") {
+      const profileName = txt(data.profile_name);
+      const user = txt(data.username);
+      if (profileName && user) return `Tofa profile: ${profileName} (${user})`;
+      return profileName ? `Tofa profile: ${profileName}` : "";
+    }
     if (up(key) === "SILO" && data && typeof data === "object") {
       const profileName = txt(data.profile_name);
       const user = txt(data.username);
