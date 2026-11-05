@@ -12,6 +12,7 @@ from typing import Any
 
 import requests
 
+from ._cleanup import cleanup_remote
 from ._auth_base import AuthManifest, AuthStatus
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
@@ -845,13 +846,11 @@ class PunchPlayAuth:
     def disconnect(self, cfg: MutableMapping[str, Any] | None = None, *, instance_id: Any = None) -> AuthStatus:
         cfgd = dict(cfg or _load_full_cfg())
         inst = normalize_instance_id(instance_id)
-        try:
-            revoke_token(cfgd, instance_id=inst)
-        except Exception:
-            pass
         block = writable_block(cfgd, inst)
+        remote = {"punchplay": dict(block)}
         clear_oauth(block)
         _save_full_cfg(cfgd)
+        cleanup_remote(revoke_token, remote)
         log(f"PUNCHPLAY: disconnected (instance={inst})", level="INFO", module="AUTH")
         return self.get_status(cfgd, instance_id=inst)
 

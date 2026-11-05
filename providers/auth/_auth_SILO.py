@@ -7,6 +7,7 @@ import secrets
 import threading
 import time
 from collections.abc import Mapping, MutableMapping
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
@@ -784,6 +785,17 @@ class SiloClient:
     def disconnect(self, cfg: dict[str, Any]) -> None:
         self.cfg = cfg
         block = writable_block(cfg, self.instance_id)
+        remote = deepcopy(block)
+        clear_oauth(block)
+        save_config(cfg)
+        if normalize_server_url(remote.get("server_url")):
+            try:
+                threading.Thread(target=self._disconnect_remote, args=(remote,), daemon=True, name="silo-disconnect").start()
+            except RuntimeError:
+                log("SILO: remote disconnect cleanup unavailable", level="WARNING")
+        log(f"SILO: disconnected (instance={self.instance_id})", level="INFO")
+
+    def _disconnect_remote(self, block: Mapping[str, Any]) -> None:
         token = str(block.get("access_token") or "").strip()
         if token and normalize_server_url(block.get("server_url")):
             try:
@@ -796,9 +808,6 @@ class SiloClient:
                 self._post_public(block, "/auth/device/cancel", {"device_code": str(pend.get("device_code"))})
             except SiloError:
                 pass
-        clear_oauth(block)
-        save_config(cfg)
-        log(f"SILO: disconnected (instance={self.instance_id})", level="INFO")
 
 
 def start_device_code(cfg: dict[str, Any] | None, *, instance_id: Any = None, server_url: Any = None, verify_ssl: Any = None, **_: Any) -> dict[str, Any]:

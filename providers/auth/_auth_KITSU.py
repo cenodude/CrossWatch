@@ -21,6 +21,8 @@ TOKEN_URL = "https://kitsu.io/api/oauth/token"
 IDENTITY_URL = API_URL + "/users?filter[self]=true"
 _LOCKS: dict[str, threading.RLock] = {}
 _GUARD = threading.Lock()
+_CONFIG_LOCK = threading.RLock()
+_GENERATIONS: dict[str, int] = {}
 
 
 class KitsuAuthError(RuntimeError):
@@ -106,6 +108,7 @@ def refresh_token(cfg: Mapping[str, Any] | None = None, *, instance_id: Any = No
                   rejected_token: str | None = None) -> dict[str, Any]:
     inst = normalize_instance_id(instance_id)
     with instance_lock(inst):
+        generation = _GENERATIONS.get(inst, 0)
         full = load_config()
         current = resolve_provider_block(full, "kitsu", inst)
         supplied = resolve_provider_block(cfg or {}, "kitsu", inst)
@@ -120,19 +123,25 @@ def refresh_token(cfg: Mapping[str, Any] | None = None, *, instance_id: Any = No
         try:
             tokens = _exchange({"grant_type": "refresh_token", "refresh_token": str(current.get("refresh_token") or "")})
         except KitsuAuthError as exc:
-            if str(exc) == "invalid_grant":
-                full = load_config()
-                block = ensure_instance_block(full, "kitsu", inst)
-                clear_oauth(block)
-                block["reauth_required"] = True
-                save_config(full)
+            with _CONFIG_LOCK:
+                if generation != _GENERATIONS.get(inst, 0):
+                    raise KitsuAuthError("Kitsu connection changed") from None
+                if str(exc) == "invalid_grant":
+                    full = load_config()
+                    block = ensure_instance_block(full, "kitsu", inst)
+                    clear_oauth(block)
+                    block["reauth_required"] = True
+                    save_config(full)
             raise
-        full = load_config()
-        block = ensure_instance_block(full, "kitsu", inst)
-        block.update(tokens)
-        block.pop("password", None)
-        save_config(full)
-        return dict(block)
+        with _CONFIG_LOCK:
+            if generation != _GENERATIONS.get(inst, 0):
+                raise KitsuAuthError("Kitsu connection changed")
+            full = load_config()
+            block = ensure_instance_block(full, "kitsu", inst)
+            block.update(tokens)
+            block.pop("password", None)
+            save_config(full)
+            return dict(block)
 
 
 def request_with_auth(session: requests.Session, method: str, url: str, *, cfg: Mapping[str, Any] | None,
@@ -179,7 +188,10 @@ class KitsuAuth:
                           extra={"reauth_required": bool(block.get("reauth_required"))})
 
     def disconnect(self, cfg: dict[str, Any], *, instance_id: Any = None) -> AuthStatus:
-        clear_oauth(ensure_instance_block(cfg, "kitsu", instance_id))
+        inst = normalize_instance_id(instance_id)
+        with _CONFIG_LOCK:
+            _GENERATIONS[inst] = _GENERATIONS.get(inst, 0) + 1
+            clear_oauth(ensure_instance_block(cfg, "kitsu", inst))
         return self.get_status(cfg, instance_id=instance_id)
 
     def finish(self, cfg: dict[str, Any], *, instance_id: Any = None, **payload: Any) -> AuthStatus:

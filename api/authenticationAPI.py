@@ -4058,13 +4058,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         from providers.auth import _auth_KITSU as kitsu
 
         inst = normalize_instance_id(instance)
-        with kitsu.instance_lock(inst):
+        with kitsu._CONFIG_LOCK:
             cfg = load_config()
             conflict = usage_conflict_response(cfg, "kitsu", inst)
             if conflict is not None:
                 return conflict
             block = ensure_instance_block(cfg, "kitsu", inst)
-            kitsu.clear_oauth(block)
+            kitsu.PROVIDER.disconnect(cfg, instance_id=inst)
             block["reauth_required"] = False
             save_config(cfg)
         _probe_bust("kitsu")
@@ -4278,11 +4278,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         conflict = usage_conflict_response(cfg, "simkl", inst)
         if conflict is not None:
             return conflict
+        from providers.auth import _auth_SIMKL as _simkl_auth
+
         s = ensure_instance_block(cfg, "simkl", inst)
+        remote = dict(s)
         token_keys: tuple[str, ...] = ("access_token", "refresh_token", "token_expires_at", "scopes", "account", "_pending_pin", "auth_method")
         try:
-            from providers.auth import _auth_SIMKL as _simkl_auth
-            _simkl_auth.revoke_block(s)
             if str(s.get("client_id") or "").strip() in _simkl_auth.baked_client_ids():
                 s.pop("client_id", None)
                 s.pop("api_key", None)
@@ -4292,6 +4293,9 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         for k in token_keys:
             s.pop(k, None)
         save_config(cfg)
+        from providers.auth._cleanup import cleanup_remote
+
+        cleanup_remote(_simkl_auth.revoke_block, remote)
         _probe_bust("simkl")
         return {"ok": True, "instance": inst}
 

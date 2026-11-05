@@ -432,12 +432,18 @@ def test_disconnect_revokes_selected_profile_and_busts_probe_cache(store, monkey
 
     connected(store)
     sent = []
+    cleanup = []
+    monkeypatch.setattr(wt, "cleanup_remote", lambda fn, *args, **kwargs: cleanup.append((fn, args, kwargs)))
     monkeypatch.setattr(wt.requests, "post", lambda url, **k: (sent.append((url, k)), Response())[1])
     monkeypatch.setattr(api, "load_config", lambda: copy.deepcopy(store["cfg"]))
     app = FastAPI()
     cache = {"wetrakr": (123, True)}
     api.register_auth(app, probe_cache=cache)
     assert TestClient(app).post("/api/wetrakr/disconnect?instance=P01").json()["ok"]
+    assert sent == []
+    assert not block(store)["access_token"]
+    fn, args, kwargs = cleanup[0]
+    fn(*args, **kwargs)
     assert sent[0][0] == wt.REVOKE_URL
     assert sent[0][1]["headers"]["Authorization"] == "Bearer old-access"
     assert not block(store)["access_token"]
