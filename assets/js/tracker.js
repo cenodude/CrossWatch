@@ -259,6 +259,15 @@
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
+  function secondsOf(value) {
+    const date = new Date(value || "");
+    return Number.isNaN(date.getTime()) ? 0 : date.getSeconds();
+  }
+
+  function secondsControl(value, attribute) {
+    return `<details><summary>More options</summary><label class="trk-field"><span>Seconds</span><select class="cw-select" ${attribute}>${Array.from({ length: 60 }, (_, n) => `<option value="${n}"${n === Number(value) ? " selected" : ""}>${pad(n)}</option>`).join("")}</select></label></details>`;
+  }
+
   function artUrl(item, size = "w342") {
     const art = item?.art;
     if (!art?.tmdb) return "";
@@ -1530,7 +1539,7 @@
     const f = featureOf(sheet.feature);
     const child = isChild(item);
     const dateRow = item.date_field
-      ? `<label class="trk-field"><span>${esc(f.date)}</span><input type="datetime-local" class="cw-input" data-trk-edit="date" value="${esc(localInput(item.date))}" max="${esc(localInput(new Date().toISOString()))}"></label>`
+      ? `<div class="trk-field"><label class="trk-field"><span>${esc(f.date)}</span><input type="datetime-local" class="cw-input" data-trk-edit="date" value="${esc(localInput(item.date))}" max="${esc(localInput(new Date().toISOString()))}"></label>${secondsControl(secondsOf(item.date), 'data-trk-edit="seconds"')}</div>`
       : "";
     const ratingRow = sheet.feature === "ratings"
       ? `<label class="trk-field"><span>Rating</span><select class="cw-select" data-trk-edit="rating">${Array.from({ length: 10 }, (_, i) => i + 1).map((n) => `<option value="${n}"${Number(item.rating) === n ? " selected" : ""}>${n}</option>`).join("")}</select></label>`
@@ -1688,7 +1697,7 @@
               <label class="trk-field"><span>Episode</span><select class="cw-select" data-trk-log-episode><option value="all"${log.episode === "all" ? " selected" : ""}>All ${count} episodes</option>${Array.from({ length: count }, (_, i) => i + 1).map((e) => `<option value="${e}"${String(log.episode) === String(e) ? " selected" : ""}>Episode ${e}</option>`).join("")}</select></label></div>`
           : `<p class="trk-note">Loading seasons...</p>`)
         : "";
-      const whenRow = log.target === "history" ? `<div class="trk-fields"><label class="trk-field"><span>When</span><input type="datetime-local" class="cw-input" data-trk-log-when value="${esc(log.when)}" max="${esc(localInput(new Date().toISOString()))}"></label></div>` : "";
+      const whenRow = log.target === "history" ? `<div class="trk-fields"><div class="trk-field"><label class="trk-field"><span>When</span><input type="datetime-local" class="cw-input" data-trk-log-when value="${esc(log.when)}" max="${esc(localInput(new Date().toISOString()))}"></label>${secondsControl(log.seconds || 0, "data-trk-log-seconds")}</div></div>` : "";
       const unlist = log.target === "history" && log.watchlistKey ? `<label class="trk-check"><input type="checkbox" class="cw-checkbox" data-trk-log-unlist${log.unlist ? " checked" : ""}><span>Remove from watchlist</span></label>` : "";
       body = `
         <div class="trk-picked">${symbol(picked.type === "movie" ? "movie" : "tv")}<div><b>${esc(picked.title)}</b><small>${esc([picked.year, picked.type === "movie" ? "Movie" : "Show"].filter(Boolean).join(" · "))}</small></div>${log.fixed ? "" : `<button type="button" class="cw-btn" data-trk-log-repick>${icon("search")}<span>Change</span></button>`}</div>
@@ -2158,8 +2167,9 @@
     const changes = {};
     const val = (name) => form.querySelector(`[data-trk-edit="${name}"]`)?.value ?? null;
     const date = val("date");
-    if (date !== null && date !== localInput(item.date)) {
+    if (date !== null && (date !== localInput(item.date) || Number(val("seconds")) !== secondsOf(item.date))) {
       const d = new Date(date);
+      d.setSeconds(Number(val("seconds")));
       changes.date = date && !Number.isNaN(d.getTime()) ? d.toISOString() : "";
     }
     const rating = val("rating");
@@ -2382,7 +2392,9 @@
     const log = sheet.log;
     const p = log.pick;
     if (!p) return;
-    const when = log.when ? new Date(log.when).toISOString() : new Date().toISOString();
+    const whenDate = log.when ? new Date(log.when) : new Date();
+    whenDate.setSeconds(Number(log.seconds || 0), 0);
+    const when = whenDate.toISOString();
     let items;
     if (log.target === "history" && p.type === "show") {
       const season = Number(log.season);
@@ -2807,6 +2819,7 @@
       renderSheet();
     } else if (event.target.matches("[data-trk-log-episode]")) log.episode = event.target.value;
     else if (event.target.matches("[data-trk-log-when]")) log.when = event.target.value;
+    else if (event.target.matches("[data-trk-log-seconds]")) log.seconds = Number(event.target.value);
     else if (event.target.matches("[data-trk-log-unlist]")) log.unlist = event.target.checked;
   }
 

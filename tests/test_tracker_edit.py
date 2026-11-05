@@ -173,6 +173,27 @@ def test_api_edit_normalizes_the_date_and_keeps_the_key(client, base):
     assert _items(base, "history")["tmdb:949"]["watched_at"] == MOVIE["watched_at"]
 
 
+@pytest.mark.parametrize("feature,field", [
+    ("history", "watched_at"), ("ratings", "rated_at"),
+    ("progress", "progress_at"), ("collection", "collected_at"),
+])
+@pytest.mark.parametrize("seconds", [0, 25, 59])
+def test_api_timestamp_seconds_roundtrip_and_undo(client, base, feature, field, seconds):
+    original = {"type": "movie", "ids": {"tmdb": "949"}, field: "2026-01-02T00:00:17.000Z"}
+    TrackerStore(base).write_state(feature, {"tmdb:949": original})
+    response = client.post("/api/tracker/edit", json={
+        "feature": feature, "key": "tmdb:949",
+        "changes": {"date": f"2026-02-02T10:30:{seconds:02d}+02:00"},
+    })
+    assert response.status_code == 200, response.text
+    saved = response.json()
+    expected = f"2026-02-02T08:30:{seconds:02d}.000Z"
+    assert saved["item"]["date"] == expected
+    assert TrackerStore(base).read_current(feature)["items"]["tmdb:949"][field] == expected
+    assert client.post("/api/tracker/undo", json={"batch": saved["batch"]}).status_code == 200
+    assert _items(base, feature)["tmdb:949"] == original
+
+
 def test_api_identity_fix_moves_the_record_to_its_new_key(client, base):
     res = client.post("/api/tracker/edit", json={"feature": "history", "key": "tmdb:949", "changes": {"ids": {"tmdb": "603", "imdb": ""}, "title": "The Matrix", "year": 1999}})
     assert res.status_code == 200, res.text
