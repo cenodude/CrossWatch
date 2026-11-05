@@ -738,7 +738,7 @@ class LibraryIndex:
                 if key and key != "unknown:":
                     self.by_key.setdefault(key, []).append(item)
 
-    def resolve(self, item: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str]:
+    def candidates(self, item: Mapping[str, Any]) -> list[dict[str, Any]]:
         candidates: list[dict[str, Any]] = []
         seen_ids: set[tuple[str, int]] = set()
         media_type = id_minimal(item).get("type")
@@ -750,6 +750,10 @@ class LibraryIndex:
                 if ident not in seen_ids:
                     seen_ids.add(ident)
                     candidates.append(candidate)
+        return candidates
+
+    def resolve(self, item: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str]:
+        candidates = self.candidates(item)
         if len(candidates) == 1:
             return candidates[0], "ok"
         if not candidates:
@@ -888,6 +892,7 @@ def apply_set_details(adapter: Any, target: Mapping[str, Any], payload: Mapping[
 
 def operation_result(adapter: Any, feature: str, op: str, items: Iterable[Mapping[str, Any]], payload_for: Any, *, dry_run: bool = False) -> dict[str, Any]:
     from providers.sync._mod_common import build_op_result
+    from cw_platform.matching_details import CANDIDATE_LIMIT, match_details
 
     rows = list(items or [])
     if dry_run:
@@ -904,7 +909,13 @@ def operation_result(adapter: Any, feature: str, op: str, items: Iterable[Mappin
         target, reason = idx.resolve(source)
         if target is None:
             reasons[reason] += 1
-            unresolved.append({"key": key, "item": dict(source), "reason": reason})
+            candidates = idx.candidates(source)
+            details = match_details({"candidate_count": len(candidates), "candidates": [
+                {**{field: candidate[field] for field in ("type", "title", "year", "season", "episode", "ids", "show_ids") if field in candidate},
+                 "local_id": candidate.get("_kodi_id")}
+                for candidate in candidates[:CANDIDATE_LIMIT]
+            ]})
+            unresolved.append({"key": key, "item": dict(source), "reason": reason, "match_details": details})
             results.append({"status": "unresolved", "key": key, "reason": reason})
             continue
         try:

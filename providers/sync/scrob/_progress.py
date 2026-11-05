@@ -203,17 +203,17 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
 
         if kodi_item is None:
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "missing_supported_id"})
+            unresolved.append({"key": key, "status": "missing_supported_id", "reason": "missing_supported_id", "item": id_minimal(item)})
             _dbg(FEATURE, "item_unresolved_before_write", key=key)
             continue
         if percent is None or not duration_ms or duration_ms <= 0:
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "missing_duration_or_percent"})
+            unresolved.append({"key": key, "status": "missing_duration_or_percent", "reason": "missing_duration_or_percent", "item": id_minimal(item)})
             _dbg(FEATURE, "item_unresolved_before_write", key=key, reason="missing_duration_or_percent")
             continue
         if percent <= PROGRESS_MIN_PERCENT or percent >= PROGRESS_MAX_PERCENT:
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "outside_supported_progress_window"})
+            unresolved.append({"key": key, "status": "outside_supported_progress_window", "reason": "outside_supported_progress_window", "item": id_minimal(item)})
             _dbg(FEATURE, "item_unresolved_before_write", key=key, reason="outside_supported_progress_window", percent=round(percent, 2))
             continue
 
@@ -237,7 +237,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
         except Exception as exc:
             ok = False
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": exc.__class__.__name__})
+            unresolved.append({"key": key, "status": exc.__class__.__name__, "reason": "progress_write_failed", "item": id_minimal(item)})
             _warn(FEATURE, "progress_write_failed", key=key, error=exc.__class__.__name__)
             continue
 
@@ -248,7 +248,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             continue
         ok = False
         unresolved_keys.append(key)
-        unresolved.append({"key": key, "status": f"http:{int(resp.status_code)}", "error": error_of(resp) or status})
+        unresolved.append({"key": key, "status": f"http:{int(resp.status_code)}", "reason": f"http:{int(resp.status_code)}" if not ok_status(resp) else "progress_write_failed", "item": id_minimal(item), "error": error_of(resp) or status})
         _warn(FEATURE, "progress_write_failed", key=key, status=int(resp.status_code), error=error_of(resp) or status)
 
     _dbg(FEATURE, "write_prepare", action="add", items=planned, skipped=len(unresolved_keys))
@@ -276,7 +276,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
         media_id = positive_int(item.get(MEDIA_ID_FIELD))
         if not media_id:
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "missing_scrob_media_id"})
+            unresolved.append({"key": key, "status": "missing_scrob_media_id", "reason": "missing_scrob_media_id", "item": id_minimal(item)})
             _dbg(FEATURE, "item_unresolved_before_write", key=key, reason="missing_scrob_media_id")
             continue
         if dry_run:
@@ -290,7 +290,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             continue
         ok = False
         unresolved_keys.append(key)
-        unresolved.append({"key": key, "status": f"http:{code}", "error": error_of(resp)})
+        unresolved.append({"key": key, "status": f"http:{code}", "reason": f"http:{code}", "item": id_minimal(item), "error": error_of(resp)})
         _warn(FEATURE, "progress_delete_failed", key=key, status=code, error=error_of(resp))
 
     _info(FEATURE, "write_done", action="remove", confirmed=len(confirmed), unresolved=len(unresolved_keys), dry_run=bool(dry_run))

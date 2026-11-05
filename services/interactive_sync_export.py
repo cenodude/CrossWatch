@@ -34,6 +34,7 @@ COLUMNS = (
     "media_type", "title", "series_title", "year", "season", "episode", "provider_ids", "show_ids",
     "result", "reason", "selected", "selectable", "row_id", "key", "destination_label",
     "before", "proposed_item", "conflict_left", "conflict_right", "conflict_winner",
+    "reason_origin", "previous_attempt", "match_details",
 )
 
 
@@ -58,6 +59,7 @@ def csv_row(row):
         row.get("result"), row.get("reason"), row.get("selected"), row.get("selectable"),
         row.get("id"), row.get("key"), row.get("destination_label"), row.get("before"), item,
         row.get("left"), row.get("right"), row.get("winner"),
+        row.get("reason_origin"), row.get("previous_attempt"), row.get("match_details"),
     )
     return [csv_cell(value) for value in values]
 

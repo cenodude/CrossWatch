@@ -21,7 +21,7 @@ from cw_platform.identity_links import clean_identity_map
 from cw_platform.provider_instances import list_user_profiles, normalize_user_profile_id
 from cw_platform.local_db.legacy_files import LAST_SYNC_JSON
 from cw_platform.memory_release import clear_caches, release_memory
-from cw_platform.reason_labels import friendly_reason
+from cw_platform.reason_labels import friendly_reason, reason_hint, reason_message
 from cw_platform.run_control import (
     SyncCancelled,
     cancel_requested,
@@ -686,13 +686,19 @@ def _format_unresolved_line(it: Mapping[str, Any]) -> str:
     nested = it.get("item")
     if isinstance(nested, Mapping):
         merged = dict(nested)
-        for field in ("reason", "feature", "provider"):
+        for field in ("reason", "hint", "feature", "provider"):
             if it.get(field) not in (None, ""):
                 merged[field] = it.get(field)
         it = merged
     series = str(it.get("series_title") or it.get("show_title") or "").strip()
     title = str(it.get("title") or it.get("name") or "").strip()
-    reason = _friendly_unresolved_reason(it.get("reason"))
+    raw_reason = it.get("reason")
+    message = reason_message(raw_reason, provider=it.get("provider"), feature=it.get("feature"))
+    provider_hint = reason_hint(it.get("hint"), raw_reason)
+    if provider_hint:
+        message = reason_message(provider_hint, provider=it.get("provider"), feature=it.get("feature")) or message
+        raw_reason = f"{raw_reason}; {provider_hint}"
+    reason = f"{message} [{raw_reason}]" if message else _friendly_unresolved_reason(raw_reason)
     code = ""
     season = it.get("season")
     episode = it.get("episode")
