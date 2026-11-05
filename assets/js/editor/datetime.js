@@ -113,7 +113,29 @@
     timeInput.value = `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
   }
 
-  function dateTimeInputsToIso(dateValue, timeValue) {
+  function appendSecondsControl(pop, iso) {
+    const details = document.createElement("details");
+    const summary = document.createElement("summary");
+    summary.textContent = "More options";
+    const label = document.createElement("label");
+    label.textContent = "Seconds ";
+    const select = document.createElement("select");
+    const date = new Date(iso || "");
+    const seconds = Number.isNaN(date.getTime()) ? 0 : date.getUTCSeconds();
+    for (let i = 0; i < 60; i++) {
+      const option = document.createElement("option");
+      option.value = String(i);
+      option.textContent = pad2(i);
+      select.appendChild(option);
+    }
+    select.value = String(seconds);
+    label.appendChild(select);
+    details.append(summary, label);
+    pop.appendChild(details);
+    return select;
+  }
+
+  function dateTimeInputsToIso(dateValue, timeValue, seconds = 0) {
     if (!dateValue) return null;
     const parts = dateValue.split("-");
     const y = parseInt(parts[0], 10);
@@ -122,7 +144,7 @@
     const [hhRaw, mmRaw] = (timeValue || "").split(":");
     const hh = parseInt(hhRaw, 10) || 0;
     const mm = parseInt(mmRaw, 10) || 0;
-    return new Date(Date.UTC(y, m - 1, dDay, hh, mm, 0)).toISOString().replace(/\.\d{3}Z$/, ".000Z");
+    return new Date(Date.UTC(y, m - 1, dDay, hh, mm, Number(seconds))).toISOString().replace(/\.\d{3}Z$/, ".000Z");
   }
 
   function appendUtcHint(pop) {
@@ -143,6 +165,7 @@
     parseTimeToMs,
     fillDateTimeInputs,
     dateTimeInputsToIso,
+    appendSecondsControl,
     appendUtcHint,
   };
   window.CrossWatchEditorDateTime = Editor.DateTime;
