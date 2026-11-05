@@ -635,3 +635,19 @@ def test_feed_transport_failure_falls_back_to_a_full_read(server: FakeServer) ->
     server.on("GET", "/users/me/state-changes", timeout)
     assert sorted(_adapter().build_index("history")) == ["tmdb:100"]
     assert server.count("GET", "/users/me/watch-state") == 2
+
+
+def test_capture_always_reads_everything_and_keeps_sync_state(server: FakeServer, tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    server.mark("f-alpha", True, "2024-05-01T20:00:00Z")
+    _adapter().build_index("history")
+    saved = {p.name: p.read_bytes() for p in tmp_path.glob("tofa_feed_*")}
+    assert saved
+
+    monkeypatch.setenv("CW_CAPTURE_MODE", "1")
+    server.mark("f-beta", True, "2022-02-02T02:02:02Z")
+    server.calls.clear()
+    assert sorted(_adapter().build_index("history")) == ["tmdb:100", "tmdb:200"]
+    assert server.count("GET", "/users/me/watch-state") == 1
+    assert server.count("GET", "/users/me/state-changes") == 0
+    assert server.count("GET", "/media/files") > 0
+    assert {p.name: p.read_bytes() for p in tmp_path.glob("tofa_feed_*")} == saved

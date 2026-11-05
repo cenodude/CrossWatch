@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -104,6 +105,10 @@ def cfg_section(adapter: Any) -> Mapping[str, Any]:
 def server_scope(adapter: Any) -> str:
     raw = normalize_server_url(cfg_section(adapter).get("server_url"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def is_capture_mode() -> bool:
+    return str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def account_scope(adapter: Any) -> str:
@@ -369,7 +374,7 @@ def _full_library(adapter: Any, *, refresh: bool = False) -> Library:
     now = time.monotonic()
     with _SHARED_LOCK:
         hit = _LIBRARIES.get(key)
-    if hit and not refresh and now - hit[0] < LIBRARY_TTL_SEC:
+    if hit and not refresh and not is_capture_mode() and now - hit[0] < LIBRARY_TTL_SEC:
         return hit[1]
     rows_by_library: dict[str, list[dict[str, Any]]] = {}
     for row in list_libraries(adapter):
@@ -641,6 +646,10 @@ def feed_changes(adapter: Any, cursor: str, *, feature: str) -> tuple[list[dict[
 
 def _snapshot(adapter: Any, name: str, *, feature: str, kind: str, full: Callable[[], tuple[dict[str, Any], str]],
               apply: Callable[[dict[str, Any], Mapping[str, Any]], None]) -> dict[str, Any]:
+    if is_capture_mode():
+        rows, _head = full()
+        _info(feature, "full_read", rows=len(rows), capture=True)
+        return rows
     scope = account_scope(adapter)
     state = read_state(name, scope)
     now = int(time.time())
