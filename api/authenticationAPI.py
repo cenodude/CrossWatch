@@ -3325,7 +3325,13 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             _safe_log(log_fn, "TOFA", f"[TOFA] watched rule set to {rule['percent']}% instance={inst}")
             return {"ok": True, "instance": inst, **rule}
         except Exception as e:
-            code = str(e) if str(e) in ("tofa_watched_rule_invalid_percent", "tofa_watched_rule_not_saved") else _tofa_error(e)
+            reason = str(e)
+            if reason == "tofa_watched_rule_invalid_percent":
+                code = "tofa_watched_rule_invalid_percent"
+            elif reason == "tofa_watched_rule_not_saved":
+                code = "tofa_watched_rule_not_saved"
+            else:
+                code = _tofa_error(e)
             _safe_log(log_fn, "TOFA", f"[TOFA] watched rule set failed reason={code} instance={inst}")
             return {"ok": False, "error": code, "instance": inst}
 
