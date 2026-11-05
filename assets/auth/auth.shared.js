@@ -647,7 +647,11 @@
 
       wrap.append(lab, sel, labelWrap, btnNew, btnDel);
       head.appendChild(wrap);
-      refreshOptions(true);
+      const initialInstance = getInstance();
+      Promise.resolve(refreshOptions(true)).then(() => {
+        if (getInstance() === initialInstance) return;
+        try { Promise.resolve(onChange?.()).catch(() => {}); } catch (_) {}
+      }).catch(() => {});
 
       sel.addEventListener("change", () => {
         setInstance(sel.value);
