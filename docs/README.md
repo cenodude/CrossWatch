@@ -73,6 +73,12 @@
     <span>Media server</span>
     <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
   </article>
+  <article class="cw-provider-card is-tofa">
+    <img class="cw-provider-mark" src="images/providers/TOFA.svg" alt="" aria-hidden="true">
+    <strong>Tofa</strong>
+    <span>Media server</span>
+    <b class="cw-provider-dots" aria-hidden="true"><i></i><i></i><i></i><i></i></b>
+  </article>
   <article class="cw-provider-card is-kodi">
     <img class="cw-provider-mark" src="images/providers/KODI.png" alt="" aria-hidden="true">
     <strong>Kodi</strong>
@@ -249,12 +255,12 @@
   <article>
     <span class="cw-token">LIVE</span>
     <h3>Watcher and webhooks</h3>
-    <p>Send play events from Plex, Emby, Jellyfin, Silo, Kodi or Scrob to supported trackers with Watcher, without Plex Pass or Emby Premiere. Webhooks are also available for Plex, Emby and Jellyfin.</p>
+    <p>Send play events from Plex, Emby, Jellyfin, Silo, Tofa, Kodi or Scrob to supported trackers with Watcher, without Plex Pass or Emby Premiere. Webhooks are also available for Plex, Emby and Jellyfin.</p>
   </article>
   <article>
     <span class="cw-token">USERS</span>
     <h3>One server, many users</h3>
-    <p>Sync several Plex, Emby, Jellyfin or Silo users from one server connection, so each person keeps their own history.</p>
+    <p>Sync several Plex, Emby, Jellyfin, Silo or Tofa users from one server connection, so each person keeps their own history.</p>
   </article>
   <article>
     <span class="cw-token">SAFE</span>
