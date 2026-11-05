@@ -412,9 +412,10 @@
     const secState = readSecretField($("anilist_client_secret"));
     if (!cidState.hasValue || !secState.hasValue) return;
 
+    const win = Shared.openWaitWindow("AniList", "Preparing the AniList approval page...");
     let authCompleted;
     try { authCompleted = await Shared.captureAuthCompletion(profile); }
-    catch (e) { notify(e.message); return; }
+    catch (e) { Shared.closeWaitWindow(win); notify(e.message); return; }
 
     const payload = {};
     if (cidState.value) payload.client_id = cidState.value;
@@ -441,8 +442,15 @@
       .then((r) => r.json())
       .catch(() => null);
 
-    if (!j?.ok || !j.authorize_url) return;
-    w.open(j.authorize_url, "_blank");
+    if (!j?.ok || !j.authorize_url) {
+      Shared.closeWaitWindow(win);
+      return;
+    }
+    if (win && !win.closed) {
+      try { win.location.replace(j.authorize_url); } catch {}
+    } else {
+      w.open(j.authorize_url, "_blank");
+    }
 
     if (pollHandle) {
       clearTimeout(pollHandle);

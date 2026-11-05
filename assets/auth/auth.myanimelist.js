@@ -91,20 +91,7 @@
     const button = el("myanimelist_oauth_start");
     button.disabled = true;
     button.classList.add("busy");
-    try {
-      popup = window.open("about:blank", "_blank");
-      if (popup) {
-        popup.opener = null;
-        popup.document.write(
-          '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CrossWatch - MyAnimeList</title></head>' +
-          '<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
-          '<div style="padding:24px"><h1 style="font-size:24px">Connecting to MyAnimeList</h1>' +
-          '<p role="status" style="font-size:14px;opacity:.8">Preparing your authorization page...</p>' +
-          '<p style="font-size:12px;opacity:.7">This window will open MyAnimeList automatically.</p></div></body></html>'
-        );
-        popup.document.close();
-      }
-    } catch (_) {}
+    popup = Shared.openWaitWindow("MyAnimeList", "Preparing the MyAnimeList approval page...");
     const win = popup;
     try {
       const response = await post("oauth/start", instance);

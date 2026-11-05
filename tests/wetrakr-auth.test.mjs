@@ -26,6 +26,8 @@ function setup({ blocked = false } = {}) {
   const popup = { closed: false, opener: {}, location: { href: "about:blank", replace(url) { this.href = url; } }, close() { this.closed = true; } };
   const shared = {
     el: node, notify() {}, reportProviderUsage: () => false,
+    openWaitWindow: (label, message) => { const win = window.open("about:blank", "_blank"); if (win) { win.opener = null; win.document?.write(message); } return win; },
+    closeWaitWindow: win => { if (win && !win.closed) win.close(); },
     createProfileAdapter: () => ({ getInstance: () => instance, ensureUI: fn => { profileChanged = fn; } }),
     setConnectLocked() {}, setStatus: (id, ok, message) => { node(id).textContent = message; },
     fetchJSON: async (url, options = {}) => {

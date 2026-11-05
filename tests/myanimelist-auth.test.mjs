@@ -26,6 +26,8 @@ function setup({ blocked = false } = {}) {
   const popup = { document: { html: "", write(html) { this.html += html; }, close() {} }, closed: false, opener: {}, location: { href: "about:blank", replace(url) { this.href = url; } }, close() { this.closed = true; } };
   const shared = {
     el: node, notify() {}, reportProviderUsage: () => false,
+    openWaitWindow: (label, message) => { const win = window.open("about:blank", "_blank"); if (win) { win.opener = null; win.document?.write(message); } return win; },
+    closeWaitWindow: win => { if (win && !win.closed) win.close(); },
     createProfileAdapter: () => ({ getInstance: () => instance, ensureUI: fn => { profileChanged = fn; } }),
     setConnectLocked() {}, setStatus: (id, ok, message) => { node(id).textContent = message; },
     fetchJSON: async (url, options = {}) => {
@@ -85,7 +87,7 @@ test("closing during start cancels the late session", async () => {
   let resolve;
   app.handler = url => url.includes("oauth/start") ? new Promise(done => { resolve = done; }) : null;
   await app.click("myanimelist_oauth_start");
-  assert.match(app.popup.document.html, /Preparing your authorization page/);
+  assert.match(app.popup.document.html, /Preparing the MyAnimeList approval page/);
   assert.equal(app.popup.location.href, "about:blank");
   await app.close();
   resolve({ ok: true, data: { ok: true, flow_id: "late-flow" } });

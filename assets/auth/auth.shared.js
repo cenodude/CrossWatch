@@ -264,6 +264,28 @@
     };
   }
 
+  function openWaitWindow(label, message) {
+    let win = null;
+    try { win = w.open("about:blank", "_blank"); } catch {}
+    if (!win) return null;
+    try { win.opener = null; } catch {}
+    const safe = (value) => String(value || "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+    try {
+      win.document.open();
+      win.document.write(
+        '<!doctype html><meta charset="utf-8"><title>CrossWatch -> ' + safe(label) + '</title>' +
+        '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
+        '<div style="font-size:14px;opacity:.7">' + safe(message || ("Contacting " + label + "...")) + '</div></body>'
+      );
+      win.document.close();
+    } catch {}
+    return win;
+  }
+
+  function closeWaitWindow(win) {
+    try { if (win && !win.closed) win.close(); } catch {}
+  }
+
   function mediaAuthGuide(root, opts) {
     if (!root) return null;
     let node = root.querySelector(".cw-auth-journey");
@@ -889,6 +911,8 @@
     setStatus,
     setConnectLocked,
     captureAuthCompletion,
+    openWaitWindow,
+    closeWaitWindow,
     mediaAuthGuide,
     setMediaAuthStep,
     applyMediaTabState,

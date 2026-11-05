@@ -201,6 +201,7 @@
     const readState = readSecretField(el("tmdb_sync_read_token"));
     const readToken = readState.masked ? "********" : readState.value;
 
+    const win = Shared.openWaitWindow("TMDb", "Preparing the TMDb approval page...");
     try {
       const r = await fetchJSON(tmdbApi(API.start), {
         method: "POST",
@@ -209,10 +210,16 @@
       });
       if (!r.ok || (r.data && r.data.ok === false)) throw new Error(r.data?.error || "connect_failed");
       const j = r.data || {};
-      if (j.auth_url) window.open(j.auth_url, "_blank", "noopener,noreferrer");
+      if (j.auth_url && win && !win.closed) {
+        try { win.location.replace(j.auth_url); } catch {}
+      } else {
+        Shared.closeWaitWindow(win);
+        if (j.auth_url) window.open(j.auth_url, "_blank", "noopener,noreferrer");
+      }
       setConn(false, "Approve in TMDb...");
       startPoll(120000);
     } catch (err) {
+      Shared.closeWaitWindow(win);
       setConn(false, (err && err.message) ? err.message : "TMDb connect failed");
     }
   }
