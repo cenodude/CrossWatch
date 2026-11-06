@@ -45,3 +45,41 @@ test("Editor labels cloud source only for history, including mixed viewing group
   assert.equal(label.textContent, "Source: Plex cloud history");
   assert.match(label.title, /does not confirm presence/);
 });
+
+
+test("failure detail sections escape evidence and keep candidates collapsed and bounded", () => {
+  const code = source.slice(source.indexOf("const failureDetailsHTML"), source.indexOf("const PAGE_SIZE"));
+  const ctx = vm.createContext({});
+  vm.runInContext(source.slice(source.indexOf("const esc ="), source.indexOf("function withEventScope")), ctx);
+  vm.runInContext(code + "globalThis.render = failureDetailsHTML;", ctx);
+  assert.equal(ctx.render({}), "");
+  assert.equal(ctx.render({event_type:"write_succeeded", reason_message:"Success"}), "");
+  assert.equal(ctx.render({match_details:{candidates:[null]}}), "");
+  const html = ctx.render({event_type:"write_failed", reason_message:"<Failure>", hint_message:"Specific hint", match_details:{candidate_count:12, truncated:true,
+    candidates:Array.from({length:12}, () => ({title:"<Candidate>", ids:{tmdb:"2"}, show_ids:{tvdb:"3"}, season:1, episode:2}))}});
+  assert.match(html, /What happened/);
+  assert.match(html, /Specific hint/);
+  assert.match(html, /&lt;Failure&gt;/);
+  assert.match(html, /&lt;Candidate&gt;/);
+  assert.doesNotMatch(html, /<Failure>|<Candidate>|<details[^>]* open/);
+  assert.match(html, /Possible matches \(12\)/);
+  assert.match(html, /show tvdb:3/);
+  assert.match(html, /S1E2/);
+  assert.match(html, /Only the first candidates/);
+  assert.equal((html.match(/&lt;Candidate&gt;/g) || []).length, 10);
+});
+
+
+test("grouped failure pairs show diagnostics once while raw events retain them", () => {
+  const ctx = vm.createContext({});
+  vm.runInContext(source.slice(source.indexOf("const esc ="), source.indexOf("function withEventScope")), ctx);
+  vm.runInContext(source.slice(source.indexOf("const failureDetailsHTML"), source.indexOf("const PAGE_SIZE")) + "globalThis.render = failureDetailsHTML;", ctx);
+  const failed = {event_type:"write_failed", run_id:"run1", item_key:"tmdb:1", destination_instance:"P01", reason_code:"ambiguous", reason_message:'A < B & "C"'};
+  const unresolved = {...failed, event_type:"unresolved_recorded"};
+  const events = [failed, unresolved];
+  assert.equal((events.map(event => ctx.render(event, events)).join("").match(/What happened/g) || []).length, 1);
+  assert.match(ctx.render(unresolved), /A &lt; B &amp; &quot;C&quot;/);
+  for (const change of [{run_id:"run2"}, {destination_instance:"P02"}, {item_key:"tmdb:2"}, {hint_message:"Different evidence"}]) {
+    assert.match(ctx.render({...unresolved, ...change}, events), /What happened/);
+  }
+});

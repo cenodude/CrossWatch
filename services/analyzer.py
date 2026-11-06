@@ -45,7 +45,8 @@ from cw_platform.local_db.legacy_files import DB_MANAGED_ARTIFACTS
 from cw_platform.memory_release import register_cache
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names
 from cw_platform.provider_instances import normalize_instance_id
-from cw_platform.reason_labels import TRACKER_TO_MEDIA_SERVER_MESSAGE, reason_message
+from cw_platform.reason_labels import TRACKER_TO_MEDIA_SERVER_MESSAGE, reason_hint, reason_message
+from cw_platform.matching_details import match_details
 
 router = APIRouter(prefix="/api", tags=["analyzer"])
 CWS_DIR = CONFIG_DIR / ".cw_state"
@@ -3416,7 +3417,8 @@ def _unresolved_index(allowed_scopes: set[str] | None) -> dict[tuple[str, str], 
             aks = _alias_keys(vv)
             if not aks:
                 continue
-            meta: dict[str, Any] = {"file": name, "kind": "unresolved_pending" if pending else kind}
+            meta: dict[str, Any] = {"file": name, "kind": "unresolved_pending" if pending else kind,
+                                    **_unresolved_diagnostics(rec, prov_key, feat_key)}
             if _split_prov_token_ex(prov_key)[2]:
                 meta["instance"] = _split_prov_token(prov_key)[1]
             if kind == "blackbox":
@@ -3469,6 +3471,7 @@ def _unresolved_records(allowed_scopes: set[str] | None) -> list[dict[str, Any]]
                     "reasons": reasons,
                     "action": str(rec.get("action") or "").strip().lower(),
                     "reason_message": _unresolved_reason_message(prov_key, feat_key, reasons),
+                    **_unresolved_diagnostics(rec, prov_key, feat_key),
                     "pending": pending,
                     "retry_blocked": (prov_key, feat_key, uk) in blocked_keys,
                     "file": name,
@@ -3579,6 +3582,9 @@ def _attention_model(
                 "ids": rec.get("ids") or {},
                 "reason": rec.get("reason"),
                 "reason_message": rec.get("reason_message"),
+                "hint": rec.get("hint"),
+                "hint_message": rec.get("hint_message"),
+                "match_details": rec.get("match_details"),
                 "item": rec.get("item") or {},
                 "retry_blocked": bool(rec.get("retry_blocked")),
                 "episode_groups": rec.get("episode_groups") or [],
@@ -3613,6 +3619,8 @@ def _attention_model(
                     "reason": next((c["data"]["reason"] for c in cluster if c["data"].get("reason")), data.get("reason")),
                     "reason_message": next((c["data"]["reason_message"] for c in cluster if c["data"].get("reason_message")), data.get("reason_message")),
                     "keys": alias_union,
+                    **{field: next((c["data"][field] for c in cluster if c["data"].get(field)), None)
+                       for field in ("hint", "hint_message", "match_details")},
                 }
             )
             counts["total"] += 1
@@ -3790,6 +3798,18 @@ def _attention_from_analysis(
     return out
 
 
+def _unresolved_diagnostics(rec: Mapping[str, Any], provider: str, feature: str) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    hint = reason_hint(rec.get("hint"), rec.get("reason"))
+    if hint:
+        out["hint"] = hint
+        out["hint_message"] = reason_message(hint, provider=provider, feature=feature) or ""
+    details = match_details(rec.get("match_details"))
+    if details:
+        out["match_details"] = details
+    return out
+
+
 def _unresolved_reason_message(dst: str, feature: str, reasons: list[str]) -> str:
     for reason in reasons:
         if reason == "apply:add:no_confirmations_fallback":
@@ -3855,7 +3875,8 @@ def _missing_peer_hints(
             for meta in rows:
                 if meta.get("kind") == "blackbox" and meta.get("blocked_key") != item_key:
                     continue
-                h: dict[str, Any] = {"provider": dst, "feature": feat}
+                h: dict[str, Any] = {"provider": _norm_prov_token(dst), "feature": feat,
+                                     **_unresolved_diagnostics(meta, dst, feat)}
                 reasons = [str(r) for r in (meta.get("reasons") or []) if str(r or "").strip()] if isinstance(meta.get("reasons"), list) else []
                 reason = str(meta.get("reason") or "").strip()
                 if reason and reason not in reasons:

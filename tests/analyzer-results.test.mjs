@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 
 globalThis.window = {};
 globalThis.document = { addEventListener() {} };
-const { mappingRowActions, savedMappingText, createResultFilter, groupSnapshotGaps, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails, episodeGroupLabel } = await import("../assets/js/analyzer/index.js");
+const { matchDetailsHTML, mappingRowActions, savedMappingText, createResultFilter, groupSnapshotGaps, watchDifferenceLabel, retryLabel, nextStepText, watchDifferenceDetails, episodeGroupLabel } = await import("../assets/js/analyzer/index.js");
 const features = ["history", "watchlist", "ratings", "progress", "collection"];
 const rows = Object.freeze(Array.from({ length: 5000 }, (_, n) => Object.freeze({
   title: `Movie ${String(n).padStart(5, "0")}`, provider: "SIMKL", feature: features[n % 5],
@@ -152,4 +152,29 @@ test("cloud confirmations remain separate from server presence and other missing
   assert.match(label, /absent from server snapshot/);
   assert.match(label, /Missing at TRAKT/);
   assert.doesNotMatch(label, /Missing at PLEX/);
+});
+
+
+test("saved matching candidates render for pending rows and snapshot hints", () => {
+  const row = { provider: "KODI", match_details: { candidate_count: 12, truncated: true, candidates: Array.from({ length: 12 }, (_, n) => ({ title: `<Candidate ${n}>`, local_id: n, type: "episode", season: 1, episode: 2, ids: { tmdb: "22" }, show_ids: { tvdb: "33" } })) } };
+  const html = matchDetailsHTML(row);
+  assert.match(html, /Possible matches from previous attempt/);
+  assert.match(html, /KODI/);
+  assert.match(html, /&lt;Candidate 0&gt;/);
+  assert.doesNotMatch(html, /<Candidate/);
+  assert.match(html, /tmdb:22/);
+  assert.match(html, /show tvdb:33/);
+  assert.match(html, /S1E2/);
+  assert.match(html, /Only the first candidates/);
+  assert.equal((html.match(/<li>/g) || []).length, 10);
+  assert.equal(matchDetailsHTML({}, [row]), html);
+  assert.equal(matchDetailsHTML(row, [row]), html);
+  assert.equal(matchDetailsHTML({}), "");
+});
+
+
+test("candidate deduplication normalizes provider spelling but preserves instances", () => {
+  const row = {provider:"KODI", match_details:{candidate_count:1, candidates:[{title:"Match"}]}};
+  assert.equal(matchDetailsHTML(row, [{...row, provider:"kodi@default"}]), matchDetailsHTML(row));
+  assert.equal((matchDetailsHTML({...row, provider:"KODI@P01"}, [{...row, provider:"KODI@P02"}]).match(/<details/g) || []).length, 2);
 });

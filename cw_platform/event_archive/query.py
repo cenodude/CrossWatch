@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import logging
+import json
 import sqlite3
 import time
 from typing import Any
 
 from .db import get_conn, events_db_path
-from ..reason_labels import friendly_reason
+from ..reason_labels import friendly_reason, reason_hint, reason_message
+from ..matching_details import match_details
 
 _LOG = logging.getLogger("crosswatch.event_archive")
 
@@ -33,6 +35,21 @@ def _with_reason_labels(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         reason = row.get("reason_code") or row.get("reason")
         if reason:
             row["reason_label"] = friendly_reason(reason)
+            message = reason_message(reason, provider=row.get("destination_provider"), feature=row.get("feature"))
+            if message:
+                row["reason_message"] = message
+        try:
+            detail = json.loads(row["detail"]) if isinstance(row.get("detail"), str) else row.get("detail")
+        except (ValueError, TypeError):
+            detail = None
+        if isinstance(detail, dict):
+            hint = reason_hint(detail.get("hint"), reason)
+            if hint:
+                row["hint"] = hint
+                row["hint_message"] = reason_message(hint, provider=row.get("destination_provider"), feature=row.get("feature")) or ""
+            matches = match_details(detail.get("match_details"))
+            if matches:
+                row["match_details"] = matches
     return rows
 
 

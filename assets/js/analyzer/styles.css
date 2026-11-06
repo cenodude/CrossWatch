@@ -159,3 +159,8 @@
   font-size: 0.8rem;
   opacity: 0.7;
 }
+
+.an-page .an-match-details{margin-top:12px;font-size:12px;line-height:1.5;overflow-wrap:anywhere;color:var(--an-text)}
+.an-page .an-match-details summary{cursor:pointer;font-size:12px;font-weight:600}
+.an-page .an-match-details ul{list-style:none;padding:0;margin:8px 0 0;display:grid;gap:8px}
+.an-page .an-match-details p{margin:2px 0 0;font-size:12px;color:var(--an-muted)}

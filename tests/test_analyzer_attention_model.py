@@ -313,3 +313,41 @@ def test_history_show_drift_only_reports_actionable_missing_items(mode, extra_co
     expected = set(extra_items) if extra_side == "source" or mode == "two-way" else set()
     assert {row["key"] for row in missing} == expected
     assert len(missing) == len(expected)
+
+
+@pytest.mark.parametrize("pending", [False, True])
+def test_provider_diagnostics_reach_pending_rows_and_snapshot_hints(monkeypatch, pending):
+    item = {"type": "movie", "title": "Example", "ids": {"tmdb": "1"}}
+    evidence = {"candidates": [{"title": "Candidate", "ids": {"tmdb": "2"}, "secret": "omit"}] * 12}
+    rec = {"reason": "write_failed", "hint": "resolve_ambiguous", "match_details": evidence}
+    monkeypatch.setattr(A, "_iter_unresolved_files", lambda scopes: iter([
+        ("KODI", "history", "unresolved", pending, "saved.json", [("tmdb:1", item, rec)])
+    ]))
+
+    records = A._unresolved_records(None)
+    model = A._attention_model(
+        [_mismatch("TRAKT", "history", "tmdb:1", ["KODI"], ["tmdb:1"])], records
+    )
+    row = model["rows"][0]
+    hints = A._missing_peer_hints(A._unresolved_index(None), "history", ["tmdb:1"], ["KODI"], False)
+
+    for result in (records[0], row, hints[0]):
+        assert result["reason"] == "write_failed"
+        assert result["hint"] == "resolve_ambiguous"
+        assert "Multiple possible destination matches" in result["hint_message"]
+        assert result["match_details"]["candidate_count"] == 12
+        assert result["match_details"]["truncated"] is True
+        assert len(result["match_details"]["candidates"]) == 10
+        assert "secret" not in result["match_details"]["candidates"][0]
+    assert row["current_mismatch"] and row["unresolved"]
+
+
+def test_unresolved_diagnostics_ignore_invalid_or_duplicate_hints():
+    assert A._unresolved_diagnostics({"reason": "not_found", "hint": "not_found", "match_details": []}, "KODI", "history") == {}
+    assert A._unresolved_diagnostics({"hint": "<invalid>"}, "KODI", "history") == {}
+
+
+def test_unknown_provider_hint_is_retained_without_raw_display():
+    result = A._unresolved_diagnostics({"reason": "write_failed", "hint": "new_provider_code"}, "KODI", "history")
+    assert result["hint"] == "new_provider_code"
+    assert result["hint_message"] == ""
