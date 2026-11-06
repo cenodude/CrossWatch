@@ -486,7 +486,14 @@
           <div class="cw-type-filter trk-layout" role="group" aria-label="Display layout">${[['list', 'view_list', 'List'], ['grid', 'grid_view', 'Grid']].map(([value, glyph, label]) => `<button type="button" class="cw-filter-chip trk-icon-btn${(state.layouts[state.view] || "list") === value ? " active" : ""}" data-trk-layout="${value}" aria-pressed="${(state.layouts[state.view] || "list") === value}" aria-label="${label} view" title="${label} view">${symbol(glyph, "cw-type-icon")}</button>`).join("")}</div>
           <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="changes" title="Changes: everything you logged, edited or deleted" aria-label="Changes">${icon("manage_history")}</button>
           <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="import" title="Import from a connected service" aria-label="Import">${icon("download")}</button>
-          <button type="button" class="cw-btn primary trk-log-btn" data-trk-action="log" aria-label="Log a watch">${icon("add_circle")}<span>Log a watch</span></button>
+          <div class="trk-add-split">
+            <button type="button" class="cw-btn primary trk-log-btn" data-trk-action="log" aria-label="Log a watch">${icon("add_circle")}<span>Log a watch</span></button>
+            <button type="button" class="cw-btn primary trk-add-toggle" data-trk-action="add-menu" aria-label="More add options" aria-haspopup="menu" aria-expanded="false" aria-controls="trk-add-menu" title="More add options">${icon("expand_more")}</button>
+            <div id="trk-add-menu" class="trk-add-menu" role="menu" aria-label="Add to Tracker or providers" hidden>
+              <button type="button" class="trk-add-item" role="menuitem" tabindex="-1" data-trk-action="log">${icon("add_circle")}<span>Log a watch</span></button>
+              <button type="button" class="trk-add-item" role="menuitem" tabindex="-1" data-trk-action="quick-add">${icon("bolt")}<span>Quick add…</span></button>
+            </div>
+          </div>
         </div>
       </div>`;
   }
@@ -805,6 +812,22 @@
     return `<div class="ins-row"><div class="ins-kv"><label for="trk-instance">Tracker</label><select id="trk-instance" class="cw-select" data-trk-input="instance">${instances}</select></div></div>`;
   }
 
+  function updateHeroSelection() {
+    const data = state.ref ? state.title : null;
+    const record = state.ref?.key ? findRecord(state.ref.key, state.ref.feature) || state.items.find((item) => item.key === state.ref.key) : null;
+    const head = data?.title || record;
+    const title = head ? data?.title?.title || cardTitle(head) : "";
+    state.root?.querySelector(".cw-page-hero")?.classList.toggle("has-selection", !!title);
+    if (!title) {
+      setSlot("selection", "Everything you watched, rated and want to watch");
+      return;
+    }
+    const show = data?.show || isChild(head) || head.type === "show";
+    const detail = show ? record ? episodeLabel(record) : "" : head.year ? String(head.year) : "";
+    const episode = record?.type === "episode" && record.title && record.title !== title && !/^S\d+\s*[·-]?\s*E\d+$/i.test(record.title) ? record.title : "";
+    setSlot("selection", `<div class="trk-hero-selection"><div class="trk-hero-title-line"><strong title="${esc(title)}">${esc(title)}</strong>${detail ? `<span class="trk-hero-meta">${esc(detail)}</span>` : ""}</div>${episode ? `<small title="${esc(episode)}">${esc(episode)}</small>` : ""}</div>`);
+  }
+
   function updateHeroBackdrop() {
     const image = state.root?.querySelector(".trk-hero-backdrop");
     if (!image) return;
@@ -822,6 +845,7 @@
   }
 
   function renderTitle() {
+    updateHeroSelection();
     updateHeroBackdrop();
     if (!state.ref) {
       return `<div class="ins-row"><div class="ins-icon">${symbol("info")}</div><div class="ins-title">Title</div></div>
@@ -1124,7 +1148,7 @@
               <div class="cw-page-hero-kicker">CW TRACKER</div>
               <div class="cw-title-row"><div>
                 <div class="cw-title cw-page-hero-title">Tracker</div>
-                <div class="cw-sub cw-page-hero-sub">Everything you watched, rated and want to watch</div>
+                <div class="cw-sub cw-page-hero-sub trk-hero-context" data-trk-slot="selection" aria-live="polite" aria-atomic="true">Everything you watched, rated and want to watch</div>
               </div></div>
             </div>
             <div class="cw-editor-hero-summary cw-page-hero-actions" data-trk-slot="hero" aria-label="Watching stats"></div>
@@ -3091,10 +3115,25 @@
 
   let searchTimer = 0;
 
+  function setAddMenu(open, { focus = true } = {}) {
+    const menu = state.root?.querySelector(".trk-add-menu");
+    const toggle = state.root?.querySelector(".trk-add-toggle");
+    if (!menu || !toggle) return;
+    menu.hidden = !open;
+    toggle.setAttribute("aria-expanded", String(open));
+    if (focus) (open ? menu.querySelector('[role="menuitem"]') : toggle)?.focus();
+  }
+
   function wire(root) {
     if (state.wired) return;
     state.wired = true;
     wireStatusMenu();
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest?.(".trk-add-split")) setAddMenu(false, { focus: false });
+    }, true);
+    root.addEventListener("focusout", (event) => {
+      if (event.target.closest?.(".trk-add-split") && !event.relatedTarget?.closest?.(".trk-add-split")) setAddMenu(false, { focus: false });
+    });
     root.addEventListener("click", (event) => {
       if (sheet.el?.contains(event.target)) return;
       if (event.target.closest("[data-trk-pick]")) return;
@@ -3166,7 +3205,16 @@
       else if (action === "changes") {
         openSheet("changes", { changes: [], changesTotal: 0, changesAll: 0, changeKind: "", changeQ: "" });
         loadChanges(false);
-      } else if (action === "log") openLog();
+      } else if (action === "add-menu") {
+        setAddMenu(state.root.querySelector(".trk-add-menu")?.hidden);
+      } else if (action === "log" || action === "quick-add") {
+        setAddMenu(false, { focus: action === "quick-add" || !!event.target.closest(".trk-add-menu") });
+        if (action === "log") openLog();
+        else if (typeof window.openManualWatchedModal === "function") {
+          const feature = { history: "history", watchlist: "watchlist", ratings: "rating", collection: "collection" }[state.view];
+          window.openManualWatchedModal(feature ? { action: feature } : {});
+        }
+      }
       else if (action === "import") openImport();
       else if (action === "month-clear") {
         state.month = "";
@@ -3198,6 +3246,25 @@
       }
     });
     root.addEventListener("keydown", (event) => {
+      const split = event.target.closest?.(".trk-add-split");
+      if (split) {
+        const menu = split.querySelector(".trk-add-menu");
+        const items = Array.from(menu.querySelectorAll('[role="menuitem"]'));
+        if (event.key === "Escape" && !menu.hidden) {
+          event.preventDefault();
+          event.stopPropagation();
+          setAddMenu(false);
+          return;
+        }
+        if ((event.target.closest(".trk-add-toggle") || !menu.hidden) && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+          event.preventDefault();
+          const at = items.indexOf(document.activeElement);
+          const next = event.key === "Home" ? 0 : event.key === "End" || (at < 0 && event.key === "ArrowUp") ? items.length - 1 : (at + (event.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
+          setAddMenu(true, { focus: false });
+          items[next]?.focus();
+          return;
+        }
+      }
       const tab = event.target.closest?.('.trk-tabs [role="tab"]');
       if (tab && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
         const tabs = Array.from(tab.parentElement.querySelectorAll('[role="tab"]'));
