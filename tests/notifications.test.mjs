@@ -140,6 +140,30 @@ test("storage events reflect clearing in another tab", () => {
   assert.doesNotMatch(app.html(), /Review one/);
 });
 
+test("profile shell initializes account state and shares Main's tracker dismissals", () => {
+  const frontend = readFileSync(new URL("../ui_frontend.py", import.meta.url), "utf8");
+  const profileShell = frontend.slice(frontend.indexOf("def get_profile_html("));
+  const authScript = profileShell.indexOf('<script src="/assets/helpers/auth-state.js?');
+  assert.ok(authScript >= 0);
+  assert.ok(authScript < profileShell.indexOf('<script src="/assets/helpers/notifications.js?'));
+  assert.ok(authScript < profileShell.indexOf('<script src="/assets/js/overview-profile.js?'));
+  const main = setup(), profile = setup(main.storage, {pairs: false});
+  delete profile.window.CW.AuthState;
+  vm.runInNewContext(readFileSync(new URL("../assets/helpers/auth-state.js", import.meta.url), "utf8"), profile.context);
+  profile.window.CW.AuthState.apply({authenticated: true, user: {id: "alice", is_admin: true}});
+  const items = [main.item("import"), main.item("metadata")];
+  main.publish(items, "tracker-check", "account");
+  main.clearAll();
+  profile.publish(items, "tracker-check", "account");
+  assert.doesNotMatch(profile.html(), /Review import|Review metadata/);
+  profile.publish([profile.item("new-import")], "tracker-check", "account");
+  profile.clearAll();
+  main.events.storage({key: [...main.storage.keys()][0]});
+  main.publish([main.item("new-import")], "tracker-check", "account");
+  assert.doesNotMatch(main.html(), /Review new-import/);
+  assert.equal(main.storage.size, 1);
+});
+
 test("release dismissals follow the account across profiles and allow newer releases", () => {
   const app=setup(), release=app.item("0.12.0");
   app.publish([release],"updates","account"); app.clearAll();
