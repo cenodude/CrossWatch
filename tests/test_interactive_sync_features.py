@@ -177,3 +177,95 @@ def test_history_rewatches_apply_only_selected_play(config_base, monkeypatch, mo
     run(cfg, InteractivePlan(preview=False, selected=selected))
     assert len(dst.add_calls) == 1 and len(dst.add_calls[0]) == 1
     assert dst.add_calls[0][0]["watched_at"] == second["watched_at"]
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+@pytest.mark.parametrize("failure", ["read", "late", "result", "all", "cancelled", "recheck_changed", "recheck_failed"])
+def test_failed_feature_does_not_block_completed_feature(config_base, monkeypatch, mode, failure):
+    from api import syncAPI
+    from cw_platform.orchestrator import _pairs
+    from services import interactive_sync as svc
+
+    cfg, src, dst = feature_setup(config_base, monkeypatch, "watchlist", [item(1)], [], mode)
+    cfg["pairs"][0].update(feature="multi", features={
+        name: {"enable": True, "add": True, "remove": True}
+        for name in ("history", "watchlist")
+    })
+    for ops in (src, dst):
+        ops.features = lambda: {"watchlist": True, "history": True}
+        ops.capabilities = lambda: {"features": {"watchlist": True, "history": True}, "index_semantics": "present"}
+        ops.health = lambda *_a, **_k: {"ok": True, "features": {"watchlist": True, "history": True}}
+    history_calls = []
+    original_read = src.build_index
+
+    def read(config, *, feature):
+        if feature == "history":
+            history_calls.append(feature)
+            raise RuntimeError("invalid history record")
+        return original_read(config, feature=feature)
+
+    monkeypatch.setattr(src, "build_index", read)
+    runner_name = "run_two_way_feature" if mode == "two-way" else "run_one_way_feature"
+    original_runner = getattr(_pairs, runner_name)
+
+    def runner(ctx, *args, feature, **kwargs):
+        if ctx.interactive.allowed_features is not None and feature == "watchlist":
+            if failure == "recheck_changed":
+                return {}
+            if failure == "recheck_failed":
+                raise RuntimeError("watchlist recheck failed")
+        if failure == "all":
+            raise RuntimeError("provider unavailable")
+        if feature == "history" and failure != "read":
+            history_calls.append(feature)
+            ctx.interactive.filter("history", "DST", "default", "remove", [item(2)], source="SRC")
+            ctx.interactive.conflict("history", "imdb:tt0000002", "SRC", "DST", item(2), item(2), "SRC")
+            if failure == "result":
+                return {"errors": 1}
+            if failure == "cancelled":
+                return {"cancelled": True}
+            raise RuntimeError("history failed after proposing changes")
+        return original_runner(ctx, *args, feature=feature, **kwargs)
+
+    monkeypatch.setattr(_pairs, runner_name, runner)
+    monkeypatch.setattr(syncAPI, "_env", lambda: (lambda: deepcopy(cfg), lambda *_: None))
+    session = svc.Session(pair_id="p1", owner="local")
+    try:
+        svc.refresh(session, cfg, {})
+        if failure in ("all", "cancelled"):
+            assert session.status == "error"
+            assert not dst.add_calls
+            return
+        assert session.status == "review", session.message
+        assert session.public()["failed_features"] == ["history"]
+        assert session.public()["completed_features"] == ["watchlist"]
+        assert session.store.features == ["watchlist"]
+        assert not session.plan.conflicts
+        assert history_calls == ["history"]
+        previous_notices = deepcopy(session.plan.notices)
+        svc.apply(session, cfg, session.store.selected_ids())
+        if failure.startswith("recheck_"):
+            assert session.status == ("review" if failure == "recheck_changed" else "error")
+            assert "history" in session.public()["failed_features"]
+            assert all(notice in session.plan.notices for notice in previous_notices)
+            assert history_calls == ["history"]
+            assert not dst.add_calls
+            if failure == "recheck_failed":
+                assert session.plan.failed_features == {"history", "watchlist"}
+                assert any(notice.get("feature") == "watchlist" for notice in session.plan.notices)
+            else:
+                assert "Some selected proposals changed" in session.message
+            monkeypatch.setattr(_pairs, runner_name, lambda ctx, *args, feature, **kwargs:
+                                {} if feature == "history" else original_runner(ctx, *args, feature=feature, **kwargs))
+            svc.refresh(session, cfg, {})
+            assert session.status == "review"
+            assert not session.plan.failed_features
+            assert not any(notice.get("event") == "feature:error" for notice in session.plan.notices)
+            return
+        assert session.status == "complete", session.message
+        assert len(dst.add_calls) == 1
+        assert [canonical_key(row) for row in dst.add_calls[0]] == [canonical_key(item(1))]
+        assert history_calls == ["history"]
+        assert {row["feature"] for row in session.report["features"]} == {"watchlist"}
+    finally:
+        session.close()

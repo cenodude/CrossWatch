@@ -618,6 +618,8 @@ def run_pairs(ctx) -> dict[str, Any]:
         injected = False
 
         for feature_index, feature in enumerate(features, 1):
+            if review is not None and review.allowed_features is not None and feature not in review.allowed_features:
+                continue
             if cancel_requested():
                 cancelled = True
                 break
@@ -668,6 +670,7 @@ def run_pairs(ctx) -> dict[str, Any]:
                         continue
 
                     features_ran.add(feature)
+                    feature_errors_before = errors_total
 
                     try:
                         if feature == "playlists":
@@ -732,10 +735,20 @@ def run_pairs(ctx) -> dict[str, Any]:
                             cancelled = True
                             break
 
+                        if review is not None:
+                            if errors_total > feature_errors_before or res.get("ok") is False:
+                                review.failed_features.add(feature)
+                                if errors_total == feature_errors_before:
+                                    errors_total += 1
+                            else:
+                                review.completed_features.add(feature)
+
                     except SyncCancelled:
                         emit("feature:cancelled", src=src, dst=dst, feature=feature)
                         cancelled = True
                     except Exception as e:
+                        if review is not None:
+                            review.failed_features.add(feature)
                         emit("feature:error", src=src, dst=dst, feature=feature, error=str(e), detail=error_detail(e), **failure_attribution(e, src, dst, mode), traceback=traceback.format_exc())
                         errors_total += 1
                         continue

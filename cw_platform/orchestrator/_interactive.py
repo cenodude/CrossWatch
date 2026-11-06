@@ -41,6 +41,9 @@ class InteractivePlan:
     on_result: Callable[..., None] | None = None
     reads: Any = None
     collecting: bool = False
+    allowed_features: set[str] | None = None
+    completed_features: set[str] = field(default_factory=set)
+    failed_features: set[str] = field(default_factory=set)
 
     def discover_notice(self, feature, provider, instance, cfg):
         if feature != "history" or provider != "PLEX" or ((cfg.get("plex") or {}).get("history") or {}).get("discover_fallback") is not True:
