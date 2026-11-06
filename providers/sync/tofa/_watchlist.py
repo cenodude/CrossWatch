@@ -5,8 +5,10 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from cw_platform.run_control import raise_if_cancelled
+from .._pagination import PageGuard
+
 from ._common import (
-    PAGE_GUARD,
     WATCHLIST_PAGE,
     TofaSyncError,
     as_int,
@@ -33,7 +35,11 @@ FEATURE = "watchlist"
 
 def _rows(adapter: Any) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for page in range(1, PAGE_GUARD + 1):
+    guard = PageGuard(TofaSyncError, "tofa_watchlist_repeated_page")
+    page = 0
+    while True:
+        page += 1
+        raise_if_cancelled()
         resp = tofa_request(adapter, "GET", "/users/me/watchlist", params={"page": page, "per_page": WATCHLIST_PAGE})
         if resp.status_code != 200:
             _warn(FEATURE, "read_failed", status=resp.status_code, code=error_of(resp) or None)
@@ -43,12 +49,12 @@ def _rows(adapter: Any) -> list[dict[str, Any]]:
         total_pages = as_int(data.get("total_pages")) if isinstance(data, Mapping) else None
         if not isinstance(items, list) or not all(isinstance(r, Mapping) for r in items) or total_pages is None or total_pages < 1:
             raise TofaSyncError("tofa_watchlist_invalid_response")
+        guard.check(items)
         out.extend(dict(row) for row in items)
         if page >= total_pages:
             return out
         if not items:
             raise TofaSyncError("tofa_watchlist_invalid_continuation")
-    raise TofaSyncError("tofa_watchlist_page_guard_tripped")
 
 
 def _full(adapter: Any) -> tuple[dict[str, Any], str]:

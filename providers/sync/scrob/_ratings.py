@@ -6,6 +6,8 @@ from __future__ import annotations
 import math
 from typing import Any, Iterable, Mapping
 
+from cw_platform.run_control import raise_if_cancelled
+
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
@@ -36,7 +38,6 @@ from ._common import (
 FEATURE = "ratings"
 
 EPISODE_DETAIL_PATH = "media/episode/{tmdb_id}"
-EPISODE_LOOKUP_CAP = 500
 
 
 def _key_of(obj: Mapping[str, Any]) -> str:
@@ -72,9 +73,7 @@ def _scope_of(item: Mapping[str, Any]) -> str:
 def _episode_context(adapter: Any, tmdb_id: int, cache: dict[int, dict[str, Any]]) -> dict[str, Any]:
     if tmdb_id in cache:
         return cache[tmdb_id]
-    if len(cache) >= EPISODE_LOOKUP_CAP:
-        _warn(FEATURE, "episode_lookup_cap_reached", cap=EPISODE_LOOKUP_CAP)
-        raise ScrobError(f"scrob_ratings_episode_lookup_cap_reached:{EPISODE_LOOKUP_CAP}")
+    raise_if_cancelled()
     resp = scrob_request(adapter, "GET", EPISODE_DETAIL_PATH.format(tmdb_id=tmdb_id))
     if ok_status(resp):
         body = safe_json(resp)

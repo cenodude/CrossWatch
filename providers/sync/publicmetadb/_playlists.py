@@ -111,7 +111,7 @@ def _resource_from_row(adapter: Any, row: Mapping[str, Any], *, public: bool = F
 @retained_read
 def list_resources(adapter: Any) -> list[PlaylistResource]:
     out: list[PlaylistResource] = []
-    for row in paged_items(adapter, "/api/external/lists", per_page=500, max_pages=1000, what="playlists_resources"):
+    for row in paged_items(adapter, "/api/external/lists", per_page=500, what="playlists_resources"):
         res = _resource_from_row(adapter, row)
         if res:
             out.append(res)
@@ -177,7 +177,7 @@ def _fetch_items(adapter: Any, list_id: str) -> tuple[list[PlaylistItem], dict[s
     remote_ids: dict[str, str] = {}
     per_page = int(getattr(adapter.cfg, "watchlist_page_size", 500) or 500)
     per_page = max(1, min(per_page, 500))
-    for row in paged_items(adapter, f"/api/external/lists/{list_id}/items", per_page=per_page, max_pages=1000, what="playlists_items"):
+    for row in paged_items(adapter, f"/api/external/lists/{list_id}/items", per_page=per_page, what="playlists_items"):
         media = _minimal_from_row(row)
         if not media:
             continue

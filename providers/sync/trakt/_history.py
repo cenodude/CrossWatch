@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from ._common import (
+    TraktPager,
     key_of,
     ids_for_trakt,
     pick_trakt_kind,
@@ -30,7 +31,6 @@ from .._mod_common import request_with_retries
 from cw_platform.history_events import has_history_watch
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 from .._log import log as cw_log
-from ._pagination import TraktPager
 
 BASE = "https://api.trakt.tv"
 URL_HIST_MOV = f"{BASE}/sync/history/movies"
@@ -1277,7 +1277,6 @@ def _preflight_total(
     per_page: int,
     timeout: float,
     max_retries: int,
-    max_pages: int | None,
 ) -> int | None:
     try:
         r = request_with_retries(
@@ -1299,8 +1298,6 @@ def _preflight_total(
                 item_count = int(page_count) * int(limit_hdr)
         if item_count is None:
             return None
-        if max_pages and max_pages > 0:
-            item_count = min(item_count, int(max_pages) * int(per_page))
         return int(item_count)
     except Exception:
         return None
@@ -1322,7 +1319,6 @@ def _fetch_history(
     url: str,
     *,
     per_page: int,
-    max_pages: int,
     timeout: float,
     max_retries: int,
     start_at: str | None = None,
@@ -1332,7 +1328,7 @@ def _fetch_history(
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     page = 1
-    pager = TraktPager("history", max_pages)
+    pager = TraktPager("history")
     seen_ids: set[str] = set()
     while True:
         r = request_with_retries(
@@ -1399,7 +1395,7 @@ def _fetch_history(
     return out
 
 
-def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -> dict[str, dict[str, Any]]:
+def build_index(adapter: Any, *, per_page: int = 250) -> dict[str, dict[str, Any]]:
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("history") if callable(prog_mk) else None
     sess = adapter.client.session
@@ -1408,9 +1404,6 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
     retries = int(_cfg_num(adapter, "max_retries", 3, int))
     cfg_per_page = int(_cfg_num(adapter, "history_per_page", per_page, int))
     cfg_per_page = max(1, min(250, cfg_per_page))
-    cfg_max_pages = int(_cfg_num(adapter, "history_max_pages", max_pages, int))
-    if cfg_max_pages <= 0:
-        cfg_max_pages = max_pages
 
     epi_extended = _episodes_extended()
 
@@ -1435,8 +1428,8 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
             validated_epoch = _as_epoch(validated_at_str) if validated_at_str else None
             due_for_validation = (validated_epoch is None) or ((time.time() - validated_epoch) >= _CACHE_VALIDATE_INTERVAL_SEC)
             if due_for_validation:
-                api_mov = _preflight_total(sess, headers, URL_HIST_MOV, per_page=cfg_per_page, timeout=timeout, max_retries=retries, max_pages=cfg_max_pages)
-                api_epi = _preflight_total(sess, headers, URL_HIST_EPI, per_page=cfg_per_page, timeout=timeout, max_retries=retries, max_pages=cfg_max_pages)
+                api_mov = _preflight_total(sess, headers, URL_HIST_MOV, per_page=cfg_per_page, timeout=timeout, max_retries=retries)
+                api_epi = _preflight_total(sess, headers, URL_HIST_EPI, per_page=cfg_per_page, timeout=timeout, max_retries=retries)
                 if api_mov is not None and api_epi is not None:
                     api_total = int(api_mov) + int(api_epi)
                     if api_total != len(cached_items):
@@ -1499,7 +1492,6 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
                     headers,
                     URL_HIST_MOV,
                     per_page=cfg_per_page,
-                    max_pages=cfg_max_pages,
                     timeout=timeout,
                     max_retries=retries,
                     start_at=start_at,
@@ -1509,7 +1501,6 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
                     headers,
                     URL_HIST_EPI,
                     per_page=cfg_per_page,
-                    max_pages=cfg_max_pages,
                     timeout=timeout,
                     max_retries=retries,
                     start_at=start_at,
@@ -1552,8 +1543,8 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
                 _dbg("index_fetch_counts", source="cache_delta", added=added, count=len(idx))
 
                 count_ok = True
-                api_mov = _preflight_total(sess, headers, URL_HIST_MOV, per_page=cfg_per_page, timeout=timeout, max_retries=retries, max_pages=cfg_max_pages)
-                api_epi = _preflight_total(sess, headers, URL_HIST_EPI, per_page=cfg_per_page, timeout=timeout, max_retries=retries, max_pages=cfg_max_pages)
+                api_mov = _preflight_total(sess, headers, URL_HIST_MOV, per_page=cfg_per_page, timeout=timeout, max_retries=retries)
+                api_epi = _preflight_total(sess, headers, URL_HIST_EPI, per_page=cfg_per_page, timeout=timeout, max_retries=retries)
                 if api_mov is not None and api_epi is not None:
                     api_total = int(api_mov) + int(api_epi)
                     if api_total != len(idx):
@@ -1591,7 +1582,6 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
         per_page=cfg_per_page,
         timeout=timeout,
         max_retries=retries,
-        max_pages=cfg_max_pages,
     )
     total_epi = _preflight_total(
         sess,
@@ -1600,7 +1590,6 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
         per_page=cfg_per_page,
         timeout=timeout,
         max_retries=retries,
-        max_pages=cfg_max_pages,
     )
     announced_total: int | None = None
     if total_mov is not None and total_epi is not None:
@@ -1629,7 +1618,6 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
         headers,
         URL_HIST_MOV,
         per_page=cfg_per_page,
-        max_pages=cfg_max_pages,
         timeout=timeout,
         max_retries=retries,
         bump=bump,
@@ -1639,7 +1627,6 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
         headers,
         URL_HIST_EPI,
         per_page=cfg_per_page,
-        max_pages=cfg_max_pages,
         timeout=timeout,
         max_retries=retries,
         extended=epi_extended,
@@ -1705,8 +1692,8 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 100000) -
                 prog.done(ok=True, total=len(idx))
         except Exception:
             pass
-    _dbg("index_fetch_counts", movies=len(movies), episodes=len(episodes), per_page=cfg_per_page, max_pages=cfg_max_pages, source="current")
-    _info("index_done", count=len(idx), movies=len(movies), episodes=len(episodes), per_page=cfg_per_page, max_pages=cfg_max_pages, source="current")
+    _dbg("index_fetch_counts", movies=len(movies), episodes=len(episodes), per_page=cfg_per_page, source="current")
+    _info("index_done", count=len(idx), movies=len(movies), episodes=len(episodes), per_page=cfg_per_page, source="current")
     _save_cache_doc(idx, remote_wm or cached_wm)
     return idx
 

@@ -164,9 +164,9 @@ class NUVIOModule:
                     status = "profile_unavailable"
                     reason = "profile_unavailable"
                 else:
-                    pull_watch_progress_rows(self, limit=1, max_pages=1)
-                    pull_watched_rows(self, page_size=1, max_pages=1)
-                    pull_library_rows(self, limit=1, max_pages=1)
+                    pull_watch_progress_rows(self, limit=1, probe=True)
+                    pull_watched_rows(self, page_size=1, probe=True)
+                    pull_library_rows(self, limit=1, probe=True)
                     ok = True
                     status = "ok"
         except NuvioTokenRefreshError:

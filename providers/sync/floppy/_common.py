@@ -3,12 +3,15 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from typing import Any
 
 from cw_platform.anime_mapping.storage import query_edges
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import canonical_key, coalesce_ids, ids_from, merge_ids, minimal as id_minimal
+from cw_platform.run_control import raise_if_cancelled
+from .._pagination import page_numbers
 from providers.auth._auth_FLOPPY import FloppyAuthError, FloppyRequestError, is_configured as auth_is_configured, provider_block
 from providers.sync._mod_common import safe_json
 
@@ -16,9 +19,6 @@ from providers.sync._mod_common import safe_json
 PLANNING = 0
 COMPLETED = 3
 PAGE_SIZE = 200
-MAX_PAGES = 200
-MAX_ROWS = 200_000
-MAX_SEASONS = 60
 MAX_EMPTY_SEASONS = 2
 ANIME_BUCKET = "anime"
 TV_BUCKET = "tv"
@@ -259,14 +259,15 @@ def _total_of(data: Mapping[str, Any]) -> int | None:
         return None
 
 
-def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, max_pages: int = MAX_PAGES, require_total: bool = True) -> list[Mapping[str, Any]]:
+def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, require_total: bool = True) -> list[Mapping[str, Any]]:
     out: list[Mapping[str, Any]] = []
     base = dict(params or {})
     limit = max(1, min(PAGE_SIZE, int(base.pop("limit", PAGE_SIZE) or PAGE_SIZE)))
     offset = max(0, int(base.pop("offset", 0) or 0))
-    previous: str | None = None
+    seen: set[bytes] = set()
     total: int | None = None
-    for _ in range(max(1, int(max_pages or 1))):
+    while True:
+        raise_if_cancelled()
         data = api_get(adapter, path, params={**base, "limit": limit, "offset": offset})
         enveloped = isinstance(data, Mapping)
         rows = data.get("results") if enveloped else data
@@ -285,25 +286,18 @@ def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, m
         out.extend(row for row in rows if isinstance(row, Mapping))
         if not enveloped:
             break
-        signature = _page_signature(rows)
-        if previous is not None and signature == previous:
+        signature = hashlib.sha256(_page_signature(rows).encode()).digest()
+        if signature in seen:
             if require_total:
                 raise RuntimeError(f"floppy_repeated_page:{path}")
             del out[before:]
             break
-        previous = signature
+        seen.add(signature)
         offset += len(rows)
-        if len(rows) < limit:
+        if total is None and len(rows) < limit:
             break
         if total is not None and offset >= total:
             break
-        if len(out) >= MAX_ROWS:
-            if require_total:
-                raise RuntimeError(f"floppy_row_cap_reached:{path}:{MAX_ROWS}")
-            break
-    else:
-        if require_total:
-            raise RuntimeError(f"floppy_page_cap_reached:{path}:{max_pages}")
     if require_total and total is not None and len(out) != total:
         raise RuntimeError(f"floppy_incomplete_read:{path}:{len(out)}/{total}")
     return out
@@ -398,7 +392,7 @@ def show_layout(adapter: Any, tmdb_id: str) -> list[tuple[int, int]]:
         _LAYOUT_CACHE[key] = layout
         return layout
     empty = 0
-    for season in range(1, MAX_SEASONS + 1):
+    for season in page_numbers():
         numbers = _season_episodes(adapter, key, season)
         if not numbers:
             empty += 1

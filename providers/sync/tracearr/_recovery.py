@@ -10,7 +10,6 @@ from . import _history as history
 
 _KNOWN = "Known identity"
 _MISSING = "Missing identity — enter a match"
-_MAX_PAGES = 5000
 
 
 def _label(row: Mapping[str, Any], kind: str) -> str:
@@ -27,7 +26,7 @@ def _read(adapter: Any, user_id: str, progress: Callable[..., None], check_cance
     rows: list[Mapping[str, Any]] = []
     cursor: str | None = None
     seen: set[str] = set()
-    for _ in range(_MAX_PAGES):
+    while True:
         check_cancel()
         params: dict[str, Any] = {"pageSize": 100, "cursor": cursor, "user_id": user_id or None, "server_id": server_id or None}
         payload = adapter.client.get("/history", **params)
@@ -43,7 +42,6 @@ def _read(adapter: Any, user_id: str, progress: Callable[..., None], check_cance
         if cursor in seen:
             raise RuntimeError("tracearr_history_repeated_cursor")
         seen.add(cursor)
-    raise RuntimeError(f"tracearr_history_page_cap_reached:{_MAX_PAGES}")
 
 
 def _mine(row: Mapping[str, Any], user_id: str) -> bool:
@@ -52,7 +50,7 @@ def _mine(row: Mapping[str, Any], user_id: str) -> bool:
 
 
 def scan(adapter: Any, *, progress: Callable[..., None], check_cancel: Callable[[], None],
-         max_rows: int = 50_000) -> list[dict[str, Any]]:
+         max_rows: int | None = None) -> list[dict[str, Any]]:
     check_cancel()
     user_id = str(history._cfg_get(adapter, "tracearr.history.user_id", "") or "").strip()
     if not user_id:
@@ -108,7 +106,7 @@ def scan(adapter: Any, *, progress: Callable[..., None], check_cancel: Callable[
                           "original_group": json.dumps(["show" if kind == "episode" else "movie", str(group or ""), [],
                                                         original.strip().casefold(), str(year or "")], ensure_ascii=True),
                           "original_year": year, "original_title": original})
-        if len(recovered) > max_rows:
+        if max_rows is not None and len(recovered) > max_rows:
             raise RuntimeError(f"More than {max_rows:,} watch events. Set a Tracearr user for this instance to narrow the history.")
         result = "Found for review"
         if not identity:

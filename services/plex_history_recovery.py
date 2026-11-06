@@ -324,7 +324,7 @@ def _scan_tautulli(job, cfg, progress, check_cancel):
     try:
         return tautulli_recovery.scan(_HistoryAdapter(cfg=module.client.raw_cfg, client=module.client),
                                       resolve=plex_recovery.guid_resolver(token), progress=progress,
-                                      check_cancel=check_cancel, max_rows=importer.MAX_ROWS,
+                                      check_cancel=check_cancel, max_rows=None,
                                       ignore_live_tv=job.ignore_live_tv)
     finally:
         module.client.session.close()
@@ -337,7 +337,7 @@ def _scan_tracearr(job, cfg, progress, check_cancel):
     module = TRACEARRModule(build_provider_config_view(cfg, "TRACEARR", job.tracearr))
     try:
         return tracearr_recovery.scan(_HistoryAdapter(cfg=module.client.raw_cfg, client=module.client),
-                                      progress=progress, check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
+                                      progress=progress, check_cancel=check_cancel, max_rows=None)
     finally:
         module.client.session.close()
 
@@ -360,7 +360,7 @@ def _scan_database(job, cfg, adapter, progress, check_cancel):
         raise RuntimeError("Plex account unavailable")
     common.configure_plex_context(baseurl=None, token=token, account_token=token)
     return recovery_db.scan(path, account=int(account), libraries=libraries, resolve=resolve, progress=progress,
-                            check_cancel=check_cancel, max_rows=importer.MAX_ROWS,
+                            check_cancel=check_cancel, max_rows=None,
                             release_tag=str((cfg.get("anime_mapping") or {}).get("release_tag") or "v3"),
                             search=plex_recovery.title_resolver(token, check_cancel),
                             ignore_live_tv=job.ignore_live_tv)
@@ -399,7 +399,7 @@ def _scan(job, cfg):
                 if job.database:
                     raw = _scan_database(job, cfg, adapter, progress, check_cancel)
                 else:
-                    raw = scan(adapter, progress=progress, check_cancel=check_cancel, max_rows=importer.MAX_ROWS)
+                    raw = scan(adapter, progress=progress, check_cancel=check_cancel, max_rows=None)
             check_cancel()
             progress("review", "Checking recovered events against the CW tracker", 0, 0)
             with LOCK:
@@ -1007,7 +1007,7 @@ def commit(sid: str, payload: Commit, request: Request):
         selected = list(titles.values())
         approved = [{**r, "status": "ready"} for r in selected]
         importer._PREVIEWS[job.id] = dict(created_at=time.time(), target_instance=job.target, rows=approved)
-        args.update(mode="selected", row_ids=[r["id"] for r in selected], status="all", q="")
+        args.update(mode="ready", row_ids=[], excluded_row_ids=[], status="all", q="")
         try:
             result = importer.api_import_commit(importer.ImportCommitRequest(**args), request=request)
         finally:

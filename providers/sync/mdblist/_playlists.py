@@ -11,6 +11,8 @@ from cw_platform.interactive_reads import remember_resource, retained_read
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import quote, unquote, urlparse
 
+from .._pagination import PageGuard, page_numbers
+
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.playlists import (
     PLAYLIST_KIND_REGULAR,
@@ -50,7 +52,6 @@ _WRITE_GROUPS = {"movie": "movies", "show": "shows", "season": "seasons", "episo
 _MDBLIST_HOSTS = {"mdblist.com", "www.mdblist.com"}
 _RESERVED_LIST_PATHS = {"user", "liked", "top", "curated", "search", "official", "share", "recommended", "external"}
 _LIKED_PAGE = 100
-_LIKED_MAX_PAGES = 20
 _SNAPSHOT_MEMO_TTL = 6 * 3600.0
 _SNAPSHOT_MEMO_MAX = 16
 _SNAPSHOT_MEMO: dict[tuple[str, str], tuple[float, tuple[str, Any], list[PlaylistItem]]] = {}
@@ -212,7 +213,8 @@ def _liked_resources(adapter: Any, skip_ids: set[str]) -> list[PlaylistResource]
     seen = set(skip_ids)
     apikey = _apikey(adapter)
     try:
-        for page in range(_LIKED_MAX_PAGES):
+        guard = PageGuard(MDBListPlaylistError, "mdblist liked lists repeated page")
+        for page in page_numbers(0):
             r = mdblist_request(
                 adapter,
                 "GET",
@@ -226,12 +228,15 @@ def _liked_resources(adapter: Any, skip_ids: set[str]) -> list[PlaylistResource]
             rows = data.get("lists") if isinstance(data, Mapping) else None
             if not isinstance(rows, list):
                 return []
+            guard.check(rows)
             for row in rows:
                 res = _resource_from_list(adapter, row, endpoint_type="liked_list") if isinstance(row, Mapping) else None
                 if res and res.id not in seen:
                     seen.add(res.id)
                     out.append(res)
             pagination = data.get("pagination")
+            if not rows and isinstance(pagination, Mapping) and pagination.get("has_more"):
+                raise MDBListPlaylistError("mdblist liked lists incomplete page")
             if not rows or not (isinstance(pagination, Mapping) and pagination.get("has_more")):
                 break
     except SyncCancelled:
@@ -389,7 +394,7 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
         return PlaylistSnapshot(resource=resource, items=cached, checkpoint=None)
 
     items: list[PlaylistItem] = []
-    pager = CursorPager(1000, 1000)
+    pager = CursorPager(1000)
     apikey = _apikey(adapter)
     pos = 0
     while True:

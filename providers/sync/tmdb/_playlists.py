@@ -9,6 +9,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from .._pagination import PageGuard, page_numbers
+
 from cw_platform.id_map import minimal as id_minimal
 from cw_platform.interactive_reads import remember_resource, retained_read
 from cw_platform.playlists import (
@@ -36,7 +38,6 @@ from ._common import (
 FEATURE = "playlists"
 MEDIA_TYPES = ("movie", "show")
 BATCH_SIZE = 100
-MAX_PAGES = 500
 _HOSTS = {"themoviedb.org", "www.themoviedb.org"}
 _SNAPSHOT_MEMO_TTL = 6 * 3600.0
 _SNAPSHOT_MEMO_MAX = 16
@@ -140,20 +141,19 @@ def _page(adapter: Any, path: str, page: int, *, missing: str, account: bool = F
 
 def _pages(adapter: Any, path: str, *, missing: str = "TMDb list not found", account: bool = False) -> list[Mapping[str, Any]]:
     out: list[Mapping[str, Any]] = []
-    page = 1
-    total = 1
     rows_seen = 0
-    while page <= total:
+    guard = PageGuard(TMDBPlaylistError, "TMDb list repeated page")
+    for page in page_numbers():
         data = _page(adapter, path, page, missing=missing, account=account)
         rows = data["results"]
         total = as_int(data.get("total_pages")) or 1
-        if total > MAX_PAGES:
-            raise TMDBPlaylistError(f"TMDb list too large ({total} pages, limit {MAX_PAGES})")
+        guard.check(rows)
         if not rows and page < total:
             raise TMDBPlaylistError(f"TMDb list page incomplete ({path})")
         rows_seen += len(rows)
         out.append(data)
-        page += 1
+        if page >= total:
+            break
     expected = as_int(out[0].get("total_results")) if out else None
     if expected is not None and rows_seen != expected:
         raise TMDBPlaylistError(f"TMDb list read incomplete ({path})")

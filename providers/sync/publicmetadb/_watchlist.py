@@ -73,7 +73,7 @@ def _find_watchlist(adapter: Any) -> str | None:
     ).strip() or "Watchlist"
     configured_name_l = configured_name.lower()
 
-    rows = paged_items(adapter, "/api/external/lists", per_page=500, max_pages=1000, what="watchlist_lists")
+    rows = paged_items(adapter, "/api/external/lists", per_page=500, what="watchlist_lists")
 
     typed_watchlist: str | None = None
     fallback: str | None = None
@@ -121,7 +121,7 @@ def _fetch_all_items(adapter: Any, list_id: str) -> tuple[dict[str, dict[str, An
     remote_ids: dict[str, str] = {}
     per_page = int(getattr(adapter.cfg, "watchlist_page_size", 500) or 500)
     per_page = max(1, min(per_page, 500))
-    for row in paged_items(adapter, f"/api/external/lists/{list_id}/items", per_page=per_page, max_pages=1000, what="watchlist"):
+    for row in paged_items(adapter, f"/api/external/lists/{list_id}/items", per_page=per_page, what="watchlist"):
         mini = _to_minimal(row)
         if not mini:
             continue

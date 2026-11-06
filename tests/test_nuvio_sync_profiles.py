@@ -43,7 +43,7 @@ def test_nuvio_sync_adapter_uses_selected_profile_from_provider_view(monkeypatch
     assert adapter.instance_id == "kid"
     assert selected_profile_id(adapter) == 2
 
-    pull_watch_progress_rows(adapter, limit=1, max_pages=1)
+    pull_watch_progress_rows(adapter, limit=1, probe=True)
 
     assert calls == [
         {

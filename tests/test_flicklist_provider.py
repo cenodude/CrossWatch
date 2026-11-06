@@ -550,7 +550,7 @@ def test_history_index_uses_flicklist_header_pagination(monkeypatch: pytest.Monk
     from providers.sync.flicklist import _history as history
 
     class Adapter:
-        config = {"flicklist": {"history_per_page": 100, "history_max_pages": 10}}
+        config = {"flicklist": {"history_per_page": 100}}
 
     calls: list[dict[str, Any]] = []
 
@@ -582,7 +582,7 @@ def test_history_index_supplements_missing_movies_from_watched_snapshot(monkeypa
     from providers.sync.flicklist._common import URL_HISTORY, URL_WATCHED_MOVIES
 
     class Adapter:
-        config = {"flicklist": {"history_per_page": 100, "history_max_pages": 10}}
+        config = {"flicklist": {"history_per_page": 100}}
 
     calls: list[str] = []
 

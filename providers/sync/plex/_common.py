@@ -23,6 +23,8 @@ from threading import RLock, local
 from typing import Any, Callable, Iterable, Mapping
 from urllib.parse import urlsplit, quote
 
+from .._pagination import PageGuard
+from cw_platform.run_control import SyncCancelled, raise_if_cancelled
 from .._log import log as cw_log
 from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.log_context import log_run_id
@@ -1540,22 +1542,35 @@ def episode_rating_key_from_show(show_obj: Any, season: Any, episode: Any) -> st
 
     def _rows(path: str) -> list[tuple[str, str, str]] | None:
         out: list[tuple[str, str, str]] = []
+        start = 0
+        guard = PageGuard(RuntimeError, "plex_episode_lookup_repeated_page")
         try:
-            resp = srv._session.get(
-                srv.url(path),
-                params={"X-Plex-Container-Start": 0, "X-Plex-Container-Size": 5000},
-                timeout=12,
-            )
-            if not resp.ok:
-                return None
-            root = ET.fromstring(resp.text or "")
-            for ep in root.findall(".//Video"):
-                rk = ep.attrib.get("ratingKey")
-                if rk:
-                    out.append((ep.attrib.get("parentIndex", "0") or "0", ep.attrib.get("index", "0") or "0", str(rk)))
+            while True:
+                raise_if_cancelled()
+                resp = srv._session.get(
+                    srv.url(path),
+                    params={"X-Plex-Container-Start": start, "X-Plex-Container-Size": 5000},
+                    timeout=12,
+                )
+                if not resp.ok:
+                    return None
+                root = ET.fromstring(resp.text or "")
+                entries = list(root)
+                guard.check([dict(entry.attrib) for entry in entries])
+                for ep in root.findall(".//Video"):
+                    rk = ep.attrib.get("ratingKey")
+                    if rk:
+                        out.append((ep.attrib.get("parentIndex", "0") or "0", ep.attrib.get("index", "0") or "0", str(rk)))
+                total = _safe_int(root.attrib.get("totalSize"))
+                start += len(entries)
+                if not entries and total is not None and start < total:
+                    return None
+                if not entries or (total is not None and start >= total) or (total is None and len(entries) < 5000):
+                    return out
+        except SyncCancelled:
+            raise
         except Exception:
             return None
-        return out
 
     for source, path in (("children", f"/library/metadata/{obj_id}/children"), ("leaves", f"/library/metadata/{obj_id}/allLeaves")):
         cached = entry[source]

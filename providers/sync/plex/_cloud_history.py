@@ -78,7 +78,7 @@ def read(adapter: Any) -> tuple[list[dict[str, Any]], int]:
         items = []
         unmatched = 0
         normalized: dict[str, dict[str, Any] | None] = {}
-        for _ in range(10000):
+        while True:
             _cancel()
             data = writer._gql(_HISTORY_QUERY, {"id": writer.uuid, "after": after})
             history = (data.get("user") or {}).get("watchHistory")
@@ -136,7 +136,6 @@ def read(adapter: Any) -> tuple[list[dict[str, Any]], int]:
                 raise CloudError("plex_discover_history_incomplete")
             cursors.add(cursor)
             after = cursor
-        raise CloudError("plex_discover_history_incomplete")
     finally:
         writer.close()
 

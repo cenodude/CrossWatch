@@ -8,6 +8,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
+from ._pagination import PageGuard, page_numbers
+
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.run_control import cancel_requested
@@ -632,7 +634,7 @@ class MDBLISTModule:
         rows: list[dict[str, Any]] = []
         journal_oldest_at = ""
         latest_action_at = ""
-        pager = CursorPager(limit, 1000)
+        pager = CursorPager(limit)
 
         while True:
             try:
@@ -700,15 +702,16 @@ class MDBLISTModule:
         raw_cached_tokens = cached.get("tokens") if isinstance(cached, Mapping) else None
         cached_tokens = raw_cached_tokens if isinstance(raw_cached_tokens, list) else []
         cache_version = int(cached.get("version") or 0) if isinstance(cached, Mapping) else 0
-        if cache_version >= 1 and remote_ts and str(cached.get("updated_at") or "").strip() == remote_ts:
+        if cache_version >= 2 and remote_ts and str(cached.get("updated_at") or "").strip() == remote_ts:
             return {str(x) for x in cached_tokens if str(x).strip()}
-        if cache_version >= 1 and not remote_ts and cached_tokens:
+        if cache_version >= 2 and not remote_ts and cached_tokens:
             return {str(x) for x in cached_tokens if str(x).strip()}
 
         tokens: set[str] = set()
         offset = 0
         limit = 1000
-        while offset <= 100000:
+        guard = PageGuard(RuntimeError, "mdblist_dropped_repeated_page")
+        for _ in page_numbers():
             try:
                 r = self.client.get(
                     f"{self.client.BASE}/sync/dropped",
@@ -716,15 +719,18 @@ class MDBLISTModule:
                 )
             except Exception as e:
                 _warn("dropped_fetch_failed", offset=offset, error=str(e))
-                break
+                raise
 
             if not (200 <= r.status_code < 300):
                 _warn("dropped_fetch_http", offset=offset, status=r.status_code)
-                break
+                raise RuntimeError(f"mdblist_dropped_http_{r.status_code}")
 
             data = r.json() if (r.text or "").strip() else {}
             raw_rows = data.get("shows") if isinstance(data, Mapping) else None
-            rows = raw_rows if isinstance(raw_rows, list) else []
+            if not isinstance(raw_rows, list):
+                raise RuntimeError("mdblist_dropped_invalid_page")
+            rows = raw_rows
+            guard.check(rows)
             for row in rows:
                 if not isinstance(row, Mapping):
                     continue
@@ -754,17 +760,16 @@ class MDBLISTModule:
                 total = -1
             if total >= 0 and offset + len(rows) < total:
                 has_more = True
-            if not rows or not has_more:
+            if not rows and has_more:
+                raise RuntimeError("mdblist_dropped_incomplete_page")
+            if not has_more:
                 break
-            try:
-                offset += int(pag.get("limit") or limit)
-            except Exception:
-                offset += limit
+            offset += len(rows)
 
         mdblist_write_json(
             cache_path,
             {
-                "version": 1,
+                "version": 2,
                 "updated_at": remote_ts,
                 "fetched_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "tokens": sorted(tokens),

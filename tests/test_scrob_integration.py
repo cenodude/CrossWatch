@@ -58,6 +58,7 @@ def test_default_config_exposes_a_scrob_block(isolated_config: Path):
     assert block["watchlist_name"] == "Watchlist"
     assert block["totp_enabled"] is False
     assert block["reauth_required"] is False
+    assert "history_max_pages" not in block
     assert "_pending" not in str(block)
 
 
@@ -70,6 +71,7 @@ def test_config_normalizer_cleans_the_scrob_block(isolated_config: Path):
             "server_url": "192.168.2.163:7330/",
             "api_prefix": "api/proxy/",
             "history_max_pages": 10**9,
+            "instances": {"extra": {"history_max_pages": 1}},
             "expires_at": "not-a-number",
         }
     )
@@ -77,7 +79,8 @@ def test_config_normalizer_cleans_the_scrob_block(isolated_config: Path):
     fresh = load_config()["scrob"]
     assert fresh["server_url"] == "http://192.168.2.163:7330"
     assert fresh["api_prefix"] == "/api/proxy"
-    assert fresh["history_max_pages"] == 100000
+    assert "history_max_pages" not in fresh
+    assert "history_max_pages" not in fresh["instances"]["extra"]
     assert fresh["expires_at"] == 0
 
 

@@ -6,6 +6,8 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable, Mapping
 
+from cw_platform.run_control import raise_if_cancelled
+
 from cw_platform.history_events import history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
@@ -207,16 +209,15 @@ def _index_from_snapshot(adapter: Any) -> dict[str, dict[str, Any]]:
     return collected
 
 
-def _index_from_history_endpoint(adapter: Any, *, per_page: int, max_pages: int) -> dict[str, dict[str, Any]]:
+def _index_from_history_endpoint(adapter: Any, *, per_page: int) -> dict[str, dict[str, Any]]:
     collected: dict[str, dict[str, Any]] = {}
     cursor: str | None = None
+    seen_cursors: set[str] = set()
     pages = 0
 
     while True:
+        raise_if_cancelled()
         pages += 1
-        if max_pages and pages > max_pages:
-            _warn(FEATURE, "index_page_cap_hit", max_pages=max_pages)
-            raise PunchPlayError(f"punchplay_history_page_cap_reached:{max_pages}")
         params: dict[str, Any] = {"limit": per_page}
         if cursor:
             params["cursor"] = cursor
@@ -233,10 +234,11 @@ def _index_from_history_endpoint(adapter: Any, *, per_page: int, max_pages: int)
         row_count = _collect_history_rows(adapter, rows, collected)
 
         nxt = data.get("nextCursor") or None
-        if not nxt or row_count <= 0:
+        if not nxt:
             break
-        if nxt == cursor:
+        if nxt in seen_cursors or row_count <= 0:
             raise PunchPlayError("punchplay_history_repeated_cursor")
+        seen_cursors.add(nxt)
         cursor = nxt
 
     _dbg(FEATURE, "history_endpoint_scanned", indexed=len(collected), pages=pages)
@@ -246,12 +248,11 @@ def _index_from_history_endpoint(adapter: Any, *, per_page: int, max_pages: int)
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     section = cfg_section(adapter) or {}
     per_page = max(1, min(cfg_int(section, "history_per_page", HISTORY_PAGE_MAX), HISTORY_PAGE_MAX))
-    max_pages = cfg_int(section, "history_max_pages", 5000)
 
     collected = _index_from_snapshot(adapter)
     source = "snapshot"
     if not collected:
-        collected = _index_from_history_endpoint(adapter, per_page=per_page, max_pages=max_pages)
+        collected = _index_from_history_endpoint(adapter, per_page=per_page)
         source = "history"
 
     _info(FEATURE, "index_done", count=len(collected), source=source)

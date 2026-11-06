@@ -2584,17 +2584,89 @@ def test_floppy_collection_read_fails_when_pages_are_missing() -> None:
         _collection.build_index(AdapterStub({("GET", "collection"): page}))
 
 
-def test_floppy_collection_read_follows_pagination_total() -> None:
+@pytest.mark.parametrize("total", [450, 40_000, 40_001])
+def test_floppy_collection_read_follows_pagination_total(total: int) -> None:
     from providers.sync.floppy import _collection
 
     def page(call):
         offset = int(call["params"]["offset"])
-        rows = [_collection_row(i, 1000 + i) for i in range(offset, min(offset + 200, 450))]
-        return {"results": rows, "pagination": {"total": 450, "limit": 200, "offset": offset}}
+        rows = [_collection_row(i, 1000 + i) for i in range(offset, min(offset + 200, total))]
+        return {"results": rows, "pagination": {"total": total, "limit": 200, "offset": offset}}
 
     adapter = AdapterStub({("GET", "collection"): page})
-    assert len(_collection.build_index(adapter)) == 450
-    assert [c["params"]["offset"] for c in adapter.client.session.calls] == [0, 200, 400]
+    index = _collection.build_index(adapter)
+    assert len(index) == total
+    assert f"tmdb:{1000 + total - 1}" in index
+    assert [c["params"]["offset"] for c in adapter.client.session.calls] == list(range(0, total, 200))
+
+
+def test_floppy_paged_reads_beyond_old_row_cap() -> None:
+    from providers.sync.floppy._common import paged
+
+    total = 200_001
+
+    def page(call):
+        offset = int(call["params"]["offset"])
+        return {"results": [{"id": i} for i in range(offset, min(offset + 200, total))], "pagination": {"total": total}}
+
+    rows = paged(AdapterStub({("GET", "collection"): page}), "collection")
+
+    assert [row["id"] for row in rows] == list(range(total))
+
+
+def test_floppy_paged_follows_total_when_server_clamps_page_size() -> None:
+    from providers.sync.floppy._common import paged
+
+    def page(call):
+        offset = int(call["params"]["offset"])
+        return {"results": [{"id": i} for i in range(offset, min(offset + 2, 5))], "pagination": {"total": 5, "limit": 2}}
+
+    adapter = AdapterStub({("GET", "collection"): page})
+
+    assert [row["id"] for row in paged(adapter, "collection")] == list(range(5))
+    assert [call["params"]["offset"] for call in adapter.client.session.calls] == [0, 2, 4]
+
+
+def test_floppy_paged_rejects_cycling_pages() -> None:
+    from providers.sync.floppy._common import paged
+
+    def page(call):
+        offset = int(call["params"]["offset"]) % 400
+        return {"results": [{"id": i} for i in range(offset, offset + 200)], "pagination": {"total": 1000}}
+
+    adapter = AdapterStub({("GET", "collection"): page})
+
+    with pytest.raises(RuntimeError, match="floppy_repeated_page:collection"):
+        paged(adapter, "collection")
+    assert len(adapter.client.session.calls) == 3
+
+
+def test_floppy_paged_rejects_changing_total() -> None:
+    from providers.sync.floppy._common import paged
+
+    def page(call):
+        offset = int(call["params"]["offset"])
+        return {"results": [{"id": i} for i in range(offset, offset + 200)], "pagination": {"total": 400 + offset}}
+
+    with pytest.raises(RuntimeError, match="floppy_total_changed:collection:400->600"):
+        paged(AdapterStub({("GET", "collection"): page}), "collection")
+
+
+def test_floppy_paged_can_be_cancelled_between_pages(monkeypatch: Any) -> None:
+    from cw_platform.run_control import SyncCancelled
+    from providers.sync.floppy import _common
+
+    adapter = AdapterStub({("GET", "collection"): {"results": [{"id": i} for i in range(200)], "pagination": {"total": 400}}})
+
+    def cancel():
+        if adapter.client.session.calls:
+            raise SyncCancelled()
+
+    monkeypatch.setattr(_common, "raise_if_cancelled", cancel)
+
+    with pytest.raises(SyncCancelled):
+        _common.paged(adapter, "collection")
+    assert len(adapter.client.session.calls) == 1
 
 
 def test_floppy_paged_short_read_fails_unless_total_is_waived() -> None:

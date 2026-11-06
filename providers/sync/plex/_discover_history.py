@@ -15,6 +15,9 @@ import time
 from typing import Any, Mapping
 from urllib.parse import quote
 
+from .._pagination import PageGuard
+from cw_platform.run_control import raise_if_cancelled
+
 import requests
 
 from . import _common as common
@@ -251,17 +254,22 @@ class Writer:
         key = ("children", parent)
         if key not in self.cache:
             rows = []
-            for start in range(0, 100_000, 200):
+            guard = PageGuard(CloudError, "plex_discover_catalog_repeated_page")
+            start = 0
+            while True:
+                raise_if_cancelled()
                 page = self._metadata(quote(parent, safe="") + "/children",
                                       params={"includeGuids": 1},
                                       headers={"X-Plex-Container-Start": str(start), "X-Plex-Container-Size": "200"})
                 batch = page.get("Metadata") or []
+                guard.check(batch)
                 rows.extend(batch)
                 total = common._safe_int(page.get("totalSize"))
+                if not batch and total is not None and len(rows) < total:
+                    raise CloudError("plex_discover_catalog_incomplete")
                 if not batch or (total is not None and start + len(batch) >= total) or (total is None and len(batch) < 200):
                     break
-            else:
-                raise CloudError("plex_discover_catalog_incomplete")
+                start += len(batch)
             self.cache[key] = rows
         matches = {str(r["ratingKey"]) for r in self.cache[key] if r.get("type") == kind and r.get("ratingKey")
                    and common._safe_int(r.get("index")) == index}

@@ -8,6 +8,8 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from providers.sync._pagination import PageGuard
+
 from cw_platform.played_writes import written_by_crosswatch
 from providers.scrobble.routes import watch_poll_seconds
 from providers.scrobble.scrobble import ScrobbleEvent, mask_account
@@ -272,7 +274,11 @@ class MediaServerMarkPoller:
 
     def _mark_played_rows(self, uid: str, cfg: dict[str, Any], watermark: float | None) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        guard = PageGuard(ValueError, "repeated played items page", check_cancel=False)
         for page in range(self._MARK_MAX_PAGES):
+            stop = getattr(self, "_stop", None)
+            if stop is not None and stop.is_set():
+                raise InterruptedError("Watcher stopped")
             path = (
                 f"/Users/{uid}/Items?IncludeItemTypes=Movie,Episode&Recursive=true&Filters=IsPlayed"
                 f"&SortBy=DatePlayed&SortOrder=Descending&StartIndex={page * self._MARK_PAGE}&Limit={self._MARK_PAGE}"
@@ -282,6 +288,7 @@ class MediaServerMarkPoller:
             items = body.get("Items") if isinstance(body, dict) else None
             if not isinstance(items, list):
                 raise ValueError("invalid played items response")
+            guard.check(items)
             rows.extend(item for item in items if isinstance(item, dict))
             if watermark is None or len(items) < self._MARK_PAGE:
                 break

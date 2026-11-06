@@ -921,7 +921,7 @@ def test_trakt_unknown_date_play_reads_as_undated_watch(monkeypatch) -> None:
 
     monkeypatch.setattr(trakt_history, "TraktPager", Pager)
     monkeypatch.setattr(trakt_history, "request_with_retries", lambda *a, **k: None)
-    fetched = trakt_history._fetch_history(object(), {}, trakt_history.URL_HIST_MOV, per_page=250, max_pages=1, timeout=5, max_retries=1)
+    fetched = trakt_history._fetch_history(object(), {}, trakt_history.URL_HIST_MOV, per_page=250, timeout=5, max_retries=1)
 
     monkeypatch.setattr(trakt_history, "_load_cache_doc", lambda: {})
     monkeypatch.setattr(trakt_history, "_save_cache_doc", lambda *a, **k: None)

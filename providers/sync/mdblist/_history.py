@@ -1002,7 +1002,6 @@ def _build_event_index(
     *,
     apikey: str,
     per_page: int,
-    max_pages: int,
     timeout: float,
     retries: int,
 ) -> dict[str, dict[str, Any]]:
@@ -1011,7 +1010,7 @@ def _build_event_index(
 
     out: dict[str, dict[str, Any]] = {}
     latest_seen: str | None = None
-    pager = CursorPager(per_page, max_pages)
+    pager = CursorPager(per_page)
     tick = 0
     complete_fetch = True
 
@@ -1090,7 +1089,6 @@ def build_index(
     adapter: Any,
     *,
     per_page: int = 1000,
-    max_pages: int = 250,
 ) -> dict[str, dict[str, Any]]:
     cfg = _cfg(adapter)
     event_mode = _rewatches_enabled(adapter)
@@ -1115,8 +1113,6 @@ def build_index(
 
     per_page = _cfg_int(cfg, "history_per_page", per_page)
     per_page = max(1, min(int(per_page), 1000))
-    max_pages = _cfg_int(cfg, "history_max_pages", max_pages)
-    max_pages = max(1, min(int(max_pages), 2000))
 
     sess = adapter.client.session
     timeout = adapter.cfg.timeout
@@ -1127,7 +1123,6 @@ def build_index(
             adapter,
             apikey=apikey,
             per_page=per_page,
-            max_pages=max_pages,
             timeout=timeout,
             retries=retries,
         )
@@ -1221,7 +1216,7 @@ def build_index(
 
     out: dict[str, dict[str, Any]] = {}
     latest_seen: str | None = None
-    pager = CursorPager(per_page, max_pages)
+    pager = CursorPager(per_page)
     tick = 0
     complete_fetch = True
     while True:

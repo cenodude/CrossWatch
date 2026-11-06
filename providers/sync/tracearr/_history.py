@@ -7,6 +7,8 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 
+from cw_platform.run_control import raise_if_cancelled
+
 from cw_platform.history_events import history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key
 
@@ -196,7 +198,7 @@ def _title_show_ids(titles: Mapping[tuple[str, str], set[tuple[tuple[str, str], 
     return dict(next(iter(found)))
 
 
-def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> dict[str, dict[str, Any]]:
+def build_index(adapter: Any, *, per_page: int = 100) -> dict[str, dict[str, Any]]:
     client = getattr(adapter, "client", None)
     if not client:
         return {}
@@ -204,15 +206,11 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     user_id = str(_cfg_get(adapter, "tracearr.history.user_id", "") or "").strip()
     server_id = str(_cfg_get(adapter, "tracearr.history.server_id", "") or "").strip()
     cfg_per_page = max(1, min(100, int(_cfg_get(adapter, "tracearr.history.per_page", per_page) or per_page)))
-    cfg_max_pages = int(_cfg_get(adapter, "tracearr.history.max_pages", max_pages) or max_pages)
-    if cfg_max_pages <= 0:
-        cfg_max_pages = max_pages
     watched_only = bool(_cfg_get(adapter, "tracearr.history.watched_only", True))
 
     _log(
         "index_fetch_counts",
         per_page=cfg_per_page,
-        max_pages=cfg_max_pages,
         has_user_id=bool(user_id),
         has_server_id=bool(server_id),
         watched_only=watched_only,
@@ -253,10 +251,8 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
             out[ck] = item
 
     while True:
+        raise_if_cancelled()
         pages += 1
-        if pages > cfg_max_pages:
-            _log("index_reconcile", level="warn", reason="max_pages_reached", pages=pages, max_pages=cfg_max_pages)
-            raise RuntimeError(f"tracearr_history_page_cap_reached:{cfg_max_pages}")
 
         params: dict[str, Any] = {"pageSize": cfg_per_page}
         if cursor:

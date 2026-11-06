@@ -65,7 +65,7 @@ class FakeClient:
 class FakeAdapter:
     def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
         self.client = FakeClient(rows)
-        self.cfg = type("Cfg", (), {"progress_per_page": 100, "progress_max_pages": 10})()
+        self.cfg = type("Cfg", (), {"progress_per_page": 100})()
 
 
 def movie_row(progress: float = 20.0) -> dict[str, Any]:

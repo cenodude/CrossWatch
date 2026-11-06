@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, TypeGuard
 
+from cw_platform.run_control import raise_if_cancelled
+
 import requests
 
 from .._log import log as cw_log
@@ -27,14 +29,14 @@ class MDBListFetchError(RuntimeError):
 
 
 class CursorPager:
-    def __init__(self, limit: int, max_pages: int = 2000):
+    def __init__(self, limit: int):
         self.limit = max(1, min(int(limit), 1000))
-        self.max_pages = max(1, int(max_pages))
         self.pages = 0
         self.cursor: str | None = None
         self.seen: set[str] = set()
 
     def params(self) -> dict[str, Any]:
+        raise_if_cancelled()
         params: dict[str, Any] = {"limit": self.limit}
         if self.cursor is not None:
             params["cursor"] = self.cursor
@@ -57,8 +59,6 @@ class CursorPager:
             return False
         if not isinstance(cursor, str) or cursor in self.seen:
             raise MDBListFetchError("MDBList returned an invalid or repeated cursor")
-        if self.pages >= self.max_pages:
-            raise MDBListFetchError("MDBList cursor read exceeded the page limit")
         self.seen.add(cursor)
         self.cursor = cursor
         return True

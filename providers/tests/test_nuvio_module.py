@@ -71,9 +71,9 @@ def test_nuvio_health_success_and_no_write(monkeypatch: pytest.MonkeyPatch) -> N
 
     monkeypatch.setattr(common, "save_config", lambda _cfg: pytest.fail("health must not write config"))
     monkeypatch.setattr(mod.NuvioClient, "pull_profiles", lambda self, cfg, refresh=True: [{"profile_id": 1, "name": "Profile 1"}])
-    monkeypatch.setattr(mod, "pull_watch_progress_rows", lambda self, limit=1, max_pages=1: [])
-    monkeypatch.setattr(mod, "pull_watched_rows", lambda self, page_size=1, max_pages=1: [])
-    monkeypatch.setattr(mod, "pull_library_rows", lambda self, limit=1, max_pages=1: [])
+    monkeypatch.setattr(mod, "pull_watch_progress_rows", lambda self, limit=1, probe=False: [])
+    monkeypatch.setattr(mod, "pull_watched_rows", lambda self, page_size=1, probe=False: [])
+    monkeypatch.setattr(mod, "pull_library_rows", lambda self, limit=1, probe=False: [])
 
     health = mod.NUVIOModule(_cfg()).health()
 

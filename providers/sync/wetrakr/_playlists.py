@@ -29,7 +29,6 @@ _FEATURE = "playlists"
 MEDIA_TYPES = ("movies", "shows", "seasons", "episodes")
 _KINDS = ("movie", "show", "season", "episode")
 PAGE_SIZE = 100
-MAX_PAGES = 100
 WRITE_BATCH = 100
 REORDER_MAX = 5000
 _HOSTS = {"wetrakr.com", "www.wetrakr.com"}
@@ -110,7 +109,9 @@ def _rows(data: Any) -> list[Mapping[str, Any]]:
 def _paged(adapter: Any, path: str) -> list[Mapping[str, Any]]:
     out: list[Mapping[str, Any]] = []
     seen: set[str] = set()
-    for page in range(1, MAX_PAGES + 1):
+    page = 0
+    while True:
+        page += 1
         raise_if_cancelled()
         response = request(adapter, "GET", path, params={"page": page, "limit": PAGE_SIZE})
         rows = _rows(body_of(response))
@@ -122,9 +123,10 @@ def _paged(adapter: Any, path: str) -> list[Mapping[str, Any]]:
         out.extend(rows)
         headers = {str(k).lower(): v for k, v in response.headers.items()}
         page_count = int_value(headers.get("x-pagination-page-count"))
+        if not rows and page < page_count:
+            raise WeTrakrSyncError("incomplete_page")
         if not rows or (page_count >= 0 and page >= page_count) or (page_count < 0 and len(rows) < PAGE_SIZE):
             return out
-    raise WeTrakrSyncError("pagination_limit")
 
 
 def _optional(adapter: Any, path: str, op: str, *, paged: bool = False) -> list[Mapping[str, Any]]:

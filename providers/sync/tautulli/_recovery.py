@@ -69,7 +69,7 @@ def _read(adapter: Any, progress: Callable[..., None], check_cancel: Callable[[]
 
 
 def scan(adapter: Any, *, resolve: Callable[[str, str], Mapping[str, Any]], progress: Callable[..., None],
-         check_cancel: Callable[[], None], max_rows: int = 50_000, ignore_live_tv: bool = True) -> list[dict[str, Any]]:
+         check_cancel: Callable[[], None], max_rows: int | None = None, ignore_live_tv: bool = True) -> list[dict[str, Any]]:
     check_cancel()
     watched_only = bool(history._cfg_get(adapter, "tautulli.history.watched_only", True))
     min_percent = history._to_float(history._cfg_get(adapter, "tautulli.history.min_percent", 90))
@@ -157,7 +157,7 @@ def scan(adapter: Any, *, resolve: Callable[[str, str], Mapping[str, Any]], prog
                                                original.strip().casefold(), str(year or "")], ensure_ascii=True),
                  "original_year": year, "original_title": original}
         recovered.append(entry)
-        if len(recovered) > max_rows:
+        if max_rows is not None and len(recovered) > max_rows:
             raise RuntimeError(f"More than {max_rows:,} watch events. Set a Tautulli user for this instance to narrow the history.")
         if not ids and show_key:
             pending.append((entry, show_key))

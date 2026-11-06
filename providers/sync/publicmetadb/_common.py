@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
+from cw_platform.run_control import raise_if_cancelled
+
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.config_base import CONFIG_BASE
 from cw_platform.metadata_cache import (
@@ -92,15 +94,14 @@ def as_int(value: Any) -> int | None:
         return None
 
 
-def paged_items(adapter: Any, path: str, *, per_page: int, max_pages: int, what: str) -> list[Mapping[str, Any]]:
+def paged_items(adapter: Any, path: str, *, per_page: int, what: str) -> list[Mapping[str, Any]]:
     out: list[Mapping[str, Any]] = []
     page = 1
     total: int | None = None
     total_pages: int | None = None
     seen_pages: set[tuple[str, ...]] = set()
     while True:
-        if page > max_pages:
-            raise RuntimeError(f"publicmetadb_{what}_page_cap_reached:{max_pages}")
+        raise_if_cancelled()
         data = adapter.client.read_json(path, params={"page": page, "perPage": per_page})
         if not isinstance(data, Mapping) or not isinstance(data.get("items"), list):
             raise RuntimeError(f"publicmetadb_{what}_invalid_response")

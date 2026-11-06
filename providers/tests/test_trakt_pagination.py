@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 
 from providers.sync.trakt import _history as history
-from providers.sync.trakt._pagination import TraktPager, TraktPaginationError
+from providers.sync.trakt._common import TraktPager, TraktPaginationError
 
 
 class Response:
@@ -71,9 +71,9 @@ def _reader(monkeypatch: Any, name: str, responses: list[Response], limits: list
         monkeypatch.setattr(module, "_shadow_load", lambda: {})
         monkeypatch.setattr(module, "_shadow_save", lambda *a, **kw: saved.append(a))
     if name == "history":
-        fetch = lambda: module._fetch_history(session, {}, module.URL_HIST_MOV, per_page=250, max_pages=10, timeout=1, max_retries=0)
+        fetch = lambda: module._fetch_history(session, {}, module.URL_HIST_MOV, per_page=250, timeout=1, max_retries=0)
     elif name == "ratings":
-        fetch = lambda: module._fetch_bucket(session, {}, module.URL_RAT_MOV, "movie", 250, 10, 1, 0)
+        fetch = lambda: module._fetch_bucket(session, {}, module.URL_RAT_MOV, "movie", 250, 1, 0)
     elif name == "playlists":
         monkeypatch.setattr(module, "list_resources", lambda _adapter: [])
         fetch = lambda: module.get_snapshot(adapter, "123").items
@@ -145,12 +145,11 @@ def test_pager_rejects_invalid_json() -> None:
         TraktPager("history").read(response, 1)
 
 
-def test_page_cap_allows_empty_completion_probe_but_rejects_more_data() -> None:
-    pager = TraktPager("history", 1)
-    assert pager.read(Response([_row(1)]), 1)
-    assert pager.read(Response([]), 2) == []
-    with pytest.raises(TraktPaginationError, match="safety_cap_hit"):
-        pager.read(Response([_row(2)]), 2)
+def test_pagination_continues_beyond_old_cap_until_empty():
+    pager = TraktPager("history")
+    for page in range(1, 100002):
+        assert pager.read(Response([_row(page)]), page)
+    assert pager.read(Response([]), 100002) == []
 
 
 def test_history_discards_cache_from_before_complete_pagination(monkeypatch: Any, tmp_path: Any) -> None:

@@ -10,6 +10,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .._pagination import PageGuard, page_numbers
+
 from cw_platform.id_map import canonical_key, ids_from, merge_ids, minimal as id_minimal
 
 from providers.auth._auth_NUVIO import (
@@ -472,18 +474,17 @@ def _rows(data: Any, reason: str) -> list[Mapping[str, Any]]:
 
 
 @retained_read
-def pull_watch_progress_rows(adapter: Any, *, limit: int = 1000, max_pages: int = 1000) -> list[Mapping[str, Any]]:
+def pull_watch_progress_rows(adapter: Any, *, limit: int = 1000, probe: bool = False) -> list[Mapping[str, Any]]:
     pid = selected_profile_id(adapter)
     per_page = max(1, min(int(limit or 1000), 1000))
-    pages = max(1, int(max_pages or 1000))
     cursor = 0
     out: list[Mapping[str, Any]] = []
 
-    for _ in range(pages):
+    for _ in page_numbers():
         data = rpc(adapter, "sync_pull_watch_progress", {"p_profile_id": pid, "p_since_last_watched": cursor, "p_limit": per_page})
         rows = _rows(data, "nuvio_progress_invalid")
         out.extend(rows)
-        if len(rows) < per_page:
+        if probe or len(rows) < per_page:
             break
         next_cursor = max((epoch_ms(row.get("last_watched")) or cursor for row in rows), default=cursor)
         if next_cursor <= cursor:
@@ -493,30 +494,34 @@ def pull_watch_progress_rows(adapter: Any, *, limit: int = 1000, max_pages: int 
 
 
 @retained_read
-def pull_watched_rows(adapter: Any, *, page_size: int = 900, max_pages: int = 1000) -> list[Mapping[str, Any]]:
+def pull_watched_rows(adapter: Any, *, page_size: int = 900, probe: bool = False) -> list[Mapping[str, Any]]:
     pid = selected_profile_id(adapter)
     size = max(1, min(int(page_size or 900), 1000))
     out: list[Mapping[str, Any]] = []
-    for page in range(1, max(1, int(max_pages or 1000)) + 1):
+    guard = PageGuard(NuvioInvalidResponse, "nuvio_history_repeated_page")
+    for page in page_numbers():
         data = rpc(adapter, "sync_pull_watched_items", {"p_profile_id": pid, "p_page": page, "p_page_size": size})
         rows = _rows(data, "nuvio_history_invalid")
+        guard.check(rows)
         out.extend(rows)
-        if len(rows) < size:
+        if probe or len(rows) < size:
             break
     return out
 
 
 @retained_read
-def pull_library_rows(adapter: Any, *, limit: int = 500, max_pages: int = 1000) -> list[Mapping[str, Any]]:
+def pull_library_rows(adapter: Any, *, limit: int = 500, probe: bool = False) -> list[Mapping[str, Any]]:
     pid = selected_profile_id(adapter)
     size = max(1, min(int(limit or 500), 500))
     out: list[Mapping[str, Any]] = []
-    for page in range(max(1, int(max_pages or 1000))):
+    guard = PageGuard(NuvioInvalidResponse, "nuvio_library_repeated_page")
+    for page in page_numbers(0):
         offset = page * size
         data = rpc(adapter, "sync_pull_library", {"p_profile_id": pid, "p_limit": size, "p_offset": offset})
         rows = _rows(data, "nuvio_library_read_failed")
+        guard.check(rows)
         out.extend(rows)
-        if len(rows) < size:
+        if probe or len(rows) < size:
             break
     return out
 

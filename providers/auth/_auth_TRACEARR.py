@@ -81,10 +81,11 @@ def validate_credentials(server_url: str, api_key: str, *, timeout: float = 12.0
     return False, "validation_bad_response"
 
 
-def list_users(server_url: str, api_key: str, *, timeout: float = 12.0, verify_ssl: bool = True, max_pages: int = 20) -> tuple[list[dict[str, Any]], str]:
+def list_users(server_url: str, api_key: str, *, timeout: float = 12.0, verify_ssl: bool = True) -> tuple[list[dict[str, Any]], str]:
     users: list[dict[str, Any]] = []
     cursor: str | None = None
-    for _ in range(max(1, int(max_pages))):
+    seen: set[str] = set()
+    while True:
         params: dict[str, Any] = {"pageSize": 100}
         if cursor:
             params["cursor"] = cursor
@@ -116,6 +117,9 @@ def list_users(server_url: str, api_key: str, *, timeout: float = 12.0, verify_s
         cursor = str((meta or {}).get("nextCursor") or "").strip() if isinstance(meta, dict) else ""
         if not cursor:
             break
+        if cursor in seen or not rows:
+            return [], "validation_bad_response"
+        seen.add(cursor)
     users.sort(key=lambda u: str(u.get("username") or "").lower())
     return users, ""
 
@@ -171,7 +175,7 @@ class TracearrAuth(AuthProvider):
         label = "Tracearr" if inst == "default" else f"Tracearr ({inst})"
         return AuthStatus(connected=ok, label=label)
 
-    def start(self, cfg: MutableMapping[str, Any] | None = None, *, redirect_uri: str | None = None, instance_id: Any = None) -> dict[str, Any]:
+    def start(self, cfg: MutableMapping[str, Any] | None = None, redirect_uri: str | None = None, *, instance_id: Any = None) -> dict[str, Any]:
         return {}
 
     def finish(self, cfg: MutableMapping[str, Any] | None = None, *, instance_id: Any = None, **payload: Any) -> AuthStatus:

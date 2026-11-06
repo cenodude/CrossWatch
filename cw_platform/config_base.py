@@ -385,7 +385,6 @@ DEFAULT_CFG: dict[str, Any] = {
 
         # Ratings
         "ratings_per_page": 1000,                       # Items per page when indexing
-        "ratings_max_pages": 50,                        # Max pages to fetch (safety cap)
         "ratings_chunk_size": 500,                      # Batch size for POST/REMOVE
         "ratings_write_delay_ms": 600,                  # Optional pacing between writes
         "ratings_max_backoff_ms": 8000,                 # Max backoff time for retries
@@ -393,7 +392,6 @@ DEFAULT_CFG: dict[str, Any] = {
 
         # History
         "history_per_page": 1000,                       # Items per page for /sync/watched delta
-        "history_max_pages": 250,                       # Max pages to fetch (safety cap)
         "history_chunk_size": 500,                      # Batch size for watched/unwatched writes
         "history_write_delay_ms": 600,                  # Optional pacing between writes
         "history_max_backoff_ms": 8000,                 # Max backoff time for retries
@@ -410,9 +408,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "watchlist_auto_create": True,                  # Create a private CrossWatch watchlist if missing
         "watchlist_page_size": 500,                     # GET page size for list items
         "history_per_page": 500,                        # GET page size for watched history
-        "history_max_pages": 1000,                      # Safety cap for watched history fetches
         "progress_per_page": 500,                       # GET page size for resume/progress
-        "progress_max_pages": 1000,                     # Safety cap for resume/progress fetches
         "ratings_label": "Overall",                     # PublicMetaDB rating label used by CrossWatch
         "ratings_submit_per_hour": 200,                 # PublicMetaDB contribution limit for rating creates
         "ratings_update_per_hour": 100,                 # PublicMetaDB contribution limit for rating updates
@@ -460,7 +456,6 @@ DEFAULT_CFG: dict[str, Any] = {
         "timeout": 20.0,
         "max_retries": 3,
         "history_per_page": 100,
-        "history_max_pages": 5000,
         "rate_limit": {
             "get_per_sec": 2.0,
             "post_per_sec": 0.5,
@@ -497,7 +492,6 @@ DEFAULT_CFG: dict[str, Any] = {
         "max_retries": 3,
         "write_batch_size": 1000,
         "history_per_page": 500,
-        "history_max_pages": 500,
         "rate_limit": {
             "get_per_sec": 0.2,
             "post_per_sec": 0.2,
@@ -547,7 +541,6 @@ DEFAULT_CFG: dict[str, Any] = {
         "verify_ssl": False,                            # Verify TLS certificates
         "timeout": 12.0,                                # HTTP timeout (seconds)
         "watchlist_name": "Watchlist",                  # Scrob list used as the CrossWatch watchlist
-        "history_max_pages": 500,                       # Safety cap for paged history reads
         "rate_limit": {
             "get_per_sec": 10,
             "post_per_sec": 5,
@@ -568,7 +561,6 @@ DEFAULT_CFG: dict[str, Any] = {
          "history": {
              "user_id": "",                             # Optional user filter
              "per_page": 100,                           # Tautulli history page size
-             "max_pages": 5000,                         # Safety cap
              "watched_only": True,                      # Skip partial playback sessions (Tautulli logs every play)
              "min_percent": 90                          # Completion fallback when watched_status is absent
          },
@@ -584,7 +576,6 @@ DEFAULT_CFG: dict[str, Any] = {
             "user_id": "",                              # Optional Tracearr user id filter
             "server_id": "",                            # Optional Tracearr server id filter
             "per_page": 100,                            # Tracearr history page size (max 100)
-            "max_pages": 5000,                          # Safety cap
             "watched_only": True,                       # Skip partial plays (uses the Tracearr watched flag)
             "min_percent_movie": 85,                    # Completion fallback when the watched flag is absent
             "min_percent_episode": 85                   # Completion fallback when the watched flag is absent
@@ -618,12 +609,10 @@ DEFAULT_CFG: dict[str, Any] = {
 
         # Ratings
         "ratings_per_page": 250,                        # Items per page when indexing (10–250; clamped to 250)
-        "ratings_max_pages": 50,                        # Max pages per type; raise if you have >2k ratings/type
         "ratings_chunk_size": 100,                      # Batch size for POST/REMOVE
 
         # History
         "history_per_page": 250,
-        "history_max_pages": 10000,                     # Safety cap for huge libraries; lower to bound runtime
         "history_chunk_size": 100,                      # Batch size for history add/remove writes
 
         "_pending_device": {
@@ -1210,6 +1199,23 @@ def cleanup_obsolete_config_keys(cfg: dict[str, Any]) -> list[str]:
         if isinstance(node, dict) and leaf in node:
             node.pop(leaf, None)
             changed.append(key)
+    for provider in ("trakt", "mdblist", "publicmetadb", "flicklist", "punchplay", "scrob", "tautulli", "tracearr"):
+        root = cfg.get(provider)
+        if not isinstance(root, dict):
+            continue
+        blocks = [(provider, root)]
+        instances = root.get("instances")
+        if isinstance(instances, dict):
+            blocks.extend((f"{provider}.instances.{name}", block) for name, block in instances.items() if isinstance(block, dict))
+        for path, block in blocks:
+            for key in ("history_max_pages", "ratings_max_pages", "collection_max_pages", "watchlist_max_pages", "progress_max_pages"):
+                if key in block:
+                    block.pop(key)
+                    changed.append(f"{path}.{key}")
+            history = block.get("history")
+            if provider in ("tautulli", "tracearr") and isinstance(history, dict) and "max_pages" in history:
+                history.pop("max_pages")
+                changed.append(f"{path}.history.max_pages")
     return changed
 
 
@@ -1870,9 +1876,7 @@ def _normalize_publicmetadb(cfg: dict[str, Any]) -> None:
 
     _int_range("watchlist_page_size", 500, 1, 500)
     _int_range("history_per_page", 500, 1, 500)
-    _int_range("history_max_pages", 1000, 1, 100000)
     _int_range("progress_per_page", 500, 1, 500)
-    _int_range("progress_max_pages", 1000, 1, 100000)
     _int_range("ratings_submit_per_hour", 200, 1, 200)
     _int_range("ratings_update_per_hour", 100, 1, 100)
     p["ratings_label"] = str(p.get("ratings_label") or "Overall").strip() or "Overall"
@@ -2056,11 +2060,7 @@ def _normalize_scrob(cfg: dict[str, Any]) -> None:
             timeout = 12.0
         block["timeout"] = max(1.0, min(timeout, 120.0))
         block["watchlist_name"] = str(block.get("watchlist_name") or "Watchlist").strip() or "Watchlist"
-        try:
-            pages = int(block.get("history_max_pages", 500) or 500)
-        except Exception:
-            pages = 500
-        block["history_max_pages"] = max(1, min(pages, 100000))
+        block.pop("history_max_pages", None)
         caps = block.get("capabilities")
         block["capabilities"] = {str(k): bool(v) for k, v in caps.items()} if isinstance(caps, dict) else {}
         rl0 = block.get("rate_limit") if isinstance(block.get("rate_limit"), dict) else {}

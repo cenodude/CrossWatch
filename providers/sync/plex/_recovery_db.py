@@ -33,7 +33,6 @@ CHECK_SECONDS = 120
 SCAN_SECONDS = 30 * 60
 BATCH_ROWS = 500
 MAX_TEXT = 1024
-MAX_ACCOUNTS = 500
 MAX_LIBRARY_TOKENS = 4_000_000
 LIVE_TV_GUID = "tv.plex.xmltv://"
 
@@ -249,7 +248,7 @@ def accounts(path: Path) -> list[dict[str, Any]]:
             f"SELECT v.account_id, substr(a.name, 1, {MAX_TEXT}), v.plays FROM (SELECT CAST(account_id AS INTEGER) AS account_id, "
             "COUNT(*) AS plays FROM metadata_item_views WHERE metadata_type IN (1, 4) AND account_id IS NOT NULL GROUP BY 1) v "
             "LEFT JOIN (SELECT id, MIN(name) AS name FROM accounts GROUP BY id) a ON a.id = v.account_id "
-            f"ORDER BY v.plays DESC, v.account_id LIMIT {MAX_ACCOUNTS}"
+            "ORDER BY v.plays DESC, v.account_id"
         ).fetchall()
     return [dict(id=int(aid), name=str(name or "").strip() or f"Account {aid}", plays=int(count)) for aid, name, count in rows]
 
@@ -295,7 +294,7 @@ def _label(kind: str, title: str, show: str, season: int | None, episode: int | 
 
 def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: set[str],
           resolve: Callable[[str, str], Mapping[str, Any]], progress: Callable[..., None],
-          check_cancel: Callable[[], None], max_rows: int, release_tag: str,
+          check_cancel: Callable[[], None], max_rows: int | None, release_tag: str,
           search: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None,
           ignore_live_tv: bool = True) -> list[dict[str, Any]]:
     progress("libraries", "Checking the Plex library in the database", 0, 0)
@@ -371,6 +370,7 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
             report(index + 1, title or show_title, result="Skipped: Live TV")
             continue
         method = _KNOWN
+        hama = kind == "episode" and guid.lower().startswith("com.plexapp.agents.hama://")
         if kind == "movie":
             year = _year(aired)
             label = _label(kind, title, "", None, None, year)
@@ -384,7 +384,6 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
             identity = bool(ids)
         else:
             year = None
-            hama = guid.lower().startswith("com.plexapp.agents.hama://")
             local, guid_season, guid_episode = _local_ids(guid)
             season = _int(season) if _int(season) is not None else guid_season
             episode = _int(episode) if _int(episode) is not None else guid_episode
@@ -431,7 +430,7 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
         recovered.append(entry)
         if not ids and (kind == "movie" or not hama):
             title_candidates.append(entry)
-        if len(recovered) > max_rows:
+        if max_rows is not None and len(recovered) > max_rows:
             raise RuntimeError(f"More than {max_rows:,} removed watch events. Narrow the configured history library scope.")
         if not ids and kind == "episode" and group and not hama:
             pending.append((entry, group))
@@ -480,7 +479,7 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
 
 
 def scan(path: Path, *, account: int, libraries: set[str], resolve: Callable[[str, str], Mapping[str, Any]],
-         progress: Callable[..., None], check_cancel: Callable[[], None], max_rows: int = 50_000,
+         progress: Callable[..., None], check_cancel: Callable[[], None], max_rows: int | None = None,
          release_tag: str = "v3",
          search: Callable[[Mapping[str, Any]], Mapping[str, Any]] | None = None,
          ignore_live_tv: bool = True) -> list[dict[str, Any]]:

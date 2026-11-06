@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from ._common import (
+    TraktPager,
     normalize_watchlist_row,
     key_of,
     ids_for_trakt,
@@ -28,7 +29,6 @@ from ._common import (
 from .._mod_common import request_with_retries
 from cw_platform.id_map import migrate_media_index, minimal as id_minimal
 from .._log import log as cw_log
-from ._pagination import TraktPager
 
 BASE = "https://api.trakt.tv"
 URL_ALL = f"{BASE}/sync/watchlist"
@@ -187,7 +187,6 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     update_watermarks_from_last_activities(acts)
 
     per_page = max(1, min(250, _cfg_int(cfg, "watchlist_per_page", 250)))
-    max_pages = max(1, _cfg_int(cfg, "watchlist_max_pages", 1000))
 
     sh = _shadow_load()
     base_headers = dict(headers)
@@ -227,7 +226,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
     idx: dict[str, dict[str, Any]] = {}
     page = 1
-    pager = TraktPager("watchlist", max_pages)
+    pager = TraktPager("watchlist")
     while True:
         rows = pager.read(r, page)
         for x in rows:

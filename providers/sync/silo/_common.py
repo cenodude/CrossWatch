@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from urllib.parse import quote
 
+from cw_platform.run_control import raise_if_cancelled
+
 import requests
 
 from cw_platform.collection_media import stream_media_info
@@ -31,7 +33,6 @@ except Exception:
     pass
 
 PAGE_LIMIT = 200
-PAGE_GUARD = 5000
 WRITE_BATCH = 100
 DEFAULT_TIMEOUT = 20.0
 DEFAULT_MAX_RETRIES = 3
@@ -227,7 +228,8 @@ def pages(adapter: Any, path: str, *, feature: str, params: Mapping[str, Any] | 
     out: list[dict[str, Any]] = []
     cursor: str | None = None
     seen: set[str] = set()
-    for _ in range(PAGE_GUARD):
+    while True:
+        raise_if_cancelled()
         query: dict[str, Any] = {"limit": PAGE_LIMIT, **dict(params or {})}
         if cursor:
             query["cursor"] = cursor
@@ -247,11 +249,10 @@ def pages(adapter: Any, path: str, *, feature: str, params: Mapping[str, Any] | 
         if not page.get("has_more"):
             return out
         nxt = str(page.get("next_cursor") or "")
-        if not nxt or nxt in seen:
+        if not nxt or nxt in seen or not data["items"]:
             raise SiloSyncError(f"silo_{feature}_invalid_continuation")
         seen.add(nxt)
         cursor = nxt
-    raise SiloSyncError(f"silo_{feature}_page_guard_tripped")
 
 
 def _anchor_ids(provider: str, value: str) -> dict[str, str]:

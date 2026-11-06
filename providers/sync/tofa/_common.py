@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 from urllib.parse import quote
 
+from cw_platform.run_control import raise_if_cancelled
+
 import requests
 
 from cw_platform.collection_media import stream_media_info
@@ -29,7 +31,6 @@ except Exception:
     pass
 
 PAGE_LIMIT = 1000
-PAGE_GUARD = 2000
 WRITE_BATCH = 500
 WATCHLIST_PAGE = 200
 DEFAULT_TIMEOUT = 20.0
@@ -245,7 +246,8 @@ def cursor_pages(adapter: Any, path: str, *, feature: str, params: Mapping[str, 
     out: list[dict[str, Any]] = []
     after: str | None = None
     seen: set[str] = set()
-    for _ in range(PAGE_GUARD):
+    while True:
+        raise_if_cancelled()
         query: dict[str, Any] = {"limit": PAGE_LIMIT, **dict(params or {})}
         if after:
             query["after"] = after
@@ -264,7 +266,6 @@ def cursor_pages(adapter: Any, path: str, *, feature: str, params: Mapping[str, 
             raise TofaSyncError(f"tofa_{feature}_invalid_continuation")
         seen.add(nxt)
         after = nxt
-    raise TofaSyncError(f"tofa_{feature}_page_guard_tripped")
 
 
 def capabilities(adapter: Any) -> set[str]:
@@ -624,7 +625,9 @@ def durations(adapter: Any, lib: Library, targets: Iterable[tuple[str, Any]], *,
 
 def feed_changes(adapter: Any, cursor: str, *, feature: str) -> tuple[list[dict[str, Any]], str, bool]:
     rows: list[dict[str, Any]] = []
-    for _ in range(PAGE_GUARD):
+    seen = {cursor}
+    while True:
+        raise_if_cancelled()
         resp = tofa_request(adapter, "GET", "/users/me/state-changes", params={"cursor": cursor, "limit": FEED_PAGE})
         _raise_for(resp, feature, "/users/me/state-changes")
         data = safe_json(resp)
@@ -638,10 +641,10 @@ def feed_changes(adapter: Any, cursor: str, *, feature: str) -> tuple[list[dict[
         nxt = str(data["next_cursor"])
         if not data.get("has_more"):
             return rows, nxt, False
-        if nxt == cursor:
+        if nxt in seen or not data["changes"]:
             raise TofaSyncError(f"tofa_{feature}_invalid_continuation")
+        seen.add(nxt)
         cursor = nxt
-    raise TofaSyncError(f"tofa_{feature}_page_guard_tripped")
 
 
 def _snapshot(adapter: Any, name: str, *, feature: str, kind: str, full: Callable[[], tuple[dict[str, Any], str]],
@@ -681,7 +684,9 @@ def _full_completed(adapter: Any, feature: str) -> tuple[dict[str, Any], str]:
     out: dict[str, Any] = {}
     head = ""
     after: str | None = None
-    for _ in range(PAGE_GUARD):
+    seen: set[str] = set()
+    while True:
+        raise_if_cancelled()
         query: dict[str, Any] = {"limit": PAGE_LIMIT, "completed_only": "true"}
         if after:
             query["after"] = after
@@ -701,10 +706,10 @@ def _full_completed(adapter: Any, feature: str) -> tuple[dict[str, Any], str]:
             if not head:
                 raise TofaSyncError(f"tofa_{feature}_missing_cursor")
             return out, head
-        if nxt == after or not data["items"]:
+        if nxt in seen or not data["items"]:
             raise TofaSyncError(f"tofa_{feature}_invalid_continuation")
+        seen.add(nxt)
         after = nxt
-    raise TofaSyncError(f"tofa_{feature}_page_guard_tripped")
 
 
 def _apply_watched(rows: dict[str, Any], change: Mapping[str, Any]) -> None:
