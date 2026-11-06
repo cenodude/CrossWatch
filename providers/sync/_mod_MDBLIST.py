@@ -145,6 +145,7 @@ except Exception:
     ctx = None  # type: ignore[assignment]
 
 __VERSION__ = "2.1"
+_MANUAL_RATING_SCALE = {"step": 0.5, "min": 1}
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
 def _health(status: str, ok: bool, latency_ms: int) -> None:
@@ -281,6 +282,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "rewatches": {"read": True, "write": True, "account_gate": False},
             },
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "step": 0.5,
                 "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
@@ -927,6 +929,7 @@ class _MDBLISTOPS:
                 "rewatches": {"read": True, "write": True, "account_gate": False},
             },
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "step": 0.5,
                 "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},

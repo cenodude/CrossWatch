@@ -28,6 +28,7 @@ from providers.sync.punchplay._common import (
 )
 
 __VERSION__ = "1.1"
+_MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "PUNCHPLAYModule", "OPS", "feat_collection", "feat_history", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
@@ -109,6 +110,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "batch_size": 100,
             },
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "read": True,
                 "write": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},

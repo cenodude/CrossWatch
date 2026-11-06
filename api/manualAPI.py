@@ -17,6 +17,7 @@ from cw_platform.access_policy import filter_instances_for_user, request_user
 from cw_platform.modules_registry import load_sync_ops, sync_provider_names
 from cw_platform.orchestrator._history_rewatches import config_with_history_rewatches, history_rewatch_supported
 from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id, user_profiles_for_instance
+from cw_platform.rating_scales import rating_scale, rating_supported
 
 router = APIRouter(prefix="/api/manual", tags=["manual"])
 
@@ -365,6 +366,7 @@ def _manual_history_targets(cfg: dict[str, Any], user: Any = None) -> list[dict[
                 "display": label if instance == "default" else f"{label} ({instance_label})",
                 "history_enabled": history_ok,
                 "ratings_enabled": ratings_ok,
+                "rating_scale": rating_scale(provider, cfg_view) if ratings_ok else None,
                 "watchlist_enabled": watchlist_ok,
                 "collection_enabled": collection_ok,
                 "episode_list": history_ok and provider in EPISODE_LIST_PROVIDERS,
@@ -587,6 +589,23 @@ def api_manual_watched(payload: dict[str, Any] = Body(...), request: Request = c
         (str(it.get("provider") or "").upper(), normalize_instance_id(it.get("instance") or "default")): it
         for it in available
     }
+
+    if do_rating:
+        rejected = []
+        for raw in selected_targets:
+            if not isinstance(raw, dict):
+                continue
+            provider = str(raw.get("provider") or "").strip().upper()
+            instance = normalize_instance_id(raw.get("instance") or raw.get("provider_instance") or "default")
+            target = target_map.get((provider, instance))
+            if not target or not target.get("ratings_enabled"):
+                continue
+            cfg_view = build_provider_config_view(cfg, provider, instance)
+            if not rating_supported(provider, rating, cfg_view):
+                rejected.append({"provider": provider, "instance": instance, "ok": False,
+                                 "rating": {"ok": False, "error": "unsupported_rating", "rating_scale": rating_scale(provider, cfg_view)}})
+        if rejected:
+            return JSONResponse({"ok": False, "error": "unsupported_rating", "results": rejected})
 
     ids = _manual_external_ids(media_type, tmdb_id)
     item_payload: dict[str, Any] = {

@@ -56,6 +56,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
     return out
 
 __VERSION__ = "1.0"
+_MANUAL_RATING_SCALE = {"step": 1}
 os.environ.setdefault("CW_ANILIST_UA", http_user_agent("AniList", override_env="CW_ANILIST_UA"))
 __all__ = ["get_manifest", "ANILISTModule", "OPS"]
 
@@ -323,6 +324,7 @@ def get_manifest() -> Mapping[str, Any]:
             "index_semantics": "present",
             "observed_deletes": False,
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
                 "upsert": True,
                 "unrate": True,
@@ -553,6 +555,7 @@ class _ANILISTOPS:
             "index_semantics": "present",
             "observed_deletes": False,
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
                 "upsert": True,
                 "unrate": True,

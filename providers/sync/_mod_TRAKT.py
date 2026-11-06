@@ -107,6 +107,7 @@ except Exception:
     ctx = None  # type: ignore[assignment]
 
 __VERSION__ = "2.0"
+_MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
 os.environ.setdefault("CW_TRAKT_UA", http_user_agent("TRAKT", override_env="CW_TRAKT_UA"))
@@ -190,6 +191,7 @@ def get_manifest() -> Mapping[str, Any]:
             "provides_ids": True,
             "index_semantics": "present",
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "unrate": True,
@@ -780,6 +782,7 @@ class _TraktOPS:
             "provides_ids": True,
             "index_semantics": "present",
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "unrate": True,

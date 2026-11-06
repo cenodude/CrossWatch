@@ -79,12 +79,12 @@ test("a one-off add names the feature in the sync pair note", () => {
   assert.match(context.oneOffNote(["history"]), /sync pair for history\./);
 });
 
-async function mountQuickAdd(props, providers) {
-  const root = { innerHTML: "", style: { setProperty() {}, removeProperty() {} }, closest: () => null, addEventListener() {}, querySelector: () => null, querySelectorAll: () => [] };
+async function mountQuickAdd(props, providers, remembered = []) {
+  const root = { innerHTML: "", style: { setProperty() {}, removeProperty() {} }, closest: () => null, addEventListener(name, handler) { this[name] = handler; }, querySelector: () => null, querySelectorAll: () => [] };
   const page = {
     window: { CW: {}, addEventListener() {}, removeEventListener() {}, setTimeout, clearTimeout },
     document: { getElementById: () => ({}), documentElement: { dataset: {}, clientHeight: 800 }, addEventListener() {}, removeEventListener() {} },
-    localStorage: { getItem: () => "[]", setItem() {} },
+    localStorage: { getItem: () => JSON.stringify(remembered), setItem() {} },
     URLSearchParams,
     AbortSignal,
     fetch: async (url) => ({ ok: true, json: async () => (url.includes("/api/manual/providers") ? { providers } : {}) }),
@@ -94,14 +94,92 @@ async function mountQuickAdd(props, providers) {
   return root;
 }
 
-const both = { provider: "MDBLIST", instance: "default", history_enabled: true, ratings_enabled: true, watchlist_enabled: true, collection_enabled: true };
+const both = { provider: "MDBLIST", instance: "default", history_enabled: true, ratings_enabled: true, watchlist_enabled: true, collection_enabled: true, rating_scale:{values:Array.from({length:19},(_,i)=>1+i/2),max:10,display_factor:1} };
 const locked = (action) => ({ action, item: { tmdb: "1", type: "movie", title: "Michael" }, only: ["MDBLIST:default"] });
+
+for (const rating_scale of [undefined,null,{}]) {
+  test(`Quick add does not guess choices for ${JSON.stringify(rating_scale)} scale metadata`, async () => {
+    const root = await mountQuickAdd(locked("rating"),[{...both,rating_scale}]);
+    assert.doesNotMatch(root.innerHTML,/data-rating="/);
+    assert.match(root.innerHTML,/Rating choices are unavailable/);
+    assert.match(root.innerHTML,/data-role="send" disabled/);
+  });
+}
+
+test("Quick add does not report success for a rejected provider rating", async () => {
+  const code = source.slice(source.indexOf("const fjson ="), source.indexOf("const esc ="));
+  const request = vm.runInNewContext(code + "fjson", {fetch:async()=>({ok:true,json:async()=>({ok:false,results:[{provider:"SIMKL",rating:{ok:false,error:"unsupported_rating"}}]})})});
+  await assert.rejects(request("/api/manual/watched"),/Rating not saved on SIMKL/);
+});
+
+test("Quick add offers half points only when the selected provider supports them", async () => {
+  const props = locked("rating");
+  const half = {...both, rating_scale:{values:Array.from({length:20},(_,i)=>(i+1)/2),max:10,display_factor:1}};
+  const halfRoot = await mountQuickAdd(props,[half]);
+  assert.match(halfRoot.innerHTML,/data-rating="7.5"/);
+  const whole = {...both, rating_scale:{values:Array.from({length:10},(_,i)=>i+1),max:10,display_factor:1}};
+  const wholeRoot = await mountQuickAdd(props,[whole]);
+  assert.doesNotMatch(wholeRoot.innerHTML,/data-rating="7.5"/);
+  assert.match(wholeRoot.innerHTML,/data-rating="8"/);
+});
+
+for (const [provider,scale] of [
+  ["SIMKL",{values:[1,2,3,4,5,6,7,8,9,10],max:10,display_factor:1}],
+  ["SILO",{values:[2,4,6,8,10],max:5,display_factor:0.5,round_step:2}],
+]) {
+  test(`Quick add keeps the nearest score when adding ${provider}`, async () => {
+    const cw = {...both,provider:"CROSSWATCH",rating_scale:{values:Array.from({length:20},(_,i)=>(i+1)/2),max:10,display_factor:1}};
+    const other = {...both,provider,rating_scale:scale};
+    const root = await mountQuickAdd({...locked("rating"),only:undefined},[cw,other],["CROSSWATCH:default"]);
+    const click = (attribute,value) => {
+      const button = {getAttribute:()=>value,closest:selector=>selector === `[${attribute}]` ? button : null};
+      root.click({target:button,preventDefault(){}});
+    };
+    click("data-rating","7.5");
+    click("data-provider-key",`${provider}:default`);
+    assert.match(root.innerHTML,/Rate 8\/10 on 2 providers/);
+    assert.doesNotMatch(root.innerHTML,/Rate [12]\/10 on 2 providers/);
+    click("data-provider-key",`${provider}:default`);
+    assert.match(root.innerHTML,/Rate 8\/10 on 1 provider/);
+  });
+}
+
+test("Quick add load failures do not claim a save failed", async () => {
+  const code = source.slice(source.indexOf("const fjson ="), source.indexOf("const esc ="));
+  const request = vm.runInNewContext(code + "fjson", {fetch:async()=>({ok:false,json:async()=>({})})});
+  await assert.rejects(request("/api/manual/search"),/information could not be loaded/);
+  await assert.rejects(request("/api/manual/watched",{method:"POST"}),/changes could not be saved/);
+});
+
+test("Quick add defaults to a valid Stremio reaction and highlights only that reaction", async () => {
+  const target = {...both,provider:"STREMIO",rating_scale:{values:[7,9.5],labels:{7:"Liked",9.5:"Loved"},bands:[{min:6.7,max:9.2,value:7},{min:9.2,max:10.5,value:9.5}],max:10,display_factor:1}};
+  const root = await mountQuickAdd({...locked("rating"),only:["STREMIO:default"]},[target]);
+  assert.match(root.innerHTML,/cw-mw-reaction active" data-rating="7"/);
+  assert.doesNotMatch(root.innerHTML,/cw-mw-score|Choose a rating supported/);
+  const button = {getAttribute:()=>"9.5",closest:selector=>selector.includes("[data-rating]") ? button : null};
+  root.click({target:button,preventDefault(){},stopPropagation(){}});
+  assert.match(root.innerHTML,/cw-mw-reaction active" data-rating="9.5"/);
+  assert.doesNotMatch(root.innerHTML,/cw-mw-reaction active" data-rating="7"/);
+});
+
+for (const [provider,scale] of [
+  ["SILO",{values:[2,4,6,8,10],max:5,display_factor:0.5}],
+  ["STREMIO",{values:[6,8],labels:{6:"Liked",8:"Loved"},max:10,display_factor:1}],
+]) {
+  test(`Quick add preserves native choices for two ${provider} accounts`, async () => {
+    const targets = ["default","second"].map(instance=>({...both,provider,instance,rating_scale:scale}));
+    const keys = targets.map(target=>`${provider}:${target.instance}`);
+    const root = await mountQuickAdd({...locked("rating"),only:undefined},targets,keys);
+    assert.match(root.innerHTML,provider === "SILO" ? /aria-label="Rate 4\/5"/ : /aria-label="Rate Loved"/);
+    assert.doesNotMatch(root.innerHTML,/aria-label="Rate 8\/10"/);
+  });
+}
 
 for (const [action, noun] of [["rating", "ratings"], ["watchlist", "watchlist"], ["collection", "collection"], ["history", "history"]]) {
   test(`a locked Quick add keeps the requested ${action} action`, async () => {
     const root = await mountQuickAdd(locked(action), [both]);
     assert.ok(root.innerHTML.includes(`Not in a sync pair for ${noun}.`));
-    assert.equal(root.innerHTML.includes("cw-mw-score"), action === "rating");
+    assert.equal(root.innerHTML.includes("cw-mw-stars"), action === "rating");
   });
 }
 

@@ -27,6 +27,7 @@ from providers.sync.flicklist._common import (
 )
 
 __VERSION__ = "1.1"
+_MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "FLICKLISTModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
@@ -91,6 +92,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "batch_size": 1000,
             },
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "read": True,
                 "write": True,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},

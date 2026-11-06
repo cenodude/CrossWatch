@@ -18,6 +18,7 @@ from ._log import log
 from .kitsu import _history, _ratings, _watchlist
 
 __VERSION__ = "0.1"
+_MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "KITSUModule", "OPS"]
 _FEATURES = {"watchlist": _watchlist, "ratings": _ratings, "history": _history}
 
@@ -42,7 +43,7 @@ def capabilities() -> dict[str, Any]:
     titles = {"movies": True, "shows": True, "seasons": False, "episodes": False}
     return {"bidirectional": True, "provides_ids": True, "index_semantics": "present", "observed_deletes": False,
             "watchlist": {"types": titles, "remove": True},
-            "ratings": {"types": titles, "upsert": True, "unrate": True, "from_date": False},
+            "ratings": {"manual_scale": _MANUAL_RATING_SCALE, "types": titles, "upsert": True, "unrate": True, "from_date": False},
             "history": {"types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
                         "upsert": False, "remove": True, "observed_deletes": False,
                         "rewatches": {"read": False, "write": False}}}

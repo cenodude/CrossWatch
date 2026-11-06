@@ -26,6 +26,7 @@ from cw_platform.orchestrator._unresolved import clear_unresolved_all_scopes
 from cw_platform.orchestrator._snapshots import module_checkpoint
 from cw_platform.orchestrator._state_store import StateStore
 from cw_platform.playlists import PlaylistSnapshot, supports_playlists
+from cw_platform.rating_scales import rating_scale, rating_supported
 from cw_platform import playlists_runner
 from cw_platform.provider_instances import (
     build_provider_config_view,
@@ -1070,6 +1071,7 @@ def api_editor_get_state(
             "source": "state",
             "snapshot": None,
             "provider": chosen,
+            "rating_scale": rating_scale(chosen, build_provider_config_view(cfg, chosen, inst)) if k == "ratings" else None,
             "provider_instance": inst,
             "ts": ts,
             "count": len(items),
@@ -1127,6 +1129,7 @@ def api_editor_get_state(
             "source": "manual",
             "snapshot": None,
             "provider": chosen,
+            "rating_scale": rating_scale(chosen, build_provider_config_view(cfg, chosen, inst)) if k == "ratings" else None,
             "provider_instance": inst,
             "ts": ts,
             "count": len(manual_adds),
@@ -1404,6 +1407,8 @@ def _editor_send_targets(cfg: dict[str, Any], feature: str) -> list[dict[str, An
                 target["rewatch_write"] = history_rewatch_supported(provider, ops, "write")
                 target["rewatch_gate"] = _rewatch_account_gate(ops)
                 target["undated_write"] = provider in UNDATED_HISTORY_PROVIDERS
+            if feat == "ratings":
+                target["rating_scale"] = rating_scale(provider, cfg_view)
             targets.append(target)
 
     targets.sort(key=lambda item: (str(item.get("label") or "").lower(), str(item.get("instance") or "")))
@@ -1869,6 +1874,13 @@ def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast
             continue
 
         cfg_view = build_provider_config_view(cfg, provider, instance)
+        rejected = [item for item in items if not rating_supported(provider, item.get("rating"), cfg_view)] if feature == "ratings" else []
+        if len(rejected) == len(items):
+            results.append({"provider": provider, "instance": instance, "ok": False, "error": "unsupported_rating",
+                            "rating_scale": rating_scale(provider, cfg_view), "rejected": rejected,
+                            "result": {"errors": len(rejected), "confirmed": 0}})
+            totals["errors"] += len(rejected)
+            continue
         if rewatch and any(_undated_history_item(item) for item in items):
             results.append({"provider": provider, "instance": instance, "ok": False, "error": "undated_rewatch_not_supported"})
             totals["skipped"] += len(items)
@@ -1880,6 +1892,8 @@ def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast
                 continue
             cfg_view = config_with_history_rewatches(cfg_view, True)
         send_items = [_rewatch_send_item(item) for item in items] if rewatch else items
+        if rejected:
+            send_items = [item for item in items if rating_supported(provider, item.get("rating"), cfg_view)]
         if provider == "PLEX" and feature == "history":
             from copy import deepcopy
 
@@ -1906,13 +1920,16 @@ def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast
             totals["errors"] += 1
             continue
 
+        if not dry_run:
+            remember_sent_items(provider, instance, feature, send_items, res, rewatch=rewatch)
+        if rejected:
+            res = {**res, "errors": int(res.get("errors", 0) or 0) + len(rejected), "ok": False}
         entry = {"provider": provider, "instance": instance, "ok": bool(res.get("ok", True)), "result": res}
+        if rejected:
+            entry.update(error="unsupported_rating", rejected=rejected, rating_scale=rating_scale(provider, cfg_view))
         results.append(entry)
         for key in totals:
             totals[key] += int(res.get(key, 0) or 0)
-
-        if not dry_run:
-            remember_sent_items(provider, instance, feature, send_items, res, rewatch=rewatch)
 
     return {
         "ok": bool(results) and all(bool(r.get("ok")) for r in results),

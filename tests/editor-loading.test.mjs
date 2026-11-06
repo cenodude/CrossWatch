@@ -108,6 +108,16 @@ function rowLoadingContext() {
     controller:sandbox.window.CW.Editor.LoadController};
 }
 
+test("Editor passes the loaded provider scale to rating controls",async()=>{
+  const {controller,ctx,response,state}=rowLoadingContext();
+  state.kind="ratings";
+  const scale={values:[7,9.5],labels:{7:"Liked",9.5:"Loved"},max:10,display_factor:1};
+  const loading=controller.loadState(ctx);
+  response.resolve({ok:true,items:{},rating_scale:scale});
+  await loading;
+  assert.equal(state.ratingScale,scale);
+});
+
 for (const items of [{},{episode:{title:"History episode"}}]) {
   test(`Kind change applies ${Object.keys(items).length ? "populated" : "empty"} History rows once`,async()=>{
     const fixture=rowLoadingContext();

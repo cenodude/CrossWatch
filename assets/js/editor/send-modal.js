@@ -76,12 +76,13 @@
         Number(result.unresolved || 0) ? `${Number(result.unresolved || 0)} unresolved` : "",
         Number(result.errors || 0) ? `${Number(result.errors || 0)} errors` : "",
         removing && Number(result.still_watched || 0) ? `${Number(result.still_watched)} still watched (other watches remain)` : "",
-        r?.error ? String(r.error) : "",
+        r?.error === "unsupported_rating" ? "This provider does not support one or more selected scores" : r?.error ? String(r.error) : "",
       ].filter(Boolean).join(" - ");
       return `<div class="cw-editor-send-result-row ${r?.ok ? "ok" : "bad"}" style="${providerToneStyle(r, esc)}">
         <span class="cw-editor-send-result-icon">${providerLogoHtml(r, esc)}</span>
         <strong>${esc(name)}</strong>
         <small>${esc(parts || (r?.ok ? "Done" : "Failed"))}</small>
+        ${(r.rejected || []).map(item => `<small>${esc(item.title || "Untitled")}: ${esc(item.rating)}/10 is not supported; not sent</small>`).join("")}
         ${(result.cloud_results || []).map(row => `<small>${esc(row.title || row.key)}: ${esc(({dated:"Plex cloud: original date restored",present:"Plex cloud: already watched, unchanged",cached:"Plex cloud: previously confirmed",plex_discover_date_pending:"Plex cloud: date repair pending"})[row.outcome] || row.reason || row.outcome)}</small>`).join("")}
       </div>`;
     }).join("");
@@ -303,7 +304,13 @@
       });
     };
 
+    const unsupportedRatings = provider => kind === "ratings" && operation === "add"
+      ? rows.filter(row => !(provider.rating_scale?.values || []).includes(Number(ctx.rowToSendItem(row)?.rating)))
+      : [];
     const syncButtons = () => {
+      for (const provider of providers) {
+        if (rows.length && unsupportedRatings(provider).length === rows.length) selected.delete(providerKey(provider));
+      }
       shell.querySelectorAll("[data-provider-key]").forEach(btn => {
         const key = btn.getAttribute("data-provider-key") || "";
         const on = selected.has(key);
@@ -320,7 +327,9 @@
       }
       if (submit) submit.disabled = busy || loading || !selected.size || !rows.length;
       shell.querySelectorAll("[data-operation], [data-provider-key], [data-send-close]").forEach(button => {
-        button.disabled = busy || (button.dataset.operation === "add" && !ctx.selectedRowsForSend().length);
+        const provider = providers.find(p => providerKey(p) === button.getAttribute("data-provider-key"));
+        button.disabled = busy || (button.dataset.operation === "add" && !ctx.selectedRowsForSend().length)
+          || !!(provider && rows.length && unsupportedRatings(provider).length === rows.length);
       });
     };
 
@@ -328,10 +337,12 @@
       if (!list) return;
       list.innerHTML = providers.length ? providers.map(p => {
         const key = providerKey(p);
+        const unsupported = unsupportedRatings(p).length;
+        const ratingNote = unsupported ? `${rows.length - unsupported} supported; ${unsupported} unsupported score${unsupported === 1 ? "" : "s"} will not be sent` : "";
         const providerClass = `provider-${String(p.provider || "").toLowerCase().replace(/[^a-z0-9_-]+/g, "")}`;
         return `<button type="button" class="cw-editor-send-provider ${providerClass} ${selected.has(key) ? "active" : ""}" data-provider-key="${esc(key)}" aria-pressed="${selected.has(key) ? "true" : "false"}" style="${providerToneStyle(p, esc)}">
           <span class="cw-editor-send-provider-icon">${providerLogoHtml(p, esc)}</span>
-          <span><strong>${esc(providerDisplayName(p))}</strong><small>${esc(p.instance_label || String(p.instance || "default"))}${operation === "remove" ? ` · ${p.matched} of ${rows.length} selected` : ""}${ctx.sendNotes?.[key] ? ` · ${esc(ctx.sendNotes[key])}` : ""}</small></span>
+          <span><strong>${esc(providerDisplayName(p))}</strong>${ratingNote ? `<small>${esc(ratingNote)}</small>` : ""}<small>${esc(p.instance_label || String(p.instance || "default"))}${operation === "remove" ? ` · ${p.matched} of ${rows.length} selected` : ""}${ctx.sendNotes?.[key] ? ` · ${esc(ctx.sendNotes[key])}` : ""}</small></span>
           <span class="cw-editor-send-check"><span class="material-symbols-rounded" aria-hidden="true">check</span></span>
         </button>`;
       }).join("") : `<div class="cw-editor-send-empty">${operation === "remove"

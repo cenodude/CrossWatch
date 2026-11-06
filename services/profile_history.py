@@ -199,8 +199,12 @@ def build_history_index(
     state: Any = None,
     tracker_items: Any = None,
     user_filter: Mapping[str, Any] | None = None,
+    cfg: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from cw_platform.rating_scales import rating_comparator
+
     wanted = normalize_source(source)
+    ratings_agree = rating_comparator(cfg or {}) if wanted == "ratings" else None
     if wanted == "scrobble":
         raw_rows = _scrobble_rows(user_filter)
     elif wanted == "ratings":
@@ -224,7 +228,8 @@ def build_history_index(
         if isinstance(values, Mapping) and values:
             row["_endpoints"] = list(values)
             row["_ratings"] = {endpoint: value[0] for endpoint, value in values.items()}
-            row["_mismatch"] = len(set(row["_ratings"].values())) > 1
+            row["_mismatch"] = not ratings_agree(row["_ratings"]) if ratings_agree else False
+            row["_rating_adjusted"] = not row["_mismatch"] and len(set(row["_ratings"].values())) > 1
         else:
             row["_endpoints"] = _row_endpoints(raw)
             row["_mismatch"] = False
@@ -331,6 +336,7 @@ def _public_row(row: Mapping[str, Any], source: str, endpoints: list[tuple[str, 
             out["missing"] = [_ref(endpoint) for endpoint in endpoints if endpoint not in present]
     if source == "ratings":
         out["agree"] = not row["_mismatch"]
+        out["rating_adjusted"] = bool(row.get("_rating_adjusted"))
     return out
 
 
@@ -504,6 +510,7 @@ def title_presence(index: dict[str, Any], media: str, tmdb: Any) -> dict[str, An
         latest_endpoints = latest.get("_endpoints") or []
         out["rating"] = latest.get("rating")
         out["agree"] = not latest.get("_mismatch")
+        out["rating_adjusted"] = bool(latest.get("_rating_adjusted"))
         out["present"] = [
             {**_ref(endpoint), "rating": ratings[endpoint]} if endpoint in ratings else _ref(endpoint)
             for endpoint in latest_endpoints

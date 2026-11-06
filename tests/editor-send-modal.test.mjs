@@ -10,7 +10,7 @@ function deferred() {
   const promise = new Promise(yes => { resolve = yes; });
   return {promise, resolve};
 }
-function fixture(kind = "watchlist") {
+function fixture(kind = "watchlist", rows = [{type: "movie", ids: {tmdb: "1"}}]) {
   class Element {
     constructor(selector = "") {
       this.selector = selector; this.innerHTML = ""; this.textContent = "";
@@ -62,7 +62,7 @@ function fixture(kind = "watchlist") {
   vm.runInContext(source, context);
   const ctx = {
     state: {kind, snapshot: "PLEX", instance: "second", mappingPair: "pair-1"},
-    selectedRowsForSend: () => [{type: "movie", ids: {tmdb: "1"}}], rowToSendItem: row => row,
+    selectedRowsForSend: () => rows, rowToSendItem: row => row,
     isProviderPickerSource: () => true, setStatusSticky() {},
     clearSelection() {cleared++;}, async loadState() {refreshed++;},
     async fetchJSON(url, options) {
@@ -211,4 +211,23 @@ test("Escape cannot dismiss an active provider send", async () => {
   await sending;
   f.key({key: "Escape", preventDefault() {}, stopPropagation() {}});
   assert.equal(f.visible, false);
+});
+
+test("rating sends preview unsupported scores and report rejected rows", async () => {
+  const f = fixture("ratings",[{type:"movie",title:"Valid",ids:{tmdb:"1"},rating:8},{type:"movie",title:"<Unsupported>",ids:{tmdb:"2"},rating:7.5}]);
+  f.provider.rating_scale = {values:Array.from({length:10},(_,i)=>i+1),max:10,display_factor:1};
+  f.send(()=>({ok:false,confirmed:1,errors:1,results:[{...f.provider,ok:false,error:"unsupported_rating",result:{confirmed:1,errors:1},rejected:[{title:"<Unsupported>",rating:7.5}]}]}));
+  await f.open();
+  assert.match(f.node(".cw-editor-send-list").innerHTML,/1 supported; 1 unsupported score will not be sent/);
+  assert.equal(f.node("[data-send-submit]").disabled,false);
+  await f.click(f.node("[data-send-submit]"));
+  assert.match(f.node("[data-send-status]").innerHTML,/&lt;Unsupported&gt;: 7.5\/10 is not supported; not sent/);
+});
+
+test("rating sends disable targets that cannot accept any selected score", async () => {
+  const f = fixture("ratings",[{type:"movie",ids:{tmdb:"1"},rating:7.5}]);
+  f.provider.rating_scale = {values:[1,2,3,4,5,6,7,8,9,10],max:10,display_factor:1};
+  await f.open();
+  assert.equal(f.node("TRAKT:family").disabled,true);
+  assert.equal(f.node("[data-send-submit]").disabled,true);
 });

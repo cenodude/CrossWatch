@@ -13,6 +13,7 @@ function load(responses, dataset = {}) {
   const focused = [];
   const element = () => ({ setAttribute() {}, addEventListener() {}, appendChild() {}, querySelector: () => null, querySelectorAll: () => [], classList: { add() {}, remove() {}, toggle() {} }, dataset: {}, style: {} });
   const clicks = [];
+  const keydowns = [];
   const created = [];
   const context = {
     window: { CW: {}, setTimeout, clearTimeout },
@@ -27,6 +28,7 @@ function load(responses, dataset = {}) {
         node.querySelector = selector => selector.startsWith("[data-ia-score=") ? { focus: () => focused.push(selector) } : null;
         node.addEventListener = (type, handler) => {
           if (type === "click") clicks.push(handler);
+          if (type === "keydown") keydowns.push(handler);
         };
         created.push(node);
         return node;
@@ -47,7 +49,7 @@ function load(responses, dataset = {}) {
   context.window.addEventListener = () => {};
   vm.runInNewContext(source.replace("  (window.CW ||= {}).ItemActions =", "  window.testActions = { identity, sendAdd, editorRemove, watchlistRemove, progressTask, watchlistKeys };\n  (window.CW ||= {}).ItemActions ="), context);
   context.CSS = { escape: String };
-  return { api: context.window.testActions, actions: context.window.CW.ItemActions, calls, created, clicks, focused };
+  return { api: context.window.testActions, actions: context.window.CW.ItemActions, calls, created, clicks, keydowns, focused };
 }
 
 test("identity keeps typed ids and drops nested objects", () => {
@@ -202,8 +204,9 @@ test("write access follows the role and view-as mode", () => {
 });
 
 test("compact stars preserve half scores and save directly to the focused provider", async () => {
-  const { actions, created, clicks, calls, focused } = load([{ providers: [paired], hidden: [], others: [], has_pair: true }, { results: [{ ok: true, result: { confirmed: 1 } }] }]);
-  await actions.openMenu({ anchor: anchor(), feature: "ratings", item: { title: "Movie", type: "movie" }, focus: paired, refs: { present: [{ ...paired, rating: 7.5 }], missing: [] } });
+  const target = {provider:"CROSSWATCH", instance:"default", rating_scale:{values:Array.from({length:20}, (_, i)=>(i+1)/2), max:10, display_factor:1}};
+  const { actions, created, clicks, calls, focused } = load([{ providers: [target], hidden: [], others: [], has_pair: true }, { results: [{ ok: true, result: { confirmed: 1 } }] }]);
+  await actions.openMenu({ anchor: anchor(), feature: "ratings", item: { title: "Movie", type: "movie" }, focus: target, refs: { present: [{ ...target, rating: 7.5 }], missing: [] } });
   assert.match(created[0].innerHTML, /data-ia-score-value>7.5</);
   assert.equal(focused[0], '[data-ia-score="7.5"]');
   assert.doesNotMatch(created[0].innerHTML, /Rated 7.5\/10/);
@@ -214,5 +217,161 @@ test("compact stars preserve half scores and save directly to the focused provid
   assert.doesNotMatch(created[0].innerHTML, /Change to/);
   assert.equal(calls[1].url, "/api/editor/send");
   assert.equal(calls[1].body.items[0].rating, 0.5);
-  assert.deepEqual(calls[1].body.providers, [{provider: "TRAKT", instance: "default"}]);
+  assert.deepEqual(calls[1].body.providers, [{provider: "CROSSWATCH", instance: "default"}]);
+});
+
+test("whole-point providers expose full stars and cannot submit half points", async () => {
+  const target = {provider:"SIMKL",instance:"default",rating_scale:{values:Array.from({length:10},(_,i)=>i+1),max:10,display_factor:1}};
+  const {actions,created,clicks,calls} = load([{providers:[target]}, {results:[{ok:true,result:{confirmed:1}}]}]);
+  await actions.openMenu({anchor:anchor(),feature:"ratings",item:{type:"movie"},focus:target,refs:{present:[{...target,rating:7}]}});
+  assert.match(created[0].innerHTML,/cw-ia-stars is-whole/);
+  assert.equal((created[0].innerHTML.match(/data-ia-act="score"/g)||[]).length,10);
+  assert.doesNotMatch(created[0].innerHTML,/data-ia-score="7.5"/);
+  clicks[0]({target:{closest:()=>({dataset:{iaAct:"score",iaScore:"7.5"}})}});
+  assert.equal(calls.length,1);
+  clicks[0]({target:{closest:()=>({dataset:{iaAct:"score",iaScore:"8"}})}});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(calls[1].body.items[0].rating,8);
+});
+
+for (const focus of [false,true]) {
+  test(`Profile ${focus ? "provider" : "coverage"} picker requires a server rating scale`, async () => {
+    const target = {provider:"SIMKL",instance:"default"};
+    const {actions,created,clicks,calls} = load([{providers:[target]}]);
+    await actions.openMenu({anchor:anchor(),feature:"ratings",rating:7.5,item:{type:"movie"},focus:focus ? target : null,refs:{present:[],missing:[target]}});
+    assert.match(created[0].innerHTML,/Rating choices are unavailable/);
+    assert.doesNotMatch(created[0].innerHTML,/data-ia-score="|data-ia-act="add-all"/);
+    if (!focus) assert.match(created[0].innerHTML,/data-ia-on="0" disabled/);
+    clicks[0]({target:{closest:()=>({dataset:{iaAct:"score",iaScore:"8"}})}});
+    clicks[0]({target:{closest:()=>({dataset:{iaAct:"add-all"}})}});
+    assert.equal(calls.length,1);
+  });
+}
+
+for (const [provider,scale,score,label] of [
+  ["SIMKL",{values:[1,2,3,4,5,6,7,8,9,10],max:10,display_factor:1},7.5,"8/10"],
+  ["SILO",{values:[2,4,6,8,10],max:5,display_factor:0.5,round_step:2},7,"4/5"],
+]) {
+  for (const focused of [false,true]) {
+    test(`${provider} missing ${focused ? "icon" : "coverage"} starts at the nearest valid score`, async () => {
+      const target = {provider,instance:"default",rating_scale:scale};
+      const cw = {provider:"CROSSWATCH",instance:"default",rating:score};
+      const {actions,created,clicks,calls} = load([{providers:[target]},{results:[{ok:true,result:{confirmed:1}}]}]);
+      await actions.openMenu({anchor:anchor(),feature:"ratings",rating:score,item:{type:"movie"},focus:focused ? target : null,refs:{present:[cw],missing:[target]}});
+      assert.match(created[0].innerHTML,/data-ia-score="8"[^>]*aria-pressed="true"/);
+      if (!focused) assert.ok(created[0].innerHTML.includes(`Rate ${label} on ${provider}`));
+      assert.equal(calls.length,1);
+      clicks[0]({target:{closest:()=>({dataset:focused ? {iaAct:"score",iaScore:"8"} : {iaAct:"add-all"}})}});
+      await new Promise(resolve=>setTimeout(resolve,0));
+      assert.equal(calls[1].body.items[0].rating,8);
+      assert.equal(calls[1].body.providers[0].provider,provider);
+    });
+  }
+}
+
+test("multi-provider ratings use the intersection of supported scores", async () => {
+  const half = {provider:"CROSSWATCH",instance:"default",rating_scale:{values:Array.from({length:20},(_,i)=>(i+1)/2),max:10,display_factor:1}};
+  const whole = {provider:"SIMKL",instance:"default",rating_scale:{values:Array.from({length:10},(_,i)=>i+1),max:10,display_factor:1}};
+  const {actions,created} = load([{providers:[half,whole]}]);
+  await actions.openMenu({anchor:anchor(),feature:"ratings",item:{type:"movie"},refs:{present:[],missing:[half,whole]}});
+  assert.equal((created[0].innerHTML.match(/data-ia-act="score"/g)||[]).length,10);
+  assert.doesNotMatch(created[0].innerHTML,/data-ia-score="0.5"/);
+});
+
+test("five-star providers display native scores but send normalized values", async () => {
+  const target={provider:"SILO",instance:"default",rating_scale:{values:[2,4,6,8,10],max:5,display_factor:0.5}};
+  const {actions,created,clicks,calls}=load([{providers:[target]},{results:[{ok:true,result:{confirmed:1}}]}]);
+  await actions.openMenu({anchor:anchor(),feature:"ratings",item:{type:"movie"},focus:target,refs:{present:[{...target,rating:8}]}});
+  assert.match(created[0].innerHTML,/data-ia-score-value>4<\/b><small>\/5/);
+  assert.equal((created[0].innerHTML.match(/data-ia-act="score"/g)||[]).length,5);
+  clicks[0]({target:{closest:()=>({dataset:{iaAct:"score",iaScore:"10"}})}});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(calls[1].body.items[0].rating,10);
+});
+
+test("unsupported rating responses explain the provider scale", async () => {
+  const {api}=load([{results:[{ok:false,error:"unsupported_rating"}]}]);
+  const result=await api.sendAdd("ratings",paired,{rating:7.5},"Trakt");
+  assert.equal(result.ok,false);
+  assert.match(result.error,/does not support that score/);
+});
+
+test("keyboard navigation follows the provider's allowed scores", async () => {
+  const target={provider:"SIMKL",instance:"default",rating_scale:{values:Array.from({length:10},(_,i)=>i+1),max:10,display_factor:1}};
+  const {actions,keydowns,focused}=load([{providers:[target]}]);
+  await actions.openMenu({anchor:anchor(),feature:"ratings",item:{type:"movie"},focus:target,refs:{present:[{...target,rating:7}]}});
+  keydowns[0]({key:"ArrowRight",preventDefault(){},target:{closest:()=>({dataset:{iaScore:"7"}})}});
+  assert.equal(focused.at(-1),'[data-ia-score="8"]');
+  keydowns[0]({key:"Home",preventDefault(){},target:{closest:()=>({dataset:{iaScore:"8"}})}});
+  assert.equal(focused.at(-1),'[data-ia-score="1"]');
+});
+
+test("reaction providers offer their labels instead of numeric stars", async () => {
+  const target={provider:"STREMIO",instance:"default",rating_scale:{values:[6,8],labels:{6:"Liked",8:"Loved"},max:10,display_factor:1}};
+  const {actions,created}=load([{providers:[target]}]);
+  await actions.openMenu({anchor:anchor(),feature:"ratings",item:{type:"movie"},focus:target,refs:{present:[]}});
+  assert.match(created[0].innerHTML,/aria-label="Liked"/);
+  assert.match(created[0].innerHTML,/aria-label="Loved"/);
+  assert.doesNotMatch(created[0].innerHTML,/class="cw-ia-star/);
+});
+
+test("MDBList keeps half-star alignment while disabling the unsupported 0.5 score", async () => {
+  const target={provider:"MDBLIST",instance:"default",rating_scale:{values:Array.from({length:19},(_,i)=>1+i/2),max:10,display_factor:1}};
+  const {actions,created,clicks,calls}=load([{providers:[target]}]);
+  await actions.openMenu({anchor:anchor(),feature:"ratings",item:{type:"movie"},focus:target,refs:{present:[]}});
+  assert.match(created[0].innerHTML,/data-ia-score="0.5" disabled/);
+  assert.match(created[0].innerHTML,/data-ia-score="1.5" aria-label/);
+  clicks[0]({target:{closest:()=>({dataset:{iaAct:"score",iaScore:"0.5"}})}});
+  assert.equal(calls.length,1);
+});
+
+const siloScale = {values:[2,4,6,8,10],max:5,display_factor:0.5,round_step:2};
+const reactionScale = {values:[6,9],labels:{6:"Liked",9:"Loved"},bands:[{min:6,max:9,value:6},{min:9,max:10.5,value:9}],max:10,display_factor:1};
+
+for (const [provider, scale, saved, label, selected] of [["SILO",siloScale,7,"4",8],["STREMIO",reactionScale,8,"Liked",6]]) {
+  test(`${provider} displays cached scores using the adapter's grouping`, async () => {
+    const target = {provider,instance:"default",rating_scale:scale};
+    const {actions,created,focused,clicks,calls} = load([{providers:[target]}]);
+    await actions.openMenu({anchor:anchor(),feature:"ratings",item:{type:"movie"},focus:target,refs:{present:[{...target,rating:saved}]}});
+    assert.ok(created[0].innerHTML.includes(`data-ia-score-value>${label}</b>`));
+    assert.equal(focused.at(-1),`[data-ia-score="${selected}"]`);
+    clicks[0]({target:{closest:()=>({dataset:{iaAct:"score",iaScore:String(selected)}})}});
+    assert.equal(calls.length,1);
+  });
+  test(`two ${provider} accounts preserve the native score display`, async () => {
+    const targets = ["default","second"].map(instance=>({provider,instance,rating_scale:scale}));
+    const {actions,created} = load([{providers:targets}]);
+    await actions.openMenu({anchor:anchor(),feature:"ratings",item:{type:"movie"},refs:{present:[],missing:targets}});
+    const html = created[0].innerHTML;
+    if (provider === "SILO") {
+      assert.match(html,/Rate 4 out of 5/);
+      assert.match(html,/Rate 4\/5/);
+      assert.doesNotMatch(html,/\/10/);
+    } else {
+      assert.match(html,/aria-label="Liked"/);
+      assert.match(html,/Rate Liked/);
+      assert.doesNotMatch(html,/Rate 6/);
+    }
+  });
+  test(`${provider} account badge displays the native saved score`, async () => {
+    const target = {provider,instance:"default",rating_scale:scale};
+    const {actions,created} = load([{providers:[target]}]);
+    await actions.openMenu({anchor:anchor(),feature:"ratings",item:{type:"movie"},refs:{present:[{...target,rating:saved}]}});
+    assert.ok(created[0].innerHTML.includes(`cw-ia-pill is-on">${provider === "SILO" ? "4/5" : "Liked"}</span>`));
+  });
+}
+
+test("disjoint rating choices open a working per-account picker", async () => {
+  const first = {provider:"SILO",instance:"default",rating_scale:siloScale};
+  const second = {provider:"STREMIO",instance:"default",rating_scale:{...reactionScale,values:[7,9],labels:{7:"Liked",9:"Loved"},bands:[{min:7,max:9,value:7},{min:9,max:10.5,value:9}]}};
+  const {actions,created,clicks,calls} = load([{providers:[first,second]},{results:[{ok:true,result:{confirmed:1}}]}]);
+  await actions.openMenu({anchor:anchor(),feature:"ratings",item:{type:"movie"},refs:{present:[],missing:[first,second]}});
+  assert.match(created[0].innerHTML,/no shared rating choices/);
+  assert.doesNotMatch(created[0].innerHTML,/Rate 0|data-ia-act="add-all"/);
+  clicks[0]({target:{closest:()=>({dataset:{iaAct:"choose-rating",iaRef:"STREMIO:default"}})}});
+  assert.match(created[0].innerHTML,/data-ia-score="9" aria-label="Loved"/);
+  clicks[0]({target:{closest:()=>({dataset:{iaAct:"score",iaScore:"9"}})}});
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(calls[1].body.items[0].rating,9);
+  assert.equal(calls[1].body.providers[0].provider,"STREMIO");
 });

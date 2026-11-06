@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -75,8 +76,8 @@ def _float_setting(value: Any, default: float) -> float:
     return out if 0 <= out <= 10 else default
 
 
-def _rating_thresholds(adapter: Any) -> tuple[float, float]:
-    block = configured_block(getattr(adapter, "config", None), getattr(adapter, "instance_id", "default"))
+def _rating_thresholds_for_config(cfg: Mapping[str, Any] | None, instance_id: str = "default") -> tuple[float, float]:
+    block = configured_block(cfg, instance_id)
     raw = block.get("ratings")
     ratings = raw if isinstance(raw, Mapping) else {}
     liked_min = _float_setting(ratings.get("liked_min"), 6.0)
@@ -84,6 +85,22 @@ def _rating_thresholds(adapter: Any) -> tuple[float, float]:
     if loved_min < liked_min:
         loved_min = liked_min
     return liked_min, loved_min
+
+
+def _rating_thresholds(adapter: Any) -> tuple[float, float]:
+    return _rating_thresholds_for_config(getattr(adapter, "config", None), getattr(adapter, "instance_id", "default"))
+
+
+def manual_rating_scale(cfg: Mapping[str, Any]) -> dict[str, Any]:
+    liked, loved = _rating_thresholds_for_config(cfg)
+    labels = {}
+    bands = []
+    for start, end, label in ((liked, loved, "Liked"), (loved, 10.5, "Loved")):
+        value = max(0.5, math.ceil(start * 2) / 2)
+        if value < end and value <= 10:
+            labels[str(int(value) if value.is_integer() else value)] = label
+            bands.append({"min": start, "max": end, "value": value})
+    return {"values": [float(value) for value in labels], "labels": labels, "bands": bands, "max": 10, "display_factor": 1}
 
 
 def _status_for_rating(adapter: Any, value: Any) -> str | None:

@@ -20,6 +20,7 @@ from providers.sync.floppy import _watchlist as feat_watchlist
 from providers.sync.floppy._common import api_delete, api_get, configured_block, is_configured, media_parts_from_item_id, paged
 
 __VERSION__ = "1.2"
+_MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "FLOPPYModule", "OPS"]
 
 if "ctx" not in globals():
@@ -84,7 +85,7 @@ def get_manifest() -> Mapping[str, Any]:
             "index_semantics": "present",
             "features": dict(_FEATURES),
             "watchlist": {"read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": False, "episodes": False}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "custom_lists": True},
-            "ratings": {"read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": True, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "scale": "0-10", "step": 0.1},
+            "ratings": {"manual_scale": _MANUAL_RATING_SCALE, "read": True, "write": True, "types": {"movies": True, "shows": True, "seasons": True, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "scale": "0-10", "step": 0.1},
             "history": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": True, "requires_ids": ["tmdb"], "event_history": True, "rewatches": {"read": True, "write": True, "account_gate": False}},
             "progress": {"read": True, "write": True, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True}, "upsert": True, "remove": True, "observed_deletes": False, "requires_ids": ["tmdb"], "units": "seconds", "completion_policy": {"progress_write": {"mode": "none"}}},
             "playlists": {"read": True, "create": True, "rename": True, "delete": True, "add": True, "remove": True, "reorder": True, "smart": False, "discovery": False, "resolve": False, "media_types": ["movies", "shows", "seasons", "episodes"], "accepted_ids": ["tmdb"]},
