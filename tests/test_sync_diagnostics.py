@@ -263,3 +263,9 @@ def test_failure_evidence_survives_chunk_aggregation(config_base, monkeypatch):
                             emit=lambda *a, **kw: None, dbg=lambda *a, **kw: None, chunk_size=1, chunk_pause_ms=0)
     for item in items:
         assert result["failure_details"][canonical_key(item)]["match_details"]["candidate_count"] == 2
+
+
+def test_candidate_details_preserve_anime_ids():
+    details = match_details({"candidates": [{"ids": {"kitsu": "123", "anidb": "456"}, "show_ids": {"kitsu": "789", "anidb": "101"}}]})
+    assert details["candidates"][0]["ids"] == {"kitsu": "123", "anidb": "456"}
+    assert details["candidates"][0]["show_ids"] == {"kitsu": "789", "anidb": "101"}

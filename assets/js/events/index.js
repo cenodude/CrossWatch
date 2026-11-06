@@ -62,6 +62,19 @@ const detailOf = (e) => {
   }
 };
 
+const failureDetailsHTML = (e, events = []) => {
+  const sameFailure = other => ["run_id", "item_key", "feature", "operation", "source_provider", "source_instance", "destination_provider", "destination_instance", "pair_key", "reason_code", "hint_message"].every(key => (other[key] || "") === (e[key] || "")) && JSON.stringify(other.match_details || null) === JSON.stringify(e.match_details || null);
+  if (e.event_type === "unresolved_recorded" && e.run_id && e.item_key && events.some(other => other.event_type === "write_failed" && sameFailure(other))) return "";
+  if (!["write_failed", "unresolved_recorded"].includes(e.event_type)) return "";
+  const messages = [...new Set([e.reason_message, e.hint_message].filter(value => typeof value === "string" && value))];
+  const details = e.match_details;
+  const candidates = Array.isArray(details?.candidates) ? details.candidates.filter(item => item && typeof item === "object").slice(0, 10) : [];
+  const ids = item => ["ids", "show_ids"].flatMap(field => Object.entries(item[field] || {}).map(([key, value]) => `${field === "show_ids" ? "show " : ""}${key}:${value}`)).join(" / ");
+  const matches = candidates.length ? `<details class="ev-match-details"><summary>Possible matches (${esc(details.candidate_count)})</summary><div class="ev-match-list">${candidates.map(item => `<div class="ev-match-row"><span>${esc([item.type, item.local_id].filter(Boolean).join(" / "))}</span><span>${esc([item.title, item.year].filter(Boolean).join(" / "))}<br>${esc(ids(item))}${item.season != null && item.episode != null ? ` / S${esc(item.season)}E${esc(item.episode)}` : ""}</span></div>`).join("")}${details.truncated || details.candidates.length > 10 ? "<p>Only the first candidates are shown.</p>" : ""}</div></details>` : "";
+  if (!messages.length && !matches) return "";
+  return `<div class="ev-failure-details"><strong>What happened</strong>${messages.map(message => `<p>${esc(message)}</p>`).join("")}${matches}</div>`;
+};
+
 const PAGE_SIZE = 10;
 const RUN_ITEMS_PAGE_SIZE = 100;
 
@@ -1481,7 +1494,7 @@ export default {
         const es = sevOf(e);
         const pct = detailOf(e).progress;
         const desc = [eventDesc(e), pct != null ? String(pct) + "%" : ""].filter(Boolean).join(" · ");
-        return `<div class="ev-tl" data-id="${e.id}"><span class="ev-tl-time">${esc(TS(e.created_at))}</span><span class="ev-tl-dot ${es}"></span><span class="ev-tl-body"><span class="ev-tl-head"><span class="ev-tl-title">${esc(titleLine(e))}</span><span class="ev-badge ${es}">${esc(badgeOf(e))}</span></span>${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}${cloudResultsHTML(e)}</span></div>`;
+        return `<div class="ev-tl" data-id="${e.id}"><span class="ev-tl-time">${esc(TS(e.created_at))}</span><span class="ev-tl-dot ${es}"></span><div class="ev-tl-body"><span class="ev-tl-head"><span class="ev-tl-title">${esc(titleLine(e))}</span><span class="ev-badge ${es}">${esc(badgeOf(e))}</span></span>${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}${cloudResultsHTML(e)}${failureDetailsHTML(e, events)}</div></div>`;
       }).join("");
 
       const detailsPane = kvGrid([
@@ -1597,11 +1610,11 @@ export default {
         <div class="ev-tl" data-id="${e.id}">
           <span class="ev-tl-time">${esc(TS(e.created_at))}</span>
           <span class="ev-tl-dot ${es}"></span>
-          <span class="ev-tl-body">
+          <div class="ev-tl-body">
             <span class="ev-tl-head"><span class="ev-tl-title">${esc(titleLine(e))}</span><span class="ev-badge ${es}">${esc(badgeOf(e))}</span></span>
-            ${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}${cloudResultsHTML(e)}
+            ${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}${cloudResultsHTML(e)}${failureDetailsHTML(e, events)}
             ${e.reason_code ? `<span class="ev-tl-code mono">${esc(e.reason_code)}</span>` : ""}
-          </span>
+          </div>
         </div>`;
       }).join("");
 
@@ -1906,6 +1919,7 @@ export default {
           <div class="ev-dtitle">${esc(titleLine(e))}</div>
           ${item ? `<div class="ev-ditem">${esc(item)}</div>` : ""}
         </div>`);
+      parts.push(failureDetailsHTML(e));
       parts.push(`<h4>Event</h4><div class="ev-kv">${kv}</div>`);
       if (isRating(e)) parts.push(`<div class="ev-ratline">Rating changed from <b>${esc(e.old_value ?? "–")}</b> to <b>${esc(e.new_value ?? "–")}</b>${e.origin_provider ? `, originating at <b>${esc(instLabel(e.origin_provider, e.origin_instance))}</b>` : ""}.</div>`);
       parts.push(`<h4>Current context</h4>`);

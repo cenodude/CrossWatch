@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 CANDIDATE_LIMIT = 10
-ID_NAMES = ("imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist")
+ID_NAMES = ("imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
 
 
 def match_details(value: Any) -> dict[str, Any]:

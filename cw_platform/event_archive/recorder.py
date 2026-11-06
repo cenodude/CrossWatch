@@ -13,6 +13,8 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.matching_details import match_details
+from cw_platform.reason_labels import reason_hint
 
 from .db import get_conn
 from .run_scope import pair_id_from_scope, record_run_pairs, scope_key as _scope_key
@@ -503,15 +505,22 @@ class RunRecorder:
                 raw_it = row.get("item")
                 it: Mapping[str, Any] = raw_it if isinstance(raw_it, Mapping) else {}
                 reason = str(row.get("reason") or "apply:add:failed")
+                diagnostics: dict[str, Any] = {}
+                hint = reason_hint(row.get("hint"), reason)
+                if hint:
+                    diagnostics["hint"] = hint
+                matches = match_details(row.get("match_details"))
+                if matches:
+                    diagnostics["match_details"] = matches
                 base = dict(
                     source_provider=src or None, destination_provider=dst or None,
                     source_instance=si or None, destination_instance=di or None,
                     item_key=k, **_item_fields(it),
                 )
                 self._add(event_type="write_failed", operation=op, severity="error",
-                          reason_code=reason, reason=reason, **base)
+                          reason_code=reason, reason=reason, detail=diagnostics or None, **base)
                 self._add(event_type="unresolved_recorded", operation=op, severity="warn",
-                          reason_code=reason, reason=reason, **base)
+                          reason_code=reason, reason=reason, detail=diagnostics or None, **base)
                 if row.get("promoted"):
                     self._add(event_type="blackbox_promoted", operation="quarantine", severity="warn",
                               reason_code="flapper", reason="flapper", **base)

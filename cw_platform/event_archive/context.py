@@ -105,7 +105,7 @@ def _event_by_id(conn: sqlite3.Connection, event_id: Any) -> dict[str, Any] | No
         ).fetchone()
     except Exception:
         return None
-    return dict(row) if row else None
+    return _query._with_reason_labels([dict(row)])[0] if row else None
 
 
 def build_context(

@@ -370,3 +370,12 @@ html[data-cw-theme=flat-light] .ev-date input::-webkit-calendar-picker-indicator
   .ev-row{padding-top:14px;padding-bottom:14px}
   .ev-time{max-width:100px;white-space:normal}
 }
+
+.ev-failure-details{margin-top:6px;font-size:12px;line-height:1.5;color:var(--ev-text);overflow-wrap:anywhere}
+.ev-failure-details p{margin:4px 0 0}
+.ev-match-details{margin-top:8px}
+.ev-match-details summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--ev-text)}
+.ev-match-details summary:focus-visible{outline:2px solid var(--ev-accent);outline-offset:3px}
+.ev-match-list{display:grid;gap:8px;margin-top:8px}
+.ev-match-row{display:grid;gap:2px;min-width:0}
+.ev-match-row>span:first-child{color:var(--ev-muted)}
