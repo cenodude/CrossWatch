@@ -109,8 +109,8 @@ def test_synced_history_counts_rewatches_once_per_viewing() -> None:
     trakt = {f"tmdb:603@{epoch}": _movie(603, "The Matrix", 1999, value) for epoch, value in watches.items()}
     simkl = {"tmdb:603": _movie(603, "The Matrix", 1999, "2026-03-01T19:32:00Z")}
     state = {"providers": {"TRAKT": _history(trakt), "SIMKL": _history(simkl), "PLEX": _history({"tmdb:20": KUSAMA})}}
-    payload = profile_history.build_history_payload(
-        profile_history.build_history_index("synced", state=state, tracker_items={}), resolve_art=False)
+    index = profile_history.build_history_index("synced", state=state, tracker_items={})
+    payload = profile_history.build_history_payload(index, resolve_art=False)
 
     kusama, matrix = payload["items"]
     assert matrix["watch_count"] == 3
@@ -119,6 +119,12 @@ def test_synced_history_counts_rewatches_once_per_viewing() -> None:
     assert "watch_epochs" not in kusama
     assert payload["stats"]["plays"] == 2
     assert payload["stats"]["watches"] == 4
+    presence = profile_history.title_presence(index, "movie", 603)
+    assert presence is not None
+    assert presence["count"] == matrix["watch_count"]
+    assert presence["last_epoch"] == matrix["sort_epoch"]
+    assert presence["present"] == matrix["present"]
+    assert profile_history.title_presence(index, "movie", 20)["count"] == 1
 
 
 def test_synced_history_keeps_same_title_shows_apart() -> None:
