@@ -133,7 +133,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js", "details-log.js",
+    "selection-bar.js", "help-links.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js", "month-bar.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
@@ -143,7 +143,7 @@ _APP_SCRIPTS = (
     "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js", "assistant-settings.js",
 )
 _USER_HELPER_SCRIPTS = (
-    "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js",
+    "selection-bar.js", "help-links.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js",
 )
 _USER_APP_SCRIPTS = (
@@ -302,13 +302,13 @@ def _profile_nav_tab(label: str, href: str, active: bool = False) -> str:
 
 def _profile_bulk_bar(bar_id: str, scope: str) -> str:
     return (
-        f'    <div id="{bar_id}" class="cw-tl-bulk" hidden>\n'
-        f'      <span class="cw-tl-bulk-count"><strong data-{scope}-count>0</strong><span>selected</span></span>\n'
-        f'      <button class="cw-tl-ghost" type="button" data-{scope}-select="visible"><span class="material-symbols-rounded" aria-hidden="true">select_all</span>Visible</button>\n'
-        f'      <button class="cw-tl-ghost" type="button" data-{scope}-select="all"><span class="material-symbols-rounded" aria-hidden="true">checklist</span>All results</button>\n'
-        f'      <button class="cw-tl-ghost" type="button" data-{scope}-select="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>Clear</button>\n'
-        '      <span class="cw-tl-bulk-actions">\n'
-        f'        <button class="cw-tl-action cw-tl-remove" type="button" data-{scope}-remove><span class="material-symbols-rounded" aria-hidden="true">delete</span>Remove</button>\n'
+        f'    <div id="{bar_id}" class="cw-tl-bulk cw-selection-bar" role="group" aria-label="Selected items" hidden>\n'
+        f'      <span class="cw-selection-count" aria-live="polite"><span class="material-symbols-rounded" aria-hidden="true">check_box_outline_blank</span><strong data-{scope}-count>0</strong><span>selected</span></span>\n'
+        f'      <button class="cw-selection-button" type="button" data-{scope}-select="visible"><span class="material-symbols-rounded" aria-hidden="true">visibility</span>Visible</button>\n'
+        f'      <button class="cw-selection-button" type="button" data-{scope}-select="all"><span class="material-symbols-rounded" aria-hidden="true">checklist</span>All results</button>\n'
+        f'      <button class="cw-selection-button" type="button" data-{scope}-select="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>Clear</button>\n'
+        '      <span class="cw-selection-actions">\n'
+        f'        <button class="cw-selection-button is-danger" type="button" data-{scope}-remove><span class="material-symbols-rounded" aria-hidden="true">delete</span>Remove</button>\n'
         '      </span>\n'
         '    </div>\n'
     )
@@ -498,15 +498,15 @@ def _profile_playback_panel() -> str:
         </select>
       </div>
     </div>
-    <div id="profile-playback-bulk" class="cw-tl-bulk" hidden>
-      <span class="cw-tl-bulk-count"><strong data-playback-count>0</strong><span>selected</span></span>
-      <button class="cw-tl-ghost" type="button" data-playback-bulk-select="visible"><span class="material-symbols-rounded" aria-hidden="true">select_all</span>Visible</button>
-      <button class="cw-tl-ghost" type="button" data-playback-bulk-select="all"><span class="material-symbols-rounded" aria-hidden="true">checklist</span>All results</button>
-      <button class="cw-tl-ghost" type="button" data-playback-bulk-select="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>Clear</button>
-      <span class="cw-tl-bulk-actions">
-        <button class="cw-tl-action cw-tl-text" type="button" data-playback-bulk="update_progress" title="Edit progress"><span class="material-symbols-rounded" aria-hidden="true">edit</span>Edit progress</button>
-        <button class="cw-tl-action cw-tl-text is-good" type="button" data-playback-bulk="mark_watched" title="Mark as watched"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>Mark watched</button>
-        <button class="cw-tl-action cw-tl-remove" type="button" data-playback-bulk="remove_progress" title="Remove progress"><span class="material-symbols-rounded" aria-hidden="true">delete</span>Remove</button>
+    <div id="profile-playback-bulk" class="cw-tl-bulk cw-selection-bar" role="group" aria-label="Selected items" hidden>
+      <span class="cw-selection-count" aria-live="polite"><span class="material-symbols-rounded" aria-hidden="true">check_box_outline_blank</span><strong data-playback-count>0</strong><span>selected</span></span>
+      <button class="cw-selection-button" type="button" data-playback-bulk-select="visible"><span class="material-symbols-rounded" aria-hidden="true">visibility</span>Visible</button>
+      <button class="cw-selection-button" type="button" data-playback-bulk-select="all"><span class="material-symbols-rounded" aria-hidden="true">checklist</span>All results</button>
+      <button class="cw-selection-button" type="button" data-playback-bulk-select="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>Clear</button>
+      <span class="cw-selection-actions">
+        <button class="cw-selection-button" type="button" data-playback-bulk="update_progress" title="Edit progress"><span class="material-symbols-rounded" aria-hidden="true">edit</span>Edit progress</button>
+        <button class="cw-selection-button is-good" type="button" data-playback-bulk="mark_watched" title="Mark as watched"><span class="material-symbols-rounded" aria-hidden="true">check_circle</span>Mark watched</button>
+        <button class="cw-selection-button is-danger" type="button" data-playback-bulk="remove_progress" title="Remove progress"><span class="material-symbols-rounded" aria-hidden="true">delete</span>Remove</button>
       </span>
     </div>
     <dialog id="profile-playback-edit" class="cw-tl-dialog" aria-labelledby="profile-playback-edit-title">
@@ -1483,7 +1483,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
             <div>
               <div class="cw-settings-pane-kicker">Connections</div>
               <h3>Providers and metadata</h3>
-              <p>Connect media servers and/or Trackers first (Providers) then configure Metadata (TMDb)</p>
+              <p>Connect media servers and/or Trackers first (Providers) then configure Metadata</p>
             </div>
             <div class="cw-settings-pane-head-actions">
               <div class="cw-conn-hero-summary" aria-label="Connection actions">
@@ -3102,6 +3102,7 @@ def get_profile_html(user: dict | None = None) -> str:
 }})();
 </script>
 <script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/selection-bar.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/icon-select.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/profile-select.js?v=__CW_VERSION__" defer></script>

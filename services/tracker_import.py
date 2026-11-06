@@ -30,7 +30,7 @@ Launch = Callable[[Mapping[str, Any], str, Callable[[Mapping[str, Any]], None]],
 
 
 def _label(cfg: Mapping[str, Any], provider: str, instance: str) -> str:
-    block = get_provider_block(cfg, provider, instance) if instance != "default" else {}
+    block = get_provider_block(cfg, provider, instance)
     label = sanitize_instance_label((block or {}).get("label")) if isinstance(block, Mapping) else ""
     return label or ("Default" if instance == "default" else instance)
 

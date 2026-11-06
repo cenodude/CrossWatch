@@ -47,6 +47,10 @@ class FakeTmdb:
             raise value
         return SimpleNamespace(data=value, fetched_at=1_760_000_000.0, source="cache")
 
+    def get_response(self, url, params, **options):
+        assert options == {"quiet_404": True, "max_age": tracker_check.MAX_AGE, "timeout": 10, "max_retries": 2}
+        return self.lookup(params["external_source"].removesuffix("_id"), url.rsplit("/", 1)[-1])
+
 
 def _movie(**extra):
     return {"type": "movie", "title": "Heat", "year": 1995, "ids": {"tmdb": "949"}, **extra}
@@ -82,6 +86,94 @@ def test_classify_keeps_tmdb_details_for_the_fix():
     code, detail = classify(_movie(title="Arrival", year=2016), Lookups(FakeTmdb(), pause=0))
     assert code == "mismatch"
     assert (detail["title"], detail["year"], detail["tmdb"], detail["source"]) == ("Heat", 1995, "949", "cache")
+
+
+@pytest.mark.parametrize(("item", "source", "identifier", "results", "expected"), [
+    (_movie(ids={"imdb": "tt0113277"}), "imdb", "tt0113277", {"movie_results": [{"id": 949}]}, "949"),
+    ({"type": "show", "title": "Severance", "year": 2022, "ids": {"imdb": "tt11280740"}}, "imdb", "tt11280740", {"tv_results": [{"id": 95396}]}, "95396"),
+    ({"type": "show", "title": "Severance", "year": 2022, "ids": {"tvdb": "371980"}}, "tvdb", "371980", {"tv_results": [{"id": 95396}]}, "95396"),
+    (_episode(show_ids={"tvdb": "371980"}), "tvdb", "371980", {"tv_results": [{"id": 95396}]}, "95396"),
+    (_episode(show_ids={"imdb": "tt11280740"}), "imdb", "tt11280740", {"tv_results": [{"id": 95396}]}, "95396"),
+    (_episode(show_ids={}, ids={"imdb": "tt12345678"}), "imdb", "tt12345678", {"tv_episode_results": [{"id": 123, "show_id": 95396, "season_number": 1, "episode_number": 2}]}, "95396"),
+    (_episode(show_ids={}, ids={"tvdb": "12345"}), "tvdb", "12345", {"tv_episode_results": [{"id": 123, "show_id": 95396, "season_number": 1, "episode_number": 2}]}, "95396"),
+    (_episode(type="season", show_ids={}, ids={"tvdb": "12345"}), "tvdb", "12345", {"tv_season_results": [{"id": 123, "show_id": 95396, "season_number": 1}]}, "95396"),
+])
+def test_external_ids_resolve_the_right_title_before_checking(item, source, identifier, results, expected):
+    provider = FakeTmdb({(source, identifier, None): results})
+    code, detail = classify(item, Lookups(provider, pause=0))
+    assert code == "ok"
+    assert detail["tmdb"] == expected
+    assert provider.calls[0] == (source, identifier, None)
+    assert ("show" if item["type"] != "movie" else "movie", expected, None) in provider.calls
+    assert "tmdb" not in item["ids"]
+
+
+@pytest.mark.parametrize("results", [
+    {"movie_results": []},
+    {"tv_results": [{"id": 949}]},
+    {"movie_results": [{"id": 949}, {"id": 194}]},
+    {"movie_results": [{"id": True}]},
+])
+def test_external_lookup_does_not_guess_a_title(results):
+    provider = FakeTmdb({("imdb", "tt0113277", None): results})
+    assert classify(_movie(ids={"imdb": "tt0113277"}), Lookups(provider, pause=0))[0] == "no_tmdb"
+    assert len(provider.calls) == 1
+
+
+def test_episode_ids_are_not_used_as_show_ids_or_for_different_episode_numbers():
+    provider = FakeTmdb({("tvdb", "123", None): {
+        "tv_results": [{"id": 95396}],
+        "tv_episode_results": [{"id": 456, "show_id": 95396, "season_number": 2, "episode_number": 2}],
+    }})
+    assert classify(_episode(show_ids={}, ids={"tvdb": "123"}), Lookups(provider, pause=0))[0] == "no_tmdb"
+    assert provider.calls == [("tvdb", "123", None)]
+
+
+def test_external_lookup_tries_tvdb_when_imdb_has_no_show_match_and_reuses_results():
+    provider = FakeTmdb({
+        ("imdb", "tt11280740", None): {"tv_results": []},
+        ("tvdb", "371980", None): {"tv_results": [{"id": 95396, "overview": "large"}]},
+    })
+    lookups = Lookups(provider, pause=0)
+    for episode in (2, 3):
+        assert classify(_episode(episode=episode, show_ids={"imdb": "tt11280740", "tvdb": "371980"}), lookups)[0] == "ok"
+    assert provider.calls == [("imdb", "tt11280740", None), ("tvdb", "371980", None), ("show", "95396", None), ("show", "95396", 1)]
+    assert lookups.cache[("tvdb", "371980", None)].data["tv_results"] == [{"id": 95396}]
+
+
+def test_resolved_external_ids_still_report_title_and_episode_mismatches():
+    provider = FakeTmdb({
+        ("imdb", "tt0113277", None): {"movie_results": [{"id": 949}]},
+        ("tvdb", "371980", None): {"tv_results": [{"id": 95396}]},
+    })
+    lookups = Lookups(provider, pause=0)
+    assert classify(_movie(title="Arrival", year=2016, ids={"imdb": "tt0113277"}), lookups)[0] == "mismatch"
+    assert classify(_episode(episode=40, show_ids={"tvdb": "371980"}), lookups)[0] == "episode_missing"
+
+
+@pytest.mark.parametrize("failure", [requests.ConnectionError("down"), _http(429), _http(503), {}, {"movie_results": None}])
+def test_external_lookup_failures_are_not_saved_as_missing_matches(failure):
+    provider = FakeTmdb({("imdb", "tt0113277", None): failure})
+    lookups = Lookups(provider, pause=0)
+    assert classify(_movie(ids={"imdb": "tt0113277"}), lookups) is None
+    assert classify(_movie(ids={"imdb": "tt0113277"}), lookups) is None
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.parametrize(("failure", "code"), [(_http(401), "tmdb_key_invalid"), (RuntimeError("missing key"), "tmdb_key_missing")])
+def test_external_lookup_auth_errors_stop_the_scan(failure, code):
+    with pytest.raises(Abort) as stopped:
+        classify(_movie(ids={"imdb": "tt0113277"}), Lookups(FakeTmdb({("imdb", "tt0113277", None): failure}), pause=0))
+    assert stopped.value.code == code
+
+
+def test_existing_tmdb_ids_still_take_precedence_and_movie_tvdb_ids_are_not_queried():
+    provider = FakeTmdb()
+    lookups = Lookups(provider, pause=0)
+    assert classify(_movie(ids={"tmdb": "949", "imdb": "tt0113277"}), lookups)[0] == "ok"
+    assert classify(_movie(ids={"tvdb": "123"}), lookups)[0] == "no_tmdb"
+    assert classify(_episode(show_ids={"imdb": "../123", "tvdb": "-1"}), lookups)[0] == "no_tmdb"
+    assert provider.calls == [("movie", "949", None)]
 
 
 def test_failed_lookup_is_not_a_finding_and_is_not_retried_per_episode():
@@ -150,6 +242,23 @@ def test_fixing_a_record_clears_its_flag(client):
     res = client.post("/api/tracker/edit", json={"feature": "history", "key": "imdb:tt2543164", "changes": {"ids": {"tmdb": "329865"}}})
     assert res.status_code == 200, res.text
     assert client.get("/api/tracker/summary").json()["attention"]["history"] == 1
+
+
+def test_bulk_scan_checks_external_ids_without_rewriting_records(client, base, monkeypatch):
+    provider = FakeTmdb({
+        ("imdb", "tt2543164", None): {"movie_results": [{"id": 329865}]},
+        ("movie", "329865", None): {"title": "Arrival", "release_date": "2016-11-10", "runtime": 116},
+    })
+    monkeypatch.setattr(trackerAPI, "_tmdb_provider", lambda: provider)
+    store = TrackerStore(base)
+    before = store.read_current("history")["items"]
+    assert client.post("/api/tracker/check", json={}).status_code == 200
+    job = client.get("/api/tracker/check").json()["job"]
+    assert (job["state"], job["done"], job["failed"], job["attention"]) == ("completed", 4, 0, 1)
+    items = client.get("/api/tracker/items", params={"feature": "history", "health": "ok"}).json()["items"]
+    arrival = next(item for item in items if item["key"] == "imdb:tt2543164")
+    assert arrival["check"]["tmdb"] == "329865"
+    assert store.read_current("history")["items"] == before
 
 
 def test_check_needs_a_tmdb_key(client):

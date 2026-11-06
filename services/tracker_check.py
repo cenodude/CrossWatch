@@ -30,6 +30,7 @@ CACHE_LIMIT = 5000
 _ANIME_FIELDS = ("_anime_absolute", "_cw_anime_map", "_simkl_episode_number", "_trakt_number_abs", "anime_type")
 _KEEP = ("title", "name", "original_title", "original_name", "release_date", "first_air_date", "runtime", "episode_run_time")
 _FAILED = object()
+_FIND_BUCKETS = ("movie_results", "tv_results", "tv_season_results", "tv_episode_results")
 
 
 class Abort(RuntimeError):
@@ -98,7 +99,26 @@ class Lookups:
             self.cache.move_to_end(key)
             return self.cache[key]
         try:
-            value = self.provider.lookup(kind, tmdb, season=season, max_age=MAX_AGE, timeout=10, max_retries=2)
+            external = kind in ("imdb", "tvdb")
+            if external:
+                value = self.provider.get_response(
+                    f"https://api.themoviedb.org/3/find/{tmdb}", {"external_source": f"{kind}_id"},
+                    quiet_404=True, max_age=MAX_AGE, timeout=10, max_retries=2,
+                )
+                data = value.data
+                if not isinstance(data, Mapping) or not any(bucket in data for bucket in _FIND_BUCKETS):
+                    raise ValueError("TMDB returned incomplete external ID results")
+                trimmed = {}
+                for bucket in _FIND_BUCKETS:
+                    rows = data.get(bucket, [])
+                    if not isinstance(rows, list) or any(not isinstance(row, Mapping) for row in rows):
+                        raise ValueError("TMDB returned invalid external ID results")
+                    trimmed[bucket] = [{field: row[field] for field in ("id", "show_id", "season_number", "episode_number") if field in row} for row in rows]
+                value = Found(trimmed, value.fetched_at, value.source)
+            else:
+                value = self.provider.lookup(kind, tmdb, season=season, max_age=MAX_AGE, timeout=10, max_retries=2)
+                if value is not None:
+                    value = Found(_trim(value.data), value.fetched_at, value.source)
         except requests.HTTPError as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status == 401:
@@ -113,8 +133,6 @@ class Lookups:
         except (requests.RequestException, ValueError):
             return self._failed(key)
         self.failures = 0
-        if value is not None:
-            value = Found(_trim(value.data), value.fetched_at, value.source)
         self._remember(key, value)
         if value is not None and value.source == "network" and self.pause:
             time.sleep(self.pause)
@@ -144,6 +162,41 @@ def _runtime(data: Mapping[str, Any], movie: bool) -> int | None:
     return (_int(last.get("runtime")) or None) if isinstance(last, Mapping) else None
 
 
+def _external_tmdb(item: Mapping[str, Any], kind: str, ids: Mapping[str, Any], lookups: Lookups) -> Any:
+    targets = [(ids, "movie_results" if kind == "movie" else "tv_results")]
+    typ = str(item.get("type") or "").lower()
+    if typ in ("episode", "season") and isinstance(item.get("ids"), Mapping):
+        targets.append((item["ids"], f"tv_{typ}_results"))
+    for external_ids, bucket in targets:
+        for source in ("imdb", "tvdb"):
+            if (source == "tvdb" and kind == "movie") or (source == "imdb" and bucket == "tv_season_results"):
+                continue
+            identifier = str(external_ids.get(source) or "").strip()
+            if not re.fullmatch(r"tt[0-9]+" if source == "imdb" else r"[0-9]+", identifier):
+                continue
+            if source == "tvdb" and int(identifier) <= 0:
+                continue
+            found = lookups.get(source, identifier)
+            if found is _FAILED:
+                return _FAILED
+            if found is None:
+                continue
+            candidates = set()
+            for row in found.data[bucket]:
+                child = bucket in ("tv_episode_results", "tv_season_results")
+                if child and any(
+                    item.get(field) is not None and _int(item[field]) != row.get(f"{field}_number")
+                    for field in (("season", "episode") if typ == "episode" else ("season",))
+                ):
+                    continue
+                tmdb = row.get("show_id" if child else "id")
+                if type(tmdb) is int and tmdb > 0:
+                    candidates.add(str(tmdb))
+            if len(candidates) == 1:
+                return candidates.pop()
+    return ""
+
+
 def classify(item: Mapping[str, Any], lookups: Lookups) -> tuple[str, dict[str, Any]] | None:
     typ = str(item.get("type") or "").lower()
     child = typ in ("season", "episode")
@@ -157,7 +210,11 @@ def classify(item: Mapping[str, Any], lookups: Lookups) -> tuple[str, dict[str, 
         return "skipped", {}
     tmdb = str(ids.get("tmdb") or "").strip()
     if not tmdb:
-        return "no_tmdb", {"kind": kind}
+        tmdb = _external_tmdb(item, kind, ids, lookups)
+        if tmdb is _FAILED:
+            return None
+        if not tmdb:
+            return "no_tmdb", {"kind": kind}
     if not tmdb.isascii() or not tmdb.isdecimal() or int(tmdb) <= 0:
         return "not_found", {"kind": kind, "tmdb": tmdb}
     found = lookups.get(kind, tmdb)

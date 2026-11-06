@@ -40,7 +40,13 @@ def test_summary_counts_records_per_feature_and_lists_instances(client):
     assert data["counts"]["ratings"] == 1
     assert data["counts"]["watchlist"] == 0
     assert [row["id"] for row in data["instances"]] == ["default", "CW-P01"]
+    assert data["instances"][0]["label"] == "Default"
     assert data["instances"][1]["label"] == "Desk"
+    trackerAPI.load_config()["crosswatch"]["label"] = "My tracker"
+    renamed = client.get("/api/tracker/summary").json()
+    assert renamed["instances"][0] == {"id": "default", "label": "My tracker"}
+    sources = client.get("/api/tracker/import/sources").json()
+    assert sources["instances"][0] == {"id": "default", "label": "My tracker"}
     profile = client.get("/api/tracker/summary", params={"provider_instance": "CW-P01"}).json()
     assert profile["counts"]["watchlist"] == 1
 

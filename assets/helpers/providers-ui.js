@@ -258,10 +258,6 @@
     return window.CW?.ProviderMeta?.logoHtml?.(info?.logoKey || info?.label || "", "cw-auth-provider-logo") || `<span class="token-text">${info?.label || ""}</span>`;
   }
 
-  function connectedText(count) {
-    return `${count} connected`;
-  }
-
   function hasConfiguredValue(v) {
     return typeof v === "string" ? v.trim().length > 0 : !!v;
   }
@@ -429,7 +425,7 @@
           </div>
           <button type="button" class="cw-auth-icon-btn material-symbols-rounded" data-cw-auth-close aria-label="Close">close</button>
         </div>
-        <div class="cw-auth-provider-picker" id="cw-auth-provider-picker"></div>
+        <div class="cw-auth-provider-picker cw-page-provider-picker" id="cw-auth-provider-picker"></div>
         <form class="cw-auth-provider-form hidden" id="cw-auth-provider-form" autocomplete="off" onsubmit="return false"></form>
       </div>`;
     slot.appendChild(overlay);
@@ -471,37 +467,56 @@
   function renderAuthPicker(overlay, cfg = getCachedConfig(), mode = "provider") {
     const picker = overlay?.querySelector("#cw-auth-provider-picker");
     if (!picker) return;
-    if (mode === "metadata") {
-      const items = META_GROUP.keys.map((key) => {
-        const info = metadataProviderInfo(key);
-        const status = metadataStatusFor(key, cfg);
-        return `<button type="button" class="cw-auth-picker-card" data-cw-meta-pick="${info.key}">
-          <span class="cw-auth-provider-mark">${metadataProviderLogo(info)}</span>
-          <span class="cw-auth-provider-copy"><strong>${info.label}</strong><small>${status.text}</small></span>
-          <span class="cw-auth-card-status ${status.ok ? "ok" : ""}"><span></span></span>
-        </button>`;
-      }).join("");
-      setPickerHtml(picker, `<div class="cw-auth-picker-group"><h4>${META_GROUP.title}</h4><div class="cw-auth-picker-grid">${items}</div></div>`);
-      return;
+    const groups = mode === "metadata" ? [META_GROUP] : AUTH_GROUPS;
+    const category = groups.some(group => group.id === overlay.dataset.cwPickerCategory) ? overlay.dataset.cwPickerCategory : "all";
+    const search = overlay.dataset.cwPickerSearch || "";
+    const tabs = [{id:"all", title:mode === "metadata" ? "All metadata" : "All providers"}, ...groups];
+    if (picker.dataset.mode !== mode || !picker.querySelector(".cw-auth-picker-results")) {
+      picker.dataset.mode = mode;
+      setPickerHtml(picker, `
+        <div class="cw-auth-picker-tools">
+          <label class="cw-auth-picker-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input type="search" data-cw-picker-search aria-label="Search providers" placeholder="Search providers..." autocomplete="off"></label>
+          <div class="cw-auth-picker-tabs" role="tablist" aria-label="Provider categories">${tabs.map(tab => `<button type="button" role="tab" id="cw-picker-tab-${tab.id}" data-cw-picker-category="${tab.id}" aria-controls="cw-auth-picker-results">${escHtml(tab.title)}</button>`).join("")}</div>
+        </div>
+        <div id="cw-auth-picker-results" class="cw-auth-picker-results" role="tabpanel" tabindex="0"></div>
+        <span class="sr-only" data-cw-picker-count role="status"></span>`);
     }
+    const input = picker.querySelector("[data-cw-picker-search]");
+    if (input.value !== search) input.value = search;
+    picker.querySelectorAll("[data-cw-picker-category]").forEach(tab => {
+      const active = tab.dataset.cwPickerCategory === category;
+      tab.setAttribute("aria-selected", String(active));
+      tab.tabIndex = active ? 0 : -1;
+    });
     const configured = configuredProviderKeys(cfg);
-    const rows = AUTH_GROUPS.map((group) => {
+    const supported = new Set(authProviderKeysWithSections());
+    let total = 0;
+    const rows = groups.filter(group => category === "all" || category === group.id).map(group => {
       const items = group.keys
-        .filter((key) => authProviderKeysWithSections().includes(key))
-        .map((key) => authProviderInfo(key))
-        .sort((a, b) => String(a.label || "").localeCompare(String(b.label || ""), undefined, { sensitivity: "base" }))
-        .map((info) => {
-          const key = info.key;
-          const status = authStatusFor(key, configured.has(key));
-          return `<button type="button" class="cw-auth-picker-card" data-cw-auth-pick="${info.key}">
-            <span class="cw-auth-provider-mark">${authProviderLogo(info.key)}</span>
-            <span class="cw-auth-provider-copy"><strong>${info.label}</strong><small>${status.text}</small></span>
-            <span class="cw-auth-card-status ${status.ok ? "ok" : ""}"><span></span></span>
+        .filter(key => mode === "metadata" || supported.has(key))
+        .map(key => mode === "metadata" ? metadataProviderInfo(key) : authProviderInfo(key))
+        .filter(info => `${info.label} ${info.key}`.toLowerCase().includes(search.trim().toLowerCase()))
+        .sort((a, b) => String(a.label).localeCompare(String(b.label), undefined, {sensitivity:"base"}))
+        .map(info => {
+          total++;
+          const status = mode === "metadata" ? metadataStatusFor(info.key, cfg) : authStatusFor(info.key, configured.has(info.key), cfg);
+          const failedNames = status.text.startsWith("Check connection: ") ? status.text.slice(18) : "";
+          const label = failedNames ? "Check connection" : status.text;
+          const attr = mode === "metadata" ? "data-cw-meta-pick" : "data-cw-auth-pick";
+          return `<button type="button" class="cw-auth-picker-row" ${attr}="${escHtml(info.key)}">
+            <span class="cw-auth-picker-logo" aria-hidden="true">${mode === "metadata" ? metadataProviderLogo(info) : authProviderLogo(info.key)}</span>
+            <span class="cw-auth-picker-copy"><strong>${escHtml(info.label)}</strong><small>${status.ok ? '<span class="cw-auth-picker-dot" aria-hidden="true"></span>' : ""}<span>${escHtml(label)}</span>${failedNames ? `<span class="cw-auth-picker-instance">${escHtml(failedNames)}</span>` : ""}</small></span>
+            <span class="material-symbols-rounded cw-auth-picker-chevron" aria-hidden="true">chevron_right</span>
           </button>`;
         }).join("");
-      return items ? `<div class="cw-auth-picker-group"><h4>${group.title}</h4><div class="cw-auth-picker-grid">${items}</div></div>` : "";
+      return items ? `<section class="cw-auth-picker-group" aria-labelledby="cw-picker-heading-${group.id}"><h4 id="cw-picker-heading-${group.id}">${escHtml(group.title)}</h4><div class="cw-auth-picker-grid">${items}</div></section>` : "";
     }).join("");
-    setPickerHtml(picker, rows || '<div class="cw-auth-empty">No supported providers found.</div>');
+    const results = picker.querySelector(".cw-auth-picker-results");
+    results.setAttribute("aria-labelledby", `cw-picker-tab-${category}`);
+    setPickerHtml(results, rows || '<div class="cw-auth-picker-empty">No providers found. Try another search or category.</div>');
+    const count = picker.querySelector("[data-cw-picker-count]");
+    const countText = `${total} provider${total === 1 ? "" : "s"} found`;
+    if (count.textContent !== countText) count.textContent = countText;
   }
 
   function syncAuthChildren(parent, nextChildren, keyOf, update) {
@@ -615,7 +630,7 @@
       const mode = section.id === META_GROUP.id ? "metadata" : "provider";
       const label = section.id === META_GROUP.id ? "Add metadata" : section.id === "sec-auth-media" ? "Add media server" : section.id === "sec-auth-clients" ? "Add media client" : section.id === "sec-auth-others" ? "Add provider" : "Add tracker";
       const copy = section.id === META_GROUP.id ? "Connect another metadata source." : "Connect another service.";
-      return `<button type="button" class="cw-auth-service-card cw-auth-add-card" data-cw-auth-empty-add="${mode}">
+      return `<button type="button" class="cw-auth-service-card cw-auth-add-card" data-cw-auth-empty-add="${mode}" data-cw-auth-category="${section.id}">
         <span class="cw-auth-add-mark"><span class="material-symbols-rounded" aria-hidden="true">add</span></span>
         <span class="cw-auth-service-copy">
           <strong>${label}</strong>
@@ -661,7 +676,7 @@
     renderAuthPicker(overlay, cfg, overlay?.dataset?.cwPickerMode || "provider");
   }
 
-  function openAuthOverlay(mode = "picker", key = "", pickerMode = "provider") {
+  function openAuthOverlay(mode = "picker", key = "", pickerMode = "provider", category = "all") {
     const slot = document.getElementById("auth-providers");
     if (!slot) return;
     const overlay = ensureAuthOverlay(slot);
@@ -669,7 +684,10 @@
     const form = overlay.querySelector("#cw-auth-provider-form");
     const title = overlay.querySelector("#cw-auth-dialog-title");
     const kicker = overlay.querySelector("#cw-auth-dialog-kicker");
+    if (overlay.classList.contains("hidden")) overlay.__cwReturnFocus = document.activeElement;
+    window.CW?.DialogFocus?.activate(overlay.querySelector(".cw-auth-dialog"), closeAuthProviderOverlay);
     overlay.classList.remove("hidden");
+    overlay.classList.toggle("cw-auth-picker-open", mode !== "form");
     overlay.setAttribute("aria-hidden", "false");
     if (mode === "form" && key) {
       picker?.classList.add("hidden");
@@ -682,16 +700,23 @@
     }
     parkActiveAuthForm();
     overlay.dataset.cwPickerMode = pickerMode;
+    overlay.dataset.cwPickerCategory = category;
+    overlay.dataset.cwPickerSearch = "";
     renderAuthPicker(overlay, getCachedConfig(), pickerMode);
     picker?.classList.remove("hidden");
     form?.classList.add("hidden");
-    if (title) title.textContent = pickerMode === "metadata" ? "Add Metadata" : "Add Provider";
+    if (title) title.textContent = pickerMode === "metadata" ? "Add metadata" : "Add provider";
     if (kicker) kicker.textContent = pickerMode === "metadata" ? "Metadata" : "Providers";
     const subtitle = overlay.querySelector("#cw-auth-dialog-subtitle");
     const logo = overlay.querySelector(".cw-auth-dialog-logo");
-    if (subtitle) subtitle.textContent = "";
+    if (subtitle) subtitle.textContent = "Choose a service to connect.";
     logo?.classList.add("hidden");
-    requestAnimationFrame(() => overlay.querySelector(".cw-auth-picker-card, [data-cw-auth-close]")?.focus?.());
+    picker.querySelector(".cw-auth-picker-results").scrollTop = 0;
+    requestAnimationFrame(() => {
+      const target = window.matchMedia("(max-width: 600px)").matches ? overlay.querySelector('[aria-selected="true"]') : overlay.querySelector("[data-cw-picker-search]");
+      target?.focus({preventScroll:true});
+      overlay.querySelector('[aria-selected="true"]')?.scrollIntoView({block:"nearest", inline:"nearest"});
+    });
   }
 
   const CONNECTION_MODAL_INFO = Object.freeze({
@@ -2049,6 +2074,7 @@
     section.querySelector(":scope > .head")?.setAttribute("aria-expanded", "true");
     overlay.classList.remove("hidden");
     overlay.setAttribute("aria-hidden", "false");
+    overlay.classList.remove("cw-auth-picker-open");
     overlay.querySelector("#cw-auth-provider-picker")?.classList.add("hidden");
     form.classList.remove("hidden");
     const title = overlay.querySelector("#cw-auth-dialog-title");
@@ -2097,27 +2123,45 @@
     const overlay = document.getElementById("cw-auth-connection-overlay");
     overlay?.classList.add("hidden");
     overlay?.setAttribute("aria-hidden", "true");
+    window.CW?.DialogFocus?.deactivate(overlay?.querySelector(".cw-auth-dialog"));
+    if (overlay?.__cwReturnFocus?.isConnected) overlay.__cwReturnFocus.focus({preventScroll:true});
   }
 
   function bindAuthPresentation(slot) {
     if (!slot || slot.__cwAuthPresentationBound) return;
     slot.__cwAuthPresentationBound = true;
+    slot.addEventListener("input", event => {
+      if (!event.target.matches("[data-cw-picker-search]")) return;
+      const overlay = event.target.closest(".cw-auth-overlay");
+      overlay.dataset.cwPickerSearch = event.target.value;
+      renderAuthPicker(overlay, getCachedConfig(), overlay.dataset.cwPickerMode);
+      overlay.querySelector(".cw-auth-picker-results").scrollTop = 0;
+    });
+    slot.addEventListener("keydown", event => {
+      const tab = event.target.closest("button[data-cw-picker-category]");
+      if (!tab || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const tabs = Array.from(tab.parentElement.querySelectorAll("[role=tab]"));
+      const index = tabs.indexOf(tab);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      tabs[next].click();
+      tabs[next].focus({preventScroll:true});
+      tabs[next].scrollIntoView({block:"nearest", inline:"nearest"});
+    });
     slot.addEventListener("click", (event) => {
       const target = event.target;
-      if (target?.closest?.("#cw-auth-add-provider")) {
-        event.preventDefault();
-        openAuthOverlay("picker", "", "provider");
-        return;
-      }
-      if (target?.closest?.("#cw-auth-add-metadata")) {
-        event.preventDefault();
-        openAuthOverlay("picker", "", "metadata");
+      const category = target?.closest?.("button[data-cw-picker-category]");
+      if (category) {
+        const overlay = category.closest(".cw-auth-overlay");
+        overlay.dataset.cwPickerCategory = category.dataset.cwPickerCategory;
+        renderAuthPicker(overlay, getCachedConfig(), overlay.dataset.cwPickerMode);
+        overlay.querySelector(".cw-auth-picker-results").scrollTop = 0;
         return;
       }
       const emptyAdd = target?.closest?.("[data-cw-auth-empty-add]");
       if (emptyAdd) {
         event.preventDefault();
-        openAuthOverlay("picker", "", emptyAdd.dataset.cwAuthEmptyAdd === "metadata" ? "metadata" : "provider");
+        openAuthOverlay("picker", "", emptyAdd.dataset.cwAuthEmptyAdd === "metadata" ? "metadata" : "provider", emptyAdd.dataset.cwAuthCategory || "all");
         return;
       }
       const openCard = target?.closest?.("[data-cw-auth-open]");

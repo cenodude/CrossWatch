@@ -366,7 +366,7 @@
     const spot = c.episode != null ? se(c.season, c.episode) : c.season != null ? `season ${c.season}` : "this episode";
     switch (c.code) {
       case "no_tmdb":
-        return { state: "attention", icon: "link_off", title: "No TMDB ID", text: `Without ${isChild(item) ? "the show's" : "a"} TMDB ID there is no cover and nothing to check against.`, fix: ["map"] };
+        return { state: "attention", icon: "link_off", title: "No TMDB match", text: "No TMDB match was found using the available IDs. Choose a match to check this title.", fix: ["map"] };
       case "not_found":
         return { state: "attention", icon: "search_off", title: "TMDB doesn't know this ID", text: `TMDB has no ${what} with ID ${c.tmdb}.`, fix: ["map"] };
       case "mismatch":
@@ -440,9 +440,9 @@
 
   function renderFilters() {
     if (state.view === "cleanup") {
-      const lists = FEATURES.map((f) => `<option value="${f.id}"${f.id === state.cleanFeature ? " selected" : ""}>${esc(f.label)} · ${esc(num(state.health?.[f.id]?.attention))}</option>`).join("");
-      const health = HEALTH.map((h) => chip(`data-trk-health="${h.id}"`, `${h.label} · ${num(healthOf()[h.id])}`, { active: state.healthFilter === h.id, iconName: h.icon })).join("");
-      return `<select class="cw-select trk-clean-list" data-trk-input="clean-feature" aria-label="List to clean up">${lists}</select><div class="trk-seg" role="group" aria-label="TMDB health">${health}</div>`;
+      const lists = FEATURES.map((f) => `<option value="${f.id}"${f.id === state.cleanFeature ? " selected" : ""}>${esc(f.label)}</option>`).join("");
+      const health = HEALTH.map((h) => `<button type="button" class="trk-clean-health" data-trk-health="${h.id}" aria-pressed="${state.healthFilter === h.id}">${symbol(h.icon)}<span>${esc(h.label)}</span><b>${esc(num(healthOf()[h.id]))}</b></button>`).join("");
+      return `<select class="cw-select trk-clean-list" data-trk-input="clean-feature" aria-label="List to clean up">${lists}</select><div class="trk-clean-health-options" role="group" aria-label="TMDB health">${health}</div>`;
     }
     if (state.view === "shows") {
       return chip('data-trk-action="hide-dropped"', "Hide dropped", { active: state.hideDropped, iconName: "do_not_disturb_on", title: "Leave out shows you dropped" });
@@ -468,17 +468,10 @@
 
   function renderControls() {
     const placeholder = state.view === "shows" ? "Filter shows / S01 / S01E02..." : state.view === "titles" ? "Filter my titles..." : "Filter by title...";
-    const picked = state.picked.size;
-    const middle = picked
-      ? `<div class="cw-bulk trk-bulk" role="group" aria-label="Selection">
-          <span class="cw-bulk-count">${esc(plural(picked, "selected", "selected"))}</span>
-          <button type="button" class="cw-btn danger" data-trk-action="delete-picked">${icon("delete")}<span>Delete</span></button>
-          <button type="button" class="cw-btn" data-trk-action="clear-picked">Clear</button>
-        </div>`
-      : `<div class="trk-filters" role="group" aria-label="Filter">${renderFilters()}</div>`;
+    const middle = `<div class="trk-filters" role="group" aria-label="Filter">${renderFilters()}</div>`;
     return `
       <nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav>
-      <div class="trk-toolbar">
+      <div class="trk-toolbar${state.view === "cleanup" ? " trk-toolbar-cleanup" : ""}">
         <input class="cw-input trk-search" data-trk-input="q" value="${esc(state.q)}" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}">
         ${middle}
         <div class="trk-actions">
@@ -516,6 +509,14 @@
         <label class="cw-page-size-control"><span>Rows</span><select class="cw-select" data-trk-input="size" aria-label="Rows per page">${sizes}</select></label>
         ${nav}
       </div>`;
+  }
+
+  function renderSelection() {
+    return `<span class="cw-selection-count" aria-live="polite">${icon("check_box_outline_blank")}<strong>${esc(num(state.picked.size))}</strong><span>selected</span></span>
+      <button type="button" class="cw-selection-button" data-trk-action="pick-visible"${state.loading || state.picking ? " disabled" : ""}>${icon("visibility")}<span>Visible</span></button>
+      <button type="button" class="cw-selection-button" data-trk-action="pick-all"${state.loading || state.picking || state.total > 1000 ? " disabled" : ""} title="${state.total > 1000 ? "Select up to 1000 records at a time. Narrow the filters to select all results." : "Select every result matching these filters"}">${icon("checklist")}<span>${state.picking ? "Selecting…" : "All results"}</span></button>
+      <button type="button" class="cw-selection-button" data-trk-action="clear-picked">${icon("close")}<span>Clear</span></button>
+      <span class="cw-selection-actions"><button type="button" class="cw-selection-button is-danger" data-trk-action="delete-picked"${state.picking ? " disabled" : ""}>${icon("delete")}<span>Delete</span></button></span>`;
   }
 
   function emptyState(text, symbolName = "table_rows") {
@@ -1131,7 +1132,7 @@
     }
     return `
       <div class="ins-row"><div class="ins-icon">${symbol("health_and_safety")}</div><div class="ins-title">TMDB health</div><span class="cw-tag trk-tag ${tag[1]}"><span class="cw-tag-dot"></span><span>${esc(tag[0])}</span></span></div>
-      <p class="trk-note trk-health-note">Compares your records with TMDB to catch wrong matches, missing IDs and episodes TMDB doesn't know.</p>
+      <p class="trk-note trk-health-note">Checks your records against TMDB using TMDB, IMDb or TVDB IDs to catch wrong matches and missing episodes.</p>
       <div class="ins-row"><div class="ins-metrics"><div class="metric-row trk-metrics">${metrics}</div></div></div>
       ${footer}`;
   }
@@ -1171,6 +1172,14 @@
           </div>
         </div>`;
       sheet.el = null;
+      const selection = document.createElement("div");
+      selection.className = "cw-selection-bar";
+      selection.dataset.trkSlot = "selection-bar";
+      selection.setAttribute("role", "group");
+      selection.setAttribute("aria-label", "Selected tracker records");
+      selection.hidden = true;
+      root.querySelector(".cw-root").appendChild(selection);
+      new ResizeObserver(() => root.style.setProperty("--cw-selection-height", `${selection.offsetHeight}px`)).observe(selection);
       const filters = root.querySelector('[data-trk-slot="filters"]');
       const media = window.matchMedia?.(NARROW);
       const fold = () => { filters.open = !media?.matches; };
@@ -1191,6 +1200,12 @@
 
   function renderSlots(controls) {
     if (!state.root) return;
+    const selection = state.root.querySelector('[data-trk-slot="selection-bar"]');
+    const focusedAction = selection?.contains(document.activeElement) ? document.activeElement.dataset.trkAction : "";
+    if (state.picked.size) setSlot("selection-bar", renderSelection());
+    if (selection) selection.hidden = !state.picked.size;
+    window.CW?.SelectionBar?.update(selection, state.picked.size);
+    if (focusedAction && state.picked.size) selection?.querySelector(`[data-trk-action="${focusedAction}"]`)?.focus();
     setSlot("hero", renderHero());
     if (controls) {
       const focused = document.activeElement?.dataset?.trkInput === "q";
@@ -1439,6 +1454,8 @@
   }
 
   async function refresh() {
+    pickRequest += 1;
+    state.picking = false;
     clearTimeout(moveTimer);
     try {
       await loadSummary();
@@ -1464,6 +1481,8 @@
   }
 
   function reload(resetPage = true) {
+    pickRequest += 1;
+    state.picking = false;
     if (resetPage) state.offset = 0;
     state.month = "";
     loadMonths();
@@ -3114,6 +3133,40 @@
   }
 
   let searchTimer = 0;
+  let pickRequest = 0;
+
+  async function pickAllResults() {
+    if (state.loading || state.picking || state.total > 1000) return;
+    const restoreFocus = document.activeElement?.dataset?.trkAction === "pick-all";
+    const id = ++pickRequest;
+    const request = state.request;
+    state.picking = true;
+    renderSlots(false);
+    const keys = new Set();
+    try {
+      for (let offset = 0; offset < 1000; offset += 200) {
+        const params = new URLSearchParams({ feature: listFeature(), provider_instance: state.instance, q: state.q,
+          media: state.view === "cleanup" ? "" : state.media, sort: state.view === "cleanup" ? "title" : state.sort,
+          offset: String(offset), limit: "200" });
+        if (state.view === "cleanup" && state.healthFilter) params.set("health", state.healthFilter);
+        if (timelineOn() && state.month) params.set("month", state.month);
+        const data = await getJSON(`/api/tracker/items?${params}`);
+        if (id !== pickRequest || request !== state.request) return;
+        if (Number(data.total) > 1000) throw new Error("Select up to 1000 records at a time. Narrow the filters and try again.");
+        for (const item of data.items || []) keys.add(item.key);
+        if (!data.items?.length || offset + data.items.length >= Number(data.total)) break;
+      }
+      state.picked = keys;
+    } catch (err) {
+      if (id === pickRequest && request === state.request) toast.show(errorText(err), { tone: "bad" });
+    } finally {
+      if (id === pickRequest) {
+        state.picking = false;
+        renderSlots(false);
+        if (restoreFocus && document.activeElement === document.body) state.root.querySelector('[data-trk-action="pick-all"]')?.focus();
+      }
+    }
+  }
 
   function setAddMenu(open, { focus = true } = {}) {
     const menu = state.root?.querySelector(".trk-add-menu");
@@ -3240,9 +3293,17 @@
       else if (action === "check") startCheck();
       else if (action === "check-cancel") cancelCheck();
       else if (action === "delete-picked" && state.picked.size) openSheet("delete", { keys: Array.from(state.picked), feature: listFeature() });
+      else if (action === "pick-visible") {
+        state.items.forEach(item => state.picked.add(item.key));
+        renderSlots(false);
+      }
+      else if (action === "pick-all") pickAllResults();
       else if (action === "clear-picked") {
+        pickRequest += 1;
+        state.picking = false;
         state.picked.clear();
-        renderSlots(true);
+        renderSlots(false);
+        root.querySelector('[data-trk-pick]')?.focus();
       }
     });
     root.addEventListener("keydown", (event) => {

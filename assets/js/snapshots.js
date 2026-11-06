@@ -470,14 +470,14 @@ function bundleKey(s) {
             </div>
             <div id="ss-list" class="ss-list"></div>
             <div id="ss-list-footer" class="ss-row" style="justify-content:space-between;margin:10px 0 14px"></div>
-            <div id="ss-bulk" class="ss-bulk" hidden>
-              <span class="ss-bulk-count"><strong data-ss-count>0</strong><span>selected</span></span>
-              <button class="ss-bulk-btn" type="button" data-ss-bulk="visible"><span class="material-symbols-rounded" aria-hidden="true">select_all</span>Visible</button>
-              <button class="ss-bulk-btn" type="button" data-ss-bulk="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>Clear</button>
-              <span class="ss-bulk-actions">
-                <button class="ss-bulk-btn" type="button" data-ss-bulk="compare" title="Compare two captures"><span class="material-symbols-rounded" aria-hidden="true">compare_arrows</span>Compare</button>
-                <button class="ss-bulk-btn" type="button" data-ss-bulk="export"><span class="material-symbols-rounded" aria-hidden="true">download</span>Export</button>
-                <button class="ss-bulk-btn danger" type="button" data-ss-bulk="delete"><span class="material-symbols-rounded" aria-hidden="true">delete</span>Delete</button>
+            <div id="ss-bulk" class="ss-bulk cw-selection-bar" role="group" aria-label="Selected captures" hidden>
+              <span class="cw-selection-count" aria-live="polite"><span class="material-symbols-rounded" aria-hidden="true">check_box_outline_blank</span><strong data-ss-count>0</strong><span>selected</span></span>
+              <button class="cw-selection-button" type="button" data-ss-bulk="visible"><span class="material-symbols-rounded" aria-hidden="true">visibility</span>Visible</button>
+              <button class="cw-selection-button" type="button" data-ss-bulk="none"><span class="material-symbols-rounded" aria-hidden="true">close</span>Clear</button>
+              <span class="cw-selection-actions">
+                <button class="cw-selection-button" type="button" data-ss-bulk="compare" title="Compare two captures"><span class="material-symbols-rounded" aria-hidden="true">compare_arrows</span>Compare</button>
+                <button class="cw-selection-button" type="button" data-ss-bulk="export"><span class="material-symbols-rounded" aria-hidden="true">download</span>Export</button>
+                <button class="cw-selection-button is-danger" type="button" data-ss-bulk="delete"><span class="material-symbols-rounded" aria-hidden="true">delete</span>Delete</button>
               </span>
             </div>
           </div>
@@ -961,7 +961,8 @@ function bundleKey(s) {
     const picks = Array.isArray(state.diffPick) ? state.diffPick.filter(Boolean) : [];
     bar.hidden = picks.length === 0;
     const label = $("[data-ss-count]", bar);
-    if (label) label.textContent = String(picks.length);
+    if (label && picks.length) label.textContent = String(picks.length);
+    window.CW?.SelectionBar?.update(bar, picks.length);
     const compare = compareSelectionState();
     $$("[data-ss-bulk]", bar).forEach((btn) => {
       const isCompare = btn.dataset.ssBulk === "compare";
