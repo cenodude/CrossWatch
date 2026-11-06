@@ -3105,6 +3105,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/icon-select.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/profile-select.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/auth-state.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/account-menu.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/notifications.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/update-notifications.js?v=__CW_VERSION__" defer></script>
