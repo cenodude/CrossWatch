@@ -1420,6 +1420,7 @@
     if (!collectionSelectable()) {
       collectionState.selected.clear();
       if (bar) bar.hidden = true;
+      window.CW?.SelectionBar?.update(bar, 0);
       return;
     }
     grid?.querySelectorAll("article[data-collection-key]").forEach((node) => {
@@ -1432,7 +1433,8 @@
     if (!bar) return;
     bar.hidden = collectionState.selected.size === 0;
     const label = bar.querySelector("[data-collection-count]");
-    if (label) label.textContent = numberFmt.format(collectionState.selected.size);
+    if (label && collectionState.selected.size) label.textContent = numberFmt.format(collectionState.selected.size);
+    window.CW?.SelectionBar?.update(bar, collectionState.selected.size);
   }
 
   async function selectCollection(mode) {
@@ -2938,11 +2940,13 @@
       if (!selectable()) {
         state.selected.clear();
         bar.hidden = true;
+        window.CW?.SelectionBar?.update(bar, 0);
         return;
       }
       bar.hidden = state.selected.size === 0;
       const label = bar.querySelector("[data-timeline-count]");
-      if (label) label.textContent = count(state.selected.size);
+      if (label && state.selected.size) label.textContent = count(state.selected.size);
+      window.CW?.SelectionBar?.update(bar, state.selected.size);
     }
 
     async function selectResults(mode) {
@@ -3895,11 +3899,13 @@
       if (!canAct()) {
         state.selected.clear();
         bar.hidden = true;
+        window.CW?.SelectionBar?.update(bar, 0);
         return;
       }
       bar.hidden = state.selected.size === 0;
       const label = bar.querySelector("[data-playback-count]");
-      if (label) label.textContent = count(state.selected.size);
+      if (label && state.selected.size) label.textContent = count(state.selected.size);
+      window.CW?.SelectionBar?.update(bar, state.selected.size);
     }
 
     function tile(tone, icon, label, note, value, filter = null) {

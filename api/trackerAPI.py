@@ -63,8 +63,8 @@ def _instances(cfg: Mapping[str, Any], user: Mapping[str, Any] | None = None) ->
         inst = normalize_instance_id(raw)
         if any(row["id"] == inst for row in out) or not user_can_access_instance(cfg, user, "CROSSWATCH", inst):
             continue
-        block = get_provider_block(cfg, "crosswatch", inst) if inst != "default" else {}
-        label = sanitize_instance_label((block or {}).get("label")) if inst != "default" else ""
+        block = get_provider_block(cfg, "crosswatch", inst)
+        label = sanitize_instance_label((block or {}).get("label"))
         out.append({"id": inst, "label": label or ("Default" if inst == "default" else inst)})
     return out if out or user else [{"id": "default", "label": "Default"}]
 
