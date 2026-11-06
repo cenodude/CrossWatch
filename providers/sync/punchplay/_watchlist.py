@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from .._pagination import PageGuard, page_numbers
+
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
@@ -125,12 +127,9 @@ def _row_is_watchlist(row: Mapping[str, Any]) -> bool:
 def watchlist_ids(adapter: Any) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     cursor: str | None = None
-    guard = 0
-    while True:
-        guard += 1
-        if guard > 200:
-            _warn(FEATURE, "list_page_guard_tripped")
-            raise PunchPlayError("punchplay_watchlist_lists_page_guard_tripped")
+    seen_cursors: set[str] = set()
+    guard = PageGuard(PunchPlayError, "punchplay_repeated_page")
+    for _ in page_numbers():
         params: dict[str, Any] = {"limit": 100}
         if cursor:
             params["cursor"] = cursor
@@ -145,6 +144,7 @@ def watchlist_ids(adapter: Any) -> list[dict[str, Any]]:
         if not isinstance(rows, list):
             raise PunchPlayError("punchplay_watchlist_lists_invalid_response")
         rows = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
+        guard.check(rows)
         for row in rows:
             if not row.get("isWatchlist"):
                 continue
@@ -155,8 +155,9 @@ def watchlist_ids(adapter: Any) -> list[dict[str, Any]]:
         nxt = data.get("nextCursor") or None
         if not nxt:
             break
-        if nxt == cursor:
+        if nxt in seen_cursors or not rows:
             raise PunchPlayError("punchplay_watchlist_lists_repeated_cursor")
+        seen_cursors.add(nxt)
         cursor = nxt
     return out
 
@@ -191,12 +192,8 @@ def _index_list_detail(adapter: Any, list_id: Any, collected: dict[str, dict[str
 
 def _index_dynamic_items(adapter: Any, list_id: Any, collected: dict[str, dict[str, Any]]) -> None:
     offset = 0
-    guard = 0
-    while True:
-        guard += 1
-        if guard > 2000:
-            _warn(FEATURE, "items_page_guard_tripped", list_id=list_id)
-            raise PunchPlayError("punchplay_watchlist_items_page_guard_tripped")
+    guard = PageGuard(PunchPlayError, "punchplay_repeated_page")
+    for _ in page_numbers():
         resp = punchplay_request(
             adapter,
             "GET",
@@ -212,15 +209,16 @@ def _index_dynamic_items(adapter: Any, list_id: Any, collected: dict[str, dict[s
         rows = data.get("items")
         if not isinstance(rows, list):
             raise PunchPlayError("punchplay_watchlist_items_invalid_response")
+        guard.check(rows)
         row_count, _added = _collect_rows(rows, collected)
         nxt = data.get("nextOffset")
-        try:
-            nxt_i = int(nxt) if nxt is not None else None
-        except Exception:
-            nxt_i = None
-        if nxt_i is None or row_count <= 0:
+        if nxt is None:
             break
-        if nxt_i <= offset:
+        try:
+            nxt_i = int(nxt)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise PunchPlayError("punchplay_watchlist_items_invalid_continuation") from exc
+        if nxt_i <= offset or row_count <= 0:
             raise PunchPlayError("punchplay_watchlist_items_invalid_continuation")
         offset = nxt_i
 

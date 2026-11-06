@@ -152,9 +152,7 @@ class PUBLICMETADBConfig:
     rate_post_per_sec: float = 3.0
     watchlist_page_size: int = 500
     history_per_page: int = 500
-    history_max_pages: int = 1000
     progress_per_page: int = 500
-    progress_max_pages: int = 1000
     ratings_label: str = "Overall"
     ratings_submit_per_hour: int = 200
     ratings_update_per_hour: int = 100
@@ -293,9 +291,7 @@ class PUBLICMETADBModule:
             rate_post_per_sec=_float("post_per_sec", 3.0, 3.0),
             watchlist_page_size=_int_range("watchlist_page_size", 500, 1, 500),
             history_per_page=_int_range("history_per_page", 500, 1, 500),
-            history_max_pages=int(p.get("history_max_pages", 1000) or 1000),
             progress_per_page=_int_range("progress_per_page", 500, 1, 500),
-            progress_max_pages=int(p.get("progress_max_pages", 1000) or 1000),
             ratings_label=str(p.get("ratings_label") or "Overall").strip() or "Overall",
             ratings_submit_per_hour=_int_range("ratings_submit_per_hour", 200, 1, 200),
             ratings_update_per_hour=_int_range("ratings_update_per_hour", 100, 1, 100),

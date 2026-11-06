@@ -266,6 +266,69 @@ def test_history_index_follows_pagination():
     assert len(_history.build_index(adapter)) == 2
 
 
+@pytest.mark.parametrize("total", [50_000, 50_001])
+def test_history_index_reads_past_old_page_cap(total: int):
+    def page(kw: Any) -> ResponseStub:
+        number = kw["params"]["page"]
+        size = kw["params"]["page_size"]
+        start = (number - 1) * size
+        return ResponseStub(200, {
+            "results": [history_row(id=i + 1) for i in range(start, min(start + size, total))],
+            "total_pages": (total + size - 1) // size,
+            "total_results": total,
+        })
+
+    adapter = FakeAdapter({("GET", "history"): page})
+    adapter.config["scrob"]["history_max_pages"] = 1
+
+    index = _history.build_index(adapter)
+
+    assert len(index) == total
+    assert {row["_scrob_history_id"] for row in index.values()} == {str(i) for i in range(1, total + 1)}
+    assert [call["params"]["page"] for call in adapter.calls] == list(range(1, (total + 99) // 100 + 1))
+
+
+def test_history_index_rejects_changing_total():
+    from providers.sync.scrob._common import ScrobError
+
+    def page(kw: Any) -> ResponseStub:
+        number = kw["params"]["page"]
+        return ResponseStub(200, {"results": [history_row(id=number)], "total_pages": 3, "total_results": number + 2})
+
+    with pytest.raises(ScrobError, match="scrob_history_total_changed:3->4"):
+        _history.build_index(FakeAdapter({("GET", "history"): page}))
+
+
+def test_history_index_rejects_missing_rows_on_last_page():
+    from providers.sync.scrob._common import ScrobError
+
+    adapter = FakeAdapter({("GET", "history"): ResponseStub(200, {
+        "results": [history_row()], "total_pages": 1, "total_results": 2,
+    })})
+
+    with pytest.raises(ScrobError, match="scrob_history_incomplete_read:1/2"):
+        _history.build_index(adapter)
+
+
+def test_history_index_can_be_cancelled_between_pages(monkeypatch: pytest.MonkeyPatch):
+    from cw_platform.run_control import SyncCancelled
+    from providers.sync.scrob import _common
+
+    adapter = FakeAdapter({("GET", "history"): ResponseStub(200, {
+        "results": [history_row()], "total_pages": 2, "total_results": 2,
+    })})
+
+    def cancel():
+        if adapter.calls:
+            raise SyncCancelled()
+
+    monkeypatch.setattr(_common, "raise_if_cancelled", cancel)
+
+    with pytest.raises(SyncCancelled):
+        _history.build_index(adapter)
+    assert len(adapter.calls) == 1
+
+
 def test_history_add_sends_watched_at_for_movies():
     adapter = FakeAdapter({("POST", "history"): ResponseStub(200, {"status": "ok"})})
     item = {"type": "movie", "ids": {"tmdb": "550"}, "watched_at": "2026-08-01T20:00:00.000Z", "_cw_event_key": "tmdb:550@1754078400"}

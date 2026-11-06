@@ -27,13 +27,11 @@ MIGRATION_OVERRIDE_KEYS: tuple[str, ...] = (
     "mdblist.watchlist_batch_size",
     "mdblist.watchlist_freeze_details",
     "mdblist.ratings_per_page",
-    "mdblist.ratings_max_pages",
     "mdblist.ratings_chunk_size",
     "mdblist.ratings_write_delay_ms",
     "mdblist.ratings_max_backoff_ms",
     "mdblist.ratings_since",
     "mdblist.history_per_page",
-    "mdblist.history_max_pages",
     "mdblist.history_chunk_size",
     "mdblist.history_write_delay_ms",
     "mdblist.history_max_backoff_ms",
@@ -50,21 +48,17 @@ MIGRATION_OVERRIDE_KEYS: tuple[str, ...] = (
 
     # Tautulli
     "tautulli.history.per_page",
-    "tautulli.history.max_pages",
 
     # Tracearr
     "tracearr.history.per_page",
-    "tracearr.history.max_pages",
 
     # Trakt
     "trakt.rate_limit.get_per_sec",
     "trakt.rate_limit.post_per_sec",
     "trakt.watchlist_batch_size",
     "trakt.ratings_per_page",
-    "trakt.ratings_max_pages",
     "trakt.ratings_chunk_size",
     "trakt.history_per_page",
-    "trakt.history_max_pages",
     "trakt.history_chunk_size",
 
     # Jellyfin

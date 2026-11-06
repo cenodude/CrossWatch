@@ -5,10 +5,10 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from providers.sync.trakt._common import TraktPager
+
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._mod_TRAKT import OPS as TRAKT_OPS, TRAKTModule
-from providers.sync.trakt._pagination import TraktPager
-
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
 from .base import PlaybackProgressAdapter, public_failure, rating_from_sources
 
@@ -193,7 +193,7 @@ class TraktPlaybackAdapter(PlaybackProgressAdapter):
             rows: list[Mapping[str, Any]] = []
             seen_ids: set[str] = set()
             for kind in ("movies", "episodes"):
-                pager = TraktPager("progress", 100)
+                pager = TraktPager("progress", check_cancel=False)
                 page = 1
                 while True:
                     response = module.client.get(

@@ -59,7 +59,7 @@ def test_collection_index_keeps_flat_episode_bucket_scope(monkeypatch) -> None:
     monkeypatch.setattr(collection, "_shadow_save", lambda _items: None)
     monkeypatch.setattr(collection, "save_watermark", lambda *_args, **_kwargs: None)
 
-    idx = collection.build_index(_adapter(), per_page=100, max_pages=1)
+    idx = collection.build_index(_adapter(), per_page=100)
 
     assert sorted(idx) == ["tmdb:73679#s01e01", "tmdb:73679#s01e02"]
     assert idx["tmdb:73679#s01e01"]["type"] == "episode"
@@ -89,7 +89,7 @@ def test_collection_index_reads_nested_episode_rows(monkeypatch) -> None:
     monkeypatch.setattr(collection, "_shadow_save", lambda _items: None)
     monkeypatch.setattr(collection, "save_watermark", lambda *_args, **_kwargs: None)
 
-    idx = collection.build_index(_adapter(), per_page=100, max_pages=1)
+    idx = collection.build_index(_adapter(), per_page=100)
 
     item = idx["tmdb:69478#s06e02"]
     assert item["type"] == "episode"

@@ -11,6 +11,8 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from ._common import (
+    TraktPager,
+    TraktPaginationError,
     ids_for_trakt,
     key_of,
     normalize_watchlist_row,
@@ -26,7 +28,6 @@ from ._common import (
 )
 from cw_platform.id_map import migrate_media_index, minimal as id_minimal
 from .._log import log as cw_log
-from ._pagination import TraktPager, TraktPaginationError
 
 BASE = "https://api.trakt.tv"
 URL_RAT_MOV = f"{BASE}/sync/ratings/movies"
@@ -236,12 +237,11 @@ def _fetch_bucket(
     url: str,
     typ_hint: str,
     per_page: int,
-    max_pages: int,
     tmo: float,
     rr: int,
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    pager = TraktPager("ratings", max_pages)
+    pager = TraktPager("ratings")
     page = 1
     while True:
         for attempt in range(max(int(rr or 0), 0) + 1):
@@ -348,10 +348,9 @@ def _dedupe_canonical(items: Iterable[dict[str, Any]]) -> dict[str, dict[str, An
     return idx
 
 
-def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 50) -> dict[str, dict[str, Any]]:
+def build_index(adapter: Any, *, per_page: int = 250) -> dict[str, dict[str, Any]]:
     per_page = int(getattr(adapter.cfg, "ratings_per_page", per_page) or per_page)
     per_page = max(1, min(per_page, _MAX_PAGE_SIZE))
-    max_pages = int(getattr(adapter.cfg, "ratings_max_pages", max_pages) or max_pages)
 
     sess = adapter.client.session
     headers = headers_for_adapter(adapter)
@@ -379,10 +378,10 @@ def build_index(adapter: Any, *, per_page: int = 250, max_pages: int = 50) -> di
         _info("index_done", count=len(cached_items), source="cache")
         return cached_items
 
-    movies = _fetch_bucket(sess, headers, URL_RAT_MOV, "movie", per_page, max_pages, tmo, rr)
-    shows = _fetch_bucket(sess, headers, URL_RAT_SHO, "show", per_page, max_pages, tmo, rr)
-    seasons = _fetch_bucket(sess, headers, URL_RAT_SEA, "season", per_page, max_pages, tmo, rr)
-    episodes = _fetch_bucket(sess, headers, URL_RAT_EPI, "episode", per_page, max_pages, tmo, rr)
+    movies = _fetch_bucket(sess, headers, URL_RAT_MOV, "movie", per_page, tmo, rr)
+    shows = _fetch_bucket(sess, headers, URL_RAT_SHO, "show", per_page, tmo, rr)
+    seasons = _fetch_bucket(sess, headers, URL_RAT_SEA, "season", per_page, tmo, rr)
+    episodes = _fetch_bucket(sess, headers, URL_RAT_EPI, "episode", per_page, tmo, rr)
 
     all_items = movies + shows + seasons + episodes
     _dbg("index_fetch_counts", count=len(all_items), movies=len(movies), shows=len(shows), seasons=len(seasons), episodes=len(episodes), source="current")

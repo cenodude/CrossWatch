@@ -161,7 +161,9 @@ def pages(adapter: Any, path: str, *, from_date: str | None = None,
     seen: set[str] = set()
     expected_total: int | None = None
     expected_pages: int | None = None
-    for page in range(1, 10001):
+    page = 0
+    while True:
+        page += 1
         raise_if_cancelled()
         params: dict[str, Any] = {"page": page, "limit": DELTA_PAGE_SIZE if from_date is not None else READ_PAGE_SIZE}
         if from_date is not None:
@@ -174,7 +176,7 @@ def pages(adapter: Any, path: str, *, from_date: str | None = None,
         total_pages = int_value(headers.get("x-pagination-page-count"))
         total = int_value(headers.get("x-pagination-item-count"))
         returned_page = int_value(headers.get("x-pagination-page"), page)
-        if total_pages < 0 or total < 0 or (total_pages == 0 and (rows or total)) or returned_page != page or total_pages > 10000:
+        if total_pages < 0 or total < 0 or (total_pages == 0 and (rows or total)) or returned_page != page:
             raise WeTrakrSyncError("invalid_pagination")
         if expected_pages is not None and (total_pages != expected_pages or total != expected_total):
             raise WeTrakrSyncError("snapshot_changed")
@@ -192,7 +194,6 @@ def pages(adapter: Any, path: str, *, from_date: str | None = None,
             if total >= 0 and len(out) != total:
                 raise WeTrakrSyncError("incomplete_snapshot")
             return out
-    raise WeTrakrSyncError("pagination_limit")
 
 
 def cache_path(adapter: Any, feature: str) -> Path:
@@ -318,7 +319,10 @@ def journal_rows(adapter: Any, feature: str, since: str) -> tuple[list[Mapping[s
     latest = checkpoint
     expected: tuple[int, int] | None = None
     seen: set[str] = set()
-    for page in range(1, 10001):
+    page = 0
+    while True:
+        page += 1
+        raise_if_cancelled()
         response = request(adapter, "GET", "/sync/journal", params={"from_date": since, "category": category, "page": page, "limit": 1000})
         data = body_of(response)
         batch = data.get("journal") if isinstance(data, Mapping) else None
@@ -327,7 +331,7 @@ def journal_rows(adapter: Any, feature: str, since: str) -> tuple[list[Mapping[s
         headers = {str(k).lower(): v for k, v in response.headers.items()}
         count = int_value(headers.get("x-pagination-item-count"))
         pages_count = int_value(headers.get("x-pagination-page-count"))
-        if (count < 0 or not 0 <= pages_count <= 10000 or (pages_count == 0 and (batch or count))
+        if (count < 0 or pages_count < 0 or (pages_count == 0 and (batch or count))
                 or int_value(headers.get("x-pagination-page")) != page):
             raise WeTrakrSyncError("invalid_journal_pagination")
         if expected is not None and expected != (count, pages_count):
@@ -353,7 +357,6 @@ def journal_rows(adapter: Any, feature: str, since: str) -> tuple[list[Mapping[s
             return rows, latest.isoformat().replace("+00:00", "Z")
         if not batch:
             raise WeTrakrSyncError("incomplete_journal")
-    raise WeTrakrSyncError("journal_pagination_limit")
 
 
 def journal_worthwhile(size: int, extra_reads: int = 0) -> bool:

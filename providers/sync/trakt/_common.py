@@ -3,21 +3,67 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping, NoReturn
 
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
-from cw_platform.run_control import cancel_requested
+from cw_platform.run_control import cancel_requested, raise_if_cancelled
 
 from .._mod_common import request_with_retries
 from .._log import log as cw_log
-from ._pagination import TraktPager
+
+
+class TraktPaginationError(RuntimeError):
+    pass
+
+
+class TraktPager:
+    def __init__(self, feature: str, *, check_cancel: bool = True) -> None:
+        self.feature = feature
+        self.check_cancel = check_cancel
+        self.seen: set[bytes] = set()
+
+    def _fail(self, reason: str, page: int, **fields: Any) -> NoReturn:
+        cw_log("TRAKT", self.feature, "warn", "pagination_incomplete", reason=reason, page=page, **fields)
+        raise TraktPaginationError(f"Trakt {self.feature} pagination incomplete: {reason} on page {page}")
+
+    def read(self, response: Any, page: int, *, bucket: str | None = None) -> list[Any]:
+        if self.check_cancel:
+            raise_if_cancelled()
+        if response.status_code != 200:
+            self._fail("http_failed", page, status=response.status_code)
+        try:
+            rows = response.json()
+        except Exception:
+            self._fail("invalid_json", page)
+        if bucket and isinstance(rows, Mapping):
+            rows = rows.get(bucket)
+        if not isinstance(rows, list):
+            self._fail("invalid_response", page)
+        headers = {str(k).lower(): v for k, v in (getattr(response, "headers", None) or {}).items()}
+        cw_log(
+            "TRAKT", self.feature, "debug", "index_page", page=page, rows=len(rows),
+            reported_pages=headers.get("x-pagination-page-count"),
+            reported_items=headers.get("x-pagination-item-count"),
+            applied_limit=headers.get("x-pagination-limit"),
+        )
+        if not rows:
+            return []
+        fingerprint = hashlib.sha256(
+            json.dumps(sorted(json.dumps(row, sort_keys=True) for row in rows)).encode("utf-8")
+        ).digest()
+        if fingerprint in self.seen:
+            self._fail("repeated_page", page)
+        self.seen.add(fingerprint)
+        return rows
+
 
 # headers
 def _user_agent() -> str:
@@ -373,7 +419,7 @@ def load_dropped_show_tokens(adapter: Any) -> set[str]:
     tokens: set[str] = set()
     page = 1
     limit = 250
-    pager = TraktPager("dropped", 100)
+    pager = TraktPager("dropped")
     while True:
         try:
             r = adapter.client.get(

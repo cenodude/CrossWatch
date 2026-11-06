@@ -9,6 +9,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from .._pagination import PageGuard, page_numbers
+
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.playlists import (
     PLAYLIST_KIND_REGULAR,
@@ -50,7 +52,6 @@ URL_PUBLIC_LIST = f"{API_V3_BASE}/lists/{{id}}"
 URL_PUBLIC_ITEMS = f"{API_V3_BASE}/lists/{{id}}/items"
 URL_USER_LISTS = f"{API_V3_BASE}/users/{{username}}/lists"
 PUBLIC_PAGE = 100
-PUBLIC_MAX_PAGES = 200
 _HOSTS = {"flicklist.tv", "www.flicklist.tv"}
 _SNAPSHOT_MEMO_TTL = 6 * 3600.0
 _SNAPSHOT_MEMO_MAX = 16
@@ -261,7 +262,8 @@ def _public_items(adapter: Any, resource: PlaylistResource) -> list[PlaylistItem
     raw_rows = 0
     expected: int | None = None
     listed = resource.extra.get("item_count")
-    for page in range(1, PUBLIC_MAX_PAGES + 1):
+    guard = PageGuard(FlickListPlaylistError, "flicklist repeated list page")
+    for page in page_numbers():
         resp = flicklist_request(adapter, "GET", URL_PUBLIC_ITEMS.format(id=resource.id), params={"page": page, "limit": PUBLIC_PAGE})
         if int(resp.status_code) in (400, 404):
             raise _unavailable(resource)
@@ -275,6 +277,7 @@ def _public_items(adapter: Any, resource: PlaylistResource) -> list[PlaylistItem
         expected = count if count is not None else expected
         if not rows and page_count is not None and page < page_count:
             raise FlickListPlaylistError("flicklist list page incomplete")
+        guard.check(rows)
         raw_rows += len(rows)
         for row in rows:
             item = _item_from_row(row)
@@ -283,8 +286,6 @@ def _public_items(adapter: Any, resource: PlaylistResource) -> list[PlaylistItem
                 items.append(item)
         if not rows or (page_count is not None and page >= page_count) or (page_count is None and len(rows) < PUBLIC_PAGE):
             break
-    else:
-        raise FlickListPlaylistError("flicklist list too large")
     if expected is None and isinstance(listed, int) and not isinstance(listed, bool):
         expected = listed
     if expected is not None and raw_rows != expected:
@@ -341,7 +342,8 @@ def _user_list(adapter: Any, username: str, slug: str) -> PlaylistResource:
             if res.extra.get("slug") == slug:
                 return res
         raise PlaylistUnavailableError(f"The FlickList list {slug} no longer exists")
-    for page in range(1, PUBLIC_MAX_PAGES + 1):
+    guard = PageGuard(FlickListPlaylistError, "flicklist repeated list page")
+    for page in page_numbers():
         resp = flicklist_request(adapter, "GET", URL_USER_LISTS.format(username=username), params={"page": page, "limit": PUBLIC_PAGE})
         if int(resp.status_code) == 404:
             raise PlaylistUnavailableError(f"The FlickList user {username} does not exist")
@@ -350,6 +352,7 @@ def _user_list(adapter: Any, username: str, slug: str) -> PlaylistResource:
         rows = safe_json(resp)
         if not isinstance(rows, list):
             raise FlickListPlaylistError("flicklist user lists invalid")
+        guard.check(rows)
         for row in rows:
             if isinstance(row, Mapping) and str(row.get("slug") or "") == slug:
                 res = _public_resource(adapter, row)

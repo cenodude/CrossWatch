@@ -12,6 +12,7 @@ import requests
 
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.provider_instances import resolve_provider_block
+from cw_platform.run_control import raise_if_cancelled
 
 from .._log import log as cw_log
 from .._mod_common import SimpleRateLimiter
@@ -371,16 +372,14 @@ def item_from_media(media: Mapping[str, Any]) -> dict[str, Any] | None:
     return out
 
 
-def paged_get(adapter: Any, path: str, *, feature: str, page_size: int, max_pages: int, params: Mapping[str, Any] | None = None) -> list[Mapping[str, Any]]:
+def paged_get(adapter: Any, path: str, *, feature: str, page_size: int, params: Mapping[str, Any] | None = None) -> list[Mapping[str, Any]]:
     rows: list[Mapping[str, Any]] = []
     page = 1
     size = max(1, min(int(page_size or HISTORY_PAGE_MAX), HISTORY_PAGE_MAX))
     total: int | None = None
     seen_pages: set[tuple[str, ...]] = set()
     while True:
-        if max_pages and page > max_pages:
-            _warn(feature, "index_page_cap_hit", max_pages=max_pages)
-            raise ScrobError(f"scrob_{feature}_page_cap_reached:{max_pages}")
+        raise_if_cancelled()
         query = dict(params or {})
         query.update({"page": page, "page_size": size})
         resp = scrob_request(adapter, "GET", path, params=query)

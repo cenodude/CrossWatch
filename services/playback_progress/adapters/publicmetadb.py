@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping, cast
 
+from providers.sync._pagination import PageGuard, page_numbers
+
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.metadata._meta_TMDB import TmdbProvider
 from providers.sync._mod_PUBLICMETADB import OPS as PUBLICMETADB_OPS, PUBLICMETADBModule
@@ -229,11 +231,12 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
     ) -> PlaybackListResult:
         try:
             module = PUBLICMETADBModule(config_view)
-            page = 1
             per_page = max(1, min(int(getattr(module.cfg, "progress_per_page", 100) or 100), 500))
-            max_pages = max(1, int(getattr(module.cfg, "progress_max_pages", 1000) or 1000))
             rows: list[Mapping[str, Any]] = []
-            while page <= max_pages:
+            guard = PageGuard(RuntimeError, "publicmetadb_progress_repeated_page", check_cancel=False)
+            expected: int | None = None
+            pages: int | None = None
+            for page in page_numbers(check_cancel=False):
                 response = module.client.get("/api/external/resume", params={"page": page, "perPage": per_page})
                 if not (200 <= response.status_code < 300):
                     return PlaybackListResult(
@@ -247,13 +250,23 @@ class PublicMetaDBPlaybackAdapter(PlaybackProgressAdapter):
                     )
                 data = module.client.safe_json(response)
                 page_rows = _rows(data)
-                if not page_rows:
-                    break
-                rows.extend(page_rows)
+                if not isinstance(data, list) and not (isinstance(data, Mapping) and any(isinstance(data.get(key), list) for key in ("items", "results", "data"))):
+                    raise RuntimeError("publicmetadb_progress_invalid_response")
+                total = _int(data.get("total")) if isinstance(data, Mapping) else None
                 total_pages = _int(data.get("totalPages") or data.get("total_pages")) if isinstance(data, Mapping) else None
-                if total_pages is None or page >= total_pages:
+                if (expected is not None and total is not None and expected != total) or (pages is not None and total_pages is not None and total_pages != pages):
+                    raise RuntimeError("publicmetadb_progress_snapshot_changed")
+                expected = total if total is not None else expected
+                pages = total_pages if total_pages is not None else pages
+                guard.check(page_rows)
+                if not page_rows and ((pages is not None and page < pages) or (expected is not None and len(rows) < expected)):
+                    raise RuntimeError("publicmetadb_progress_incomplete_read")
+                rows.extend(page_rows)
+                if pages is None or page >= pages:
                     break
-                page += 1
+
+            if expected is not None and len(rows) != expected:
+                raise RuntimeError("publicmetadb_progress_incomplete_read")
 
             caps = self.capabilities(config_view, instance_id=instance_id, instance_label=instance_label)
             metadata = tmdb_metadata_provider(config_view)

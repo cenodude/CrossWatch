@@ -82,7 +82,7 @@ def title_resolver(token: str, check_cancel: Callable[[], None]) -> Callable[[Ma
 
 
 def scan(adapter: Any, *, progress: Callable[..., None], check_cancel: Callable[[], None],
-         max_rows: int = 50_000) -> list[dict[str, Any]]:
+         max_rows: int | None = None) -> list[dict[str, Any]]:
     need, switched, aid, uname = common.home_scope_enter(adapter)
     try:
         if need and not switched:
@@ -201,7 +201,7 @@ def scan(adapter: Any, *, progress: Callable[..., None], check_cancel: Callable[
                               "original_group": _source_group(raw, original),
                               "original_year": common._row_get(raw, "grandparentYear") if item.get("type") == "episode" else original.get("year"),
                               "original_title": original.get("series_title") or original.get("title")})
-            if len(recovered) > max_rows:
+            if max_rows is not None and len(recovered) > max_rows:
                 raise RuntimeError(f"More than {max_rows:,} removed watch events. Narrow the configured history library scope.")
             result = "Found for review"
             if not identity:

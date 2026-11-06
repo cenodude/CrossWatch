@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
+from .._pagination import PageGuard, page_numbers
+
 import requests
 
 from .._log import log as cw_log
@@ -551,12 +553,8 @@ def snapshot_pages(adapter: Any, resource: str, *, feature: str, limit: int = PA
         raise PunchPlayError(f"unsupported snapshot resource: {resource}")
     after = 0
     page_size = max(1, min(int(limit or PAGE_MAX), PAGE_MAX))
-    guard = 0
-    while True:
-        guard += 1
-        if guard > 10000:
-            _warn(feature, "snapshot_page_guard_tripped", resource=resource)
-            raise PunchPlayError(f"punchplay_{feature}_snapshot_page_guard_tripped")
+    guard = PageGuard(PunchPlayError, "punchplay_repeated_page")
+    for _ in page_numbers():
         resp = punchplay_request(
             adapter,
             "GET",
@@ -574,6 +572,7 @@ def snapshot_pages(adapter: Any, resource: str, *, feature: str, limit: int = PA
         if not isinstance(rows, list):
             raise PunchPlayError(f"punchplay_{feature}_snapshot_invalid_response")
         rows = [r for r in rows if isinstance(r, Mapping)] if isinstance(rows, list) else []
+        guard.check(rows)
         if rows:
             yield rows
         if not data.get("hasMore"):
@@ -583,7 +582,7 @@ def snapshot_pages(adapter: Any, resource: str, *, feature: str, limit: int = PA
             nxt_int = int(nxt) if nxt is not None else None
         except Exception:
             nxt_int = None
-        if nxt_int is None or nxt_int <= after:
+        if nxt_int is None or nxt_int <= after or not rows:
             _warn(feature, "snapshot_invalid_continuation", resource=resource, after=after, next_after=nxt)
             raise PunchPlayError(f"punchplay_{feature}_snapshot_invalid_continuation")
         after = nxt_int

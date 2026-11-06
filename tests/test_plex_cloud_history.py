@@ -69,6 +69,16 @@ def test_pagination_keeps_rewatches_and_reuses_metadata(remote):
     assert [c for c in remote.calls if c[0] == "page"][1][1]["after"] == "next"
 
 
+def test_cloud_history_reads_beyond_10000_pages(remote):
+    node = remote.pages[0]["nodes"][0]
+    remote.pages = [{"nodes": [dict(node, id=f"play{i}")],
+                     "pageInfo": {"hasNextPage": i < 10001, "endCursor": str(i)}}
+                    for i in range(1, 10002)]
+    rows, unmatched = cloud.read(remote.adapter)
+    assert len(rows) == 10001 and unmatched == 0
+    assert remote.closed
+
+
 @pytest.mark.parametrize("failure", ["page", "cursor", "metadata"])
 def test_failed_read_never_returns_partial_history(remote, failure):
     if failure == "metadata":

@@ -128,11 +128,12 @@ def test_tracker_startup_second_is_closed():
     assert tracker.fresh("u", later + _rows(("f", BASE + 45)), BASE + 70, 150) == ["f"]
 
 
-def test_played_pages_continue_across_watermark_ties(monkeypatch):
-    played: dict[str, list[dict[str, Any]]] = {"u1": [_row(f"m{i:03}", f"Movie {i}", BASE) for i in range(51)]}
+@pytest.mark.parametrize("count", [51, 201])
+def test_played_pages_continue_across_watermark_ties_with_bounded_poll(monkeypatch, count):
+    played: dict[str, list[dict[str, Any]]] = {"u1": [_row(f"m{i:03}", f"Movie {i}", BASE) for i in range(count)]}
     service, _ = _service(monkeypatch, played)
     watermark = parse_epoch(played["u1"][0]["UserData"]["LastPlayedDate"])
-    assert len(service._mark_played_rows("u1", service._active_cfg(), watermark)) == 51
+    assert len(service._mark_played_rows("u1", service._active_cfg(), watermark)) == min(count, 200)
 
 
 def test_tracker_keeps_marks_that_share_the_watermark_second():

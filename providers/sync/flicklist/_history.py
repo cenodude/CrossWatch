@@ -5,6 +5,8 @@ import json
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from .._pagination import PageGuard, page_numbers
+
 from ._common import (
     FlickListError,
     HISTORY_PAGE_DEFAULT,
@@ -228,19 +230,19 @@ def _supplement_watched_shows(adapter: Any, out: dict[str, dict[str, Any]]) -> t
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     section = cfg_section(adapter) or {}
     per_page = max(1, min(cfg_int(section, "history_per_page", HISTORY_PAGE_DEFAULT), HISTORY_PAGE_MAX))
-    max_pages = max(1, cfg_int(section, "history_max_pages", 500))
     out: dict[str, dict[str, Any]] = {}
     skipped = 0
-    page = 1
     raw_rows = 0
     item_count: int | None = None
-    while page <= max_pages:
+    guard = PageGuard(FlickListError, "flicklist_history_repeated_page")
+    for page in page_numbers():
         resp = flicklist_request(adapter, "GET", URL_HISTORY, params={"page": page, "limit": per_page})
         if not ok_status(resp):
             _warn(FEATURE, "index_failed", page=page, status=int(resp.status_code), error=error_of(resp))
             raise FlickListError(f"flicklist_history_http_{int(resp.status_code)}")
         data = safe_json(resp)
         rows = _rows(data)
+        guard.check(rows)
         page_items = header_int(resp, "X-FlickList-Item-Count")
         if item_count is not None and page_items is not None and page_items != item_count:
             raise FlickListError(f"flicklist_history_total_changed:{item_count}->{page_items}")
@@ -271,10 +273,6 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         page_count = _response_page_count(resp, data, page)
         if page >= page_count:
             break
-        page += 1
-    else:
-        _warn(FEATURE, "index_page_cap_reached", max_pages=max_pages, count=len(out))
-        raise FlickListError(f"flicklist_history_page_cap_reached:{max_pages}")
     if item_count is not None and raw_rows != item_count:
         raise FlickListError(f"flicklist_history_incomplete_read:{raw_rows}/{item_count}")
     if not any((item.get("type") == "movie") for item in out.values()):

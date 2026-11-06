@@ -99,9 +99,8 @@ def _event_key(item: Mapping[str, Any]) -> str:
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     section = cfg_section(adapter) or {}
     per_page = max(1, min(cfg_int(section, "history_per_page", HISTORY_PAGE_MAX), HISTORY_PAGE_MAX))
-    max_pages = cfg_int(section, "history_max_pages", 500)
 
-    rows = paged_get(adapter, PATH_HISTORY, feature=FEATURE, page_size=per_page, max_pages=max_pages)
+    rows = paged_get(adapter, PATH_HISTORY, feature=FEATURE, page_size=per_page)
 
     collected: dict[str, dict[str, Any]] = {}
     skipped = 0

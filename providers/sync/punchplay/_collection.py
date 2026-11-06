@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from .._pagination import PageGuard, page_numbers
+
 from cw_platform.collection_media import punchplay_format
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 
@@ -140,12 +142,9 @@ def _to_minimal(row: Mapping[str, Any]) -> dict[str, Any] | None:
 def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     collected: dict[str, dict[str, Any]] = {}
     cursor: str | None = None
-    guard = 0
-    while True:
-        guard += 1
-        if guard > 2000:
-            _warn(FEATURE, "collection_page_guard_tripped")
-            raise PunchPlayError("punchplay_collection_page_guard_tripped")
+    seen_cursors: set[str] = set()
+    guard = PageGuard(PunchPlayError, "punchplay_repeated_page")
+    for _ in page_numbers():
         params: dict[str, Any] = {"limit": 200}
         if cursor:
             params["cursor"] = cursor
@@ -160,6 +159,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         if not isinstance(rows, list):
             raise PunchPlayError("punchplay_collection_invalid_response")
         rows = [row for row in rows if isinstance(row, Mapping)] if isinstance(rows, list) else []
+        guard.check(rows)
         for row in rows:
             item = _to_minimal(row)
             if not item:
@@ -170,8 +170,9 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         nxt = str(data.get("nextCursor") or "").strip() or None
         if not nxt:
             break
-        if nxt == cursor:
+        if nxt in seen_cursors or not rows:
             raise PunchPlayError("punchplay_collection_repeated_cursor")
+        seen_cursors.add(nxt)
         cursor = nxt
     _info(FEATURE, "index_done", count=len(collected))
     return collected

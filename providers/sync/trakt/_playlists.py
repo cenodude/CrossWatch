@@ -22,6 +22,7 @@ from cw_platform.playlists import (
 from cw_platform.run_control import SyncCancelled
 
 from ._common import (
+    TraktPager,
     build_watchlist_body,
     headers_for_adapter,
     key_of,
@@ -33,7 +34,6 @@ from . import _watchlist as feat_watchlist
 from ._watchlist import _batch_payload, _record_not_found
 from .._mod_common import request_with_retries
 from .._log import log as cw_log
-from ._pagination import TraktPager
 
 BASE = "https://api.trakt.tv"
 _PROVIDER = "TRAKT"
@@ -369,7 +369,7 @@ def _liked_resources(adapter: Any, skip_ids: set[str]) -> list[PlaylistResource]
     out: list[PlaylistResource] = []
     seen = set(skip_ids)
     page = 1
-    pager = TraktPager("playlists", 50)
+    pager = TraktPager("playlists")
     try:
         while True:
             r = _get(adapter, "/users/me/likes/lists", {"page": page, "limit": 100})
@@ -503,7 +503,7 @@ def _discovery_snapshot(adapter: Any, feed: Mapping[str, Any]) -> PlaylistSnapsh
     items: list[PlaylistItem] = []
     page = 1
     per_page = _DISCOVERY_LIMIT
-    pager = TraktPager("playlists", 10)
+    pager = TraktPager("playlists")
     while len(items) < _DISCOVERY_LIMIT:
         r = request_with_retries(
             sess,
@@ -662,7 +662,7 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
     items: list[PlaylistItem] = []
     page = 1
     per_page = 100 if resource.is_smart else 250
-    pager = TraktPager("playlists", 1000)
+    pager = TraktPager("playlists")
     while True:
         r = request_with_retries(
             sess,

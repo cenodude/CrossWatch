@@ -10,6 +10,8 @@ from collections.abc import Callable, Mapping
 from types import SimpleNamespace
 from typing import Any, cast
 
+from providers.sync._pagination import PageGuard
+
 import requests
 
 try:
@@ -549,7 +551,11 @@ class SiloWatchService:
         reader = SimpleNamespace(config=self._active_cfg(), instance_id=inst, session=self.session)
         rows: list[dict[str, Any]] = []
         cursor = ""
+        guard = PageGuard(RuntimeError, "repeated completed items page", check_cancel=False)
+        cursors: set[str] = set()
         for _ in range(MARK_MAX_PAGES):
+            if cursor and self._stop.is_set():
+                raise InterruptedError("Watcher stopped")
             params: dict[str, Any] = {"status": "completed", "limit": MARK_PAGE}
             if cursor:
                 params["cursor"] = cursor
@@ -562,12 +568,16 @@ class SiloWatchService:
             items = data.get("items")
             if not isinstance(items, list):
                 raise RuntimeError("invalid_response")
+            guard.check(items)
             rows.extend(dict(r) for r in items if isinstance(r, Mapping))
             raw_page = data.get("page")
             page: Mapping[str, Any] = raw_page if isinstance(raw_page, Mapping) else {}
             cursor = str(page.get("next_cursor") or "")
             if watermark is None or not cursor or not items:
                 break
+            if cursor in cursors:
+                raise RuntimeError("repeated completed items cursor")
+            cursors.add(cursor)
             last = items[-1] if isinstance(items[-1], Mapping) else {}
             oldest = parse_epoch(last.get("updated_at"))
             if oldest is None or oldest < watermark:

@@ -6,6 +6,9 @@ from datetime import datetime, timezone
 import re
 from typing import Any
 
+from .._pagination import PageGuard
+from cw_platform.run_control import raise_if_cancelled
+
 from cw_platform.history_events import history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key, ids_from_guid
 
@@ -253,16 +256,13 @@ def _row_ids(row: Mapping[str, Any]) -> tuple[dict[str, str], dict[str, str]]:
     return {k: v for k, v in ids.items() if v}, {k: v for k, v in show_ids.items() if v}
 
 
-def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> dict[str, dict[str, Any]]:
+def build_index(adapter: Any, *, per_page: int = 100) -> dict[str, dict[str, Any]]:
     client = getattr(adapter, "client", None)
     if not client:
         return {}
 
     user_id = str(_cfg_get(adapter, "tautulli.history.user_id", "") or "").strip()
     cfg_per_page = max(1, min(500, int(_cfg_get(adapter, "tautulli.history.per_page", per_page) or per_page)))
-    cfg_max_pages = int(_cfg_get(adapter, "tautulli.history.max_pages", max_pages) or max_pages)
-    if cfg_max_pages <= 0:
-        cfg_max_pages = max_pages
     watched_only = bool(_cfg_get(adapter, "tautulli.history.watched_only", True))
     min_percent = _to_float(_cfg_get(adapter, "tautulli.history.min_percent", 90))
     if min_percent is None:
@@ -271,7 +271,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     _log(
         "index_fetch_counts",
         per_page=cfg_per_page,
-        max_pages=cfg_max_pages,
         has_user_id=bool(user_id),
         watched_only=watched_only,
         min_percent=min_percent,
@@ -281,8 +280,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     meta_cache: dict[str, Mapping[str, Any] | None] = {}
     start = 0
     pages = 0
-    prev_sig = ""
-    repeats = 0
+    guard = PageGuard(RuntimeError, "tautulli_history_repeated_page")
 
     rows_seen = 0
     rows_kept = 0
@@ -291,17 +289,6 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
     skipped_no_time = 0
     skipped_no_ids = 0
     event_mode = _rewatches_enabled(adapter)
-
-    def _page_sig(rows: list[dict[str, Any]]) -> str:
-        if not rows:
-            return ""
-        first = rows[0] if isinstance(rows[0], Mapping) else {}
-        last = rows[-1] if isinstance(rows[-1], Mapping) else {}
-        fk = first.get("row_id") or first.get("reference_id") or first.get("rating_key") or ""
-        lk = last.get("row_id") or last.get("reference_id") or last.get("rating_key") or ""
-        ft = first.get("date") or ""
-        lt = last.get("date") or ""
-        return f"{fk}:{ft}|{lk}:{lt}|{len(rows)}"
 
     def _get_meta(rating_key: str) -> Mapping[str, Any] | None:
         rk = str(rating_key or "").strip()
@@ -318,10 +305,8 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
         return meta_cache[rk]
 
     while True:
+        raise_if_cancelled()
         pages += 1
-        if pages > cfg_max_pages:
-            _log("index_reconcile", level="warn", reason="max_pages_reached", pages=pages, max_pages=cfg_max_pages)
-            raise RuntimeError(f"tautulli_history_page_cap_reached:{cfg_max_pages}")
 
         params: dict[str, Any] = {
             "start": start,
@@ -355,15 +340,7 @@ def build_index(adapter: Any, *, per_page: int = 100, max_pages: int = 5000) -> 
                 raise RuntimeError(f"tautulli_history_incomplete_read:{start}/{total_i}")
             break
 
-        sig = _page_sig(rows)
-        if sig and sig == prev_sig:
-            repeats += 1
-            if repeats >= 2:
-                _log("index_reconcile", level="warn", reason="page_repeat", pages=pages, start=start, sig=sig)
-                raise RuntimeError("tautulli_history_repeated_page")
-        else:
-            repeats = 0
-            prev_sig = sig
+        guard.check(rows)
 
         _log("index_fetch_counts", start=start, page=pages, batch=len(rows), total=_to_int_total(total))
 

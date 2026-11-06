@@ -144,7 +144,7 @@ def test_incomplete_refresh_does_not_replace_cache(cache_env, monkeypatch):
     monkeypatch.setattr(ratings, "mdblist_request", lambda *a, **kw: SimpleNamespace(
         status_code=200, text="json", json=lambda: {"pagination": {"has_more": True}}))
     with pytest.raises(ratings.MDBListFetchError):
-        ratings.build_index(adapter, max_pages=1)
+        ratings.build_index(adapter)
     assert json.loads(path.read_text()) == original
 
 

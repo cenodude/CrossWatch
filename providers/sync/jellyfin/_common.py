@@ -2046,14 +2046,14 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
                 setattr(adapter, "_jellyfin_series_episodes_cache", episode_cache)
             eps_rows = episode_cache.get(str(sid))
             if eps_rows is None:
-                body = get_series_episodes(http, uid, sid, start=0, limit=10000)
-                if body is None:
-                    eps_rows = []
-                    _dbg('series_episodes_fetch_failed', series_id=str(sid))
-                else:
-                    eps_rows = body.get("Items") or []
-                    episode_cache[str(sid)] = eps_rows
-                    _dbg('series_episodes_cached', series_id=str(sid), count=len(eps_rows))
+                eps_rows = fetch_item_pages(http, f"/Shows/{sid}/Episodes", {
+                    "userId": uid,
+                    "Fields": "IndexNumber,ParentIndexNumber,SeasonId,SeriesId,ProviderIds,ProductionYear,Type",
+                    "EnableUserData": False,
+                    "EnableTotalRecordCount": True,
+                }, reason="jellyfin_series_episodes", series_id=str(sid))
+                episode_cache[str(sid)] = eps_rows
+                _dbg('series_episodes_cached', series_id=str(sid), count=len(eps_rows))
             for row in eps_rows:
                 s = row.get("ParentIndexNumber")
                 e = row.get("IndexNumber")

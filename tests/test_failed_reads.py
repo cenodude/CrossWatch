@@ -77,7 +77,7 @@ def test_punchplay_snapshot_pages_valid_empty_still_succeeds(monkeypatch):
     ([Resp(502, {"detail": "bad gateway"})], "scrob_history_http_502"),
     ([Resp(200, {"results": [{"id": 1}], "total_pages": 2}), Resp(500, {})], "scrob_history_http_500"),
     ([Resp(200, text="<html></html>", ctype="text/html")], "scrob_history_invalid_response"),
-    ([Resp(200, {"results": [{"id": n}], "total_pages": 9}) for n in (1, 2, 3)], "scrob_history_page_cap_reached:2"),
+    ([Resp(200, {"results": [{"id": n}], "total_pages": 9}) for n in (1, 2, 1)], "scrob_history_repeated_page"),
 ])
 def test_scrob_paged_get_fails_instead_of_returning_partial_rows(monkeypatch, responses, reason):
     from providers.sync.scrob import _common
@@ -85,7 +85,7 @@ def test_scrob_paged_get_fails_instead_of_returning_partial_rows(monkeypatch, re
     request, _calls = _sequence(responses)
     monkeypatch.setattr(_common, "scrob_request", request)
     with pytest.raises(_common.ScrobError, match=reason):
-        _common.paged_get(SimpleNamespace(), "history", feature="history", page_size=10, max_pages=2)
+        _common.paged_get(SimpleNamespace(), "history", feature="history", page_size=10)
 
 
 @pytest.mark.parametrize("feature", ["watchlist", "ratings", "progress"])
@@ -99,14 +99,14 @@ def test_flicklist_index_http_failure_raises(monkeypatch, feature):
         module.build_index(SimpleNamespace(config={}))
 
 
-def test_flicklist_history_page_cap_raises(monkeypatch):
+def test_flicklist_history_repeated_page_raises(monkeypatch):
     from providers.sync.flicklist import _history
 
     request, _calls = _sequence([Resp(200, [{"id": 1}])])
     monkeypatch.setattr(_history, "flicklist_request", request)
     monkeypatch.setattr(_history, "cfg_section", lambda adapter: {"history_max_pages": 2})
     monkeypatch.setattr(_history, "_response_page_count", lambda resp, data, page: 99)
-    with pytest.raises(RuntimeError, match="flicklist_history_page_cap_reached:2"):
+    with pytest.raises(RuntimeError, match="flicklist_history_repeated_page"):
         _history.build_index(SimpleNamespace(config={}))
 
 
@@ -179,15 +179,15 @@ def test_publicmetadb_pager_rejects_incomplete_reads(pages, reason):
     from providers.sync.publicmetadb._common import paged_items
 
     with pytest.raises(RuntimeError, match=f"publicmetadb_history_{reason}"):
-        paged_items(_pmdb_adapter(pages), "/api/external/watched", per_page=1, max_pages=10, what="history")
+        paged_items(_pmdb_adapter(pages), "/api/external/watched", per_page=1, what="history")
 
 
 def test_publicmetadb_pager_accepts_empty_library_and_full_reads():
     from providers.sync.publicmetadb._common import paged_items
 
-    assert paged_items(_pmdb_adapter({1: {"items": [], "total": 0, "totalPages": 0}}), "/x", per_page=5, max_pages=5, what="history") == []
+    assert paged_items(_pmdb_adapter({1: {"items": [], "total": 0, "totalPages": 0}}), "/x", per_page=5, what="history") == []
     pages = {1: {"items": [{"id": "a"}], "total": 2, "totalPages": 2}, 2: {"items": [{"id": "b"}], "total": 2, "totalPages": 2}}
-    assert [row["id"] for row in paged_items(_pmdb_adapter(pages), "/x", per_page=1, max_pages=5, what="history")] == ["a", "b"]
+    assert [row["id"] for row in paged_items(_pmdb_adapter(pages), "/x", per_page=1, what="history")] == ["a", "b"]
 
 
 def test_flicklist_history_rejects_empty_advertised_last_page(monkeypatch):
@@ -215,7 +215,7 @@ def test_scrob_paged_get_rejects_malformed_later_pages(monkeypatch, responses, r
     request, _calls = _sequence(responses)
     monkeypatch.setattr(_common, "scrob_request", request)
     with pytest.raises(_common.ScrobError, match=reason):
-        _common.paged_get(SimpleNamespace(), "history", feature="history", page_size=1, max_pages=5)
+        _common.paged_get(SimpleNamespace(), "history", feature="history", page_size=1)
 
 
 def test_scrob_export_and_episode_lookup_reject_unreadable_bodies(monkeypatch):
@@ -286,15 +286,15 @@ def test_kodi_batch_missing_response_raises(monkeypatch):
 
 @pytest.mark.parametrize("pages,reason", [
     ({0: {"results": [{"id": 1}, {"id": 2}]}}, "floppy_missing_total"),
-    ({0: {"results": [{"id": 1}, {"id": 2}], "pagination": {"total": 9}}}, "floppy_page_cap_reached"),
+    ({0: {"results": [{"id": 1}, {"id": 2}], "pagination": {"total": 9}}, 2: {"results": [], "pagination": {"total": 9}}}, "floppy_incomplete_read"),
 ])
-def test_floppy_paged_fails_on_caps_and_missing_totals(monkeypatch, pages, reason):
+def test_floppy_paged_fails_on_incomplete_reads_and_missing_totals(monkeypatch, pages, reason):
     from providers.sync.floppy import _common
 
     monkeypatch.setattr(_common, "PAGE_SIZE", 2)
     monkeypatch.setattr(_common, "api_get", lambda adapter, path, params=None: pages[int(params["offset"])])
     with pytest.raises(RuntimeError, match=reason):
-        _common.paged(SimpleNamespace(), "media/movie", max_pages=1)
+        _common.paged(SimpleNamespace(), "media/movie")
 
 
 @pytest.mark.parametrize("prov", ["jellyfin", "emby"])

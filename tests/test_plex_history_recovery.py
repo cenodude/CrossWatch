@@ -225,6 +225,35 @@ def test_import_only_selected_events_to_real_tracker_and_repeat_is_skipped(api):
     assert api.cfg["plex"]["fallback_GUID"] is True
 
 
+def test_large_recovery_commit_keeps_selection_and_receipt_without_row_id_limit(api, monkeypatch):
+    from services import importer
+
+    count = importer.MAX_ROWS + 1
+    stored = {}
+    template = api.job.raw[0]
+    api.job.raw = [dict(template, item=dict(template["item"], title=f"Title {i}", ids={"tmdb": str(i + 1)}))
+                   for i in range(count + 2)]
+    api.job.raw[-1]["recovery_requires_review"] = True
+    api.job.raw.append(dict(api.job.raw[0], item=dict(api.job.raw[0]["item"], watched_at="2021-01-01T12:00:00Z")))
+
+    def add(cfg, items, *, feature):
+        assert feature == "history"
+        assert len(items) == count
+        stored.update({importer._key_for(feature, item): item for item in items})
+        return {"ok": True, "count": len(items)}
+
+    monkeypatch.setattr(importer, "load_sync_ops", lambda provider: NS(add=add))
+    monkeypatch.setattr(importer, "_existing_keys", lambda *args: {"history": stored, "ratings": {}, "watchlist": {}})
+    result = api.client.post(f"/api/import/plex-recovery/{api.job.id}/commit", json=dict(
+        import_id=api.job.id, revision=0, mode="ready", excluded_row_ids=[str(count)]))
+    assert result.status_code == 200, result.text
+    assert result.json()["applied"] == count
+    assert len(result.json()["imported_keys"]) == count
+    assert {item["ids"]["tmdb"] for item in stored.values()} == {str(i + 1) for i in range(count)}
+    assert next(item for item in stored.values() if item["ids"]["tmdb"] == "1")["watched_at"] == "2021-01-01T12:00:00Z"
+    assert api.job.id not in importer._PREVIEWS
+
+
 def test_bulk_import_skips_title_guesses_but_explicit_selection_accepts_them(api):
     from services import importer
     api.job.raw[1]["recovery_requires_review"]=True

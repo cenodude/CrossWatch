@@ -7,6 +7,8 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from .._pagination import PageGuard, page_numbers
+
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.interactive_reads import remember_resource, retained_read
 from cw_platform.playlists import (
@@ -42,9 +44,7 @@ MEDIA_TYPES = ("movie", "show", "season", "episode")
 URL_CREATE_LIST = f"{PLATFORM_BASE}/lists"
 URL_LIST_ITEM = f"{PLATFORM_BASE}/lists/{{list_id}}/items/{{item_id}}"
 INDEX_PAGE = 50
-INDEX_MAX_PAGES = 200
 DYNAMIC_PAGE = 100
-DYNAMIC_MAX_PAGES = 500
 _HOSTS = {"punchplay.tv", "www.punchplay.tv"}
 
 
@@ -120,7 +120,8 @@ def list_resources(adapter: Any) -> list[PlaylistResource]:
     out: list[PlaylistResource] = []
     seen: set[str] = set()
     cursor: str | None = None
-    for _page in range(INDEX_MAX_PAGES):
+    cursors: set[str] = set()
+    for _page in page_numbers():
         params: dict[str, Any] = {"limit": INDEX_PAGE}
         if cursor:
             params["cursor"] = cursor
@@ -142,11 +143,10 @@ def list_resources(adapter: Any) -> list[PlaylistResource]:
         nxt = data.get("nextCursor") or None
         if not nxt:
             break
-        if nxt == cursor:
+        if nxt in cursors or not rows:
             raise PunchPlayPlaylistError("punchplay_playlists_lists_repeated_cursor")
+        cursors.add(nxt)
         cursor = nxt
-    else:
-        raise PunchPlayPlaylistError("punchplay_playlists_lists_page_guard_tripped")
     _info(FEATURE, "list_resources_done", count=len(out))
     return out
 
@@ -230,7 +230,8 @@ def _dynamic_rows(adapter: Any, lid: str) -> list[Any]:
     rows: list[Any] = []
     offset = 0
     total: int | None = None
-    for _page in range(DYNAMIC_MAX_PAGES):
+    guard = PageGuard(PunchPlayPlaylistError, "punchplay_playlists_items_repeated_page")
+    for _page in page_numbers():
         resp = punchplay_request(adapter, "GET", URL_LIST_ITEMS.format(list_id=lid), params={"offset": offset, "limit": DYNAMIC_PAGE})
         if resp.status_code in (401, 403, 404):
             raise PunchPlayListUnavailable(f"The PunchPlay list {lid} is private or no longer exists")
@@ -240,17 +241,16 @@ def _dynamic_rows(adapter: Any, lid: str) -> list[Any]:
         page = data.get("items") if isinstance(data, Mapping) else None
         if not isinstance(page, list):
             raise PunchPlayPlaylistError("punchplay_playlists_items_invalid_response")
+        guard.check(page)
         rows.extend(page)
         total = _as_int(data.get("total")) if data.get("total") is not None else total
         nxt = data.get("nextOffset")
         if nxt is None:
             break
         nxt_i = _as_int(nxt)
-        if nxt_i is None or nxt_i <= offset:
+        if nxt_i is None or nxt_i <= offset or not page:
             raise PunchPlayPlaylistError("punchplay_playlists_items_bad_offset")
         offset = nxt_i
-    else:
-        raise PunchPlayPlaylistError("punchplay_playlists_items_page_guard_tripped")
     if total is not None and len(rows) != total:
         raise PunchPlayPlaylistError("punchplay_playlists_items_incomplete")
     return rows

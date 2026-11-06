@@ -14,8 +14,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._log import log as cw_log
 from providers.sync._progress_policy import decide_progress_write, progress_materially_equal, select_progress_record
 
-from ._common import _fix_imdb
-from ._pagination import TraktPager
+from ._common import TraktPager, _fix_imdb
 
 
 _PROVIDER = "TRAKT"
@@ -172,17 +171,13 @@ def build_index(adapter: Any, **_kwargs: Any) -> dict[str, dict[str, Any]]:
         limit = max(1, min(250, int(getattr(adapter.cfg, "progress_per_page", 250) or 250)))
     except Exception:
         limit = 250
-    try:
-        max_pages = max(1, int(getattr(adapter.cfg, "progress_max_pages", 100) or 100))
-    except Exception:
-        max_pages = 100
 
     out: dict[str, dict[str, Any]] = {}
     skipped: dict[str, int] = {}
     rows_seen = 0
     for media_type in ("movies", "episodes"):
         page = 1
-        pager = TraktPager("progress", max_pages)
+        pager = TraktPager("progress")
         while True:
             rows = _progress_page(adapter, media_type, page, limit, pager=pager)
             if not rows:

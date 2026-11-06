@@ -507,7 +507,7 @@ def _activity_collected_at(acts: Mapping[str, Any]) -> str | None:
     return _iso_z(latest) if _iso_ok(latest) else None
 
 
-def build_index(adapter: Any, *, per_page: int = 1000, max_pages: int = 250) -> dict[str, dict[str, Any]]:
+def build_index(adapter: Any, *, per_page: int = 1000) -> dict[str, dict[str, Any]]:
     cfg = _cfg(adapter)
     apikey = _as_str(cfg.get("api_key")) or ""
     shadow = _shadow_load()
@@ -533,11 +533,10 @@ def build_index(adapter: Any, *, per_page: int = 1000, max_pages: int = 250) -> 
         return cached
 
     limit = max(1, min(_cfg_int(cfg, "collection_per_page", per_page), 1000))
-    max_pages = max(1, min(_cfg_int(cfg, "collection_max_pages", max_pages), 2000))
     prog_factory = getattr(adapter, "progress_factory", None)
     prog: Any = prog_factory("collection") if callable(prog_factory) else None
     out: dict[str, dict[str, Any]] = {}
-    pager = CursorPager(limit, max_pages)
+    pager = CursorPager(limit)
     total_tick = 0
 
     while True:

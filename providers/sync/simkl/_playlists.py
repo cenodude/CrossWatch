@@ -5,6 +5,8 @@ import time
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import unquote, urlparse
 
+from .._pagination import PageGuard, page_numbers
+
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PlaylistItem, PlaylistLinkError, PlaylistPlanError, PlaylistResource, PlaylistSnapshot, PlaylistUnavailableError
 
@@ -45,7 +47,6 @@ SIMKL_CUSTOM_WARNING = "SIMKL custom lists are read only. Use them as the source
 _CUSTOM_TIERS = {"pro", "vip"}
 _CUSTOM_MEDIA = {"movies": ("movies", "movie"), "tv": ("shows", "show"), "anime": ("anime", "anime")}
 _CUSTOM_PAGE = 500
-_CUSTOM_MAX_PAGES = 20
 _SIMKL_HOSTS = {"simkl.com", "www.simkl.com"}
 _ROLE_TYPES = {"follower": "followed_list", "collaborator": "collaboration"}
 _SNAPSHOT_MEMO_TTL = 6 * 3600.0
@@ -236,14 +237,22 @@ def _me(adapter: Any) -> tuple[str, str]:
 
 def _user_lists(adapter: Any, user_id: str, me: str, **flags: Any) -> list[PlaylistResource]:
     out: list[PlaylistResource] = []
-    for page in range(1, _CUSTOM_MAX_PAGES + 1):
+    guard = PageGuard(SIMKLFetchError, "simkl custom lists repeated page")
+    for page in page_numbers():
         data = _custom_get(adapter, URL_USER_LISTS.format(user_id=user_id), limit=_CUSTOM_PAGE, page=page, **flags)
         rows = data.get("lists")
-        for row in rows if isinstance(rows, list) else []:
+        pagination = _mapping(data.get("pagination"))
+        if rows is None and page == 1 and int(pagination.get("total_pages") or 0) <= 1 and not int(pagination.get("total_items") or 0):
+            rows = []
+        if not isinstance(rows, list):
+            raise SIMKLFetchError("simkl custom lists invalid page")
+        guard.check(rows)
+        if not rows and (page > 1 or page < int(pagination.get("total_pages") or 1) or int(pagination.get("total_items") or 0) > 0):
+            raise SIMKLFetchError("simkl custom lists incomplete page")
+        for row in rows:
             resource = _custom_resource(adapter, row, me=me) if isinstance(row, Mapping) else None
             if resource:
                 out.append(resource)
-        pagination = _mapping(data.get("pagination"))
         if page >= int(pagination.get("total_pages") or 1):
             break
     return out
@@ -311,7 +320,8 @@ def _custom_snapshot(adapter: Any, list_id: str) -> PlaylistSnapshot:
     head: Mapping[str, Any] = {}
     stamp: tuple[str, Any] | None = None
     raw_rows = 0
-    for page in range(1, _CUSTOM_MAX_PAGES + 1):
+    guard = PageGuard(SIMKLFetchError, "simkl custom list repeated page")
+    for page in page_numbers():
         data = _custom_get(adapter, URL_LIST.format(list_id=list_id), limit=_CUSTOM_PAGE, page=page)
         if not head:
             head = data
@@ -327,10 +337,11 @@ def _custom_snapshot(adapter: Any, list_id: str) -> PlaylistSnapshot:
         rows = data.get("items")
         pagination = _mapping(data.get("pagination"))
         total_pages = int(pagination.get("total_pages") or 1)
-        if not isinstance(rows, list) or total_pages > _CUSTOM_MAX_PAGES or (not rows and page < total_pages):
+        if not isinstance(rows, list) or (not rows and page < total_pages):
             raise SIMKLFetchError("simkl custom list page incomplete")
         if any(not isinstance(row, Mapping) for row in rows):
             raise SIMKLFetchError("simkl custom list page has invalid rows")
+        guard.check(rows)
         raw_rows += len(rows)
         for row in rows:
             ids = dict(row.get("ids") or {}) if isinstance(row.get("ids"), Mapping) else {}

@@ -41,7 +41,7 @@ def _adapter(rows: list[dict[str, Any]], cfg: dict[str, Any] | None = None) -> S
         return {"data": list(rows), "recordsFiltered": len(rows)}
 
     client = SimpleNamespace(call=call, calls=calls)
-    history_cfg = {"per_page": 100, "max_pages": 5}
+    history_cfg = {"per_page": 100}
     history_cfg.update(cfg or {})
     return SimpleNamespace(client=client, cfg={"tautulli": {"history": history_cfg}}, calls=calls)
 

@@ -265,12 +265,18 @@ def test_connect_rejects_api_key_pasted_as_read_token(monkeypatch: pytest.Monkey
     assert "Read Access Token" in res["error"]
 
 
-def test_snapshot_refuses_lists_beyond_page_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lists_continue_beyond_old_page_limit(monkeypatch: pytest.MonkeyPatch) -> None:
     adapter = mod.TMDBModule(_v4_cfg())
-    big = {"id": 11, "name": "Huge", "total_pages": playlists.MAX_PAGES + 1, "results": []}
-    _fake_v4(monkeypatch, adapter, lambda *args: _Resp(200, big))
-    with pytest.raises(playlists.TMDBPlaylistError, match="too large"):
-        adapter.get_playlist_snapshot("11")
+    calls = []
+
+    def page(adapter, path, number, **kwargs):
+        calls.append(number)
+        return {"total_pages": 501, "total_results": 501, "results": [{"id": number}]}
+
+    monkeypatch.setattr(playlists, "_page", page)
+    result = playlists._pages(adapter, "/list/11")
+    assert len(result) == 501
+    assert calls == list(range(1, 502))
 
 
 def _auth_client(monkeypatch: pytest.MonkeyPatch, store: dict[str, Any], post: Any) -> TestClient:

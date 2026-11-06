@@ -105,13 +105,19 @@ def test_incomplete_read_does_not_save_partial_cache_or_watermark(monkeypatch, t
 
 
 @pytest.mark.parametrize("feature", ["ratings", "history", "collection"])
-def test_page_cap_with_more_items_does_not_save(monkeypatch, tmp_path, feature):
+def test_readers_continue_beyond_old_page_caps(monkeypatch, tmp_path, feature):
     module, adapter, writes = setup_reader(monkeypatch, tmp_path, feature)
-    monkeypatch.setattr(module, "mdblist_request", lambda *a, **kw:
-                        response({"movies": [row(1)], "pagination": {"next_cursor": "more"}}))
-    with pytest.raises(MDBListFetchError, match="page limit"):
-        module.build_index(adapter, max_pages=1)
-    assert writes == []
+    adapter.config["mdblist"][f"{feature}_max_pages"] = 1
+    calls = []
+
+    def request(*args, **kwargs):
+        number = len(calls) + 1
+        calls.append(kwargs["params"])
+        return response({"movies": [row(number)], "pagination": {"next_cursor": str(number) if number < 251 else None}})
+
+    monkeypatch.setattr(module, "mdblist_request", request)
+    assert len(module.build_index(adapter)) == 251
+    assert len(calls) == 251
 
 
 def test_rewatch_pages_keep_distinct_plays(monkeypatch, tmp_path):
@@ -134,9 +140,11 @@ def test_rewatch_pages_keep_distinct_plays(monkeypatch, tmp_path):
     assert calls[1]["cursor"] == "second"
 
 
-def test_cursor_limit_and_final_page_at_safety_cap():
-    pager = CursorPager(5000, max_pages=1)
+def test_cursor_page_size_is_bounded_without_limiting_total_pages():
+    pager = CursorPager(5000)
     assert pager.params() == {"limit": 1000}
+    for page in range(2001):
+        assert pager.advance({"next_cursor": str(page)}, response({}))
     assert not pager.advance({"pagination": {"next_cursor": None}}, response({}))
 
 
@@ -213,7 +221,7 @@ def test_invalid_history_response_cannot_clear_persisted_cache(monkeypatch, tmp_
 
 
 def test_explicit_last_page_ignores_leftover_cursor():
-    pager = CursorPager(1000, max_pages=1)
+    pager = CursorPager(1000)
     assert not pager.advance({"pagination": {"next_cursor": "leftover", "has_more": False}}, response({}))
 
 
@@ -292,7 +300,7 @@ def test_journal_headers_and_category_filter_keep_paging():
                      {"apikey": "test-key", "limit": 1000, "cursor": "next"}]
 
 
-@pytest.mark.parametrize("failure", ["http", "network", "invalid_json", "missing_rows", "missing_cursor", "repeated_cursor", "page_cap"])
+@pytest.mark.parametrize("failure", ["http", "network", "invalid_json", "missing_rows", "missing_cursor", "repeated_cursor"])
 def test_incomplete_journal_never_returns_partial_rows(monkeypatch, failure):
     first = response({"journal": [{"category": "rated", "action_at": WHEN}], "pagination": {"next_cursor": "next"}})
     bad = response({"journal": [], "pagination": {"has_more": True}})
@@ -305,10 +313,8 @@ def test_incomplete_journal_never_returns_partial_rows(monkeypatch, failure):
         bad.json = lambda: json.loads("invalid")
     elif failure == "missing_rows":
         bad = response({})
-    elif failure in ("repeated_cursor", "page_cap"):
-        bad = response({"journal": [], "pagination": {"next_cursor": "next" if failure == "repeated_cursor" else "third"}})
-    if failure == "page_cap":
-        monkeypatch.setattr(mdblist, "CursorPager", lambda limit, max_pages: CursorPager(limit, 2))
+    elif failure == "repeated_cursor":
+        bad = response({"journal": [], "pagination": {"next_cursor": "next"}})
     client, calls = journal_client([first, bad])
     with pytest.raises(MDBListFetchError):
         mdblist.MDBLISTModule.fetch_journal(SimpleNamespace(client=client), since=WHEN)

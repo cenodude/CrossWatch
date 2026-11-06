@@ -633,7 +633,6 @@ def build_index(
     adapter: Any,
     *,
     per_page: int = 1000,
-    max_pages: int = 250,
 ) -> dict[str, dict[str, Any]]:
     cfg = _cfg(adapter)
     apikey = str(cfg.get("api_key") or "").strip()
@@ -650,8 +649,6 @@ def build_index(
 
     per_page = _cfg_int(cfg, "ratings_per_page", per_page)
     per_page = max(1, min(int(per_page), 1000))
-    max_pages = _cfg_int(cfg, "ratings_max_pages", max_pages)
-    max_pages = max(1, min(int(max_pages), 2000))
 
     timeout = adapter.cfg.timeout
     retries = adapter.cfg.max_retries
@@ -736,10 +733,10 @@ def build_index(
 
     sess = adapter.client.session
     out: dict[str, dict[str, Any]] = {}
-    pager = CursorPager(per_page, max_pages)
+    pager = CursorPager(per_page)
     latest_seen: str | None = None
 
-    _dbg("index_reconcile", reason="delta_fetch", strategy="delta", since=since_req, per_page=per_page, max_pages=max_pages, timeout=timeout, retries=retries)
+    _dbg("index_reconcile", reason="delta_fetch", strategy="delta", since=since_req, per_page=per_page, timeout=timeout, retries=retries)
     while True:
         r = mdblist_request(
             adapter,

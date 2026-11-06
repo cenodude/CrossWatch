@@ -8,6 +8,8 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
+from .._pagination import PageGuard, page_numbers
+
 import requests
 
 from cw_platform.id_map import canonical_key, ids_from, minimal as id_minimal
@@ -35,7 +37,6 @@ URL_COLLECTION_SHOWS = f"{API_V3_BASE}/sync/collection/shows"
 
 BULK_MAX = 1000
 UP_NEXT_PAGE_SIZE = 100
-UP_NEXT_MAX_PAGES = 200
 HISTORY_PAGE_MAX = 500
 HISTORY_PAGE_DEFAULT = 500
 DEFAULT_TIMEOUT = 20.0
@@ -547,14 +548,17 @@ def classify_write(
 
 def dropped_show_tokens(adapter: Any) -> set[str]:
     tokens: set[str] = set()
-    page = 1
-    while page <= UP_NEXT_MAX_PAGES:
+    guard = PageGuard(FlickListError, "flicklist_dropped_repeated_page")
+    for page in page_numbers():
         resp = flicklist_request(adapter, "GET", URL_UP_NEXT, params={"page": page, "limit": UP_NEXT_PAGE_SIZE})
         if not ok_status(resp):
             _warn("history", "dropped_fetch_failed", page=page, status=int(resp.status_code), error=error_of(resp))
             raise FlickListError("flicklist_dropped_fetch_failed")
         data = safe_json(resp)
-        rows = data if isinstance(data, list) else []
+        if not isinstance(data, list):
+            raise FlickListError("flicklist_dropped_invalid_page")
+        rows = data
+        guard.check(rows)
         for row in rows:
             if not isinstance(row, Mapping) or row.get("dropped") is not True:
                 continue
@@ -568,11 +572,12 @@ def dropped_show_tokens(adapter: Any) -> set[str]:
             tokens.update(f"{source}:{str(value).lower()}" for source, value in ids.items())
         page_count = header_int(resp, "X-FlickList-Page-Count")
         if page_count is not None:
+            if not rows and page < page_count:
+                raise FlickListError("flicklist_dropped_incomplete_page")
             if page >= page_count:
                 break
         elif len(rows) < UP_NEXT_PAGE_SIZE:
             break
-        page += 1
     _info("history", "dropped_index_done", count=len(tokens), pages=page)
     return tokens
 

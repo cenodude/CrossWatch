@@ -13,6 +13,7 @@ from cw_platform.collection_media import from_trakt_metadata, to_trakt_metadata
 from cw_platform.id_map import canonical_key, migrate_media_index, minimal as id_minimal
 
 from ._common import (
+    TraktPager,
     _chunk,
     _is_capture_mode,
     _pair_scope,
@@ -28,7 +29,6 @@ from ._common import (
 )
 from .._log import log as cw_log
 from .._mod_common import request_with_retries
-from ._pagination import TraktPager
 
 BASE = "https://api.trakt.tv"
 URL_ADD = f"{BASE}/sync/collection"
@@ -278,9 +278,6 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     use_etag = _cfg_bool(cfg, "collection_use_etag", True)
     ttl_h = _cfg_int(cfg, "collection_shadow_ttl_hours", 168)
     per_page = max(1, min(250, _cfg_int(cfg, "collection_per_page", _cfg_int(cfg, "history_per_page", 250))))
-    max_pages = _cfg_int(cfg, "collection_max_pages", _cfg_int(cfg, "history_max_pages", 10000))
-    if max_pages <= 0:
-        max_pages = 10000
     prog_mk = getattr(adapter, "progress_factory", None)
     prog: Any = prog_mk("collection") if callable(prog_mk) else None
 
@@ -308,7 +305,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
         idx: dict[str, dict[str, Any]] = {}
         page = 1
-        pager = TraktPager("collection", max_pages)
+        pager = TraktPager("collection")
         etag_out: str | None = None
         total_hint: int | None = None
         rows_seen = 0
@@ -360,7 +357,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
 
             page += 1
 
-        _dbg("index_fetch_bucket", bucket=name, rows=rows_seen, items=len(idx), per_page=per_page, max_pages=max_pages, pages=(page - 1))
+        _dbg("index_fetch_bucket", bucket=name, rows=rows_seen, items=len(idx), per_page=per_page, pages=(page - 1))
         return idx, etag_out, False
 
     media = _fetch_bucket("media", URL_MEDIA)
@@ -369,7 +366,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         if use_etag:
             _shadow_save({"media": media_etag}, media_idx, {"media": media_idx})
         source = "shadow" if media_cached else "live"
-        _info("index_done", count=len(media_idx), source=source, endpoint="media", per_page=per_page, max_pages=max_pages)
+        _info("index_done", count=len(media_idx), source=source, endpoint="media", per_page=per_page)
         return media_idx
 
     movies = _fetch_bucket("movies", URL_MOVIES)
@@ -386,7 +383,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     if use_etag:
         _shadow_save({"movies": movie_etag, "shows": show_etag}, idx, {"movies": movie_idx, "shows": show_idx})
     source = "shadow" if movie_cached and show_cached else ("mixed" if movie_cached or show_cached else "live")
-    _info("index_done", count=len(idx), source=source, per_page=per_page, max_pages=max_pages)
+    _info("index_done", count=len(idx), source=source, per_page=per_page)
     return idx
 
 

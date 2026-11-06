@@ -109,6 +109,12 @@ def test_repeated_cursor_and_row_limit_fail():
         scan(Tracearr([movie(str(i)) for i in range(1, 6)]), max_rows=2)
 
 
+def test_recovery_has_no_default_50000_event_limit(monkeypatch):
+    rows = [movie(str(i)) for i in range(1, 50002)]
+    monkeypatch.setattr(recovery, "_read", lambda *args: rows)
+    assert len(scan(Tracearr([]))) == 50001
+
+
 @pytest.fixture
 def api(monkeypatch, config_base):
     from api import syncAPI

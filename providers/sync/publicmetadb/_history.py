@@ -133,10 +133,8 @@ def _fetch_all_items(adapter: Any) -> tuple[dict[str, dict[str, Any]], dict[str,
     remote_ids: dict[str, str] = {}
     per_page = int(getattr(adapter.cfg, "history_per_page", 500) or 500)
     per_page = max(1, min(per_page, 500))
-    max_pages = int(getattr(adapter.cfg, "history_max_pages", 1000) or 1000)
-    max_pages = max(1, max_pages)
 
-    for row in paged_items(adapter, "/api/external/watched", per_page=per_page, max_pages=max_pages, what="history"):
+    for row in paged_items(adapter, "/api/external/watched", per_page=per_page, what="history"):
         mini = _to_minimal(row)
         if not mini:
             continue
