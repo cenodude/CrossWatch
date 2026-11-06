@@ -14,7 +14,7 @@ function modal(presence = null, type = "movie", ItemActions = undefined) {
     navigator: { language: "en-US" },
     document: { documentElement: { dataset: {} } },
   };
-  vm.runInNewContext(source.replace("  (window.CW ||= {}).ProfileMediaModal =", "  window.testModal = { state, openItemActions, movieProgressBox, overviewTab, episodesTab, seasonProgress, upNext, episodeSlot, livesCard, episodeDetail, showResumePoints };\n  (window.CW ||= {}).ProfileMediaModal ="), context);
+  vm.runInNewContext(source.replace("  (window.CW ||= {}).ProfileMediaModal =", "  window.testModal = { state, actions, openItemActions, movieProgressBox, overviewTab, episodesTab, seasonProgress, upNext, episodeSlot, livesCard, episodeDetail, showResumePoints };\n  (window.CW ||= {}).ProfileMediaModal ="), context);
   const api = context.window.testModal;
   api.window = context.window;
   Object.assign(api.state, { item: { type, tmdb: "123" }, presence, progress: [] });
@@ -23,6 +23,16 @@ function modal(presence = null, type = "movie", ItemActions = undefined) {
 
 const epoch = Date.parse("2026-01-02T12:00:00Z") / 1000;
 const entry = (count, last_epoch = epoch, episodes = []) => ({ count, last_epoch, episodes, present: [{ provider: "TRAKT" }], missing: [] });
+
+test("media details distinguish equivalent ratings from exact agreement and conflicts", () => {
+  const api = modal({ratings:{rating:7.5,agree:true,rating_adjusted:true}});
+  assert.match(api.actions(),/Equivalent scores/);
+  assert.doesNotMatch(api.actions(),/Same everywhere|Scores differ/);
+  api.state.presence.ratings.agree = false;
+  assert.match(api.actions(),/Scores differ/);
+  api.state.presence.ratings = {rating:8,agree:true,rating_adjusted:false};
+  assert.match(api.actions(),/Same everywhere/);
+});
 
 test("a scrobbled movie is watched without synced history", () => {
   const api = modal({ synced: null, scrobble: entry(1) });

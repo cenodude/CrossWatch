@@ -14,6 +14,7 @@ from providers.sync.kodi import _ratings as feat_ratings
 from providers.sync.kodi._common import KodiClient, health_payload, is_configured, item_key, make_config, pick_instance_id
 
 __VERSION__ = "1.0"
+_MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "KODIModule", "OPS"]
 
 _FEATURES = {"watchlist": False, "ratings": True, "history": True, "progress": True, "playlists": False, "collection": True}
@@ -43,6 +44,7 @@ def get_manifest() -> Mapping[str, Any]:
             "rewatches": {"read": False, "write": False},
         },
         "ratings": {
+            "manual_scale": _MANUAL_RATING_SCALE,
             "read": True,
             "write": True,
             "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},

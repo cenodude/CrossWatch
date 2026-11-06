@@ -126,6 +126,7 @@ except Exception:
     make_snapshot_progress = None  # type: ignore[assignment]
 
 __VERSION__ = "2.0"
+_MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "CROSSWATCHModule", "OPS"]
 
 _FEATURES: dict[str, Any] = {}
@@ -185,6 +186,7 @@ def get_manifest() -> Mapping[str, Any]:
             "index_semantics": "present",
             "observed_deletes": True,
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "unrate": True,

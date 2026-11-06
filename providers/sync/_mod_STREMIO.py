@@ -18,6 +18,7 @@ from providers.sync.stremio import _watchlist as feat_watchlist
 from providers.sync.stremio._common import DEFAULT_STREMIO_PROFILE_ID, datastore_meta, is_capture_mode, is_configured, read_drop_unresolved_items
 
 __VERSION__ = "1.1"
+_MANUAL_RATING_SCALE = {"dynamic": True}
 __all__ = ["get_manifest", "STREMIOModule", "OPS", "feat_history", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
@@ -97,6 +98,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "custom_lists": False,
             },
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "read": False,
                 "write": True,
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
@@ -209,6 +211,9 @@ class _STREMIOOPS:
 
     def capabilities(self) -> Mapping[str, Any]:
         return get_manifest()["capabilities"]
+
+    def rating_scale(self, cfg: Mapping[str, Any]) -> Mapping[str, Any]:
+        return feat_ratings.manual_rating_scale(cfg)
 
     def is_configured(self, cfg: Mapping[str, Any]) -> bool:
         return is_configured(cfg, "default")

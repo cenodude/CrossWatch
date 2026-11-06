@@ -129,8 +129,6 @@ html[data-cw-theme] .cw-mw.cw-mw-compact .cw-mw-media-toggle .cw-mw-chip { heigh
 html[data-cw-theme] .cw-mw.cw-mw-compact .cw-mw-media-toggle .cw-mw-chip.active { background:var(--mw-accent)!important; color:#fff!important; }
 .cw-mw.cw-mw-compact .cw-mw-search .cw-mw-input { height:40px; border-radius:12px; }
 .cw-mw.cw-mw-compact .cw-mw-search .cw-mw-btn { height:40px; width:40px; border-radius:12px; }
-.cw-mw.cw-mw-compact .cw-mw-score { width:36px!important; padding:0; font-variant-numeric:tabular-nums; }
-.cw-mw.cw-mw-compact .cw-mw-chips:has(.cw-mw-score) { gap:6px; }
 .cw-mw.cw-mw-compact .cw-mw-chips .cw-mw-date { width:auto!important; height:36px!important; min-height:0!important; padding:0 12px!important; border-radius:10px!important; font:inherit!important; font-size:13px!important; font-weight:500!important; letter-spacing:0!important; font-variant-numeric:tabular-nums; }
 .cw-mw.cw-mw-compact :is(select,input,button,textarea) { font-family:inherit!important; letter-spacing:0!important; }
 .cw-mw.cw-mw-compact .cw-mw-eps-source { font-size:13px; font-weight:500; }

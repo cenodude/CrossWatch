@@ -19,6 +19,7 @@ except Exception:
     ctx = None  # type: ignore[assignment]
 
 __VERSION__ = "1.2"
+_MANUAL_RATING_SCALE = {"step": 0.5}
 os.environ.setdefault("CW_TMDB_UA", http_user_agent("TMDB", override_env="CW_TMDB_UA"))
 __all__ = ["get_manifest", "TMDBModule", "OPS"]
 
@@ -122,6 +123,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "remove": True,
             },
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "step": 0.5,
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": True},
                 "add": True,

@@ -27,6 +27,7 @@ except Exception:
     ctx = None  # type: ignore[assignment]
 
 __VERSION__ = "1.4"
+_MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "PUBLICMETADBModule", "OPS"]
 
 
@@ -115,6 +116,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "rewatches": {"read": True, "write": True, "account_gate": False},
             },
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": True},
                 "upsert": True,
                 "remove": True,

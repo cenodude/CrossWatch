@@ -13,7 +13,11 @@ const ACTIONS = [
 const fjson = async (url, opts = {}) => {
   const r = await fetch(url, { cache: "no-store", ...opts });
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data?.error || `${r.status}`);
+  if (!r.ok || data?.ok === false) {
+    const invalid = (data.results || []).filter(row => row.rating?.error === "unsupported_rating");
+    if (invalid.length) throw new Error(`Rating not saved on ${invalid.map(row => row.provider).join(", ")}: choose a score supported by those providers.`);
+    throw new Error(data?.error || (opts.method && opts.method !== "GET" ? "One or more changes could not be saved." : "The requested information could not be loaded."));
+  }
   return data || {};
 };
 
@@ -217,6 +221,37 @@ export default {
       && (!state.actions.history || historyFits(item, isShow(), pickingEpisodes()));
     const compatibleProviders = () => state.providers.filter(providerCompatible);
     const selectedCompatibleTargets = () => selectedTargets().filter(providerCompatible);
+    const ratingScale = () => {
+      const empty = {values: [], max: 10, display_factor: 1};
+      const targets = selectedCompatibleTargets().filter(item => item.ratings_enabled);
+      if (targets.some(item => !Array.isArray(item.rating_scale?.values))) return {...empty, unavailable: true};
+      const scales = targets.map(item => item.rating_scale);
+      const first = scales[0] || empty;
+      const display = scale => JSON.stringify([scale.max, scale.display_factor, scale.labels || null]);
+      const sharedDisplay = scales.every(scale => display(scale) === display(first));
+      return {...(sharedDisplay ? first : empty), values: first.values.filter(value => scales.every(scale => scale.values.includes(value)))};
+    };
+    const ratingLabel = value => {
+      const scale = ratingScale();
+      return value == null ? "Choose rating" : scale.labels?.[value] || `${value * scale.display_factor}/${scale.max}`;
+    };
+    const ratingChoices = () => {
+      const scale = ratingScale();
+      if (scale.unavailable) return `<span class="cw-mw-muted">Rating choices are unavailable for a selected provider. Reload and try again.</span>`;
+      if (scale.labels) return `<div class="cw-mw-chips" role="group" aria-label="Rating">${scale.values.map(score => `<button type="button" class="cw-mw-chip cw-mw-reaction ${score === state.rating ? "active" : ""}" data-rating="${score}" aria-pressed="${score === state.rating}" aria-label="Rate ${esc(ratingLabel(score))}">${esc(scale.labels[score])}</button>`).join("")}</div>`;
+      if (!scale.values.length) return `<span class="cw-mw-muted">These providers have no shared rating choices. Rate each provider separately.</span>`;
+      const half = scale.values.some(value => !Number.isInteger(value * scale.display_factor));
+      const count = scale.max * (half ? 2 : 1);
+      const slots = Array.from({length: count}, (_, i) => (i + 1) / (half ? 2 : 1) / scale.display_factor);
+      return `<div class="cw-mw-rating"><div class="cw-mw-rating-summary"><strong data-rating-value>${esc(ratingLabel(state.rating))}</strong><span>Your rating</span></div><div class="cw-mw-stars${half ? " is-half" : ""}" style="--mw-rating-slots:${count}" role="group" aria-label="Rating">${slots.map(score => `<button type="button" class="cw-mw-star${half && Number.isInteger(score * scale.display_factor) ? " is-right" : ""}${score <= state.rating ? " is-lit" : ""}" data-rating="${score}" aria-pressed="${score === state.rating}" aria-label="Rate ${esc(ratingLabel(score))}"${scale.values.includes(score) && !state.saving ? "" : " disabled"}><span class="material-symbols-rounded" aria-hidden="true">star</span></button>`).join("")}</div></div>`;
+    };
+    const previewRating = value => {
+      const summary = root.querySelector("[data-rating-value]");
+      if (summary) summary.textContent = ratingLabel(value);
+      root.querySelectorAll(".cw-mw-star").forEach(button => {
+        button.classList.toggle("is-lit", Number(button.getAttribute("data-rating")) <= value);
+      });
+    };
     const normalizeActions = () => {
       if (!state.only && state.providers.length) {
         const allowed = new Set(availableActions().map(([key]) => key));
@@ -228,6 +263,17 @@ export default {
         if (!item || !providerCompatible(item)) state.selectedProviders.delete(key);
       }
       if (!state.actions.rating) state.rating = 8;
+      else {
+        const scale = ratingScale();
+        if (!scale.unavailable && !scale.values.includes(state.rating)) {
+          const band = scale.bands?.find(band => state.rating >= band.min && state.rating < band.max);
+          const value = state.rating ?? 8;
+          state.rating = band && scale.values.includes(band.value) ? band.value : !scale.values.length ? null : scale.values.reduce((best, choice) => {
+            const distance = Math.abs(choice - value) - Math.abs(best - value);
+            return distance < 0 || (distance === 0 && choice > best) ? choice : best;
+          });
+        }
+      }
       if (state.providers.length && !listSources().some((row) => row.key === state.listSource)) {
         state.listSource = "tmdb";
         state.picked = new Map();
@@ -275,7 +321,9 @@ export default {
         const targets = selectedCompatibleTargets();
         if (targets.length !== 1 || providerKey(targets[0]) !== state.listSource) return `Episodes from the ${sourceLabel()} list can only be sent to ${sourceLabel()}.`;
       }
-      if (state.actions.rating && !(Number(state.rating) >= 0.5 && Number(state.rating) <= 10)) return "Choose a rating from 0.5 to 10.";
+      if (state.actions.rating && ratingScale().unavailable) return "Rating choices are unavailable for a selected provider. Reload and try again.";
+      if (state.actions.rating && !ratingScale().values.length) return "These providers have no shared rating choices. Rate them separately.";
+      if (state.actions.rating && !ratingScale().values.includes(Number(state.rating))) return "Choose a rating supported by the selected providers.";
       return "";
     };
     const setStatus = (text = "", tone = "") => {
@@ -287,7 +335,7 @@ export default {
       if (state.saving) return "Sending...";
       const keys = selectedActionKeys();
       const verb = keys.length === 1
-        ? { history: "Mark watched", watchlist: "Add to watchlist", rating: `Rate ${state.rating}/10`, collection: "Add to collection" }[keys[0]]
+        ? { history: "Mark watched", watchlist: "Add to watchlist", rating: `Rate ${ratingLabel(state.rating)}`, collection: "Add to collection" }[keys[0]]
         : "Save";
       const count = selectedCompatibleTargets().length;
       return count ? `${verb} on ${count} provider${count === 1 ? "" : "s"}` : verb;
@@ -473,9 +521,7 @@ export default {
           <button type="button" class="cw-mw-chip ${state.dateMode === "custom" ? "active" : ""}" data-date-mode="custom">Choose date</button>
           ${state.dateMode === "custom" ? `<input type="date" class="cw-mw-date" data-role="custom-date" value="${esc(state.watchedOn || "")}">` : ""}
         </div></div>` : ""}
-        ${state.actions.rating ? `<div class="cw-mw-field"><span class="cw-mw-label">Rating</span><div class="cw-mw-chips">
-          ${Array.from({ length: 20 }, (_, i) => (i + 1) / 2).map((score) => `<button type="button" class="cw-mw-chip cw-mw-score ${score <= Number(state.rating) ? "active" : ""}" data-rating="${score}" aria-pressed="${score === Number(state.rating) ? "true" : "false"}" aria-label="Rate ${score} out of 10">${score}</button>`).join("")}
-        </div></div>` : ""}
+        ${state.actions.rating ? `<div class="cw-mw-field"><span class="cw-mw-label">Rating</span>${ratingChoices()}</div>` : ""}
         ${episodeChoice() ? episodesCard() : ""}
       </div>
     `;
@@ -751,13 +797,35 @@ export default {
     });
 
     root.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && e.target.matches("[data-role=query]")) {
+      const rating = e.target.closest("[data-rating]");
+      if (rating && ["ArrowLeft", "ArrowDown", "ArrowRight", "ArrowUp", "Home", "End"].includes(e.key)) {
+        e.preventDefault();
+        const values = ratingScale().values;
+        const index = values.indexOf(Number(rating.getAttribute("data-rating")));
+        const next = e.key === "Home" ? 0 : e.key === "End" ? values.length - 1 : Math.max(0, Math.min(values.length - 1, index + (["ArrowLeft", "ArrowDown"].includes(e.key) ? -1 : 1)));
+        root.querySelector(`[data-rating="${values[next]}"]`)?.focus();
+      } else if (e.key === "Enter" && e.target.matches("[data-role=query]")) {
         e.preventDefault();
         search();
       } else if (e.key === "Enter" && e.target.matches("[data-role=extra-season],[data-role=extra-episode]")) {
         e.preventDefault();
         addExtra();
       }
+    });
+
+    root.addEventListener("pointerover", (e) => {
+      const button = e.target.closest(".cw-mw-star");
+      if (button && !button.disabled && e.pointerType !== "touch") previewRating(Number(button.getAttribute("data-rating")));
+    });
+    root.addEventListener("pointerout", (e) => {
+      if (e.target.closest(".cw-mw-stars") && !e.relatedTarget?.closest?.(".cw-mw-stars")) previewRating(state.rating);
+    });
+    root.addEventListener("focusin", (e) => {
+      const button = e.target.closest(".cw-mw-star");
+      if (button && !button.disabled) previewRating(Number(button.getAttribute("data-rating")));
+    });
+    root.addEventListener("focusout", (e) => {
+      if (e.target.closest(".cw-mw-stars") && !e.relatedTarget?.closest?.(".cw-mw-stars")) previewRating(state.rating);
     });
 
     root.addEventListener("change", (e) => {
@@ -858,8 +926,11 @@ export default {
       }
       const scoreBtn = target.closest("[data-rating]");
       if (scoreBtn) {
-        state.rating = Math.max(0.5, Math.min(10, Number(scoreBtn.getAttribute("data-rating") || 8)));
+        const value = Number(scoreBtn.getAttribute("data-rating"));
+        if (!ratingScale().values.includes(value)) return;
+        state.rating = value;
         render();
+        root.querySelector(`[data-rating="${value}"]`)?.focus({preventScroll: true});
         return true;
       }
       const modeBtn = target.closest("[data-date-mode]");

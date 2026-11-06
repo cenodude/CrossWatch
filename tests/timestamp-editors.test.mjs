@@ -18,6 +18,28 @@ function editor() {
 
 const descendants = node => [node, ...node.children.flatMap(descendants)];
 
+for (const [name,scale,current,expected,chosen] of [
+  ["SIMKL",{values:[1,2,3,4,5,6,7,8,9,10],max:10,display_factor:1},7,"8/10",8],
+  ["Silo",{values:[2,4,6,8,10],max:5,display_factor:0.5,round_step:2},7,"4/5",8],
+  ["Stremio",{values:[6,9],labels:{6:"Liked",9:"Loved"},bands:[{min:6,max:9,value:6},{min:9,max:10.5,value:9}],max:10,display_factor:1},8,"Liked",6],
+]) {
+  test(`Editor offers ${name}'s native rating choices`, () => {
+    const row = {raw:{rating:current,rated_at:"2026-11-03T02:32:25.123Z"}};
+    const pop = element("div");
+    editor().ExtraEditors.openRatingEditor(row,null,null,{
+      state:{ratingScale:scale},openPopup:(_,render)=>render(pop,()=>{}),
+      appendPopupTitle(){},appendPopupActions(){},finishExtraChange(){},
+    });
+    const buttons = descendants(pop).filter(node=>node.tag === "button");
+    assert.equal(buttons.length,scale.values.length);
+    const choice = buttons.find(button=>button["aria-label"] === `Rate ${expected}`);
+    if (name !== "SIMKL") assert.equal(choice["aria-pressed"], "true");
+    choice.onclick();
+    assert.equal(row.raw.rating,chosen);
+    assert.equal(row.raw.rated_at,"2026-11-03T02:32:25.123Z");
+  });
+}
+
 for (const [method, field] of [["openHistoryEditor", "watched_at"], ["openCollectionEditor", "collected_at"], ["openProgressEditor", "progress_at"], ["openRatingEditor", "rated_at"]]) {
   test(`${field} retains seconds in the time input and allows an explicit zero`, () => {
     const app = editor();
@@ -25,6 +47,7 @@ for (const [method, field] of [["openHistoryEditor", "watched_at"], ["openCollec
     const pop = element("div");
     const actions = [];
     const ctx = {
+      state: {ratingScale: {values: Array.from({length: 20}, (_, i) => (i + 1) / 2), max: 10, display_factor: 1}},
       openPopup: (_, render) => render(pop, () => {}),
       appendPopupTitle() {},
       appendPopupActions: (_, buttons) => actions.push(...buttons),
@@ -49,7 +72,7 @@ for (const [method, field] of [["openHistoryEditor", "watched_at"], ["openCollec
     assert.equal(row.raw[field], "2026-11-04T02:32:00.000Z");
     if (field === "rated_at") {
       time.value = time.value.replace(/:00$/, ":59");
-      nodes.find(node => node.tag === "button" && node.textContent === "9").onclick();
+      nodes.find(node => node.tag === "button" && node["data-editor-rating"] === "9").onclick();
       assert.equal(row.raw.rating, 9);
       assert.equal(row.raw.rated_at, "2026-11-04T02:32:59.000Z");
     }

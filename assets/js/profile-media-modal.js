@@ -525,7 +525,7 @@
     const rating = state.presence?.ratings;
     const userScore = Number(rating?.rating);
     if (rating?.rating != null && Number.isFinite(userScore)) {
-      const hint = rating.agree === false ? "Scores differ" : "Same everywhere";
+      const hint = rating.agree === false ? "Scores differ" : rating.rating_adjusted ? "Equivalent scores" : "Same everywhere";
       out.push(`<span class="cw-mm-score" title="Your rating · ${esc(hint)}">${ring(rating.rating, userScore * 10, "amber")}<span><strong>Your rating</strong><small>${esc(hint)}</small></span></span>`);
     }
     return out.join("");

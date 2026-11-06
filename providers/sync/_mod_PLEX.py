@@ -44,6 +44,7 @@ def _log(msg: str) -> None:
     _dbg(msg)
 
 __VERSION__ = "2.8"
+_MANUAL_RATING_SCALE = {"step": 1}
 os.environ.setdefault("CW_PLEX_UA", http_user_agent("Plex", override_env="CW_PLEX_UA"))
 __all__ = ["get_manifest", "PLEXModule", "PLEXClient", "PLEXError", "PLEXAuthError", "PLEXNotFound", "OPS"]
 
@@ -552,6 +553,7 @@ def get_manifest() -> Mapping[str, Any]:
             },
             "watchlist": {"writes": "discover_first", "pms_fallback": True, "upsert": True, "remove": True},
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "unrate": True,
@@ -1586,6 +1588,7 @@ class _PlexOPS:
             },
             "watchlist": {"writes": "discover_first", "pms_fallback": True, "upsert": True, "remove": True},
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "upsert": True,
                 "unrate": True,

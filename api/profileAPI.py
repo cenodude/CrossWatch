@@ -871,6 +871,7 @@ def _profile_history_index(cfg: dict[str, Any], profile_id: str, source: str) ->
         (wanted, profile_id, version) if version else None,
         lambda: profile_history.build_history_index(
             wanted,
+            cfg=cfg,
             state=state_source,
             tracker_items=lambda: media_scope.tracker(
                 _tracker_feature_items("ratings" if ratings else "history"), "ratings" if ratings else "history"

@@ -23,6 +23,7 @@ except Exception:
     ctx = None  # type: ignore[assignment]
 
 __VERSION__ = "1.1"
+_MANUAL_RATING_SCALE = {"step": 1}
 os.environ.setdefault("CW_SCROB_UA", http_user_agent("Scrob", override_env="CW_SCROB_UA"))
 __all__ = ["get_manifest", "SCROBModule", "OPS"]
 
@@ -42,6 +43,7 @@ CAPABILITIES: dict[str, Any] = {
         "required_ids": ["tmdb"],
     },
     "ratings": {
+        "manual_scale": _MANUAL_RATING_SCALE,
         "types": ["movie", "show", "season", "episode"],
         "scale": {"min": 1, "max": 10, "step": 1},
         "upsert": True,

@@ -127,6 +127,7 @@
       }
       const data = await ctx.fetchJSON(`/api/editor${merged ? "/merged" : ""}?${params.toString()}`);
       if (data && data.ok === false) throw new Error(data.error || data.detail || "Load failed");
+      state.ratingScale = data.rating_scale || null;
       renderMappingScope(ctx, data);
 
       if (state.source === "playlist") {

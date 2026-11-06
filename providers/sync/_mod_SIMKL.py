@@ -94,6 +94,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
     return out
 
 __VERSION__ = "2.1"
+_MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
 
@@ -307,6 +308,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "rewatches": {"read": True, "write": True, "account_gate": "pro_vip"},
             },
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "index_semantics": "present",
                 "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
@@ -874,6 +876,7 @@ class _SIMKLOPS:
                 "rewatches": {"read": True, "write": True, "account_gate": "pro_vip"},
             },
             "ratings": {
+                "manual_scale": _MANUAL_RATING_SCALE,
                 "index_semantics": "present",
                 "observed_deletes": True,
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
