@@ -491,7 +491,7 @@ def title_presence(index: dict[str, Any], media: str, tmdb: Any) -> dict[str, An
                 present.append(endpoint)
     newest = max(rows, key=lambda row: int(row.get("sort_epoch") or 0))
     out: dict[str, Any] = {
-        "count": len(rows),
+        "count": sum(max(1, dw._as_int(row.get("watch_count")) or 1) for row in rows) if source == "synced" else len(rows),
         "last_epoch": int(newest.get("sort_epoch") or 0),
         "present": [_ref(endpoint) for endpoint in present],
         "missing": [_ref(endpoint) for endpoint in endpoints if endpoint not in present],
