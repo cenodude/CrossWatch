@@ -807,7 +807,7 @@ async function saveSettings() {
         if (_cwTouched("cw_tracker_label")) set("label", _cwNorm(labelEl?.value).slice(0, 12), _cwNorm(prevBlock?.label).slice(0, 12));
         if (_cwTouched("cw_tracker_retention_days")) set("retention_days", intOr("cw_tracker_retention_days", Number(prevBlock?.retention_days), 30), Number.isFinite(prevBlock?.retention_days) ? Number(prevBlock.retention_days) : 30);
         if (_cwTouched("cw_tracker_auto_snapshot")) set("auto_snapshot", _cwTruthy(_cwEl("cw_tracker_auto_snapshot")?.value), prevBlock?.auto_snapshot !== false);
-        if (_cwTouched("cw_tracker_max_snapshots")) set("max_snapshots", intOr("cw_tracker_max_snapshots", Number(prevBlock?.max_snapshots), 64), Number.isFinite(prevBlock?.max_snapshots) ? Number(prevBlock.max_snapshots) : 64);
+        if (_cwTouched("cw_tracker_max_snapshots")) set("max_snapshots", intOr("cw_tracker_max_snapshots", Number(prevBlock?.max_snapshots), 14), Number.isFinite(prevBlock?.max_snapshots) ? Number(prevBlock.max_snapshots) : 14);
         ["watchlist", "history", "ratings", "progress", "collection"].forEach((key) => {
           const el = _cwEl(`cw_tracker_restore_${key}`);
           if (!el || !_cwTouched(`cw_tracker_restore_${key}`)) return;

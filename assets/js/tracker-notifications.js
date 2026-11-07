@@ -102,12 +102,18 @@
     }
     if (failures.length) {
       const first = failures[0];
+      if (first.reason === "backup_pending") {
+        return {...base, revision: "backup_pending", icon: "error_outline", title: "Tracker upgrade - backup needs attention",
+          detail: "The database import completed, but moving the original JSON files to the backup did not finish. Check disk access and restart CrossWatch to retry the move."};
+      }
       const moved = results.length ? ` ${plural(results.length, "other tracker was", "other trackers were")} moved.` : "";
       return {...base, revision: `failed:${failures.length}`, icon: "error_outline", title: "Tracker upgrade - needs attention",
         detail: `${first.file || "A file"} could not be read, so the tracker${name(first.instance)} still uses its old files. Fix or remove that file and restart CrossWatch.${moved}`};
     }
+    const counts = results.some(row => row.snapshots_backup_only !== undefined)
+      ? ` ${plural(results.reduce((n, row) => n + Number(row.restore_points || 0), 0), "snapshot", "snapshots")} imported; ${plural(results.reduce((n, row) => n + Number(row.snapshots_backup_only || 0), 0), "snapshot", "snapshots")} kept only in the backup.` : "";
     return {...base, revision: "completed", icon: "check_circle", title: "Tracker upgrade - completed",
-      detail: results.length > 1 ? `${results.length} trackers now use a database. Their original files are in a json-backup folder.` : `The tracker now uses a database. The original files are in ${results[0]?.backup || "a json-backup folder"}.`};
+      detail: (results.length > 1 ? `${results.length} trackers now use a database. Their original files are in a json-backup folder.` : `The tracker now uses a database. The original files are in ${results[0]?.backup || "a json-backup folder"}.`) + counts};
   }
 
   function render(data = {}, error = "") {

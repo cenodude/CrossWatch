@@ -15,7 +15,7 @@ import uuid
 import zipfile
 import zlib
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -442,6 +442,17 @@ def tracker_roots(cfg: Mapping[str, Any], config_dir: Path | str) -> list[tuple[
     return roots
 
 
+def tracker_snapshot_settings(cfg: Mapping[str, Any], instance: str = "default") -> dict[str, Any]:
+    base = cfg.get("crosswatch") or cfg.get("CrossWatch") or {}
+    base = base if isinstance(base, Mapping) else {}
+    _, block = _configured_instance(cfg, instance)
+    return {**base, **block}
+
+
+class TrackerBackupPending(RuntimeError):
+    pass
+
+
 class TrackerStore:
     def __init__(
         self,
@@ -450,8 +461,10 @@ class TrackerStore:
         scope: str | None = None,
         chained: bool = True,
         log: LogFn | None = None,
+        migration_settings: Mapping[str, Any] | None = None,
     ) -> None:
         self.root = Path(root)
+        self._migration_settings = migration_settings
         self.scope = scope
         self.chained = chained
         self._scope = scope or ""
@@ -561,7 +574,7 @@ class TrackerStore:
                 return
             conn = self._connect()
             try:
-                if files or snaps is not None:
+                if files or snaps is not None or self.needs_migration():
                     self._import_legacy(conn, files, snaps)
                 _READY.add(key)
             except Exception:
@@ -664,11 +677,19 @@ class TrackerStore:
 
     def needs_migration(self) -> bool:
         files, snaps = self._legacy_files()
-        return bool(files) or snaps is not None
+        if files or snaps is not None:
+            return True
+        if not self.db_path.is_file():
+            return False
+        with closing(sqlite3.connect(self.db_path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='meta'").fetchone():
+                return False
+            row = conn.execute("SELECT value FROM meta WHERE key='legacy_import'").fetchone()
+            return bool(row and json.loads(row[0]).get("backup_pending"))
 
     def migrate(self, progress: ProgressFn | None = None) -> dict[str, Any] | None:
         files, snaps = self._legacy_files()
-        if not files and snaps is None:
+        if not files and snaps is None and not self.needs_migration():
             return None
         conn = self._connect()
         try:
@@ -676,6 +697,67 @@ class TrackerStore:
             _READY.add(str(self.db_path))
         finally:
             conn.close()
+        return stats
+
+    def _legacy_snapshot_selection(self, conn: sqlite3.Connection, snap_files: list[tuple[Path, tuple[str, ...]]]) -> set[Path]:
+        settings = self._migration_settings
+        if settings is None:
+            from .config_base import CONFIG, load_config
+
+            cfg = load_config()
+            settings = {}
+            for instance, root in tracker_roots(cfg, CONFIG):
+                if root.resolve() == self.root.resolve():
+                    settings = tracker_snapshot_settings(cfg, instance)
+                    break
+        days = max(0, int(settings.get("retention_days", 30)))
+        limit = max(0, int(settings.get("max_snapshots", 14)))
+        groups: dict[tuple[str, str], list[Path]] = {}
+        for path, rel in snap_files:
+            feature = _snapshot_feature(path.name)
+            if feature and len(rel) <= 2 and path.is_file():
+                groups.setdefault((rel[0] if len(rel) == 2 else "", feature), []).append(path)
+        selected: set[Path] = set()
+        now = time.time_ns()
+        for (scope, feature), paths in groups.items():
+            paths.sort(key=lambda p: (p.stat().st_mtime_ns, p.name), reverse=True)
+            eligible = [p for p in paths if not days or now - p.stat().st_mtime_ns <= days * 86400_000_000_000]
+            selected.update(eligible[:limit] if limit else eligible)
+            pinned = str(settings.get(f"restore_{feature}") or "").strip()
+            if pinned.lower() not in {"", "latest", "last"}:
+                selected.update(p for p in paths if pinned in (p.name, p.stem))
+            if not self._state_row(conn, scope, feature):
+                for path in paths:
+                    try:
+                        _snapshot_payload(path.read_text("utf-8"), feature)
+                    except Exception:
+                        continue
+                    selected.add(path)
+                    break
+                else:
+                    raise TrackerUnreadable(feature, [paths[0].relative_to(self.root).as_posix()])
+        return selected
+
+    def _finish_legacy_backup(self, conn: sqlite3.Connection, stats: dict[str, Any]) -> dict[str, Any]:
+        if not stats.get("backup_pending"):
+            return stats
+        backup = self.root / stats["backup"]
+        for name in list(stats["backup_pending"]):
+            source, target = self.root / name, backup / name
+            try:
+                backup.mkdir(parents=True, exist_ok=True)
+                if source.exists():
+                    if target.exists():
+                        raise FileExistsError(str(target))
+                    source.rename(target)
+                elif not target.exists():
+                    raise FileNotFoundError(str(source))
+                stats["backup_pending"].remove(name)
+                stats["moved"] = int(stats.get("moved", 0)) + 1
+                with self._write(conn):
+                    conn.execute("UPDATE meta SET value=? WHERE key='legacy_import'", (_dumps(stats),))
+            except (OSError, sqlite3.Error) as exc:
+                raise TrackerBackupPending(f"Original JSON backup is incomplete: {name}") from exc
         return stats
 
     def _import_legacy(
@@ -686,6 +768,20 @@ class TrackerStore:
         progress: ProgressFn | None = None,
     ) -> dict[str, Any] | None:
         with _IMPORT_LOCK:
+            previous = conn.execute("SELECT value FROM meta WHERE key='legacy_import'").fetchone()
+            if previous:
+                stats = json.loads(previous[0])
+                if "backup_pending" not in stats and (files or snaps is not None):
+                    stats.update(
+                        backup=f"json-backup-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}",
+                        backup_pending=[p.name for p in [*files, *([snaps] if snaps is not None else [])]], moved=0,
+                    )
+                    try:
+                        with self._write(conn):
+                            conn.execute("UPDATE meta SET value=? WHERE key='legacy_import'", (_dumps(stats),))
+                    except sqlite3.Error as exc:
+                        raise TrackerBackupPending("Could not record the remaining original JSON backup") from exc
+                return self._finish_legacy_backup(conn, stats) if stats.get("backup_pending") else None
             snap_files = [(p, p.relative_to(snaps).parts) for p in sorted(snaps.rglob("*.json"))] if snaps is not None else []
             sizes = {path: _size(path) for path in [*files, *(path for path, _ in snap_files)]}
             total_files, total_bytes = len(sizes), sum(sizes.values())
@@ -731,9 +827,10 @@ class TrackerStore:
                         self._put_doc(conn, scope, key, raw, updated_ns=mtime_ns)
                         docs += 1
                     advance(path)
+                selected = self._legacy_snapshot_selection(conn, snap_files)
                 for path, rel in snap_files:
                     feature = _snapshot_feature(path.name)
-                    if feature is None or len(rel) > 2 or not path.is_file():
+                    if feature is None or path not in selected:
                         advance(path)
                         continue
                     try:
@@ -745,22 +842,14 @@ class TrackerStore:
                     self._put_restore_point(conn, rel[0] if len(rel) == 2 else "", feature, path.name, text, created_ns=mtime_ns)
                     points += 1
                     advance(path)
-                conn.execute(
-                    "INSERT INTO meta(key, value) VALUES('legacy_import', ?)",
-                    (_dumps({"ts": int(time.time()), "states": states, "docs": docs, "restore_points": points}),),
-                )
-            backup = self.root / f"json-backup-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}"
-            moved = 0
-            for path in [*files, *([snaps] if snaps is not None else [])]:
-                try:
-                    backup.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(path), str(backup / path.name))
-                    moved += 1
-                except Exception as e:
-                    self._log("common", "warn", "legacy_json_backup_failed", path=str(path), error=str(e))
-            self._log("common", "info", "legacy_json_imported", states=states, docs=docs,
-                      restore_points=points, backup=str(backup), moved=moved)
-            return {"states": states, "docs": docs, "restore_points": points, "backup": backup.name, "moved": moved}
+                stats = {
+                    "ts": int(time.time()), "states": states, "docs": docs, "restore_points": points,
+                    "snapshots_backup_only": len(snap_files) - points,
+                    "backup": f"json-backup-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:8]}",
+                    "backup_pending": [p.name for p in [*files, *([snaps] if snaps is not None else [])]], "moved": 0,
+                }
+                conn.execute("INSERT INTO meta(key, value) VALUES('legacy_import', ?)", (_dumps(stats),))
+            return self._finish_legacy_backup(conn, stats)
 
     @staticmethod
     def _put_state(
@@ -1045,7 +1134,7 @@ class TrackerStore:
         *,
         reuse_window: int = 0,
         retention_days: int = 30,
-        max_snapshots: int = 64,
+        max_snapshots: int = 14,
     ) -> None:
         now_ns = time.time_ns()
         payload = {"ts": now_ns // 1_000_000_000, "items": dict(items or {})}
@@ -2111,7 +2200,7 @@ class TrackerStore:
         filename: str,
         *,
         retention_days: int = 30,
-        max_snapshots: int = 64,
+        max_snapshots: int = 14,
     ) -> dict[str, Any]:
         try:
             raw = json.loads(payload.decode("utf-8"))
@@ -2171,7 +2260,7 @@ class TrackerStore:
         filename: str | None = None,
         *,
         retention_days: int = 30,
-        max_snapshots: int = 64,
+        max_snapshots: int = 14,
     ) -> dict[str, Any]:
         name = (filename or "").strip() or "upload.bin"
         buf = BytesIO(payload)

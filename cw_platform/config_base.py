@@ -777,7 +777,7 @@ DEFAULT_CFG: dict[str, Any] = {
         "enabled":          True,                       # Enable/disable CrossWatch as sync provider
         "retention_days":   30,                         # Snapshot retention in days; 0 = keep forever
         "auto_snapshot":    True,                       # Take snapshot before mutating main JSONs
-        "max_snapshots":    64,                         # Max snapshots per feature; 0 = unlimited
+        "max_snapshots":    14,                         # Max snapshots per feature; 0 = unlimited
         "restore_watchlist": "latest",                  # "", "latest", or specific snapshot name/stem
         "restore_history": "latest",                    # "", "latest", or specific snapshot name/stem
         "restore_ratings": "latest"                     # "", "latest", or specific snapshot name/stem
@@ -1515,13 +1515,41 @@ def apply_default_overrides(
 
     return data, applied
 
+def _normalize_tracker_snapshot_defaults(cfg: dict[str, Any]) -> None:
+    marker = "_snapshot_defaults_v2"
+    for key in ("crosswatch", "CrossWatch"):
+        base = cfg.get(key)
+        if not isinstance(base, dict):
+            continue
+        original_count = base.get("max_snapshots", 14 if base.get(marker) else 64)
+        original_days = base.get("retention_days", 30)
+        instances = base.get("instances")
+        blocks = [base, *(instances.values() if isinstance(instances, dict) else [])]
+        planned = []
+        for block in blocks:
+            if not isinstance(block, dict):
+                continue
+            count = block.get("max_snapshots", original_count)
+            days = block.get("retention_days", original_days)
+            if not block.get(marker) and str(count) == "64" and str(days) == "30":
+                count = 14
+            planned.append((block, count))
+        base_count = planned[0][1]
+        for block, count in planned:
+            if block is base or "max_snapshots" in block or str(count) != str(base_count):
+                block["max_snapshots"] = count
+            block[marker] = True
+
+
 def apply_migration_overrides(cfg: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
     try:
         from .config_overrides import MIGRATION_OVERRIDE_KEYS
     except Exception:
         MIGRATION_OVERRIDE_KEYS = ()
 
-    return apply_default_overrides(cfg, MIGRATION_OVERRIDE_KEYS)
+    data, applied = apply_default_overrides(cfg, MIGRATION_OVERRIDE_KEYS)
+    _normalize_tracker_snapshot_defaults(data)
+    return data, applied
 
 
 # Feature normalization
@@ -3025,7 +3053,9 @@ def load_config() -> dict[str, Any]:
         except Exception as e:
             raise RuntimeError(f"Invalid config file: {p}") from e
 
+    _normalize_tracker_snapshot_defaults(user_cfg)
     cfg = _deep_merge(DEFAULT_CFG, user_cfg)
+    _normalize_tracker_snapshot_defaults(cfg)
     cfg.setdefault("version", _current_version_norm())
     try:
         user_cw = user_cfg.get("crosswatch") if isinstance(user_cfg.get("crosswatch"), dict) else user_cfg.get("CrossWatch")
@@ -3213,6 +3243,7 @@ def _save_config_locked(cfg: dict[str, Any]) -> None:
         pass
     data["version"] = _current_version_norm()
     cleanup_obsolete_config_keys(data)
+    _normalize_tracker_snapshot_defaults(data)
     _normalize_tmdb_sync(data)
     _normalize_trakt(data)
     _normalize_simkl(data)

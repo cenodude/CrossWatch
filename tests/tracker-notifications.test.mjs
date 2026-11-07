@@ -164,3 +164,13 @@ test("storage notifications distinguish reader waits and net payload growth", as
   assert.match(app.latest().items[0].detail, /1.*MB more snapshot data/);
   assert.doesNotMatch(app.latest().items[0].detail, /less snapshot data/);
 });
+
+
+test("legacy migration reports imported and backup-only counts and backup failures", async () => {
+  const app = await setup();
+  await app.publish(null, 200, {id: "retained", state: "completed", results: [{restore_points: 14, snapshots_backup_only: 50, backup: "json-backup-test"}]});
+  assert.match(app.latest().items[0].detail, /14 snapshots imported; 50 snapshots kept only in the backup/);
+  await app.publish(null, 200, {id: "retained", state: "failed", errors: [{instance: "default", reason: "backup_pending"}]});
+  assert.match(app.latest().items[0].detail, /database import completed/);
+  assert.match(app.latest().items[0].detail, /restart CrossWatch to retry/);
+});

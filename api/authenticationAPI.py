@@ -412,7 +412,7 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             base.setdefault("root_dir", "/config/.cw_provider")
             base.setdefault("retention_days", 30)
             base.setdefault("auto_snapshot", True)
-            base.setdefault("max_snapshots", 64)
+            base.setdefault("max_snapshots", 14)
             if inst != "default":
                 block = ensure_instance_block(cfg, "crosswatch", inst)
                 block["connected"] = True

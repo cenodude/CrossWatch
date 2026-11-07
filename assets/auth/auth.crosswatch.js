@@ -129,7 +129,7 @@
     setVal("cw_tracker_label", txt(block.label).slice(0, 12));
     setVal("cw_tracker_retention_days", intOr(merged.retention_days, 30));
     setSelect("cw_tracker_auto_snapshot", truth(merged.auto_snapshot, true) ? "true" : "false");
-    setVal("cw_tracker_max_snapshots", intOr(merged.max_snapshots, 64));
+    setVal("cw_tracker_max_snapshots", intOr(merged.max_snapshots, 14));
     ["watchlist", "history", "ratings", "progress", "collection"].forEach((feature) => {
       const sel = $(`cw_tracker_restore_${feature}`);
       if (sel) sel.dataset.wanted = txt(merged[`restore_${feature}`]) || "latest";

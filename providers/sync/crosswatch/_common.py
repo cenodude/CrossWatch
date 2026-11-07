@@ -263,7 +263,7 @@ def _snapshot_state(
         items,
         reuse_window=reuse_window,
         retention_days=int(getattr(cfg, "retention_days", 30) or 0),
-        max_snapshots=int(getattr(cfg, "max_snapshots", 64) or 0),
+        max_snapshots=int(getattr(cfg, "max_snapshots", 14) or 0),
     )
 
 
