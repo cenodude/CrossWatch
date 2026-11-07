@@ -185,6 +185,9 @@ def refresh(sid: str, payload: Refresh, request: Request):
         choices = dict(session.plan.choices)
         for cid, winner in payload.choices.items():
             conflict = session.plan.conflicts.get(cid)
+            if conflict and winner == "" and (conflict.get("left") or {}).get("_cw_status_mapping") and (conflict.get("right") or {}).get("_cw_status_mapping"):
+                choices.pop(cid, None)
+                continue
             if not conflict or winner not in (conflict["source"], conflict["target"]):
                 raise HTTPException(400, "Invalid conflict choice")
             choices[cid] = winner
@@ -279,7 +282,7 @@ def apply(sid: str, payload: Apply, request: Request):
 
 def mapping_row(session, row_id):
     row = session.plan.rows.get(row_id)
-    if not row or row["operation"] not in ("add", "update") or row["feature"] == "playlists":
+    if not row or row["operation"] not in ("add", "update") or row["feature"] == "playlists" or row["item"].get("_cw_status_mapping"):
         raise HTTPException(400, "This change cannot be remapped")
     if row["item"].get("_cw_episode_group"):
         raise HTTPException(409, "Edit this episode group under Editor → Mappings & blocks → Episode groups.")

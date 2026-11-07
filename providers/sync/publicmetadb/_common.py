@@ -20,6 +20,7 @@ from cw_platform.metadata_cache import (
 )
 
 from .._log import log as cw_log
+from .._pagination import PageGuard
 
 STATE_DIR = Path("/config/.cw_state")
 STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -94,17 +95,23 @@ def as_int(value: Any) -> int | None:
         return None
 
 
-def paged_items(adapter: Any, path: str, *, per_page: int, what: str) -> list[Mapping[str, Any]]:
+def paged_items(adapter: Any, path: str, *, per_page: int, what: str, strict: bool = False) -> list[Mapping[str, Any]]:
     out: list[Mapping[str, Any]] = []
     page = 1
     total: int | None = None
     total_pages: int | None = None
     seen_pages: set[tuple[str, ...]] = set()
+    guard = PageGuard(RuntimeError, f"publicmetadb_{what}_repeated_page")
     while True:
         raise_if_cancelled()
         data = adapter.client.read_json(path, params={"page": page, "perPage": per_page})
         if not isinstance(data, Mapping) or not isinstance(data.get("items"), list):
             raise RuntimeError(f"publicmetadb_{what}_invalid_response")
+        if strict and (type(data.get("page")) is not int or data["page"] != page
+                       or any(not isinstance(row, Mapping) for row in data["items"])
+                       or any(k in data and data[k] is not None and (type(data[k]) is not int or data[k] < 0) for k in ("total", "totalPages"))
+                       or (page == 1 and any(type(data.get(k)) is not int or data[k] < 0 for k in ("total", "totalPages")))):
+            raise RuntimeError(f"publicmetadb_{what}_invalid_pagination")
         page_total = as_int(data.get("total"))
         page_pages = as_int(data.get("totalPages") if data.get("totalPages") is not None else data.get("total_pages"))
         if total is not None and page_total is not None and page_total != total:
@@ -114,12 +121,14 @@ def paged_items(adapter: Any, path: str, *, per_page: int, what: str) -> list[Ma
         total = page_total if page_total is not None else total
         total_pages = page_pages if page_pages is not None else total_pages
         rows = [row for row in data["items"] if isinstance(row, Mapping)]
+        if strict:
+            guard.check(rows)
         if not rows:
             if page > 1 or (total or 0) > 0:
                 raise RuntimeError(f"publicmetadb_{what}_incomplete_read:page {page}")
             break
         signature = tuple(str(row.get("id") or "") for row in rows)
-        if signature in seen_pages:
+        if not strict and signature in seen_pages:
             raise RuntimeError(f"publicmetadb_{what}_repeated_page")
         seen_pages.add(signature)
         out.extend(rows)

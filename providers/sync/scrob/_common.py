@@ -372,12 +372,14 @@ def item_from_media(media: Mapping[str, Any]) -> dict[str, Any] | None:
     return out
 
 
-def paged_get(adapter: Any, path: str, *, feature: str, page_size: int, params: Mapping[str, Any] | None = None) -> list[Mapping[str, Any]]:
+def paged_get(adapter: Any, path: str, *, feature: str, page_size: int, params: Mapping[str, Any] | None = None, strict: bool = False) -> list[Mapping[str, Any]]:
     rows: list[Mapping[str, Any]] = []
     page = 1
     size = max(1, min(int(page_size or HISTORY_PAGE_MAX), HISTORY_PAGE_MAX))
     total: int | None = None
     seen_pages: set[tuple[str, ...]] = set()
+    expected_pages: int | None = None
+    seen_ids: set[int] = set()
     while True:
         raise_if_cancelled()
         query = dict(params or {})
@@ -389,6 +391,17 @@ def paged_get(adapter: Any, path: str, *, feature: str, page_size: int, params: 
         data = safe_json(resp)
         if not isinstance(data, Mapping) or not isinstance(data.get("results"), list):
             raise ScrobError(f"scrob_{feature}_invalid_response")
+        if strict:
+            if (type(data.get("page")) is not int or data["page"] != page or any(type(data.get(k)) is not int or data[k] < 0 for k in ("total_results", "total_pages"))
+                    or any(not isinstance(row, Mapping) or type(row.get("id")) is not int for row in data["results"])):
+                raise ScrobError(f"scrob_{feature}_invalid_pagination")
+            if expected_pages is not None and expected_pages != data["total_pages"]:
+                raise ScrobError(f"scrob_{feature}_pages_changed")
+            expected_pages = data["total_pages"]
+            for row in data["results"]:
+                if row["id"] in seen_ids:
+                    raise ScrobError(f"scrob_{feature}_duplicate_row")
+                seen_ids.add(row["id"])
         page_total = as_int(data.get("total_results"))
         if total is not None and page_total is not None and page_total != total:
             raise ScrobError(f"scrob_{feature}_total_changed:{total}->{page_total}")
@@ -410,6 +423,43 @@ def paged_get(adapter: Any, path: str, *, feature: str, page_size: int, params: 
     if total is not None and len(rows) != total:
         raise ScrobError(f"scrob_{feature}_incomplete_read:{len(rows)}/{total}")
     return rows
+
+
+def status_object(adapter: Any, path: str, **kwargs: Any) -> Mapping[str, Any]:
+    raise_if_cancelled()
+    response = scrob_request(adapter, "GET", path, **kwargs)
+    if not ok_status(response):
+        raise ScrobError(f"scrob_status_read_http_{response.status_code}")
+    data = response.json()
+    if not isinstance(data, Mapping):
+        raise ScrobError("scrob_status_invalid_object")
+    return data
+
+
+def status_rows(data: Mapping[str, Any], name: str) -> list[Mapping[str, Any]]:
+    rows = data.get(name)
+    if not isinstance(rows, list) or any(not isinstance(row, Mapping) for row in rows):
+        raise ScrobError("scrob_status_invalid_rows")
+    if (data.get("next") or data.get("next_cursor") or data.get("total_pages", 1) not in (0, 1)
+            or any(k in data and data[k] != len(rows) for k in ("count", "total_results"))):
+        raise ScrobError("scrob_status_incomplete_rows")
+    return rows
+
+
+def status_resume(adapter: Any) -> list[Mapping[str, Any]]:
+    limit = 100
+    previous: list[Any] = []
+    while True:
+        data = status_object(adapter, PATH_CONTINUE_WATCHING, params={"limit": limit, "include_hidden": "true"})
+        rows = status_rows(data, "continue_watching")
+        ids = [row.get("id") for row in rows]
+        if (any(type(ident) is not int for ident in ids) or len(set(ids)) != len(ids)
+                or ids[:len(previous)] != previous or len(rows) > limit):
+            raise ScrobError("scrob_status_resume_changed")
+        if len(rows) < limit:
+            return rows
+        previous = ids
+        limit *= 2
 
 def webhook_post(adapter: Any, path: str, payload: Mapping[str, Any]) -> requests.Response:
     section = cfg_section(adapter)

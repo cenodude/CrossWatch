@@ -535,6 +535,7 @@ def run_pairs(ctx) -> dict[str, Any]:
     provs = ctx.providers or {}
 
     features_ran: set[str] = set()
+    status_pairs = []
     cancelled = False
 
     for i, pair in enumerate(pairs, 1):
@@ -625,6 +626,17 @@ def run_pairs(ctx) -> dict[str, Any]:
                 break
             emit("run:feature", pair_id=str(pair.get('id') or ''), i=feature_index, n=len(features), feature=feature)
             fcfg = feat_map.get(feature) or {}
+            if feature == "history" and pair.get("status_mapping") and isinstance(fcfg, dict):
+                from ._status_mapping import validate_pair
+                try:
+                    validate_pair(pair)
+                except ValueError as exc:
+                    emit("feature:error", src=src, dst=dst, feature=feature, error=str(exc))
+                    errors_total += 1
+                    if review is not None:
+                        review.failed_features.add(feature)
+                    continue
+                fcfg = {**fcfg, "use_source_status": False}
             if isinstance(fcfg, dict) and not coerce_bool(fcfg.get("enable", True), True):
                 continue
 
@@ -742,6 +754,8 @@ def run_pairs(ctx) -> dict[str, Any]:
                                     errors_total += 1
                             else:
                                 review.completed_features.add(feature)
+                        if feature == "history" and errors_total == feature_errors_before and res.get("ok") is not False:
+                            status_pairs.append(pair)
 
                     except SyncCancelled:
                         emit("feature:cancelled", src=src, dst=dst, feature=feature)
@@ -755,6 +769,15 @@ def run_pairs(ctx) -> dict[str, Any]:
                 finally:
                     ctx.config = prev_cfg
                     ctx.state_store = prev_store
+    if not cancelled:
+        from ._status_mapping import run_status_mappings
+        try:
+            status_result = run_status_mappings(ctx, status_pairs, cfg, health_map)
+            updated_total += status_result["updated"]
+            unresolved_total += status_result["unresolved"]
+            errors_total += status_result["errors"]
+        except SyncCancelled:
+            cancelled = True
     if not cancelled and cancel_requested():
         cancelled = True
 

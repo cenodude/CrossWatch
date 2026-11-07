@@ -156,7 +156,7 @@ def body_of(response: Any) -> Any:
 
 
 def pages(adapter: Any, path: str, *, from_date: str | None = None,
-          on_page: Callable[[int], None] | None = None) -> list[Mapping[str, Any]]:
+          on_page: Callable[[int], None] | None = None, extended: str | None = None) -> list[Mapping[str, Any]]:
     out: list[Mapping[str, Any]] = []
     seen: set[str] = set()
     expected_total: int | None = None
@@ -168,6 +168,8 @@ def pages(adapter: Any, path: str, *, from_date: str | None = None,
         params: dict[str, Any] = {"page": page, "limit": DELTA_PAGE_SIZE if from_date is not None else READ_PAGE_SIZE}
         if from_date is not None:
             params["from_date"] = from_date
+        if extended is not None:
+            params["extended"] = extended
         response = request(adapter, "GET", path, params=params)
         rows = body_of(response)
         if not isinstance(rows, list) or any(not isinstance(row, Mapping) for row in rows):

@@ -58,6 +58,29 @@ def test_pair_scopes_match_orchestrator_scopes():
     assert pair_scopes(cfg, "missing") is None
 
 
+@pytest.mark.parametrize("operation", ["history", "watchlist", "delete"])
+def test_status_comparison_state_is_reset_only_with_its_pair_history(config_base, monkeypatch, operation):
+    from cw_platform.status_mapping import Endpoint, ItemScope, PairScope
+    from cw_platform.status_mapping_store import StatusStore
+    cfg = config()
+    state_dir, _ = seed(config_base, cfg)
+    store = StatusStore(config_base / "state" / "status-mapping.sqlite3")
+    items = [ItemScope(PairScope(pair_id, Endpoint("plex", "default"), Endpoint("simkl", "default")), "shows", "1", "1")
+             for pair_id in ("p1", "p2")]
+    for item in items:
+        store.put(item, {"pending": {"desired": "dropped"}})
+    monkeypatch.setattr(maintenanceAPI, "_cw", lambda: (config_base / "cache", config_base, state_dir, None, None, None))
+    monkeypatch.setattr(maintenanceAPI, "_load_config_for_state_prune", lambda _dir: cfg)
+    monkeypatch.setattr(syncAPI, "_env", lambda: (lambda: cfg, lambda value: None))
+    monkeypatch.setattr(syncAPI, "_cw_state_dir", lambda: state_dir)
+    monkeypatch.setattr(syncAPI, "_managed_pair_blocked", lambda *_a, **_k: False)
+    result = (syncAPI.api_pairs_delete("p1", True, None) if operation == "delete" else
+              maintenanceAPI.clear_pair_state_route(pair_id="p1", features=[operation], clear_retry=True))
+    assert result["ok"]
+    assert bool(store.get(items[0])) is (operation == "watchlist")
+    assert store.get(items[1]) == {"pending": {"desired": "dropped"}}
+
+
 def test_clear_pair_state_removes_only_selected_scope(config_base):
     cfg = config()
     state_dir, scopes = seed(config_base, cfg)

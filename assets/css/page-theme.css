@@ -1082,6 +1082,13 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-hero-backdrop{opacity:.24}
 
 .cw-mw .cw-mw-star,.cw-editor-rating .cw-editor-star{border:0;background:transparent;color:var(--cw-theme-muted);box-shadow:none}
 .cw-editor-rating{-webkit-text-fill-color:currentColor}
+.cw-status-mapping{color:var(--cw-theme-text)}
+.cw-status-mapping :is(p,small){color:var(--cw-theme-muted)}
+.cw-status-map-row{border-bottom:1px solid var(--cw-theme-border)}
+.cw-status-mapping :is(select,button){color:var(--cw-theme-text);background:var(--cw-theme-input);border:1px solid var(--cw-theme-border-strong);border-radius:var(--cw-page-control-radius)}
+.cw-status-mapping input[type="checkbox"]{accent-color:var(--cw-theme-accent)}
+.cw-status-mapping select:disabled{color:var(--cw-theme-muted);cursor:not-allowed}
+.cw-status-mapping :is(select,button,input):focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:3px}
 .cw-mw .cw-mw-star:hover,.cw-editor-rating .cw-editor-star:hover{background:transparent}
 .cw-mw .cw-mw-star.is-lit,.cw-editor-rating .cw-editor-star.is-lit{color:var(--cw-theme-accent)}
 .cw-mw .cw-mw-star:focus-visible,.cw-editor-rating .cw-editor-star:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:-2px}

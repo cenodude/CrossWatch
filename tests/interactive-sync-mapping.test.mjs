@@ -7,6 +7,33 @@ import {readFileSync} from "node:fs";
 import vm from "node:vm";
 import {mappingAppliesToRow, candidateConflict, correctedItem, correctedEpisode, mappingGroups, sameSeason, seriesTitle} from "../assets/js/interactive-sync-mapping.js";
 
+test("status conflicts show actual labels and default to leaving both sides unchanged", () => {
+  const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
+  const render = source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
+  const value = source.slice(source.indexOf("  function value("), source.indexOf("  const duration ="));
+  const row = {id:"status-1",result:"conflict",feature:"history",key:"private-scope-json",source:"AniList",target:"SIMKL",winner:"",
+    left:{title:"Example",watch_status:"on_hold",_cw_status_mapping:true},right:{title:"Example",watch_status:"dropped",_cw_status_mapping:true}};
+  const update = {id:"status-2",result:"update",operation:"update",feature:"history",provider:"SIMKL",selectable:true,
+    item:{title:"Other",type:"show",watch_status:"dropped",_cw_status_mapping:{from:"watching",to:"dropped"}},
+    before:{watch_status:"watching",_cw_status_mapping:true}};
+  const context = {host:{contains:()=>false,innerHTML:""},document:{activeElement:null},window:{},
+    session:{status:"review",pair:{source:"ANILIST",target:"SIMKL"},counts:{changes:1,selected:0,conflicts:1},features:["history"]},
+    pageData:{total:2,items:[row,update]},page:0,PAGE_SIZE:100,pageLoading:false,downloadOpen:false,downloading:false,
+    query:"",feature:"",result:"",labels:{update:"Update"},pending:()=>false,origin:()=>["main","Main"],aiButton:()=>"",
+    esc:value=>String(value ?? ""),endpoint:p=>p,progressHTML:()=>"",number:value=>Number(value || 0),title:item=>item.title,
+    reasonDetailsHTML:()=>""};
+  vm.createContext(context);
+  vm.runInContext(value + render + "render();", context);
+  assert.match(context.host.innerHTML,/AniList: On hold/);
+  assert.match(context.host.innerHTML,/SIMKL: Dropped/);
+  assert.match(context.host.innerHTML,/<option value="" selected>Leave unchanged<\/option>/);
+  assert.doesNotMatch(context.host.innerHTML,/private-scope-json|data-map="status-2"/);
+  assert.match(context.host.innerHTML,/Watching/);
+  row.winner = "SIMKL";
+  vm.runInContext("render();", context);
+  assert.match(context.host.innerHTML,/<option value="SIMKL" selected>Use SIMKL<\/option>/);
+});
+
 test("a season can move to a separate show while preserving episode order and watched dates", () => {
   const originals = Array.from({length:10}, (_,i) => ({type:"episode", series_title:"Monster", title:`S02E${i+1}`,
     ids:{tvdb:String(1000+i)}, show_ids:{tmdb:"113988"}, season:2, episode:i+1, watched_at:"2024-09-19T08:00:00Z"}));
