@@ -157,7 +157,7 @@ def _scheduling_warning_summary(cfg: dict[str, Any]) -> dict[str, Any]:
     adv = _as_dict(scfg.get("advanced"))
     warnings: list[str] = []
 
-    if bool(scfg.get("enabled")) and not bool(adv.get("enabled")):
+    if bool(scfg.get("enabled")):
         mode = _clean_text(scfg.get("mode")).lower()
         if mode in {"custom", "custom_interval"}:
             try:
@@ -378,16 +378,21 @@ def sched_post(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     load_config, save_config, scheduler, hint, compute_next, log = _env()
     cfg = load_config() or {}
     prev_scfg = _as_dict(cfg.get("scheduling"))
-    next_scfg = dict((payload or {}) or {})
+    next_scfg = {**prev_scfg, **(payload or {})}
+    next_scfg["_independent_plans_v1"] = True
     if "profiles" not in next_scfg and isinstance(prev_scfg.get("profiles"), dict):
         next_scfg["profiles"] = prev_scfg["profiles"]
     prev_adv = _as_dict(prev_scfg.get("advanced"))
-    next_adv = dict(_as_dict(next_scfg.get("advanced")))
-    if "backup_jobs" not in next_adv and "backupJobs" not in next_adv:
+    advanced_patch = _as_dict((payload or {}).get("advanced"))
+    next_adv = {**prev_adv, **advanced_patch}
+    if "backupJobs" in advanced_patch and "backup_jobs" not in advanced_patch:
+        next_adv["backup_jobs"] = advanced_patch["backupJobs"]
+    if "backup_jobs" not in advanced_patch and "backupJobs" not in advanced_patch:
         backup_jobs = prev_adv.get("backup_jobs") or prev_adv.get("backupJobs")
         if isinstance(backup_jobs, list):
             next_adv["backup_jobs"] = backup_jobs
-            next_scfg["advanced"] = next_adv
+    next_adv.pop("backupJobs", None)
+    next_scfg["advanced"] = next_adv
     cfg["scheduling"] = next_scfg
     save_config(cfg)
 

@@ -1439,7 +1439,7 @@ def test_scheduler_set_every_configures_standard_scheduler() -> None:
         "/api/scheduling",
         {
             "enabled": True,
-            "advanced": {"enabled": False, "jobs": []},
+            "advanced": {"enabled": True, "jobs": []},
             "mode": "every_n_hours",
             "every_n_hours": 6,
         },

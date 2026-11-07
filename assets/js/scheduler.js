@@ -370,7 +370,7 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
   const EVENT_NAME_OPTIONS = [["start", "Start"], ["pause", "Pause"], ["stop", "Stop"]];
   const EVENT_MEDIA_OPTIONS = [["", "Any"], ["movie", "Movie"], ["episode", "Episode"]];
   const HELP_TIPS = {
-    std_enabled: "Use standard plan:\nTurn on the standard timer-based scheduler.\nWhen enabled, the advanced plan is turned off.",
+    std_enabled: "Use standard plan:\nTurn on the standard timer-based scheduler.\nStandard and advanced plans can run together. Runs execute one at a time. When both are due, standard skips pairs already started by advanced for that run.",
     std_frequency: "Frequency:\nChoose how often the standard plan runs.\nUse Every hour, Every N hours, Daily at a fixed time, or a Custom interval.",
     std_every_n_hours: "Every N hours:\nSet how many hours to wait between runs when Frequency is set to Every N hours.",
     std_time: "Time:\nChoose the local time to run each day when Frequency is set to Daily at a fixed time.",
@@ -687,7 +687,7 @@ html[data-cw-theme="flat-light"] #sec-scheduling .sch-card-icon{background:#eef2
     if (mode !== "custom_interval" && warning) warning.classList.remove("is-visible");
     if (summaryText) summaryText.textContent = summary;
     if (summaryNote) summaryNote.textContent = note;
-    if (summaryState) summaryState.textContent = advOn ? "Advanced plan active" : stdOn ? "Standard plan active" : "Saved but off";
+    if (summaryState) summaryState.textContent = stdOn ? (advOn ? "Standard and advanced plans active" : "Standard plan active") : "Saved but off";
     if (detailTitle) detailTitle.textContent = detailHeading;
     if (detailCopy) detailCopy.textContent = detailBody;
   };
@@ -743,34 +743,17 @@ const ensureStdEnabledToggle = () => {
   syncFromSel();
 
   if (!cb.__stdToggleWired) cb.addEventListener("change", () => {
-    // Standard on -> force advanced off
-    if (cb.checked) {
-      const advCb = $("#schAdvEnabled");
-      if (advCb && advCb.checked) advCb.checked = false;
-      _advEnabled = !!$("#schAdvEnabled")?.checked;
-    }
-
     setBooleanSelect(sel, cb.checked);
     try { sel.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
     try { sel.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
 
-    applyModeLocks();
+    updatePlanState();
   });
   cb.__stdToggleWired = true;
 
   if (!sel.__toggleEnhanced) sel.addEventListener("change", syncFromSel);
   sel.__toggleEnhanced = true;
 };
-
-  const setAdvDisabled = (disabled) => {
-    const adv = $("#schAdv");
-    if (!adv) return;
-    adv.classList.toggle("adv-disabled", !!disabled);
-    [...adv.querySelectorAll("select,input,button")].forEach((n) => {
-      if (n && n.id === "schAdvEnabled") return;
-      n.disabled = !!disabled;
-    });
-  };
 
   const decorateStandardPanel = () => {
     const basic = $("#sec-scheduling .cw-subpanel[data-sub='basic'] .auth-card");
@@ -781,7 +764,7 @@ const ensureStdEnabledToggle = () => {
         <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">edit_calendar</span>
         <div class="sch-card-head-copy">
           <div class="sch-std-title">Standard Scheduler</div>
-          <div class="sch-std-copy">Set up a frequency. Switch to Advanced for chained steps.</div>
+          <div class="sch-std-copy">Set up a frequency. Add an advanced plan for chained steps.</div>
         </div>
       </div>
     `;
@@ -825,41 +808,8 @@ const ensureStdEnabledToggle = () => {
     });
   };
 
-  const applyModeLocks = () => {
-    const sel = $("#schEnabled");
-    const stdToggle = $("#schEnabledToggle");
-    const advCb = $("#schAdvEnabled");
-
-    const stdEnabled = String(sel?.value || "").trim().toLowerCase() === "true";
-    const advEnabled = !!advCb?.checked;
-
-    if (advEnabled) {
-      // Advanced on -> force standard off
-      if (stdEnabled) {
-        setBooleanSelect(sel, false);
-        try { sel.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
-        try { sel.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
-      }
-      if (stdToggle) stdToggle.checked = false;
-    } else if (stdEnabled) {
-      // Standard on -> force advanced off
-      if (advCb && advCb.checked) advCb.checked = false;
-      _advEnabled = !!advCb?.checked;
-    }
-
-    const advOn = !!advCb?.checked;
-    const stdOn = String(sel?.value || "").trim().toLowerCase() === "true";
-
-    // Lock standard fields when advanced is on
-    const lockStdFields = advOn;
-    ["schMode", "schN", "schTime", "schCustomValue", "schCustomUnit"].forEach((id) => {
-      const n = $("#" + id);
-      if (n) n.disabled = lockStdFields;
-    });
-
-    // Lock advanced fields when standard is on 
-    setAdvDisabled(stdOn);
-
+  const updatePlanState = () => {
+    _advEnabled = !!$("#schAdvEnabled")?.checked;
     updateStandardWizard();
     try { updateAdvancedStatus(); } catch {}
 
@@ -2117,7 +2067,7 @@ const ensureStdEnabledToggle = () => {
     <span class="material-symbols-rounded sch-card-icon" aria-hidden="true">account_tree</span>
     <div class="sch-card-head-copy">
       <div class="sch-adv-head-title">Advanced Scheduler</div>
-      <p>Set up a Time Plan, Captures, Event Triggers in one advanced schedule.</p>
+      <p>Set up timed steps, captures and event triggers. This plan can run alongside the standard schedule.</p>
     </div>
   </div>
   <label class="cx-toggle">
@@ -2423,17 +2373,7 @@ const ensureStdEnabledToggle = () => {
     $("#btnWebhookTest").onclick = sendWebhookTest;
     $("#schAdvEnabled").onchange = () => {
       _advEnabled = !!$("#schAdvEnabled").checked;
-
-      // Advanced on -> force standard off
-      if (_advEnabled) {
-        const sel = $("#schEnabled");
-        setBooleanSelect(sel, false);
-        try { sel.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
-        try { sel.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
-        try { sel.__toggleSync?.(); } catch {}
-      }
-
-      applyModeLocks();
+      updatePlanState();
     };
   };
 
@@ -2631,7 +2571,7 @@ const ensureStdEnabledToggle = () => {
         queueCapturePrefills(pendingCapturePrefills);
       }
 
-      applyModeLocks();
+      updatePlanState();
       updateStandardWizard();
 
       try { window.cwSchedSettingsHubInit?.(); } catch {}
@@ -2639,7 +2579,7 @@ const ensureStdEnabledToggle = () => {
       decorateStandardFieldHelp();
       ensureStdEnabledToggle();
       wireStandardWizard();
-      applyModeLocks();
+      updatePlanState();
       syncSchedulerTabVisibility();
       try { window.cwSchedSettingsHubUpdate?.(); } catch {}
 
@@ -2748,11 +2688,12 @@ const ensureStdEnabledToggle = () => {
     syncWebhooksFromFields();
     const advanced = serializeAdvanced();
 
-    // Advanced plan disables standard scheduling
-    const stdEnabled = ($("#schEnabled")?.value || "").trim() === "true";
-    const enabled = advanced.enabled ? false : stdEnabled;
+    const enabled = ($("#schEnabled")?.value || "").trim() === "true";
 
-    const patch = { enabled, mode, every_n_hours, daily_time, custom_interval_minutes, advanced };
+    const patch = { enabled, mode, advanced, _independent_plans_v1: true };
+    if (mode === "every_n_hours" || mode === "hourly") patch.every_n_hours = every_n_hours;
+    if (mode === "daily_time") patch.daily_time = daily_time;
+    if (mode === "custom_interval") patch.custom_interval_minutes = custom_interval_minutes;
     if (_webhooksHydrated) patch.webhooks = normalizeWebhooks(_webhooks);
     return patch;
   };

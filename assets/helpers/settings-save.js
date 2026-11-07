@@ -1112,6 +1112,11 @@ async function saveSettings() {
             sched = window.getSchedulingPatch({ strict: true }) || sched;
           }
         }
+        sched = {
+          ...serverCfg?.scheduling,
+          ...sched,
+          advanced: { ...serverCfg?.scheduling?.advanced, ...sched.advanced }
+        };
         if (!same(sched, serverCfg?.scheduling || {})) {
           cfg.scheduling = sched;
           schedChanged = true;

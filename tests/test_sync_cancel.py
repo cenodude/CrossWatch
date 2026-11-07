@@ -16,8 +16,10 @@ from cw_platform.orchestrator import _applier, _snapshots
 @pytest.fixture(autouse=True)
 def _clear_cancel():
     run_control.clear_cancel()
+    run_control.clear_queue_stop()
     yield
     run_control.clear_cancel()
+    run_control.clear_queue_stop()
 
 
 def test_cancel_requested_targets_only_the_named_run(monkeypatch) -> None:
@@ -411,16 +413,53 @@ def test_cancel_endpoint_requires_a_running_sync(monkeypatch, tmp_path) -> None:
     assert sync.api_cancel_status()["cancel_requested"] is True
 
 
-def test_scheduler_queues_guard_on_cancel() -> None:
-    import inspect
+@pytest.mark.parametrize("kind", ["jobs", "workflows"])
+@pytest.mark.parametrize("stale", [False, True])
+def test_scheduler_queues_guard_on_cancel(monkeypatch, kind, stale) -> None:
+    from datetime import datetime, timedelta
     from services import scheduling
 
-    src = inspect.getsource(scheduling.SyncScheduler._adv_run_due)
-    guards = src.count("consume_queue_stop()")
+    now = datetime(2026, 3, 15, 8)
+    monkeypatch.setattr(scheduling, "_as_now_in_tz", lambda _tz=None: now)
+    monkeypatch.setattr(scheduling, "_now_ts", lambda: int(now.timestamp()))
+    monkeypatch.setattr(run_control, "time", types.SimpleNamespace(time=lambda: now.timestamp()))
+    advanced: dict[str, Any] = {"enabled": True}
+    if kind == "jobs":
+        advanced["jobs"] = [{"id": p, "pair_id": p, "at": "08:00"} for p in "abc"]
+    else:
+        advanced["workflows"] = [{"id": "chain", "mode": "daily_time", "daily_time": "08:00",
+                                  "steps": [{"id": p, "pair_id": p} for p in "abc"]}]
+    sch = {"advanced": advanced}
+    runs = []
+    if stale:
+        now -= timedelta(hours=1)
+        run_control.request_cancel()
+        run_control.clear_cancel()
+        now += timedelta(hours=1)
 
-    assert guards == 2, "both the advanced job loop and the workflow step loop must guard on cancel"
-    assert "skipping remaining jobs" in src
-    assert "skipping remaining steps" in src
+    def run(payload):
+        runs.append(payload["pair_id"])
+        if not stale:
+            run_control.request_cancel()
+        return True
+
+    worker = scheduling.SyncScheduler(lambda: {"scheduling": sch}, lambda _: None, run)
+    assert worker._adv_run_due(sch, None) is stale
+    expected = ["a", "b", "c"] if stale else ["a"]
+    assert runs == expected
+    worker._adv_run_due(sch, None)
+    assert runs == expected
+    assert not run_control.queue_stopped()
+
+
+def test_queue_stop_timestamp_survives_run_cleanup_and_is_consumed_once(monkeypatch):
+    monkeypatch.setattr(run_control, "time", types.SimpleNamespace(time=lambda: 123.5))
+    run_control.request_cancel("run-1")
+    run_control.clear_cancel()
+    assert run_control.cancel_state()["requested_at"] is None
+    assert run_control.consume_queue_stop_requested_at() == 123.5
+    assert run_control.consume_queue_stop_requested_at() is None
+    assert not run_control.queue_stopped()
 
 
 def test_manual_run_clears_a_stale_queue_stop(monkeypatch, tmp_path) -> None:
