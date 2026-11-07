@@ -59,6 +59,8 @@ OFFLINE_INITIAL_RETRY_SECONDS = 30.0
 OFFLINE_MAX_RETRY_SECONDS = 300.0
 SESSION_CONTINUITY_SECONDS = 6 * 3600
 ACTIVE_PLAYBACK_SECONDS = 120.0
+VANISHED_SCAN_SECONDS = 30.0
+VANISHED_GRACE_SECONDS = 60.0
 
 
 class _PlexAlertListener(AlertListener):
@@ -428,6 +430,9 @@ class WatchService:
         self._dur_cache: dict[int, tuple[int, float]] = {}
         self._last_event: dict[str, ScrobbleEvent] = {}
         self._stop_sent: set[str] = set()
+        self._vanished_closed: dict[str, ScrobbleEvent] = {}
+        self._stop_lock = threading.Lock()
+        self._vanished_scan_ts = 0.0
         self._session_playback: dict[str, tuple[dict[str, str], float]] = {}
         self._stop_fallback: dict[str, tuple[ScrobbleEvent, dict[str, str], float]] = {}
         self._identity_recovery: dict[str, tuple[ScrobbleEvent, dict[str, str], float]] = {}
@@ -759,28 +764,115 @@ class WatchService:
         return offset is not None and best is not None and offset < best[0]
 
     def _close_replaced_playback(self, sk: str, ts: float) -> None:
-        base = self._last_event.get(sk)
-        if not isinstance(base, ScrobbleEvent) or sk in self._stop_sent or self._stop.is_set():
-            return
         if not 0 <= time.time() - ts < ACTIVE_PLAYBACK_SECONDS:
             return
-        changes: dict[str, Any] = {"action": "stop", "raw": {**(base.raw or {}), "_cw_replaced_stop": True}}
-        progress = self._best_progress_for_session(sk)
-        best = self._best_offset.get(sk)
-        if progress is not None and best:
-            changes.update(progress=progress, position_ms=best[0], duration_ms=best[1])
-        else:
-            changes["progress"] = self._last_emit.get(sk, ("start", base.progress))[1]
-        ev = ScrobbleEvent(**{**base.__dict__, **changes})
-        self._stop_sent.add(sk)
-        if not self._dispatch.dispatch(ev):
+        self._emit_closing_stop(sk, "_cw_replaced_stop", "replaced", self._best_progress_for_session(sk))
+
+    @staticmethod
+    def _same_item(a: ScrobbleEvent, b: ScrobbleEvent) -> bool:
+        if (a.media_type, a.season, a.number) != (b.media_type, b.season, b.number):
+            return False
+        ia, ib = a.ids or {}, b.ids or {}
+        return any(ia.get(k) and str(ia.get(k)) == str(ib.get(k) or "") for k in ("plex", "imdb", "tmdb", "tvdb"))
+
+    def _continued_elsewhere(self, sk: str, base: ScrobbleEvent) -> bool:
+        seen = self._last_seen.get(sk, 0.0)
+        account = str(base.account or "").strip()
+        progress = float(self._last_emit.get(sk, ("start", base.progress))[1])
+        return any(
+            other != sk
+            and self._last_seen.get(other, 0.0) > seen
+            and str(ev.account or "").strip() == account
+            and self._same_item(ev, base)
+            and float(self._last_emit.get(other, ("start", ev.progress))[1]) >= progress
+            for other, ev in list(self._last_event.items())
+        )
+
+    def _emit_closing_stop(
+        self, sk: str, marker: str, reason: str, progress: int | None, expected: ScrobbleEvent | None = None,
+        *, continued: bool = False,
+    ) -> bool:
+        with self._stop_lock:
+            base = self._last_event.get(sk)
+            if not isinstance(base, ScrobbleEvent) or sk in self._stop_sent or self._stop.is_set():
+                return False
+            if expected is not None and (
+                base is not expected or time.time() - self._last_seen.get(sk, 0.0) < VANISHED_GRACE_SECONDS
+            ):
+                return False
+            self._stop_sent.add(sk)
+            if expected is not None:
+                self._vanished_closed[sk] = base
+            seen = self._last_seen.get(sk, 0.0)
+            changes: dict[str, Any] = {"action": "stop", "raw": {**(base.raw or {}), marker: True}}
+            best = self._best_offset.get(sk)
+            if progress is not None and best:
+                changes.update(progress=progress, position_ms=best[0], duration_ms=best[1])
+            else:
+                changes["progress"] = self._last_emit.get(sk, ("start", base.progress))[1]
+            ev = ScrobbleEvent(**{**base.__dict__, **changes})
+            if continued:
+                self._clear_currently_watching(ev)
+                self._dbg(f"session continued elsewhere sess={sk}; closed without stop")
+                return True
+        accepted = bool(self._dispatch.dispatch(ev))
+        with self._stop_lock:
+            if self._last_event.get(sk) is not base or self._last_seen.get(sk, 0.0) != seen:
+                return accepted
+            if not accepted:
+                if expected is not None:
+                    self._clear_currently_watching(ev)
+                return False
+            try:
+                _cw_update("plex", ev, duration_ms=ev.duration_ms, provider_instance=str(self._instance_id or "default"))
+            except Exception:
+                pass
+            self._last_emit[sk] = ("stop", ev.progress)
+        self._log(f"event stop {ev.media_type} user={_mask_account(ev.account)} p={ev.progress} sess={sk} reason={reason}")
+        return True
+
+    def _close_vanished_sessions(self) -> None:
+        now = time.time()
+        if not self._plex or self._stop.is_set() or now - self._vanished_scan_ts < VANISHED_SCAN_SECONDS:
+            return
+        self._vanished_scan_ts = now
+        candidates = [
+            (sk, base) for sk, base in list(self._last_event.items())
+            if sk not in self._stop_sent and now - self._last_seen.get(sk, 0.0) >= VANISHED_GRACE_SECONDS
+        ]
+        if not candidates:
             return
         try:
-            _cw_update("plex", ev, duration_ms=ev.duration_ms, provider_instance=str(self._instance_id or "default"))
+            el: Any = self._plex.query("/status/sessions")
         except Exception:
-            pass
-        self._last_emit[sk] = ("stop", ev.progress)
-        self._log(f"event stop {ev.media_type} user={_mask_account(ev.account)} p={ev.progress} sess={sk} reason=replaced")
+            return
+        if el is None or getattr(el, "tag", None) != "MediaContainer":
+            return
+        rows = list(el)
+        try:
+            if int(el.get("size")) != len(rows):
+                return
+        except (TypeError, ValueError):
+            return
+        listed: dict[str, str] = {}
+        for v in rows:
+            if v.tag != "Video":
+                continue
+            vk = str(v.get("sessionKey") or "").strip()
+            if not vk:
+                return
+            listed[vk] = str(v.get("ratingKey") or "").strip()
+        for sk, base in candidates:
+            rk = str((base.ids or {}).get("plex") or "").strip()
+            if sk in listed and (not rk or not listed[sk] or listed[sk] == rk):
+                continue
+            try:
+                self._emit_closing_stop(
+                    sk, "_cw_vanished_stop", "session_ended", None, expected=base,
+                    continued=self._continued_elsewhere(sk, base),
+                )
+            except Exception as e:
+                self._log(f"closing ended session failed sess={sk}: {e}", "ERROR")
 
     def _prepare_session(self, sk: str, fingerprint: dict[str, str], action: str, entry: dict[str, Any] | None = None) -> None:
         self._expire_session_identity(sk)
@@ -917,19 +1009,25 @@ class WatchService:
         raw["_cw_seek_src"] = str(src or "timeline")
         raw["_cw_seek_ts"] = now
         ev2 = ScrobbleEvent(**{**base.__dict__, "progress": pct_i, "raw": raw})
-        self._last_seek_emit[sk] = now
-        self._last_seen[sk] = now
-        self._last_emit[sk] = ("start", pct_i)
-        self._max_seen[sk] = max(pct_i, self._max_seen.get(sk, 0))
+        with self._stop_lock:
+            if sk in self._stop_sent or self._last_event.get(sk) is not base:
+                return
+            self._last_seek_emit[sk] = now
+            self._last_seen[sk] = now
+            self._last_emit[sk] = ("start", pct_i)
+            self._max_seen[sk] = max(pct_i, self._max_seen.get(sk, 0))
         accepted = bool(self._dispatch.dispatch(ev2))
         if not accepted:
             self._throttled_route_filtered_log(ev2, "seek update", dispatched=True)
             self._clear_currently_watching(ev2)
             return
-        try:
-            _cw_update("plex", ev2, provider_instance=str(self._instance_id or "default"))
-        except Exception:
-            pass
+        with self._stop_lock:
+            if sk in self._stop_sent or self._last_event.get(sk) is not base:
+                return
+            try:
+                _cw_update("plex", ev2, provider_instance=str(self._instance_id or "default"))
+            except Exception:
+                pass
         self._log(f"seek update p={pct_i}% sess={ev2.session_key}", "DEBUG")
 
     # Ingest progress from PSN, TimelineEntry, and ProgressNotification alerts.
@@ -1485,6 +1583,9 @@ class WatchService:
         if prev is None and fallback:
             prev = fallback[0]
         if ev.action == "stop" and isinstance(prev, ScrobbleEvent):
+            if sk in self._last_event:
+                with self._stop_lock:
+                    self._stop_sent.add(sk)
             client = str(entry.get("clientIdentifier") or "").strip()
             if client and self._needs_pkc_support():
                 self._pkc_pending[client] = {
@@ -2110,22 +2211,31 @@ class WatchService:
             self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)} sess={ev.session_key}", "DEBUG")
             if self._stop.is_set():
                 return
+            if sk and (ev.action == "stop" or (ev.raw or {}).get("_cw_playback_action") == "stop"):
+                with self._stop_lock:
+                    closed = self._vanished_closed.get(sk)
+                    if closed is not None and self._same_item(ev, closed):
+                        self._clear_currently_watching(ev)
+                        self._dbg(f"suppress stop after ended session sess={sk} p={ev.progress}")
+                        return
+                    self._vanished_closed.pop(sk, None)
+                    self._stop_sent.add(sk)
             accepted = bool(self._dispatch.dispatch(ev))
             if not accepted:
                 self._throttled_route_filtered_log(ev, dispatched=True)
                 self._clear_currently_watching(ev)
                 return
 
-            try:
-                _cw_update("plex", ev, duration_ms=d, provider_instance=str(self._instance_id or "default"))
-            except Exception:
-                pass
-            if sk and ev.action == "start":
-                self._last_event[sk] = ev
-                self._stop_fallback.pop(sk, None)
-                self._stop_sent.discard(sk)
-            elif sk and ev.action == "stop":
-                self._stop_sent.add(sk)
+            with self._stop_lock:
+                try:
+                    _cw_update("plex", ev, duration_ms=d, provider_instance=str(self._instance_id or "default"))
+                except Exception:
+                    pass
+                if sk and ev.action == "start":
+                    self._last_event[sk] = ev
+                    self._stop_fallback.pop(sk, None)
+                    self._stop_sent.discard(sk)
+                    self._vanished_closed.pop(sk, None)
             self._log(f"event {ev.action} {ev.media_type} user={_mask_account(ev.account)} p={ev.progress} sess={ev.session_key}")
             if sk:
                 self._last_emit[sk] = (ev.action, ev.progress)
@@ -2175,6 +2285,7 @@ class WatchService:
                         self._log("Plex account settings changed; reconnecting", "INFO")
                         break
                     self._poll_manual_marks()
+                    self._close_vanished_sessions()
                     time.sleep(0.5)
             except Exception as e:
                 self._mark_offline(e)
