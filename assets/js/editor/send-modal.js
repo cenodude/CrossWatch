@@ -188,7 +188,7 @@
     returnFocus = document.activeElement;
     const shell = document.createElement("div");
     shell.id = "cw-editor-send-modal";
-    shell.className = "cw-editor-send-overlay";
+    shell.className = "cw-editor-send-overlay cw-page-send";
     const kindLabel = sendKindLabel(kind);
     const kindIcon = sendKindIcon(kind);
     shell.innerHTML = `

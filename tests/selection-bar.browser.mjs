@@ -56,7 +56,7 @@ test("Editor selects visible and filtered results and preserves block/unblock ac
   assert.equal(await bar.isVisible(),false);
   await page.locator("#cw-select-page").check();
   assert.equal(await bar.locator("strong").textContent(),"50");
-  assert.equal(await bar.getByRole("button",{name:"Send to...",exact:true}).isVisible(),true);
+  assert.equal(await bar.getByRole("button",{name:"Send",exact:true}).isVisible(),true);
   await bar.getByRole("button",{name:"All results",exact:true}).click();
   assert.equal(await bar.locator("strong").textContent(),"75");
   await bar.getByRole("button",{name:"Clear",exact:true}).click();

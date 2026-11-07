@@ -1243,7 +1243,7 @@
       btn.title = label;
       btn.setAttribute("aria-label", label);
     };
-    setAction(bulkSendBtn, "send", "Send to...");
+    setAction(bulkSendBtn, "send", "Send");
     const picked = (state.rows || []).filter(row => state.selected.has(row._rid));
     bulkRemoveBtn.style.display = !isMergedView() && picked.some(row => !row.deleted) ? "" : "none";
     bulkRestoreBtn.style.display = !isMergedView() && picked.some(row => row.deleted) ? "" : "none";
