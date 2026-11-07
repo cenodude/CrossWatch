@@ -30,6 +30,7 @@ function displaySub(r) {
   if (k === "episode" && r.season != null && r.episode != null) out.push(`S${String(r.season).padStart(2, "0")}E${String(r.episode).padStart(2, "0")}`);
   else if (k === "season" && r.season != null) out.push(`S${String(r.season).padStart(2, "0")}`);
   if (r.watched_at) out.push("watched");
+  if (r.record_type === "title_status") out.push("title status", String(r.status || "unknown").replaceAll("_", " "));
   return out.join(" • ");
 }
 
@@ -67,6 +68,10 @@ async function copyText(t) {
 function renderRecordCard(label, rec, missingText = "Missing") {
   if (!rec) return `<div class="card"><div class="ttl"><div class="name">${esc(label)}</div><div class="mini">${esc(missingText)}</div></div><div class="empty">No record in this file.</div></div>`;
   const kv = [["Type", kindOf(rec)], ["Title", rec.title], ["Series", rec.series_title || rec.show_title], ["Year", rec.year], ["Season", rec.season], ["Episode", rec.episode], ["Watched", rec.watched_at], ["Added", rec.added_at], ["Updated", rec.updated_at]].filter(([, v]) => v != null && v !== "");
+  if (rec.record_type === "title_status") {
+    const flag = value => value === true ? "Yes" : value === false ? "No" : "Unknown";
+    kv.push(["Title status", String(rec.status || "unknown").replaceAll("_", " ")], ["Provider status", rec.native_status || "unknown"], ["Rewatching", flag(rec.rewatching)], ["Watchlisted", flag(rec.watchlisted)]);
+  }
   const chips = [];
   for (const [prefix, obj] of [["", rec.ids], ["show.", rec.show_ids]]) {
     if (!obj || typeof obj !== "object") continue;

@@ -102,8 +102,16 @@ def matched_records(left, right, *, allow_mapping=True):
             yield a, b
 
 
-def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None):
+def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None, adapter_overrides=None):
     store = store or StatusStore()
+    pairs = list(pairs)
+    endpoints = {endpoint for pair in pairs if not skip_reason(pair)
+                 for endpoint in (pair_scope(pair).a, pair_scope(pair).b) if endpoint not in (adapter_overrides or {})}
+    with store.exclusive_instances(endpoints):
+        return _run_status_mappings(ctx, pairs, cfg, health_map, store=store, adapter_overrides=adapter_overrides)
+
+
+def _run_status_mappings(ctx, pairs, cfg, health_map, *, store, adapter_overrides=None):
     review = getattr(ctx, "interactive", None)
     preview = review is not None and review.preview
     dry_run = bool(getattr(ctx, "dry_run", False) or (cfg.get("sync") or {}).get("dry_run") or (cfg.get("sync") or {}).get("enable_add") is False)
@@ -160,7 +168,7 @@ def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None):
                     instances = (cfg.get(endpoint.provider) or {}).get("instances")
                     if instances:
                         view[endpoint.provider] = {**view[endpoint.provider], "instances": instances}
-                    adapter = cls(view)
+                    adapter = (adapter_overrides or {}).get(endpoint) or cls(view)
                     snapshots[endpoint] = read_once(["status_mapping", asdict(endpoint)], adapter.read, scoped=False)
                     adapters[endpoint] = adapter
             left, right = dict(snapshots[scope.a]), dict(snapshots[scope.b])

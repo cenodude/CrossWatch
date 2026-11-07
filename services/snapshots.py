@@ -26,6 +26,8 @@ from cw_platform.provider_instances import (
     normalize_instance_id,
     split_sync_user_id,
 )
+from cw_platform.run_control import SyncCancelled
+from services.capture_statuses import capture_statuses, comparison_statuses, guard_feature_restore, restore_statuses, status_records
 
 Feature = Literal["watchlist", "ratings", "history", "progress", "collection"]
 CreateFeature = Literal["watchlist", "ratings", "history", "progress", "collection", "all"]
@@ -291,7 +293,7 @@ def start_capture_job(
     def _run() -> None:
         try:
             create_snapshot(provider, feature, label=label, instance_id=instance_id, cfg=cfg, progress_id=job_id)
-        except Exception:
+        except (Exception, SyncCancelled):
             pass
 
     thread = Thread(target=_run, name=f"cw-capture-{job_id[:8]}", daemon=True)
@@ -376,7 +378,7 @@ def start_restore_job(
     def _run() -> None:
         try:
             restore_snapshot(path, mode=mode, instance_id=instance_id, cfg=cfg, progress_id=job_id)
-        except Exception:
+        except (Exception, SyncCancelled):
             pass
 
     thread = Thread(target=_run, name=f"cw-restore-{job_id[:8]}", daemon=True)
@@ -973,6 +975,12 @@ def _create_single_snapshot(
     idx = _canonicalize_index(pid, feat, idx)
     stats = _stats_for(feat, idx)
     count = int(stats.get("count") or 0)
+    statuses = None
+    if feat == "history":
+        _capture_progress_update(progress_id, stage="reading", message="Reading native title statuses...")
+        statuses = capture_statuses(cfg, pid, normalize_instance_id(instance))
+        if statuses is not None:
+            stats["title_statuses"] = len(statuses["items"])
     _capture_progress_update(
         progress_id,
         stage="writing",
@@ -999,6 +1007,8 @@ def _create_single_snapshot(
         "items": idx,
         "app_version": str(cfg.get("version") or ""),
     }
+    if statuses is not None:
+        payload["title_statuses"] = statuses
     _write_json_atomic(path, payload)
     try:
         written = path.stat().st_size
@@ -1097,6 +1107,8 @@ def create_snapshot(
             rel = f"{ts.strftime('%Y-%m-%d')}/{_snap_name(ts, pid, inst, 'all', label)}"
             path = _snapshots_dir() / rel
             stats = {"feature": "all", "count": total, "features": feats_total}
+            if any("title_statuses" in child.get("stats", {}) for child in children):
+                stats["title_statuses"] = sum(child.get("stats", {}).get("title_statuses", 0) for child in children)
 
             payload: dict[str, Any] = {
                 "kind": SNAPSHOT_BUNDLE_KIND,
@@ -1111,7 +1123,9 @@ def create_snapshot(
             }
             _write_json_atomic(path, payload)
 
-            result = {"ok": True, "path": rel, "provider": pid, "instance": inst, "feature": "all", "label": payload["label"], "created_at": payload["created_at"], "stats": stats, "children": children}
+            result = {"ok": not any("error" in child for child in children), "path": rel, "provider": pid, "instance": inst, "feature": "all", "label": payload["label"], "created_at": payload["created_at"], "stats": stats, "children": children}
+            if not result["ok"]:
+                result["message"] = "Capture incomplete. Failed features: " + ", ".join(str(child["feature"]) for child in children if "error" in child) + "."
             _capture_progress_done(progress_id, result=result)
             return result
 
@@ -1135,7 +1149,7 @@ def create_snapshot(
         )
         _capture_progress_done(progress_id, result=result)
         return result
-    except Exception as e:
+    except (Exception, SyncCancelled) as e:
         _capture_progress_error(progress_id, e)
         raise
 def list_snapshots() -> list[dict[str, Any]]:
@@ -1310,6 +1324,7 @@ def _restore_single_snapshot(
     progress_id: str | None = None,
     feature_index: int = 1,
     feature_total: int = 1,
+    restore_title_statuses: bool = True,
 ) -> dict[str, Any]:
     cfg = cfg or load_config()
     snap = read_snapshot(path)
@@ -1317,6 +1332,8 @@ def _restore_single_snapshot(
     snap_inst = normalize_instance_id(snap.get("instance") or snap.get("instance_id") or snap.get("profile"))
     inst = normalize_instance_id(instance_id) if instance_id else snap_inst
     feat = _norm_feature(str(snap.get("feature") or ""))
+    if "title_statuses" in snap:
+        status_records(snap["title_statuses"])
     ops = _ops_or_raise(pid)
 
     cfg_view = build_provider_config_view(cfg, pid, inst)
@@ -1396,12 +1413,17 @@ def _restore_single_snapshot(
         remove_total = len(rem_items)
         for batch in _chunk(rem_items, chunk_size):
             try:
-                if pid == "CROSSWATCH":
-                    with _crosswatch_write_env():
+                with guard_feature_restore(pid, inst):
+                    if pid == "CROSSWATCH":
+                        with _crosswatch_write_env():
+                            res = ops.remove(cfg_view, batch, feature=feat, dry_run=False) or {}
+                    else:
                         res = ops.remove(cfg_view, batch, feature=feat, dry_run=False) or {}
-                else:
-                    res = ops.remove(cfg_view, batch, feature=feat, dry_run=False) or {}
-                removed += int(res.get("count") or len(batch))
+                count, failure = _restore_operation_result(res)
+                removed += count
+                if failure:
+                    errors.append(f"remove_failed: {failure}")
+                    break
                 frac = 0.30 + (min(1.0, removed / max(1, remove_total)) * 0.28)
                 _capture_progress_update(
                     progress_id,
@@ -1422,6 +1444,7 @@ def _restore_single_snapshot(
                 )
             except Exception as e:
                 errors.append(f"remove_failed: {e}")
+                break
 
     if mode == "clear_restore" and errors:
         _capture_progress_update(
@@ -1445,12 +1468,17 @@ def _restore_single_snapshot(
         add_total = len(add_items)
         for batch in _chunk(add_items, chunk_size):
             try:
-                if pid == "CROSSWATCH":
-                    with _crosswatch_write_env():
+                with guard_feature_restore(pid, inst):
+                    if pid == "CROSSWATCH":
+                        with _crosswatch_write_env():
+                            res = ops.add(cfg_view, batch, feature=feat, dry_run=False) or {}
+                    else:
                         res = ops.add(cfg_view, batch, feature=feat, dry_run=False) or {}
-                else:
-                    res = ops.add(cfg_view, batch, feature=feat, dry_run=False) or {}
-                added += int(res.get("count") or len(batch))
+                count, failure = _restore_operation_result(res)
+                added += count
+                if failure:
+                    errors.append(f"add_failed: {failure}")
+                    break
                 frac = 0.60 + (min(1.0, added / max(1, add_total)) * 0.34)
                 _capture_progress_update(
                     progress_id,
@@ -1471,6 +1499,7 @@ def _restore_single_snapshot(
                 )
             except Exception as e:
                 errors.append(f"add_failed: {e}")
+                break
 
     _capture_progress_update(
         progress_id,
@@ -1490,7 +1519,7 @@ def _restore_single_snapshot(
         percent=_progress_percent(feature_index, feature_total, 0.96),
     )
 
-    return {
+    result = {
         "ok": len(errors) == 0,
         "provider": pid,
         "instance": inst,
@@ -1502,6 +1531,38 @@ def _restore_single_snapshot(
         "snapshot_count": len(snap_items),
         "errors": errors,
     }
+    if restore_title_statuses:
+        _restore_captured_statuses(snap, result, cfg, pid, inst, progress_id=progress_id)
+    return result
+
+
+def _restore_operation_result(result):
+    if not isinstance(result, Mapping) or type(result.get("count")) is not int or result["count"] < 0:
+        return 0, "Provider did not report a valid applied count. Restore stopped; verify the provider before retrying."
+    if result.get("ok") is False or any(result.get(key) for key in ("error", "errors", "unresolved", "unresolved_keys", "accepted_unverified")):
+        return result["count"], "Provider reported failed, unresolved or unverified changes. Restore stopped; review the provider before retrying."
+    return result["count"], ""
+
+
+def _restore_captured_statuses(snap, result, cfg, pid, inst, *, progress_id=None):
+    if not result.get("ok") or "title_statuses" not in snap:
+        return
+    _capture_progress_update(progress_id, stage="restoring", message="Restoring captured title statuses...")
+    statuses = restore_statuses(cfg, pid, inst, snap["title_statuses"])
+    result["title_statuses"] = statuses
+    if not statuses["ok"]:
+        result["ok"] = False
+        result["errors"].extend(statuses["errors"])
+
+
+def _restore_message(result):
+    message = f"Restore complete: {int(result.get('added') or 0):,} added, {int(result.get('removed') or 0):,} removed."
+    statuses = result.get("title_statuses")
+    if statuses:
+        message += f" Title statuses: {statuses['updated'] + statuses.get('recovered', 0):,} restored, {statuses.get('unchanged', 0):,} unchanged, {statuses.get('excluded', 0):,} excluded."
+    if not result.get("ok"):
+        message += " Needs attention: " + "; ".join(result.get("errors") or ["Some restore actions failed."])
+    return message
 
 
 def delete_snapshot(path: str, *, delete_children: bool = True) -> dict[str, Any]:
@@ -1625,6 +1686,12 @@ def restore_snapshot(
             if not isinstance(children, list):
                 children = []
             child_paths = [str(c.get("path") or "").strip() for c in children if isinstance(c, Mapping) and str(c.get("path") or "").strip()]
+            captured_children = [read_snapshot(child_path) for child_path in child_paths]
+            for child in captured_children:
+                if _norm_provider(str(child.get("provider") or "")) != pid or normalize_instance_id(child.get("instance")) != snap_inst:
+                    raise ValueError("Capture bundle contains a different provider or instance")
+                if "title_statuses" in child:
+                    status_records(child["title_statuses"])
             feature_total = max(1, len(child_paths))
             _capture_progress_start(progress_id, provider=pid, instance=inst, feature="all", feature_total=feature_total)
             _capture_progress_update(
@@ -1639,16 +1706,21 @@ def restore_snapshot(
             )
 
             results: list[dict[str, Any]] = []
-            errors: list[str] = []
+            errors: list[str] = [str(child["error"]) for child in children if isinstance(child, Mapping) and child.get("error")]
             for index, child_path in enumerate(child_paths, start=1):
                 try:
-                    results.append(_restore_single_snapshot(child_path, mode=mode, instance_id=inst, cfg=cfg, chunk_size=chunk_size, progress_id=progress_id, feature_index=index, feature_total=feature_total))
+                    child_result = _restore_single_snapshot(child_path, mode=mode, instance_id=inst, cfg=cfg, chunk_size=chunk_size, progress_id=progress_id, feature_index=index, feature_total=feature_total, restore_title_statuses=False)
+                    results.append(child_result)
+                    errors.extend(child_result.get("errors") or [])
                 except Exception as e:
                     errors.append(str(e))
 
             added = sum(int(r.get("added") or 0) for r in results)
             removed = sum(int(r.get("removed") or 0) for r in results)
             result = {"ok": len(errors) == 0 and all(bool(r.get("ok")) for r in results), "provider": pid, "instance": inst, "feature": "all", "mode": mode, "children": results, "errors": errors, "added": added, "removed": removed, "message": f"Restore complete: {added:,} added, {removed:,} removed.", "stats": {"count": added + removed}}
+            for child in captured_children:
+                _restore_captured_statuses(child, result, cfg, pid, inst, progress_id=progress_id)
+            result["message"] = _restore_message(result)
             _capture_progress_done(progress_id, result=result)
             _capture_progress_update(progress_id, operation="restore", restore_result=result, added=added, removed=removed, total_items=added + removed, items_done=added + removed)
             return result
@@ -1659,12 +1731,12 @@ def restore_snapshot(
         _capture_progress_start(progress_id, provider=pid, instance=inst, feature=feat_raw or "restore", feature_total=1)
         _capture_progress_update(progress_id, operation="restore", stage="starting", message="Preparing restore...", provider=pid, instance=inst, feature=feat_raw or "restore", feature_total=1)
         result = _restore_single_snapshot(path, mode=mode, instance_id=instance_id, cfg=cfg, chunk_size=chunk_size, progress_id=progress_id, feature_index=1, feature_total=1)
-        result["message"] = f"Restore complete: {int(result.get('added') or 0):,} added, {int(result.get('removed') or 0):,} removed."
+        result["message"] = _restore_message(result)
         result["stats"] = {"count": int(result.get("added") or 0) + int(result.get("removed") or 0)}
         _capture_progress_done(progress_id, result=result)
         _capture_progress_update(progress_id, operation="restore", restore_result=result, added=int(result.get("added") or 0), removed=int(result.get("removed") or 0), total_items=int(result.get("stats", {}).get("count") or 0), items_done=int(result.get("stats", {}).get("count") or 0))
         return result
-    except Exception as e:
+    except (Exception, SyncCancelled) as e:
         _capture_progress_error(progress_id, e)
         raise
 def clear_provider_features(
@@ -1876,7 +1948,7 @@ def _brief_item(x: Any) -> dict[str, Any]:
     if not isinstance(x, Mapping):
         return {"value": x}
     out: dict[str, Any] = {}
-    for k in ("type", "title", "year", "season", "episode", "status"):
+    for k in ("type", "title", "year", "season", "episode", "status", "native_status", "record_type", "read_state", "rewatching", "watchlisted"):
         if k in x:
             out[k] = x.get(k)
     t = str(x.get("type") or "").lower()
@@ -2218,6 +2290,9 @@ def diff_snapshots(
     if feat_a == "history":
         items_a = _history_items_by_base_key(items_a_raw)
         items_b = _history_items_by_base_key(items_b_raw)
+        if "title_statuses" in a and "title_statuses" in b:
+            items_a.update(comparison_statuses(a["title_statuses"]))
+            items_b.update(comparison_statuses(b["title_statuses"]))
         history_multi = True
     else:
         items_a = dict(items_a_raw)
@@ -2405,6 +2480,9 @@ def diff_snapshots_extended(
     if feat_a == "history":
         items_a = _history_items_by_base_key(items_a_raw)
         items_b = _history_items_by_base_key(items_b_raw)
+        if "title_statuses" in a and "title_statuses" in b:
+            items_a.update(comparison_statuses(a["title_statuses"]))
+            items_b.update(comparison_statuses(b["title_statuses"]))
         history_multi = True
     else:
         items_a = dict(items_a_raw)
