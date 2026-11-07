@@ -11,7 +11,33 @@
   let timer, controller, current = {};
   const plural = (n, one, many) => `${Number(n || 0).toLocaleString()} ${n === 1 ? one : many}`;
   const mb = bytes => (Number(bytes || 0) / 1e6).toLocaleString(undefined, {maximumFractionDigits: bytes < 1e7 ? 1 : 0});
-  const running = data => [data?.job, data?.migration, data?.import].some(job => job?.state === "running");
+  const running = data => [data?.job, data?.migration, data?.import, ...(data?.storage || [])].some(job => job?.state === "running");
+
+  function storageItem(job) {
+    if (!job?.id) return null;
+    const where = job.instance && job.instance !== "default" ? ` (${job.label || job.instance})` : "";
+    const base = {id: `storage:${job.id}`, href: "/#tracker", action: "Open tracker", time: job.finished_at || job.started_at};
+    const saved = `${mb(Math.abs(Number(job.bytes_saved || 0)))} MB ${Number(job.bytes_saved || 0) < 0 ? "more" : "less"} snapshot data`;
+    if (job.state === "completed") {
+      return {...base, revision: "completed", icon: "check_circle", title: `Tracker storage - completed${where}`,
+        detail: `Snapshot processing completed: ${saved}. Restore points remain available.`};
+    }
+    if (job.state === "failed") {
+      return {...base, revision: "failed", icon: "error_outline", title: `Tracker storage - needs attention${where}`,
+        detail: "Storage maintenance stopped. Saved restore points are kept. CrossWatch will retry; see the log for details."};
+    }
+    let detail = `${Number(job.done || 0).toLocaleString()} of ${plural(job.total, "snapshot", "snapshots")} compressed; ${saved}. You can keep using the tracker.`;
+    if (job.phase === "waiting") {
+      detail = job.reason === "disk_space" ? "More free disk space is needed to continue storage maintenance. Completed work is kept; CrossWatch will retry."
+        : job.reason === "wal_pressure" ? "Waiting for database readers to release the write-ahead log before continuing compression. CrossWatch will retry."
+        : job.reason === "busy" ? "The database is busy. Storage maintenance will retry when it is available."
+        : "Snapshots compressed. Waiting for an idle window to compact the database.";
+    } else if (job.phase === "compacting") {
+      detail = "Reclaiming unused database space. Tracker writes may briefly wait.";
+    }
+    return {...base, revision: job.phase === "waiting" ? `waiting:${job.reason}` : "running", icon: "database",
+      title: `Tracker storage - ${job.phase === "waiting" ? "waiting" : "running"}${where}`, detail};
+  }
 
   function checkItem(job) {
     if (!job?.id) return null;
@@ -86,7 +112,7 @@
 
   function render(data = {}, error = "") {
     current = data || {};
-    const items = [migrationItem(current.migration), importItem(current.import), checkItem(current.job)].filter(Boolean);
+    const items = [migrationItem(current.migration), ...(current.storage || []).map(storageItem), importItem(current.import), checkItem(current.job)].filter(Boolean);
     window.CW?.Notifications?.setSource("tracker-check", {scope: "account", error, items});
   }
 
@@ -107,7 +133,7 @@
       const data = await response.json();
       if (!request.signal.aborted) {
         const wasMoving = current.migration?.state === "running";
-        render({job: data.job || null, migration: data.migration || null, import: data.import || null});
+        render({job: data.job || null, migration: data.migration || null, import: data.import || null, storage: data.storage || []});
         if (wasMoving && data.migration?.state !== "running") window.dispatchEvent(new CustomEvent("cw:tracker-migrated"));
       }
     } catch {

@@ -31,7 +31,7 @@ from cw_platform.tracker_store import (
     tracker_roots,
 )
 from cw_platform.value_coercion import coerce_bool
-from services import tracker_check, tracker_import, tracker_migration
+from services import tracker_check, tracker_import, tracker_migration, tracker_storage_maintenance
 
 router = APIRouter(prefix="/api/tracker", tags=["tracker"])
 
@@ -965,7 +965,13 @@ def tracker_check_current(request: Request) -> Any:
             break
         if latest is None or float(job.get("finished_at") or 0) > float(latest.get("finished_at") or 0):
             latest = job
-    return {"ok": True, "job": latest, "migration": migration if user is None else None, "import": _latest_import(cfg, labels)}
+    storage = [
+        {**job, "label": labels.get(str(job.get("instance")), job.get("instance"))}
+        for job in tracker_storage_maintenance.status()
+        if job.get("instance") in labels
+    ] if user is None else []
+    return {"ok": True, "job": latest, "migration": migration if user is None else None,
+            "import": _latest_import(cfg, labels), "storage": storage}
 
 
 def _import_run(job: Mapping[str, Any]) -> Mapping[str, Any] | None:
