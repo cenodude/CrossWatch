@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import re
@@ -12,6 +13,7 @@ import threading
 import time
 import uuid
 import zipfile
+import zlib
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -54,6 +56,10 @@ _CACHE_LOCK = threading.Lock()
 _GUARD = threading.local()
 _MISSING = object()
 _CACHE_LIMIT = 256
+_SNAPSHOT_MAGIC = b"CWSP\x01"
+_SNAPSHOT_COMPACT_MIN = 16 * 1024 * 1024
+_SNAPSHOT_HEADROOM = 64 * 1024 * 1024
+_SNAPSHOT_WAL_LIMIT = 64 * 1024 * 1024
 _WHEN_FIELDS: tuple[str, ...] = ("watched_at", "rated_at", "progress_at", "collected_at", "listed_at", "added_at")
 _ITEM_COLUMNS: tuple[tuple[str, str], ...] = (
     ("kind", "TEXT"), ("when_at", "TEXT"), ("show_key", "TEXT"), ("season", "INTEGER"), ("episode", "INTEGER"),
@@ -200,8 +206,33 @@ def _upload_items(raw: Mapping[str, Any], feature: str) -> dict[str, Any]:
     return _state_payload(raw, feature)[1]
 
 
-def _snapshot_payload(text: str, feature: str) -> dict[str, Any]:
-    ts, items = _state_payload(json.loads(text), feature)
+class SnapshotMaintenanceDeferred(RuntimeError):
+    pass
+
+
+def _snapshot_failure_reason(exc: Exception) -> str | None:
+    code = getattr(exc, "sqlite_errorcode", 0) & 255
+    if code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+        return "busy"
+    if code == sqlite3.SQLITE_FULL or isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
+        return "disk_space"
+    return None
+
+
+def _snapshot_text(data: str | bytes) -> str:
+    if isinstance(data, bytes):
+        if not data.startswith(_SNAPSHOT_MAGIC):
+            raise ValueError("Unknown snapshot encoding")
+        return zlib.decompress(data[len(_SNAPSHOT_MAGIC):]).decode("utf-8")
+    return data
+
+
+def _pack_snapshot(text: str) -> bytes:
+    return _SNAPSHOT_MAGIC + zlib.compress(text.encode("utf-8"))
+
+
+def _snapshot_payload(text: str | bytes, feature: str) -> dict[str, Any]:
+    ts, items = _state_payload(json.loads(_snapshot_text(text)), feature)
     return {"ts": ts, "items": items}
 
 
@@ -549,9 +580,80 @@ class TrackerStore:
         try:
             yield conn
         except BaseException:
-            conn.execute("ROLLBACK")
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
             raise
         conn.execute("COMMIT")
+
+    def _migrate_snapshots(
+        self,
+        conn: sqlite3.Connection,
+        progress: Callable[[int, int, int], None] | None = None,
+        cancelled: Callable[[], bool] | None = None,
+    ) -> dict[str, int]:
+        total = int(conn.execute("SELECT count(*) FROM restore_points WHERE typeof(data)='text'").fetchone()[0])
+        done = saved = after = 0
+        if progress:
+            progress(done, total, saved)
+        while not cancelled or not cancelled():
+            point = conn.execute(
+                "SELECT id, data FROM restore_points WHERE id>? AND typeof(data)='text' ORDER BY id LIMIT 1",
+                (after,),
+            ).fetchone()
+            if point is None:
+                break
+            packed = _pack_snapshot(point[1])
+            if _snapshot_text(packed) != point[1]:
+                raise ValueError("Snapshot compression verification failed")
+            raw_size = len(point[1].encode("utf-8"))
+            if shutil.disk_usage(self.root).free < _SNAPSHOT_HEADROOM + 4 * (raw_size + len(packed)):
+                raise SnapshotMaintenanceDeferred("disk_space")
+            checkpoint = conn.execute("PRAGMA wal_checkpoint(PASSIVE)").fetchone()
+            page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+            if max(0, checkpoint[1] - checkpoint[2]) * page_size >= _SNAPSHOT_WAL_LIMIT:
+                raise SnapshotMaintenanceDeferred("wal_pressure")
+            with self._write(conn):
+                changed = conn.execute(
+                    "UPDATE restore_points SET data=? WHERE id=? AND data=?", (packed, point[0], point[1]),
+                ).rowcount
+            after = int(point[0])
+            done += 1
+            if changed:
+                saved += raw_size - len(packed)
+            if progress:
+                progress(done, total, saved)
+        return {"done": done, "total": total, "bytes_saved": saved}
+
+    def _compact_snapshots(self, conn: sqlite3.Connection) -> str:
+        if conn.in_transaction:
+            return "busy"
+        try:
+            now = int(time.time())
+            row = conn.execute("SELECT value FROM meta WHERE key='snapshot_compact_checked'").fetchone()
+            if row and now - int(row[0]) < 86400:
+                return "skipped"
+            pages = int(conn.execute("PRAGMA page_count").fetchone()[0])
+            free = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
+            size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+            if free * size >= _SNAPSHOT_COMPACT_MIN and free >= pages / 4:
+                if shutil.disk_usage(self.root).free < pages * size * 2:
+                    self._log("common", "warn", "snapshot_compaction_deferred", reason="disk_space")
+                    return "disk_space"
+                conn.execute("VACUUM")
+                checkpoint = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                if checkpoint[0]:
+                    return "busy"
+            conn.execute(
+                "INSERT INTO meta(key, value) VALUES('snapshot_compact_checked', ?)"
+                " ON CONFLICT(key) DO UPDATE SET value=excluded.value", (str(now),),
+            )
+            return "completed"
+        except (OSError, sqlite3.Error) as e:
+            self._log("common", "warn", "snapshot_compaction_deferred", error=str(e))
+            reason = _snapshot_failure_reason(e)
+            if reason:
+                return reason
+            raise
 
     @staticmethod
     def _bump(conn: sqlite3.Connection) -> None:
@@ -709,7 +811,7 @@ class TrackerStore:
             "INSERT INTO restore_points(scope, feature, name, ts, created_ns, data) VALUES(?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(scope, feature, name) DO UPDATE SET ts=excluded.ts, created_ns=excluded.created_ns,"
             " data=excluded.data",
-            (scope, feature, name, ts if ts is not None else created_ns // 1_000_000_000, created_ns, text),
+            (scope, feature, name, ts if ts is not None else created_ns // 1_000_000_000, created_ns, _pack_snapshot(text)),
         )
 
     @staticmethod
@@ -764,7 +866,7 @@ class TrackerStore:
         row = self._state_row(conn, scope, feature)
         return {"ts": row[0] if row else 0, "items": self._items(conn, scope, feature)}
 
-    def _fallback_point(self, conn: sqlite3.Connection, feature: str) -> tuple[str, str] | None:
+    def _fallback_point(self, conn: sqlite3.Connection, feature: str) -> tuple[str, str | bytes] | None:
         if self.chained:
             row = conn.execute(
                 "SELECT name, data FROM restore_points WHERE feature=? ORDER BY created_ns DESC, id DESC LIMIT 1",
@@ -776,7 +878,7 @@ class TrackerStore:
                 " ORDER BY created_ns DESC, id DESC LIMIT 1",
                 (feature, self._scope),
             ).fetchone()
-        return (str(row[0]), str(row[1])) if row else None
+        return (str(row[0]), row[1]) if row else None
 
     @contextmanager
     def guarded(self) -> Generator[None]:
@@ -946,14 +1048,27 @@ class TrackerStore:
         max_snapshots: int = 64,
     ) -> None:
         now_ns = time.time_ns()
-        text = _dumps({"ts": now_ns // 1_000_000_000, "items": dict(items or {})})
+        payload = {"ts": now_ns // 1_000_000_000, "items": dict(items or {})}
+        text = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         try:
             with self._db(create=True) as conn:
                 assert conn is not None
                 with self._write(conn):
                     rows = self._point_rows(conn, feature)
-                    if reuse_window > 0 and rows and (now_ns - rows[-1][3]) / 1e9 <= reuse_window:
-                        conn.execute("UPDATE restore_points SET data=?, created_ns=? WHERE id=?", (text, now_ns, rows[-1][0]))
+                    unchanged = False
+                    payload_updated_ns = 0
+                    if rows:
+                        latest = conn.execute("SELECT data FROM restore_points WHERE id=?", (rows[-1][0],)).fetchone()
+                        try:
+                            previous = json.loads(_snapshot_text(latest[0]))
+                            payload_updated_ns = int(previous.get("ts") or 0) * 1_000_000_000
+                            unchanged = previous.get("items") == payload["items"]
+                        except (ValueError, TypeError, AttributeError, zlib.error):
+                            pass
+                    if unchanged:
+                        conn.execute("UPDATE restore_points SET created_ns=? WHERE id=?", (now_ns, rows[-1][0]))
+                    elif reuse_window > 0 and rows and (now_ns - payload_updated_ns) / 1e9 <= reuse_window:
+                        conn.execute("UPDATE restore_points SET data=?, created_ns=? WHERE id=?", (_pack_snapshot(text), now_ns, rows[-1][0]))
                     else:
                         name = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime(now_ns / 1e9))}-{feature}.json"
                         self._put_restore_point(conn, self._scope, feature, name, text, created_ns=now_ns)
@@ -1915,8 +2030,8 @@ class TrackerStore:
                     zf.writestr(_file_name(str(scope), str(feature)), _dumps(self._payload(conn, str(scope), str(feature))))
                 for scope, name, data in conn.execute("SELECT scope, name, data FROM docs ORDER BY scope, name").fetchall():
                     zf.writestr(_file_name(str(scope), str(name)), str(data))
-                for scope, name, data in conn.execute("SELECT scope, name, data FROM restore_points ORDER BY created_ns, id").fetchall():
-                    zf.writestr("/".join(["snapshots", *([str(scope)] if scope else []), str(name)]), str(data))
+                for scope, name, data in conn.execute("SELECT scope, name, data FROM restore_points ORDER BY created_ns, id"):
+                    zf.writestr("/".join(["snapshots", *([str(scope)] if scope else []), str(name)]), _snapshot_text(data))
                 keys = [str(k) for (k,) in conn.execute("SELECT title_key FROM notes ORDER BY title_key").fetchall()]
                 fields = conn.execute("SELECT value FROM meta WHERE key='note_fields'").fetchone()
                 if keys or fields:

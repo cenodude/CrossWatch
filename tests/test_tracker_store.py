@@ -3,13 +3,180 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 import json
 import os
+import sqlite3
+from io import BytesIO
+from zipfile import ZipFile
 
 import pytest
 
 from api import maintenanceAPI
+from cw_platform import tracker_store
 from cw_platform.tracker_store import TrackerStore, TrackerUnreadable, tracker_context
 
 ITEM = {"type": "movie", "ids": {"tmdb": "1"}, "watched_at": "2026-09-19T12:00:00Z"}
+
+
+def test_compressed_snapshots_restore_and_export_as_json(tmp_path):
+    store = TrackerStore(tmp_path)
+    items = {f"tmdb:{n}": {**ITEM, "title": "Amélie 日本語", "ids": {"tmdb": str(n)}} for n in range(1000)}
+    store.add_restore_point("history", items)
+    point = store.restore_points("history")[0]
+    with sqlite3.connect(store.db_path) as conn:
+        data = conn.execute("SELECT data FROM restore_points").fetchone()[0]
+    assert isinstance(data, bytes)
+    assert len(data) < len(json.dumps(items).encode()) / 4
+    assert point.size == len(data)
+    assert store.read_restore_point("history", point.name)["items"] == items
+    assert store.load_items("history", point.name)["items"] == items
+    assert store.read_state("history").raw["items"] == items
+    with ZipFile(BytesIO(store.export_zip())) as archive:
+        assert json.loads(archive.read(f"snapshots/{point.name}"))["items"] == items
+    target = TrackerStore(tmp_path / "imported")
+    target.import_zip(BytesIO(store.export_zip()))
+    assert target.read_restore_point("history", point.name)["items"] == items
+
+
+def test_unchanged_snapshots_reuse_storage_and_still_apply_retention(tmp_path, monkeypatch):
+    store = TrackerStore(tmp_path, scope="pair-a")
+    now = 1_800_000_000_000_000_000
+    monkeypatch.setattr(tracker_store.time, "time_ns", lambda: now)
+    store.add_restore_point("history", {"old": ITEM})
+    now += 2_000_000_000
+    store.add_restore_point("history", {"current": ITEM})
+    name = store.restore_points("history")[-1].name
+    with sqlite3.connect(store.db_path) as conn:
+        before = conn.execute("SELECT data FROM restore_points WHERE name=?", (name,)).fetchone()[0]
+    now += 40 * 86400_000_000_000
+    store.add_restore_point("history", {"current": dict(reversed(list(ITEM.items())))})
+    assert [p.name for p in store.restore_points("history")] == [name]
+    with sqlite3.connect(store.db_path) as conn:
+        assert conn.execute("SELECT data FROM restore_points").fetchone()[0] == before
+    other = TrackerStore(tmp_path, scope="pair-b")
+    other.add_restore_point("history", {"current": ITEM})
+    assert len(other.restore_points("history")) == 1
+
+
+def test_changed_snapshot_within_reuse_window_stays_readable(tmp_path, monkeypatch):
+    store = TrackerStore(tmp_path)
+    now = 1_800_000_000_000_000_000
+    monkeypatch.setattr(tracker_store.time, "time_ns", lambda: now)
+    store.add_restore_point("history", {"one": ITEM}, reuse_window=60)
+    now += 2_000_000_000
+    store.add_restore_point("history", {"two": ITEM}, reuse_window=60)
+    points = store.restore_points("history")
+    assert len(points) == 1
+    assert store.read_restore_point("history", points[0].name)["items"] == {"two": ITEM}
+
+
+def test_snapshot_migration_resumes_and_preserves_original_metadata(tmp_path, monkeypatch):
+    store = TrackerStore(tmp_path)
+    conn = store._connect()
+    original = json.dumps({"ts": 123, "items": {"tmdb:1": ITEM}})
+    for n in range(3):
+        conn.execute(
+            "INSERT INTO restore_points(scope, feature, name, ts, created_ns, data) VALUES('pair-a', 'history', ?, ?, ?, ?)",
+            (f"{n}-history.json", n, n + 100, original),
+        )
+    pack = tracker_store._pack_snapshot
+    calls = 0
+
+    def interrupt(text):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("interrupted")
+        return pack(text)
+
+    monkeypatch.setattr(tracker_store, "_pack_snapshot", interrupt)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        store._migrate_snapshots(conn)
+    assert conn.execute("SELECT count(*) FROM restore_points WHERE typeof(data)='blob'").fetchone()[0] == 1
+    monkeypatch.setattr(tracker_store, "_pack_snapshot", pack)
+    store._migrate_snapshots(conn)
+    rows = conn.execute("SELECT scope, name, ts, created_ns, data FROM restore_points ORDER BY id").fetchall()
+    assert [(s, name, ts, ns) for s, name, ts, ns, _ in rows] == [
+        ("pair-a", f"{n}-history.json", n, n + 100) for n in range(3)
+    ]
+    assert all(tracker_store._snapshot_text(data) == original for *_, data in rows)
+    assert conn.execute("SELECT count(*) FROM restore_points WHERE typeof(data)='text'").fetchone()[0] == 0
+    conn.close()
+
+
+def test_open_leaves_migration_and_compaction_to_background(tmp_path, monkeypatch):
+    store = TrackerStore(tmp_path)
+    conn = store._connect()
+    original = json.dumps({"ts": 1, "items": {"tmdb:1": {**ITEM, "title": "x" * 2_000_000}}})
+    conn.execute(
+        "INSERT INTO restore_points(scope, feature, name, ts, created_ns, data) VALUES('', 'history', 'old-history.json', 1, 1, ?)",
+        (original,),
+    )
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    before = store.db_path.stat().st_size
+    conn.close()
+    monkeypatch.setattr(tracker_store, "_SNAPSHOT_COMPACT_MIN", 1024)
+    assert store.read_restore_point("history", "old-history.json") == json.loads(original)
+    assert store.db_path.stat().st_size == before
+    conn = store._connect()
+    assert conn.execute("SELECT typeof(data) FROM restore_points").fetchone()[0] == "text"
+    store._migrate_snapshots(conn)
+    store._compact_snapshots(conn)
+    conn.close()
+    assert store.db_path.stat().st_size < before / 4
+
+
+def test_compaction_defers_without_space_and_retries_later(tmp_path, monkeypatch, caplog):
+    from types import SimpleNamespace
+
+    store = TrackerStore(tmp_path)
+    conn = store._connect()
+    conn.execute("INSERT INTO docs(scope, name, data, updated_ns) VALUES('', 'large', ?, 1)", ("x" * 2_000_000,))
+    conn.execute("DELETE FROM docs")
+    monkeypatch.setattr(tracker_store, "_SNAPSHOT_COMPACT_MIN", 1024)
+    disk_usage = tracker_store.shutil.disk_usage
+    monkeypatch.setattr(tracker_store.shutil, "disk_usage", lambda _: SimpleNamespace(free=0))
+    free = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    store._compact_snapshots(conn)
+    assert "snapshot_compaction_deferred" in caplog.text
+    assert conn.execute("PRAGMA freelist_count").fetchone()[0] == free
+    monkeypatch.setattr(tracker_store.shutil, "disk_usage", disk_usage)
+    store._compact_snapshots(conn)
+    assert conn.execute("PRAGMA freelist_count").fetchone()[0] < free
+    conn.close()
+
+
+def test_compaction_is_throttled_and_does_not_interrupt_transactions(tmp_path, monkeypatch):
+    store = TrackerStore(tmp_path)
+    conn = store._connect()
+    store._compact_snapshots(conn)
+    conn.execute("INSERT INTO docs(scope, name, data, updated_ns) VALUES('', 'large', ?, 1)", ("x" * 2_000_000,))
+    conn.execute("DELETE FROM docs")
+    monkeypatch.setattr(tracker_store, "_SNAPSHOT_COMPACT_MIN", 1024)
+    free = conn.execute("PRAGMA freelist_count").fetchone()[0]
+    store._compact_snapshots(conn)
+    assert conn.execute("PRAGMA freelist_count").fetchone()[0] == free
+    conn.execute("DELETE FROM meta WHERE key='snapshot_compact_checked'")
+    with store._write(conn):
+        store._compact_snapshots(conn)
+        assert conn.in_transaction
+    assert conn.execute("PRAGMA freelist_count").fetchone()[0] == free
+    conn.close()
+
+
+@pytest.mark.parametrize("data", [b"CWSP\x01broken", b"CWSP\x02unknown"])
+def test_corrupt_or_unknown_compression_fails_restore(tmp_path, data):
+    store = TrackerStore(tmp_path)
+    store.write_state("watchlist", {})
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute(
+            "INSERT INTO restore_points(scope, feature, name, ts, created_ns, data) VALUES('', 'history', 'bad-history.json', 1, 1, ?)",
+            (data,),
+        )
+    with pytest.raises(TrackerUnreadable):
+        store.read_restore_point("history", "bad-history.json")
+    with pytest.raises(TrackerUnreadable):
+        store.read_state("history")
+    store.add_restore_point("history", {"tmdb:1": ITEM})
+    assert store.read_state("history").raw["items"] == {"tmdb:1": ITEM}
 
 
 def test_state_round_trips_and_missing_state_reads_as_none(tmp_path):

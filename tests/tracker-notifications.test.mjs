@@ -13,7 +13,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 async function setup(role = "admin", tracker = "") {
   const events = {}, sources = [], timers = new Map();
   let nextTimer = 0, requests = 0, code = 200;
-  let job = null, migration = null, imp = null;
+  let job = null, migration = null, imp = null, storage = [];
   const document = {hidden: false, documentElement: {dataset: {cwRole: role, ...(tracker ? {cwPermTracker: tracker} : {})}}, addEventListener: (name, fn) => { events[name] = fn; }};
   const dispatched = [];
   const window = {CW: {Notifications: {setSource: (name, source) => sources.push({name, ...source})}},
@@ -25,12 +25,12 @@ async function setup(role = "admin", tracker = "") {
       requests++;
       assert.equal(url, "/api/tracker/check/current");
       assert.equal(options.credentials, "same-origin");
-      return {ok: code === 200, status: code, json: async () => ({ok: true, job, migration, import: imp})};
+      return {ok: code === 200, status: code, json: async () => ({ok: true, job, migration, import: imp, storage})};
     },
   });
   await flush();
   return {timers, dispatched, requests: () => requests, latest: () => sources.at(-1),
-    async publish(value, status = 200, move = null, run = null) { job = value; migration = move; imp = run; code = status; await events["cw:tracker-check-changed"](); },
+    async publish(value, status = 200, move = null, run = null, jobs = []) { storage = jobs; job = value; migration = move; imp = run; code = status; await events["cw:tracker-check-changed"](); },
   };
 }
 
@@ -129,4 +129,38 @@ test("managed users with a tracker of their own get its notifications", async ()
   assert.equal(app.requests(), 1);
   await app.publish({id: "c7", instance: "CW-P01", label: "Ann", state: "completed", attention: 2, finished_at: 5});
   assert.match(app.latest().items[0].title, /needs attention \(Ann\)/);
+});
+
+
+test("snapshot maintenance reports progress, waiting and completion in one item", async () => {
+  const app = await setup();
+  const job = {id: "s1", instance: "default", state: "running", phase: "compressing", done: 2, total: 10, bytes_saved: 5e6};
+  await app.publish(null, 200, null, null, [job]);
+  const first = app.latest().items[0];
+  assert.match(first.detail, /2 of 10 snapshots compressed; 5.*MB less snapshot data/);
+  assert.ok([...app.timers.values()].some(timer => timer.ms === 3000));
+  await app.publish(null, 200, null, null, [{...job, done: 8}]);
+  assert.equal(app.latest().items[0].revision, first.revision);
+  await app.publish(null, 200, null, null, [{...job, phase: "waiting", reason: "idle"}]);
+  assert.match(app.latest().items[0].detail, /idle window/);
+  await app.publish(null, 200, null, null, [{...job, phase: "waiting", reason: "disk_space"}]);
+  assert.match(app.latest().items[0].detail, /More free disk space/);
+  await app.publish(null, 200, null, null, [{...job, state: "completed"}]);
+  assert.equal(app.latest().items[0].id, first.id);
+  assert.match(app.latest().items[0].title, /completed/);
+  await app.publish(null, 200, null, null, [{...job, state: "failed"}]);
+  assert.match(app.latest().items[0].detail, /will retry/);
+});
+
+
+test("storage notifications distinguish reader waits and net payload growth", async () => {
+  const app = await setup();
+  const job = {id: "s2", state: "running", phase: "waiting", reason: "wal_pressure", done: 1, total: 3};
+  await app.publish(null, 200, null, null, [job]);
+  assert.match(app.latest().items[0].detail, /database readers/);
+  await app.publish(null, 200, null, null, [{...job, reason: "busy"}]);
+  assert.match(app.latest().items[0].detail, /database is busy/);
+  await app.publish(null, 200, null, null, [{...job, state: "completed", bytes_saved: -1e6}]);
+  assert.match(app.latest().items[0].detail, /1.*MB more snapshot data/);
+  assert.doesNotMatch(app.latest().items[0].detail, /less snapshot data/);
 });
