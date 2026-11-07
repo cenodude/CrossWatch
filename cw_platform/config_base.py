@@ -2178,6 +2178,16 @@ def _normalize_scheduling(cfg: dict[str, Any]) -> None:
 
     adv = _ensure_dict(s, "advanced")
     adv["enabled"] = bool(adv.get("enabled", False))
+    backup_jobs = adv.get("backup_jobs") or adv.get("backupJobs") or []
+    if (
+        s["enabled"]
+        and s["mode"] != "disabled"
+        and adv["enabled"]
+        and isinstance(backup_jobs, list)
+        and any(isinstance(job, dict) and job.get("id") == "app-backup-default" for job in backup_jobs)
+        and not any(adv.get(key) for key in ("jobs", "workflows", "capture_jobs", "captureJobs", "event_rules", "eventRules"))
+    ):
+        adv["enabled"] = False
 
     jobs0 = adv.get("jobs")
     jobs: list[dict[str, Any]] = []

@@ -225,6 +225,8 @@ def compute_next_run(now: datetime, sch: dict[str, Any]) -> datetime:
         except Exception:
             n = 2
         anchor = (now if isinstance(now, datetime) else _now_local_naive()).replace(second=0, microsecond=0)
+        if tz is not None:
+            anchor = _to_local_naive(anchor.replace(tzinfo=tz))
         return _apply_jitter(anchor + timedelta(hours=n), sch)
 
     if mode == "custom_interval":
@@ -233,6 +235,8 @@ def compute_next_run(now: datetime, sch: dict[str, Any]) -> datetime:
         except Exception:
             minutes = 60
         anchor = (now if isinstance(now, datetime) else _now_local_naive()).replace(second=0, microsecond=0)
+        if tz is not None:
+            anchor = _to_local_naive(anchor.replace(tzinfo=tz))
         return _apply_jitter(anchor + timedelta(minutes=minutes), sch)
 
     if mode == "daily_time":
@@ -312,7 +316,7 @@ def scheduler_should_run(cfg: dict[str, Any]) -> bool:
     sch: dict[str, Any] = sch_raw if isinstance(sch_raw, dict) else {}
     adv_raw = sch.get("advanced")
     adv: dict[str, Any] = adv_raw if isinstance(adv_raw, dict) else {}
-    return bool(sch.get("enabled") or adv.get("enabled") or enabled_profile_schedules(cfg))
+    return bool(sch.get("enabled") or adv.get("enabled") or _iter_adv_backup_jobs(sch) or enabled_profile_schedules(cfg))
 
 
 def _normalize_job(j: dict[str, Any]) -> dict[str, Any]:
@@ -571,7 +575,7 @@ def _iter_adv_capture_jobs(sch: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _iter_adv_backup_jobs(sch: dict[str, Any]) -> list[dict[str, Any]]:
     adv = sch.get("advanced") or {}
-    if not isinstance(adv, dict) or not adv.get("enabled"):
+    if not isinstance(adv, dict):
         return []
     jobs = adv.get("backup_jobs") or adv.get("backupJobs") or []
     if not isinstance(jobs, list):
@@ -851,6 +855,8 @@ class SyncScheduler:
             return {"enabled": True, "mode": "advanced"}
         if std_enabled and (sch.get("mode") or "").lower() != "disabled":
             return {"enabled": True, "mode": (sch.get("mode") or "every_n_hours").lower()}
+        if _iter_adv_backup_jobs(sch):
+            return {"enabled": True, "mode": "backup"}
         return {"enabled": False, "mode": "disabled"}
 
     def _adv_signature(self, sch: dict[str, Any]) -> str:
@@ -905,7 +911,7 @@ class SyncScheduler:
             )
             for j in backup_jobs
         ]
-        return repr(sorted(pairs))
+        return repr((str(sch.get("timezone") or "").strip(), sorted(pairs)))
 
     def _adv_seed_past_due_today(self, sch: dict[str, Any], tz: Any | None) -> None:
         now = _as_now_in_tz(tz)
@@ -1312,7 +1318,10 @@ class SyncScheduler:
                 continue
             if best is None or cand < best:
                 best = cand
-        return _apply_jitter(best, sch) if best else None
+        if best is None:
+            return None
+        nxt = _apply_jitter(best, sch)
+        return _to_local_naive(nxt.replace(tzinfo=tz)) if tz is not None else nxt
 
     def _adv_due_jobs(self, sch: dict[str, Any], tz: Any | None) -> list[tuple[datetime, dict[str, Any]]]:
         jobs = _iter_adv_jobs(sch)
@@ -1604,20 +1613,31 @@ class SyncScheduler:
                 self._status["last_event_name"] = ""
 
             self._adv_last_key[j["id"]] = f"{today}@{j.get('at')}"
-        for _, j in due_backup:
-            if self._stop.is_set():
-                break
-
+        for due_at, pending_job in due_backup:
+            occurrence_key = f"{due_at.date().isoformat()}@{pending_job.get('at')}"
             waited = 0
-            while self.is_sync_running_fn() and not self._stop.is_set():
+            j = None
+            while not self._stop.is_set():
+                current_sch = self._get_sched_cfg()
+                j = next((job for job in _iter_adv_backup_jobs(current_sch) if job["id"] == pending_job["id"]), None)
+                if j is not None and (
+                    j["at"] != pending_job["at"]
+                    or j["days"] != pending_job["days"]
+                    or _tz_from_cfg(current_sch) != tz
+                    or self._adv_last_key.get(j["id"]) == occurrence_key
+                ):
+                    j = None
+                if j is None or not self.is_sync_running_fn():
+                    break
                 if waited == 0:
                     self._log("advanced backup: sync is busy; waiting to run due backup job(s)", level="INFO")
                 waited += 1
                 self._sleep_or_poke(2.0)
-                if self._poke.is_set():
-                    self._poke.clear()
-                    return True
 
+            if self._stop.is_set():
+                return False
+            if j is None:
+                continue
             payload = {
                 "source": "scheduler",
                 "scheduler_mode": "advanced_backup",
@@ -1660,7 +1680,7 @@ class SyncScheduler:
                 self._status["last_event_source"] = ""
                 self._status["last_event_name"] = ""
 
-            self._adv_last_key[j["id"]] = f"{today}@{j.get('at')}"
+            self._adv_last_key[j["id"]] = occurrence_key
         return ok_all
 
     def _std_run_due(self) -> bool:
@@ -1724,7 +1744,7 @@ class SyncScheduler:
                     continue
 
                 now_local = _as_now_in_tz(tz)
-                if eff["mode"] == "advanced":
+                if eff["mode"] in {"advanced", "backup"}:
                     with self._lock:
                         self._std_next_ts = 0
                         self._std_cfg_key = ""
@@ -1735,7 +1755,7 @@ class SyncScheduler:
                         ran = self._adv_run_due(sch, tz)
                         now_local = _as_now_in_tz(tz)
                         nxt = self._adv_next(sch, now_local, tz)
-                        self._update_next(nxt, effective_mode="advanced")
+                        self._update_next(nxt, effective_mode=eff["mode"])
                     finally:
                         self._set_busy(False)
 
@@ -1744,14 +1764,23 @@ class SyncScheduler:
                         self._sleep_or_poke(0.5)
                         continue
 
-                    remaining = max(0.0, (nxt - _as_now_in_tz(tz)).total_seconds()) if nxt else 1.0
+                    remaining = max(0.0, nxt.timestamp() - _now_ts()) if nxt else 1.0
                     self._sleep_or_poke(min(30.0, remaining if remaining > 0 else 0.5))
                     continue
 
                 # standard
-                with self._lock:
-                    self._adv_seed_key = ""
-                    self._adv_seed_day = ""
+                self._adv_seed_past_due_today(sch, tz)
+                self._set_busy(True)
+                try:
+                    self._adv_run_due(sch, tz)
+                finally:
+                    self._set_busy(False)
+                if self._stop.is_set():
+                    break
+                if self._get_sched_cfg() != sch:
+                    continue
+                now_local = _as_now_in_tz(tz)
+                backup_next = self._adv_next(sch, now_local, tz)
                 std_key = "|".join([
                     str(eff.get("mode") or ""),
                     str(sch.get("enabled") or ""),
@@ -1777,7 +1806,8 @@ class SyncScheduler:
                 else:
                     nxt = datetime.fromtimestamp(cached_next)
 
-                self._update_next(nxt, effective_mode=eff["mode"])
+                next_run = min(nxt, backup_next, key=lambda dt: dt.timestamp()) if backup_next else nxt
+                self._update_next(next_run, effective_mode=eff["mode"])
 
                 if now_ts >= cached_next:
                     if self.is_sync_running_fn():
@@ -1793,14 +1823,15 @@ class SyncScheduler:
                         nxt2 = compute_next_run(now_local, sch)
                         with self._lock:
                             self._std_next_ts = int(nxt2.timestamp())
-                        self._update_next(nxt2, effective_mode=eff["mode"])
+                        backup_next = self._adv_next(sch, now_local, tz)
+                        self._update_next(min(nxt2, backup_next, key=lambda dt: dt.timestamp()) if backup_next else nxt2, effective_mode=eff["mode"])
                     finally:
                         self._set_busy(False)
 
                     self._sleep_or_poke(0.5)
                     continue
 
-                remaining = max(0.0, (nxt - _as_now_in_tz(tz)).total_seconds())
+                remaining = max(0.0, next_run.timestamp() - _now_ts())
                 self._sleep_or_poke(min(30.0, remaining if remaining > 0 else 0.5))
         finally:
             with self._lock:
@@ -1855,7 +1886,7 @@ class SyncScheduler:
             self._status["busy"] = busy
 
     def _sleep_or_poke(self, seconds: float) -> None:
-        if seconds <= 0:
+        if seconds <= 0 or self._stop.is_set():
             return
         self._poke.wait(timeout=seconds)
         self._poke.clear()
