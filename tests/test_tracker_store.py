@@ -283,10 +283,10 @@ def test_first_open_imports_json_files_and_moves_them_to_a_backup(tmp_path):
     assert store.read_current("history") == {"ts": 7, "items": {"tmdb:1": ITEM}}
     assert store.read_meta("history.unresolved") == {"items": {"x": {}}}
     assert store.read_playlists() == {"version": 1, "lists": {}}
-    assert [p.name for p in store.restore_points("history")] == ["20260101T000000Z-history.json"]
+    assert store.restore_points("history") == []
     scoped = TrackerStore(tmp_path, scope="pair-a", chained=False)
     assert scoped.read_current("watchlist")["items"] == {"tmdb:2": ITEM}
-    assert [p.name for p in scoped.restore_points("watchlist")] == ["20260102T000000Z-watchlist.json"]
+    assert scoped.restore_points("watchlist") == []
     assert not list(tmp_path.glob("*.json"))
     assert not (tmp_path / "snapshots").exists()
     backup = next(tmp_path.glob("json-backup-*"))

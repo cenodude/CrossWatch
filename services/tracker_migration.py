@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from cw_platform.tracker_store import TrackerStore, TrackerUnreadable, tracker_roots
+from cw_platform.tracker_store import TrackerBackupPending, TrackerStore, TrackerUnreadable, tracker_roots, tracker_snapshot_settings
 
 _LOG = logging.getLogger("crosswatch.tracker_migration")
 _LOCK = threading.RLock()
@@ -61,13 +61,13 @@ def start(cfg: Mapping[str, Any], config_dir: Path | str, *, background: bool = 
         }
         _ROOTS.update(seen)
     if background:
-        threading.Thread(target=run, args=(pending,), name="tracker-migration", daemon=True).start()
+        threading.Thread(target=run, args=(pending, cfg), name="tracker-migration", daemon=True).start()
     else:
-        run(pending)
+        run(pending, cfg)
     return True
 
 
-def run(pending: list[tuple[str, Path]]) -> None:
+def run(pending: list[tuple[str, Path]], cfg: Mapping[str, Any] | None = None) -> None:
     global _STATE
     for index, (inst, root) in enumerate(pending, 1):
         with _LOCK:
@@ -78,10 +78,14 @@ def run(pending: list[tuple[str, Path]]) -> None:
                 _STATE.update(files_done=files_done, files_total=files_total, bytes_done=bytes_done, bytes_total=bytes_total)
 
         try:
-            result = TrackerStore(root).migrate(progress)
+            result = TrackerStore(root, migration_settings=tracker_snapshot_settings(cfg or {}, inst)).migrate(progress)
             if result is not None:
                 with _LOCK:
                     _STATE["results"].append({"instance": inst, **result})
+        except TrackerBackupPending:
+            _LOG.exception("Tracker %s was imported but its original JSON backup is incomplete", inst)
+            with _LOCK:
+                _STATE["errors"].append({"instance": inst, "file": None, "reason": "backup_pending"})
         except TrackerUnreadable as exc:
             _LOG.warning("Tracker %s was left on its JSON files: %s could not be read", inst, exc.names[0])
             with _LOCK:

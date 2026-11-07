@@ -139,7 +139,7 @@ def html() -> str:
                       <label for="cw_tracker_max_snapshots">Max snapshots per feature</label>
                       <button type="button" class="cw-field-help material-symbols-rounded" title="Max snapshots per feature: Maximum snapshots kept for watchlist, history, ratings, progress and collection. Use 0 for unlimited." aria-label="Local tracker max snapshots setting help">help</button>
                     </div>
-                    <input id="cw_tracker_max_snapshots" name="cw_tracker_max_snapshots" type="number" min="0" step="1" placeholder="64" autocomplete="off" />
+                    <input id="cw_tracker_max_snapshots" name="cw_tracker_max_snapshots" type="number" min="0" step="1" placeholder="14" autocomplete="off" />
                   </div>
                 </div>
               </section>

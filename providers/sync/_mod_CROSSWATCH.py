@@ -247,7 +247,7 @@ class CROSSWATCHConfig:
     root_dir: str = "/config/.cw_provider"
     retention_days: int = 30
     auto_snapshot: bool = True
-    max_snapshots: int = 64
+    max_snapshots: int = 14
     
     restore_watchlist: str | None = None
     restore_history: str | None = None
@@ -297,7 +297,7 @@ class CROSSWATCHModule:
             root_dir=root_dir,
             retention_days=_int("retention_days", 30),
             auto_snapshot=_bool("auto_snapshot", True),
-            max_snapshots=_int("max_snapshots", 64),
+            max_snapshots=_int("max_snapshots", 14),
             restore_watchlist=_restore_id("restore_watchlist"),
             restore_history=_restore_id("restore_history"),
             restore_ratings=_restore_id("restore_ratings"),

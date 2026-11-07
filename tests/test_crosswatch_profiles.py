@@ -1694,7 +1694,7 @@ def test_crosswatch_connect_creates_connection_config(monkeypatch) -> None:
     assert store["crosswatch"]["connected"] is True
     assert store["crosswatch"]["retention_days"] == 30
     assert store["crosswatch"]["auto_snapshot"] is True
-    assert store["crosswatch"]["max_snapshots"] == 64
+    assert store["crosswatch"]["max_snapshots"] == 14
 
 
 def test_crosswatch_explicitly_disconnected_config_stays_disconnected() -> None:
