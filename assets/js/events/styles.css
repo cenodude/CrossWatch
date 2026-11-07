@@ -258,7 +258,7 @@ html[data-cw-theme=flat-light] .ev-date input::-webkit-calendar-picker-indicator
   .ev-tab{flex-shrink:0}
 }
 @media (max-width:560px){
-  .ev-cards,.ev-scards{grid-template-columns:1fr}.ev-row{grid-template-columns:18px 30px minmax(0,1fr) 28px}.ev-time{display:none}
+  .ev-cards,.ev-scards{grid-template-columns:1fr}.ev-row{grid-template-columns:18px 30px minmax(0,1fr) 28px}
 }
 
 .ev-tabsbar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0 0;border-bottom:1px solid var(--ev-border-soft);background:transparent;flex-wrap:wrap}

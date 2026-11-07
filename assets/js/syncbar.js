@@ -205,11 +205,12 @@
 
     _pairData(d) {
       if (!d) return { src: "", dst: "", feat: "", text: "" };
-      const src = (d.src || d.provider_src || d.source || d.src_name || "").toString().trim().toUpperCase();
-      const dst = (d.dst || d.provider_dst || d.target || d.dst_name || "").toString().trim().toUpperCase();
+      const src = (d.src || d.a || d.provider_src || d.source || d.src_name || "").toString().trim().toUpperCase();
+      const dst = (d.dst || d.b || d.provider_dst || d.target || d.dst_name || "").toString().trim().toUpperCase();
       const feat = (d.feature || d.lane || d.kind || "").toString().trim().toLowerCase();
       const parts = [];
-      if (src || dst) parts.push([src, dst].filter(Boolean).join(" -> "));
+      const endpoint = (provider, instance) => provider + (instance && instance !== "default" ? ` (${instance})` : "");
+      if (src || dst) parts.push([endpoint(src, d.src_instance), endpoint(dst, d.dst_instance)].filter(Boolean).join(d.mode === "two-way" || d.a ? " <-> " : " -> "));
       if (feat) parts.push(feat);
       return { src, dst, feat, text: parts.join(" - ") };
     }
@@ -353,6 +354,10 @@
         this.markInit();
       }
       this._streamArmed = !!(running || (mapped.start && !mapped.done) || this._pendingDone);
+      if (running && Object.hasOwn(sum, "current_pair")) {
+        this._pairMeta = this._pairData(sum.current_pair);
+        this._pairText = this._pairMeta.text;
+      }
 
       const ph = sum?._phase || {};
       if (ph.snapshot && PhaseAgg.snap.total === 0) {
@@ -523,6 +528,13 @@
       mobile.style.setProperty("--sb-mobile-progress", `${this._pctMemo}%`);
       mobile.querySelector(".sb-mobile-title").textContent = statusText === "Idle" ? "Ready to sync" : statusText === "Synced" ? "All up to date" : statusText;
       mobile.querySelector(".sb-mobile-detail").textContent = statusText === "Idle" ? "Your next sync starts here." : statusText === "Starting" ? "Preparing your connected services." : phaseLabel;
+      let mobilePair = mobile.querySelector(".sb-mobile-pair");
+      if (!mobilePair) {
+        mobilePair = document.createElement("p");
+        mobilePair.className = "sb-mobile-pair";
+        mobile.querySelector(".sb-mobile-detail").before(mobilePair);
+      }
+      mobilePair.textContent = isRunning && !hardDone && !this._hadError ? this._pairText : "";
       mobile.querySelector(".sb-mobile-percent").textContent = isRunning && !this._hadError && !hardDone ? `${this._pctMemo}%` : "";
       mobile.querySelector(".sb-mobile-symbol").textContent = this._hadError ? "priority_high" : hardDone ? "check" : "sync";
 

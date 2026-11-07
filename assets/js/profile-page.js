@@ -4627,7 +4627,7 @@
     const tabs = document.querySelector('.cw-profile-tabs');
     const mobileView = document.createElement('label');
     mobileView.className = 'cw-profile-mobile-view';
-    mobileView.innerHTML = '<span>View</span><select aria-label="Profile section"></select>';
+    mobileView.innerHTML = '<span>View</span><select aria-label="Profile section" data-cw-native-select="true"></select>';
     const mobileSelect = mobileView.querySelector('select');
     tabs?.before(mobileView);
     const syncMobileView = () => {

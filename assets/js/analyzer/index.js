@@ -209,6 +209,7 @@ const Analyzer = {
       </section>
       <details id="an-scope-notes" class="an-scope-notes" hidden></details>
       <nav class="an-tabs" aria-label="Analyzer views">${Object.entries(VIEWS).map(([key, view]) => `<button type="button" class="an-tab" data-view="${key}" aria-pressed="${key === "missing"}">${icon(view.icon)}<span>${view.title}</span><span class="an-count" data-count="${key}">—</span></button>`).join("")}</nav>
+      <label class="cw-page-mobile-view" for="an-mobile-view"><span>View</span><select id="an-mobile-view">${Object.entries(VIEWS).map(([key, view]) => `<option value="${key}">${view.title}</option>`).join("")}</select></label>
       <section class="an-results" aria-labelledby="an-view-title">
         <div class="an-results-heading"><div><h2 id="an-view-title"></h2><p id="an-view-description"></p></div><span id="an-checked" class="an-muted"></span></div>
         <div class="an-toolbar">
@@ -221,7 +222,7 @@ const Analyzer = {
         <div class="an-list-meta"><span id="an-result-count" role="status" aria-live="polite"></span><label>Per page<select id="an-page-size" aria-label="Items per page"><option>25</option><option selected>50</option><option>100</option><option>250</option></select></label></div>
         <div id="an-workspace" class="an-workspace">
           <div class="an-list-column"><div id="an-list"></div><nav id="an-pagination" class="an-pagination" aria-label="Result pages"></nav></div>
-          <aside id="an-detail" class="an-detail" aria-label="Item details" hidden></aside>
+          <aside id="an-detail" class="an-detail" aria-label="Item details" tabindex="-1" hidden></aside>
         </div>
       </section>`;
     const $ = selector => root.querySelector(selector);
@@ -233,6 +234,8 @@ const Analyzer = {
     let analysisError = "", systemError = "", checked = "", pageError = "";
     let analysisStarted = Date.now(), systemStarted = Date.now();
     let allTotal = null, selected = null;
+    let listScroll = 0, detailIndex = 0;
+    const mobile = () => window.matchMedia("(max-width:760px)").matches;
     let mappingWorkspace = null, mappingController = null, savedRow = null, releasing = false;
     let scopeSequence = 0;
     let total = 0, offset = 0, pageSize = 50;
@@ -333,7 +336,9 @@ const Analyzer = {
       for (const [key, count] of Object.entries(counts)) {
         $(`[data-count="${key}"]`).textContent = count == null ? "—" : count.toLocaleString();
         $(`[data-view="${key}"]`).setAttribute("aria-pressed", String(view === key));
+        $(`#an-mobile-view option[value="${key}"]`).textContent = `${VIEWS[key].title}${count == null ? "" : ` (${count.toLocaleString()})`}`;
       }
+      $("#an-mobile-view").value = view;
       $('[data-view="system"]').classList.toggle("has-errors", errors > 0 || systemState === "error");
       const alerts = [];
       const gaps = groupSnapshotGaps(snapshotGaps);
@@ -410,10 +415,10 @@ const Analyzer = {
         return;
       }
       const editable = ["pending", "missing"].includes(view) && window.CW?.AuthState?.read?.().permissions?.write !== false;
-      $("#an-list").innerHTML = `<div class="an-table-scroll"><table class="an-table"><thead><tr><th scope="col">Item</th><th scope="col">Provider</th><th scope="col">Feature</th><th scope="col">Finding</th>${editable ? '<th scope="col" class="an-mapping-column" aria-label="Edit mapping"></th>' : ''}</tr></thead><tbody>${currentRows.map((row, index) => {
+      $("#an-list").innerHTML = `<div class="an-table-scroll"><table class="an-table" role="table"><thead><tr><th scope="col">Item</th><th scope="col">Provider</th><th scope="col">Feature</th><th scope="col">Finding</th>${editable ? '<th scope="col" class="an-mapping-column" aria-label="Edit mapping"></th>' : ''}</tr></thead><tbody>${currentRows.map((row, index) => {
         const mismatch = missingIndex.get(identity(row));
         const finding = view === "pending" ? retryLabel(row) : row.type === "missing_peer" || mismatch ? watchDifferenceLabel(mismatch || row, providerName) : episodeGroupLabel(row) || (blockedIndex.has(identity(row)) ? "Blocked" : "No presence issue");
-        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td>${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span>${savedMappingText(row) ? `<span class="an-pair-label">${esc(savedMappingText(row))}</span>` : ""}</td>${editable ? `<td class="an-mapping-column">${mappingRowActions(row, index)}${row.retry_blocked && row.key ? `<button type="button" class="an-icon-button" data-release="${index}" title="Release retry block" aria-label="Release retry block for ${esc(label(row))}">${icon("lock_open")}</button>` : ''}</td>` : ''}</tr>`;
+        return `<tr data-row="${index}" class="${selected === row ? "is-selected" : ""}"><td><button type="button" class="an-item-button" data-row="${index}" aria-pressed="${selected === row}"><strong>${esc(label(row))}</strong><span>${esc([human(row.item_type || row.item?.type || (row.type === "missing_peer" ? "" : row.type)), row.year || row.item?.year].filter(Boolean).join(" · "))}</span></button></td><td data-label="Provider">${esc(providerName(row.provider))}${rowPairName(row) ? `<span class="an-pair-label">${esc(rowPairName(row))}</span>` : ""}</td><td data-label="Feature"><span class="an-feature-badge">${esc(human(row.feature))}</span></td><td data-label="Finding"><span class="an-result-badge ${mismatch || row.type === "missing_peer" ? "an-warn-text" : ""}">${esc(finding)}</span>${savedMappingText(row) ? `<span class="an-pair-label">${esc(savedMappingText(row))}</span>` : ""}</td>${editable ? `<td class="an-mapping-column">${mappingRowActions(row, index)}${row.retry_blocked && row.key ? `<button type="button" class="an-icon-button" data-release="${index}" title="Release retry block" aria-label="Release retry block for ${esc(label(row))}">${icon("lock_open")}</button>` : ''}</td>` : ''}</tr>`;
       }).join("")}</tbody></table></div>`;
     }
     function renderFinding(row, index) {
@@ -441,7 +446,7 @@ const Analyzer = {
     }
     function selectVisible() {
       detailController?.abort();
-      selected = currentRows.find(row => selected && identity(row) === identity(selected)) || currentRows[0] || null;
+      selected = currentRows.find(row => selected && identity(row) === identity(selected)) || (mobile() ? null : currentRows[0]) || null;
       renderList();
       if (selected && !isDiagnostic()) showDetail(selected);
     }
@@ -522,7 +527,7 @@ const Analyzer = {
           return limit && limit.item_count > 0 && limit.used >= limit.item_count ? `${providerName(target)} ${human(key)} limit reached (${limit.used}/${limit.item_count}). Free up space or review the provider account limit.` : "";
         }).filter(Boolean);
         const ask = view !== "all" || mismatch ? aiAsk(`Explain this analyzer finding for ${label(row)} (${[human(row.feature), provider, rowPairName(row) && `sync pair ${rowPairName(row)}`, row.key && `key ${row.key}`].filter(Boolean).join(", ")}): ${presence}.${reasons.slice(0, 3).map(value => ` ${value}.`).join("")} Why is this happening and what should I do?`) : "";
-        $("#an-detail").innerHTML = `<div class="an-detail-heading"><span class="an-eyebrow">ITEM DETAILS</span><button type="button" class="an-icon-button" id="an-close-detail" aria-label="Close item details">${icon("close")}</button></div><h3>${esc(label(row))}</h3><p class="an-detail-meta">${esc([provider, human(row.feature), row.year || row.item?.year].filter(Boolean).join(" · "))}</p>${rowPairName(row) ? `<p class="an-detail-meta">Sync pair: ${esc(rowPairName(row))}</p>` : ""}<div class="an-detail-status">${icon(mismatch || view === "pending" ? "info" : "check_circle")}<strong>${esc(presence)}</strong></div>${reasons.length || limitNotes.length ? `<div class="an-detail-reasons"><h4>What happened</h4>${[...limitNotes, ...reasons].map(reason => `<p>${esc(reason)}</p>`).join("")}</div>` : mismatch ? '<p class="an-muted">CrossWatch found this item in the source snapshot but could not confirm it at the destination.</p>' : ""}${matchDetailsHTML(row, detail.hints)}${savedMappingText(row) ? `<div class="an-detail-reasons"><h4>Saved mapping</h4><p>${esc(savedMappingText(row))}</p><p>This correction is saved. Run the pair again to apply it; the snapshot finding reflects the last sync.</p></div>` : ""}${watchDifferenceDetails(diagnosis.watch_time_differences, providerName)}${error ? `<p class="an-detail-error" role="alert">${esc(error)}</p><button type="button" class="an-button" id="an-retry-detail">Retry details</button>` : ""}${mismatch || view === "pending" ? `<div class="an-next-step"><h4>Next step</h4><p>${esc(nextStepText(diagnosis))}</p></div>` : ""}${ids.length ? `<details class="an-identifiers"><summary>Item IDs (${ids.length})</summary><dl>${ids.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl></details>` : ""}${row.key ? `<p class="an-item-key">${esc(row.key)}</p>` : ""}${ask}`;
+        $("#an-detail").innerHTML = `<div class="an-detail-heading"><span class="an-eyebrow">ITEM DETAILS</span><button type="button" class="an-icon-button" id="an-close-detail" aria-label="Close item details">${icon("close")}<span class="an-mobile-back">Back to results</span></button></div><h3>${esc(label(row))}</h3><p class="an-detail-meta">${esc([provider, human(row.feature), row.year || row.item?.year].filter(Boolean).join(" · "))}</p>${rowPairName(row) ? `<p class="an-detail-meta">Sync pair: ${esc(rowPairName(row))}</p>` : ""}<div class="an-detail-status">${icon(mismatch || view === "pending" ? "info" : "check_circle")}<strong>${esc(presence)}</strong></div>${reasons.length || limitNotes.length ? `<div class="an-detail-reasons"><h4>What happened</h4>${[...limitNotes, ...reasons].map(reason => `<p>${esc(reason)}</p>`).join("")}</div>` : mismatch ? '<p class="an-muted">CrossWatch found this item in the source snapshot but could not confirm it at the destination.</p>' : ""}${matchDetailsHTML(row, detail.hints)}${savedMappingText(row) ? `<div class="an-detail-reasons"><h4>Saved mapping</h4><p>${esc(savedMappingText(row))}</p><p>This correction is saved. Run the pair again to apply it; the snapshot finding reflects the last sync.</p></div>` : ""}${watchDifferenceDetails(diagnosis.watch_time_differences, providerName)}${error ? `<p class="an-detail-error" role="alert">${esc(error)}</p><button type="button" class="an-button" id="an-retry-detail">Retry details</button>` : ""}${mismatch || view === "pending" ? `<div class="an-next-step"><h4>Next step</h4><p>${esc(nextStepText(diagnosis))}</p></div>` : ""}${ids.length ? `<details class="an-identifiers"><summary>Item IDs (${ids.length})</summary><dl>${ids.map(([key, value]) => `<div><dt>${esc(key)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl></details>` : ""}${row.key ? `<p class="an-item-key">${esc(row.key)}</p>` : ""}${ask}`;
       };
       render(detailCache.get(identity(row)));
       if (!mismatch || detailCache.has(identity(row))) return;
@@ -775,9 +780,15 @@ const Analyzer = {
       else if (button.dataset.view) changeView(button.dataset.view);
       else if (button.hasAttribute("data-open-system")) changeView("system");
       else if (button.dataset.row != null) {
+        listScroll = window.scrollY;
+        detailIndex = Number(button.dataset.row);
         selected = currentRows[Number(button.dataset.row)];
         renderList();
         showDetail(selected);
+        if (mobile()) {
+          $("#an-detail").scrollIntoView({block:"start", behavior:"instant"});
+          $("#an-detail").focus({preventScroll:true});
+        }
       } else if (button.dataset.page != null) {
         const start = Number(button.dataset.page);
         if (view === "all") loadPage(start); else showLocalPage(start);
@@ -786,7 +797,13 @@ const Analyzer = {
       else if (button.dataset.retry === "page") loadPage(offset);
       else if (button.id === "an-run") { pairs.length ? analyzeItems() : loadScope(); analyzeSystem(true); }
       else if (button.id === "an-retry-detail" && selected) showDetail(selected);
-      else if (button.id === "an-close-detail") { detailController?.abort(); selected = null; renderList(); }
+      else if (button.id === "an-close-detail") {
+        detailController?.abort(); selected = null; renderList();
+        if (mobile()) {
+          window.scrollTo({top:listScroll, behavior:"instant"});
+          $(`.an-item-button[data-row="${detailIndex}"]`)?.focus({preventScroll:true});
+        }
+      }
       else if (button.id === "an-clear") {
         $("#an-search").value = "";
         $("#an-feature").value = "";
@@ -807,6 +824,7 @@ const Analyzer = {
       updateSnapshot();
       analyzeItems();
     });
+    $("#an-mobile-view").addEventListener("change", event => changeView(event.target.value));
     $("#an-search").addEventListener("input", () => {
       pageController?.abort();
       clearTimeout(searchTimer);

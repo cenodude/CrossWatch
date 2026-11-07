@@ -7,6 +7,7 @@
   let _resizeTimer = 0;
   let _limitTimer = 0;
   let _limitTries = 0;
+  const _renderedPairs = new WeakMap();
 
   const key = (s) => String(s || "").trim().toUpperCase();
   const brandKey = (k) => key(k).toLowerCase().replace(/[^a-z0-9]/g, "") || "x";
@@ -45,7 +46,7 @@
     _limitTries = 0;
 
     const cards = [...board.querySelectorAll(".pair-card")];
-    if (cards.length <= visibleCount) {
+    if (window.matchMedia("(max-width: 760px)").matches || cards.length <= visibleCount) {
       host.style.maxHeight = "";
       host.style.overflowY = "";
       host.style.paddingRight = "";
@@ -91,6 +92,8 @@
   }
 
   function installTooltip(host) {
+    if (host.dataset.tooltipBound) return;
+    host.dataset.tooltipBound = "1";
     let tip = host.querySelector(".cx-tip");
     if (!tip) { tip = document.createElement("div"); tip.className = "cx-tip"; host.appendChild(tip); }
 
@@ -386,7 +389,7 @@
     _lastBoard = board;
 
     const pairs = Array.isArray(window.cx?.pairs) ? window.cx.pairs : [];
-    if (!pairs.length) { host.style.display = "none"; board.innerHTML = ""; return; }
+    if (!pairs.length) { host.style.display = "none"; board.innerHTML = ""; _renderedPairs.delete(board); return; }
     host.style.display = "block";
 
     const bead = (cls, tip, val) => `<span class="bead ${cls} ${truthy(val) ? "on" : ""}" data-tip="${tip}"></span>`;
@@ -468,7 +471,11 @@
         </div>`;
     };
 
-    board.innerHTML = pairs.map((pair, index) => renderPairCard(pair, index + 1)).join("");
+    const html = pairs.map((pair, index) => renderPairCard(pair, index + 1)).join("");
+    if (_renderedPairs.get(board) !== html) {
+      board.innerHTML = html;
+      _renderedPairs.set(board, html);
+    }
     refreshIdentityTips(board, pairs);
     scheduleViewportLimit(0);
     installTooltip(host);

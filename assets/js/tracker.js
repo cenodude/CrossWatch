@@ -470,6 +470,7 @@
     const placeholder = state.view === "shows" ? "Filter shows / S01 / S01E02..." : state.view === "titles" ? "Filter my titles..." : "Filter by title...";
     const middle = `<div class="trk-filters" role="group" aria-label="Filter">${renderFilters()}</div>`;
     return `
+      <label class="cw-page-mobile-view" for="trk-mobile-view"><span>View</span><select id="trk-mobile-view" data-trk-input="view">${VIEWS.map(v => `<option value="${v.id}"${v.id === state.view ? " selected" : ""}>${esc(v.label)}${viewCount(v.id) ? ` (${num(viewCount(v.id))})` : ""}</option>`).join("")}</select></label>
       <nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav>
       <div class="trk-toolbar${state.view === "cleanup" ? " trk-toolbar-cleanup" : ""}">
         <input class="cw-input trk-search" data-trk-input="q" value="${esc(state.q)}" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}">
@@ -1208,12 +1209,12 @@
     if (focusedAction && state.picked.size) selection?.querySelector(`[data-trk-action="${focusedAction}"]`)?.focus();
     setSlot("hero", renderHero());
     if (controls) {
-      const focused = document.activeElement?.dataset?.trkInput === "q";
+      const focused = document.activeElement?.dataset?.trkInput;
       setSlot("controls", renderControls());
-      if (focused) {
-        const input = state.root.querySelector('[data-trk-input="q"]');
-        input?.focus();
-        input?.setSelectionRange?.(input.value.length, input.value.length);
+      if (["q", "view"].includes(focused)) {
+        const input = state.root.querySelector(`[data-trk-input="${focused}"]`);
+        input?.focus({preventScroll:true});
+        if (focused === "q") input?.setSelectionRange?.(input.value.length, input.value.length);
       }
     }
     setSlot("import", renderImportBanner());
@@ -3354,7 +3355,14 @@
         return;
       }
       const input = event.target.dataset?.trkInput;
-      if (input === "size") {
+      if (input === "view") {
+        if (!VIEWS.some(view => view.id === event.target.value) || state.view === event.target.value) return;
+        state.view = event.target.value;
+        state.q = "";
+        if (state.view === "cleanup" && !state.healthFilter) state.healthFilter = "attention";
+        reload();
+        state.root.querySelector("#trk-mobile-view")?.focus({preventScroll:true});
+      } else if (input === "size") {
         state.pageSize = PAGE_SIZES.includes(Number(event.target.value)) ? Number(event.target.value) : 50;
         reload();
       } else if (input === "note-tag") {

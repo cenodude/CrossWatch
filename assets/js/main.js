@@ -745,7 +745,7 @@
         try { applySummarySnapshot(JSON.parse(ev.data || "{}"), "sse"); } catch {}
       };
       on(esSummary, ["run:start", "run:pair", "feature:start"], () => safe(sync.markInit?.bind(sync)));
-      on(esSummary, ["one:plan", "two:plan"], (e) => {
+      on(esSummary, ["run:pair", "one:plan", "two:plan"], (e) => {
         try { sync.setPair(JSON.parse(e.data || "{}")); } catch {}
       });
       on(esSummary, ["snapshot:start"], (e) => {

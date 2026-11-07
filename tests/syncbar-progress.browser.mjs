@@ -66,4 +66,16 @@ test("the page does not scroll sideways on a phone", async t => {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   assert.match(await page.locator(".sb-mobile-detail").textContent(), /Adding to SCROB history/);
   assert.match(await page.locator(".sb-mobile-percent").textContent(), /91%/);
+  assert.match(await page.locator(".sb-mobile-pair").textContent(), /STREMIO -> SCROB/);
+});
+
+test("opening a scheduled run mid-sync shows the current pair without log events", async t => {
+  const page = await open(t, "flat-light", {width: 320, height: 640});
+  await page.evaluate(() => window.bar.fromSummary({running: true, current_pair: {src: "TRAKT", dst: "TRAKT", src_instance: "Home", dst_instance: "Family", mode: "two-way", feature: "history"}}));
+  assert.equal(await page.locator(".sb-mobile-pair").textContent(), "TRAKT (Home) <-> TRAKT (Family) - history");
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.evaluate(() => window.bar.fromSummary({running: true, current_pair: {src: "PLEX", dst: "SIMKL", feature: "ratings"}}));
+  assert.equal(await page.locator(".sb-mobile-pair").textContent(), "PLEX -> SIMKL - ratings");
+  await page.evaluate(() => window.bar.success());
+  assert.equal(await page.locator(".sb-mobile-pair").textContent(), "");
 });
