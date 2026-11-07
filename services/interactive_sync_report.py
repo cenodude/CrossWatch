@@ -50,6 +50,7 @@ class SyncReport:
         self.detail_omitted = {}
         self.accepted_unverified = {}
         self.cloud_results = {}
+        self.status_mappings = {}
         if store is not None:
             store.clear_report_issues()
 
@@ -116,6 +117,8 @@ class SyncReport:
         if not isinstance(value, dict):
             return
         name = str(value.get("event") or "")
+        if name in ("status_mapping:start", "status_mapping:read", "status_mapping:done", "status_mapping:skip"):
+            self.status_mappings[value.get("pair_id")] = {key: item for key, item in value.items() if key != "event"}
         if name in ("apply:add:done", "apply:update:done", "apply:remove:done"):
             key = (name, value.get("dst"), value.get("destination_instance"), value.get("feature"))
             self.accepted_unverified[key] = count(value.get("accepted_unverified"))
@@ -194,6 +197,7 @@ class SyncReport:
                     outcome=outcome, totals=totals, requested=requested,
                     accepted_unverified=sum(self.accepted_unverified.values()),
                     cloud_results=list(self.cloud_results.values()),
+                    status_mappings=list(self.status_mappings.values()),
                     manual_excluded=manual_excluded, engine_blocked=engine_blocked,
                     proposed=count(counts.get("changes")),
                     not_selected=max(0, count(counts.get("changes")) - requested),

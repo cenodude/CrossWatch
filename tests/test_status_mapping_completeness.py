@@ -181,8 +181,13 @@ def test_service_preview_and_apply_crosswatch_status(tmp_path, config_base, monk
         assert right.note(key) == before
         proposals = {ident for ident, value in session.plan.rows.items() if value["item"].get("_cw_status_mapping")}
         assert len(proposals) == 1, session.plan.notices
+        preview_summary = session.public()["status_mappings"][0]
+        assert preview_summary["preview"] and preview_summary["proposed"] == 1 and preview_summary["updated"] == 0
         svc.apply(session, cfg, proposals)
         assert session.status == "complete", session.message
+        execution_summary = session.report["status_mappings"][0]
+        assert not execution_summary["preview"] and execution_summary["updated"] == 1
+        assert execution_summary["state"] == "complete"
         assert right.note(key)["status"] == "on_hold"
         if existing:
             assert right.note(key)["notes"] == "Keep"

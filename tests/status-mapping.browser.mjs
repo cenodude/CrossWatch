@@ -17,7 +17,7 @@ async function setSwitch(input, checked) {
   await input.press("Space");
 }
 
-async function fixture(t, theme="original", width=1280, pair=initialPair) {
+async function fixture(t, theme="original", width=1280, pair=initialPair, expand=true, providerCaps=caps) {
   const browser = await chromium.launch({headless:true});
   t.after(()=>browser.close());
   const page = await browser.newPage({viewport:{width,height:1000}});
@@ -33,7 +33,7 @@ async function fixture(t, theme="original", width=1280, pair=initialPair) {
       try{return route.fulfill({body:await readFile(new URL(".."+path,import.meta.url)),contentType:path.endsWith(".css")?"text/css":path.endsWith(".svg")?"image/svg+xml":path.endsWith(".woff2")?"font/woff2":"text/javascript"});}
       catch{return route.fulfill({status:404,body:""});}
     }
-    if(path==="/api/sync/providers") return route.fulfill({json:["ANILIST","MYANIMELIST"].map(name=>({name,label:name==="ANILIST"?"AniList":"MyAnimeList",features:{history:true,watchlist:true,ratings:true},capabilities:{bidirectional:true,status_mapping:caps},configured:true}))});
+    if(path==="/api/sync/providers") return route.fulfill({json:["ANILIST","MYANIMELIST"].map(name=>({name,label:name==="ANILIST"?"AniList":"MyAnimeList",features:{history:true,watchlist:true,ratings:true},capabilities:{bidirectional:true,status_mapping:providerCaps},configured:true}))});
     if(path==="/api/provider-instances") return route.fulfill({json:{ANILIST:[{id:"default",label:"Alice",configured:true}],MYANIMELIST:[{id:"default",label:"Bob",configured:true}]}});
     if(path==="/api/user-profiles") return route.fulfill({json:[]});
     if(path==="/api/config") return route.fulfill({json:{anime_mapping:{enabled:true},sync:{},pairs:[pair]}});
@@ -47,8 +47,51 @@ async function fixture(t, theme="original", width=1280, pair=initialPair) {
   if(width<700) await page.locator("#cx-mobile-section").selectOption("providers");
   else await page.locator("#cx-tab-providers").click();
   await page.locator("#cx-status-title").waitFor();
+  if(expand && !pair.features.history.use_source_status) await page.locator(".cw-status-editor>summary").click();
   return {page,saves};
 }
+
+test("disabled mapping stays compact and can be configured without enabling",async t=>{
+  const {page}=await fixture(t,"original",1280,initialPair,false);
+  assert.equal(await page.locator("[data-status-direction]").isVisible(),false);
+  assert.ok((await page.locator(".cw-status-mapping").boundingBox()).height < 110);
+  await page.locator(".cw-status-editor>summary").focus();
+  await page.keyboard.press("Enter");
+  assert.equal(await page.locator("[data-status-direction]").isVisible(),true);
+  assert.equal(await page.locator("[data-status-optin]").isChecked(),false);
+  await page.locator('[data-status-include="completed"]').check();
+  assert.equal(await page.locator('[data-status-target="completed"]').isDisabled(),false);
+  await page.locator('[data-status-target="completed"]').selectOption("dropped");
+  await setSwitch(page.locator("[data-status-optin]"),true);
+  await setSwitch(page.locator("[data-status-optin]"),false);
+  assert.equal(await page.locator("[data-status-direction]").isVisible(),false);
+  await page.locator(".cw-status-editor>summary").click();
+  assert.equal(await page.locator('[data-status-target="completed"]').inputValue(),"dropped");
+});
+
+test("mobile History shortcut navigates without enabling History",async t=>{
+  const {page}=await fixture(t,"flat-light",390);
+  await page.getByRole("button",{name:"History settings"}).click();
+  assert.equal(await page.locator("#cx-mobile-section").inputValue(),"history");
+  assert.equal(await page.locator("#cx-hs-enable").isChecked(),false);
+  assert.equal(await page.locator("#cx-hs-enable").evaluate(el=>el===document.activeElement),true);
+});
+
+test("help and overflow actions preserve existing mapping behavior",async t=>{
+  const effectsCaps=structuredClone(caps);
+  effectsCaps.media.shows.effects.on_hold="Provider-specific hold behavior.";
+  const {page}=await fixture(t,"flat-dark",1280,initialPair,true,effectsCaps);
+  assert.equal(await page.locator(".cw-status-info p").isVisible(),false);
+  await page.locator(".cw-status-info>summary").click();
+  assert.match(await page.locator(".cw-status-info p").innerText(),/Provider-specific/);
+  await page.locator(".cw-status-help>summary").click();
+  assert.match(await page.locator(".cw-status-help").innerText(),/Planned stays managed by Watchlist/);
+  await page.locator('[data-status-target="dropped"]').selectOption("on_hold");
+  await page.locator(".cw-status-menu>summary").click();
+  await page.getByRole("button",{name:"Use existing behavior"}).click();
+  assert.equal(await page.evaluate(()=>document.querySelector("#cx-modal").__state.statusMapping),null);
+  assert.equal(await page.locator("[data-status-optin]").isChecked(),false);
+});
 
 test("fixture passes script-like pair data without executing it",async t=>{
   const pair = {...initialPair, name:'</script><script>window.fixtureInjected=true</script>'};
@@ -64,7 +107,7 @@ test("draft rules keep Watchlist and opt-ins unchanged and save with pair",async
   await page.locator('[data-status-include="on_hold"]').uncheck();
   await page.locator("[data-status-direction]").selectOption("b_to_a");
   assert.equal(await page.locator('[data-status-target="dropped"]').inputValue(),"dropped");
-  await page.locator("[data-status-media]").selectOption("movies");
+  await page.getByRole("button",{name:"Movies",exact:true}).click();
   await page.locator('[data-status-include="dropped"]').uncheck();
   await page.locator("[data-status-reset]").click();
   await page.locator("#cx-inline-save").click();
@@ -130,9 +173,12 @@ test("mapping switch saves the shared opt-in without enabling History or discard
 
 for(const theme of ["original","flat-dark","flat-light"]) for(const width of [1280,390]) {
   test(`${theme} at ${width}px keeps controls visible without horizontal overflow`,async t=>{
-    const {page}=await fixture(t,theme,width);
+    const {page}=await fixture(t,theme,width,initialPair,false);
     const section=page.locator(".cw-status-mapping");
     await mkdir(new URL("../.pytest_tmp_status_visual/",import.meta.url),{recursive:true});
+    assert.equal(await page.locator("[data-status-direction]").isVisible(),false);
+    await section.screenshot({path:new URL(`../.pytest_tmp_status_visual/${theme}-${width}-collapsed.png`,import.meta.url).pathname.replace(/^\/(\w:)/,"$1")});
+    await page.locator(".cw-status-editor>summary").click();
     await page.screenshot({path:new URL(`../.pytest_tmp_status_visual/${theme}-${width}-modal.png`,import.meta.url).pathname.replace(/^\/(\w:)/,"$1"),fullPage:true});
     assert.equal(await section.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
     assert.equal(await page.locator("[data-status-conflict] option").count(),3);
@@ -141,6 +187,33 @@ for(const theme of ["original","flat-dark","flat-light"]) for(const width of [12
     await page.locator('[data-status-include="watching"]').check();
     await page.locator("[data-status-conflict]").focus();
     assert.notEqual(await page.locator("[data-status-conflict]").evaluate(el=>getComputedStyle(el).outlineStyle),"none");
+    await page.setViewportSize({width,height:1700});
+    await section.scrollIntoViewIfNeeded();
     await section.screenshot({path:new URL(`../.pytest_tmp_status_visual/${theme}-${width}.png`,import.meta.url).pathname.replace(/^\/(\w:)/,"$1")});
+    await setSwitch(page.locator("[data-status-optin]"),true);
+    assert.equal(await page.locator(".cw-status-editor>summary").isVisible(),false);
+    assert.equal(await page.locator("[data-status-direction]").isVisible(),true);
+    assert.equal(await section.evaluate(el=>el.scrollWidth<=el.clientWidth+1),true);
+    if(width>600) assert.ok((await section.boundingBox()).height<450);
+    await section.screenshot({path:new URL(`../.pytest_tmp_status_visual/${theme}-${width}-enabled.png`,import.meta.url).pathname.replace(/^\/(\w:)/,"$1")});
+  });
+}
+
+for(const theme of ["original","flat-dark","flat-light"]) {
+  test(`${theme} handles an empty mapping and one-way direction`,async t=>{
+    const emptyCaps=structuredClone(caps);
+    for(const media of Object.values(emptyCaps.media)) media.writable=[];
+    const pair=structuredClone(initialPair);
+    pair.mode="one-way";
+    pair.features.history.enable=true;
+    pair.features.history.use_source_status=true;
+    const {page}=await fixture(t,theme,390,pair,true,emptyCaps);
+    assert.equal(await page.locator("[data-status-direction] option").count(),1);
+    assert.equal(await page.locator(".cw-status-map-row").count(),0);
+    assert.equal(await page.locator(".cw-status-empty").isVisible(),true);
+    assert.equal(await page.locator("[data-status-history]").count(),0);
+    assert.equal(await page.locator("[data-status-conflict] option").count(),2);
+    await page.setViewportSize({width:390,height:1700});
+    await page.locator(".cw-status-mapping").screenshot({path:new URL(`../.pytest_tmp_status_visual/${theme}-empty.png`,import.meta.url).pathname.replace(/^\/(\w:)/,"$1")});
   });
 }

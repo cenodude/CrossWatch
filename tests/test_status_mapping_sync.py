@@ -61,6 +61,52 @@ def test_one_way_write_persists_and_is_idempotent(sync_case):
     assert run(case)["updated"] == 0
     assert len(case.writes) == 1
     assert case.store.path.exists()
+    summaries = [value for event, value in case.events if event == "status_mapping:done"]
+    assert [(value["updated"], value["unchanged"]) for value in summaries] == [(1, 0), (0, 1)]
+    assert all(value["state"] == "complete" and value["matched"] == 1 for value in summaries)
+    change = next(value for event, value in case.events if event == "status_mapping:updated")
+    assert (change["title"], change["before"], change["after"]) == ("Title 1", "watching", "dropped")
+
+
+@pytest.mark.parametrize("setting,reason", [("enable", "History is disabled"), ("use_source_status", "switched off"), ("mapping", "No custom status mapping")])
+def test_mapping_skip_is_visible_without_warning_or_provider_reads(sync_case, monkeypatch, setting, reason):
+    case = sync_case
+    case.ctx.interactive = InteractivePlan()
+    if setting == "mapping":
+        case.pair.pop("status_mapping")
+    else:
+        case.pair["features"]["history"][setting] = False
+    monkeypatch.setattr(case.adapter, "read", lambda self: pytest.fail("Skipped mapping must not read providers"))
+    assert run(case) == {"updated": 0, "unresolved": 0, "errors": 0, "skipped": 0}
+    summary = case.ctx.interactive.status_mappings[0]
+    assert summary["state"] == "skipped" and reason in summary["reason"]
+    assert case.events == [("status_mapping:skip", summary)]
+    assert not case.ctx.interactive.notices and not case.writes
+
+
+def test_mapping_preview_and_selected_apply_have_separate_counts(sync_case):
+    case = sync_case
+    case.ctx.interactive = InteractivePlan()
+    assert run(case)["updated"] == 0
+    summary = case.ctx.interactive.status_mappings[0]
+    assert summary["preview"] and summary["proposed"] == 1 and summary["updated"] == 0
+    assert not case.ctx.interactive.notices and not case.writes
+    case.ctx.interactive = InteractivePlan(preview=False, selected=set(case.ctx.interactive.rows))
+    assert run(case)["updated"] == 1
+    summary = case.ctx.interactive.status_mappings[0]
+    assert not summary["preview"] and summary["updated"] == 1 and summary["state"] == "complete"
+
+
+def test_mapping_unverified_write_is_not_reported_as_updated(sync_case, monkeypatch):
+    case = sync_case
+    def uncertain(self, record, desired):
+        raise TimeoutError("private provider response")
+    monkeypatch.setattr(case.adapter, "write", uncertain)
+    assert run(case)["errors"] == 1
+    summary = case.events[-1][1]
+    assert summary["state"] == "attention" and summary["errors"] == 1 and summary["updated"] == 0
+    assert not any(event == "status_mapping:updated" for event, _ in case.events)
+    assert "private provider response" not in str(case.events)
 
 
 @pytest.mark.parametrize("baseline", [False, True])
@@ -839,10 +885,14 @@ def test_actual_orchestrator_only_executes_statuses_for_successful_history_pairs
         return {"errors": 0 if eligible else 1}
     monkeypatch.setattr(_pairs, "run_one_way_feature", history)
     monkeypatch.setattr(_pairs, "run_two_way_feature", history)
-    Orchestrator(cfg).run(pair_scope_ids=["p1"])
+    review = InteractivePlan(preview=False)
+    Orchestrator(cfg, interactive=review).run(pair_scope_ids=["p1"])
     assert options and options[0]["use_source_status"] is False
     assert len(calls) == int(eligible)
     assert cfg["pairs"][0]["features"]["history"]["use_source_status"] is True
+    if not eligible:
+        assert review.status_mappings[0]["state"] == "skipped"
+        assert "History did not complete successfully" in review.status_mappings[0]["reason"]
 
 
 def test_native_id_matching_respects_anime_mapping_opt_out():

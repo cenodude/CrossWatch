@@ -95,7 +95,26 @@
     return rows;
   }
 
+  function statusForRow(row, snapshot) {
+    if (!snapshot) return {label: "—", hint: "Choose a provider instance to see its current status."};
+    if (snapshot.loading) return {label: "Loading…", hint: "Reading current provider statuses."};
+    if (snapshot.error) return {label: "Unavailable", hint: "Could not read statuses. Refresh Editor to retry."};
+    if (!snapshot.data?.supported) return {label: "—", hint: "This provider does not supply title statuses."};
+    const type = row.raw?.type || row.type;
+    const media = type === "movie" ? "movies" : ["show", "anime", "season", "episode"].includes(type) ? "shows" : "";
+    const ids = ["season", "episode"].includes(type) ? row.raw?.show_ids || {} : row.raw?.ids || {};
+    const matches = (snapshot.data.records || []).filter(record => {
+      if (record.media !== media) return false;
+      const shared = Object.keys(record.ids || {}).filter(key => ids[key]);
+      return shared.length > 0 && shared.every(key => String(ids[key]) === String(record.ids[key]));
+    });
+    const status = matches.length === 1 ? matches[0].status : null;
+    const label = ({planned: "Planned", watching: "Watching", on_hold: "On hold", dropped: "Dropped", completed: "Completed"})[status];
+    return {label: label || "Unknown", hint: label ? `Current ${media === "shows" ? "show" : "movie"} status from the selected provider. Read-only.` : "No unambiguous status was returned for this title."};
+  }
+
   Editor.Rows = {
+    statusForRow,
     viewingBaseKey,
     viewingTime,
     imdbFromKey,
