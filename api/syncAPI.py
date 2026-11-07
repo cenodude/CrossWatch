@@ -2585,10 +2585,11 @@ def api_pairs_add(payload: PairIn = Body(...), request: Request = cast(Request, 
         item["id"] = _gen_id("pair")
 
         from cw_platform.orchestrator._status_mapping import validate_pair
+        from cw_platform.status_mapping import STATUS_MAPPING_ERRORS, StatusMappingValidationError
         try:
             validate_pair(item)
-        except ValueError as exc:
-            return {"ok": False, "error": str(exc)}
+        except StatusMappingValidationError as exc:
+            return {"ok": False, "error": STATUS_MAPPING_ERRORS.get(exc.code, "Invalid status mapping configuration")}
 
         arr.append(item)
         save_config(cfg)
@@ -2681,10 +2682,11 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...), request: Requ
                 if _same_pair_endpoint({**it, **upd}):
                     return {"ok": False, "error": "same_provider_instance"}
                 from cw_platform.orchestrator._status_mapping import validate_pair
+                from cw_platform.status_mapping import STATUS_MAPPING_ERRORS, StatusMappingValidationError
                 try:
                     validate_pair({**it, **upd})
-                except ValueError as exc:
-                    return {"ok": False, "error": str(exc)}
+                except StatusMappingValidationError as exc:
+                    return {"ok": False, "error": STATUS_MAPPING_ERRORS.get(exc.code, "Invalid status mapping configuration")}
                 if "features" in upd:
                     it["features"] = _normalize_features(upd.pop("features"))
                 if "providers" in upd:

@@ -78,6 +78,37 @@ def test_status_updates_cannot_be_remapped_as_catalog_entries():
     assert exc.value.status_code == 400
 
 
+@pytest.mark.parametrize("operation", ["create", "update"])
+@pytest.mark.parametrize("expected", [True, False])
+def test_status_validation_only_returns_public_messages(config, monkeypatch, operation, expected):
+    from cw_platform.orchestrator import _status_mapping
+    from cw_platform.status_mapping import STATUS_MAPPING_ERRORS, StatusMappingValidationError
+
+    cfg, saved = config
+    if operation == "update":
+        assert create()["ok"]
+    before = deepcopy(cfg)
+    saves_before = len(saved)
+    private = "private-token-and-server-path"
+
+    def fail(pair):
+        if expected:
+            raise StatusMappingValidationError("destination", private)
+        raise ValueError(private)
+
+    monkeypatch.setattr(_status_mapping, "validate_pair", fail)
+    monkeypatch.setattr(syncAPI, "_rt", lambda: {8: lambda *args: None})
+    result = create() if operation == "create" else syncAPI.api_pairs_update(
+        cfg["pairs"][0]["id"], syncAPI.PairPatch(status_mapping=mapping()))
+    assert result["ok"] is False
+    assert private not in json.dumps(result)
+    if expected:
+        assert result["error"] == STATUS_MAPPING_ERRORS["destination"]
+    else:
+        assert result["error"] == syncAPI._public_error(f"pair_{operation}_failed")
+    assert cfg == before and len(saved) == saves_before
+
+
 @pytest.mark.parametrize("kind", ["ordinary", "one_marker", "missing", "invalid_provider"])
 def test_clearing_status_choice_does_not_relax_other_conflict_validation(monkeypatch, kind):
     conflict = {"source": "A", "target": "B", "left": {}, "right": {}}

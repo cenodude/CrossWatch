@@ -26,6 +26,7 @@ async function fixture(t, theme="original", width=1280, pair=initialPair) {
   page.on("pageerror",err=>errors.push(err.message));
   page.on("dialog",dialog=>dialog.accept());
   t.after(()=>assert.deepEqual(errors,[]));
+  await page.addInitScript(value => {window.testPair = value;}, pair);
   await page.route("**/*",async route=>{
     const path = new URL(route.request().url()).pathname;
     if(path.startsWith("/assets/")){
@@ -39,7 +40,7 @@ async function fixture(t, theme="original", width=1280, pair=initialPair) {
     if(path.startsWith("/api/pairs")&&route.request().method()==="PUT") {saves.push(route.request().postDataJSON());return route.fulfill({json:{ok:true}});}
     if(path==="/api/pairs") return route.fulfill({json:[pair]});
     if(path.startsWith("/api/")) return route.fulfill({json:{}});
-    return route.fulfill({contentType:"text/html",body:`<!doctype html><html data-cw-theme="${theme}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${["themes/tokens","css/base","crosswatch","css/layout","css/components","css/pages","css/page-theme","js/modals/core/styles","fonts/material-symbols-rounded","ui-shell","themes/flat","themes/original-coverage"].map(file=>`<link rel="stylesheet" href="/assets/${file}.css">`).join("")}</head><body><div id="host" class="cx-modal-shell"></div><script>window.CW={};window.cxCloseModal=()=>document.querySelector('#host').remove();</script><script type="module">import modal from '/assets/js/modals/pair-config/index.js';await modal.mount(document.querySelector('#host'),{pairOrId:${JSON.stringify(pair)}});window.ready=true;</script></body></html>`});
+    return route.fulfill({contentType:"text/html",body:`<!doctype html><html data-cw-theme="${theme}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${["themes/tokens","css/base","crosswatch","css/layout","css/components","css/pages","css/page-theme","js/modals/core/styles","fonts/material-symbols-rounded","ui-shell","themes/flat","themes/original-coverage"].map(file=>`<link rel="stylesheet" href="/assets/${file}.css">`).join("")}</head><body><div id="host" class="cx-modal-shell"></div><script>window.CW={};window.cxCloseModal=()=>document.querySelector('#host').remove();</script><script type="module">import modal from '/assets/js/modals/pair-config/index.js';await modal.mount(document.querySelector('#host'),{pairOrId:window.testPair});window.ready=true;</script></body></html>`});
   });
   await page.goto("https://status-mapping.test/");
   await page.waitForFunction(()=>window.ready);
@@ -48,6 +49,13 @@ async function fixture(t, theme="original", width=1280, pair=initialPair) {
   await page.locator("#cx-status-title").waitFor();
   return {page,saves};
 }
+
+test("fixture passes script-like pair data without executing it",async t=>{
+  const pair = {...initialPair, name:'</script><script>window.fixtureInjected=true</script>'};
+  const {page}=await fixture(t,"original",1280,pair);
+  assert.equal(await page.evaluate(()=>window.testPair.name),pair.name);
+  assert.equal(await page.evaluate(()=>window.fixtureInjected),undefined);
+});
 
 test("draft rules keep Watchlist and opt-ins unchanged and save with pair",async t=>{
   const {page,saves}=await fixture(t);

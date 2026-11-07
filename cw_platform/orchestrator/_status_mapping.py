@@ -11,7 +11,7 @@ from cw_platform.provider_instances import build_provider_config_view, normalize
 from cw_platform.run_control import raise_if_cancelled
 from cw_platform.status_mapping import (
     ConflictPolicy, Decision, Direction, Endpoint, ExecutionScope, ItemScope, PairScope, Status, TransitionCheck,
-    parse_mapping, plan_status, verified_baseline, verify_status_write,
+    StatusMappingValidationError, parse_mapping, plan_status, verified_baseline, verify_status_write,
 )
 from cw_platform.status_mapping_store import StatusStore, decode_item, decode_observation, encode_observation
 from providers.sync._status_mapping import adapter_class
@@ -37,7 +37,7 @@ def validate_pair(pair):
     scope = pair_scope(pair)
     if pair.get("status_mapping") and any(isinstance(value, dict) and value.get("history_dropped_mode") == "tag"
                                           for value in (pair.get("providers") or {}).values()):
-        raise ValueError("Use either custom status mapping or Dropped shows tagging for this pair.")
+        raise StatusMappingValidationError("tagging")
     return parse_mapping(pair.get("status_mapping"), scope=scope, capabilities=capabilities(scope))
 
 

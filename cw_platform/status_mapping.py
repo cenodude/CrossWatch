@@ -11,6 +11,28 @@ from enum import StrEnum
 from typing import Any
 
 
+STATUS_MAPPING_ERRORS = {
+    "invalid_structure": "Invalid status mapping configuration",
+    "version": "Unsupported status mapping version",
+    "endpoint": "Status mapping endpoint changed; reopen the pair and configure its mappings again",
+    "conflict": "Invalid status conflict policy",
+    "one_way_preference": "A one-way mapping cannot prefer its destination",
+    "reverse": "A one-way mapping cannot contain reverse rules",
+    "include": "Status mapping Include must be a boolean",
+    "destination": "Invalid status mapping destination",
+    "planned": "Planned remains managed by Watchlist",
+    "unsupported": "Unsupported status mapping for these providers and title type",
+    "tagging": "Use either custom status mapping or Dropped shows tagging for this pair.",
+}
+
+
+class StatusMappingValidationError(ValueError):
+    def __init__(self, code: str, detail: str = ""):
+        self.code = code
+        message = STATUS_MAPPING_ERRORS[code]
+        super().__init__(f"{message}: {detail}" if detail else message)
+
+
 class Status(StrEnum):
     WATCHING = "watching"
     PLANNED = "planned"
@@ -79,7 +101,7 @@ class MappingConfig:
 
 def _object(raw: Any, keys: set[str], path: str) -> Mapping[str, Any]:
     if not isinstance(raw, Mapping) or any(key not in keys for key in raw):
-        raise ValueError(f"Invalid status mapping: {path}")
+        raise StatusMappingValidationError("invalid_structure", path)
     return raw
 
 
@@ -93,23 +115,23 @@ def parse_mapping(
         return None
     data = _object(raw, {"version", "a", "b", "conflict", "directions"}, "configuration")
     if type(data.get("version")) is not int or data["version"] != 1:
-        raise ValueError("Unsupported status mapping version")
+        raise StatusMappingValidationError("version")
     for side, endpoint in (("a", scope.a), ("b", scope.b)):
         ref = _object(data.get(side), {"provider", "instance"}, side)
         if dict(ref) != {"provider": endpoint.provider, "instance": endpoint.instance}:
-            raise ValueError(f"Status mapping endpoint changed: {side}")
+            raise StatusMappingValidationError("endpoint", side)
     try:
         conflict = ConflictPolicy(data.get("conflict", ConflictPolicy.LEAVE))
     except (TypeError, ValueError) as exc:
-        raise ValueError("Invalid status conflict policy") from exc
+        raise StatusMappingValidationError("conflict") from exc
     if not scope.two_way and conflict == ConflictPolicy.PREFER_B:
-        raise ValueError("A one-way mapping cannot prefer its destination")
+        raise StatusMappingValidationError("one_way_preference")
     directions = _object(data.get("directions"), {d.value for d in Direction}, "directions")
     rules: list[Rule] = []
     for key, raw_media in directions.items():
         direction = Direction(key)
         if direction == Direction.REVERSE and not scope.two_way:
-            raise ValueError("A one-way mapping cannot contain reverse rules")
+            raise StatusMappingValidationError("reverse")
         source, target = (scope.a, scope.b) if direction == Direction.FORWARD else (scope.b, scope.a)
         for media, raw_rows in _object(raw_media, {"movies", "shows"}, key).items():
             source_caps = capabilities.get((source, media), Capabilities())
@@ -118,16 +140,16 @@ def parse_mapping(
             for source_status, raw_rule in rows.items():
                 row = _object(raw_rule, {"include", "target"}, f"{key}.{media}.{source_status}")
                 if type(row.get("include")) is not bool:
-                    raise ValueError("Status mapping Include must be a boolean")
+                    raise StatusMappingValidationError("include")
                 try:
                     target_status = Status(row.get("target"))
                 except (TypeError, ValueError) as exc:
-                    raise ValueError("Invalid status mapping destination") from exc
+                    raise StatusMappingValidationError("destination") from exc
                 status = Status(source_status)
                 if target_status == Status.PLANNED:
-                    raise ValueError("Planned remains managed by Watchlist")
+                    raise StatusMappingValidationError("planned")
                 if status not in source_caps.readable or target_status not in target_caps.writable:
-                    raise ValueError(f"Unsupported status mapping: {key}.{media}.{source_status}")
+                    raise StatusMappingValidationError("unsupported", f"{key}.{media}.{source_status}")
                 rules.append(Rule(direction, media, status, target_status, row["include"]))
     ordered = tuple(sorted(rules, key=lambda r: (r.direction, r.media, r.source)))
     canonical = [conflict.value, [(r.direction, r.media, r.source, r.target, r.include) for r in ordered]]
