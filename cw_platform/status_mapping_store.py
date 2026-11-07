@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
-from contextlib import closing
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
 from .config_base import CONFIG_BASE
+from .run_control import raise_if_cancelled
 from .status_mapping import Baseline, Direction, Endpoint, ItemScope, Observation, PairScope, ReadState, Status
 
 
@@ -41,6 +43,33 @@ def pending_destinations(item: ItemScope, pending: dict) -> set[tuple[Endpoint, 
 class StatusStore:
     def __init__(self, path: Path | None = None):
         self.path = (path or CONFIG_BASE() / "state" / "status-mapping.sqlite3").resolve()
+
+    @contextmanager
+    def _instance_lock(self, endpoint: Endpoint):
+        identity = json.dumps(asdict(endpoint), sort_keys=True).encode()
+        path = self.path.parent / (self.path.name + ".locks") / (hashlib.sha256(identity).hexdigest() + ".sqlite3")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(path, timeout=0.25)) as conn:
+            while True:
+                raise_if_cancelled()
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    break
+                except sqlite3.OperationalError as exc:
+                    if exc.sqlite_errorcode not in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED}:
+                        raise
+            try:
+                raise_if_cancelled()
+                yield
+            finally:
+                conn.rollback()
+
+    @contextmanager
+    def exclusive_instances(self, endpoints):
+        with ExitStack() as locks:
+            for endpoint in sorted(set(endpoints), key=lambda value: (value.provider, value.instance)):
+                locks.enter_context(self._instance_lock(endpoint))
+            yield
 
     @staticmethod
     def key(item: ItemScope) -> str:

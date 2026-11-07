@@ -5,6 +5,18 @@ import vm from 'node:vm';
 import * as data from '../assets/js/capture-compare/data.js';
 import * as model from '../assets/js/capture-compare/model.js';
 
+test('captured title statuses are distinct from watched plays', () => {
+  const row = {type:'show',title:'A show',record_type:'title_status',status:'on_hold',native_status:'Hold',rewatching:true,watchlisted:false};
+  assert.match(model.displaySub(row), /title status.*on hold/);
+  const card = model.renderRecordCard('After', row);
+  assert.match(card, /Title status/);
+  assert.match(card, /Provider status/);
+  assert.match(card, /Hold/);
+  assert.match(card, /Rewatching<\/div><div class="v">Yes/);
+  assert.match(card, /Watchlisted<\/div><div class="v">No/);
+  assert.doesNotMatch(card, /class="k">Watched/);
+});
+
 test('capture routes retain paths with spaces, hashes and query characters', () => {
   const route = {a:'plex/A #1 & first.json',b:'simkl/第二.json',feature:'history'};
   assert.deepEqual(data.readRoute(data.compareRoute(route)), route);
