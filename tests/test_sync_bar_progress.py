@@ -36,6 +36,27 @@ def pair(i: int = 1, n: int = 1, features: tuple[str, ...] = ("history",)) -> No
     send("run:feature", i=1, n=len(features), feature=features[0])
 
 
+def test_current_pair_survives_summary_polling_and_changes_with_the_run(summary):
+    send("run:pair", pair_id="first", src="PLEX", dst="TRAKT", src_instance="home", mode="two-way", i=1, n=2, features=["history"])
+    send("run:feature", feature="history", i=1, n=1)
+    current = syncAPI._summary_snapshot()["current_pair"]
+    assert current == {"pair_id": "first", "src": "PLEX", "dst": "TRAKT", "src_instance": "home", "mode": "two-way", "feature": "history"}
+    send("run:pair", pair_id="second", src="SIMKL", dst="TRAKT", i=2, n=2, features=["ratings"])
+    assert summary["current_pair"] == {"pair_id": "second", "src": "SIMKL", "dst": "TRAKT"}
+    syncAPI._summary_reset()
+    assert summary["current_pair"] is None
+
+
+def test_current_pair_is_hidden_outside_managed_scope(monkeypatch, summary):
+    monkeypatch.setattr(syncAPI, "filter_pairs_for_user", lambda *args: [{"id": "allowed", "source": "PLEX", "target": "TRAKT"}])
+    snapshot = {"pair_scope_ids": ["allowed"], "current_pair": {"pair_id": "private", "src_instance": "private account"}}
+    scoped = syncAPI._scope_summary_for_user({}, {"is_admin": False}, snapshot)
+    assert scoped["current_pair"] is None
+    assert snapshot["current_pair"]["pair_id"] == "private"
+    snapshot["current_pair"] = {"pair_id": "allowed", "src": "PLEX", "dst": "TRAKT"}
+    assert syncAPI._scope_summary_for_user({}, {"is_admin": False}, snapshot)["current_pair"] == snapshot["current_pair"]
+
+
 def write(op: str, dst: str, feature: str, count: int, seen: list[float] | None = None, attempted: int | None = None) -> None:
     send(f"apply:{op}:start", dst=dst, feature=feature, count=count)
     step = max(1, count // 4)

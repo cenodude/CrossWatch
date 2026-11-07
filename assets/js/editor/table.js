@@ -407,6 +407,7 @@
       extraBtn.onclick = () => call(ctx, "openProgressEditor", row, extraBtn, extraBtn);
     }
     dataCells.extra = cell(extraBtn, "cw-col-extra");
+    dataCells.extra.classList.toggle("cw-empty-extra", extraBtn.disabled && !extraBtn.textContent.trim());
     const status = call(ctx, "statusForRow", row) || {label: "—", hint: ""};
     const statusText = document.createElement("span");
     statusText.dataset.statusRow = String(row._rid);

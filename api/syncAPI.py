@@ -340,6 +340,7 @@ def _summary_reset() -> None:
         SUMMARY.update(
             {
                 "running": False,
+                "current_pair": None,
                 "started_at": None,
                 "finished_at": None,
                 "duration_sec": None,
@@ -1209,10 +1210,13 @@ def _track_apply_progress(ev: str, o: Mapping[str, Any]) -> None:
     with SUMMARY_LOCK:
         phase = SUMMARY.setdefault("_phase", {}).setdefault("apply", {"total": 0, "done": 0, "final": False})
         if ev == "run:pair":
+            SUMMARY["current_pair"] = {key: o[key] for key in ("pair_id", "src", "dst", "src_instance", "dst_instance", "mode") if key in o}
             features = o.get("features")
             phase.update(pair_index=_count_of(o.get("i")), pair_count=_count_of(o.get("n")), feature_count=len(features) if isinstance(features, list) else 1,
                          feature_index=0, step_planned=0, step_settled=0, step_finished=False, current=0)
         elif ev == "run:feature":
+            if isinstance(SUMMARY.get("current_pair"), dict):
+                SUMMARY["current_pair"]["feature"] = str(o.get("feature") or "")
             phase.update(feature_index=_count_of(o.get("i")), feature_count=_count_of(o.get("n")), step_planned=0, step_settled=0, step_finished=False, current=0)
         elif ev == "feature:done":
             phase["step_finished"] = True
@@ -3067,6 +3071,9 @@ def _scope_summary_for_user(cfg: dict[str, Any], user: Mapping[str, Any] | None,
     if not scope_ids and (snap.get("run_id") or snap.get("running")):
         return _empty_summary_for_pairs(pairs)
     out = dict(snap)
+    current_pair = out.get("current_pair")
+    if isinstance(current_pair, Mapping) and str(current_pair.get("pair_id") or "") not in allowed_ids:
+        out["current_pair"] = None
     out["enabled"] = _enabled_from_pairs(pairs)
     out["pair_scope_ids"] = sorted(scope_ids & allowed_ids) if scope_ids else sorted(allowed_ids)
     allowed_providers: set[str] = set()
@@ -3458,6 +3465,7 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             snap = _scope_summary_for_user(cfg_for_scope, user_for_scope, snap)
             key = (
                 snap.get("running"),
+                json.dumps(snap.get("current_pair"), sort_keys=True),
                 snap.get("exit_code"),
                 snap.get("cancel_requested"),
                 snap.get("cancelled"),

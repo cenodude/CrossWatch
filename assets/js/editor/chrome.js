@@ -267,6 +267,9 @@
     details.className = 'cw-editor-filters';
     const summary = document.createElement('summary');
     summary.textContent = 'Source and filters';
+    const context = document.createElement('small');
+    context.className = 'cw-editor-source-summary';
+    summary.append(context);
     details.appendChild(summary);
     side.before(details);
     details.appendChild(side);
@@ -274,6 +277,15 @@
     const update = () => { details.open = !narrow.matches; };
     update();
     narrow.addEventListener('change', update);
+    const updateContext = () => {
+      context.textContent = ['#cw-source', '#cw-kind', '#cw-snapshot', '#cw-instance'].map(selector => {
+        const select = side.querySelector(selector);
+        return select && (selector === '#cw-snapshot' || select.style.display !== 'none') ? select.selectedOptions[0]?.textContent : '';
+      }).filter(Boolean).join(' · ');
+    };
+    side.addEventListener('change', updateContext);
+    new MutationObserver(updateContext).observe(side, {childList:true, subtree:true, attributes:true, attributeFilter:['style', 'selected']});
+    updateContext();
   }
 
   Editor.Chrome = {

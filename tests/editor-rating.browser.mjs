@@ -99,6 +99,7 @@ test("Editor stars fit every theme on desktop and mobile, with empty and disable
   for (const theme of ["original","flat-dark","flat-light"]) {
     await page.evaluate(theme => document.documentElement.dataset.cwTheme = theme, theme);
     for (const width of [1000,375]) {
+      await page.mouse.move(0,0);
       await page.setViewportSize({width,height:800});
       await page.evaluate(scale => window.openRating(scale, null), {...half,values:half.values.filter(value => value >= 1)});
       assert.equal(await page.locator("[data-editor-rating-value]").textContent(), "Not rated");
