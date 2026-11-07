@@ -23,7 +23,10 @@ async function open(t, theme, width = 390) {
   page.on("pageerror", error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
   const frontend = await readFile(new URL("../ui_frontend.py", import.meta.url), "utf8");
-  const navigation = [...frontend.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(match => match[1]).filter(script => script.startsWith("(()=>{const panes=") || script.startsWith("(()=>{const scrollTo="));
+  const navigation = await page.evaluate(source => {
+    const doc = new DOMParser().parseFromString(source, "text/html");
+    return [...doc.scripts].map(script => script.textContent).filter(script => script.startsWith("(()=>{const panes=") || script.startsWith("(()=>{const scrollTo="));
+  }, frontend);
   assert.equal(navigation.length, 2);
   await page.route("https://mobile.test/**", async route => {
     const path = new URL(route.request().url()).pathname;

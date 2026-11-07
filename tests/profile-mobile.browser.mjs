@@ -7,7 +7,7 @@ import {execFileSync} from "node:child_process";
 import {readFile, mkdir} from "node:fs/promises";
 import {chromium} from "playwright";
 
-const template = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_profile_html({'is_admin':True,'username':'mobile','display_name':'Mobile preview'}))"], {encoding:"utf8",maxBuffer:1024*1024}).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+const template = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_profile_html({'is_admin':True,'username':'mobile','display_name':'Mobile preview'}))"], {encoding:"utf8",maxBuffer:1024*1024});
 const items = ["The Grand Budapest Hotel", "A long episode title with plenty of words", "Arrival"].map((title,index)=>({key:`movie:tmdb:${index+1}`,type:"movie",title,year:2014,ids:{tmdb:String(index+1)},tmdb:String(index+1),sort_epoch:1793989800,watched_at:"2026-11-06T18:30:00Z",last_collected_at:1793989800,rating:8.5,watch_count:3,watch_epochs:[1793989800],providers:["PLEX","TRAKT"],sources_by_provider:{PLEX:["default"],TRAKT:["default"]},progress:45,can_update_progress:true,can_mark_watched:true,can_remove_progress:true,provider:"PLEX",provider_instance:"default",duration:120,remaining_minutes:66,media:{resolution:"4k",hdr:"dolby_vision",audio:"truehd"}}));
 
 async function fixture(t,theme,width) {
@@ -19,6 +19,22 @@ async function fixture(t,theme,width) {
   page.on('pageerror',error=>errors.push(error.message));
   t.after(()=>assert.deepEqual(errors,[]));
   const state={empty:false};
+  const html=await page.evaluate(({source,theme})=>{
+    const doc=new DOMParser().parseFromString(source,'text/html');
+    doc.querySelectorAll('script').forEach(script=>script.remove());
+    doc.documentElement.className=theme==='original'?'cw-theme-original':`cw-theme-${theme==='flat-light'?'light':'dark'}`;
+    if(theme!=='original') doc.documentElement.dataset.cwTheme=theme;
+    doc.getElementById(theme==='original'?'cw-theme-flat-css':'cw-theme-original-css')?.remove();
+    const bootstrap=doc.createElement('script');
+    bootstrap.textContent='window.CW={AuthState:{read:()=>({isAdmin:true,permissions:{write:true}})}};';
+    doc.body.append(bootstrap);
+    for(const path of ['helpers/selection-bar','helpers/profile-datetime','helpers/month-bar','helpers/icon-select','helpers/account-menu','js/profile-page']) {
+      const script=doc.createElement('script');
+      script.src=`/assets/${path}.js`;
+      doc.body.append(script);
+    }
+    return '<!doctype html>'+doc.documentElement.outerHTML;
+  },{source:template,theme});
   await page.route('https://profile-mobile.test/**',async route=>{
     const url=new URL(route.request().url()),path=url.pathname;
     if(path.startsWith('/assets/')) {
@@ -38,9 +54,7 @@ async function fixture(t,theme,width) {
       if(path==='/api/profile/preferences') json={preferences:{}};
       return route.fulfill({json});
     }
-    const attrs=theme==='original'?'class="cw-theme-original"':`data-cw-theme="${theme}" class="cw-theme-${theme==='flat-light'?'light':'dark'}"`;
-    const html=template.replace(/<html\b[^>]*>/,`<html ${attrs} data-cw-role="admin" data-profile-write="on">`).replace(/<link[^>]+id="cw-theme-(flat|original)-css"[^>]*>/g,tag=>tag.includes(theme==='original'?'original-css':'flat-css')?tag:'').replace('</body>',`<script>window.CW={AuthState:{read:()=>({isAdmin:true,permissions:{write:true}})}};</script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/helpers/profile-datetime.js"></script><script src="/assets/js/profile-page.js"></script></body>`);
-    return route.fulfill({contentType:'text/html',body:html.replace('<script src="/assets/js/profile-page.js">','<script src="/assets/helpers/month-bar.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/account-menu.js"></script><script src="/assets/js/profile-page.js">')});
+    return route.fulfill({contentType:'text/html',body:html});
   });
   await page.goto('https://profile-mobile.test/profile');
   await page.locator('.cw-profile-mobile-view').waitFor({state:'attached'});
