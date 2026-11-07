@@ -301,7 +301,7 @@ def _finish_save(state: Ctx, scfg: dict[str, Any], *, dry_run: bool, message: st
 def _mode(scfg: dict[str, Any]) -> str:
     advanced = as_dict(scfg.get("advanced"))
     if coerce_bool(advanced.get("enabled"), False):
-        return "advanced"
+        return "standard + advanced" if coerce_bool(scfg.get("enabled"), False) and scfg.get("mode") != "disabled" else "advanced"
     mode = str(scfg.get("mode") or "").strip()
     if mode:
         return mode
@@ -413,7 +413,6 @@ def scheduler_set(
     else:
         raise CLIError(f"Unknown scheduler mode '{mode}'", hint="Use hourly, every, daily, or interval.", exit_code=EXIT_USAGE)
 
-    _advanced(scfg)["enabled"] = False
     _finish_save(state, scfg, dry_run=dry_run, message="Standard scheduler configured.")
 
 

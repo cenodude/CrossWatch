@@ -11,7 +11,7 @@ from typing import Any
 ANY_RUN = "*"
 
 _LOCK = threading.RLock()
-_STATE: dict[str, Any] = {"run_id": None, "requested_at": None, "reason": "", "queue_stopped": False}
+_STATE: dict[str, Any] = {"run_id": None, "requested_at": None, "reason": "", "queue_stopped": False, "queue_stop_requested_at": None}
 
 
 class SyncCancelled(BaseException):
@@ -29,6 +29,7 @@ def request_cancel(run_id: Any = None, reason: str = "user") -> dict[str, Any]:
         _STATE["requested_at"] = time.time()
         _STATE["reason"] = str(reason or "user").strip() or "user"
         _STATE["queue_stopped"] = True
+        _STATE["queue_stop_requested_at"] = _STATE["requested_at"]
         return dict(_STATE)
 
 
@@ -45,13 +46,19 @@ def queue_stopped() -> bool:
 def clear_queue_stop() -> None:
     with _LOCK:
         _STATE["queue_stopped"] = False
+        _STATE["queue_stop_requested_at"] = None
 
 
 def consume_queue_stop() -> bool:
+    return consume_queue_stop_requested_at() is not None
+
+
+def consume_queue_stop_requested_at() -> float | None:
     with _LOCK:
-        stopped = bool(_STATE.get("queue_stopped"))
+        requested_at = _STATE.get("queue_stop_requested_at") if _STATE.get("queue_stopped") else None
         _STATE["queue_stopped"] = False
-        return stopped
+        _STATE["queue_stop_requested_at"] = None
+        return float(requested_at) if requested_at is not None else None
 
 
 def cancel_state() -> dict[str, Any]:

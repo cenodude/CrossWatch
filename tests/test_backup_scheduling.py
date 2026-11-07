@@ -236,6 +236,7 @@ def test_standard_plan_is_revalidated_after_backup_wait(monkeypatch, change):
             if change == "disable":
                 cfg["scheduling"]["enabled"] = False
             elif change == "advanced":
+                cfg["scheduling"]["enabled"] = False
                 cfg["scheduling"]["advanced"].update({"enabled": True, "jobs": [{"id": "later", "pair_id": "pair", "at": "09:00"}]})
             else:
                 cfg["scheduling"]["daily_time"] = "09:00"

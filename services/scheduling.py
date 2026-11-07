@@ -10,7 +10,7 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
-from cw_platform.run_control import consume_queue_stop
+from cw_platform.run_control import consume_queue_stop_requested_at
 from services.scheduler_webhooks import (
     DEFAULT_WEBHOOKS,
     normalize_scheduler_webhooks,
@@ -765,6 +765,8 @@ class SyncScheduler:
         self._stop = threading.Event()
         self._poke = threading.Event()
         self._lock = threading.Lock()
+        self._std_dispatched_pairs: set[str] = set()
+        self._std_cancelled = False
 
         self._status: dict[str, Any] = {
             "running": False,
@@ -850,10 +852,12 @@ class SyncScheduler:
     def _effective(self, sch: dict[str, Any]) -> dict[str, Any]:
         adv = sch.get("advanced") if isinstance(sch.get("advanced"), dict) else {}
         adv_enabled = bool((adv or {}).get("enabled"))
-        std_enabled = bool(sch.get("enabled"))
+        std_enabled = bool(sch.get("enabled")) and (sch.get("mode") or "").lower() != "disabled"
+        if std_enabled and adv_enabled:
+            return {"enabled": True, "mode": "combined"}
         if adv_enabled:
             return {"enabled": True, "mode": "advanced"}
-        if std_enabled and (sch.get("mode") or "").lower() != "disabled":
+        if std_enabled:
             return {"enabled": True, "mode": (sch.get("mode") or "every_n_hours").lower()}
         if _iter_adv_backup_jobs(sch):
             return {"enabled": True, "mode": "backup"}
@@ -1416,7 +1420,22 @@ class SyncScheduler:
         due.sort(key=lambda x: (x[0], str(x[1].get("id") or "")))
         return due
 
-    def _adv_run_due(self, sch: dict[str, Any], tz: Any | None) -> bool:
+    def _wait_for_advanced_sync(self, sch: dict[str, Any], pending: dict[str, Any], iterator: Callable, message: str) -> bool:
+        waited = False
+        while not self._stop.is_set():
+            current = self._get_sched_cfg()
+            job = next((job for job in iterator(current) if job["id"] == pending["id"]), None)
+            if job != pending or _tz_from_cfg(current) != _tz_from_cfg(sch):
+                return False
+            if not self.is_sync_running_fn():
+                return True
+            if not waited:
+                self._log(message, level="INFO")
+                waited = True
+            self._sleep_or_poke(2.0)
+        return False
+
+    def _adv_run_due(self, sch: dict[str, Any], tz: Any | None, *, overlap_pairs: set[str] | None = None, standard_due_at: int = 0) -> bool:
         due = self._adv_due_jobs(sch, tz)
         due_workflows = self._adv_due_workflows(sch, tz)
         due_capture = self._adv_due_capture_jobs(sch, tz)
@@ -1430,11 +1449,22 @@ class SyncScheduler:
         ordered = _topo_order(jobs)
         executed: set[str] = set()
         ok_all = True
+        cancelled = False
+        sync_due_at = min((dt.replace(tzinfo=tz).timestamp() for dt, _ in due + due_workflows), default=float("inf"))
+
+        def queue_cancelled() -> bool:
+            nonlocal cancelled
+            requested_at = consume_queue_stop_requested_at()
+            if requested_at is not None:
+                cancelled = cancelled or requested_at >= sync_due_at
+                if standard_due_at and requested_at >= standard_due_at:
+                    self._std_cancelled = True
+            return cancelled
 
         for j in ordered:
             if self._stop.is_set():
                 break
-            if consume_queue_stop():
+            if queue_cancelled():
                 self._log("advanced: sync cancelled by user; skipping remaining jobs", level="INFO")
                 ok_all = False
                 break
@@ -1443,17 +1473,10 @@ class SyncScheduler:
             if dep and dep in {x.get("id") for x in jobs} and dep not in executed:
                 continue
 
-            # Wait until sync is free
-            waited = 0
-            while self.is_sync_running_fn() and not self._stop.is_set():
-                if waited == 0:
-                    self._log("advanced: sync is busy; waiting to run due job(s)", level="INFO")
-                waited += 1
-                self._sleep_or_poke(2.0)
-                if self._poke.is_set():
-                    self._poke.clear()
-                    # re-check due after config change
-                    return True
+            if not self._wait_for_advanced_sync(sch, j, _iter_adv_jobs, "advanced: sync is busy; waiting to run due job(s)"):
+                continue
+            if queue_cancelled():
+                break
 
             payload = {
                 "source": "scheduler",
@@ -1470,6 +1493,8 @@ class SyncScheduler:
                 self._notify_sync_start_rejected(payload, "advanced job failed")
             else:
                 self._log(f"advanced: job {j['id']} ok", level="INFO")
+                if overlap_pairs is not None and _now_ts() >= standard_due_at:
+                    overlap_pairs.add(j["pair_id"])
 
             with self._lock:
                 self._status["last_run_ok"] = ok
@@ -1498,7 +1523,7 @@ class SyncScheduler:
             for step in steps:
                 if self._stop.is_set():
                     break
-                if consume_queue_stop():
+                if queue_cancelled():
                     self._log(
                         f"advanced workflow: sync cancelled by user; skipping remaining steps of {workflow['id']}",
                         level="INFO",
@@ -1507,15 +1532,12 @@ class SyncScheduler:
                     workflow_ok = False
                     break
 
-                waited = 0
-                while self.is_sync_running_fn() and not self._stop.is_set():
-                    if waited == 0:
-                        self._log("advanced workflow: sync is busy; waiting to run due workflow", level="INFO")
-                    waited += 1
-                    self._sleep_or_poke(2.0)
-                    if self._poke.is_set():
-                        self._poke.clear()
-                        return True
+                if not self._wait_for_advanced_sync(sch, workflow, _iter_adv_workflows, "advanced workflow: sync is busy; waiting to run due workflow"):
+                    workflow_ok = False
+                    break
+                if queue_cancelled():
+                    workflow_ok = False
+                    break
 
                 payload = {
                     "source": "scheduler",
@@ -1534,6 +1556,8 @@ class SyncScheduler:
                     self._notify_sync_start_rejected(payload, "advanced workflow step failed")
                 else:
                     self._log(f"advanced workflow: step {step['id']} ok", level="INFO")
+                    if overlap_pairs is not None and _now_ts() >= standard_due_at:
+                        overlap_pairs.add(step["pair_id"])
 
                 with self._lock:
                     self._status["last_run_ok"] = ok
@@ -1561,15 +1585,8 @@ class SyncScheduler:
             if self._stop.is_set():
                 break
 
-            waited = 0
-            while self.is_sync_running_fn() and not self._stop.is_set():
-                if waited == 0:
-                    self._log("advanced capture: sync is busy; waiting to run due capture job(s)", level="INFO")
-                waited += 1
-                self._sleep_or_poke(2.0)
-                if self._poke.is_set():
-                    self._poke.clear()
-                    return True
+            if not self._wait_for_advanced_sync(sch, j, _iter_adv_capture_jobs, "advanced capture: sync is busy; waiting to run due capture job(s)"):
+                continue
 
             payload = {
                 "source": "scheduler",
@@ -1681,21 +1698,26 @@ class SyncScheduler:
                 self._status["last_event_name"] = ""
 
             self._adv_last_key[j["id"]] = occurrence_key
-        return ok_all
+        if queue_cancelled():
+            for due_at, job in due:
+                self._adv_last_key[job["id"]] = f"{due_at.date().isoformat()}@{job.get('at')}"
+            for due_at, workflow in due_workflows:
+                self._adv_last_key[f"workflow:{workflow['id']}"] = _workflow_key(due_at)
+        return ok_all and not cancelled
 
-    def _std_run_due(self) -> bool:
+    def _std_run_due(self, dispatched_pairs: set[str] | None = None) -> bool:
         payload: dict[str, Any] = {"source": "scheduler", "scheduler_mode": "standard"}
         cfg = self.load_config_cb() or {}
-        skipped = profile_scheduled_pair_ids(cfg)
+        skipped = profile_scheduled_pair_ids(cfg) | (dispatched_pairs or set())
         if skipped:
             pairs_raw = cfg.get("pairs")
             pairs: list[Any] = pairs_raw if isinstance(pairs_raw, list) else []
             scope = [str(p.get("id") or "").strip() for p in pairs if isinstance(p, dict) and str(p.get("id") or "").strip() and str(p.get("id") or "").strip() not in skipped]
             if not scope:
-                self._log("standard: every pair runs on a profile schedule; nothing to run", level="INFO")
+                self._log("standard: no remaining pairs after profile schedules and overlapping advanced runs", level="INFO")
                 return True
             payload["pair_scope_ids"] = scope
-            self._log(f"standard: skipping {len(skipped)} pair(s) that run on profile schedules", level="INFO")
+            self._log(f"standard: skipping {len(skipped)} pair(s) covered by profile schedules or overlapping advanced runs", level="INFO")
         self._log("standard: triggering sync run", level="INFO")
         ok = self._run_sync(payload)
         if not ok:
@@ -1738,6 +1760,8 @@ class SyncScheduler:
                     with self._lock:
                         self._std_next_ts = 0
                         self._std_cfg_key = ""
+                        self._std_dispatched_pairs.clear()
+                        self._std_cancelled = False
                         self._adv_seed_key = ""
                         self._adv_seed_day = ""
                     self._sleep_or_poke(1.0)
@@ -1748,6 +1772,8 @@ class SyncScheduler:
                     with self._lock:
                         self._std_next_ts = 0
                         self._std_cfg_key = ""
+                        self._std_dispatched_pairs.clear()
+                        self._std_cancelled = False
 
                     self._adv_seed_past_due_today(sch, tz)
                     self._set_busy(True)
@@ -1768,31 +1794,18 @@ class SyncScheduler:
                     self._sleep_or_poke(min(30.0, remaining if remaining > 0 else 0.5))
                     continue
 
-                # standard
-                self._adv_seed_past_due_today(sch, tz)
-                self._set_busy(True)
-                try:
-                    self._adv_run_due(sch, tz)
-                finally:
-                    self._set_busy(False)
-                if self._stop.is_set():
-                    break
-                if self._get_sched_cfg() != sch:
-                    continue
-                now_local = _as_now_in_tz(tz)
-                backup_next = self._adv_next(sch, now_local, tz)
+                frequency_field = {
+                    "every_n_hours": "every_n_hours", "daily_time": "daily_time",
+                    "custom_interval": "custom_interval_minutes",
+                }.get(str(sch.get("mode") or "").lower())
                 std_key = "|".join([
-                    str(eff.get("mode") or ""),
                     str(sch.get("enabled") or ""),
                     str(sch.get("mode") or ""),
-                    str(sch.get("every_n_hours") or ""),
-                    str(sch.get("daily_time") or ""),
-                    str(sch.get("custom_interval_minutes") or ""),
+                    str(sch.get(frequency_field) if frequency_field else ""),
                     str(sch.get("timezone") or ""),
                     str(sch.get("jitter_seconds") or ""),
                 ])
 
-                now_ts = _now_ts()
                 with self._lock:
                     cached_key = self._std_cfg_key
                     cached_next = int(self._std_next_ts or 0)
@@ -1803,10 +1816,24 @@ class SyncScheduler:
                     with self._lock:
                         self._std_cfg_key = std_key
                         self._std_next_ts = cached_next
+                        self._std_dispatched_pairs.clear()
+                        self._std_cancelled = False
                 else:
                     nxt = datetime.fromtimestamp(cached_next)
 
-                next_run = min(nxt, backup_next, key=lambda dt: dt.timestamp()) if backup_next else nxt
+                self._adv_seed_past_due_today(sch, tz)
+                self._set_busy(True)
+                try:
+                    self._adv_run_due(sch, tz, overlap_pairs=self._std_dispatched_pairs, standard_due_at=cached_next)
+                finally:
+                    self._set_busy(False)
+                if self._stop.is_set():
+                    break
+                if self._get_sched_cfg() != sch:
+                    continue
+                now_ts = _now_ts()
+                timed_next = self._adv_next(sch, _as_now_in_tz(tz), tz)
+                next_run = min(nxt, timed_next, key=lambda dt: dt.timestamp()) if timed_next else nxt
                 self._update_next(next_run, effective_mode=eff["mode"])
 
                 if now_ts >= cached_next:
@@ -1817,14 +1844,22 @@ class SyncScheduler:
 
                     self._set_busy(True)
                     try:
-                        self._std_run_due()
+                        requested_at = consume_queue_stop_requested_at()
+                        if requested_at is not None and requested_at >= cached_next:
+                            self._std_cancelled = True
+                        if self._std_cancelled:
+                            self._log("standard: sync cancelled by user; skipping overlapping occurrence", level="INFO")
+                        else:
+                            self._std_run_due(self._std_dispatched_pairs)
 
                         now_local = _as_now_in_tz(tz)
                         nxt2 = compute_next_run(now_local, sch)
                         with self._lock:
                             self._std_next_ts = int(nxt2.timestamp())
-                        backup_next = self._adv_next(sch, now_local, tz)
-                        self._update_next(min(nxt2, backup_next, key=lambda dt: dt.timestamp()) if backup_next else nxt2, effective_mode=eff["mode"])
+                            self._std_dispatched_pairs.clear()
+                            self._std_cancelled = False
+                        timed_next = self._adv_next(sch, now_local, tz)
+                        self._update_next(min(nxt2, timed_next, key=lambda dt: dt.timestamp()) if timed_next else nxt2, effective_mode=eff["mode"])
                     finally:
                         self._set_busy(False)
 

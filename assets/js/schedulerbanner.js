@@ -37,7 +37,7 @@
     chipNav={pairs:{target:"pairs",label:"Open sync pair settings"},sched:{target:"scheduling",label:"Open scheduler settings"},watch:{target:"watcher",label:"Open watcher settings"},hook:{target:"webhook",label:"Open webhook settings"},health:{target:"maintenance",label:"Open Maintenance tools"}},
     S={cfg:null,pairs:{total:0,active:0},sched:{enabled:false,running:false,next:0,advanced:false,captures:0,webhooks:false,webhookLabel:"",warning:false,warnings:[]},evt:{enabled:false,count:0},watch:{...blank(),alive:false},hook:blank(),system:{health:{known:false,ok:false,status:"checking"}},timers:{sched:null,scrob:null,health:null,wait:null,rotate:null},debounce:null,last:{watcher:"",webhook:""}};
   const SHARED_WATCH_KEY="__CW_CURRENT_WATCHING_SHARED__",SHARED_WATCH_TTL_MS=3000,WATCHER_UNAVAILABLE_GRACE_MS=35000;
-  let scrobPollSeq=0;
+  let scrobPollSeq=0, lastSync=null;
   const isManaged=()=>document.documentElement?.dataset?.cwRole==="user";
 
   if (!$("#sched-banner-css")) {
@@ -91,7 +91,7 @@
 #ops-card #sched-inline-log .sched.disabled::before{opacity:.48!important;box-shadow:none!important;}
 #ops-card #sched-inline-log .copy{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important;}
 #ops-card #sched-inline-log .sched.has-copy{flex:0 1 auto!important;width:auto!important;max-width:280px!important;justify-content:flex-start!important;gap:9px!important;padding:0 12px 0 9px!important;}
-#ops-card #sched-inline-log #chip-sched.has-copy{min-width:166px!important;}
+#ops-card #sched-inline-log #chip-sched.has-copy{min-width:210px!important;}
 #ops-card #sched-inline-log #chip-watch.has-copy,#ops-card #sched-inline-log #chip-hook.has-copy{min-width:150px!important;}
 #ops-card #sched-inline-log .sched.has-copy .copy{position:static!important;display:grid!important;grid-template-columns:auto auto auto!important;grid-template-rows:auto auto!important;align-items:center!important;column-gap:7px!important;row-gap:2px!important;width:auto!important;height:auto!important;padding:0!important;margin:0!important;overflow:visible!important;clip:auto!important;white-space:nowrap!important;border:0!important;}
 #ops-card #sched-inline-log .sched.has-copy .label,#ops-card #sched-inline-log .sched.has-copy .value,#ops-card #sched-inline-log .sched.has-copy .meta,#ops-card #sched-inline-log .sched.has-copy .badges{position:static!important;top:auto!important;transform:none!important;margin:0!important;padding:0!important;height:auto!important;line-height:1.15!important;}
@@ -199,6 +199,19 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     if (!day || dt.toDateString()===now.toDateString()) return time;
     const tom=new Date(now); tom.setDate(now.getDate()+1);
     return dt.toDateString()===tom.toDateString()?`tomorrow ${time}`:`${dt.toLocaleDateString([],{weekday:"short"})} ${time}`;
+  }
+
+  function lastSyncTip(summary, now=Date.now()) {
+    if (!summary) return "Last sync: Unavailable";
+    const running=!!summary.running, raw=running?(summary.started_at||summary.raw_started_ts):(summary.finished_at||summary.started_at||summary.raw_started_ts);
+    if (!raw) return "Last sync: No runs recorded";
+    const number=Number(raw), date=new Date(Number.isFinite(number)?(number<1e12?number*1000:number):raw);
+    if (!Number.isFinite(date.getTime())||date.getTime()<=0) return "Last sync: No runs recorded";
+    const seconds=Math.max(0,Math.floor((now-date.getTime())/1000)), unit=seconds<3600?"minute":seconds<86400?"hour":"day",
+      amount=Math.floor(seconds/({minute:60,hour:3600,day:86400}[unit])),
+      relative=seconds<60?"Just now":new Intl.RelativeTimeFormat(undefined,{numeric:"auto"}).format(-amount,unit),
+      exact=date.toLocaleString([],{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",timeZoneName:"short"});
+    return `${running?"Sync started":"Last sync"}: ${relative}\n${exact}`;
   }
 
   const sourceLabel=(src)=>{
@@ -370,12 +383,12 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     paint(sched,managed||!S.sched.enabled?{
       show:false
     }:{
-      value:schedWarning?"":(S.sched.running?"":(S.sched.advanced?"advanced":"scheduled")),
-      meta:S.sched.next?`next ${clock(S.sched.next,true)}`:"",
+      value:schedWarning?"":(S.sched.running?"running":(S.sched.advanced?(S.sched.standard?"combined":"advanced"):"scheduled")),
+      meta:S.sched.next?`Next run ${clock(S.sched.next,true)}`:"",
       badges:schedBadges,
       live:S.sched.running&&!schedWarning,
       ok:!schedWarning,
-      tip:`Scheduler ${S.sched.running?"running":(S.sched.advanced?"advanced":"scheduled")}${S.sched.next?` • next ${clock(S.sched.next,true)}`:""}${S.sched.advanced?" • advanced mode":""}${S.sched.captures?` • ${S.sched.captures} capture schedule${S.sched.captures===1?"":"s"}`:""}${S.evt.enabled&&S.evt.count?` • ${S.evt.count} event trigger${S.evt.count===1?"":"s"}`:""}${schedWebhookTip}`
+      tip:`Scheduler ${S.sched.running?"running":(S.sched.advanced?"advanced":"scheduled")}${S.sched.next?` • next ${clock(S.sched.next,true)}`:""}${S.sched.advanced?(S.sched.standard?" • standard and advanced plans":" • advanced mode"):""}${S.sched.captures?` • ${S.sched.captures} capture schedule${S.sched.captures===1?"":"s"}`:""}${S.evt.enabled&&S.evt.count?` • ${S.evt.count} event trigger${S.evt.count===1?"":"s"}`:""}${schedWebhookTip}\n${lastSyncTip(lastSync)}`
     });
 
     paint(watch,!S.watch.enabled?{
@@ -455,10 +468,14 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     clear("sched");
     if (document.hidden) return scheduleSched();
     try {
-      const st=await API().Scheduling.status(force), sc=st?.config||S.cfg?.scheduling||{};
+      const [st, summary]=await Promise.all([
+        API().Scheduling.status(force),
+        fetch("/api/run/summary",{cache:"no-store"}).then(r=>{if(!r.ok) throw new Error("Sync history unavailable");return r.json();}).catch(()=>null)
+      ]), sc=st?.config||S.cfg?.scheduling||{};
+      lastSync=summary;
       const adv=advancedOn(sc), captures=adv?activeCaptureJobs(sc):0, events=adv?activeEventRules(sc):0, wh=webhookState(sc);
       const warnings=(Array.isArray(st?.scheduling_warnings)?st.scheduling_warnings:(Array.isArray(st?.warnings)?st.warnings:[])).map(x=>String(x||"").trim()).filter(Boolean);
-      S.sched={enabled:schedulingOn(sc),advanced:adv,running:!!st?.running,next:+(st?.next_run_at||st?.next_run||0)||0,captures:captures,webhooks:!!wh.active,webhookLabel:wh.label||"",warning:!!st?.warning||warnings.length>0,warnings};
+      S.sched={enabled:schedulingOn(sc),standard:!!sc.enabled&&sc.mode!=="disabled",advanced:adv,running:!!st?.running,next:+(st?.next_run_at||st?.next_run||0)||0,captures:captures,webhooks:!!wh.active,webhookLabel:wh.label||"",warning:!!st?.warning||warnings.length>0,warnings};
       S.evt={enabled:adv&&events>0,count:events};
     } catch { S.sched={enabled:false,running:false,next:0,advanced:false,captures:0,webhooks:false,webhookLabel:"",warning:false,warnings:[]}; S.evt={enabled:false,count:0}; }
     render();
