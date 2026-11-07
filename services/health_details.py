@@ -9,6 +9,7 @@ from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any, Callable
 
 from services import health_alerts
+from services.scheduling import scheduler_should_run
 
 OVERDUE_GRACE_S = 300
 TOKEN_EXPIRY_WINDOW_S = 14 * 86400
@@ -89,8 +90,7 @@ def scheduler_health(
     now: int,
     issues: Issues,
 ) -> dict[str, Any]:
-    sch = _as_dict(cfg.get("scheduling"))
-    enabled = bool(sch.get("enabled") or _as_dict(sch.get("advanced")).get("enabled"))
+    enabled = scheduler_should_run(cfg)
     running = bool(status.get("running"))
     working = bool(sync_running or status.get("busy"))
     next_run_at = int(status.get("next_run_at") or 0)

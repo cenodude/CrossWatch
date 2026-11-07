@@ -213,10 +213,9 @@ def _after_config_save(env: dict[str, Any], cfg: dict[str, Any]) -> None:
         sched = env["scheduler"]
         if hasattr(sched, "refresh_ratings_watermarks"):
             sched.refresh_ratings_watermarks()
-        s = cfg.get("scheduling") or {}
-        effective_enabled = bool(
-            (s or {}).get("enabled") or ((s or {}).get("advanced") or {}).get("enabled")
-        )
+        from services.scheduling import scheduler_should_run
+
+        effective_enabled = scheduler_should_run(cfg)
         if sched is not None:
             if effective_enabled:
                 getattr(sched, "start", lambda: None)()

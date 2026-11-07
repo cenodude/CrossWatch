@@ -381,6 +381,13 @@ def sched_post(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
     next_scfg = dict((payload or {}) or {})
     if "profiles" not in next_scfg and isinstance(prev_scfg.get("profiles"), dict):
         next_scfg["profiles"] = prev_scfg["profiles"]
+    prev_adv = _as_dict(prev_scfg.get("advanced"))
+    next_adv = dict(_as_dict(next_scfg.get("advanced")))
+    if "backup_jobs" not in next_adv and "backupJobs" not in next_adv:
+        backup_jobs = prev_adv.get("backup_jobs") or prev_adv.get("backupJobs")
+        if isinstance(backup_jobs, list):
+            next_adv["backup_jobs"] = backup_jobs
+            next_scfg["advanced"] = next_adv
     cfg["scheduling"] = next_scfg
     save_config(cfg)
 

@@ -246,8 +246,6 @@ def api_backups_schedule_post(body: dict[str, Any] = Body(...)) -> JSONResponse:
         if not isinstance(adv, dict):
             adv = {}
             sch["advanced"] = adv
-        adv["enabled"] = bool(adv.get("enabled") or enabled)
-
         job = {
             "id": "app-backup-default",
             "scope": str(body.get("scope") or "app_state"),
@@ -263,11 +261,12 @@ def api_backups_schedule_post(body: dict[str, Any] = Body(...)) -> JSONResponse:
             "active": enabled,
         }
 
-        raw_jobs0 = adv.get("backup_jobs")
+        raw_jobs0 = adv.get("backup_jobs") or adv.get("backupJobs")
         jobs0 = raw_jobs0 if isinstance(raw_jobs0, list) else []
         jobs = [x for x in jobs0 if not (isinstance(x, dict) and str(x.get("id") or "") == "app-backup-default")]
         jobs.insert(0, job)
         adv["backup_jobs"] = jobs
+        adv.pop("backupJobs", None)
         save_config(cfg)
         _refresh_scheduler()
         LOG.success(f"backup schedule saved enabled={enabled}")

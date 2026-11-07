@@ -13,7 +13,10 @@
       const sc=S.cfg?.scrobble||{}, mode=scrobMode(), src=sc?.sources&&typeof sc.sources==="object"?sc.sources:null;
       return src?{webhook:!!src.webhook,watcher:!!(src.watcher??src.watch)}:{webhook:mode==="webhook",watcher:mode==="watch"};
     },
-    schedulingOn=c=>!!((c?.scheduling||c||{}).enabled||(c?.scheduling||c||{})?.advanced?.enabled),
+    schedulingOn=c=>{
+      const sch=c?.scheduling||c||{}, canonical=sch.advanced?.backup_jobs, jobs=Array.isArray(canonical)&&canonical.length?canonical:sch.advanced?.backupJobs||[];
+      return !!(sch.enabled||sch.advanced?.enabled||(Array.isArray(jobs)&&jobs.some(r=>r&&r.active!==false&&/^([01]?\d|2[0-3]):[0-5]\d$/.test(String(r.at||"").trim()))));
+    },
     advancedOn=c=>!!((c?.scheduling||c||{})?.advanced?.enabled),
     activeCaptureJobs=c=>(((c?.scheduling||c||{})?.advanced?.capture_jobs)||((c?.scheduling||c||{})?.advanced?.captureJobs)||[])
       .filter(r=>r&&typeof r==="object"&&r.active!==false&&String(r?.provider||"").trim()&&String(r?.feature||"").trim()&&String(r?.at||"").trim()).length,
