@@ -31,6 +31,7 @@ class InteractivePlan:
     record_rows: bool = True
     copy_rows: bool = True
     notices: list[dict[str, Any]] = field(default_factory=list)
+    status_mappings: list[dict[str, Any]] = field(default_factory=list)
     seen: set[str] = field(default_factory=set)
     deferred_removes: list[dict[str, Any]] = field(default_factory=list)
     result: dict[str, Any] | None = None

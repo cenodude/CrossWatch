@@ -57,7 +57,8 @@ class Session:
                     counts=dict(self.store.counts) if self.store else dict(changes=0, conflicts=0, attention=0, selected=0),
                     features=list(self.store.features) if self.store else [], selection_version=self.selection_version,
                     completed_features=sorted(self.plan.completed_features), failed_features=sorted(self.plan.failed_features),
-                    notices=self.plan.notices[:100], summary=self.summary, apply_review=self.apply_review, report=self.report)
+                    notices=self.plan.notices[:100], status_mappings=self.plan.status_mappings,
+                    summary=self.summary, apply_review=self.apply_review, report=self.report)
 
     def close(self):
         if self.store is not None:

@@ -3,11 +3,11 @@
 (function () {
   const PAGE_SIZE_OPTIONS = [50, 100, 150, 200];
   const DEFAULT_PAGE_SIZE = 50;
-  const COLUMN_KEYS = ["key", "type", "title", "year", "id", "imdb", "tvdb", "trakt", "simkl", "anilist", "extra"];
+  const COLUMN_KEYS = ["key", "type", "title", "year", "id", "imdb", "tvdb", "trakt", "simkl", "anilist", "extra", "status"];
   const COLUMN_LAYOUT_VERSION = 4;
   const DEFAULT_COLUMN_ORDER = COLUMN_KEYS.slice();
-  const DEFAULT_COLUMN_VISIBILITY = { key: true, type: true, title: true, year: false, id: true, imdb: false, tvdb: false, trakt: false, simkl: false, anilist: false, extra: true };
-  const DEFAULT_COLUMN_WIDTHS = { key: 132, type: 126, title: 360, year: 92, id: 132, imdb: 150, tvdb: 120, trakt: 120, simkl: 120, anilist: 120, extra: 190 };
+  const DEFAULT_COLUMN_VISIBILITY = { key: true, type: true, title: true, year: false, id: true, imdb: false, tvdb: false, trakt: false, simkl: false, anilist: false, extra: true, status: false };
+  const DEFAULT_COLUMN_WIDTHS = { key: 132, type: 126, title: 360, year: 92, id: 132, imdb: 150, tvdb: 120, trakt: 120, simkl: 120, anilist: 120, extra: 190, status: 120 };
   const MIN_COLUMN_WIDTHS = { key: 96, type: 116, title: 220, year: 84, id: 120, imdb: 130, tvdb: 110, trakt: 110, simkl: 110, anilist: 110, extra: 180 };
   const MAX_COLUMN_WIDTHS = { key: 340, type: 240, title: 760, year: 180, id: 280, imdb: 280, tvdb: 240, trakt: 240, simkl: 240, anilist: 240, extra: 560 };
   const COLUMN_META = {
@@ -22,6 +22,7 @@
     simkl: { icon: "hub", label: "SIMKL" },
     anilist: { icon: "animation", label: "AniList" },
     extra: { icon: "tune", label: "Extra" },
+    status: { icon: "flag", label: "Status" },
   };
   const SIMPLE_COLUMNS = ["type", "title", "year", "extra"];
   const ALL_PROVIDERS = "__all__";
@@ -825,7 +826,7 @@
   }
 
   function columnSortKey(column) {
-    return COLUMN_KEYS.includes(column) ? column : "";
+    return column !== "status" && COLUMN_KEYS.includes(column) ? column : "";
   }
 
   function columnLabel(column) {
@@ -1569,6 +1570,10 @@
     }
     syncColumnVisibilityUI();
     persistUIState();
+    if (column === "status") {
+      syncStatusColumn();
+      updateStatusCells();
+    }
     if (sortChanged) renderRows();
     else updateSortUI();
   }
@@ -1963,6 +1968,8 @@
       updateTypeDisplay,
       updateExtraDisplay,
       createDateTimeEditor: row => editorExtraEditors.createDateTimeEditor(row, extraEditorContext()),
+      statusForRow: row => editorRows.statusForRow(row, state.statusSnapshot),
+      updateStatusCells,
       formatEpisodeVisualTitle,
       formatSxxEyy,
       openTypeEditor,
@@ -2058,7 +2065,38 @@
     return editorTableController.updateSortUI(tableControllerContext());
   }
 
+  function updateStatusCells(changedRow = null) {
+    const rows = new Map((changedRow ? [changedRow] : state.rows).map(row => [String(row._rid), row]));
+    host.querySelectorAll("[data-status-row]").forEach(cell => {
+      const row = rows.get(cell.dataset.statusRow);
+      if (!row) return;
+      const status = editorRows.statusForRow(row, state.statusSnapshot);
+      cell.textContent = status.label;
+      cell.title = status.hint;
+    });
+  }
+
+  function syncStatusColumn() {
+    if (!columnShown("status") || state.loading || !state.rows.length || !isProviderPickerSource() || isMergedView() || !state.snapshot || state.snapshot === ALL_PROVIDERS) {
+      state.statusSnapshot = null;
+      return;
+    }
+    const scope = JSON.stringify([state.source, state.snapshot, state.instance]);
+    if (state.statusSnapshot?.scope === scope && state.statusSnapshot.rows === state.rows) return;
+    const snapshot = state.statusSnapshot = {scope, rows: state.rows, loading: true};
+    const params = new URLSearchParams({provider: state.snapshot, provider_instance: state.instance || "default"});
+    fetchJSON(`/api/editor/statuses?${params}`).then(data => {
+      snapshot.data = data;
+    }).catch(() => {
+      snapshot.error = true;
+    }).finally(() => {
+      snapshot.loading = false;
+      if (state.statusSnapshot === snapshot) updateStatusCells();
+    });
+  }
+
   function renderRows() {
+    syncStatusColumn();
     const result = editorTableController.renderRows(tableControllerContext());
     syncTypeChipVisibility();
     return result;

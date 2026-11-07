@@ -41,10 +41,33 @@ def validate_pair(pair):
     return parse_mapping(pair.get("status_mapping"), scope=scope, capabilities=capabilities(scope))
 
 
-def enabled(pair):
+def skip_reason(pair):
     history = (pair.get("features") or {}).get("history") or {}
-    return (pair.get("enabled", True) is not False and bool(pair.get("status_mapping")) and isinstance(history, dict)
-            and history.get("enable") is True and history.get("use_source_status") is True)
+    if pair.get("enabled", True) is False:
+        return "The pair is disabled."
+    if not pair.get("status_mapping"):
+        return "No custom status mapping is saved. Existing provider behavior applies."
+    if not isinstance(history, dict) or history.get("enable") is not True:
+        return "History is disabled. Enable History to run status mapping."
+    if history.get("use_source_status") is not True:
+        return "Status mapping is switched off. Enable Use source watch status to run it."
+    return ""
+
+
+def publish_status(ctx, pair, event, **values):
+    summary = dict(pair_id=pair.get("id"), feature="history", src=pair.get("source"), dst=pair.get("target"),
+                   src_instance=pair.get("source_instance") or "default", dst_instance=pair.get("target_instance") or "default",
+                   mode=pair.get("mode") or "one-way", **values)
+    review = getattr(ctx, "interactive", None)
+    if review is not None:
+        review.status_mappings = [row for row in review.status_mappings if row["pair_id"] != summary["pair_id"]] + [summary]
+    ctx.emit("status_mapping:" + event, **summary)
+
+
+def report_skipped(ctx, pair, reason):
+    history = (pair.get("features") or {}).get("history") or {}
+    if pair.get("status_mapping") or isinstance(history, dict) and history.get("use_source_status"):
+        publish_status(ctx, pair, "skip", state="skipped", reason=reason)
 
 
 def _identity_ids(record, allow_mapping):
@@ -86,9 +109,11 @@ def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None):
     dry_run = bool(getattr(ctx, "dry_run", False) or (cfg.get("sync") or {}).get("dry_run") or (cfg.get("sync") or {}).get("enable_add") is False)
     totals = {"updated": 0, "unresolved": 0, "errors": 0, "skipped": 0}
     adapters, snapshots, proposals, claims = {}, {}, [], {}
+    summaries = {}
 
     def report(pair, reason, *, item=None, error=False):
         totals["errors" if error else "unresolved"] += 1
+        summaries[pair.get("id")]["errors" if error else "unresolved"] += 1
         ctx.emit("status_mapping:review", pair_id=pair.get("id"), feature="history", src=pair.get("source"), dst=pair.get("target"),
                  reason=reason, title=(item or {}).get("title") or "")
         if item:
@@ -107,8 +132,15 @@ def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None):
 
     for pair in pairs:
         raise_if_cancelled()
-        if not enabled(pair) or review is not None and review.allowed_features is not None and "history" not in review.allowed_features:
+        reason = skip_reason(pair)
+        if not reason and review is not None and review.allowed_features is not None and "history" not in review.allowed_features:
+            reason = "History is outside this Interactive Sync selection."
+        if reason:
+            report_skipped(ctx, pair, reason)
             continue
+        summary = summaries[pair.get("id")] = dict(state="checking", preview=preview, dry_run=dry_run,
+            matched=0, unmatched=0, proposed=0, unchanged=0, excluded=0, recovered=0, updated=0, unresolved=0, errors=0, not_selected=0)
+        publish_status(ctx, pair, "start", **summary)
         try:
             scope = pair_scope(pair)
             caps = capabilities(scope)
@@ -146,6 +178,8 @@ def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None):
                         covered.update(_tokens(candidate, allow_mapping))
             matched = list(matched_records(left, right, allow_mapping=allow_mapping))
             missing = len(left) - len(matched) + (len(right) - len(matched) if scope.two_way else 0)
+            summary.update(source_count=len(snapshots[scope.a]), destination_count=len(snapshots[scope.b]), matched=len(matched), unmatched=missing)
+            publish_status(ctx, pair, "read", **summary)
             if missing:
                 report(pair, f"{missing} status entries have no unique matching title on the other side. No status was written for those entries.")
             for a, b in matched:
@@ -191,6 +225,8 @@ def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None):
                             report(pair, "Status state changed during verification. The newer operation was preserved; refresh before continuing.", item=a.item)
                         elif verified.outcome != "verified":
                             report(pair, verified.reason.replace("_", " "), item=a.item)
+                        else:
+                            summary["recovered"] += 1
                         continue
                     if review is None:
                         report(pair, "A previous status write needs review. Refresh Interactive sync and select this status update to retry.", item=a.item)
@@ -209,6 +245,7 @@ def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None):
                     if pending:
                         report(pair, "A previous status write changed other fields or returned an unexpected state. Review the provider before changing this mapping.", item=a.item)
                         continue
+                    summary["unchanged"] += 1
                     if not preview and not dry_run and not state.get("pending"):
                         if not store.settle(verified_baseline(config, item, a.observation, b.observation), expected_state=state):
                             report(pair, "Status state changed since planning. The newer operation was preserved; refresh before continuing.", item=a.item)
@@ -216,6 +253,8 @@ def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None):
                 if decision.outcome != "write":
                     if decision.reason not in {"excluded", "source_absent", "watchlist_managed"}:
                         report(pair, decision.reason.replace("_", " "), item=a.item)
+                    else:
+                        summary["excluded"] += 1
                     continue
                 proposals.append((pair, config, item, a, b, decision, state))
         except Exception as exc:
@@ -240,6 +279,7 @@ def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None):
         if len(claims[target_ep, item.media, target.native_id]) > 1:
             report(pair, "Other pairs propose a different status for this title.", item=target.item)
             continue
+        summaries[pair.get("id")]["proposed"] += 1
         display = {**target.item, "watch_status": decision.desired.value,
                    "_cw_status_mapping": {"from": target.observation.status, "to": decision.desired.value}}
         selected = True
@@ -249,6 +289,8 @@ def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None):
                             source=source_ep.provider.upper(), source_instance=source_ep.instance,
                             before={canonical_key(display): {"watch_status": target.observation.status, "_cw_status_mapping": True}}, scope="status:" + store.key(item)))
         if preview or dry_run or not selected:
+            if not preview and not selected:
+                summaries[pair.get("id")]["not_selected"] += 1
             if pending and not preview and not dry_run and not selected:
                 report(pair, "The previous status write is still pending. Refresh Interactive sync to review its retry.", item=target.item)
             continue
@@ -286,10 +328,18 @@ def run_status_mappings(ctx, pairs, cfg, health_map, *, store=None):
                 report(pair, verified.reason.replace("_", " "), item=target.item)
             else:
                 totals["updated"] += 1
+                summaries[pair.get("id")]["updated"] += 1
+                ctx.emit("status_mapping:updated", pair_id=pair.get("id"), feature="history", provider=target_ep.provider.upper(),
+                         instance=target_ep.instance, title=target.item.get("title") or "", before=target.observation.status, after=decision.desired.value)
                 if review is not None and review.on_result:
                     review.on_result("history", source_ep.provider.upper(), target_ep.provider.upper(), source_ep.instance, target_ep.instance, "one-way", {"updated": 1})
                 ctx.emit("apply:done", pair_id=pair.get("id"), provider=target_ep.provider.upper(), instance=target_ep.instance,
                          feature="history", op="update", updated=1, count=1, status_mapping=True)
         except Exception as exc:
             report(pair, f"Status update could not be verified ({type(exc).__name__}). Review before retrying.", item=target.item, error=True)
+    for pair in pairs:
+        if pair.get("id") in summaries:
+            summary = summaries[pair.get("id")]
+            summary["state"] = "attention" if summary["errors"] or summary["unresolved"] else "complete"
+            publish_status(ctx, pair, "done", **summary)
     return totals

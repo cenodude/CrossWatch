@@ -15,6 +15,21 @@ from test_interactive_sync import api_client, run
 from test_interactive_sync_features import FEATURES, feature_item, feature_setup
 
 
+@pytest.mark.parametrize("state", ["complete", "skipped"])
+def test_status_summary_survives_session_and_report_without_creating_attention(state):
+    session = Session(pair_id="p1", owner="local")
+    summary = dict(pair_id="p1", state=state, src="TRAKT", dst="WETRAKR", matched=12, updated=0, unchanged=12)
+    session.plan.status_mappings.append(summary)
+    assert session.public()["status_mappings"] == [summary]
+    collector = SyncReport()
+    collector.event(dict(event="status_mapping:start", **{**summary, "state": "checking"}))
+    collector.event(dict(event="status_mapping:skip" if state == "skipped" else "status_mapping:done", **summary))
+    report = collector.finish(session, InteractivePlan(preview=False), {"ok": True})
+    assert report["status_mappings"] == [summary]
+    assert report["outcome"] == "success" and report["notices"] == []
+    assert report["totals"]["updated"] == 0
+
+
 @pytest.mark.parametrize("feature", FEATURES)
 @pytest.mark.parametrize("mode", ["one-way", "two-way"])
 def test_report_uses_actual_selected_execution_results(config_base, monkeypatch, feature, mode):

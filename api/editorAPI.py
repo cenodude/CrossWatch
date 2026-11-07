@@ -981,6 +981,38 @@ def api_editor_state_providers(request: Request = cast(Request, None)) -> dict[s
     return {"providers": providers}
 
 
+@router.get("/statuses")
+def api_editor_statuses(provider: str, provider_instance: str | None = None, request: Request = cast(Request, None)) -> dict[str, Any]:
+    from cw_platform.run_control import SyncCancelled
+    from providers.sync._status_mapping import adapter_class
+
+    cfg = load_config() or {}
+    name = provider.strip().upper()
+    inst = _instance_for_request(cfg, request, name, provider_instance)
+    _require_instance_scope(cfg, request, name, inst)
+    cls = adapter_class(name)
+    if cls is None:
+        return {"supported": False, "records": []}
+    view = build_provider_config_view(cfg, name, inst)
+    view["_cw_readonly"] = True
+    view["_cw_provider_instance"] = inst
+    instances = (cfg.get(name.lower()) or {}).get("instances")
+    if instances:
+        view[name.lower()] = {**view[name.lower()], "instances": instances}
+    try:
+        records = cls(view).read()
+    except SyncCancelled:
+        raise HTTPException(503, "Status lookup was interrupted. Refresh to retry.") from None
+    except Exception:
+        raise HTTPException(502, "Could not read provider statuses. Refresh to retry.") from None
+    namespaces = {"tmdb", "imdb", "tvdb", "trakt", "simkl", "anilist", "mal", "kitsu", "anidb", "wetrakr"}
+    return {"supported": True, "records": [
+        {"media": record.media, "ids": {key: str(value) for key, value in (record.item.get("ids") or {}).items() if key in namespaces and value},
+         "status": record.observation.status.value if record.observation.complete and record.observation.status else None}
+        for record in records.values()
+    ]}
+
+
 @router.get("")
 def api_editor_get_state(
     kind: str = "watchlist",

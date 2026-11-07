@@ -172,6 +172,8 @@
       updateTypeDisplay: ctx.updateTypeDisplay,
       updateExtraDisplay: ctx.updateExtraDisplay,
       createDateTimeEditor: ctx.createDateTimeEditor,
+      statusForRow: ctx.statusForRow,
+      updateStatusCells: ctx.updateStatusCells,
       formatEpisodeVisualTitle: ctx.formatEpisodeVisualTitle,
       formatSxxEyy: ctx.formatSxxEyy,
       openTypeEditor: ctx.openTypeEditor,

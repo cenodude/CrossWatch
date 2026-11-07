@@ -770,8 +770,11 @@ def run_pairs(ctx) -> dict[str, Any]:
                     ctx.config = prev_cfg
                     ctx.state_store = prev_store
     if not cancelled:
-        from ._status_mapping import run_status_mappings
+        from ._status_mapping import report_skipped, run_status_mappings, skip_reason
         try:
+            for pair in pairs:
+                if pair not in status_pairs:
+                    report_skipped(ctx, pair, skip_reason(pair) or "History did not complete successfully. Status mapping was not run.")
             status_result = run_status_mappings(ctx, status_pairs, cfg, health_map)
             updated_total += status_result["updated"]
             unresolved_total += status_result["unresolved"]

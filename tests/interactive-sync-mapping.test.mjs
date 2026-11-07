@@ -29,6 +29,11 @@ test("status conflicts show actual labels and default to leaving both sides unch
   assert.match(context.host.innerHTML,/<option value="" selected>Leave unchanged<\/option>/);
   assert.doesNotMatch(context.host.innerHTML,/private-scope-json|data-map="status-2"/);
   assert.match(context.host.innerHTML,/Watching/);
+  context.session.status_mappings = [{src:"TRAKT",dst:"WETRAKR",state:"complete",preview:true,matched:3,proposed:1,unchanged:2,updated:0}];
+  vm.runInContext("render();", context);
+  assert.match(context.host.innerHTML, /Status mapping/);
+  assert.match(context.host.innerHTML, /Preview checked/);
+  assert.match(context.host.innerHTML, /3 matched · 1 proposed · 2 unchanged/);
   row.winner = "SIMKL";
   vm.runInContext("render();", context);
   assert.match(context.host.innerHTML,/<option value="SIMKL" selected>Use SIMKL<\/option>/);
@@ -339,6 +344,7 @@ test("long reasons stay collapsed behind a short label with full details availab
 test("failed plans identify partial progress proposals and expose failure details", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
   const fn = source.slice(source.indexOf("  const noticeSubject"), source.indexOf("  function aiQuestion()"))
+    + source.slice(source.indexOf("  function statusMappingHTML("), source.indexOf("  const duration ="))
     + source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
   const rows = [1,2].map(id => ({id:String(id), key:`movie:${id}`, item:{type:"movie",title:`Movie ${id}`},
     feature:"progress", operation:"add", result:"add", provider:"FLOPPY", instance:"default", selectable:true}));
@@ -407,7 +413,8 @@ test("failed plans identify partial progress proposals and expose failure detail
 
 test("completion report distinguishes cloud outcomes and escapes titles", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
-  const fn = source.slice(source.indexOf("  function reportHTML()"), source.indexOf("  function render()"));
+  const fn = source.slice(source.indexOf("  function statusMappingHTML("), source.indexOf("  const duration ="))
+    + source.slice(source.indexOf("  function reportHTML()"), source.indexOf("  function render()"));
   const report = {outcome:"success", totals:{added:1,updated:0,removed:0}, features:[], cloud_results:
     ["dated","present","cached","plex_discover_date_pending"].map(outcome => ({title:"<Example>",key:"movie:1",provider:"PLEX",instance:"own",outcome}))};
   const context = {session:{report}, esc:value=>String(value ?? "").replaceAll("<","&lt;").replaceAll(">","&gt;"),
@@ -430,4 +437,14 @@ test("completion report distinguishes cloud outcomes and escapes titles", () => 
   report.cloud_results = [];
   vm.runInContext("globalThis.html = reportHTML();", context);
   assert.doesNotMatch(context.html, /<h2>Plex Discover fallback/);
+  report.status_mappings = [{src:"TRAKT",src_instance:"default",dst:"WETRAKR",dst_instance:"<other>",state:"complete",matched:1,updated:1,proposed:1}];
+  vm.runInContext("globalThis.html = reportHTML();", context);
+  assert.match(context.html, /Status mapping/);
+  assert.match(context.html, /WETRAKR \(&lt;other&gt;\): Checked/);
+  assert.match(context.html, /1 updated/);
+  report.status_mappings = [{state:"skipped",reason:"History is disabled. <not markup>"}];
+  vm.runInContext("globalThis.html = reportHTML();", context);
+  assert.match(context.html, /Not run/);
+  assert.match(context.html, /History is disabled. &lt;not markup&gt;/);
+  assert.doesNotMatch(context.html, /0 matched/);
 });

@@ -18,7 +18,7 @@
 
   function dataColumnOrder(ctx = {}) {
     const order = Array.isArray(ctx.state?.columnOrder) ? ctx.state.columnOrder : [];
-    const valid = ["key", "type", "title", "year", "id", "imdb", "tvdb", "trakt", "simkl", "anilist", "extra"];
+    const valid = ["key", "type", "title", "year", "id", "imdb", "tvdb", "trakt", "simkl", "anilist", "extra", "status"];
     const seen = new Set();
     const out = [];
     order.forEach(column => {
@@ -289,6 +289,7 @@
       if (value) row.raw.ids[idKey] = value;
       else delete row.raw.ids[idKey];
       call(ctx, "markChanged");
+      call(ctx, "updateStatusCells", row);
     };
 
     const makeIdInput = (idKey, label) => {
@@ -406,6 +407,12 @@
       extraBtn.onclick = () => call(ctx, "openProgressEditor", row, extraBtn, extraBtn);
     }
     dataCells.extra = cell(extraBtn, "cw-col-extra");
+    const status = call(ctx, "statusForRow", row) || {label: "—", hint: ""};
+    const statusText = document.createElement("span");
+    statusText.dataset.statusRow = String(row._rid);
+    statusText.textContent = status.label;
+    statusText.title = status.hint;
+    dataCells.status = cell(statusText, "cw-col-status");
 
     dataColumnOrder(ctx).forEach(column => {
       const td = dataCells[column];
@@ -413,7 +420,7 @@
       td.dataset.column = column;
       td.dataset.label = ({key: 'Key', type: 'Type', title: 'Title', year: 'Year',
         id: anilistMode ? 'MAL' : 'TMDB', imdb: 'IMDb', tvdb: 'TVDB', trakt: 'Trakt',
-        simkl: 'SIMKL', anilist: 'AniList', extra: call(ctx, 'columnLabel', 'extra') || 'Extra'})[column];
+        simkl: 'SIMKL', anilist: 'AniList', status: 'Status', extra: call(ctx, 'columnLabel', 'extra') || 'Extra'})[column];
       td.querySelectorAll('input,button').forEach(control => {
         if (!control.hasAttribute('aria-label')) control.setAttribute('aria-label', td.dataset.label);
       });
