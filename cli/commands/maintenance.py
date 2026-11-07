@@ -41,7 +41,7 @@ MAINTENANCE_TOOLS = [
     ("Sync State", "Database health", "cw maintenance database"),
     ("Sync State", "Compact sync state", "cw maintenance state-file --compact"),
     ("Sync State", "Prune stale state", "cw maintenance state-file --prune"),
-    ("Archive & Recovery", "CW tracker archive", "cw maintenance tracker --clear --snapshots --yes"),
+    ("CW Tracker", "CW tracker archive", "cw maintenance tracker --clear --snapshots --yes"),
     ("Captures", "Clear all captures", "cw capture clear --yes"),
     ("Provider Cleanup", "Clear provider data", "cw maintenance provider-cleanup --provider PLEX --feature watchlist --yes"),
     ("Support", "Support diagnostics", "cw maintenance support"),
