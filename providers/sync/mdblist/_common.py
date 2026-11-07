@@ -15,6 +15,7 @@ from cw_platform.run_control import raise_if_cancelled
 import requests
 
 from .._log import log as cw_log
+from .._pagination import PageGuard
 from ._auth import is_configured as auth_configured
 from ._auth import request_with_auth as mdblist_request_with_auth
 
@@ -72,6 +73,38 @@ def require_page(data: Any, what: str) -> None:
         raise MDBListFetchError(f"Invalid MDBList {what} response")
     if any(not isinstance(data[name], list) for name in names if name in data):
         raise MDBListFetchError(f"Invalid MDBList {what} rows")
+
+
+def status_pages(client: Any, path: str, **params: Any) -> list[tuple[str, Mapping[str, Any]]]:
+    pager = CursorPager(250)
+    guard = PageGuard(MDBListFetchError, "mdblist_status_repeated_page")
+    result: list[tuple[str, Mapping[str, Any]]] = []
+    expected = None
+    while True:
+        response = client.get("https://api.mdblist.com" + path, params={**params, **pager.params()})
+        response.raise_for_status()
+        data = response.json()
+        require_page(data, "status")
+        pagination = data.get("pagination") if isinstance(data, Mapping) else None
+        if not isinstance(pagination, Mapping) or not any(k in pagination for k in ("has_more", "next_cursor")):
+            raise MDBListFetchError("mdblist_status_missing_pagination")
+        if "total" in pagination:
+            total = pagination["total"]
+            if type(total) is not int or total < 0 or (expected is not None and total != expected):
+                raise MDBListFetchError("mdblist_status_changed_total")
+            expected = total
+        rows = [(bucket, row) for bucket in ("movies", "shows", "seasons", "episodes") for row in data.get(bucket, [])]
+        if any(not isinstance(row, Mapping) for _, row in rows):
+            raise MDBListFetchError("mdblist_status_invalid_row")
+        guard.check(rows)
+        more = pager.advance(data, response)
+        if not rows and (more or pager.pages > 1):
+            raise MDBListFetchError("mdblist_status_empty_page")
+        result.extend(rows)
+        if not more:
+            if expected is not None and len(result) != expected:
+                raise MDBListFetchError("mdblist_status_incomplete_read")
+            return result
 
 
 STATE_DIR.mkdir(parents=True, exist_ok=True)

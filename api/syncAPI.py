@@ -2301,6 +2301,10 @@ def api_sync_providers(request: Request = cast(Request, None)) -> JSONResponse:
         mf["label"] = mf.get("label") or mf["name"].title()
         mf["features"] = _norm_features(mf.get("features"))
         mf["capabilities"] = _norm_caps(mf.get("capabilities"))
+        from providers.sync._status_mapping import provider_caps
+        status_caps = provider_caps(mf["name"])
+        if status_caps:
+            mf["capabilities"]["status_mapping"] = status_caps
         if mf["name"] in seen:
             continue
         seen.add(mf["name"])
@@ -2322,6 +2326,7 @@ class PairIn(BaseModel):
     enabled: bool | None = None
     path_matching: bool | None = None
     providers: dict[str, Any] | None = None
+    status_mapping: dict[str, Any] | None = None
     features: dict[str, Any] | None = None
     profile_id: str | None = None
     match_users: bool | None = None
@@ -2336,6 +2341,7 @@ class PairPatch(BaseModel):
     enabled: bool | None = None
     path_matching: bool | None = None
     providers: dict[str, Any] | None = None
+    status_mapping: dict[str, Any] | None = None
     features: dict[str, Any] | None = None
     profile_id: str | None = None
     match_users: bool | None = None
@@ -2578,6 +2584,13 @@ def api_pairs_add(payload: PairIn = Body(...), request: Request = cast(Request, 
             item.pop("providers", None)
         item["id"] = _gen_id("pair")
 
+        from cw_platform.orchestrator._status_mapping import validate_pair
+        from cw_platform.status_mapping import STATUS_MAPPING_ERRORS, StatusMappingValidationError
+        try:
+            validate_pair(item)
+        except StatusMappingValidationError as exc:
+            return {"ok": False, "error": STATUS_MAPPING_ERRORS.get(exc.code, "Invalid status mapping configuration")}
+
         arr.append(item)
         save_config(cfg)
         return {"ok": True, "id": item["id"]}
@@ -2657,6 +2670,8 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...), request: Requ
         cfg = load_config()
         arr = _cfg_pairs(cfg)
         upd = payload.model_dump(exclude_unset=True, exclude_none=True)
+        if "status_mapping" in payload.model_fields_set:
+            upd["status_mapping"] = payload.status_mapping
 
         for it in arr:
             if str(it.get("id")) == str(pair_id):
@@ -2666,6 +2681,12 @@ def api_pairs_update(pair_id: str, payload: PairPatch = Body(...), request: Requ
                     return {"ok": False, "error": "playlist_managed_pair"}
                 if _same_pair_endpoint({**it, **upd}):
                     return {"ok": False, "error": "same_provider_instance"}
+                from cw_platform.orchestrator._status_mapping import validate_pair
+                from cw_platform.status_mapping import STATUS_MAPPING_ERRORS, StatusMappingValidationError
+                try:
+                    validate_pair({**it, **upd})
+                except StatusMappingValidationError as exc:
+                    return {"ok": False, "error": STATUS_MAPPING_ERRORS.get(exc.code, "Invalid status mapping configuration")}
                 if "features" in upd:
                     it["features"] = _normalize_features(upd.pop("features"))
                 if "providers" in upd:
@@ -2704,6 +2725,8 @@ def _cw_state_dir() -> Path:
         return p if p.exists() else Path('.cw_state')
 
 def _purge_pair_state(pair_id: str, scopes: Sequence[str] = ()) -> dict[str, Any]:
+    from cw_platform.status_mapping_store import StatusStore
+    StatusStore().purge(pair_id)
     state_dir = _cw_state_dir()
     token = str(pair_id or '').strip()
     removed: list[str] = []

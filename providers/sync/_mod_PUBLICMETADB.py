@@ -205,7 +205,7 @@ class PUBLICMETADBClient:
             method,
             self.url(path),
             timeout=self.cfg.timeout,
-            max_retries=self.cfg.max_retries,
+            max_retries=kw.pop("max_retries", self.cfg.max_retries),
             **kw,
         )
 

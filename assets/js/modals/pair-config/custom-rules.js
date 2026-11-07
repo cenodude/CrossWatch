@@ -61,6 +61,7 @@ export function hasCumulativeAnimeHistory(state) {
 }
 
 export function sourceWatchStatusAllowed(state) {
+  if ([state?.src, state?.dst].every(name => state?.providers?.some(row => same(row.name,name) && row.capabilities?.status_mapping))) return true;
   return [state?.src, state?.dst].every(provider => ["simkl", "anilist", "kitsu", "myanimelist"].some(name => same(provider, name)));
 }
 

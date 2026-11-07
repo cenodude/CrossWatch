@@ -8,6 +8,7 @@ import { createLibraryController } from "./libraries.js";
 import { providerLogoHTML, providerToneRgb, sharedFeatureOrder, sharedFeatureLabel } from "./meta.js";
 import { ensurePairConfigStyles } from "./styles.js";
 import { createTabsController } from "./tabs.js";
+import { hasStatusMapping, mountStatusMapping, statusMappingPayload } from "./status-mapping.js";
 import { createIdentityMap } from "../core/identity-map.js";
 import { collectionDisabledForPair, collectionTypesForPair, commonFeaturesForPair, featureAllowedForPair, hasCumulativeAnimeHistory, historyRemoveAllowed, ratingsDisabledForPair, sanitizeFeaturesForPair, sourceWatchStatusAllowed, undatedAsTodayAllowed } from "./custom-rules.js";
 
@@ -74,7 +75,7 @@ function hasTrakt(state){return isTrakt(state?.src)||isTrakt(state?.dst)}
 function hasMDBList(state){return isMDBList(state?.src)||isMDBList(state?.dst)}
 function hasPublicMetaDB(state){return isPublicMetaDB(state?.src)||isPublicMetaDB(state?.dst)}
 function hasFloppy(state){return isFloppy(state?.src)||isFloppy(state?.dst)}
-function hasProviderControls(state){return hasPlex(state)||hasJelly(state)||hasEmby(state)||hasKodi(state)||hasSilo(state)||hasTofa(state)}
+function hasProviderControls(state){return hasStatusMapping(state)||hasPlex(state)||hasJelly(state)||hasEmby(state)||hasKodi(state)||hasSilo(state)||hasTofa(state)}
 function floppyAnimeLibraryOn(state){const pair=state?.pairProviders?.floppy;return pair&&"anime_library" in pair?!!pair.anime_library:!!state?.cfgRaw?.floppy?.anime_library}
 function hasScrob(state){return isScrob(state?.src)||isScrob(state?.dst)}
 function hasStremio(state){return isStremio(state?.src)||isStremio(state?.dst)}
@@ -423,7 +424,7 @@ function defaultState(){
       progress:{enable:false,add:false,remove:false,min_seconds:60,delta_seconds:30,max_percent:PROGRESS_LEGACY_MAX_PERCENT,replay_enabled:false,timestamp_tolerance_seconds:30,propagate_timestamp_updates:false,include_specials:true},
       collection:{enable:false,add:false,remove:false,types:["movies"]}
     },
-    pairProviders:{},path_matching:false,match_users:false,user_matches:{},
+    pairProviders:{},statusMapping:null,path_matching:false,match_users:false,user_matches:{},
     pair_remove_mode:"source_deletes",
     pair_remove_mode_touched:false,
     jellyfin:{watchlist:{mode:"favorites",playlist_name:"Watchlist"}},
@@ -1465,7 +1466,8 @@ function renderFeaturePanel(state){
         </div>
       </details>`);
 
-    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Media servers</div>
+    left.innerHTML=`<div class="panel-title"><span class="material-symbols-rounded" style="vertical-align:-3px;margin-right:6px;">dns</span>Providers</div>
+      <div id="cx-status-mapping"></div>
       ${renderMatchUsersCard(state)}
       <div class="providers-intro">
         <div class="providers-intro-copy">
@@ -1481,6 +1483,10 @@ function renderFeaturePanel(state){
       </div>`;
 
     right.innerHTML = "";
+    mountStatusMapping(ID("cx-status-mapping"), state);
+    if(hasStatusMapping(state) && !providerCards.length){
+      left.querySelectorAll(".providers-intro,.provider-card-list,.providers-note").forEach(node=>node.remove());
+    }
     initPairLibraryUIController(state);
     QA(".fold").forEach(f=>{f.classList.remove("open")});
     mountMatchUsersCard(state);
@@ -2753,6 +2759,7 @@ function buildPayload(state,wrap){
   const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history,progress,playlists:get("playlists"),collection});
   if(state.pair_remove_mode_touched) applyPairRemoveMode(features,state.pair_remove_mode);
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst??"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
+  payload.status_mapping=statusMappingPayload({...state,src,dst,src_instance:srcInst,dst_instance:dstInst,mode:payload.mode,twoWay:modeTwo});
   payload.path_matching=supportsPathMatching({src,dst})&&!!state.path_matching;
   payload.match_users=supportsMatchUsers({src,dst})&&!!state.match_users;
   payload.user_matches=payload.match_users?{...(state.user_matches||{})}:{};
@@ -2879,6 +2886,7 @@ export default{
       state.options.ratings=Object.assign({},r0,rI,{types:Array.isArray(rI.types)&&rI.types.length?rI.types:r0.types,mode:rI.mode||r0.mode,from_date:rI.from_date||r0.from_date||""});
       if(pair.id) ["watchlist","ratings","history","progress"].forEach(k=>{state.options[k].library_only=!!state.options[k].library_only});
       state.pairProviders = normalizePairProviders(pair.providers);
+      state.statusMapping = pair.status_mapping ? jclone(pair.status_mapping) : null;
       state.path_matching = !!pair.path_matching;
       state.match_users = !!pair.match_users;
       state.user_matches = pair.user_matches && typeof pair.user_matches === "object" ? { ...pair.user_matches } : {};
@@ -2935,7 +2943,7 @@ export default{
       }
 
       const res=await savePair(payload);
-      if(!res.ok){alert(res.error==="same_provider_instance"?"Choose two different instances to create a sync pair.":res.error==="not_found"?"This pair no longer exists. Close the editor and create a new pair.":res.error==="profile_scope_denied"?"Choose accounts that belong to this profile.":"Save failed");return;}
+      if(!res.ok){alert(res.error==="same_provider_instance"?"Choose two different instances to create a sync pair.":res.error==="not_found"?"This pair no longer exists. Close the editor and create a new pair.":res.error==="profile_scope_denied"?"Choose accounts that belong to this profile.":String(res.error||"").toLowerCase().includes("status")||res.error==="Planned remains managed by Watchlist"?res.error:"Save failed");return;}
 
       try{
         if(typeof window.loadPairs==="function"){await window.loadPairs(true)}

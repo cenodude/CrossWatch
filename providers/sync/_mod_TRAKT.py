@@ -345,13 +345,14 @@ class TRAKTClient:
             self._try_refresh()
 
     def _do(self, method: str, url: str, **kw: Any):
+        max_retries = kw.pop("max_retries", self.cfg.max_retries)
         self._preflight()
         r = request_with_retries(
             self.session,
             method,
             url,
             timeout=self.cfg.timeout,
-            max_retries=self.cfg.max_retries,
+            max_retries=max_retries,
             **kw,
         )
         if r.status_code in (401, 403):
@@ -361,7 +362,7 @@ class TRAKTClient:
                     method,
                     url,
                     timeout=self.cfg.timeout,
-                    max_retries=self.cfg.max_retries,
+                    max_retries=max_retries,
                     **kw,
                 )
         return r

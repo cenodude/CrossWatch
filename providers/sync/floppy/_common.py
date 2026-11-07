@@ -259,7 +259,8 @@ def _total_of(data: Mapping[str, Any]) -> int | None:
         return None
 
 
-def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, require_total: bool = True) -> list[Mapping[str, Any]]:
+def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, require_total: bool = True,
+          require_envelope: bool = False) -> list[Mapping[str, Any]]:
     out: list[Mapping[str, Any]] = []
     base = dict(params or {})
     limit = max(1, min(PAGE_SIZE, int(base.pop("limit", PAGE_SIZE) or PAGE_SIZE)))
@@ -272,6 +273,8 @@ def paged(adapter: Any, path: str, *, params: Mapping[str, Any] | None = None, r
         enveloped = isinstance(data, Mapping)
         rows = data.get("results") if enveloped else data
         if not isinstance(rows, list):
+            raise RuntimeError(f"floppy_invalid_response:{path}")
+        if require_envelope and (not enveloped or any(not isinstance(row, Mapping) for row in rows)):
             raise RuntimeError(f"floppy_invalid_response:{path}")
         if enveloped:
             page_total = _total_of(data)

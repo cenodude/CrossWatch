@@ -237,6 +237,7 @@ class ANILISTClient:
         *,
         feature: str | None = None,
         tolerate_errors: bool = False,
+        max_retries: int | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {"query": query}
         if variables is not None:
@@ -248,7 +249,7 @@ class ANILISTClient:
             GQL_URL,
             json=payload,
             timeout=self.cfg.timeout,
-            max_retries=self.cfg.max_retries,
+            max_retries=self.cfg.max_retries if max_retries is None else max_retries,
         )
 
         try:

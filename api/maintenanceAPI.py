@@ -1466,6 +1466,12 @@ def clear_pair_state_route(
         return not clear_retry or name.startswith("plex_fallback_memo.")
 
     result = clear_pair_state(CONFIG_DIR, CW_STATE_DIR, scopes.values(), keep_file=keep)
+    if "history" in scopes:
+        from cw_platform.status_mapping_store import StatusStore
+        try:
+            StatusStore(Path(CONFIG_DIR) / "state" / "status-mapping.sqlite3").purge(pair_id)
+        except Exception as exc:
+            result["errors"].append(f"status mapping: {exc}")
     clear_caches()
     release_memory()
     errors = list(result.get("errors") or [])

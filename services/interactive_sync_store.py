@@ -152,6 +152,7 @@ class ReviewStore:
             where += " AND selected=1"
         if editable_only:
             where += " AND kind='change' AND feature!='playlists' AND json_extract(payload,'$.operation') IN ('add','update')"
+            where += " AND json_extract(payload,'$.item._cw_status_mapping') IS NULL"
         with self.lock:
             if not feature and not result and not q and not selected_only and not editable_only:
                 total = self.counts["changes"] + self.counts["conflicts"]
