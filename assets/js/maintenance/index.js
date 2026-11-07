@@ -275,8 +275,8 @@ const GROUPS = [
   {
     id: "archive",
     icon: "inventory_2",
-    title: "Archive & Recovery",
-    desc: "Manage CW Tracker state, snapshots and archive files.",
+    title: "CW Tracker",
+    desc: "Manage tracker state, snapshots and archive files.",
     keys: ["tracker"],
   },
   {
