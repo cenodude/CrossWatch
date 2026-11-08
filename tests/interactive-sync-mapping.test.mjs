@@ -502,3 +502,23 @@ test("Tracker import reviews use the shared selection controls without permanent
   assert.match(context.host.innerHTML,/data-map="one"/);
   assert.match(context.host.innerHTML,/data-action="map-selected"/);
 });
+
+test("Review footer explains global dry run and keeps Apply disabled", () => {
+  const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
+  const fn = source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
+  const context = {host:{contains:()=>false,innerHTML:""},document:{activeElement:null},window:{},
+    session:{dry_run:true,status:"review",pair:{source:"WETRAKR",target:"FLOPPY"},counts:{changes:1,selected:1},features:["history"]},
+    pageData:{total:1,items:[{id:"one",key:"tmdb:949",item:{type:"movie",title:"Heat"},feature:"history",operation:"add",result:"add",provider:"FLOPPY",selectable:true,selected:true}]},
+    page:0,PAGE_SIZE:75,pageLoading:false,downloadOpen:false,query:"",feature:"",result:"",labels:{add:"Add"},pending:()=>false,
+    origin:()=>["sync","Synchronization"],aiButton:()=>"",esc:value=>String(value??""),endpoint:value=>value,progressHTML:()=>"",statusMappingHTML:()=>"",
+    number:value=>Number(value||0),title:item=>item.title,value:()=>"",reasonDetailsHTML:()=>""};
+  vm.createContext(context);
+  vm.runInContext(fn+"render();",context);
+  assert.match(context.host.innerHTML,/Dry run is on/);
+  assert.match(context.host.innerHTML,/Turn off dry run in Settings/);
+  assert.match(context.host.innerHTML,/data-action="apply" disabled/);
+  context.session.dry_run=false;
+  vm.runInContext("render();",context);
+  assert.match(context.host.innerHTML,/1 changes selected/);
+  assert.doesNotMatch(context.host.innerHTML,/data-action="apply" disabled/);
+});

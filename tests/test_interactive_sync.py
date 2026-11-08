@@ -813,3 +813,12 @@ def test_cancel_during_selected_execution_prevents_writes(config_base, monkeypat
         assert not dst.add_calls
     finally:
         run_control.clear_cancel()
+
+
+def test_session_payload_reports_global_dry_run():
+    from types import SimpleNamespace
+    from api.interactiveSyncAPI import public
+
+    session = SimpleNamespace(public=lambda: {"ok": True, "status": "review"})
+    assert public(session, {"sync": {"dry_run": True}})["dry_run"] is True
+    assert public(session, {"sync": {}})["dry_run"] is False

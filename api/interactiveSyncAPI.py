@@ -82,6 +82,11 @@ def pair_for(cfg, request, pair_id):
     return pair
 
 
+def public(session, cfg=None):
+    cfg = load_config() if cfg is None else cfg
+    return {**session.public(), "dry_run": coerce_bool((cfg.get("sync") or {}).get("dry_run", False))}
+
+
 def get_session(sid, request, cfg):
     svc.prune()
     session = svc.SESSIONS.get(sid)
@@ -186,13 +191,14 @@ def start(payload: Start, request: Request):
         session.pair = {k: pair.get(k) for k in ("source", "target", "source_instance", "target_instance", "mode", "name")}
         launch(session, svc.refresh, cfg, {})
         svc.SESSIONS[session.id] = session
-        return session.public()
+        return public(session, cfg)
 
 
 @router.get("/{sid}")
 def get(sid: str, request: Request):
     with svc.LOCK:
-        return get_session(sid, request, load_config()).public()
+        cfg = load_config()
+        return public(get_session(sid, request, cfg), cfg)
 
 
 @router.post("/{sid}/refresh")
@@ -211,7 +217,7 @@ def refresh(sid: str, payload: Refresh, request: Request):
                 raise HTTPException(400, "Invalid conflict choice")
             choices[cid] = winner
         launch(session, svc.recalculate if payload.choices or not payload.reread else svc.refresh, cfg, choices)
-        return session.public()
+        return public(session, cfg)
 
 
 @router.get("/{sid}/report-issues")
@@ -278,7 +284,7 @@ def selection(sid: str, payload: Selection, request: Request):
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         session.selection_version += 1
-        return session.public()
+        return public(session)
 
 
 @router.post("/{sid}/apply")
@@ -296,7 +302,7 @@ def apply(sid: str, payload: Apply, request: Request):
         if not selected:
             raise HTTPException(400, "Select valid changes from this review")
         launch(session, svc.apply, cfg, selected, applying=True)
-        return session.public()
+        return public(session, cfg)
 
 
 def mapping_row(session, row_id):
@@ -387,7 +393,7 @@ def save_mappings(session, cfg, request, changes, scope="pair"):
                                 selected=edit.selected))
     launch(session, svc.refresh_mappings, cfg, dict(session.plan.choices), corrections,
            prepare=lambda: _save_policy_manual_batch(prepared, mappings=mappings, pair_id=session.pair_id if scope == "pair" else ""))
-    return session.public()
+    return public(session, cfg)
 
 
 @router.post("/{sid}/mapping")
