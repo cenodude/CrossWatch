@@ -89,6 +89,8 @@ def scrobble_media(item: Mapping[str, Any]) -> dict[str, Any]:
     if item.get("type") != "episode":
         raise WeTrakrSyncError("unsupported_media_type")
     season, episode = int_value(item.get("season")), int_value(item.get("episode"))
+    if episode == 0:
+        raise WeTrakrSyncError("invalid_episode_coordinates")
     if season >= 0 and episode >= 1 and item.get("show_ids"):
         return {"show": identity(item["show_ids"]), "episode": {"season": season, "number": episode}}
     ids = item.get("ids")

@@ -313,7 +313,7 @@ def write_ident(item: Mapping[str, Any], *, seasons: bool = False) -> dict[str, 
     if is_episode:
         season = as_int(item.get("season") if item.get("season") is not None else item.get("season_number"))
         episode = as_int(item.get("episode") if item.get("episode") is not None else item.get("episode_number"))
-        if season is None or episode is None:
+        if season is None or episode is None or episode < 1:
             return None
         payload["media_type"] = "show"
         payload["season"] = season
