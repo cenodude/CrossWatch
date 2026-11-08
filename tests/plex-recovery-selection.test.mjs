@@ -111,6 +111,31 @@ test("Select all skips title guesses; checking a guess adds only that explicit s
   assert.equal(sandbox.count(),0);
 });
 
+test("bulk recovery sends the chosen media type and search evidence to the recovery API",async()=>{
+  const calls=[], context={revision:4,rows:[{id:"group",item:{type:"show",title:"Miss Hokusai"}}],total:1};
+  const sandbox=vm.createContext({busy:false,controls(){},message(){},filters:()=>({q:""}),
+    job:{id:"scan",revision:4},window:{},document:{querySelector:()=>true},
+    lifetime:{signal:{aborted:false}},URLSearchParams,matchingWorkspace:null,
+    request:async(path,body)=>{calls.push({path,body});return context;},
+    mappingModule:{openMappingWorkspace(options){sandbox.workspace=options;return {};}}});
+  const code=source.slice(source.indexOf("  async function bulkMatch()"),source.indexOf("  function matchTypeChanged("))
+    .replace(/await import\(`[^`]+`\)/,"mappingModule");
+  vm.runInContext(code,sandbox);
+  await sandbox.bulkMatch();
+  assert.equal(sandbox.workspace.recovery,true);
+  await sandbox.workspace.mappingApi.search({id:"group",item:{type:"movie"}},"Miss Hokusai","tmdb",{language:"ja-JP"});
+  const query=new URLSearchParams(calls.at(-1).path.split("?")[1]);
+  assert.equal(query.get("media_type"),"movie");
+  assert.equal(query.get("group_id"),"group");
+  assert.equal(query.get("language"),"ja-JP");
+  await sandbox.workspace.mappingApi.save([{row_id:"group",item:{type:"movie",title:"Miss Hokusai",ids:{tmdb:267970}},
+    matchSearch:{catalog:"tmdb",match_query:"Miss Hokusai",language:"ja-JP"}}]);
+  assert.equal(calls.at(-1).path,"/scan/match-groups");
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1).body)),{revision:4,edits:[{group_id:"group",title:"Miss Hokusai",
+    ids:{tmdb:"267970"},media_type:"movie",catalog:"tmdb",match_query:"Miss Hokusai",language:"ja-JP"}]});
+  assert.equal(calls.some(call=>call.path.endsWith("/commit")),false);
+});
+
 test("bulk selection resets individual guesses and review-only bulk selection stays empty",async()=>{
   const {sandbox,click,check}=fixture();
   check("1",true);

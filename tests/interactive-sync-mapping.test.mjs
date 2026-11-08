@@ -144,8 +144,54 @@ function recoveryWorkspaceFixture() {
   vm.runInContext(workspaceSource.slice(workspaceSource.indexOf("  const saveable ="),workspaceSource.indexOf("  const cache =")),sandbox);
   vm.runInContext(workspaceSource.slice(workspaceSource.indexOf('  $("[data-suggest]").onclick'),workspaceSource.indexOf('  $("[data-bulk]").onclick')),sandbox);
   vm.runInContext(workspaceSource.slice(workspaceSource.indexOf('  $("[data-save]").onclick'),workspaceSource.indexOf('  return {close, destroy()')),sandbox);
-  return {sandbox,drafts,calls,saved,auto:()=>$("[data-suggest]").onclick(),save:()=>$("[data-save]").onclick()};
+  return {sandbox,drafts,calls,saved,$,auto:()=>$("[data-suggest]").onclick(),save:()=>$("[data-save]").onclick()};
 }
+
+test("bulk recovery switches a selected series to movie search and saves the verified match", async () => {
+  const f = recoveryWorkspaceFixture(), handlers = {}, candidates = [], searches = [];
+  const draft = f.drafts[0];
+  f.drafts.forEach((d, i) => { d.checked = i === 0; });
+  Object.assign(f.sandbox, {canConvert:false, movieDraft, structuredClone, candidateConflict,
+    esc:String, endpoint:()=>"PLEX", routeKey:()=>"PLEX", applyParts(){}, window:{},
+    document:{createElement:()=>({setAttribute(){}, querySelector:()=>null})},
+    search:async(row, query)=>{
+      searches.push({type:row.item.type, query});
+      return {catalog:"TMDb",results:[{type:"movie",title:"Miss Hokusai",year:2015,ids:{tmdb:"267970"}}]};
+    }});
+  f.sandbox.dialog.addEventListener = (name, fn) => { handlers[name] = fn; };
+  Object.assign(f.$(".is-map-candidates"), {replaceChildren(){candidates.length=0;},append(button){candidates.push(button);}});
+  f.$("[data-change-match]").focus = () => {};
+  f.$("[data-catalog]").value = "tmdb";
+  vm.runInContext(workspaceSource.slice(workspaceSource.indexOf('  dialog.addEventListener("change"'),
+    workspaceSource.indexOf('  dialog.addEventListener("click"')), f.sandbox);
+  vm.runInContext(workspaceSource.slice(workspaceSource.indexOf("  async function find(row)"),
+    workspaceSource.indexOf('  dialog.addEventListener("input"')), f.sandbox);
+  const changeType = value => handlers.change({target:{value,hasAttribute:name=>name === "data-media-type"}});
+  changeType("movie");
+  assert.equal(draft.item.type,"movie");
+  assert.equal(draft.row.item.type,"show");
+  await f.save();
+  assert.equal(f.saved.length,0);
+  f.$("[data-search-query]").value = "Miss Hokusai";
+  await f.sandbox.find(draft.row);
+  assert.deepEqual(searches,[{type:"movie",query:"Miss Hokusai"}]);
+  assert.equal(candidates.length,1);
+  await candidates[0].onclick();
+  assert.equal(draft.item.ids.tmdb,"267970");
+  assert.equal(draft.item.year,2015);
+  await f.save();
+  assert.equal(f.saved.length,1);
+  assert.equal(f.saved[0].length,1);
+  assert.equal(f.saved[0][0].item.type,"movie");
+  assert.deepEqual(JSON.parse(JSON.stringify(f.saved[0][0].matchSearch)),
+    {catalog:"tmdb",match_query:"Miss Hokusai",language:"nl-NL"});
+  changeType("show");
+  assert.deepEqual(draft.item,draft.row.item);
+  assert.equal(draft.matchSearch,undefined);
+  f.drafts[1].checked = true;
+  changeType("movie");
+  assert.equal(draft.item.type,"show");
+});
 
 test("recovery auto match stages only unambiguous suggestions and retry preserves staged matches",async()=>{
   const f=recoveryWorkspaceFixture();
