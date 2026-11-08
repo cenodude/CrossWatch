@@ -42,7 +42,6 @@ _EDIT_IDS = ("imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu"
 _IDENTITY = ("ids", "show_ids", "title", "year")
 _IMDB = re.compile(r"^tt\d{5,10}$")
 _NUMERIC = re.compile(r"^\d{1,12}$")
-_MAX_DELETE = 1000
 _NOTE_KEY = re.compile(r"^(show|movie):(tmdb|imdb|title|key):.{1,500}$")
 _FIELD_ID = re.compile(r"^[a-z0-9]{1,16}$")
 _FIELD_TYPES = ("text", "number", "date", "bool", "choice")
@@ -916,8 +915,6 @@ def tracker_delete(request: Request, payload: dict[str, Any] = Body(...)) -> Any
     keys = list(dict.fromkeys(str(k) for k in raw if str(k or "").strip())) if isinstance(raw, list) else []
     if not keys:
         return _error("no_changes", 400)
-    if len(keys) > _MAX_DELETE:
-        return _error("too_many", 400, limit=_MAX_DELETE)
     _, inst, store = _store(payload.get("provider_instance"), request)
     try:
         batch = store.change_items(feature, [(key, None, None) for key in keys], action="delete")
@@ -1364,8 +1361,6 @@ def tracker_notes_bulk(request: Request, payload: dict[str, Any] = Body(...)) ->
     raw = payload.get("keys")
     if not isinstance(raw, list) or not raw:
         return _error("no_changes", 400)
-    if len(raw) > _MAX_DELETE:
-        return _error("too_many", 400, limit=_MAX_DELETE)
     if any(not isinstance(key, str) or not _NOTE_KEY.fullmatch(key) for key in raw):
         return _error("invalid_note_key", 400)
     action = payload.get("action")
@@ -1389,8 +1384,8 @@ def tracker_titles_status(request: Request, payload: dict[str, Any] = Body(...))
     if _pair_scoped():
         return _error("pair_scoped", 409)
     keys, status = payload.get("keys"), payload.get("status")
-    if not isinstance(keys, list) or not keys or len(keys) > _MAX_DELETE:
-        return _error("too_many" if isinstance(keys, list) and len(keys) > _MAX_DELETE else "no_changes", 400)
+    if not isinstance(keys, list) or not keys:
+        return _error("no_changes", 400)
     if any(not isinstance(key, str) or not key or len(key) > 1024 for key in keys):
         return _error("invalid_ids", 400)
     if not isinstance(status, str) or status not in ("", *NOTE_STATUSES):

@@ -50,19 +50,37 @@ test("changing filters while selection loads cannot apply stale title keys", asy
   assert.equal(state.picking,false);
 });
 
-test("selection limits and failures preserve the current selection", async () => {
-  let calls = 0;
-  const limited = setup(async()=>{calls++;},{total:1001});
-  await limited.all();
-  assert.equal(calls,0);
-  for(const response of [async()=>({notes:[],total:1001}),async()=>{throw Error("offline");}]) {
-    const {state,all,errors} = setup(response);
-    await all();
-    assert.deepEqual([...state.picked],["previous"]);
-    assert.equal(state.picking,false);
-    assert.equal(errors.length,1);
-  }
+test("selection failures preserve the current selection", async () => {
+  const {state,all,errors} = setup(async()=>{throw Error("offline");});
+  await all();
+  assert.deepEqual([...state.picked],["previous"]);
+  assert.equal(state.picking,false);
+  assert.equal(errors.length,1);
 });
+
+for (const [view,field] of [["titles","notes"],["history","items"],["shows","shows"]]) {
+  test(`${view}: all results selects more than 1000 filtered rows`, async () => {
+    const rows=Array.from({length:1301},(_,i)=>({key:`row:${i}`}));
+    const calls=[];
+    const app=setup(async url=>{
+      const parsed=new URL(url,"https://tracker.test");
+      const offset=Number(parsed.searchParams.get("offset"));
+      calls.push(offset);
+      assert.equal(parsed.searchParams.get("provider_instance"),"CW-P01");
+      assert.equal(parsed.searchParams.get("status"),"dropped");
+      assert.equal(parsed.searchParams.get("q"),"Show");
+      return {[field]:rows.slice(offset,offset+200),total:rows.length};
+    },{view,total:rows.length});
+    const render=source.slice(source.indexOf("  function renderSelection("),source.indexOf("  function emptyState("));
+    const html=vm.runInNewContext(render+"renderSelection()",{state:app.state,icon:()=>"",esc:String,num:String});
+    assert.doesNotMatch(html,/data-trk-action="pick-all" disabled/);
+    await app.all();
+    assert.equal(app.state.picked.size,1301);
+    assert(app.state.picked.has("row:1300"));
+    assert.deepEqual(calls,[0,200,400,600,800,1000,1200]);
+    assert.equal(app.state.picking,false);
+  });
+}
 
 test("history selection continues to use record keys and the items endpoint", async () => {
   let path;

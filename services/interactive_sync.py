@@ -236,7 +236,7 @@ def _apply_needs_review(session, selected, reason):
              session.id, len(selected), retained, len(selected) - retained, reason)
 
 
-def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
+def apply(session: Session, cfg: dict[str, Any], selected: set[str], confirm_dry_run: bool = False):
     original_cfg = cfg
     cfg = session.config(cfg)
     from api import syncAPI
@@ -289,7 +289,7 @@ def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
         cfg = session.config(cfg)
         session.config_hash = fingerprint(cfg)
     execution = InteractivePlan(preview=False, selected=selected, choices=dict(plan.choices), planned_at=session.planned_at, record_rows=False, reads=session.reads,
-                                allowed_features=set(plan.completed_features))
+                                allowed_features=set(plan.completed_features), override_dry_run=confirm_dry_run)
     def progress(event):
         session.progress.event(event)
         report.event(event)

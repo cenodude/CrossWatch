@@ -563,6 +563,25 @@ def test_viewed_tracker_offers_rows_that_no_pair_has_synced_yet(setup):
     assert list(ops.live[("default", "history")]) == ["tmdb:2"]
 
 
+@pytest.mark.parametrize("provider", ["CROSSWATCH", "TRAKT"])
+def test_large_history_removal_keeps_provider_batches_and_unselected_rows(setup, provider):
+    rows = {f"tmdb:{i}": movie(i) for i in range(1, 1303)}
+    if provider == "CROSSWATCH":
+        ops = _tracker_only(setup, rows)
+    else:
+        setup.seed("p1", provider, "default", "history", rows)
+        ops = setup.ops[provider]
+    payload = dict(kind="history", items=list(rows.values())[:-1], source_provider=provider)
+    preview = api.api_editor_remove_preview(payload, request=None)
+    assert preview["selected"] == 1301
+    assert preview["providers"][0]["count"] == 1301
+    result = setup.execute(payload)
+    assert result["ok"]
+    assert result["confirmed"] == 1301
+    assert [len(call[2]) for call in ops.calls] == [100] * 13 + [1]
+    assert list(ops.live[("default", "history")]) == ["tmdb:1302"]
+
+
 def test_live_check_removes_a_remote_record_added_after_the_last_sync(setup):
     setup.ops["MDBLIST"].live[("default", "history")] = {"tmdb:1": movie(), "tmdb:2": movie(2)}
     payload = dict(kind="history", items=[movie()])

@@ -24,6 +24,7 @@ from cw_platform.provider_instances import (
     list_instance_ids,
     list_sync_user_ids,
     normalize_instance_id,
+    sanitize_instance_label,
     split_sync_user_id,
 )
 from cw_platform.run_control import SyncCancelled
@@ -724,7 +725,8 @@ def _stats_for(feature: Feature, idx: Mapping[str, Mapping[str, Any]]) -> dict[s
 def _instance_label(cfg: Mapping[str, Any], pid: str, inst: str) -> str:
     ref = split_sync_user_id(inst)
     if ref is None:
-        return "Default" if inst == "default" else inst
+        label = sanitize_instance_label(get_instance_block(cfg, pid, inst).get("label"))
+        return label or ("Default" if inst == "default" else inst)
     username = str(get_instance_block(cfg, pid, inst).get("username") or "").strip()
     return f"{_instance_label(cfg, pid, ref[0])} · {username or ref[1]}"
 

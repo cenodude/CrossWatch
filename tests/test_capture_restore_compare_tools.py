@@ -633,7 +633,39 @@ def test_snapshot_manifest_reports_cleanup_features_separately(tmp_path: Path, m
     }
 
 
-def test_snapshot_manifest_lists_identities_only_when_asked(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize("provider", ["CROSSWATCH", "PLEX", "JELLYFIN", "EMBY", "TRAKT", "SIMKL", "WETRAKR"])
+def test_snapshot_manifest_uses_friendly_instance_labels(tmp_path: Path, monkeypatch, provider: str) -> None:
+    import services.snapshots as snapshots
+
+    ops = CleanupCapabilityOps({})
+    _patch_ops(monkeypatch, snapshots, tmp_path, ops)
+    monkeypatch.setattr(snapshots, "_registry_sync_providers", lambda: [provider])
+    monkeypatch.setattr(snapshots, "load_sync_ops", lambda _provider: ops)
+    cfg = {
+        provider.lower(): {
+            "label": " Main ",
+            "instances": {
+                "P01": {"label": " Family   TV "},
+                "P02": {},
+                "P03": {"label": "  "},
+            },
+        }
+    }
+
+    row = snapshots.snapshot_manifest(cfg)[0]
+
+    assert row["id"] == provider
+    assert {instance["id"]: instance["label"] for instance in row["instances"]} == {
+        "default": "Main",
+        "P01": "Family TV",
+        "P02": "P02",
+        "P03": "P03",
+    }
+    assert all(instance["configured"] for instance in row["instances"])
+
+
+@pytest.mark.parametrize("named", [False, True])
+def test_snapshot_manifest_lists_identities_only_when_asked(tmp_path: Path, monkeypatch, named: bool) -> None:
     import services.snapshots as snapshots
 
     ops = CleanupCapabilityOps({})
@@ -645,16 +677,20 @@ def test_snapshot_manifest_lists_identities_only_when_asked(tmp_path: Path, monk
             "instances": {"P01": {"sync_users": {"u2": {"username": ""}}}},
         }
     }
+    if named:
+        cfg["plex"]["label"] = "Main"
+        cfg["plex"]["instances"]["P01"]["label"] = "Family"
 
     plain = snapshots.snapshot_manifest(cfg)[0]["instances"]
     scoped = snapshots.snapshot_manifest(cfg, include_sync_users=True)[0]["instances"]
 
     assert [row["id"] for row in plain] == ["default", "P01"]
+    main_label, family_label = ("Main", "Family") if named else ("Default", "P01")
     assert [(row["id"], row["label"]) for row in scoped] == [
-        ("default", "Default"),
-        ("default~u1", "Default · alice"),
-        ("P01", "P01"),
-        ("P01~u2", "P01 · u2"),
+        ("default", main_label),
+        ("default~u1", f"{main_label} · alice"),
+        ("P01", family_label),
+        ("P01~u2", f"{family_label} · u2"),
     ]
 
 

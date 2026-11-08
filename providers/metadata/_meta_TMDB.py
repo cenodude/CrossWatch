@@ -623,6 +623,8 @@ class TmdbProvider:
             return {}
 
         include = f"{lang[:2]},{lang},null" if lang else "en,null"
+        if want_logo:
+            include = ",".join(dict.fromkeys([*include.split(","), "en"]))
         base = "https://api.themoviedb.org/3"
         if kind == "movie":
             imgs = self._get(f"{base}/movie/{tmdb_id}/images", {"include_image_language": include})

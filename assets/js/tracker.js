@@ -537,7 +537,7 @@
   function renderSelection() {
     return `<span class="cw-selection-count" aria-live="polite">${icon("check_box_outline_blank")}<strong>${esc(num(state.picked.size))}</strong><span>selected</span></span>
       <button type="button" class="cw-selection-button" data-trk-action="pick-visible"${state.loading || state.picking ? " disabled" : ""}>${icon("visibility")}<span>Visible</span></button>
-      <button type="button" class="cw-selection-button" data-trk-action="pick-all"${state.loading || state.picking || state.total > 1000 ? " disabled" : ""} title="${state.total > 1000 ? "Select up to 1000 records at a time. Narrow the filters to select all results." : "Select every result matching these filters"}">${icon("checklist")}<span>${state.picking ? "Selecting…" : "All results"}</span></button>
+      <button type="button" class="cw-selection-button" data-trk-action="pick-all"${state.loading || state.picking ? " disabled" : ""} title="Select every result matching these filters">${icon("checklist")}<span>${state.picking ? "Selecting…" : "All results"}</span></button>
       <button type="button" class="cw-selection-button" data-trk-action="clear-picked">${icon("close")}<span>Clear</span></button>
       <span class="cw-selection-actions"><button type="button" class="cw-selection-button" data-trk-action="status-picked"${state.picking ? " disabled" : ""}>${icon("flag")}<span>Set status</span></button>${state.view === "shows" ? "" : `<button type="button" class="cw-selection-button is-danger" data-trk-action="delete-picked"${state.picking ? " disabled" : ""}>${icon("delete")}<span>${state.view === "titles" ? "Remove from My titles" : "Delete"}</span></button>`}</span>`;
   }
@@ -846,15 +846,29 @@
     const record = state.ref?.key ? findRecord(state.ref.key, state.ref.feature) || state.items.find((item) => item.key === state.ref.key) : null;
     const head = data?.title || record;
     const title = head ? data?.title?.title || cardTitle(head) : "";
+    const selection = state.root?.querySelector('[data-trk-slot="selection"]');
     state.root?.querySelector(".cw-page-hero")?.classList.toggle("has-selection", !!title);
     if (!title) {
+      if (selection) delete selection.dataset.logoSelection;
       setSlot("selection", "Everything you watched, rated and want to watch");
       return;
     }
     const show = data?.show || isChild(head) || head.type === "show";
     const detail = show ? record ? episodeLabel(record) : "" : head.year ? String(head.year) : "";
     const episode = record?.type === "episode" && record.title && record.title !== title && !/^S\d+\s*[·-]?\s*E\d+$/i.test(record.title) ? record.title : "";
-    setSlot("selection", `<div class="trk-hero-selection"><div class="trk-hero-title-line"><strong title="${esc(title)}">${esc(title)}</strong>${detail ? `<span class="trk-hero-meta">${esc(detail)}</span>` : ""}</div>${episode ? `<small title="${esc(episode)}">${esc(episode)}</small>` : ""}</div>`);
+    const art = head?.art;
+    const logoUrl = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?kind=logo&size=w500` : "";
+    const signature = JSON.stringify([title, detail, episode, logoUrl]);
+    if (selection?.dataset.logoSelection === signature) return;
+    setSlot("selection", `<div class="trk-hero-selection"><div class="trk-hero-title-line"><span class="trk-hero-heading"><strong title="${esc(title)}">${esc(title)}</strong>${logoUrl ? `<img class="trk-hero-logo" alt="${esc(title)}" hidden>` : ""}</span>${detail ? `<span class="trk-hero-meta">${esc(detail)}</span>` : ""}</div>${episode ? `<small title="${esc(episode)}">${esc(episode)}</small>` : ""}</div>`);
+    if (selection) selection.dataset.logoSelection = signature;
+    const logo = selection?.querySelector(".trk-hero-logo");
+    const label = selection?.querySelector(".trk-hero-heading strong");
+    if (logo) {
+      logo.onload = () => { logo.hidden = false; label.hidden = true; };
+      logo.onerror = () => { logo.hidden = true; label.hidden = false; };
+      logo.src = logoUrl;
+    }
   }
 
   function updateHeroBackdrop() {
@@ -3330,7 +3344,7 @@
   }
 
   async function pickAllResults() {
-    if (state.loading || state.picking || state.total > 1000) return;
+    if (state.loading || state.picking) return;
     const restoreFocus = document.activeElement?.dataset?.trkAction === "pick-all";
     const id = ++pickRequest;
     const request = state.request;
@@ -3338,7 +3352,7 @@
     renderSlots(false);
     const keys = new Set();
     try {
-      for (let offset = 0; offset < 1000; offset += 200) {
+      for (let offset = 0; ; offset += 200) {
         const params = new URLSearchParams({ feature: listFeature(), provider_instance: state.instance, q: state.q,
           media: state.view === "cleanup" ? "" : state.media, sort: state.view === "cleanup" ? "title" : state.sort,
           offset: String(offset), limit: "200" });
@@ -3352,7 +3366,6 @@
         params.set("tag", state.noteTag);
         const data = await getJSON(`/api/tracker/${notes ? "notes" : shows ? "shows" : "items"}?${params}`);
         if (id !== pickRequest || request !== state.request) return;
-        if (Number(data.total) > 1000) throw new Error("Select up to 1000 records at a time. Narrow the filters and try again.");
         const rows = (notes ? data.notes : shows ? data.shows : data.items) || [];
         for (const item of rows) keys.add(item.key);
         if (!rows.length || offset + rows.length >= Number(data.total)) break;

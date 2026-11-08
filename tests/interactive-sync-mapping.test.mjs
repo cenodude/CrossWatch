@@ -503,7 +503,7 @@ test("Tracker import reviews use the shared selection controls without permanent
   assert.match(context.host.innerHTML,/data-action="map-selected"/);
 });
 
-test("Review footer explains global dry run and keeps Apply disabled", () => {
+test("Review footer explains the one-time dry run confirmation", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
   const fn = source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
   const context = {host:{contains:()=>false,innerHTML:""},document:{activeElement:null},window:{},
@@ -515,10 +515,49 @@ test("Review footer explains global dry run and keeps Apply disabled", () => {
   vm.createContext(context);
   vm.runInContext(fn+"render();",context);
   assert.match(context.host.innerHTML,/Dry run is on/);
-  assert.match(context.host.innerHTML,/Turn off dry run in Settings/);
+  assert.match(context.host.innerHTML,/ask for confirmation/);
+  assert.match(context.host.innerHTML,/Global dry run stays on/);
+  assert.doesNotMatch(context.host.innerHTML,/data-action="apply" disabled/);
+  context.session.counts.selected=0;
+  vm.runInContext("render();",context);
   assert.match(context.host.innerHTML,/data-action="apply" disabled/);
+  context.session.counts.selected=1;
   context.session.dry_run=false;
   vm.runInContext("render();",context);
   assert.match(context.host.innerHTML,/1 changes selected/);
   assert.doesNotMatch(context.host.innerHTML,/data-action="apply" disabled/);
+});
+
+test("Apply requires confirmation for dry run and never reuses it", async () => {
+  const source=readFileSync(new URL("../assets/js/interactive-sync.js",import.meta.url),"utf8");
+  const fn=source.slice(source.indexOf("  async function action("),source.indexOf("  async function mapping("));
+  const requests=[],prompts=[];
+  let confirmed=false;
+  const context={session:{id:"review-1",dry_run:true,revision:3,selection_version:4,counts:{selected:2}},
+    generation:1,pageLoading:false,busy:false,pageData:{items:[]},API:"/api/interactive-sync",
+    pending:()=>false,invalidatePage:()=>{},render:()=>{},accept:()=>{},showError:assert.fail,poll:assert.fail,
+    window:{confirm:message=>{prompts.push(message);return confirmed;}},
+    post:async (url,body)=>{requests.push({url,body});return {};}};
+  vm.createContext(context);
+  vm.runInContext(fn,context);
+  await vm.runInContext('action("apply")',context);
+  assert.equal(requests.length,0);
+  assert.match(prompts[0],/Apply 2 selected changes/);
+  assert.match(prompts[0],/Global dry run will stay enabled/);
+  confirmed=true;
+  await vm.runInContext('action("apply")',context);
+  assert.equal(requests.length,1);
+  assert.equal(requests[0].url,"/api/interactive-sync/review-1/apply");
+  assert.equal(requests[0].body.confirm_dry_run,true);
+  assert.equal(requests[0].body.revision,3);
+  assert.equal(requests[0].body.selection_version,4);
+  assert.equal(context.session.dry_run,true);
+  confirmed=false;
+  await vm.runInContext('action("apply")',context);
+  assert.equal(requests.length,1);
+  context.session.dry_run=false;
+  await vm.runInContext('action("apply")',context);
+  assert.equal(requests.length,2);
+  assert.equal(requests[1].body.confirm_dry_run,undefined);
+  assert.equal(prompts.length,3);
 });
