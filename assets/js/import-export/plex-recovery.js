@@ -342,8 +342,9 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
           },
           autoStatus:()=>request(`/${id}/auto-match`),
           autoStop:()=>request(`/${id}/auto-match`,null,"DELETE"),
-          search:(row,q,catalog,options)=>request(`/${id}/match-search?${new URLSearchParams({revision,group_id:row.id,q,catalog,language:options?.language || "en-US"})}`,null,"GET",options?.signal),
+          search:(row,q,catalog,options)=>request(`/${id}/match-search?${new URLSearchParams({revision,group_id:row.id,q,catalog,language:options?.language || "en-US",media_type:row.item.type === "movie" ? "movie" : "episode"})}`,null,"GET",options?.signal),
           save:edits=>request(`/${id}/match-groups`,{revision,edits:edits.map(edit=>({group_id:edit.row_id,title:edit.item.title,
+            media_type:edit.item.type === "movie" ? "movie" : "episode",...edit.matchSearch,
             ids:Object.fromEntries(Object.entries(edit.item.ids || {}).filter(([key])=>["tmdb","tvdb","imdb"].includes(key)).map(([key,value])=>[key,String(value)]))}))})
         }
       });

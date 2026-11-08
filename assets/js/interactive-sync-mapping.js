@@ -110,7 +110,9 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   const canConvert = allowMovieConversion && direct && standalone && !recovery && rows.length === 1
     && rows[0].source === "CROSSWATCH" && rows[0].feature === "history" && ["episode", "show"].includes(rows[0].item.type);
   const converting = () => canConvert && drafts[0].item.type === "movie";
-  const saveable = draft => draft.dirty && (!recovery || draft.checked) && (!converting() || !!draft.item.ids?.tmdb);
+  const saveable = draft => draft.dirty && (!recovery || draft.checked)
+    && (!recovery || draft.item.type === draft.row.item.type || !!draft.matchSearch)
+    && (!converting() || !!draft.item.ids?.tmdb);
   const cache = new Map();
   const catalogs = new Map();
   const episodeMatching = new Map();
@@ -142,9 +144,10 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   dialog.innerHTML = `<header class="is-mapping-head"><div><div class="is-eyebrow">MAPPING</div><h2>${recovery ? "Match recovered history" : "Fix a wrong match"}</h2><p>${recovery ? "Choose the correct title and review your changes." : "Find the right title, check the result, then save."}</p></div><button class="is-btn is-map-close" data-close aria-label="Close" title="Close">${icon("close")}</button></header>
     <div class="is-mapping-body">
     <div class="is-map-intro"><span>${rows.length} ${recovery ? `title${rows.length === 1 ? "" : "s"}` : `item${rows.length === 1 ? "" : "s"}`}${total > rows.length ? ` from ${total} results` : ""}</span><details class="is-map-help" ${recovery ? "hidden" : ""}><summary aria-label="About saved mappings" title="About saved mappings">${icon("info")}<span>About mappings</span></summary><p>Pair mappings override shared corrections for that pair. Shared corrections apply to every pair using the source provider instance. Watched dates and ratings are kept. ${standalone ? "Run the pair again to retry with your correction." : "Saving updates your sync review."}</p></details></div>
-    ${recovery ? "<p>Confirm a movie or series once for its unresolved items. Recovery keeps one record per movie or episode, using its most recent watch date. Episode numbers are kept. Review suggestions, then save the checked matches. Saving does not import history.</p><p><strong>API traffic warning:</strong> Auto match can generate heavy API traffic and consume your provider's request quota. Each distinct movie or show may require a separate search, plus extra requests for details or retries. Cached results are reused. Matching runs in the background; return through the notification bell.</p>" : ""}
+    ${recovery ? "<p>Confirm a movie or series once for its unresolved items. Recovery keeps one record per movie or episode, using its most recent watch date. Select one series to match its episodes as a movie. Otherwise, episode numbers are kept. Review suggestions, then save the checked matches. Saving does not import history.</p><p><strong>API traffic warning:</strong> Auto match can generate heavy API traffic and consume your provider's request quota. Each distinct movie or show may require a separate search, plus extra requests for details or retries. Cached results are reused. Matching runs in the background; return through the notification bell.</p>" : ""}
     <section class="is-map-bulk" aria-label="Choose a title"><div class="is-map-search-heading"><h3>${recovery ? "Choose a title" : `<span class="is-map-step">1</span>Find the right title`}</h3><div class="is-map-actions"><button class="is-btn" data-suggest hidden>${icon("auto_fix_high")}Auto match</button><button class="is-btn" data-stop-search hidden>Stop search</button></div></div>
       ${canConvert ? `<label class="is-map-scope">Match as<select data-media-type><option value="${esc(first.item.type)}">${first.item.type === "episode" ? "Episode / Show" : "Show"}</option><option value="movie">Movie</option></select><small>Converting to a movie changes only this watch and remembers it for re-import. You can undo it from Tracker Changes.</small></label>` : ""}
+      ${recovery ? `<label class="is-map-scope" data-recovery-type hidden>Match as<select data-media-type><option value="show">Episode / Show</option><option value="movie">Movie</option></select><small>Applies to all recovered episodes of the selected series. Search and select a movie before saving.</small></label>` : ""}
       <div data-chosen hidden class="is-map-chosen"><span>${icon("check_circle")}<strong data-match></strong></span><button class="is-btn is-small" data-change-match>Change match</button></div>
       <div data-search-panel><div class="is-map-search-bar" hidden><label>Search title<input data-search-query value="${esc(seriesTitle(first.item))}" maxlength="200"></label><label>Search in<select data-catalog></select></label>${recovery ? `<label data-language-wrap hidden title="Match the language used for titles in Plex. Films and series from all countries are included.">Metadata language<select data-language>${Object.entries({"en-US":"English","nl-NL":"Dutch","de-DE":"German","fr-FR":"French","es-ES":"Spanish","it-IT":"Italian","pt-PT":"Portuguese","pt-BR":"Portuguese (Brazil)","pl-PL":"Polish","da-DK":"Danish","sv-SE":"Swedish","nb-NO":"Norwegian","fi-FI":"Finnish","cs-CZ":"Czech","tr-TR":"Turkish","ja-JP":"Japanese","ko-KR":"Korean","zh-CN":"Chinese (Simplified)","zh-TW":"Chinese (Traditional)"}).map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></label>` : ""}<button class="is-btn" data-search>Find matches</button></div><div class="is-map-candidates"></div></div>
       <p data-search-status role="status">Choose a match or try Auto match.</p>
@@ -206,6 +209,11 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   updateScopeNote();
   function updateCatalogs() {
     const row = drafts.find(d => d.checked)?.row || first;
+    if (recovery) {
+      const selected = drafts.filter(d => d.checked);
+      $("[data-recovery-type]").hidden = selected.length !== 1 || selected[0].row.item.type !== "show";
+      $("[data-media-type]").value = selected[0]?.item.type || "show";
+    }
     const options = catalogs.get(routeKey(row)) || [];
     const select = $("[data-catalog]"), previous = select.value;
     select.innerHTML = options.map(option => `<option value="${esc(option.id)}">${esc(option.label)}</option>`).join("");
@@ -246,6 +254,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   function selectionChanged() {
     dialog.querySelectorAll("[data-edit]").forEach(el => { el.checked = drafts[Number(el.closest("[data-draft]").dataset.draft)].checked; });
     showSearch();
+    if (recovery) $(".is-map-candidates").replaceChildren();
     updateCatalogs();
     if (recovery) drafts.forEach(changed);
   }
@@ -341,7 +350,9 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
   }
   async function find(row) {
     if (canConvert) row = {...row, item: drafts[0].item};
+    if (recovery) row = {...row, item: drafts.find(d => d.row.id === row.id)?.item || row.item};
     const term = $("[data-search-query]").value.trim();
+    const matchSearch = {catalog:$("[data-catalog]").value, match_query:term, language:metadataLanguage()};
     if (term.length < 2) { status("Enter at least two characters."); return; }
     showSearch();
     searchController = new AbortController(); searching = true; lock(true); status(`Searching ${endpoint(row)}...`);
@@ -378,6 +389,10 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
             status("Select one movie or series to choose its match, or use Auto match for multiple titles.");
             return;
           }
+          if (recovery && selected[0].row.id !== row.id) {
+            status("Search again for the selected title.");
+            return;
+          }
           if (selected.some(d => routeKey(d.row) !== routeKey(row)
             || (d.item.type === "movie" ? "movie" : "show") !== (row.item.type === "movie" ? "movie" : "show"))) {
             status("Choose rows with the same destination and media type for this match.");
@@ -405,6 +420,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
             draft.review = "";
             const current = draft.item.show_ids || draft.item.ids || {};
             draft.item = correctedItem(draft.item, {ids:(!recovery && !parts.length && matchedIds(current, match.ids)) || match.ids, title:match.title});
+            if (recovery) draft.matchSearch = matchSearch;
             if (converting() && match.year) draft.item.year = match.year;
             if (recovery && match.year) draft.item.year = match.year;
             applyParts(draft, match, parts);
@@ -457,11 +473,15 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     changed(draft);
   });
   dialog.addEventListener("change", event => {
-    if (canConvert && event.target.hasAttribute("data-media-type") && !saving && !searching) {
-      const draft = drafts[0];
+    if ((canConvert || recovery) && event.target.hasAttribute("data-media-type") && !saving && !searching) {
+      const selected = drafts.filter(d => d.checked);
+      if (recovery && (selected.length !== 1 || selected[0].row.item.type !== "show")) return;
+      const draft = recovery ? selected[0] : drafts[0];
       draft.item = event.target.value === "movie" ? movieDraft(draft.row.item) : structuredClone(draft.row.item);
+      delete draft.matchSearch;
       draft.review = "";
       paint(draft);
+      $("[data-search-query]").value = seriesTitle(draft.item);
       showSearch();
       $(".is-map-candidates").replaceChildren();
       status("Search for the correct title, then save the match.");
@@ -494,6 +514,8 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     }
     if (button.hasAttribute("data-reset")) {
       draft.item = structuredClone(draft.row.item); draft.review = "";
+      delete draft.matchSearch;
+      if (recovery) selectionChanged();
       const partWrap = row.querySelector("[data-part-wrap]");
       if (partWrap) partWrap.hidden = true;
       paint(draft);
@@ -751,7 +773,8 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
       invalid.reportValidity();
       return;
     }
-    const edits = drafts.filter(saveable).map(d => ({row_id:d.row.id, item:d.item, selected:true}));
+    const edits = drafts.filter(saveable).map(d => ({row_id:d.row.id, item:d.item, selected:true,
+      ...(recovery && d.item.type !== d.row.item.type ? {matchSearch:d.matchSearch} : {})}));
     if (!edits.length) return;
     saving = true; lock(true); $("[data-error]").textContent = "";
     try {

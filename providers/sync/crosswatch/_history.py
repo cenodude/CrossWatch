@@ -211,6 +211,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             continue
         try:
             accepted = _accepted(obj)
+            if adapter.config.get("_cw_local_history_type_origins") and isinstance(obj.get(TYPE_ORIGINS), list):
+                accepted[TYPE_ORIGINS] = list(obj[TYPE_ORIGINS])
         except Exception:
             unresolved_src.append(obj)
             continue

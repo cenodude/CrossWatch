@@ -86,6 +86,10 @@ class GroupEdit(BaseModel):
     group_id: str = Field(min_length=1, max_length=64)
     title: str = Field(min_length=1, max_length=512)
     ids: dict[str, str] = Field(max_length=12)
+    media_type: Literal["movie", "episode"] | None = None
+    catalog: str = Field(default="", max_length=256)
+    match_query: str = Field(default="", max_length=200)
+    language: str = Field(default="en-US", pattern=r"^[a-z]{2}-[A-Z]{2}$")
 
 
 class GroupMatches(BaseModel):
@@ -302,6 +306,9 @@ def _shape(job, cfg):
                 for identity in _history_identities(item)}
     for row, (index, indices) in zip(rows, selected):
         raw = job.raw[index]
+        origins = type_origins({str(i): job.raw[i]["item"] for i in indices})
+        if origins:
+            row["item"][TYPE_ORIGINS] = sorted(origins)
         row["id"] = str(index)
         row["recovery_row_ids"] = [str(i) for i in indices]
         row.update(recovery_match=raw["recovery_match"], original_title=raw["original_title"])
@@ -885,9 +892,9 @@ def match_search(sid: str, revision: int, catalog: str, request: Request, group_
             kind = media_type or (row or {}).get("media_type")
             group = {"item": {"type": "movie" if kind == "movie" else "show"}} if row else None
         else:
-            if media_type is not None:
-                raise HTTPException(400, "Change media type on an individual recovered item.")
             group = next((g for g in _match_groups(job) if g["id"] == group_id), None)
+            if group is not None and media_type is not None:
+                group["item"]["type"] = "movie" if media_type == "movie" else "show"
         if group is None:
             raise HTTPException(404, "Unresolved movie or series not found")
         choice = _match_catalogs(cfg, request).get(catalog)
@@ -929,9 +936,35 @@ def save_group_matches(sid: str, payload: GroupMatches, request: Request):
             ids = {key: value.strip() for key, value in edit.ids.items() if key in {"tmdb", "tvdb", "imdb"} and value.strip()}
             if not edit.title.strip() or not ids or any(not re.fullmatch(r"tt\d+" if key == "imdb" else r"[1-9]\d*", value) for key, value in ids.items()):
                 raise HTTPException(400, "Enter a title and valid TMDb, TVDB or IMDb IDs.")
+            group = groups[edit.group_id]
+            kind = edit.media_type or ("episode" if group["item"]["type"] == "show" else "movie")
+            conversion = (kind == "movie") != (group["item"]["type"] == "movie")
+            selected = None
+            if conversion:
+                if kind != "movie":
+                    raise HTTPException(400, "Set season and episode numbers on an individual recovered item.")
+                choice = _match_catalogs(cfg, request).get(edit.catalog)
+                if choice is None:
+                    raise HTTPException(400, "Search and select a movie match before saving.")
+                cache_key = json.dumps([_search_fingerprint(cfg, job, choice), edit.catalog, "movie",
+                                        edit.match_query.strip().casefold(), _search_language(choice, edit.language)])
+                selected = next((candidate for candidate in job.match_cache.get(cache_key, {}).get("results", [])
+                                 if candidate.get("type") == "movie" and not candidate.get("mapping_unavailable")
+                                 and {k: str(v) for k, v in candidate.get("ids", {}).items() if k in {"tmdb", "tvdb", "imdb"}} == ids), None)
+                if selected is None:
+                    raise HTTPException(400, "Search again and select a movie match before saving.")
+            origins = sorted({origin for row_id in group["row_ids"]
+                              for origin in set(updated[int(row_id)]["item"].get(TYPE_ORIGINS) or [])
+                              | event_identities(updated[int(row_id)]["item"])}) if conversion else []
             for row_id in groups[edit.group_id]["row_ids"]:
                 raw = updated[int(row_id)]
                 item = raw["item"]
+                if selected is not None:
+                    item = {key: item[key] for key in ("watched_at", "watched") if key in item}
+                    item.update(type="movie", year=selected.get("year"))
+                    if origins:
+                        item[TYPE_ORIGINS] = origins
+                    raw["item"] = item
                 valid = True
                 if item["type"] == "episode":
                     item.update(ids={}, show_ids=dict(ids), series_title=edit.title.strip())
@@ -1057,9 +1090,15 @@ def commit(sid: str, payload: Commit, request: Request):
             previous = titles.get(identity)
             if previous is None or (history_epoch_from_value(row["item"].get("watched_at")) or 0) > (history_epoch_from_value(previous["item"].get("watched_at")) or 0):
                 titles[identity] = row
+            if previous is not None:
+                origins = type_origins({"previous": previous["item"], "current": row["item"]})
+                if origins:
+                    winner = titles[identity]
+                    titles[identity] = {**winner, "item": {**winner["item"], TYPE_ORIGINS: sorted(origins)}}
         selected = list(titles.values())
         approved = [{**r, "status": "ready"} for r in selected]
-        importer._PREVIEWS[job.id] = dict(created_at=time.time(), target_instance=job.target, rows=approved)
+        importer._PREVIEWS[job.id] = dict(created_at=time.time(), target_instance=job.target, rows=approved,
+                                        local_history_type_origins=True)
         args.update(mode="ready", row_ids=[], excluded_row_ids=[], status="all", q="")
         try:
             result = importer.api_import_commit(importer.ImportCommitRequest(**args), request=request)

@@ -1455,6 +1455,7 @@ def api_import_commit(payload: ImportCommitRequest = Body(...), request: Request
         view = dict(cfg_view)
         if feature == "history":
             view["_cw_history_rewatches"] = True
+            view["_cw_local_history_type_origins"] = bool(preview.get("local_history_type_origins"))
         res = ops.add(view, items, feature=feature)
         result = dict(res) if isinstance(res, Mapping) else {"ok": bool(res)}
         unresolved = result.get("unresolved")
