@@ -152,10 +152,18 @@ def test_watcher_episode_reported_as_series(monkeypatch: pytest.MonkeyPatch, ser
     assert ev.title == "Line of Fire (2026)" and ev.ids["tvdb_show"] == "477711" and ev.ids["tvdb_episode"] == "9001"
 
 
-@pytest.mark.parametrize("completed_at,expected", [("2026-10-27T17:58:20.000Z", 100.0), ("2026-10-20T10:00:00.000Z", 88.0), (None, 88.0)])
-def test_watcher_stop_uses_silo_completion_in_session(monkeypatch: pytest.MonkeyPatch, server: FakeServer, completed_at: str | None, expected: float) -> None:
+@pytest.mark.parametrize(
+    "completed_at,left,expected",
+    [
+        ("2026-10-27T17:58:20.000Z", 0, 100.0),
+        ("2026-10-20T10:00:00.000Z", 0, 88.0),
+        (None, 0, 88.0),
+        ("2026-10-27T17:58:20.000Z", 5280.0, 88.0),
+    ],
+)
+def test_watcher_stop_uses_silo_completion_in_session(monkeypatch: pytest.MonkeyPatch, server: FakeServer, completed_at: str | None, left: float, expected: float) -> None:
     rows: list[dict[str, Any]] = []
-    done = [{"media_item_id": "movie-tmdb-100", "completed": True, "position_seconds": 0, "updated_at": completed_at}] if completed_at else []
+    done = [{"media_item_id": "movie-tmdb-100", "completed": True, "position_seconds": left, "updated_at": completed_at}] if completed_at else []
     server.on("GET", "/profiles/household/sessions", lambda kw: ResponseStub(200, {"items": rows}))
     server.on("GET", "/catalog/items/movie-tmdb-100", lambda kw: ResponseStub(200, {"content_id": "movie-tmdb-100", "tmdb_id": "100"}))
     server.on("GET", "/progress", lambda kw: ResponseStub(200, {"items": done, "page": {}}))
