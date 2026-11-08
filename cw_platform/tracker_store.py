@@ -72,6 +72,14 @@ _UPSERT_ITEM = (
     + ", ".join(f"{n}=excluded.{n}" for n, _ in _ITEM_COLUMNS)
 )
 _SHOW_KINDS = ("show", "season", "episode")
+_ITEM_NOTE_KEY = (
+    "CASE WHEN items.kind IN ('episode', 'season') THEN 'show:' || coalesce(items.show_key, 'title:')"
+    " WHEN items.kind IN ('show', 'anime') THEN 'show:' || CASE WHEN coalesce(items.tmdb, '') != '' THEN 'tmdb:' || items.tmdb"
+    " ELSE 'title:' || cw_lower(json_extract(items.data, '$.title')) END"
+    " WHEN coalesce(items.tmdb, '') != '' THEN 'movie:tmdb:' || items.tmdb"
+    " WHEN coalesce(items.imdb, '') != '' THEN 'movie:imdb:' || items.imdb"
+    " ELSE 'movie:key:' || CASE WHEN instr(items.item_key, '@') > 0 THEN substr(items.item_key, 1, instr(items.item_key, '@') - 1) ELSE items.item_key END END"
+)
 
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)",
@@ -491,6 +499,7 @@ class TrackerStore:
         self.root.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self.db_path), timeout=30.0, isolation_level=None, check_same_thread=False)
         try:
+            conn.create_function("cw_lower", 1, lambda value: str(value or "").lower(), deterministic=True)
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA cache_size=-32768")
             if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
@@ -1254,8 +1263,14 @@ class TrackerStore:
         attention: bool = False,
         health: str = "",
         until: str = "",
+        status: str = "",
+        tag: str = "",
+        duplicates: bool = False,
     ) -> tuple[int, list[tuple[str, Any]]]:
-        where, args = self._filters(feature, text=text, media=media, attention=attention, health=health)
+        where, args = self._filters(feature, text=text, media=media, attention=attention, health=health, duplicates=duplicates)
+        note_where, note_args = self._note_filters(status=status, tag=tag)
+        where.extend(note_where)
+        args.extend(note_args)
         if until:
             where.append("when_at < ?")
             args.append(until)
@@ -1283,8 +1298,11 @@ class TrackerStore:
         except Exception:
             raise TrackerUnreadable(feature, [DB_NAME])
 
-    def months(self, feature: str, *, text: str = "", media: str = "") -> list[dict[str, Any]]:
-        where, args = self._filters(feature, text=text, media=media)
+    def months(self, feature: str, *, text: str = "", media: str = "", status: str = "", tag: str = "", duplicates: bool = False) -> list[dict[str, Any]]:
+        where, args = self._filters(feature, text=text, media=media, duplicates=duplicates)
+        note_where, note_args = self._note_filters(status=status, tag=tag)
+        where.extend(note_where)
+        args.extend(note_args)
         clause = " AND ".join(where)
         with self._db() as conn:
             if conn is None:
@@ -1300,11 +1318,31 @@ class TrackerStore:
         return [{"month": str(m), "count": int(c)} for m, c in rows]
 
     @staticmethod
-    def _filters(feature: str, *, text: str = "", media: str = "", attention: bool = False, health: str = "") -> tuple[list[str], list[Any]]:
+    def _note_filters(*, status: str = "", tag: str = "", key: str = _ITEM_NOTE_KEY) -> tuple[list[str], list[Any]]:
+        where: list[str] = []
+        args: list[Any] = []
+        if status == "none":
+            where.append(f"NOT EXISTS (SELECT 1 FROM notes n WHERE n.title_key=({key}) AND coalesce(n.status, '') != '')")
+        elif status:
+            where.append(f"EXISTS (SELECT 1 FROM notes n WHERE n.title_key=({key}) AND n.status=?)")
+            args.append(status)
+        if tag:
+            where.append(f"EXISTS (SELECT 1 FROM note_tags nt WHERE nt.title_key=({key}) AND nt.tag=?)")
+            args.append(tag)
+        return where, args
+
+    @staticmethod
+    def _filters(feature: str, *, text: str = "", media: str = "", attention: bool = False, health: str = "", duplicates: bool = False) -> tuple[list[str], list[Any]]:
         if feature not in FEATURES:
             raise ValueError(f"Unsupported kind: {feature!r}")
         where = ["scope=''", "feature=?"]
         args: list[Any] = [feature]
+        if duplicates:
+            if feature != "history":
+                where.append("0")
+            else:
+                identity = f"({_ITEM_NOTE_KEY}), coalesce(kind, ''), coalesce(season, -1), coalesce(episode, -1), when_at"
+                where.append(f"({identity}) IN (SELECT {identity} FROM items WHERE scope='' AND feature='history' AND coalesce(when_at, '') != '' GROUP BY {identity} HAVING COUNT(*) > 1)")
         marks = ", ".join("?" for _ in ATTENTION_CODES)
         if attention or health == "attention":
             where.append(f"item_key IN (SELECT item_key FROM checks WHERE scope='' AND feature=? AND code IN ({marks}))")
@@ -1618,7 +1656,7 @@ class TrackerStore:
                 return set()
             return {str(k) for (k,) in conn.execute("SELECT title_key FROM notes WHERE status=?", (status,)).fetchall()}
 
-    def show_summaries(self, *, text: str = "", offset: int = 0, limit: int = 50, exclude: Iterable[str] = ()) -> tuple[int, list[dict[str, Any]]]:
+    def show_summaries(self, *, text: str = "", offset: int = 0, limit: int = 50, exclude: Iterable[str] = (), status: str = "", tag: str = "") -> tuple[int, list[dict[str, Any]]]:
         skip = {str(k) for k in exclude}
         needle = text.strip().lower()
         clause = "scope='' AND feature='history' AND show_key IS NOT NULL AND kind='episode'"
@@ -1660,6 +1698,12 @@ class TrackerStore:
                     return tuple((k, len(v[0]), v[1], v[2], v[3], v[4]) for k, v in ordered)
 
                 summary = self._cached(conn, "shows", (needle,), compute)
+                note_where, note_args = self._note_filters(status=status, tag=tag, key="'show:' || show_key")
+                if note_where:
+                    matched = {str(key) for (key,) in conn.execute(
+                        f"SELECT DISTINCT show_key FROM items WHERE {clause} AND {' AND '.join(note_where)}", note_args
+                    ).fetchall()}
+                    summary = tuple(row for row in summary if row[0] in matched)
                 if skip:
                     summary = tuple(row for row in summary if row[0] not in skip)
                 page = summary[max(0, int(offset)):max(0, int(offset)) + max(1, min(int(limit), 200))]
@@ -1796,6 +1840,33 @@ class TrackerStore:
                 self._prune_changes(conn, now)
         return batch
 
+    def change_notes(self, keys: Iterable[str], *, status: str = "", remove: bool = False, defaults: Mapping[str, Mapping[str, Any]] | None = None) -> tuple[str | None, int]:
+        if not remove and status not in ("", *NOTE_STATUSES):
+            raise ValueError("invalid_status")
+        now = time.time_ns()
+        batch = uuid.uuid4().hex
+        count = 0
+        with self.mutation(), self._db(create=True) as conn:
+            assert conn is not None
+            with self._write(conn):
+                for key in dict.fromkeys(keys):
+                    before = self._note_get(conn, key)
+                    if before is None and (defaults is None or key not in defaults or remove):
+                        raise KeyError(key)
+                    current = before if before is not None else (defaults or {}).get(key, {})
+                    after = None if remove else _note_norm({**current, "status": status})
+                    if after is not None and not any(after.get(field) for field in ("status", "started", "finished", "notes", "tags", "fields")):
+                        after = None
+                    if before == after:
+                        continue
+                    self._note_put(conn, key, after, now)
+                    self._note_change(conn, batch, key, key if after is not None else None, before, after, now)
+                    count += 1
+                if count:
+                    self._bump(conn)
+                    self._prune_changes(conn, now)
+        return (batch if count else None), count
+
     def _follow_note(self, conn: sqlite3.Connection, follow: Mapping[str, Any], batch: str, now: int) -> None:
         old, new = str(follow.get("old") or ""), str(follow.get("new") or "")
         if not old or not new or old == new:
@@ -1814,7 +1885,9 @@ class TrackerStore:
     def notes(self, *, status: str = "", tag: str = "", text: str = "", offset: int = 0, limit: int = 50) -> tuple[int, list[tuple[str, dict[str, Any], int]]]:
         where: list[str] = []
         args: list[Any] = []
-        if status:
+        if status == "none":
+            where.append("coalesce(status, '') = ''")
+        elif status:
             where.append("status=?")
             args.append(status)
         if tag:

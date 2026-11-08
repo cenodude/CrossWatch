@@ -41,6 +41,8 @@ class Session:
     config_hash: str = ""
     mapping_version: str = ""
     pair: dict[str, Any] = field(default_factory=dict)
+    import_pair: dict[str, Any] | None = None
+    new_tracker: dict[str, Any] | None = None
     message: str = "Reading providers and building the sync plan…"
     summary: dict[str, Any] = field(default_factory=dict)
     progress: SyncProgress = field(default_factory=SyncProgress)
@@ -52,7 +54,7 @@ class Session:
     reads: ReviewReads | None = None
 
     def public(self):
-        return dict(ok=True, id=self.id, pair_id=self.pair_id, pair=self.pair, status=self.status,
+        return dict(ok=True, id=self.id, pair_id=self.pair_id, pair=self.pair, status=self.status, tracker_import=self.import_pair is not None,
                     revision=self.revision, message=self.message, progress=self.progress.public(),
                     counts=dict(self.store.counts) if self.store else dict(changes=0, conflicts=0, attention=0, selected=0),
                     features=list(self.store.features) if self.store else [], selection_version=self.selection_version,
@@ -67,6 +69,13 @@ class Session:
         if self.reads is not None:
             self.reads.close()
             self.reads = None
+
+    def config(self, cfg: dict[str, Any]) -> dict[str, Any]:
+        if self.new_tracker is not None:
+            from services.tracker_import import preview_config
+
+            cfg = preview_config(cfg, self.new_tracker)
+        return {**cfg, "pairs": [deepcopy(self.import_pair)]} if self.import_pair is not None else cfg
 
 
 def prune():
@@ -140,6 +149,9 @@ def _empty_review(plan, summary):
 
 
 def refresh(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, restart_progress=True, corrections=(), complete_empty=True, reread=True):
+    cfg = session.config(cfg)
+    if session.import_pair is not None:
+        complete_empty = False
     if not reread and session.reads is None:
         session.status = "error"
         session.message = "No captured provider data is available. Refresh provider data first."
@@ -225,6 +237,8 @@ def _apply_needs_review(session, selected, reason):
 
 
 def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
+    original_cfg = cfg
+    cfg = session.config(cfg)
     from api import syncAPI
 
     if session.reads is None:
@@ -241,7 +255,7 @@ def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
         _apply_needs_review(session, selected, "Settings changed. Refresh provider data first.")
         return
     if mapping_version(cfg) != session.mapping_version:
-        refresh(session, cfg, session.plan.choices, restart_progress=False, complete_empty=False, reread=False)
+        refresh(session, original_cfg, session.plan.choices, restart_progress=False, complete_empty=False, reread=False)
         _apply_needs_review(session, selected, "Mappings changed.")
         return
     version = mapping_version(cfg)
@@ -262,6 +276,18 @@ def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
     finally:
         if session.store is not store:
             store.close()
+    if session.new_tracker is not None and session.import_pair is not None:
+        from services.tracker_import import create_preview_tracker
+
+        try:
+            cfg = create_preview_tracker(session.new_tracker, session.import_pair, session.config_hash)
+        except ValueError as exc:
+            session.status = "review"
+            _apply_needs_review(session, selected, str(exc))
+            return
+        session.new_tracker = None
+        cfg = session.config(cfg)
+        session.config_hash = fingerprint(cfg)
     execution = InteractivePlan(preview=False, selected=selected, choices=dict(plan.choices), planned_at=session.planned_at, record_rows=False, reads=session.reads,
                                 allowed_features=set(plan.completed_features))
     def progress(event):
@@ -273,7 +299,8 @@ def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
     execution.valid = lambda: mapping_version(cfg) == session.mapping_version
     execution.config_hash = fingerprint(cfg)
     try:
-        syncAPI._run_pairs_thread_entry("interactive-" + session.id, {"pair_id": session.pair_id}, interactive=execution)
+        overrides = {"import_pair": session.import_pair, "source": "tracker-import"} if session.import_pair is not None else {"pair_id": session.pair_id}
+        syncAPI._run_pairs_thread_entry("interactive-" + session.id, overrides, interactive=execution)
     finally:
         with LOCK:
             if session.reads is not None:
@@ -284,6 +311,16 @@ def apply(session: Session, cfg: dict[str, Any], selected: set[str]):
             session.report = report.finish(session, execution, execution.result)
     with LOCK:
         result = execution.result
+        if session.import_pair is not None and result is not None:
+            from cw_platform.config_base import CONFIG_BASE
+            from cw_platform.tracker_store import TrackerStore, tracker_context
+            from services.tracker_import import remember_source
+
+            pair = session.import_pair
+            try:
+                remember_source(TrackerStore(tracker_context(cfg, CONFIG_BASE(), pair["target_instance"])[1]), pair["source"], pair["source_instance"], {"features": {row["feature"]: row for row in report.features}})
+            except Exception:
+                LOG.exception("Could not save Tracker import source")
         session.summary = dict(result or {})
         session.summary["not_applied"] = len(selected - execution.seen)
         session.status = "complete" if result is not None else "error"

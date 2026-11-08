@@ -71,6 +71,23 @@ def test_admin_still_sees_every_tracker(cfg):
     assert api.get("/api/tracker/import/sources").json()["can_create"] is True
 
 
+def test_bulk_title_changes_enforce_instance_access_and_write_permission(cfg):
+    own = TrackerStore(trackerAPI.tracker_context(cfg, trackerAPI.CONFIG, "CW-P01")[1])
+    other = TrackerStore(trackerAPI.tracker_context(cfg, trackerAPI.CONFIG, "CW-P02")[1])
+    key = "movie:tmdb:949"
+    for store in (own, other):
+        store.save_note(key, {"type": "movie", "title": "Heat", "status": "watching"})
+    payload = {"keys": [key], "action": "remove", "provider_instance": "CW-P02"}
+    assert _client(ANN).post("/api/tracker/notes/bulk", json=payload).status_code == 403
+    assert other.note(key) is not None
+    payload["provider_instance"] = "CW-P01"
+    readonly = {**ANN, "permissions": {"write": False}}
+    assert not crosswatch._non_admin_permission_allowed(readonly, "/api/tracker/notes/bulk", "POST")
+    assert own.note(key) is not None
+    assert _client(ANN).post("/api/tracker/notes/bulk", json=payload).status_code == 200
+    assert own.note(key) is None and other.note(key) is not None
+
+
 def test_admin_viewing_as_a_profile_gets_that_scope(cfg, monkeypatch):
     from cw_platform import config_base
 
@@ -107,7 +124,7 @@ def test_bell_and_import_only_show_the_users_own_instances(cfg, monkeypatch):
 @pytest.mark.parametrize(("permissions", "allowed"), [({"write": True}, True), ({"write": False}, False), ({"monitor": True}, False)])
 def test_tracker_api_is_open_to_managed_users_with_write_access(permissions, allowed):
     user = {"is_admin": False, "permissions": permissions}
-    for method, path in (("GET", "/api/tracker/summary"), ("POST", "/api/tracker/edit")):
+    for method, path in (("GET", "/api/tracker/summary"), ("POST", "/api/tracker/edit"), ("POST", "/api/tracker/notes/bulk")):
         assert appAuthAPI.non_admin_api_allowed(path, method)
         assert crosswatch._non_admin_permission_allowed(user, path, method) is allowed
 
@@ -140,3 +157,21 @@ def test_profile_header_loads_authorized_assistant_and_tracker_feeds(monkeypatch
         html = ui_frontend.get_profile_html({"is_admin": False, "username": "user", "profile_id": profile})
         assert ("tracker-notifications.js" in html) is allowed
         assert "assistant-settings.js" not in html
+
+
+def test_history_bulk_status_respects_tracker_access_and_write_permission(cfg):
+    payload = {"keys": ["tmdb:949"], "status": "completed", "provider_instance": "CW-P02"}
+    assert _client(ANN).post("/api/tracker/titles/status", json=payload).status_code == 403
+    readonly = {**ANN, "permissions": {"write": False}}
+    assert not crosswatch._non_admin_permission_allowed(readonly, "/api/tracker/titles/status", "POST")
+    payload["provider_instance"] = "CW-P01"
+    assert _client(ANN).post("/api/tracker/titles/status", json=payload).status_code == 200
+    assert TrackerStore(trackerAPI.tracker_context(cfg, trackerAPI.CONFIG, "CW-P01")[1]).note("movie:tmdb:949")["status"] == "completed"
+    assert TrackerStore(trackerAPI.tracker_context(cfg, trackerAPI.CONFIG, "CW-P02")[1]).note("movie:tmdb:949") is None
+
+
+def test_managed_users_cannot_create_trackers_through_import_preview(cfg):
+    before = dict(cfg["crosswatch"]["instances"])
+    response = _client(ANN).post("/api/tracker/import/preview", json={"provider_instance": "new", "source": "TRAKT", "source_instance": "TRAKT-P01", "features": ["history"]})
+    assert response.status_code == 403
+    assert cfg["crosswatch"]["instances"] == before

@@ -23,6 +23,7 @@ from cw_platform.config_base import load_config
 from cw_platform.history_events import history_sync_key
 from cw_platform.id_map import canonical_key, coalesce_ids, minimal as id_minimal
 from cw_platform.modules_registry import load_sync_ops
+from cw_platform.tracker_history_identity import event_identities, type_origins
 from cw_platform.provider_instances import (
     build_provider_config_view,
     list_instance_ids,
@@ -1111,6 +1112,7 @@ def _display_title(item: Mapping[str, Any], key: str = "") -> str:
 
 def _shape_rows(raw_rows: list[dict[str, Any]], cfg: Mapping[str, Any], target_instance: str, source: str) -> list[dict[str, Any]]:
     existing = _existing_keys(cfg, target_instance)
+    corrected = type_origins(existing.get("history") or {})
     seen: set[tuple[str, str]] = set()
     rows: list[dict[str, Any]] = []
     for i, row in enumerate(raw_rows):
@@ -1130,6 +1132,8 @@ def _shape_rows(raw_rows: list[dict[str, Any]], cfg: Mapping[str, Any], target_i
             status, reason = STATUS_INVALID, "missing_watched_at"
         elif feature == "ratings" and item.get("rating") in (None, ""):
             status, reason = STATUS_INVALID, "missing_rating"
+        elif feature == "history" and corrected and not event_identities(item).isdisjoint(corrected):
+            status, reason = STATUS_EXISTS, "already_exists"
         elif (feature, key) in seen:
             status, reason = STATUS_DUPLICATE, "duplicate_in_file"
         else:

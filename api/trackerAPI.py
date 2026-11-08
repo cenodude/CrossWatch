@@ -16,8 +16,9 @@ from fastapi.responses import JSONResponse
 from cw_platform.access_policy import request_user, user_can_access_instance
 from cw_platform.config_base import CONFIG, load_config
 from cw_platform.history_events import history_epoch_from_item
-from cw_platform.id_map import canonical_key, minimal as id_minimal
+from cw_platform.id_map import ID_KEYS, canonical_key, minimal as id_minimal
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id, sanitize_instance_label
+from cw_platform.tracker_history_identity import TYPE_ORIGINS, event_identities
 from cw_platform.tracker_store import (
     ATTENTION_CODES,
     FEATURES,
@@ -325,7 +326,7 @@ def _edited(feature: str, item: Mapping[str, Any], changes: Mapping[str, Any]) -
 
 
 def _item_key(feature: str, key: str, before: Mapping[str, Any], after: Mapping[str, Any]) -> str:
-    identity = any(before.get(field) != after.get(field) for field in _IDENTITY)
+    identity = any(before.get(field) != after.get(field) for field in (*_IDENTITY, "type"))
     redated = feature == "history" and before.get("watched_at") != after.get("watched_at")
     if not identity and not redated:
         return key
@@ -608,7 +609,10 @@ def tracker_items(
     feature: str = Query("history"),
     provider_instance: str | None = Query("default"),
     q: str = Query("", max_length=200),
+    status: str = Query(""),
+    tag: str = Query("", max_length=40),
     media: str = Query(""),
+    duplicates: bool = Query(False),
     sort: str = Query("recent"),
     offset: int = Query(0, ge=0),
     limit: int = Query(60, ge=1, le=200),
@@ -616,6 +620,8 @@ def tracker_items(
     health: str = Query(""),
     month: str = Query("", pattern=r"^(\d{4}-(0[1-9]|1[0-2]))?$"),
 ) -> Any:
+    if status and status not in (*NOTE_STATUSES, "none"):
+        return _error("invalid_status", 400)
     if feature not in FEATURES:
         return _error("unknown_feature", 400)
     _, inst, store = _store(provider_instance, request)
@@ -624,6 +630,9 @@ def tracker_items(
             total, rows = store.query(
                 feature,
                 text=q,
+                status=status,
+                duplicates=duplicates,
+                tag=tag,
                 media=media if media in ("movie", "show") else "",
                 sort=sort if sort in ("recent", "oldest", "title") else "recent",
                 offset=offset,
@@ -673,13 +682,18 @@ def tracker_months(
     feature: str = Query("history"),
     provider_instance: str | None = Query("default"),
     q: str = Query("", max_length=200),
+    status: str = Query(""),
+    tag: str = Query("", max_length=40),
     media: str = Query(""),
+    duplicates: bool = Query(False),
 ) -> Any:
+    if status and status not in (*NOTE_STATUSES, "none"):
+        return _error("invalid_status", 400)
     if feature not in FEATURES:
         return _error("unknown_feature", 400)
     _, inst, store = _store(provider_instance, request)
     try:
-        months = store.months(feature, text=q, media=media if media in ("movie", "show") else "")
+        months = store.months(feature, duplicates=duplicates, text=q, status=status, tag=tag, media=media if media in ("movie", "show") else "")
     except TrackerUnreadable:
         return _unreadable()
     return {"ok": True, "provider_instance": inst, "feature": feature, "months": months}
@@ -723,6 +737,31 @@ def tracker_edit(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
 _IDENTITY_FIELDS = ("type", "title", "year", "season", "episode", "series_title", "series_year", "ids", "show_ids", "part")
 
 
+def _matched_external_ids(item: Mapping[str, Any], cfg: Mapping[str, Any]) -> dict[str, Any]:
+    out = dict(item)
+    typ = str(item.get("type") or "").lower()
+    field = "show_ids" if typ in ("episode", "season") else "ids"
+    ids = dict(_map(item.get(field)))
+    tmdb = str(ids.get("tmdb") or "")
+    if not _tmdb_key(cfg) or not _NUMERIC.fullmatch(tmdb) or typ not in ("movie", "show", "anime", "episode", "season"):
+        return out
+    entity = "movie" if typ == "movie" else "tv"
+    try:
+        external = _tmdb_provider().get_response(
+            f"https://api.themoviedb.org/3/{entity}/{tmdb}/external_ids", timeout=8, max_retries=0,
+        ).data
+        if not isinstance(external, Mapping) or str(external.get("id")) != tmdb:
+            raise ValueError("Invalid external IDs response")
+    except Exception as exc:
+        raise HTTPException(502, "Could not verify the match's external IDs with TMDB. Try again.") from exc
+    for namespace in ("imdb", "tvdb") if entity == "tv" else ("imdb",):
+        value = str(external.get(f"{namespace}_id") or "")
+        if (_IMDB if namespace == "imdb" else _NUMERIC).fullmatch(value):
+            ids[namespace] = value
+    out[field] = ids
+    return out
+
+
 @router.post("/replace", dependencies=_READY)
 def tracker_replace(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
     feature = str(payload.get("feature") or "")
@@ -733,13 +772,26 @@ def tracker_replace(request: Request, payload: dict[str, Any] = Body(...)) -> An
         return blocked
     if not key or not isinstance(corrected, Mapping) or not isinstance(corrected.get("ids"), Mapping):
         return _error("invalid_ids", 400)
-    _, inst, store = _store(payload.get("provider_instance"), request)
+    cfg, inst, store = _store(payload.get("provider_instance"), request)
     try:
         current = store.item(feature, key)
         if not isinstance(current, Mapping):
             return _error("not_found", 404)
+        converting = current.get("type") != corrected.get("type")
+        if converting and (feature != "history" or current.get("type") not in ("episode", "show") or corrected.get("type") != "movie"):
+            return _error("unsupported_type_change", 400)
+        if converting and not event_identities(current):
+            return _error("missing_watch_identity", 400)
+        corrected = _matched_external_ids(corrected, cfg)
         updated = {k: v for k, v in current.items() if k not in _IDENTITY_FIELDS}
         updated.update({k: corrected[k] for k in _IDENTITY_FIELDS if corrected.get(k) not in (None, "", {})})
+        if converting:
+            tmdb = str(_map(updated.get("ids")).get("tmdb") or "")
+            if not _NUMERIC.fullmatch(tmdb) or int(tmdb) < 1:
+                return _error("invalid_ids", 400)
+            for field in (*ID_KEYS, "season", "episode", "show_ids", "series_title", "series_year", "show_title", "_cw_anime_map", "_cw_episode_order", "_anime_absolute", "_simkl_episode_number", "_trakt_number_abs", "simkl_bucket", "anime_type"):
+                updated.pop(field, None)
+            updated[TYPE_ORIGINS] = sorted(set(current.get(TYPE_ORIGINS) or []) | event_identities(current))
         if updated == dict(current):
             return _error("no_changes", 400)
         new_key = _item_key(feature, key, current, updated)
@@ -805,7 +857,9 @@ def tracker_edit_title(request: Request, payload: dict[str, Any] = Body(...)) ->
     key = str(payload.get("key") or "")
     if not show and (feature not in FEATURES or not key):
         return _error("not_found", 404)
-    _, inst, store = _store(payload.get("provider_instance"), request)
+    cfg, inst, store = _store(payload.get("provider_instance"), request)
+    if not isinstance(changes, Mapping):
+        item = _matched_external_ids(item, cfg)
     try:
         with store.mutation():
             if show:
@@ -823,6 +877,8 @@ def tracker_edit_title(request: Request, payload: dict[str, Any] = Body(...)) ->
                         per["show_ids"] = per.pop("ids")
                     updated = _edited(name, data, per)
                 else:
+                    if (data.get("type") == "movie") != (item.get("type") == "movie"):
+                        return _error("type_change_requires_record", 400)
                     updated = _retitled(data, item)
                 if updated != data:
                     rows.append((name, item_key, _item_key(name, item_key, data, updated), updated, data))
@@ -1058,6 +1114,48 @@ def tracker_import_cancel(request: Request, payload: dict[str, Any] = Body(defau
     return {"ok": True, "provider_instance": inst, "cancelled": cancelled}
 
 
+@router.post("/import/preview", dependencies=_READY)
+def tracker_import_preview(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
+    from api import interactiveSyncAPI as review_api
+    from services import interactive_sync as review
+
+    blocked = _write_guard()
+    if blocked is not None:
+        return blocked
+    new_tracker = None
+    if payload.get("provider_instance") == "new":
+        if _user(request) is not None:
+            return _error("profile_scope_denied", 403)
+        cfg = _cfg()
+        try:
+            new_tracker = tracker_import.preview_tracker(cfg, payload.get("name"))
+        except ValueError as exc:
+            return _error(str(exc), 400)
+        inst = new_tracker["id"]
+    else:
+        cfg, inst, _ = _store(payload.get("provider_instance"), request)
+    if not user_can_access_instance(cfg, _user(request), payload.get("source"), payload.get("source_instance")):
+        return _error("profile_scope_denied", 403)
+    try:
+        features = payload.get("features")
+        pair, _ = tracker_import.prepare(
+            tracker_import.preview_config(cfg, new_tracker) if new_tracker is not None else cfg,
+            source=payload.get("source"), source_instance=payload.get("source_instance"), instance=inst,
+            features=features if isinstance(features, list) else [], dropped=coerce_bool(payload.get("dropped")),
+        )
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    with review.LOCK:
+        review.prune()
+        if len(review.SESSIONS) >= review.MAX_SESSIONS:
+            return _error("too_many_reviews", 429)
+        session = review.Session(pair_id=pair["id"], owner=review_api.owner(request), import_pair=pair, new_tracker=new_tracker)
+        session.pair = {k: pair.get(k) for k in ("source", "target", "source_instance", "target_instance", "mode", "name")}
+        review_api.launch(session, review.refresh, cfg, {})
+        review.SESSIONS[session.id] = session
+        return {"ok": True, "provider_instance": inst, "session": session.public()}
+
+
 _ADD_FEATURES = ("history", "watchlist", "ratings", "collection")
 _MAX_ADD = 200
 
@@ -1172,15 +1270,19 @@ def tracker_shows(
     request: Request,
     provider_instance: str | None = Query("default"),
     q: str = Query("", max_length=200),
+    status: str = Query(""),
+    tag: str = Query("", max_length=40),
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     hide_dropped: bool = Query(False),
 ) -> Any:
+    if status and status not in (*NOTE_STATUSES, "none"):
+        return _error("invalid_status", 400)
     _, inst, store = _store(provider_instance, request)
     try:
         with store.session():
-            hidden = {k[5:] for k in store.status_keys("dropped") if k.startswith("show:")} if hide_dropped else set()
-            total, shows = store.show_summaries(text=q, offset=offset, limit=limit, exclude=hidden)
+            hidden = {k[5:] for k in store.status_keys("dropped") if k.startswith("show:")} if hide_dropped and not status else set()
+            total, shows = store.show_summaries(text=q, offset=offset, limit=limit, exclude=hidden, status=status, tag=tag)
             notes = store.notes_for(f"show:{show['key']}" for show in shows)
     except TrackerUnreadable:
         return _unreadable()
@@ -1204,7 +1306,7 @@ def tracker_notes(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ) -> Any:
-    if status and status not in NOTE_STATUSES:
+    if status and status not in (*NOTE_STATUSES, "none"):
         return _error("invalid_status", 400)
     _, inst, store = _store(provider_instance, request)
     try:
@@ -1253,6 +1355,72 @@ def tracker_note_save(request: Request, payload: dict[str, Any] = Body(...)) -> 
     except TrackerConflict as exc:
         return _error(exc.code, 409, key=exc.key)
     return {"ok": True, "provider_instance": inst, "key": key, "batch": batch, "note": _note_out(key, store.note(key))}
+
+
+@router.post("/notes/bulk", dependencies=_READY)
+def tracker_notes_bulk(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
+    if _pair_scoped():
+        return _error("pair_scoped", 409)
+    raw = payload.get("keys")
+    if not isinstance(raw, list) or not raw:
+        return _error("no_changes", 400)
+    if len(raw) > _MAX_DELETE:
+        return _error("too_many", 400, limit=_MAX_DELETE)
+    if any(not isinstance(key, str) or not _NOTE_KEY.fullmatch(key) for key in raw):
+        return _error("invalid_note_key", 400)
+    action = payload.get("action")
+    if action not in ("status", "remove"):
+        return _error("unknown_action", 400)
+    status = payload.get("status") if action == "status" else ""
+    if not isinstance(status, str) or status not in ("", *NOTE_STATUSES):
+        return _error("invalid_status", 400)
+    _, inst, store = _store(payload.get("provider_instance"), request)
+    try:
+        batch, count = store.change_notes(raw, status=status, remove=action == "remove")
+    except TrackerUnreadable:
+        return _unreadable()
+    except KeyError as exc:
+        return _error("not_found", 404, key=str(exc.args[0]))
+    return {"ok": True, "provider_instance": inst, "batch": batch, "count": count}
+
+
+@router.post("/titles/status", dependencies=_READY)
+def tracker_titles_status(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
+    if _pair_scoped():
+        return _error("pair_scoped", 409)
+    keys, status = payload.get("keys"), payload.get("status")
+    if not isinstance(keys, list) or not keys or len(keys) > _MAX_DELETE:
+        return _error("too_many" if isinstance(keys, list) and len(keys) > _MAX_DELETE else "no_changes", 400)
+    if any(not isinstance(key, str) or not key or len(key) > 1024 for key in keys):
+        return _error("invalid_ids", 400)
+    if not isinstance(status, str) or status not in ("", *NOTE_STATUSES):
+        return _error("invalid_status", 400)
+    feature = payload.get("feature", "history")
+    shows = payload.get("view") == "shows"
+    if feature not in FEATURES or (shows and feature != "history"):
+        return _error("unknown_feature", 400)
+    _, inst, store = _store(payload.get("provider_instance"), request)
+    try:
+        with store.mutation(), store.session():
+            defaults: dict[str, dict[str, Any]] = {}
+            for key in dict.fromkeys(keys):
+                if shows:
+                    if not _NOTE_KEY.fullmatch(f"show:{key}"):
+                        return _error("invalid_note_key", 400)
+                    rows = store.related(**_show_identity(key), feature="history")
+                    item = rows[0][2] if rows else None
+                else:
+                    item = store.item(feature, key)
+                if not isinstance(item, Mapping):
+                    return _error("not_found", 404, key=key)
+                ident = _show_identity(key) if shows else _identity_of(item, key)
+                note_key = _title_key(ident)
+                defaults[note_key] = {"type": "show" if ident["show"] else "movie", "title": item.get("series_title") if item.get("type") in ("episode", "season") else item.get("title"),
+                                      "year": item.get("series_year") if item.get("type") in ("episode", "season") else item.get("year"), "tmdb": ident["tmdb"] or None}
+            batch, count = store.change_notes(defaults, status=status, defaults=defaults)
+    except TrackerUnreadable:
+        return _unreadable()
+    return {"ok": True, "provider_instance": inst, "batch": batch, "count": count}
 
 
 @router.post("/note-fields", dependencies=_READY)

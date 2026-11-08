@@ -44,10 +44,13 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
     <div class="ie-apply"><div><strong id="pr-selected"></strong><p>Only selected, valid watch events are imported. Events already in the tracker are skipped.</p></div><button class="ie-button ie-primary" id="pr-import">Import selected history</button></div>
   </section>
   <dialog id="pr-match" class="cw-page-panel pr-match"><form method="dialog">
-    <h2>Match recovered history</h2><p id="pr-match-original"></p><p>For episodes, enter the show's IDs and the season and episode numbers.</p>
-    <div class="ie-fields"><label class="ie-field"><span>Title / series</span><input name="title" required maxlength="512"></label>
+    <h2>Match recovered history</h2><p id="pr-match-original"></p><p>For episodes, use the show's IDs and episode numbers. To change media type, search and select a match. Saving updates this review; nothing is imported yet.</p>
+    <div class="ie-fields"><label class="ie-field"><span id="pr-match-type-label">Media type</span><select id="pr-match-type" name="media_type" data-cw-native-select="true"><option value="movie">Movie</option><option value="episode">Episode</option></select></label><label class="ie-field"><span>Title / series</span><input name="title" required maxlength="512"></label>
+    <label class="ie-field"><span id="pr-match-catalog-label">Search provider</span><select id="pr-match-catalog" name="catalog" data-cw-native-select="true"></select></label></div>
+    <div class="pr-actions"><button type="button" class="ie-button" id="pr-match-search">Search titles</button></div><div id="pr-match-results" class="pr-actions" aria-live="polite"></div>
+    <div class="ie-fields">
     ${["tmdb","tvdb","imdb","season","episode"].map(key => `<label class="ie-field"><span>${({tmdb:"TMDb ID",tvdb:"TVDB ID",imdb:"IMDb ID",season:"Season",episode:"Episode"})[key]}</span><input name="${key}" maxlength="20" ${["season","episode"].includes(key) ? 'type="number" min="0"' : ''}></label>`).join("")}</div>
-    <p id="pr-match-error" role="alert"></p><div class="pr-actions"><button class="ie-button" value="cancel">Cancel</button><button class="ie-button ie-primary" id="pr-match-save" value="save">Save match</button></div>
+    <p id="pr-match-error" role="alert"></p><div class="pr-actions"><button class="ie-button" value="cancel" formnovalidate>Cancel</button><button class="ie-button ie-primary" id="pr-match-save" value="save">Save match</button></div>
   </form></dialog>`;
   const $ = selector => host.querySelector(selector);
   const lifetime = new AbortController();
@@ -57,7 +60,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
   let otherRecovery = false;
   let busy = false, reading = false, loading = false, all = false, chosen = new Set(), excluded = new Set();
   let timer, searchTimer, sequence = 0, editing = null, receipt = null, matchingWorkspace = null;
-  let pollSequence = 0, stoppingRecovery = false;
+  let pollSequence = 0, stoppingRecovery = false, matchSequence = 0, matchQuery = "", matchResults = [];
   async function request(path, body, method = body ? "POST" : "GET", signal = lifetime.signal) {
     const response = await fetch(api + path, {method, signal,
       ...(body ? {headers:{"Content-Type":"application/json"},body:JSON.stringify(body)} : {})});
@@ -346,13 +349,62 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
       });
     } catch(error) {if(!lifetime.signal.aborted)message(error.message,true);busy=false;controls();}
   }
-  function edit(row) {
+  function matchTypeChanged(clear = true) {
+    const form = $("#pr-match form"), episode = form.elements.media_type.value === "episode";
+    ++matchSequence;matchQuery="";matchResults=[];$("#pr-match-results").innerHTML="";
+    $("#pr-match-error").textContent="";
+    $("#pr-match-search").disabled=!form.elements.catalog.value;
+    for (const key of ["season","episode"]) {
+      form.elements[key].closest("label").hidden=!episode;
+      form.elements[key].required=episode;
+    }
+    if (clear) for (const key of ["tmdb","tvdb","imdb"]) form.elements[key].value="";
+  }
+  async function edit(row) {
     editing=row; const form=$("#pr-match form"), ids=row.media_type === "episode" ? row.show_ids : row.ids;
+    form.elements.media_type.value=row.media_type;
+    form.elements.media_type.dispatchEvent(new Event("change"));
+    form.elements.catalog.innerHTML="";
     for(const key of ["title","tmdb","tvdb","imdb","season","episode"]) form.elements[key].value = key === "title" ? row.original_title || row.title : ["season","episode"].includes(key) ? row[key] ?? "" : ids?.[key] || "";
-    for(const key of ["season","episode"]) form.elements[key].closest("label").hidden=row.media_type !== "episode";
+    matchTypeChanged(false);
     $("#pr-match-original").textContent=`Original Plex record: ${row.original_title}`;
     $("#pr-match-error").textContent="";$("#pr-match").showModal();
+    try {
+      const context=await request(`/${job.id}/match-groups?${new URLSearchParams({revision:job.revision})}`);
+      if(editing!==row || !$("#pr-match").open)return;
+      form.elements.catalog.innerHTML=context.catalogs.map(c=>option(c.id,c.label)).join("");
+      $("#pr-match-search").disabled=!context.catalogs.length;
+      if(!context.catalogs.length)$("#pr-match-error").textContent="Configure a search provider or TMDb metadata key to change media type.";
+    } catch(error) {if(editing===row && $("#pr-match").open)$("#pr-match-error").textContent=error.message;}
   }
+  on($("#pr-match form").elements.media_type,"change",()=>matchTypeChanged());
+  on($("#pr-match form").elements.catalog,"change",()=>matchTypeChanged(false));
+  on($("#pr-match"),"close",()=>{++matchSequence;});
+  on($("#pr-match-search"),"click",async()=>{
+    const form=$("#pr-match form"), query=form.elements.title.value.trim(), ticket=++matchSequence;
+    matchQuery="";matchResults=[];$("#pr-match-results").innerHTML="";
+    if(!query){$("#pr-match-error").textContent="Enter a title to search.";return;}
+    if(query.length>200){$("#pr-match-error").textContent="Use a search title of 200 characters or fewer.";return;}
+    $("#pr-match-search").disabled=true;$("#pr-match-error").textContent="Searching…";
+    try {
+      const result=await request(`/${job.id}/match-search?${new URLSearchParams({revision:job.revision,row_id:editing.id,
+        q:query,catalog:form.elements.catalog.value,media_type:form.elements.media_type.value})}`);
+      if(ticket!==matchSequence)return;
+      matchQuery=query;matchResults=result.results;
+      $("#pr-match-results").innerHTML=matchResults.map((item,index)=>`<button type="button" class="ie-button" data-match-result="${index}" ${item.mapping_unavailable ? "disabled" : ""}>${esc(item.title)}${item.year ? ` (${esc(item.year)})` : ""}${item.mapping_unavailable ? ` · ${esc(item.mapping_unavailable)}` : ""}</button>`).join("");
+      $("#pr-match-error").textContent=matchResults.length ? "Select the correct search result." : "No matches. Try another title or search provider.";
+    } catch(error) {if(ticket===matchSequence)$("#pr-match-error").textContent=error.message;}
+    finally {if(ticket===matchSequence)$("#pr-match-search").disabled=false;}
+  });
+  on($("#pr-match-results"),"click",event=>{
+    const button=event.target.closest("[data-match-result]");
+    if(!button || button.disabled)return;
+    const item=matchResults[Number(button.dataset.matchResult)], form=$("#pr-match form");
+    if(!item || item.mapping_unavailable)return;
+    form.elements.title.value=item.title;
+    for(const key of ["tmdb","tvdb","imdb"])form.elements[key].value=item.ids?.[key] || "";
+    $("#pr-match-results").innerHTML="";$("#pr-match-error").textContent="Match selected. Review the fields, then save.";
+  });
   on($("#pr-match form"),"submit",async event=>{
     if (event.submitter?.value !== "save") return;
     event.preventDefault(); const form=event.currentTarget;
@@ -360,7 +412,8 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
     try {
       const values=Object.fromEntries(new FormData(form));
       values.season=values.season === "" ? null : Number(values.season);values.episode=values.episode === "" ? null : Number(values.episode);
-      job=await request(`/${job.id}/match`,{...values,row_id:editing.id,revision:job.revision});
+      if(values.media_type==="movie")values.season=values.episode=null;
+      job=await request(`/${job.id}/match`,{...values,match_query:matchQuery,row_id:editing.id,revision:job.revision});
       $("#pr-match").close();all=false;chosen.clear();excluded.clear();await page(offset);
     } catch(error) {$("#pr-match-error").textContent=error.message;}
     finally {$("#pr-match-save").disabled=false;}

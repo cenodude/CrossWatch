@@ -48,6 +48,15 @@ test("show and note cards preserve their detail references", () => {
   assert.equal(render({view:"history"}),"empty list");
 });
 
+test("My titles cards have independent bulk selection without opening their details", () => {
+  const html = render({view:"titles",noteRows:[{key:"note",title:"Note"},{key:"other",title:"Other"}],picked:new Set(["note"])});
+  assert.match(html,/data-trk-pick="0" checked/);
+  assert.match(html,/data-trk-pick="1" aria-label="Select Other"/);
+  assert.equal((html.match(/is-picked/g)||[]).length,1);
+  assert.doesNotMatch(html,/is-selected/);
+  assert.match(render({view:"shows",shows:[{key:"show",title:"Show"}]}),/data-trk-pick="0"/);
+});
+
 function preferences(initial = {}) {
   const prefs = source.slice(source.indexOf("  function loadView("), source.indexOf("  async function getJSON("));
   const click = source.slice(source.indexOf("      if (layout) {"), source.indexOf('      const view = event.target.closest("[data-trk-view]")'));

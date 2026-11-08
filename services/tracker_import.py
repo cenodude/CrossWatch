@@ -8,11 +8,14 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
+from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from cw_platform.modules_registry import load_sync_ops, provider_display_label, sync_provider_names, sync_provider_supports_feature
 from cw_platform.provider_instances import (
     build_provider_config_view,
+    apply_instance_defaults,
     get_provider_block,
     list_instance_ids,
     normalize_instance_id,
@@ -145,17 +148,8 @@ def result(run: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def start(
-    cfg: Mapping[str, Any],
-    store: TrackerStore,
-    *,
-    source: Any,
-    source_instance: Any,
-    instance: Any,
-    features: Iterable[Any],
-    launch: Launch,
-    dropped: bool = False,
-) -> dict[str, Any]:
+def prepare(cfg: Mapping[str, Any], *, source: Any, source_instance: Any, instance: Any,
+            features: Iterable[Any], dropped: bool = False) -> tuple[dict[str, Any], dict[str, Any]]:
     src = str(source or "").strip().upper()
     src_inst = normalize_instance_id(source_instance)
     inst = normalize_instance_id(instance)
@@ -171,6 +165,68 @@ def start(
     if not picked or wanted - set(picked) or any(f not in row["features"] for f in picked):
         raise ValueError("unsupported_feature")
     tag_dropped = bool(dropped and row.get("dropped") and "history" in picked)
+    return pair_for(src, src_inst, inst, picked, dropped=tag_dropped), row
+
+
+def preview_tracker(cfg: dict[str, Any], name: Any) -> dict[str, Any]:
+    from api.providerInstancesAPI import _next_profile_id
+
+    draft = deepcopy(cfg)
+    instances = draft.setdefault("crosswatch", {}).setdefault("instances", {})
+    instance = _next_profile_id(TARGET, instances, draft)
+    if not instance:
+        raise ValueError("profile_limit_reached")
+    instances[instance] = {"connected": True, "label": sanitize_instance_label(name) or "Tracker import"}
+    apply_instance_defaults(draft, TARGET, instance)
+    block = instances[instance]
+    if Path(block["root_dir"]).exists():
+        raise ValueError("The new Tracker storage already exists. Create a Tracker in Settings and review into it instead.")
+    return {"id": instance, "block": block}
+
+
+def preview_config(cfg: dict[str, Any], tracker: dict[str, Any]) -> dict[str, Any]:
+    draft = deepcopy(cfg)
+    instances = draft.setdefault("crosswatch", {}).setdefault("instances", {})
+    if tracker["id"] in instances:
+        raise ValueError("The proposed Tracker ID is now in use. Start a new import review.")
+    instances[tracker["id"]] = deepcopy(tracker["block"])
+    return draft
+
+
+def create_preview_tracker(tracker: dict[str, Any], pair: dict[str, Any], expected_hash: str) -> dict[str, Any]:
+    from api.providerInstancesAPI import _create_instance, _invalidate_provider_cache, _next_profile_id
+    from cw_platform.config_base import update_config
+    from cw_platform.orchestrator._interactive import fingerprint
+
+    def create(cfg):
+        draft = preview_config(cfg, tracker)
+        if fingerprint({**draft, "pairs": [pair]}) != expected_hash:
+            raise ValueError("Settings changed. Refresh the import review before applying.")
+        instances = cfg.setdefault("crosswatch", {}).setdefault("instances", {})
+        if _next_profile_id(TARGET, instances, cfg) != tracker["id"] or Path(tracker["block"]["root_dir"]).exists():
+            raise ValueError("The proposed Tracker destination changed. Start a new import review.")
+        _create_instance(cfg, TARGET, instances, tracker["id"], {"template": tracker["block"]})
+
+    cfg, _ = update_config(create)
+    _invalidate_provider_cache(TARGET)
+    return cfg
+
+
+def start(
+    cfg: Mapping[str, Any],
+    store: TrackerStore,
+    *,
+    source: Any,
+    source_instance: Any,
+    instance: Any,
+    features: Iterable[Any],
+    launch: Launch,
+    dropped: bool = False,
+) -> dict[str, Any]:
+    pair, row = prepare(cfg, source=source, source_instance=source_instance, instance=instance, features=features, dropped=dropped)
+    src, src_inst, inst = pair["source"], pair["source_instance"], pair["target_instance"]
+    picked = list(pair["features"])
+    tag_dropped = bool(dropped and row.get("dropped") and "history" in picked)
     key = str(store.db_path)
     with _LOCK:
         if _ACTIVE:
@@ -184,7 +240,6 @@ def start(
         _ACTIVE[key] = job
     try:
         store.save_job(JOB, job)
-        pair = pair_for(src, src_inst, inst, picked, dropped=tag_dropped)
         launched = launch(pair, job["run_id"], lambda run: finish(store, job, run))
     except BaseException:
         with _LOCK:
@@ -197,6 +252,36 @@ def start(
         return {"ok": False, "error": str(launched.get("error") or "sync_running")}
     with _LOCK:
         return {"ok": True, **job}
+
+
+def remember_source(store: TrackerStore, source: str, instance: str, run: Mapping[str, Any]) -> None:
+    features = [f for f, counts in _map(run.get("features")).items() if f in FEATURES and (
+        int(_map(counts).get("added") or 0) > 0 or int(_map(counts).get("updated") or 0) > 0)]
+    if not features:
+        return
+    with store.mutation():
+        rows = list((store.job("import_sources") or {}).get("sources") or [])
+        previous = next((r for r in rows if r.get("source") == source and r.get("instance") == instance), {})
+        rows = [r for r in rows if r is not previous]
+        rows.append({"source": source, "instance": instance, "features": sorted(set(previous.get("features") or []) | set(features)), "last_import": time.time()})
+        store.save_job("import_sources", {"sources": rows[-64:]})
+
+
+def origin_sources(cfg: Mapping[str, Any], instance: str, feature: str) -> list[dict[str, Any]]:
+    from cw_platform.config_base import CONFIG_BASE
+    from cw_platform.tracker_store import tracker_context
+
+    store = TrackerStore(tracker_context(cfg, CONFIG_BASE(), instance)[1])
+    rows = list((store.job("import_sources") or {}).get("sources") or [])
+    last = store.job(JOB) or {}
+    if last.get("state") == "completed":
+        rows.append({"source": last.get("source"), "instance": last.get("source_instance"), "features": last.get("features") or []})
+    out = {}
+    for row in rows:
+        source, src_inst = str(row.get("source") or ""), str(row.get("instance") or "default")
+        if source and feature in (row.get("features") or []) and src_inst in _instance_ids(cfg, source):
+            out[(source, src_inst)] = {"pair_id": "", "pair_label": "Previously used for a Tracker import", "provider": source, "instance": src_inst, "cfg": cfg}
+    return list(out.values())
 
 
 def finish(store: TrackerStore, job: dict[str, Any], run: Mapping[str, Any]) -> None:
@@ -214,6 +299,8 @@ def finish(store: TrackerStore, job: dict[str, Any], run: Mapping[str, Any]) -> 
         job.update(state=state, finished_at=time.time(), **(result(run) if mine else {}))
     try:
         store.save_job(JOB, job)
+        if mine:
+            remember_source(store, str(job["source"]), str(job["source_instance"]), run)
     except Exception:
         _LOG.exception("Could not save the tracker import result")
     with _LOCK:

@@ -49,6 +49,7 @@ class MappingRequest(BaseModel):
     simkl_id: str = Field(default="", max_length=32)
     catalog: Literal["destination", "tmdb"] = "tmdb"
     item: dict[str, Any] = Field(default_factory=dict)
+    search_type: Literal["movie"] | None = None
 
 
 class BlockRequest(BaseModel):
@@ -114,9 +115,13 @@ def handle_mapping(payload, request):
     if pair:
         side = "target" if str(pair.get("source") or "").upper() == provider and normalize_instance_id(pair.get("source_instance")) == instance else "source"
         destination, target_instance = str(pair[side]).upper(), normalize_instance_id(pair.get(f"{side}_instance"))
-    row = dict(id="editor-item", key=payload.key, item=payload.original, feature=payload.feature,
+    row: dict[str, Any] = dict(id="editor-item", key=payload.key, item=payload.original, feature=payload.feature,
                source=provider, source_instance=instance, provider=destination, instance=target_instance,
                operation="add", metadata_only=not bool(pair))
+    if payload.search_type:
+        if provider != "CROSSWATCH" or pair or payload.feature != "history" or payload.original.get("type") not in ("episode", "show"):
+            raise HTTPException(400, "Media type changes are only available for individual Tracker history records")
+        row["item"] = {**payload.original, "type": payload.search_type}
     if payload.action == "catalogs":
         return {**search_catalogs(cfg, row), "episode_matching": bool(metadata_key(cfg, row)), "row": row}
     if payload.action == "search":

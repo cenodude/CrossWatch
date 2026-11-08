@@ -8,6 +8,7 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.history_events import has_history_watch, history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key
+from cw_platform.tracker_history_identity import TYPE_ORIGINS, event_identities, type_origins
 
 from ._common import (
     _capture_mode,
@@ -40,7 +41,10 @@ def _history_key(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None
 
 
 def _history_minimal(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None) -> dict[str, Any]:
-    return preserve_tracker_identity(minimal_history_item(item, fallback_key, event_mode=_rewatches_enabled(adapter)), item)
+    out = preserve_tracker_identity(minimal_history_item(item, fallback_key, event_mode=_rewatches_enabled(adapter)), item)
+    if item.get(TYPE_ORIGINS):
+        out[TYPE_ORIGINS] = item[TYPE_ORIGINS]
+    return out
 
 
 def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
@@ -178,6 +182,13 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
+def filter_cached_adds(adapter: Any, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    reader = copy(adapter)
+    reader.config = {**getattr(adapter, "config", {}), "_cw_readonly": True, "_cw_history_rewatches": True}
+    corrected = type_origins(_load_state(reader).get("items") or {})
+    return [item for item in items if event_identities(item).isdisjoint(corrected)] if corrected else items
+
+
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
     if _pair_scope() is None:
         return 0, []
@@ -189,11 +200,14 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
 
     state = _load_state(adapter)
     cur: dict[str, dict[str, Any]] = dict(state.get("items") or {})
+    corrected = type_origins(cur)
     unresolved_src: list[Mapping[str, Any]] = []
     changed = 0
 
     for obj in src:
         if not isinstance(obj, Mapping):
+            continue
+        if corrected and not event_identities(obj).isdisjoint(corrected):
             continue
         try:
             accepted = _accepted(obj)
@@ -211,6 +225,8 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
         if existing is None or (str(existing.get("watched_at") or "") <= str(accepted.get("watched_at") or "")):
             if isinstance(existing, Mapping):
                 accepted = merge_tracker_identity(existing, accepted)
+                if existing.get(TYPE_ORIGINS):
+                    accepted[TYPE_ORIGINS] = existing[TYPE_ORIGINS]
             cur[key] = _history_minimal(adapter, accepted, key)
             changed += 1
 
