@@ -428,6 +428,8 @@ class SiloWatchService:
         for row in rows:
             if str(row.get("media_item_id") or "") != cid or not row.get("completed"):
                 continue
+            if (_float(row.get("position_seconds")) or 0.0) > 0:
+                continue
             done = parse_epoch(row.get("updated_at"))
             if done is not None and done >= started - COMPLETION_SLACK_SECONDS:
                 return True
