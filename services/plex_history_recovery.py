@@ -959,7 +959,7 @@ def save_group_matches(sid: str, payload: GroupMatches, request: Request):
             for row_id in groups[edit.group_id]["row_ids"]:
                 raw = updated[int(row_id)]
                 item = raw["item"]
-                if conversion:
+                if selected is not None:
                     item = {key: item[key] for key in ("watched_at", "watched") if key in item}
                     item.update(type="movie", year=selected.get("year"))
                     if origins:
