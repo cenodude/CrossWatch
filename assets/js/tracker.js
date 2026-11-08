@@ -731,9 +731,10 @@
         <div class="trk-grid-art"><span class="trk-grid-placeholder" aria-hidden="true">${symbol(shows ? "tv" : typeMeta(item).icon)}</span>${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}
           <input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}">
           ${rating != null ? `<span class="cw-media-card-score" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}
+          ${notes && item.status ? `<span class="trk-grid-status">${statusPill(item.status)}</span>` : ""}
           ${date ? `<span class="trk-grid-date">${esc(timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}
         </div>
-        <div class="trk-grid-copy"><strong>${esc(title)}</strong><small>${esc(meta)}</small>${shows ? `<div class="trk-grid-progress">${progressCell(item)}${nextCell(item)}</div>` : notes ? `${statusPill(item.status)}${tagChips(item.tags, 3)}` : feature === "progress" ? extraCell(item, feature) : ""}
+        <div class="trk-grid-copy"><strong>${esc(title)}</strong><small>${esc(meta)}</small>${shows ? `<div class="trk-grid-progress">${progressCell(item)}${nextCell(item)}</div>` : notes ? tagChips(item.tags, 3) : feature === "progress" ? extraCell(item, feature) : ""}
           ${!shows && !notes ? `<div class="trk-grid-tools">${healthIcon(item, state.view === "cleanup")}<button type="button" class="trk-icon" data-trk-row-edit="${index}" title="Edit" aria-label="Edit ${esc(title)}">${icon("edit")}</button></div>` : ""}
         </div></article>`;
     }).join("");

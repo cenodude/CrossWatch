@@ -550,7 +550,7 @@ def media_item(row: Mapping[str, Any], kind: str) -> dict[str, Any]:
                     season=int_value(row.get("number") if kind == "season" else row.get("season_number")))
         if kind == "episode":
             item["episode"] = int_value(row.get("number"))
-        if not item["show_ids"] or item["season"] < 0 or (kind == "episode" and item["episode"] < 1):
+        if not item["show_ids"] or item["season"] < 0 or (kind == "episode" and item["episode"] < 0):
             raise WeTrakrSyncError("invalid_episode_coordinates")
     if not item["ids"] or canonical_key(item) == "unknown:":
         raise WeTrakrSyncError("missing_media_identity")
@@ -672,6 +672,8 @@ def resolve_child(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any]:
     ids = item.get("ids")
     show_ids = item.get("show_ids")
     show_native = int_value(show_ids.get("wetrakr")) if isinstance(show_ids, Mapping) else -1
+    if item.get("type") == "episode" and int_value(item.get("episode")) == 0:
+        raise WeTrakrSyncError("invalid_episode_coordinates")
     if isinstance(ids, Mapping) and int_value(ids.get("wetrakr")) > 0 and int_value(ids.get("wetrakr")) != show_native:
         return dict(item)
     season, episode = int_value(item.get("season")), int_value(item.get("episode"))

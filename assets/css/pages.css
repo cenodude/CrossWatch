@@ -1654,6 +1654,10 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-grid-placeholder{position:absolute;inset:0;display:grid;place-items:center}
 #page-tracker .trk-grid-placeholder .material-symbol{font-size:40px}
 #page-tracker .trk-grid-pick{position:absolute;top:12px;left:12px;z-index:2}
+#page-tracker .trk-grid-status{position:absolute;top:10px;right:10px;max-width:calc(100% - 56px);pointer-events:none}
+#page-tracker .cw-media-card-score~.trk-grid-status{right:54px;max-width:calc(100% - 100px)}
+#page-tracker .trk-grid-status .trk-status{max-width:100%;box-sizing:border-box;border-radius:999px}
+#page-tracker .trk-grid-status .trk-status>span:last-child{overflow:hidden;text-overflow:ellipsis}
 #page-tracker .trk-grid-date{position:absolute;bottom:10px;left:10px;max-width:calc(100% - 20px);padding:4px 8px;border-radius:8px;font-size:11px;font-weight:700}
 #page-tracker .trk-grid-copy{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;padding:12px 14px}
 #page-tracker .trk-grid-copy>*{grid-column:1/-1}

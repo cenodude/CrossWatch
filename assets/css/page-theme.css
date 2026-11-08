@@ -1044,6 +1044,8 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-months{--hist-tone-rgb:70,86
 :is(#page-tracker :is(.trk-status,.trk-status-btn,.trk-status-item),.cw-mm-trk-status)[data-status="dropped"]{--trk-status:var(--cw-theme-danger)}
 #page-tracker .trk-status{--trk-status:var(--cw-theme-muted);border:0;background:color-mix(in srgb,var(--trk-status) 12%,transparent);color:var(--cw-theme-text)}
 #page-tracker .trk-status .material-symbol{color:var(--trk-status)}
+#page-tracker .trk-grid-status .trk-status{background:rgba(0,0,0,.82);color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+#page-tracker .trk-grid-status .material-symbol{color:color-mix(in srgb,var(--trk-status) 75%,#fff)}
 #page-tracker .trk-extra-filters{border-top:1px solid var(--cw-theme-border)}
 #page-tracker .trk-extra-filters>small{color:var(--cw-theme-muted)}
 #page-tracker :is(.trk-status-btn,.trk-status-item){--trk-status:var(--cw-theme-muted)}

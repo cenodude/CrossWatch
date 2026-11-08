@@ -151,7 +151,7 @@ def test_registry_profiles_capabilities_and_ids(env):
     from cw_platform.orchestrator._history_rewatches import history_rewatch_pair_enabled
 
     assert load_sync_ops("WETRAKR") is OPS
-    assert get_manifest()["version"] == "0.2"
+    assert get_manifest()["version"] == "0.3"
     assert OPS.is_configured(env.view)
     assert not OPS.is_configured(env.cfg)
     assert sync_provider_supports_feature("wetrakr", "watchlist")

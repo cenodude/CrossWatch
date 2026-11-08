@@ -12,7 +12,7 @@ import pytest
 
 from cw_platform.orchestrator._pairs import failure_attribution
 from cw_platform.orchestrator.facade import Orchestrator
-from providers.sync.wetrakr import _history
+from providers.sync.wetrakr import _common, _history, _progress
 from providers.sync.wetrakr._common import WeTrakrSyncError
 from services.interactive_sync_report import notice_subject
 
@@ -30,7 +30,7 @@ def _movie(mid: int) -> dict[str, Any]:
 
 @pytest.fixture
 def wetrakr(monkeypatch):
-    rows = {"movie": [_movie(1)], "episode": [_episode(11, 1, 1), _episode(12, 1, 0), _episode(13, None, 2)]}
+    rows = {"movie": [_movie(1)], "episode": [_episode(11, 1, 1), _episode(12, 1, -1), _episode(13, None, 2)]}
     logs: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
     monkeypatch.setattr(_history, "tracking_rows", lambda adapter, feature, force=False: rows)
     monkeypatch.setattr(_history, "log", lambda *args, **fields: logs.append((args, fields)))
@@ -43,17 +43,17 @@ def test_unreadable_history_records_fail_the_read_and_are_named(wetrakr):
     message = str(caught.value)
     assert caught.value.reason == "invalid_history_records"
     assert "WeTrakr returned 2 unreadable history records" in message
-    assert "episode 'Example Show' season=1 episode=0 id=12 show_id=900 ids=tmdb:1400,imdb:tt0000900 (invalid_episode_coordinates)" in message
+    assert "episode 'Example Show' season=1 episode=-1 id=12 show_id=900 ids=tmdb:1400,imdb:tt0000900 (invalid_episode_coordinates)" in message
     assert "season=missing episode=2 id=13" in message
     logged = [fields for args, fields in wetrakr.logs if args[3] == "history_record_invalid"]
     assert [row["id"] for row in logged] == ["12", "13"]
-    assert logged[0]["season"] == "1" and logged[0]["episode"] == "0"
+    assert logged[0]["season"] == "1" and logged[0]["episode"] == "-1"
     assert logged[0]["show_ids"] == {"tmdb": "1400", "imdb": "tt0000900"}
 
 
 @pytest.mark.parametrize("total, suffix", [(5, "; 2 more in the log"), (60, "; 57 more, the log lists 17 of them")])
 def test_overflow_counts_match_what_the_log_contains(wetrakr, total, suffix):
-    wetrakr.rows["episode"] = [_episode(20 + i, 1, 0) for i in range(total)]
+    wetrakr.rows["episode"] = [_episode(20 + i, 1, -1) for i in range(total)]
     with pytest.raises(WeTrakrSyncError) as caught:
         _history.build_index(wetrakr.adapter)
     assert f"{total} unreadable history records" in str(caught.value)
@@ -65,7 +65,7 @@ def test_overflow_counts_match_what_the_log_contains(wetrakr, total, suffix):
 
 def test_summary_fits_the_notice_cap_and_cuts_at_record_boundaries(wetrakr):
     long_show = dict(SHOW, title="T" * 300)
-    wetrakr.rows["episode"] = [_episode(20 + i, 1, 0, show=dict(long_show, id=900 + i)) for i in range(4)]
+    wetrakr.rows["episode"] = [_episode(20 + i, 1, -1, show=dict(long_show, id=900 + i)) for i in range(4)]
     with pytest.raises(WeTrakrSyncError) as caught:
         _history.build_index(wetrakr.adapter)
     message = str(caught.value)
@@ -78,7 +78,7 @@ def test_summary_fits_the_notice_cap_and_cuts_at_record_boundaries(wetrakr):
 def test_structured_id_values_are_reduced_to_their_id(wetrakr):
     show = {"id": {"url": "https://x.test/?token=SECRET"}, "title": "Example Show",
             "ids": {"tmdb": {"id": 3, "url": "https://x.test/?token=SECRET"}, "imdb": ["SECRET"], "tvdb": True}}
-    wetrakr.rows["episode"] = [_episode(12, 1, 0, show=show)]
+    wetrakr.rows["episode"] = [_episode(12, 1, -1, show=show)]
     with pytest.raises(WeTrakrSyncError) as caught:
         _history.build_index(wetrakr.adapter)
     assert "SECRET" not in str(caught.value) and "SECRET" not in repr(wetrakr.logs)
@@ -99,6 +99,40 @@ def test_event_history_names_the_play_of_an_unreadable_record(wetrakr):
 def test_readable_history_is_unchanged(wetrakr):
     wetrakr.rows["episode"] = [_episode(11, 1, 1), _episode(14, 0, 3)]
     assert len(_history.build_index(wetrakr.adapter)) == 3
+
+
+def test_episode_zero_is_read_like_any_episode(wetrakr):
+    wetrakr.rows["episode"] = [_episode(11, 1, 1), _episode(12, 1, 0), _episode(15, 0, 0)]
+    index = _history.build_index(wetrakr.adapter)
+    assert sorted((item["season"], item["episode"]) for item in index.values() if item["type"] == "episode") == [(0, 0), (1, 0), (1, 1)]
+
+
+def test_episode_zero_is_never_written(wetrakr):
+    item = {"type": "episode", "season": 1, "episode": 0, "ids": {"wetrakr": "130371", "tmdb": 50904},
+            "show_ids": {"wetrakr": "1391814", "tmdb": 942}, "watched_at": "2026-01-02T03:04:05Z"}
+    for call in (lambda: _common.payload_item(item, "history"), lambda: _common.resolve_child(wetrakr.adapter, item),
+                 lambda: _progress.scrobble_media(item)):
+        with pytest.raises(WeTrakrSyncError) as caught:
+            call()
+        assert caught.value.reason == "invalid_episode_coordinates"
+
+
+def test_episode_zero_is_unresolved_while_the_rest_of_the_batch_is_written(wetrakr):
+    show = {"tmdb": 942}
+    items = [{"type": "episode", "season": 1, "episode": episode, "ids": {"tmdb": 50900 + episode}, "show_ids": show,
+              "watched_at": "2026-01-02T03:04:05Z"} for episode in (0, 1)]
+    result = _common.write_items(wetrakr.adapter, "history", items, remove=False, dry_run=True)
+    assert result["count"] == 1
+    assert [row["reason"] for row in result["unresolved"]] == ["invalid_episode_coordinates"]
+    assert result["unresolved_keys"] == [_common.item_key(wetrakr.adapter, "history", items[0])]
+
+
+def test_missing_episode_number_still_fails_the_read(wetrakr):
+    wetrakr.rows["episode"] = [_episode(11, 1, 1), _episode(16, 1, None)]
+    with pytest.raises(WeTrakrSyncError) as caught:
+        _history.build_index(wetrakr.adapter)
+    assert "season=1 episode=missing id=16" in str(caught.value)
+    assert "(invalid_episode_coordinates)" in str(caught.value)
 
 
 def test_index_integrity_errors_keep_their_own_reason(wetrakr):

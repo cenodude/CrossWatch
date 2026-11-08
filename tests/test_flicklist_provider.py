@@ -110,6 +110,26 @@ def test_episode_write_ident_uses_show_ids() -> None:
     }
 
 
+def test_episode_zero_write_ident_is_unresolved() -> None:
+    from providers.sync.flicklist._common import write_ident
+
+    item = {"type": "episode", "season": 1, "episode": 0, "ids": {"tmdb": "50904"}, "show_ids": {"tmdb": "942"}}
+
+    assert write_ident(item) is None
+
+
+def test_episode_zero_is_unresolved_while_the_rest_of_the_batch_is_accepted() -> None:
+    from providers.sync.flicklist import _history
+
+    items = [{"type": "episode", "season": 1, "episode": episode, "ids": {"tmdb": str(50900 + episode)},
+              "show_ids": {"tmdb": "942"}, "watched_at": "2026-01-02T03:04:05Z"} for episode in (0, 1)]
+
+    accepted, unresolved_keys, unresolved = _history._accepted(items, include_watched_at=True)
+
+    assert [payload["episode"] for _key, payload in accepted] == [1]
+    assert len(unresolved_keys) == 1 and [row["status"] for row in unresolved] == ["missing_supported_id"]
+
+
 def test_episode_write_ident_without_show_ids_is_unresolved() -> None:
     from providers.sync.flicklist._common import write_ident
 
