@@ -1,5 +1,5 @@
 # cw_platform/tracker_history_identity.py
-# CrossWatch - Local history type correction identities
+# CrossWatch - Local history correction and Plex source identities
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from cw_platform.history_events import history_epoch_from_item
 from cw_platform.id_map import canonical_key, minimal
 
 TYPE_ORIGINS = "_cw_history_type_origins"
+PLEX_ORIGINS = "_cw_plex_history_origins"
 
 
 def event_identities(item: Mapping[str, Any]) -> set[str]:
@@ -29,9 +30,17 @@ def event_identities(item: Mapping[str, Any]) -> set[str]:
     return result
 
 
-def type_origins(items: Mapping[str, Any]) -> set[str]:
+def _origins(items: Mapping[str, Any], field: str) -> set[str]:
     if not isinstance(items, Mapping):
         return set()
     return {origin for item in items.values() if isinstance(item, Mapping)
-            if isinstance(item.get(TYPE_ORIGINS), list)
-            for origin in item[TYPE_ORIGINS] if isinstance(origin, str)}
+            if isinstance(item.get(field), list)
+            for origin in item[field] if isinstance(origin, str)}
+
+
+def type_origins(items: Mapping[str, Any]) -> set[str]:
+    return _origins(items, TYPE_ORIGINS)
+
+
+def plex_origins(items: Mapping[str, Any]) -> set[str]:
+    return _origins(items, PLEX_ORIGINS)

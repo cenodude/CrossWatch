@@ -43,6 +43,15 @@ def _source_group(row: Any, original: Mapping[str, Any]) -> str:
                        str(title or "").strip().casefold(), str(year or "")], ensure_ascii=True)
 
 
+def source_event(account: Any, kind: str, guid: Any, season: Any, episode: Any, timestamp: Any, rating_key: str = "") -> str:
+    identity = str(guid or "").split("?", 1)[0].split("#", 1)[0] or (f"rating:{rating_key}" if rating_key else "")
+    if account in (None, "") or not identity or timestamp is None:
+        return ""
+    return json.dumps(["plex-watch-v1", str(account), kind, identity,
+                       str(season) if kind == "episode" and season is not None else None,
+                       str(episode) if kind == "episode" and episode is not None else None, int(timestamp)])
+
+
 def guid_resolver(token: str) -> Callable[[str, str], dict[str, str]]:
     if common._metadata_request(common.METADATA, "0" * 24, token).status_code == 401:
         raise PermissionError("Plex rejected the account token.")
@@ -196,6 +205,9 @@ def scan(adapter: Any, *, progress: Callable[..., None], check_cancel: Callable[
             if item.get("type") == "episode" and (item.get("season") is None or item.get("episode") is None):
                 identity = False
             recovered.append({"feature": "history", "item": item, "source_path": "Plex history",
+                              "recovery_source": source_event(row_account if row_account is not None else account,
+                                                              str(original.get("type") or ""), guid, original.get("season"),
+                                                              original.get("episode"), timestamp, rk),
                               "recovery_match": method if identity else "Missing identity — enter a match",
                               "recovery_valid": bool(identity), "recovery_requires_review": match_key in guessed,
                               "original_group": _source_group(raw, original),
