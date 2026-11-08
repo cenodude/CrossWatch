@@ -78,6 +78,20 @@ def test_only_removed_history_and_rewatches_without_persistent_memo(plex, monkey
     assert plex.calls == [{"accountID":17}]
 
 
+def test_live_recovery_remembers_the_source_watch_without_using_its_title(plex):
+    entry = raw("42")
+    plex.rows = [entry]
+    original = scan(plex)[0]["recovery_source"]
+    assert original
+    entry.title = "Renamed title"
+    assert scan(plex)[0]["recovery_source"] == original
+    entry.viewedAt += 1
+    assert scan(plex)[0]["recovery_source"] != original
+    assert not recovery.source_event(17, "movie", "", None, None, entry.viewedAt)
+    assert not recovery.source_event(None, "movie", "plex://movie/42", None, None, entry.viewedAt)
+    assert not recovery.source_event("", "movie", "plex://movie/42", None, None, entry.viewedAt)
+
+
 def test_readded_identity_and_other_user_are_excluded(plex):
     plex.library = [{"type":"movie", "ratingKey":"new", "Guid":[{"id":"tmdb://2"}]}]
     wrong = raw("3"); wrong.accountID=18
@@ -411,10 +425,12 @@ def test_collapsed_movie_keeps_all_conversion_origins_on_import_and_rescan(api, 
         else:
             raw["item"].update(title="Movie", ids={"tmdb": "267970"})
             raw["recovery_requires_review"] = newer == "suggested_movie"
+        raw["recovery_source"] = recovery.source_event(17, raw["item"]["type"], f"plex://item/{index}", 1, 1, 1577880000 + index)
     before = deepcopy(api.job.raw)
     expected_origins = set().union(*(service.event_identities(raw["item"]) for raw in before[:2]
                                     if raw["item"]["type"] == "episode"))
     service._shape(api.job, api.cfg)
+    expected_sources = service.plex_origins({str(i): raw["item"] for i, raw in enumerate(api.job.raw[:2])})
     url = f"/api/import/plex-recovery/{api.job.id}"
     groups = api.client.get(url + "/match-groups", params={"revision": 0}).json()["rows"]
     monkeypatch.setattr(interactive_sync_mapping, "search_candidates", lambda *a, **kw: {
@@ -441,6 +457,7 @@ def test_collapsed_movie_keeps_all_conversion_origins_on_import_and_rescan(api, 
     stored = list(importer._existing_keys(api.cfg, "default")["history"].values())
     assert len(stored) == 1
     assert set(stored[0][service.TYPE_ORIGINS]) == expected_origins
+    assert set(stored[0][service.PLEX_ORIGINS]) == expected_sources
     assert stored[0]["watched_at"] == before[1]["item"]["watched_at"]
     assert api.job.raw[2] == before[2]
     api.job.raw = before

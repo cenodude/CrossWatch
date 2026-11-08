@@ -359,6 +359,7 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
         check_cancel()
         guid, show_guid = _clean(raw_guid), _clean(raw_show)
         kind = "movie" if media_type == 1 else "episode"
+        source_event = recovery.source_event(account, kind, guid, _int(season), _int(episode), _int(viewed_at))
         title, show_title = str(title or "").strip(), str(show_title or "").strip()
         out_of_scope = bool(libraries) and section is not None and str(section) in sections and str(section) not in libraries
         if not guid or "/edition/trailer" in guid.lower() or out_of_scope:
@@ -422,6 +423,7 @@ def _scan(con: sqlite3.Connection, clock: _Clock, *, account: int, libraries: se
         item["watched_at"] = history._iso(int(viewed_at)) if _int(viewed_at) is not None else None
         item["watched"] = True
         entry = {"feature": "history", "item": item, "source_path": "Plex database",
+                 "recovery_source": source_event,
                  "recovery_match": method if identity else _MISSING, "recovery_valid": identity,
                  "recovery_requires_review": False,
                  "original_group": json.dumps(["show" if kind == "episode" else "movie", group, [],

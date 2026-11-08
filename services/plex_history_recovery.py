@@ -28,8 +28,8 @@ from cw_platform.access_policy import request_user, user_can_access_instance
 from cw_platform.config_base import load_config
 from cw_platform.history_events import history_epoch_from_value
 from cw_platform.id_map import canonical_key, minimal as id_minimal
-from cw_platform.tracker_history_identity import TYPE_ORIGINS, event_identities, type_origins
-from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id
+from cw_platform.tracker_history_identity import PLEX_ORIGINS, TYPE_ORIGINS, event_identities, plex_origins, type_origins
+from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id, provider_instance_uid_for
 from . import importer
 
 router = APIRouter(prefix="/api/import/plex-recovery", tags=["import"])
@@ -286,9 +286,17 @@ def _history_identities(item):
 
 
 def _shape(job, cfg):
+    saved = importer._existing_keys(cfg, job.target)["history"]
+    remembered = plex_origins(saved)
+    block = build_provider_config_view(cfg, "PLEX", job.source).get("plex") or {}
+    source_scope = [provider_instance_uid_for(cfg, "PLEX", job.source) or job.source,
+                    block.get("machine_id") or block.get("server_url") or block.get("baseurl") or ""]
     grouped: dict[str, list[int]] = {}
     for index, raw in enumerate(job.raw):
         item = raw["item"]
+        if raw.get("recovery_source") and not job.tautulli and not job.tracearr:
+            origin = hashlib.sha256(json.dumps([source_scope, raw["recovery_source"]]).encode()).hexdigest()
+            item[PLEX_ORIGINS] = [origin]
         if raw["recovery_valid"] and not raw.get("recovery_requires_review"):
             identity = canonical_key(id_minimal(item))
         else:
@@ -296,12 +304,17 @@ def _shape(job, cfg):
             identity = json.dumps([item.get("type"), source, raw.get("original_year"), item.get("season"), item.get("episode")])
         if item.get("type") == "episode" and (item.get("season") is None or item.get("episode") is None):
             identity = f"unresolved:{index}"
+        if not plex_origins({"item": item}).isdisjoint(remembered):
+            identity = f"remembered:{identity}"
         grouped.setdefault(identity, []).append(index)
     selected = [(max(indices, key=lambda i: history_epoch_from_value(job.raw[i]["item"].get("watched_at")) or 0), indices)
                 for indices in grouped.values()]
     rows = importer._shape_rows([job.raw[index] for index, _ in selected], cfg, job.target, "plex_recovery")
-    saved = importer._existing_keys(cfg, job.target)["history"]
     corrected = type_origins(saved)
+    existing_events: dict[str, set[str]] = {}
+    for key, item in saved.items():
+        for identity in event_identities(item):
+            existing_events.setdefault(identity, set()).add(key)
     existing = {identity for item in saved.values()
                 for identity in _history_identities(item)}
     for row, (index, indices) in zip(rows, selected):
@@ -309,6 +322,9 @@ def _shape(job, cfg):
         origins = type_origins({str(i): job.raw[i]["item"] for i in indices})
         if origins:
             row["item"][TYPE_ORIGINS] = sorted(origins)
+        sources = plex_origins({str(i): job.raw[i]["item"] for i in indices})
+        if sources:
+            row["item"][PLEX_ORIGINS] = sorted(sources)
         row["id"] = str(index)
         row["recovery_row_ids"] = [str(i) for i in indices]
         row.update(recovery_match=raw["recovery_match"], original_title=raw["original_title"])
@@ -316,9 +332,21 @@ def _shape(job, cfg):
             row.update(status="missing_identity", reason="missing_identity", importable=False, default_included=False)
         elif row["status"] == "ready" and raw.get("recovery_requires_review", False):
             row.update(status="needs_review", reason="title_guess", default_included=False)
-        if raw["recovery_valid"] and (not _history_identities(raw["item"]).isdisjoint(existing)
-                                      or (corrected and not event_identities(raw["item"]).isdisjoint(corrected))):
+        present = not event_identities(raw["item"]).isdisjoint(existing_events) if sources else not _history_identities(raw["item"]).isdisjoint(existing)
+        if (sources and sources <= remembered) or (raw["recovery_valid"] and
+                (present or (corrected and not event_identities(raw["item"]).isdisjoint(corrected)))):
             row.update(status="exists", reason="already_exists", importable=False, default_included=False)
+        if sources - remembered and raw["recovery_valid"] and any(job.raw[i].get("recovery_manual_match") for i in indices):
+            matches = {key for identity in event_identities(raw["item"]) for key in existing_events.get(identity, ())}
+            if len(matches) == 1:
+                key = next(iter(matches))
+                origins = plex_origins({"saved": saved[key]}) | sources
+                row.update(status="ready", reason="remember_match", importable=True, default_included=True, key=key,
+                           item={**saved[key], PLEX_ORIGINS: sorted(origins)},
+                           recovery_match="Match confirmed — import to remember it on the existing watch")
+                types = type_origins({"saved": saved[key], **{str(i): job.raw[i]["item"] for i in indices}})
+                if types:
+                    row["item"][TYPE_ORIGINS] = sorted(types)
     job.rows = rows
 
 
@@ -972,7 +1000,7 @@ def save_group_matches(sid: str, payload: GroupMatches, request: Request):
                 else:
                     item["ids"] = dict(ids)
                 item["title"] = edit.title.strip()
-                raw.update(recovery_valid=valid, recovery_requires_review=False, recovery_match="Confirmed bulk match")
+                raw.update(recovery_valid=valid, recovery_requires_review=False, recovery_manual_match=True, recovery_match="Confirmed bulk match")
             changed += groups[edit.group_id]["recovery_count"]
         candidate = replace(job, raw=updated, rows=[])
         _shape(candidate, cfg)
@@ -1030,7 +1058,7 @@ def match(sid: str, payload: Match, request: Request):
             else:
                 item["ids"] = dict(ids)
             item["title"] = payload.title.strip()
-            raw.update(recovery_valid=True, recovery_requires_review=False, recovery_match="Manually matched")
+            raw.update(recovery_valid=True, recovery_requires_review=False, recovery_manual_match=True, recovery_match="Manually matched")
         candidate = replace(job, raw=updated, rows=[])
         _shape(candidate, cfg)
         job.raw, job.rows = candidate.raw, candidate.rows
@@ -1095,10 +1123,14 @@ def commit(sid: str, payload: Commit, request: Request):
                 if origins:
                     winner = titles[identity]
                     titles[identity] = {**winner, "item": {**winner["item"], TYPE_ORIGINS: sorted(origins)}}
+                sources = plex_origins({"previous": previous["item"], "current": row["item"]})
+                if sources:
+                    winner = titles[identity]
+                    titles[identity] = {**winner, "item": {**winner["item"], PLEX_ORIGINS: sorted(sources)}}
         selected = list(titles.values())
         approved = [{**r, "status": "ready"} for r in selected]
         importer._PREVIEWS[job.id] = dict(created_at=time.time(), target_instance=job.target, rows=approved,
-                                        local_history_type_origins=True)
+                                        local_history_type_origins=True, local_plex_history_origins=True)
         args.update(mode="ready", row_ids=[], excluded_row_ids=[], status="all", q="")
         try:
             result = importer.api_import_commit(importer.ImportCommitRequest(**args), request=request)

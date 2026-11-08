@@ -8,7 +8,7 @@ from typing import Any, Iterable, Mapping
 
 from cw_platform.history_events import has_history_watch, history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key
-from cw_platform.tracker_history_identity import TYPE_ORIGINS, event_identities, type_origins
+from cw_platform.tracker_history_identity import PLEX_ORIGINS, TYPE_ORIGINS, event_identities, plex_origins, type_origins
 
 from ._common import (
     _capture_mode,
@@ -40,10 +40,14 @@ def _history_key(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None
     return history_sync_key(item, fallback_key, event_mode=_rewatches_enabled(adapter))
 
 
-def _history_minimal(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None) -> dict[str, Any]:
+def _history_minimal(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None,
+                     previous: Mapping[str, Any] | None = None) -> dict[str, Any]:
     out = preserve_tracker_identity(minimal_history_item(item, fallback_key, event_mode=_rewatches_enabled(adapter)), item)
     if item.get(TYPE_ORIGINS):
         out[TYPE_ORIGINS] = item[TYPE_ORIGINS]
+    origins = plex_origins({"previous": previous, "current": item})
+    if origins:
+        out[PLEX_ORIGINS] = sorted(origins)
     return out
 
 
@@ -106,7 +110,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             key = _history_key(adapter, obj)
             if not key:
                 continue
-            items[key] = _history_minimal(adapter, obj, key)
+            items[key] = _history_minimal(adapter, obj, key, items.get(key))
         state = {"ts": 0, "items": items}
         if items and may_persist(adapter, "history"):
             write_state(adapter, "history", items)
@@ -123,7 +127,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
                 ck = _history_key(adapter, value, key)
                 if not ck:
                     continue
-                items[ck] = _history_minimal(adapter, value, key)
+                items[ck] = _history_minimal(adapter, value, key, items.get(ck))
             state = {"ts": ts, "items": items}
             if items and may_persist(adapter, "history"):
                 write_state(adapter, "history", items, ts=ts)
@@ -136,7 +140,7 @@ def _load_state(adapter: Any) -> dict[str, Any]:
             ck = _history_key(adapter, value, key)
             if not ck:
                 continue
-            items[ck] = _history_minimal(adapter, value, key)
+            items[ck] = _history_minimal(adapter, value, key, items.get(ck))
         state = {"ts": 0, "items": items}
         if items and may_persist(adapter, "history"):
             write_state(adapter, "history", items)
@@ -201,6 +205,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
     state = _load_state(adapter)
     cur: dict[str, dict[str, Any]] = dict(state.get("items") or {})
     corrected = type_origins(cur)
+    config = getattr(adapter, "config", {}) or {}
     unresolved_src: list[Mapping[str, Any]] = []
     changed = 0
 
@@ -211,8 +216,10 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             continue
         try:
             accepted = _accepted(obj)
-            if adapter.config.get("_cw_local_history_type_origins") and isinstance(obj.get(TYPE_ORIGINS), list):
+            if config.get("_cw_local_history_type_origins") and isinstance(obj.get(TYPE_ORIGINS), list):
                 accepted[TYPE_ORIGINS] = list(obj[TYPE_ORIGINS])
+            if config.get("_cw_local_plex_history_origins") and isinstance(obj.get(PLEX_ORIGINS), list):
+                accepted[PLEX_ORIGINS] = sorted(plex_origins({"item": obj}))
         except Exception:
             unresolved_src.append(obj)
             continue
@@ -229,6 +236,15 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 accepted = merge_tracker_identity(existing, accepted)
                 if existing.get(TYPE_ORIGINS):
                     accepted[TYPE_ORIGINS] = existing[TYPE_ORIGINS]
+                origins = plex_origins({"existing": existing, "incoming": accepted})
+                if origins:
+                    if config.get("_cw_local_plex_history_origins"):
+                        accepted = dict(existing)
+                        if config.get("_cw_local_history_type_origins"):
+                            types = type_origins({"existing": existing, "incoming": obj})
+                            if types:
+                                accepted[TYPE_ORIGINS] = sorted(types)
+                    accepted[PLEX_ORIGINS] = sorted(origins)
             cur[key] = _history_minimal(adapter, accepted, key)
             changed += 1
 

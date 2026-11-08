@@ -126,7 +126,8 @@ def test_hama_movie_can_be_matched_before_import_without_changing_other_events(a
     assert result.status_code == 200, result.text
     item = job.raw[int(row["id"])]["item"]
     assert item == dict(type="movie", title="Miss Hokusai", year=2015, ids={"tmdb": "123"},
-                        watched=True, watched_at=original[int(row["id"])]["item"]["watched_at"])
+                        watched=True, watched_at=original[int(row["id"])]["item"]["watched_at"],
+                        _cw_plex_history_origins=original[int(row["id"])]["item"][service.PLEX_ORIGINS])
     other = next(i for i in range(len(original)) if str(i) != row["id"])
     assert job.raw[other] == original[other]
     assert not importer._existing_keys(api.cfg, "default")["history"]
@@ -137,6 +138,133 @@ def test_hama_movie_can_be_matched_before_import_without_changing_other_events(a
     assert len(stored) == 1 and stored[0]["type"] == "movie"
     assert stored[0]["watched_at"] == item["watched_at"]
     assert not {"season", "episode", "show_ids", "series_title"}.intersection(stored[0])
+
+
+@pytest.mark.parametrize("known_ids", [False, True])
+@pytest.mark.parametrize("bulk", [False, True])
+@pytest.mark.parametrize("existing_watch", [False, True])
+def test_exact_database_matches_survive_new_scans_and_keep_rewatches(api, monkeypatch, known_ids, bulk, existing_watch):
+    from services import importer
+    from cw_platform.tracker_store import TrackerStore
+
+    monkeypatch.setattr(recovery, "query_edges", lambda *a, **kw: [])
+    guid = "com.plexapp.agents.hama://" + ("tvdb-900" if known_ids else "anidb-10611") + "/1/2?lang=en"
+    original = episode(guid, 2, title="Original series")
+    db = library(api.tmp / "original.db", views=[original])
+    raw, _ = scan(db)
+    previous = {}
+    if existing_watch:
+        item = dict(type="episode", series_title="Previously corrected", title="S01E02", ids={},
+                    show_ids={"tvdb": "901", "tmdb": "99"}, season=1, episode=2, watched_at=raw[0]["item"]["watched_at"])
+        previous = {importer._key_for("history", item): item}
+        TrackerStore(api.cfg["crosswatch"]["root_dir"]).write_state("history", previous)
+    previous_index = importer._existing_keys(api.cfg, "default")["history"]
+    job = service.Job("local", "default", "default", service._source_hash(api.cfg, "default"), status="review", raw=raw)
+    service._shape(job, api.cfg)
+    service.JOBS[job.id] = job
+    url = f"/api/import/plex-recovery/{job.id}"
+    if bulk:
+        job.raw[0]["recovery_requires_review"] = True
+        service._shape(job, api.cfg)
+        groups = api.client.get(url + "/match-groups", params={"revision": 0}).json()["rows"]
+        response = api.client.post(url + "/match-groups", json=dict(revision=0, edits=[
+            dict(group_id=groups[0]["id"], title="Correct series", ids={"tvdb": "901", "tmdb": "99"})]))
+    else:
+        response = api.client.post(url + "/match", json=dict(revision=0, row_id="0", title="Correct series",
+                                    tvdb="901", tmdb="99", season=1, episode=2))
+    assert response.status_code == 200, response.text
+    assert not service.plex_origins(importer._existing_keys(api.cfg, "default")["history"])
+    if existing_watch:
+        assert job.rows[0]["reason"] == "remember_match"
+        assert TrackerStore(api.cfg["crosswatch"]["root_dir"]).read_current("history")["items"] == previous
+    response = api.client.post(url + "/commit", json=dict(import_id=job.id, revision=1, mode="ready"))
+    assert response.status_code == 200 and response.json()["applied"] == 1, response.text
+    stored = importer._existing_keys(api.cfg, "default")["history"]
+    assert len(stored) == 1
+    if existing_watch:
+        assert {key: {k: v for k, v in item.items() if k != service.PLEX_ORIGINS} for key, item in stored.items()} == previous_index
+    assert next(iter(stored.values()))[service.PLEX_ORIGINS]
+    service.JOBS.clear()
+    fresh = service.Job("local", "default", "default", job.source_hash, status="review", raw=scan(db)[0])
+    service.JOBS[fresh.id] = fresh
+    service._shape(fresh, api.cfg)
+    assert fresh.rows[0]["status"] == "exists"
+    assert not service._match_groups(fresh)
+    result = api.client.post(f"/api/import/plex-recovery/{fresh.id}/commit", json=dict(import_id=fresh.id, revision=0, mode="ready"))
+    assert result.json()["applied"] == 0
+    later = library(api.tmp / "later.db", views=[original, {**original, "viewed_at": DAY + 100}])
+    fresh.raw = scan(later)[0]
+    service._shape(fresh, api.cfg)
+    assert len(fresh.rows) == 2
+    assert [row["status"] for row in fresh.rows] == ["exists", "ready" if known_ids else "missing_identity"]
+    assert importer._existing_keys(api.cfg, "default")["history"] == stored
+
+
+def test_remembered_plex_events_are_scoped_and_do_not_travel_to_other_trackers(api, monkeypatch):
+    from api import trackerAPI
+    from cw_platform.tracker_store import TrackerStore
+    from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
+    from services import importer
+
+    monkeypatch.setattr(recovery, "query_edges", lambda *a, **kw: [])
+    original = episode("com.plexapp.agents.hama://anidb-10611/1/1", 1, title="Same title")
+    db = library(api.tmp / "scoped.db", views=[original, {**original, "account_id": 7}])
+    job = service.Job("local", "default", "default", service._source_hash(api.cfg, "default"), status="review", raw=scan(db)[0])
+    service._shape(job, api.cfg)
+    service.JOBS[job.id] = job
+    url = f"/api/import/plex-recovery/{job.id}"
+    assert api.client.post(url + "/match", json=dict(revision=0, row_id="0", title="Correct series", tvdb="901", season=1, episode=1)).status_code == 200
+    assert api.client.post(url + "/commit", json=dict(import_id=job.id, revision=1, mode="ready")).json()["applied"] == 1
+    saved = importer._existing_keys(api.cfg, "default")["history"]
+    store = TrackerStore(api.cfg["crosswatch"]["root_dir"])
+    api.client.app.include_router(trackerAPI.router)
+    monkeypatch.setattr(trackerAPI, "load_config", lambda: api.cfg)
+    monkeypatch.setattr(trackerAPI, "_sync_running", lambda: False)
+    replaced = api.client.post("/api/tracker/replace", json=dict(feature="history", key=next(iter(saved)),
+        item=dict(type="episode", title="S01E01", series_title="Another correction", ids={}, show_ids={"tvdb": "902"}, season=1, episode=1)))
+    assert replaced.status_code == 200, replaced.text
+    updated = importer._existing_keys(api.cfg, "default")["history"]
+    assert service.plex_origins(updated) == service.plex_origins(saved)
+    for source, target, account, server in [("default", "default", 1, "http://plex"),
+            ("second", "default", 1, "http://plex"), ("default", "default", 7, "http://plex"),
+            ("default", "other", 1, "http://plex"), ("default", "default", 1, "http://different")]:
+        cfg = deepcopy(api.cfg)
+        cfg["plex"]["server_url"] = server
+        cfg["crosswatch"]["instances"] = {"other": {"connected": True, "root_dir": str(api.tmp / "other")}}
+        fresh = service.Job("local", source, target, "unused", status="review", raw=scan(db, account=account)[0])
+        service._shape(fresh, cfg)
+        expected = "exists" if source == target == "default" and account == 1 and server == "http://plex" else "missing_identity"
+        assert fresh.rows[0]["status"] == expected
+    adapter = CROSSWATCHModule({**api.cfg, "_cw_history_rewatches": True})
+    current = next(iter(updated.values()))
+    assert adapter.add("history", [{k: v for k, v in current.items() if k != service.PLEX_ORIGINS}])["count"] == 1
+    assert service.plex_origins(importer._existing_keys(api.cfg, "default")["history"]) == service.plex_origins(saved)
+    other = CROSSWATCHModule({"crosswatch": {"connected": True, "root_dir": str(api.tmp / "remote")}, "_cw_history_rewatches": True})
+    assert other.add("history", [current])["count"] == 1
+    assert not service.plex_origins(TrackerStore(api.tmp / "remote").read_current("history")["items"])
+    deleted = api.client.post("/api/tracker/delete", json=dict(feature="history", keys=list(updated)))
+    assert deleted.status_code == 200, deleted.text
+    fresh = service.Job("local", "default", "default", "unused", status="review", raw=scan(db)[0])
+    service._shape(fresh, api.cfg)
+    assert fresh.rows[0]["status"] == "missing_identity"
+    assert api.client.post("/api/tracker/undo", json={"batch": deleted.json()["batch"]}).status_code == 200
+    service._shape(fresh, api.cfg)
+    assert fresh.rows[0]["status"] == "exists"
+
+
+def test_plex_origins_survive_latest_only_history_refresh(api):
+    from cw_platform.tracker_store import TrackerStore
+    from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
+    from services import importer
+
+    older = dict(type="movie", title="Movie", ids={"tmdb": "10"}, watched_at="2020-01-01T00:00:00Z",
+                 _cw_plex_history_origins=["remembered-source-watch"])
+    newer = dict(type="movie", title="Movie", ids={"tmdb": "10"}, watched_at="2021-01-01T00:00:00Z")
+    store = TrackerStore(api.cfg["crosswatch"]["root_dir"])
+    store.write_state("history", {importer._key_for("history", item): item for item in [older, newer]})
+    adapter = CROSSWATCHModule({**api.cfg, "_cw_history_rewatches": False})
+    assert adapter.add("history", [newer])["count"] == 1
+    assert service.plex_origins(store.read_current("history")["items"]) == {"remembered-source-watch"}
 
 
 def test_removed_shows_resolve_once_and_legacy_and_hama_guids_need_no_lookup(tmp_path, monkeypatch):
