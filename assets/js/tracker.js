@@ -192,7 +192,11 @@
       state.hideDropped = saved.hideDropped === true;
       if (Number.isInteger(saved.zoom)) state.zoom = saved.zoom;
       if (typeof saved.instance === "string" && saved.instance) state.instance = saved.instance;
-      for (const key of ["q", "noteStatus", "noteTag", "cleanFeature", "healthFilter"]) if (typeof saved[key] === "string") state[key] = saved[key].slice(0, 200);
+      if (typeof saved.q === "string") state.q = saved.q.slice(0, 200);
+      if (typeof saved.noteStatus === "string") state.noteStatus = saved.noteStatus.slice(0, 200);
+      if (typeof saved.noteTag === "string") state.noteTag = saved.noteTag.slice(0, 200);
+      if (typeof saved.cleanFeature === "string") state.cleanFeature = saved.cleanFeature.slice(0, 200);
+      if (typeof saved.healthFilter === "string") state.healthFilter = saved.healthFilter.slice(0, 200);
       if (["recent", "oldest", "title"].includes(saved.sort)) state.sort = saved.sort;
       state.duplicates = saved.duplicates === true;
       state.offset = Number.isInteger(saved.offset) && saved.offset >= 0 ? saved.offset : 0;

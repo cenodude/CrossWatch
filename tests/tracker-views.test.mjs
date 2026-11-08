@@ -70,6 +70,40 @@ test("duplicate names and corrupt browser storage do not overwrite saved views",
   assert.equal(app.state.scrollTop,0);
 });
 
+test("saved filter text stays escaped and cannot overwrite unrelated state", () => {
+  const {context:app,state,storage} = setup();
+  const markup = '\"><img src=x onerror=alert(1)>';
+  state.statusMenu = false;
+  state.title = {ratings:[{rating:8}]};
+  state.notes = {tags:[]};
+  storage.set("prefs", JSON.stringify({q:markup,noteStatus:markup,noteTag:markup,cleanFeature:"history",healthFilter:"attention",
+    byDay:markup,statusMenu:markup,title:markup}));
+  app.loadView();
+  assert.equal(state.q,markup);
+  assert.equal(state.noteStatus,markup);
+  assert.equal(state.noteTag,markup);
+  assert.equal(state.cleanFeature,"history");
+  assert.equal(state.healthFilter,"attention");
+  assert.equal(state.byDay,false);
+  assert.equal(state.statusMenu,false);
+  assert.equal(state.title.ratings[0].rating,8);
+  app.STATUSES = [];
+  app.num = String;
+  const escape = source.slice(source.indexOf("  const esc ="),source.indexOf("\n",source.indexOf("  const esc =")));
+  const filters = source.slice(source.indexOf("  function renderNoteFilters()"),source.indexOf("  function renderFilters()"));
+  vm.runInContext(escape+filters,app);
+  const html = app.renderNoteFilters();
+  assert(!html.includes("<img"));
+  assert(html.includes("&quot;&gt;&lt;img src=x onerror=alert(1)&gt;"));
+  storage.set("prefs",JSON.stringify({q:"x".repeat(300),noteStatus:42,noteTag:null,cleanFeature:[],healthFilter:{}}));
+  app.loadView();
+  assert.equal(state.q.length,200);
+  assert.equal(state.noteStatus,markup);
+  assert.equal(state.noteTag,markup);
+  assert.equal(state.cleanFeature,"history");
+  assert.equal(state.healthFilter,"attention");
+});
+
 
 test("returning from an import report selects its Tracker and clears stale title references", () => {
   const {context:app,state} = setup();
