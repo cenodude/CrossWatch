@@ -952,6 +952,8 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None, *, interactive
 
             if fingerprint(cfg) != interactive.config_hash:
                 return
+            if not interactive.preview and interactive.override_dry_run:
+                cfg = {**cfg, "sync": {**(cfg.get("sync") or {}), "dry_run": False}}
         scheduler_webhook_cfg = cfg if isinstance(cfg, dict) else {}
 
         try:

@@ -39,6 +39,7 @@ class Refresh(Revision):
 class Apply(Revision):
     model_config = {"extra": "forbid"}
     selection_version: int = Field(ge=0)
+    confirm_dry_run: bool = Field(default=False, strict=True)
 
 
 class Selection(Revision):
@@ -296,12 +297,13 @@ def apply(sid: str, payload: Apply, request: Request):
         check_selection(session, payload.selection_version)
         if session.status != "review":
             raise HTTPException(409, "Build a complete plan before applying")
-        if coerce_bool((cfg.get("sync") or {}).get("dry_run", False)):
-            raise HTTPException(409, "Disable global dry run before applying changes")
+        dry_run = coerce_bool((cfg.get("sync") or {}).get("dry_run", False))
+        if dry_run and not payload.confirm_dry_run:
+            raise HTTPException(409, "Global dry run is on. Confirm applying these selected changes once.")
         selected = session.store.selected_ids() if session.store else set()
         if not selected:
             raise HTTPException(400, "Select valid changes from this review")
-        launch(session, svc.apply, cfg, selected, applying=True)
+        launch(session, svc.apply, cfg, selected, dry_run and payload.confirm_dry_run, applying=True)
         return public(session, cfg)
 
 

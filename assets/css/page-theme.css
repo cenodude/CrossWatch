@@ -196,6 +196,7 @@ dialog.cw-page-panel {
 }
 #page-tracker .trk-hero-title-line strong{color:var(--cw-theme-text);font-size:clamp(17px,1.5vw,22px);font-weight:650;letter-spacing:-.02em}
 #page-tracker .trk-hero-meta{color:var(--cw-theme-muted);font-size:13px;font-weight:500}
+#page-tracker .trk-hero-logo{background:transparent;filter:drop-shadow(0 0 1px rgba(255,255,255,.6)) drop-shadow(0 2px 3px rgba(0,0,0,.8))}
 #page-tracker .trk-hero-selection small{color:var(--cw-theme-muted);font-size:13px}
 #layout .cw-themed-page :is(.ss-hero-seg, .cw-editor-hero-seg) strong {
   color: var(--cw-theme-text);

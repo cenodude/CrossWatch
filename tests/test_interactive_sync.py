@@ -822,3 +822,87 @@ def test_session_payload_reports_global_dry_run():
     session = SimpleNamespace(public=lambda: {"ok": True, "status": "review"})
     assert public(session, {"sync": {"dry_run": True}})["dry_run"] is True
     assert public(session, {"sync": {}})["dry_run"] is False
+
+
+@pytest.mark.parametrize("confirmation, status", [(None, 409), (False, 409), ("true", 422), (True, 200)])
+def test_api_requires_explicit_dry_run_confirmation(api_client, monkeypatch, confirmation, status):
+    client, session, api = api_client
+    cfg = api.load_config()
+    cfg["sync"]["dry_run"] = True
+    before = deepcopy(cfg)
+    launched = []
+    monkeypatch.setattr(api, "launch", lambda *args, **kwargs: launched.append((args, kwargs)))
+    payload = dict(revision=1, selection_version=0)
+    if confirmation is not None:
+        payload["confirm_dry_run"] = confirmation
+
+    response = client.post(f"/api/interactive-sync/{session.id}/apply", json=payload)
+
+    assert response.status_code == status
+    assert cfg == before
+    assert len(launched) == (1 if status == 200 else 0)
+    if status == 200:
+        assert launched[0][0][3] == session.store.selected_ids()
+        assert launched[0][0][4] is True
+        assert response.json()["dry_run"] is True
+
+
+@pytest.mark.parametrize("invalid", ["revision", "selection", "owner", "permission", "empty"])
+def test_dry_run_confirmation_preserves_apply_checks(api_client, monkeypatch, invalid):
+    client, session, api = api_client
+    api.load_config()["sync"]["dry_run"] = True
+    monkeypatch.setattr(api, "launch", lambda *args, **kwargs: pytest.fail("Invalid apply launched"))
+    payload = dict(revision=1, selection_version=0, confirm_dry_run=True)
+    headers = {}
+    expected = 409
+    if invalid == "revision":
+        payload["revision"] = 0
+    elif invalid == "selection":
+        payload["selection_version"] = 1
+    elif invalid == "owner":
+        headers["x-test-user"] = "bob"
+        expected = 404
+    elif invalid == "permission":
+        monkeypatch.setattr(api, "request_user", lambda request: dict(id="alice", permissions=dict(write=False)))
+        expected = 403
+    else:
+        monkeypatch.setattr(session.store, "selected_ids", lambda: set())
+        expected = 400
+    assert client.post(f"/api/interactive-sync/{session.id}/apply", json=payload, headers=headers).status_code == expected
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_confirmed_dry_run_applies_only_selected_changes_once(config_base, monkeypatch, mode):
+    from api import syncAPI
+    from services import interactive_sync as svc
+
+    src, dst = setup_ops(config_base, monkeypatch, [item(1), item(2)])
+    cfg = _cfg(False)
+    cfg["pairs"][0]["mode"] = mode
+    cfg["sync"]["dry_run"] = True
+    before = deepcopy(cfg)
+    monkeypatch.setattr(syncAPI, "_env", lambda: (lambda: cfg, lambda *_: pytest.fail("Global config was saved")))
+    session = svc.Session(pair_id="p1", owner="local")
+    try:
+        svc.refresh(session, cfg, {})
+        selected = {key for key, row in session.plan.rows.items() if row["item"]["title"] == "Movie 1"}
+        assert len(selected) == 1
+        assert not dst.add_calls
+        svc.apply(session, cfg, selected, confirm_dry_run=True)
+        assert session.status == "complete", session.message
+        assert session.report["outcome"] == "success"
+        assert len(dst.add_calls) == 1
+        assert [row["title"] for row in dst.add_calls[0]] == ["Movie 1"]
+        assert dst.add_dry_run == [False]
+        assert cfg == before
+        assert not src.add_calls
+        assert session.report["requested"] == 1
+        dst.add_calls.clear()
+        dst.add_dry_run.clear()
+        written = deepcopy(dst.index)
+        syncAPI._run_pairs_thread_entry("next-dry-run", {"pair_id": "p1"})
+        assert dst.add_dry_run == [True]
+        assert dst.index == written
+        assert cfg == before
+    finally:
+        session.close()

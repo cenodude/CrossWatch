@@ -1988,9 +1988,13 @@ html:is([data-cw-theme],.cw-theme-original) .cx-modal-shell .scrm-modal .scrm-pa
 html body img:is([src*="/assets/img/placeholder_poster.svg"],[src*="/art/tmdb/"]){background:var(--cw-artwork-placeholder-bg);color-scheme:var(--cw-artwork-color-scheme)}
 
 #page-tracker .trk-hero-backdrop{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;object-position:center;z-index:-1;pointer-events:none}
-#page-tracker .trk-hero-context{display:flex;align-items:center;height:54px;min-width:0}
+#page-tracker .trk-hero-context{display:flex;align-items:center;height:72px;min-width:0}
 #page-tracker .trk-hero-selection{display:grid;gap:3px;min-width:0;max-width:100%;animation:trk-hero-reveal .2s ease-out}
-#page-tracker .trk-hero-title-line{display:flex;align-items:baseline;gap:12px;min-width:0;line-height:1.3}
+#page-tracker .trk-hero-title-line{display:flex;align-items:center;gap:12px;min-width:0;line-height:1.3}
+#page-tracker .trk-hero-heading{display:flex;align-items:center;min-width:0;max-width:min(280px,100%)}
+#page-tracker .trk-hero-logo{display:block;width:auto;max-width:100%;height:44px;object-fit:contain;object-position:left center}
+#page-tracker .trk-hero-heading [hidden]{display:none}
+@media(max-width:760px){#page-tracker .trk-hero-context{height:64px}#page-tracker .trk-hero-heading{max-width:min(180px,50vw)}#page-tracker .trk-hero-logo{height:36px}}
 #page-tracker .trk-hero-title-line strong,#page-tracker .trk-hero-selection small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #page-tracker .trk-hero-meta{flex:0 0 auto}
 @keyframes trk-hero-reveal{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:translateY(0)}}

@@ -74,7 +74,7 @@ def test_repeated_keys_are_counted_once_and_unchanged_status_has_no_batch(api, n
     assert store.change_count() == count
 
 
-@pytest.mark.parametrize("extra", [{"status": "unknown"}, {"status": None}, {"keys": []}, {"keys": ["bad"]}, {"action": "delete"}, {"keys": ["movie:tmdb:949"] * 1001}])
+@pytest.mark.parametrize("extra", [{"status": "unknown"}, {"status": None}, {"keys": []}, {"keys": ["bad"]}, {"action": "delete"}])
 def test_invalid_bulk_requests_leave_notes_untouched(api, notes, extra):
     store, keys, before = notes
     response = api.post("/api/tracker/notes/bulk", json={"keys": keys, "action": "status", "status": "completed", **extra})

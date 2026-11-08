@@ -18,8 +18,10 @@ from test_tracker_import import cfg, fake_sources
 
 
 @pytest.mark.parametrize("feature", ["history", "watchlist", "ratings", "progress", "collection"])
-def test_review_only_writes_selected_changes_to_the_selected_tracker(config_base, monkeypatch, feature):
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_review_only_writes_selected_changes_to_the_selected_tracker(config_base, monkeypatch, feature, dry_run):
     cfg, source, other = feature_setup(config_base, monkeypatch, feature, [feature_item(feature, 1), feature_item(feature, 2)], [])
+    cfg["sync"]["dry_run"] = dry_run
     cfg["crosswatch"] = {"root_dir": str(config_base / "default"), "instances": {"desk": {"root_dir": str(config_base / "desk")}}}
     monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"SRC": source, "DST": other, "CROSSWATCH": OPS})
     monkeypatch.setattr(syncAPI, "_env", lambda: (lambda: deepcopy(cfg), lambda *_: None))
@@ -43,7 +45,7 @@ def test_review_only_writes_selected_changes_to_the_selected_tracker(config_base
         assert target.job("import_sources") is None
         selected = {rid for rid, row in session.plan.rows.items() if row["item"]["title"] == "Movie 2"}
         assert len(selected) == 1
-        interactive_sync.apply(session, cfg, selected)
+        interactive_sync.apply(session, cfg, selected, confirm_dry_run=dry_run)
         assert session.status == "complete", session.message
         assert {r["title"] for r in target.read_current(feature)["items"].values()} == {"Movie 9", "Movie 2"}
         assert not TrackerStore(config_base / "default").read_current(feature)["items"]

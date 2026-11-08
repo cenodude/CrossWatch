@@ -887,7 +887,9 @@ def get_art_file(
     cache_root = _cache_subdir(cache_dir, "art")
     cache_root.mkdir(parents=True, exist_ok=True)
 
-    art_kind = "backdrop" if str(kind).strip().lower() == "backdrop" else "poster"
+    art_kind = str(kind).strip().lower()
+    if art_kind not in {"poster", "backdrop", "logo"}:
+        art_kind = "poster"
     eff_locale = locale or _cfg_ui_locale() or None
 
     requested_entity = "movie" if str(typ).strip().lower() == "movie" else "show"
@@ -917,8 +919,11 @@ def get_art_file(
     base = _cache_base_path(cache_root, cache_stem)
     meta_path = base.with_suffix(".json")
 
+    cached_info = _read_json(meta_path) if meta_path.exists() else {}
+    if art_kind == "logo" and cached_info.get("missing") and time.time() - cached_info.get("ts", 0) < 86400:
+        return str(_placeholder_poster()), "image/svg+xml"
     cached_art = None
-    if meta_path.exists() and _read_json(meta_path).get("url"):
+    if cached_info.get("url"):
         for f in _cache_matches(cache_root, cache_stem):
             if f.suffix.lower() != ".json" and f.exists():
                 cached_art = f
@@ -941,7 +946,7 @@ def get_art_file(
         typ,
         str(tmdb_id),
         cache_dir=cache_dir,
-        need={"poster": True, "backdrop": True},
+        need={"logo": True} if art_kind == "logo" else {"poster": True, "backdrop": True},
         locale=eff_locale,
         title=title,
         year=year,
@@ -958,10 +963,14 @@ def get_art_file(
 
     best = _pick_best_image(art, eff_locale)
     if not best:
+        if art_kind == "logo" and "logo" in (meta.get("images") or {}):
+            _write_json(meta_path, {"missing": True, "ts": int(time.time())})
         return str(_placeholder_poster()), "image/svg+xml"
 
     size_tag = safe_size
     src_url = _tmdb_size_url(best, size_tag) or ""
+    if art_kind == "logo" and src_url.lower().endswith(".svg"):
+        src_url = src_url[:-4] + ".png"
     if not src_url:
         return str(_placeholder_poster()), "image/svg+xml"
 
@@ -1209,6 +1218,8 @@ def api_tmdb_art(
                 year=year,
             )
         safe_path = _safe_tmdb_art_response_path(base, local_path)
+        if art_kind == "logo" and _is_placeholder_art(safe_path):
+            return PlainTextResponse("Logo not available", status_code=404, headers={"Cache-Control": "public, max-age=3600"})
         return FileResponse(
             safe_path,
             media_type=mime,

@@ -156,8 +156,8 @@ def _selection(payload, request):
     if feature not in FEATURES:
         raise HTTPException(400, "Unsupported feature")
     raw = payload.get("items")
-    if not isinstance(raw, list) or not raw or len(raw) > 1000:
-        raise HTTPException(400, "Select between 1 and 1000 rows")
+    if not isinstance(raw, list) or not raw:
+        raise HTTPException(400, "Select at least one row")
     selected = []
     seen = set()
     for row in raw:

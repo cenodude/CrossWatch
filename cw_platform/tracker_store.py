@@ -1522,7 +1522,7 @@ class TrackerStore:
     def _prune_changes(conn: sqlite3.Connection, now_ns: int) -> None:
         conn.execute("DELETE FROM changes WHERE created_ns < ?", (now_ns - CHANGE_RETENTION_DAYS * 86_400 * 1_000_000_000,))
         conn.execute(
-            "DELETE FROM changes WHERE batch IN (SELECT batch FROM changes WHERE id <= (SELECT max(id) FROM changes) - ?)",
+            "DELETE FROM changes WHERE batch IN (SELECT batch FROM changes GROUP BY batch HAVING max(id) <= (SELECT max(id) FROM changes) - ?)",
             (CHANGE_LIMIT,),
         )
 
