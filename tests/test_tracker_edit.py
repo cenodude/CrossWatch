@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 import sqlite3
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -379,6 +380,74 @@ def test_api_replace_takes_the_mapped_identity_and_keeps_the_watch(client, base)
     assert (row["title"], row["year"], row["ids"]) == ("The Matrix", 1999, {"tmdb": "603", "imdb": "tt0133093"})
     assert row["watched_at"] == MOVIE["watched_at"]
     assert client.post("/api/tracker/replace", json={"feature": "history", "key": "tmdb:603", "item": {"title": "x"}}).status_code == 400
+
+
+@pytest.mark.parametrize("endpoint", ["replace", "edit-title"])
+@pytest.mark.parametrize("original_imdb", ["tt0113277", "tt0133093"])
+def test_tmdb_match_saves_verified_imdb_and_undo_restores_original(client, base, cfg, monkeypatch, endpoint, original_imdb):
+    original = {**MOVIE, "ids": {"imdb": original_imdb}}
+    key = f"imdb:{original_imdb}"
+    store = TrackerStore(base)
+    store.write_state("history", {key: original})
+    cfg["tmdb"] = {"api_key": "test"}
+    calls = []
+
+    def get_response(url, **kwargs):
+        calls.append(url)
+        return SimpleNamespace(data={"id": 949, "imdb_id": "tt0113277"})
+
+    monkeypatch.setattr(trackerAPI, "_tmdb_provider", lambda: SimpleNamespace(get_response=get_response))
+    response = client.post(f"/api/tracker/{endpoint}", json={
+        "feature": "history", "key": key,
+        "item": {"type": "movie", "title": "Heat", "year": 1995, "ids": {"tmdb": "949"}},
+    })
+    assert response.status_code == 200, response.text
+    assert calls == ["https://api.themoviedb.org/3/movie/949/external_ids"]
+    saved = store.read_current("history")["items"]["tmdb:949"]
+    assert saved["ids"] == {"tmdb": "949", "imdb": "tt0113277"}
+    assert saved["watched_at"] == original["watched_at"]
+    assert client.post("/api/tracker/undo", json={"batch": response.json()["batch"]}).status_code == 200
+    assert store.read_current("history")["items"] == {key: original}
+
+
+@pytest.mark.parametrize("endpoint", ["replace", "edit-title"])
+@pytest.mark.parametrize("failure", ["network", "malformed", "wrong_title"])
+def test_failed_match_id_lookup_leaves_tracker_unchanged(client, base, cfg, monkeypatch, endpoint, failure):
+    cfg["tmdb"] = {"api_key": "test"}
+
+    def get_response(*args, **kwargs):
+        if failure == "network":
+            raise OSError("Offline")
+        return SimpleNamespace(data=[] if failure == "malformed" else {"id": 603, "imdb_id": "tt0133093"})
+
+    monkeypatch.setattr(trackerAPI, "_tmdb_provider", lambda: SimpleNamespace(get_response=get_response))
+    response = client.post(f"/api/tracker/{endpoint}", json={
+        "feature": "history", "key": "tmdb:949", "item": {"type": "movie", "ids": {"tmdb": "949"}},
+    })
+    assert response.status_code == 502
+    assert _items(base, "history")["tmdb:949"] == MOVIE
+    assert TrackerStore(base).change_log()[0] == 0
+
+
+@pytest.mark.parametrize("endpoint", ["replace", "edit-title"])
+def test_tmdb_show_match_keeps_external_ids_at_show_level(client, base, cfg, monkeypatch, endpoint):
+    cfg["tmdb"] = {"api_key": "test"}
+    calls = []
+
+    def get_response(url, **kwargs):
+        calls.append(url)
+        return SimpleNamespace(data={"id": 95396, "imdb_id": "tt11280740", "tvdb_id": 371980})
+
+    monkeypatch.setattr(trackerAPI, "_tmdb_provider", lambda: SimpleNamespace(get_response=get_response))
+    response = client.post(f"/api/tracker/{endpoint}", json={
+        "feature": "history", "key": "tmdb:95396#s01e02", "item": EPISODE,
+    })
+    assert response.status_code == 200, response.text
+    assert calls == ["https://api.themoviedb.org/3/tv/95396/external_ids"]
+    saved = _items(base, "history")["tmdb:95396#s01e02"]
+    assert saved["show_ids"] == {"tmdb": "95396", "imdb": "tt11280740", "tvdb": "371980"}
+    assert not saved.get("ids")
+    assert (saved["season"], saved["episode"]) == (1, 2)
 
 
 def test_change_log_filters_by_kind_and_searches_titles(client, base):

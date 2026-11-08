@@ -141,6 +141,8 @@
     noteRows: [],
     notes: { total: 0, statuses: {}, tags: [] },
     noteFields: [],
+    duplicates: false,
+    filtersOpen: false,
     noteStatus: "",
     noteTag: "",
     total: 0,
@@ -190,12 +192,18 @@
       state.hideDropped = saved.hideDropped === true;
       if (Number.isInteger(saved.zoom)) state.zoom = saved.zoom;
       if (typeof saved.instance === "string" && saved.instance) state.instance = saved.instance;
+      for (const key of ["q", "noteStatus", "noteTag", "cleanFeature", "healthFilter"]) if (typeof saved[key] === "string") state[key] = saved[key].slice(0, 200);
+      if (["recent", "oldest", "title"].includes(saved.sort)) state.sort = saved.sort;
+      state.duplicates = saved.duplicates === true;
+      state.offset = Number.isInteger(saved.offset) && saved.offset >= 0 ? saved.offset : 0;
+      state.scrollTop = Number.isFinite(saved.scrollTop) && saved.scrollTop > 0 ? saved.scrollTop : 0;
+      if (saved.ref && typeof saved.ref === "object" && ["note", "show", "key"].some(key => typeof saved.ref[key] === "string")) state.ref = saved.ref;
     } catch {}
   }
 
   function saveView() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ view: state.view, layouts: state.layouts, media: state.media, byDay: state.byDay, hideDropped: state.hideDropped, zoom: state.zoom, pageSize: state.pageSize, instance: state.instance }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ view: state.view, layouts: state.layouts, media: state.media, byDay: state.byDay, hideDropped: state.hideDropped, zoom: state.zoom, pageSize: state.pageSize, instance: state.instance, q: state.q, sort: state.sort, noteStatus: state.noteStatus, noteTag: state.noteTag, cleanFeature: state.cleanFeature, healthFilter: state.healthFilter, duplicates: state.duplicates, offset: state.offset, ref: state.ref, scrollTop: state.scrollTop }));
     } catch {}
   }
 
@@ -438,32 +446,41 @@
     }).join("");
   }
 
+  function renderNoteFilters() {
+    const counts = state.view === "titles" ? state.notes.statuses || {} : {};
+    const statuses = [{ id: "", label: "All statuses", icon: "", count: state.view === "titles" ? state.notes.total : 0 }, ...STATUSES.map((s) => ({ ...s, count: counts[s.id] })), {id:"none",label:"No status"}]
+      .map((s) => `<option value="${esc(s.id)}"${state.noteStatus === s.id ? " selected" : ""}>${esc(s.label)}${s.count ? ` (${esc(num(s.count))})` : ""}</option>`)
+      .join("");
+    const tags = [...(state.notes.tags || [])];
+    const picked = state.noteTag.toLowerCase();
+    if (picked && !tags.some(t => t.tag.toLowerCase() === picked)) tags.push({tag:state.noteTag,count:0});
+    const tagSelect = `<label class="trk-status-filter"><span>Tag</span><select class="cw-select trk-tag-filter" data-trk-input="note-tag" aria-label="Filter by tag"><option value="">Every tag</option>${tags.map((t) => `<option value="${esc(t.tag)}"${t.tag.toLowerCase() === picked ? " selected" : ""}>${esc(t.tag)} · ${esc(num(t.count))}</option>`).join("")}</select></label>`;
+    return `<label class="trk-status-filter"><span>Status</span><select class="cw-select" data-trk-input="note-status" aria-label="Filter by status">${statuses}</select></label>${state.view === "titles" && !tags.length ? "" : tagSelect}`;
+  }
+
   function renderFilters() {
+    const count = Number(state.view === "history" && !!state.duplicates) + Number(!!state.noteStatus) + Number(!!state.noteTag) + Number(state.sort !== "recent" && !["shows", "cleanup"].includes(state.view));
+    const more = `<button type="button" class="cw-filter-chip${count || state.filtersOpen ? " active" : ""}" data-trk-action="filters" aria-expanded="${state.filtersOpen}" aria-controls="trk-extra-filters">${symbol("filter_list")}<span>Filters${count ? ` (${count})` : ""}</span></button>`;
     if (state.view === "cleanup") {
       const lists = FEATURES.map((f) => `<option value="${f.id}"${f.id === state.cleanFeature ? " selected" : ""}>${esc(f.label)}</option>`).join("");
       const health = HEALTH.map((h) => `<button type="button" class="trk-clean-health" data-trk-health="${h.id}" aria-pressed="${state.healthFilter === h.id}">${symbol(h.icon)}<span>${esc(h.label)}</span><b>${esc(num(healthOf()[h.id]))}</b></button>`).join("");
-      return `<select class="cw-select trk-clean-list" data-trk-input="clean-feature" aria-label="List to clean up">${lists}</select><div class="trk-clean-health-options" role="group" aria-label="TMDB health">${health}</div>`;
+      return `<select class="cw-select trk-clean-list" data-trk-input="clean-feature" aria-label="List to clean up">${lists}</select>${more}<div class="trk-clean-health-options" role="group" aria-label="TMDB health">${health}</div>`;
     }
     if (state.view === "shows") {
-      return chip('data-trk-action="hide-dropped"', "Hide dropped", { active: state.hideDropped, iconName: "do_not_disturb_on", title: "Leave out shows you dropped" });
+      return more + chip('data-trk-action="hide-dropped"', "Hide dropped", { active: state.hideDropped, iconName: "do_not_disturb_on", title: "Leave out shows you dropped" });
     }
-    if (state.view === "titles") {
-      const counts = state.notes.statuses || {};
-      const statuses = [{ id: "", label: "All", icon: "", count: state.notes.total }, ...STATUSES.map((s) => ({ ...s, count: counts[s.id] }))]
-        .map((s) => chip(`data-trk-note-filter="${s.id}"`, s.label, { active: state.noteStatus === s.id, count: s.count }))
-        .join("");
-      const tags = state.notes.tags || [];
-      const picked = state.noteTag.toLowerCase();
-      const tagSelect = tags.length || state.noteTag
-        ? `<select class="cw-select trk-tag-filter" data-trk-input="note-tag" aria-label="Filter by tag"><option value="">Every tag</option>${tags.map((t) => `<option value="${esc(t.tag)}"${t.tag.toLowerCase() === picked ? " selected" : ""}>${esc(t.tag)} · ${esc(num(t.count))}</option>`).join("")}</select>`
-        : "";
-      return `<div class="trk-seg" role="group" aria-label="Status">${statuses}</div>${tagSelect}`;
-    }
+    if (state.view === "titles") return renderNoteFilters();
     let out = `<div class="trk-seg" role="group" aria-label="Type">${MEDIA.map((m) => chip(`data-trk-media="${m.id}"`, m.label, { active: state.media === m.id, iconName: m.icon })).join("")}</div>`;
     if (timelineOn() && state.month) {
       out += `<button type="button" class="cw-filter-chip active" data-trk-action="month-clear" title="Back to the latest plays">${symbol("event", "cw-type-icon")}<span>${esc(monthName(state.month))} and older</span>${symbol("close", "cw-type-icon")}</button>`;
     }
-    return out;
+    return out + more;
+  }
+
+  function renderExtraFilters() {
+    if (state.view === "titles") return "";
+    const sort = ["shows", "cleanup"].includes(state.view) ? "" : `<label class="trk-status-filter"><span>Sort</span><select class="cw-select" data-trk-input="sort" aria-label="Sort results">${[["recent","Newest first"],["oldest","Oldest first"],["title","Title A-Z"]].map(([value,label]) => `<option value="${value}"${state.sort === value ? " selected" : ""}>${label}</option>`).join("")}</select></label>`;
+    return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Additional filters">${renderNoteFilters()}${sort}${state.view === "history" ? `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="duplicates"${state.duplicates ? " checked" : ""}>Possible duplicates</label>` : ""}<button type="button" class="cw-btn" data-trk-action="filters-clear">Clear filters</button><small>${state.view === "history" && state.duplicates ? "Same title, episode and watch time. Compare the entries before deleting; watches at different times are kept." : "Status and tags use your local My titles details."}</small></div>`;
   }
 
   function renderControls() {
@@ -478,6 +495,7 @@
         <div class="trk-actions">
           ${state.view === "history" ? `<button type="button" class="cw-filter-chip trk-icon-btn${state.byDay ? " active" : ""}" data-trk-action="by-day" aria-pressed="${state.byDay}" aria-label="Group by day" title="By day">${symbol("calendar_view_day", "cw-type-icon")}</button>` : ""}
           <div class="cw-type-filter trk-layout" role="group" aria-label="Display layout">${[['list', 'view_list', 'List'], ['grid', 'grid_view', 'Grid']].map(([value, glyph, label]) => `<button type="button" class="cw-filter-chip trk-icon-btn${(state.layouts[state.view] || "list") === value ? " active" : ""}" data-trk-layout="${value}" aria-pressed="${(state.layouts[state.view] || "list") === value}" aria-label="${label} view" title="${label} view">${symbol(glyph, "cw-type-icon")}</button>`).join("")}</div>
+          <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="views" title="Saved views" aria-label="Saved views">${icon("bookmarks")}</button>
           <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="changes" title="Changes: everything you logged, edited or deleted" aria-label="Changes">${icon("manage_history")}</button>
           <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="import" title="Import from a connected service" aria-label="Import">${icon("download")}</button>
           <div class="trk-add-split">
@@ -489,7 +507,7 @@
             </div>
           </div>
         </div>
-      </div>`;
+      </div>${renderExtraFilters()}`;
   }
 
   function pager() {
@@ -517,7 +535,7 @@
       <button type="button" class="cw-selection-button" data-trk-action="pick-visible"${state.loading || state.picking ? " disabled" : ""}>${icon("visibility")}<span>Visible</span></button>
       <button type="button" class="cw-selection-button" data-trk-action="pick-all"${state.loading || state.picking || state.total > 1000 ? " disabled" : ""} title="${state.total > 1000 ? "Select up to 1000 records at a time. Narrow the filters to select all results." : "Select every result matching these filters"}">${icon("checklist")}<span>${state.picking ? "Selecting…" : "All results"}</span></button>
       <button type="button" class="cw-selection-button" data-trk-action="clear-picked">${icon("close")}<span>Clear</span></button>
-      <span class="cw-selection-actions"><button type="button" class="cw-selection-button is-danger" data-trk-action="delete-picked"${state.picking ? " disabled" : ""}>${icon("delete")}<span>Delete</span></button></span>`;
+      <span class="cw-selection-actions"><button type="button" class="cw-selection-button" data-trk-action="status-picked"${state.picking ? " disabled" : ""}>${icon("flag")}<span>Set status</span></button>${state.view === "shows" ? "" : `<button type="button" class="cw-selection-button is-danger" data-trk-action="delete-picked"${state.picking ? " disabled" : ""}>${icon("delete")}<span>${state.view === "titles" ? "Remove from My titles" : "Delete"}</span></button>`}</span>`;
   }
 
   function emptyState(text, symbolName = "table_rows") {
@@ -573,7 +591,7 @@
 
   function renderTimeline() {
     if (!state.items.length) {
-      return emptyState(state.loading ? "Loading your history..." : state.q || state.media ? "No plays match these filters." : "Nothing watched yet. Use Log a watch to add your first play.", state.loading ? "hourglass_empty" : "history");
+      return emptyState(state.loading ? "Loading your history..." : state.q || state.media || state.noteStatus || state.noteTag || state.duplicates ? "No plays match these filters." : "Nothing watched yet. Use Log a watch to add your first play.", state.loading ? "hourglass_empty" : "history");
     }
     const body = timelineGroups().map((day) => {
       const header = `<tr class="trk-day"><td colspan="4"><span>${esc(day.label)}</span><small>${esc(plural(day.plays, "play", "plays"))}</small></td></tr>`;
@@ -625,11 +643,12 @@
   }
 
   function renderShows() {
-    if (!state.shows.length) return emptyState(state.loading ? "Loading shows..." : state.q ? "No shows match this filter." : "No episodes in your history yet.", state.loading ? "hourglass_empty" : "tv");
-    const body = state.shows.map((show) => {
+    if (!state.shows.length) return emptyState(state.loading ? "Loading shows..." : state.q || state.noteStatus || state.noteTag || state.hideDropped ? "No shows match these filters." : "No episodes in your history yet.", state.loading ? "hourglass_empty" : "tv");
+    const body = state.shows.map((show, index) => {
       const selected = state.ref?.show === show.key;
       const last = show.last_season != null ? se(show.last_season, show.last_episode) : "";
-      return `<tr class="trk-play${selected ? " is-selected" : ""}" data-trk-ref-show="${esc(show.key)}" tabindex="0" aria-selected="${selected}">
+      return `<tr class="trk-play${selected ? " is-selected" : ""}${state.picked.has(show.key) ? " is-picked" : ""}" data-trk-ref-show="${esc(show.key)}" tabindex="0" aria-selected="${selected}">
+          <td class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="${index}"${state.picked.has(show.key) ? " checked" : ""} aria-label="Select ${esc(show.title || show.key)}"></td>
           <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(show.title || show.key)}</strong>${statusPill(show.status)}</div>${show.year ? `<span class="trk-sub">${esc(show.year)}</span>` : ""}</div></td>
           <td class="trk-col-progress">${progressCell(show)}</td>
           <td class="trk-col-next">${nextCell(show)}</td>
@@ -637,7 +656,7 @@
           <td class="trk-col-date">${esc(agoText(show.last_watched))}</td>
         </tr>`;
     }).join("");
-    return tableWrap(`${th("Show", "cw-col-title")}${th("Progress", "trk-col-progress")}${th("Next up", "trk-col-next")}${th("Last episode", "trk-col-last-episode")}${th("Last watched", "trk-col-date")}`, body, "trk-shows", ["title", "progress", "next", "last-episode", "date"]) + pager();
+    return tableWrap(`<th class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="page"${state.shows.every(s => state.picked.has(s.key)) ? " checked" : ""} aria-label="Select this page"></th>${th("Show", "cw-col-title")}${th("Progress", "trk-col-progress")}${th("Next up", "trk-col-next")}${th("Last episode", "trk-col-last-episode")}${th("Last watched", "trk-col-date")}`, body, "trk-shows", ["pick", "title", "progress", "next", "last-episode", "date"]) + pager();
   }
 
   function renderTitles() {
@@ -648,17 +667,20 @@
         : "Nothing here yet. Open any title and add a status, dates, tags or notes. They stay in CrossWatch and never sync.";
       return emptyState(text, state.loading ? "hourglass_empty" : "bookmarks");
     }
-    const body = state.noteRows.map((n) => {
+    const allPicked = state.noteRows.every((n) => state.picked.has(n.key));
+    const body = state.noteRows.map((n, index) => {
       const selected = state.ref?.note === n.key;
       const dates = [n.started ? `Started ${dayText(n.started)}` : "", n.finished ? `Finished ${dayText(n.finished)}` : ""].filter(Boolean).join(" · ");
-      return `<tr class="trk-play${selected ? " is-selected" : ""}" data-trk-ref-note="${esc(n.key)}" tabindex="0" aria-selected="${selected}">
+      return `<tr class="trk-play${selected ? " is-selected" : ""}${state.picked.has(n.key) ? " is-picked" : ""}" data-trk-ref-note="${esc(n.key)}" tabindex="0" aria-selected="${selected}">
+          <td class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="${index}"${state.picked.has(n.key) ? " checked" : ""} aria-label="Select ${esc(n.title || n.key)}"></td>
           <td class="cw-col-type">${typePill({ type: n.type })}</td>
           <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(n.title || n.key)}</strong>${n.year ? `<span class="trk-inline-sub">${esc(n.year)}</span>` : ""}</div>${dates ? `<span class="trk-sub">${esc(dates)}</span>` : ""}${tagChips(n.tags, 5)}</div></td>
           <td class="trk-col-status">${statusPill(n.status)}</td>
           <td class="trk-col-date">${esc(agoText(n.updated))}</td>
         </tr>`;
     }).join("");
-    return tableWrap(`${th("Type", "cw-col-type")}${th("Title", "cw-col-title")}${th("Status", "trk-col-status")}${th("Updated", "trk-col-date")}`, body, "trk-titles", ["type", "title", "status", "date"]) + pager();
+    const head = `<th class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="page"${allPicked ? " checked" : ""} aria-label="Select this page"></th>`;
+    return tableWrap(`${head}${th("Type", "cw-col-type")}${th("Title", "cw-col-title")}${th("Status", "trk-col-status")}${th("Updated", "trk-col-date")}`, body, "trk-titles", ["pick", "type", "title", "status", "date"]) + pager();
   }
 
   function extraColumn(feature) {
@@ -701,9 +723,9 @@
         const day = dayLabel(date);
         if (day !== previousDay) { heading = `<h3 class="trk-grid-day">${esc(day)}</h3>`; previousDay = day; }
       }
-      return `${heading}<article class="trk-play trk-grid-card${selected ? " is-selected" : ""}" data-trk-ref-${refName}="${esc(item.key)}" tabindex="0" aria-label="${esc(title)}" aria-selected="${selected}">
+      return `${heading}<article class="trk-play trk-grid-card${selected ? " is-selected" : ""}${state.picked.has(item.key) ? " is-picked" : ""}" data-trk-ref-${refName}="${esc(item.key)}" tabindex="0" aria-label="${esc(title)}" aria-selected="${selected}">
         <div class="trk-grid-art"><span class="trk-grid-placeholder" aria-hidden="true">${symbol(shows ? "tv" : typeMeta(item).icon)}</span>${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}
-          ${!shows && !notes ? `<input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}">` : ""}
+          <input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}">
           ${rating != null ? `<span class="cw-media-card-score" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}
           ${date ? `<span class="trk-grid-date">${esc(timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}
         </div>
@@ -720,7 +742,7 @@
     const f = featureOf(feature);
     const clean = state.view === "cleanup";
     if (!state.items.length) {
-      const text = state.loading ? "Loading..." : clean ? (state.healthFilter === "attention" ? `Nothing in ${f.label.toLowerCase()} needs attention.` : "No records match this filter.") : state.q || state.media ? "No records match these filters." : `Your ${f.label.toLowerCase()} is empty.`;
+      const text = state.loading ? "Loading..." : state.noteStatus || state.noteTag || (state.view === "history" && state.duplicates) ? "No records match these filters." : clean ? (state.healthFilter === "attention" ? `Nothing in ${f.label.toLowerCase()} needs attention.` : "No records match this filter.") : state.q || state.media ? "No records match these filters." : `Your ${f.label.toLowerCase()} is empty.`;
       return emptyState(text, state.loading ? "hourglass_empty" : clean ? "verified" : f.icon);
     }
     const allPicked = state.items.every((i) => state.picked.has(i.key));
@@ -1107,6 +1129,7 @@
         <button type="button" class="cw-btn" data-trk-detail="rate" title="${rating != null ? "Change rating" : "Rate"}" aria-label="${rating != null ? "Change rating" : "Rate"}">${icon(rating != null ? "star" : "star_outline")}</button>
         <button type="button" class="cw-btn" data-trk-detail="list" title="${listed ? "Remove from watchlist" : "Add to watchlist"}" aria-label="${listed ? "Remove from watchlist" : "Add to watchlist"}">${icon(listed ? "bookmark_remove" : "bookmark_add")}</button>
         ${info ? "" : `<button type="button" class="cw-btn" data-trk-detail="map" title="Choose the correct movie or show for this tracker entry" aria-label="Fix match">${icon("compare_arrows")}</button>`}
+        ${recordCount(data) ? `<button type="button" class="cw-btn" data-trk-detail="origin" title="Where does this come from?" aria-label="Where does this come from?">${icon("alt_route")}</button>` : ""}
         ${card ? `<button type="button" class="cw-btn" data-trk-detail="card" title="Open details" aria-label="Open details">${icon("info")}</button>` : ""}
       </div>
       ${episodePreviews(data)}
@@ -1211,7 +1234,7 @@
     if (controls) {
       const focused = document.activeElement?.dataset?.trkInput;
       setSlot("controls", renderControls());
-      if (["q", "view"].includes(focused)) {
+      if (["q", "view", "note-status", "note-tag", "sort"].includes(focused)) {
         const input = state.root.querySelector(`[data-trk-input="${focused}"]`);
         input?.focus({preventScroll:true});
         if (focused === "q") input?.setSelectionRange?.(input.value.length, input.value.length);
@@ -1269,7 +1292,7 @@
     }
     let months = [];
     try {
-      const params = new URLSearchParams({ feature: "history", provider_instance: state.instance, q: state.q, media: state.media });
+      const params = new URLSearchParams({ feature: "history", provider_instance: state.instance, q: state.q, media: state.media, status: state.noteStatus, tag: state.noteTag, duplicates: String(state.duplicates) });
       const data = await getJSON(`/api/tracker/months?${params}`);
       months = Array.isArray(data.months) ? data.months : [];
     } catch {
@@ -1335,7 +1358,7 @@
         state.total = Number(data.total || 0);
         if (data.summary) state.notes = data.summary;
       } else if (state.view === "shows") {
-        const data = await getJSON(`/api/tracker/shows?${inst()}&q=${encodeURIComponent(state.q)}&offset=${state.offset}&limit=${state.pageSize}${state.hideDropped ? "&hide_dropped=true" : ""}`);
+        const data = await getJSON(`/api/tracker/shows?${inst()}&q=${encodeURIComponent(state.q)}&offset=${state.offset}&limit=${state.pageSize}&status=${encodeURIComponent(state.noteStatus)}&tag=${encodeURIComponent(state.noteTag)}${state.hideDropped ? "&hide_dropped=true" : ""}`);
         if (id !== state.request) return;
         state.shows = Array.isArray(data.shows) ? data.shows : [];
         state.total = Number(data.total || 0);
@@ -1344,8 +1367,11 @@
         const timeline = timelineOn();
         const params = new URLSearchParams({
           feature: listFeature(),
+          duplicates: String(state.view === "history" && state.duplicates),
           provider_instance: state.instance,
           q: state.q,
+          status: state.noteStatus,
+          tag: state.noteTag,
           media: state.view === "cleanup" ? "" : state.media,
           sort: state.view === "cleanup" ? "title" : state.sort,
           offset: String(timeline ? (append ? state.items.length : 0) : state.offset),
@@ -1427,6 +1453,7 @@
 
   function selectRef(ref) {
     state.ref = ref;
+    saveView();
     state.statusMenu = false;
     state.title = null;
     state.seasonOpen.clear();
@@ -1455,6 +1482,7 @@
   }
 
   async function refresh() {
+    const position = {view:state.view,instance:state.instance,top:state.scrollTop || 0};
     pickRequest += 1;
     state.picking = false;
     clearTimeout(moveTimer);
@@ -1479,12 +1507,13 @@
     loadMonths();
     await loadMain();
     if (state.ref) loadTitle();
+    if (position.top && position.view === state.view && position.instance === state.instance) requestAnimationFrame(() => window.scrollTo({top:position.top,behavior:"instant"}));
   }
 
   function reload(resetPage = true) {
     pickRequest += 1;
     state.picking = false;
-    if (resetPage) state.offset = 0;
+    if (resetPage) { state.offset = 0; state.scrollTop = 0; }
     state.month = "";
     loadMonths();
     state.picked.clear();
@@ -1789,6 +1818,54 @@
       </div>`;
   }
 
+  function readSavedViews() {
+    try {
+      const rows = JSON.parse(localStorage.getItem("cw.tracker.saved-views.v1") || "[]");
+      return Array.isArray(rows) ? rows.filter(row => row && typeof row.name === "string" && row.settings && typeof row.settings === "object").slice(0, 20) : [];
+    } catch { return []; }
+  }
+
+  function renderSavedViews() {
+    return `${sheetHead("bookmarks", "Saved views", "Filters and layout saved in this browser")}
+      <form class="trk-form" data-trk-form="views">
+        ${sheet.views.map((view,index) => `<div class="trk-play-row"><button type="button" class="cw-btn" data-trk-saved-view="${index}">${esc(view.name)}</button><button type="button" class="trk-icon" data-trk-saved-view="${index}" data-remove="true" aria-label="Remove saved view ${esc(view.name)}">${icon("delete")}</button></div>`).join("") || '<p class="trk-note">No saved views yet.</p>'}
+        <label class="trk-field trk-field-wide"><span>Save the current view as</span><input class="cw-input" data-trk-view-name maxlength="60" placeholder="For example: Watching TV" required></label>
+        ${sheet.error ? `<p class="trk-error" role="alert">${esc(sheet.error)}</p>` : ""}
+        <footer class="trk-sheet-foot"><button type="button" class="cw-btn" data-trk-sheet="close">Close</button><button type="submit" class="cw-btn primary"${sheet.views.length >= 20 ? " disabled" : ""}>Save view</button></footer>
+      </form>`;
+  }
+
+  function saveNamedView() {
+    const name = sheet.el.querySelector("[data-trk-view-name]").value.trim().slice(0, 60);
+    if (!name || sheet.views.length >= 20) return;
+    if (sheet.views.some(view => view.name.toLowerCase() === name.toLowerCase())) {
+      sheet.error = "A view with that name already exists.";
+      renderSheet();
+      return;
+    }
+    try {
+      saveView();
+      const settings = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+      sheet.views.push({name,settings:{...settings,offset:0,ref:null,scrollTop:0}});
+      localStorage.setItem("cw.tracker.saved-views.v1", JSON.stringify(sheet.views));
+      sheet.error = "";
+      renderSheet();
+    } catch { sheet.error = "This browser could not save your views."; renderSheet(); }
+  }
+
+  function renderNotesBulk() {
+    const removing = sheet.noteAction === "remove";
+    const count = sheet.sourceView ? plural(sheet.keys.length, "selected entry", "selected entries") : plural(sheet.keys.length, "title", "titles");
+    return `${sheetHead(removing ? "delete" : "flag", removing ? `Remove ${count} from My titles?` : `Change status for ${count}`, "My titles")}
+      <form class="trk-form" data-trk-form="notes-bulk">
+        ${removing ? `<p class="trk-note">Removes their local statuses, notes, tags and dates. Watch history, ratings, watchlist and collection entries are kept.</p>`
+          : `<label class="trk-field trk-field-wide"><span>Status</span><select class="cw-select" data-trk-bulk-status aria-label="New status"><option value="choose" disabled${sheet.bulkStatus === null ? " selected" : ""}>Choose a status</option>${[...STATUSES, {id:"",label:"No status"}].map(s => `<option value="${esc(s.id)}"${sheet.bulkStatus === s.id ? " selected" : ""}>${esc(s.label)}</option>`).join("")}</select></label><p class="trk-note">Changes only the local status. Notes, tags and dates are kept. Episodes use the status of their show; each title is changed once. Clearing the last detail removes a title from My titles.</p>`}
+        <p class="trk-note">You can undo this batch from Changes.</p>
+        ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : ""}
+        <footer class="trk-sheet-foot"><button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button><button type="submit" class="cw-btn ${removing ? "danger" : "primary"}"${sheet.busy || (!removing && sheet.bulkStatus === null) ? " disabled" : ""}>${icon(removing ? "delete" : "check")}<span>${removing ? "Remove from My titles" : "Apply status"}</span></button></footer>
+      </form>`;
+  }
+
   function ratingLabel(value) {
     const labels = [
       "Unwatchable", "Absolute trash", "Garbage", "Painful", "Refund my time",
@@ -2051,7 +2128,9 @@
         const on = imp.features.has(f.id);
         return `<button type="button" class="cw-filter-chip${on ? " active" : ""}" data-trk-imp-feature="${f.id}" aria-pressed="${on}">${symbol(f.icon, "cw-type-icon")}<span>${esc(f.label)}</span></button>`;
       }).join("");
-      const targets = importTargets(imp).map((i) => `<option value="${esc(i.id)}"${i.id === imp.target ? " selected" : ""}>${esc(i.label)}</option>`).join("");
+      const available = importTargets(imp);
+      const creating = imp.target === "new";
+      const targets = available.map((i) => `<option value="${esc(i.id)}"${i.id === imp.target ? " selected" : ""}>${esc(i.label)}</option>`).join("");
       const fileLink = `#import_export?target=${encodeURIComponent(imp.target === "new" ? state.instance : imp.target)}&returnTo=${encodeURIComponent("/#tracker")}`;
       body = `
         <div class="trk-fields">
@@ -2061,10 +2140,20 @@
         <div class="cw-type-filter" role="group" aria-label="What to bring in">${chips}</div>
         ${pick.row?.dropped && imp.features.has("history") ? `<label class="trk-check trk-imp-dropped"><input type="checkbox" class="cw-checkbox" data-trk-imp="dropped"${imp.dropped ? " checked" : ""}><span>Also bring in shows you dropped. They show up as Dropped under My titles.</span></label>` : ""}
         <div class="trk-fields">
-          <label class="trk-field"><span>Into</span><select class="cw-select" data-trk-imp="target" aria-label="Import into">${targets}${imp.canCreate ? `<option value="new"${imp.target === "new" ? " selected" : ""}>New instance</option>` : ""}</select></label>
-          ${imp.target === "new" ? `<label class="trk-field"><span>Name</span><input type="text" class="cw-input" data-trk-imp="name" value="${esc(imp.name)}" maxlength="24" placeholder="${esc(`${pick.row?.label || "Import"} import`)}"></label>` : ""}
+          <label class="trk-field trk-field-wide"><span>How to import</span><select class="cw-select" data-trk-imp="mode" aria-label="How to import">
+            <option value="merge"${creating ? "" : " selected"}${available.length ? "" : " disabled"}>Merge into an existing tracker</option>
+            ${imp.canCreate ? `<option value="new"${creating ? " selected" : ""}>Import into a new tracker</option>` : ""}
+          </select></label>
+          ${creating
+            ? `<label class="trk-field trk-field-wide"><span>New tracker name</span><input type="text" class="cw-input" data-trk-imp="name" value="${esc(imp.name)}" maxlength="24" placeholder="${esc(`${pick.row?.label || "Import"} import`)}"></label>`
+            : `<label class="trk-field trk-field-wide"><span>Tracker</span><select class="cw-select" data-trk-imp="target" aria-label="Import into">${targets}</select></label>`}
         </div>
-        <p class="trk-effect">${icon("info")}<span>Only adds. Nothing is removed, and nothing is written back to ${esc(pick.label)}. It runs in the background with progress in the bell; large libraries can take a while.</span></p>
+        <p class="trk-effect">${icon("info")}<span>${creating
+          ? (imp.review ? "Starts with an empty tracker, created only when you apply the review. Your existing trackers are kept." : "Starts with an empty tracker. Your existing trackers are kept.")
+          : "Merges into this tracker. Missing items are added; existing ratings and playback progress may be updated. Nothing is removed."} Nothing is written back to ${esc(pick.label)}.</span></p>
+        ${!creating && !available.length ? `<p class="trk-note">No other tracker is available for this source. Choose another source${imp.canCreate ? " or import into a new tracker" : ""}.</p>` : ""}
+        <label class="trk-check trk-imp-dropped"><input type="checkbox" class="cw-checkbox" data-trk-imp="review"${imp.review ? " checked" : ""}><span>Review changes before importing</span></label>
+        <p class="trk-note">${imp.review ? "Choose which proposed additions and updates to import. No records change until you apply the review." : "Runs in the background with progress in the bell; large libraries can take a while."}</p>
         ${imp.busy ? `<p class="trk-effect is-danger">${icon("sync")}<span>A sync is running. Start the import when it has finished.</span></p>` : ""}
         <p class="trk-note">Have an export file instead? <a href="${esc(fileLink)}" data-trk-sheet="close">Import a file</a></p>`;
     }
@@ -2076,7 +2165,7 @@
         ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : ""}
         <footer class="trk-sheet-foot">
           <button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button>
-          ${imp.sources.length ? `<button type="submit" class="cw-btn primary"${ready && !sheet.busy ? "" : " disabled"}>${icon("download")}<span>Start import</span></button>` : ""}
+          ${imp.sources.length ? `<button type="submit" class="cw-btn primary"${ready && !sheet.busy ? "" : " disabled"}>${icon(imp.review ? "fact_check" : "download")}<span>${imp.review ? "Review import" : "Start import"}</span></button>` : ""}
         </footer>
       </form>`;
   }
@@ -2088,8 +2177,18 @@
     if (imp.target !== "new" && !importTargets(imp).some((i) => i.id === imp.target)) imp.target = importTargets(imp)[0]?.id || (imp.canCreate ? "new" : "");
   }
 
+  function setImportMode(imp, value) {
+    if (value === "new" && imp.canCreate) {
+      if (imp.target !== "new") imp.mergeTarget = imp.target;
+      imp.target = "new";
+    } else if (value === "merge") {
+      const targets = importTargets(imp);
+      imp.target = targets.find((i) => i.id === imp.mergeTarget)?.id || targets[0]?.id || (imp.canCreate ? "new" : "");
+    }
+  }
+
   async function openImport() {
-    const imp = { loading: true, sources: [], instances: [], source: "", features: new Set(), target: state.instance, name: "", busy: false, canCreate: false, dropped: false };
+    const imp = { loading: true, sources: [], instances: [], source: "", features: new Set(), target: state.instance, name: "", busy: false, canCreate: false, dropped: false, review: true };
     openSheet("import", { imp });
     try {
       const data = await getJSON("/api/tracker/import/sources");
@@ -2109,21 +2208,29 @@
   async function startImport() {
     const imp = sheet.imp;
     const pick = importPick(imp);
-    if (!pick.row || !imp.features.size) return;
+    if (sheet.busy || imp.busy || !pick.row || !imp.features.size) return;
+    if (imp.target === "new" ? !imp.canCreate : !importTargets(imp).some((i) => i.id === imp.target)) return;
     sheet.busy = true;
     sheet.error = "";
     renderSheet();
     try {
-      if (imp.target === "new") {
+      if (imp.target === "new" && !imp.review) {
         const label = imp.name.trim() || `${pick.row.label} import`;
         const made = await getJSON("/api/provider-instances/CROSSWATCH/next", { label, template: { connected: true } });
         imp.instances.push({ id: made.id, label });
         imp.target = made.id;
       }
       const dropped = !!(pick.row.dropped && imp.features.has("history") && imp.dropped);
-      const data = await getJSON("/api/tracker/import", { source: pick.id, source_instance: pick.instance, provider_instance: imp.target, features: Array.from(imp.features), dropped });
+      const data = await getJSON(imp.review ? "/api/tracker/import/preview" : "/api/tracker/import", { source: pick.id, source_instance: pick.instance, provider_instance: imp.target, features: Array.from(imp.features), dropped, ...(imp.target === "new" ? {name:imp.name.trim() || `${pick.row.label} import`} : {}) });
       closeSheet();
-      state.instance = data.provider_instance || imp.target;
+      if (imp.target !== "new") state.instance = data.provider_instance || imp.target;
+      if (imp.review && data.session?.id) {
+        state.ref = null; state.title = null; state.picked.clear();
+        state.offset = 0; state.scrollTop = 0;
+        saveView();
+        window.location.hash = `interactive_sync?session=${encodeURIComponent(data.session.id)}`;
+        return;
+      }
       state.imp = data.job || null;
       state.ref = null;
       state.title = null;
@@ -2349,7 +2456,9 @@
     const keep = ["data-trk-log-q", "data-trk-note-tag", "data-trk-change-q"].find((name) => active?.hasAttribute?.(name));
     const renderers = {
       edit: renderEdit, delete: renderDelete, rate: renderRate, log: renderLog, title: renderTitleSheet,
-      changes: renderChanges, import: renderImport, notes: renderNotes, fields: renderFields, "title-edit": renderTitleEdit,
+      views: renderSavedViews,
+      origin: () => `${sheetHead("alt_route", "Where does this come from?", "Tracker")}<div class="trk-form"><div class="cw-origin-body" data-trk-origin>Looking this up...</div></div>`,
+      changes: renderChanges, import: renderImport, notes: renderNotes, fields: renderFields, "title-edit": renderTitleEdit, "notes-bulk": renderNotesBulk,
     };
     dialog.innerHTML = (renderers[sheet.mode] || renderChanges)();
     dialog.scrollTop = scroll;
@@ -2443,6 +2552,28 @@
     } catch (err) {
       sheet.busy = false;
       sheet.error = err?.code === "changed_since" ? "This record changed while you were editing it. Close it and open it again to see the latest version." : writeError(err);
+      renderSheet();
+    }
+  }
+
+  async function saveNotesBulk() {
+    if (sheet.busy || !sheet.keys.length || (sheet.noteAction === "status" && sheet.bulkStatus === null)) return;
+    sheet.busy = true;
+    sheet.error = "";
+    renderSheet();
+    try {
+      const data = await getJSON(sheet.sourceView ? "/api/tracker/titles/status" : "/api/tracker/notes/bulk", {provider_instance: state.instance, keys: sheet.keys, action: sheet.noteAction, status: sheet.bulkStatus, ...(sheet.sourceView ? {view:sheet.sourceView,feature:sheet.feature} : {})});
+      const removing = sheet.noteAction === "remove";
+      if (removing && sheet.keys.includes(state.ref?.note)) { state.ref = null; state.title = null; }
+      closeSheet();
+      state.picked.clear();
+      toast.show(data.count ? `${removing ? "Removed" : "Updated"} ${plural(data.count, "title", "titles")}` : "No titles changed", data.batch ? {undo: () => undo(data.batch)} : {});
+      state.offset = 0;
+      state.progress = {};
+      await refresh();
+    } catch (err) {
+      sheet.busy = false;
+      sheet.error = writeError(err);
       renderSheet();
     }
   }
@@ -2769,6 +2900,7 @@
       return openMappingWorkspace({
         rows: [context.row],
         total: 1, standalone: true, staged: true, direct: true,
+        allowMovieConversion: feature === "history" && ["episode", "show"].includes(record.type),
         scope: count > 1 && !perEpisode ? "title" : "record",
         scopes: count > 1
           ? [{ id: "title", label: `Every record of this title (${num(count)})` }, { id: "record", label: data.show ? "Only this episode" : "Only this record" }]
@@ -2778,12 +2910,12 @@
           : "Changes only this record. You can undo it from Changes.",
         mappingApi: {
           catalogs: async () => context,
-          search: (_row, q, catalog, options) => request("search", { q, catalog }, options),
+          search: (row, q, catalog, options) => request("search", { q, catalog, ...(row.item.type !== original.type && row.item.type === "movie" ? { search_type: "movie" } : {}) }, options),
           episodes: (edits, options) => request("episodes", { item: edits[0].item }, options),
           parts: (_row, simklId, options) => request("parts", { simkl_id: simklId }, options),
           save: async (edits, scope) => {
             const prepared = await request("prepare", { item: edits[0].item });
-            if (scope === "title") {
+            if (scope === "title" && prepared.item.type === original.type) {
               const target = data.show ? { show: data.show_key } : { feature, key: record.key };
               const res = await getJSON("/api/tracker/edit-title", { provider_instance: state.instance, item: prepared.item, ...target });
               state.ref = res.show_key ? { show: res.show_key } : { feature: res.feature, key: res.key };
@@ -2791,7 +2923,7 @@
               return prepared;
             }
             const res = await getJSON("/api/tracker/replace", { feature, provider_instance: state.instance, key: record.key, item: prepared.item });
-            if (state.ref && !state.ref.show) state.ref = { feature, key: res.key };
+            if (prepared.item.type !== original.type || (state.ref && !state.ref.show)) state.ref = { feature, key: res.key };
             await afterWrite(res, `Fixed the match for ${cardTitle(res.item || record)}`);
             return prepared;
           },
@@ -2815,6 +2947,24 @@
     return data?.attention?.[0] || data?.plays?.[0] || data?.ratings?.[0] || data?.watchlist?.[0] || data?.collection?.[0] || data?.progress?.[0] || null;
   }
 
+  async function openOrigin() {
+    const record = titleAnchor(state.title);
+    if (!record) return;
+    const instance = state.instance;
+    openSheet("origin");
+    const token = sheet.token;
+    try {
+      const [{renderItemOrigin}, data] = await Promise.all([
+        import(`/assets/js/editor/origin.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`),
+        postRaw("/api/editor/origin", {provider:"CROSSWATCH",instance,feature:record.feature || "history",key:record.key,original:record}),
+      ]);
+      if (sheet.mode !== "origin" || sheet.token !== token || state.instance !== instance) return;
+      renderItemOrigin(sheet.el.querySelector("[data-trk-origin]"), data, {snapshot:"CROSSWATCH",instance});
+    } catch (err) {
+      if (sheet.mode === "origin" && sheet.token === token) sheet.el.querySelector("[data-trk-origin]").textContent = writeError(err);
+    }
+  }
+
   function detailAction(action) {
     const data = state.title;
     if (!data) return;
@@ -2823,6 +2973,7 @@
     else if (action === "rate") openSheet("rate");
     else if (action === "list") toggleWatchlist();
     else if (action === "map") openMapping();
+    else if (action === "origin") openOrigin();
     else if (action === "notes") openNotes();
     else if (action === "status-menu") setStatusMenu(!state.statusMenu);
     else if (action === "edit-title") openSheet("title-edit");
@@ -2895,6 +3046,24 @@
   }
 
   function onSheetClick(event) {
+    const saved = sheet.mode === "views" ? event.target.closest("[data-trk-saved-view]") : null;
+    if (saved) {
+      const index = Number(saved.dataset.trkSavedView);
+      const view = sheet.views[index];
+      if (!view) return;
+      try {
+        if (saved.dataset.remove === "true") {
+          sheet.views.splice(index, 1);
+          localStorage.setItem("cw.tracker.saved-views.v1", JSON.stringify(sheet.views));
+          renderSheet();
+        } else {
+          localStorage.setItem(STORE_KEY, JSON.stringify({...view.settings,offset:0,ref:null,scrollTop:0}));
+          state.ref = null; state.title = null; state.picked.clear();
+          loadView(); closeSheet(); refresh();
+        }
+      } catch (err) { sheet.error = "This browser could not save your views."; renderSheet(); }
+      return;
+    }
     const undoBtn = event.target.closest("[data-trk-undo]");
     if (undoBtn) {
       sheet.busy = true;
@@ -3048,6 +3217,12 @@
   }
 
   function onSheetChange(event) {
+    if (sheet.mode === "notes-bulk" && event.target.hasAttribute("data-trk-bulk-status")) {
+      sheet.bulkStatus = event.target.value;
+      renderSheet();
+      sheet.el.querySelector("[data-trk-bulk-status]")?.focus();
+      return;
+    }
     if (sheet.mode === "notes" && event.target.matches("select[data-trk-note-field], input[type=checkbox][data-trk-note-field]")) {
       noteInput(event.target);
       return;
@@ -3057,12 +3232,19 @@
       return;
     }
     const field = sheet.mode === "import" ? event.target.dataset?.trkImp : "";
+    if (field === "review") {
+      sheet.imp.review = event.target.checked;
+      renderSheet();
+      return;
+    }
     if (field === "dropped") {
       sheet.imp.dropped = event.target.checked;
       return;
     }
-    if (field === "source" || field === "target") {
+    if (field === "source" || field === "target" || field === "mode") {
+      if (sheet.busy) return;
       if (field === "source") setImportSource(sheet.imp, event.target.value);
+      else if (field === "mode") setImportMode(sheet.imp, event.target.value);
       else sheet.imp.target = event.target.value;
       renderSheet();
       return;
@@ -3085,6 +3267,8 @@
     else if (sheet.mode === "log") saveLog();
     else if (sheet.mode === "import") startImport();
     else if (sheet.mode === "notes") saveNotes();
+    else if (sheet.mode === "notes-bulk") saveNotesBulk();
+    else if (sheet.mode === "views") saveNamedView();
     else if (sheet.mode === "fields") saveFields();
     else if (sheet.mode === "title-edit") saveTitleEdit();
   }
@@ -3136,6 +3320,10 @@
   let searchTimer = 0;
   let pickRequest = 0;
 
+  function selectableItems() {
+    return state.view === "titles" ? state.noteRows : state.view === "shows" ? state.shows : state.items;
+  }
+
   async function pickAllResults() {
     if (state.loading || state.picking || state.total > 1000) return;
     const restoreFocus = document.activeElement?.dataset?.trkAction === "pick-all";
@@ -3151,11 +3339,18 @@
           offset: String(offset), limit: "200" });
         if (state.view === "cleanup" && state.healthFilter) params.set("health", state.healthFilter);
         if (timelineOn() && state.month) params.set("month", state.month);
-        const data = await getJSON(`/api/tracker/items?${params}`);
+        const notes = state.view === "titles";
+        const shows = state.view === "shows";
+        if (shows && state.hideDropped) params.set("hide_dropped", "true");
+        params.set("duplicates", String(state.view === "history" && state.duplicates));
+        params.set("status", state.noteStatus);
+        params.set("tag", state.noteTag);
+        const data = await getJSON(`/api/tracker/${notes ? "notes" : shows ? "shows" : "items"}?${params}`);
         if (id !== pickRequest || request !== state.request) return;
         if (Number(data.total) > 1000) throw new Error("Select up to 1000 records at a time. Narrow the filters and try again.");
-        for (const item of data.items || []) keys.add(item.key);
-        if (!data.items?.length || offset + data.items.length >= Number(data.total)) break;
+        const rows = (notes ? data.notes : shows ? data.shows : data.items) || [];
+        for (const item of rows) keys.add(item.key);
+        if (!rows.length || offset + rows.length >= Number(data.total)) break;
       }
       state.picked = keys;
     } catch (err) {
@@ -3269,6 +3464,7 @@
           window.openManualWatchedModal(feature ? { action: feature } : {});
         }
       }
+      else if (action === "views") openSheet("views", {views:readSavedViews()});
       else if (action === "import") openImport();
       else if (action === "month-clear") {
         state.month = "";
@@ -3276,8 +3472,10 @@
         loadMain();
       } else if (action === "by-day") {
         state.byDay = !state.byDay;
+        if (state.byDay) state.sort = "recent";
         reload();
       } else if (action === "hide-dropped") {
+        state.noteStatus = "";
         state.hideDropped = !state.hideDropped;
         saveView();
         reload();
@@ -3293,10 +3491,23 @@
       }
       else if (action === "check") startCheck();
       else if (action === "check-cancel") cancelCheck();
-      else if (action === "delete-picked" && state.picked.size) openSheet("delete", { keys: Array.from(state.picked), feature: listFeature() });
+      else if (action === "status-picked" && state.picked.size) openSheet("notes-bulk", { keys: Array.from(state.picked), noteAction: "status", bulkStatus: null, sourceView: state.view === "titles" ? "" : state.view, feature: state.view === "shows" ? "history" : listFeature() });
+      else if (action === "delete-picked" && state.picked.size) {
+        if (state.view === "titles") openSheet("notes-bulk", { keys: Array.from(state.picked), noteAction: "remove", sourceView: "" });
+        else openSheet("delete", { keys: Array.from(state.picked), feature: listFeature() });
+      }
       else if (action === "pick-visible") {
-        state.items.forEach(item => state.picked.add(item.key));
+        selectableItems().forEach(item => state.picked.add(item.key));
         renderSlots(false);
+      }
+      else if (action === "filters") {
+        state.filtersOpen = !state.filtersOpen;
+        renderSlots(true);
+        state.root.querySelector('[data-trk-action="filters"]')?.focus();
+      }
+      else if (action === "filters-clear") {
+        state.noteStatus = ""; state.noteTag = ""; state.q = ""; state.media = ""; state.sort = "recent"; state.hideDropped = false; state.duplicates = false;
+        reload();
       }
       else if (action === "pick-all") pickAllResults();
       else if (action === "clear-picked") {
@@ -3345,9 +3556,9 @@
     root.addEventListener("change", (event) => {
       const pick = event.target.dataset?.trkPick;
       if (pick !== undefined) {
-        if (pick === "page") state.items.forEach((i) => (event.target.checked ? state.picked.add(i.key) : state.picked.delete(i.key)));
+        if (pick === "page") selectableItems().forEach((i) => (event.target.checked ? state.picked.add(i.key) : state.picked.delete(i.key)));
         else {
-          const item = state.items[Number(pick)];
+          const item = selectableItems()[Number(pick)];
           if (item && event.target.checked) state.picked.add(item.key);
           else if (item) state.picked.delete(item.key);
         }
@@ -3364,6 +3575,17 @@
         state.root.querySelector("#trk-mobile-view")?.focus({preventScroll:true});
       } else if (input === "size") {
         state.pageSize = PAGE_SIZES.includes(Number(event.target.value)) ? Number(event.target.value) : 50;
+        reload();
+      } else if (input === "note-status") {
+        state.noteStatus = event.target.value;
+        if (state.noteStatus) state.hideDropped = false;
+        reload();
+      } else if (input === "duplicates") {
+        state.duplicates = event.target.checked;
+        reload();
+      } else if (input === "sort") {
+        state.sort = ["recent", "oldest", "title"].includes(event.target.value) ? event.target.value : "recent";
+        if (state.sort !== "recent") state.byDay = false;
         reload();
       } else if (input === "note-tag") {
         state.noteTag = event.target.value;
@@ -3402,6 +3624,13 @@
       img.closest(".trk-poster").classList.add("is-empty");
       img.remove();
     }, true);
+    let positionTimer = 0;
+    window.addEventListener("scroll", () => {
+      if (root.classList.contains("hidden")) return;
+      state.scrollTop = window.scrollY;
+      clearTimeout(positionTimer);
+      positionTimer = setTimeout(saveView, 200);
+    }, {passive:true});
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) return;
       if (state.moving) waitForMove();
@@ -3419,6 +3648,10 @@
     const hash = window.location.hash || "";
     if (!hash.startsWith("#tracker?")) return;
     const query = new URLSearchParams(hash.slice(hash.indexOf("?") + 1));
+    if (query.get("instance")) {
+      state.instance = query.get("instance");
+      state.ref = null; state.title = null; state.offset = 0; state.scrollTop = 0;
+    }
     if (query.get("attention") === "1") {
       state.view = "cleanup";
       state.healthFilter = "attention";

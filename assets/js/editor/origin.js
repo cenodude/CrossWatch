@@ -137,7 +137,7 @@ function renderLinks(links, total) {
   return box;
 }
 
-function render(body, data, state = {}) {
+export function renderItemOrigin(body, data, state = {}) {
   body.replaceChildren();
   const animeMode = data.mode === "anime";
   const anime = data.anime || [];
@@ -154,6 +154,14 @@ function render(body, data, state = {}) {
     }).join(" · ")));
   }
   body.append(head);
+
+  if (data.import_sources?.length) {
+    const imports = el("div", "cw-origin-sources");
+    imports.append(el("div", "cw-origin-label", "Tracker import sources"));
+    data.import_sources.forEach(source => imports.append(providerChip(source.provider, source.instance)));
+    imports.append(el("p", "cw-origin-note", "These services imported this feature into this Tracker. This does not prove which service added this particular entry; matches below use saved source snapshots."));
+    body.append(imports);
+  }
 
   if (animeMode && !anime.length) {
     const why = data.mapping_ready
@@ -185,7 +193,9 @@ function render(body, data, state = {}) {
   const pairs = data.pairs || [];
   let note = "No sync pair sends this feature to this provider, so there are no sources to check.";
   if (pairs.length) {
-    note = animeMode
+    note = data.import_sources?.length
+      ? "No matching source record was found in the saved snapshots. Source records may not have been saved, or may have changed since the import."
+      : animeMode
       ? "No title in your sources maps to this entry. It may come from an older mapping or a title match."
       : "No title in your sources has the same IDs. It may have been added on this provider directly, or matched by title.";
   }
@@ -229,7 +239,7 @@ export function openItemOrigin(row, anchor, ctx) {
         key: String(row.key || ""), pair_id: state.mappingPair || "", original}),
     }).then(data => {
       if (!pop.isConnected) return;
-      render(body, data, state);
+      renderItemOrigin(body, data, state);
       finish(data);
     }).catch(error => {
       if (!pop.isConnected) return;

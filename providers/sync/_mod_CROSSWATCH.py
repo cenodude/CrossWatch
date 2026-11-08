@@ -306,7 +306,8 @@ class CROSSWATCHModule:
         )
 
         try:
-            self.cfg.base_path.mkdir(parents=True, exist_ok=True)
+            if not cfg.get("_cw_readonly"):
+                self.cfg.base_path.mkdir(parents=True, exist_ok=True)
         except Exception as e:
             _warn("module", "provider_dir_create_failed", path=str(self.cfg.base_path), error=str(e))
 
@@ -438,13 +439,19 @@ class CROSSWATCHModule:
 
         try:
             base = self.cfg.base_path
-            base.mkdir(parents=True, exist_ok=True)
-            test = base / ".health.touch"
-            test.write_text("ok", encoding="utf-8")
-            try:
-                test.unlink()
-            except Exception:
-                pass
+            if self.config.get("_cw_readonly"):
+                while not base.exists() and base != base.parent:
+                    base = base.parent
+                if not base.is_dir() or not os.access(base, os.R_OK | os.W_OK):
+                    raise OSError("Tracker storage is unavailable")
+            else:
+                base.mkdir(parents=True, exist_ok=True)
+                test = base / ".health.touch"
+                test.write_text("ok", encoding="utf-8")
+                try:
+                    test.unlink()
+                except Exception:
+                    pass
         except Exception as e:
             ok = False
             error = str(e)
@@ -524,6 +531,11 @@ class _CrossWatchOPS:
         feature: str,
     ) -> Mapping[str, dict[str, Any]]:
         return self._adapter(cfg).build_index(feature)
+
+    def filter_cached_adds(self, cfg, items, *, feature):
+        if feature != "history" or not feat_history:
+            return items
+        return feat_history.filter_cached_adds(self._adapter(cfg), items)
 
     def watchlist_absent(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> list[bool]:
         if not feat_watchlist:

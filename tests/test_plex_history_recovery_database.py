@@ -87,6 +87,58 @@ def test_removed_movies_use_stored_ids_and_resolve_plex_guids_once(tmp_path):
     assert all(r["source_path"] == "Plex database" and r["item"]["watched"] for r in result)
 
 
+def test_hama_movie_can_be_matched_before_import_without_changing_other_events(api, monkeypatch):
+    from services import importer, interactive_sync_mapping
+
+    api.cfg["tmdb"] = {"api_key": "test"}
+    supplied = dict(grandparent_guid="com.plexapp.agents.hama://anidb-10611?lang=en",
+                    grandparent_title="Sarusuberi: Miss Hokusai",
+                    guid="com.plexapp.agents.hama://anidb-10611/1/1?lang=en", index=1, metadata_type=4,
+                    originally_available_at=1431122400, parent_index=1, parent_title="", title="Complete Movie",
+                    view_type=0, viewed_at=1486599207)
+    monkeypatch.setattr(recovery, "query_edges", lambda *a, **kw: [])
+    path = library(api.tmp / "hama.db", views=[supplied, {**supplied, "index": 2,
+        "guid": "com.plexapp.agents.hama://anidb-10611/1/2?lang=en"}])
+    raw, _ = scan(path)
+    job = service.Job("local", "default", "default", service._source_hash(api.cfg, "default"),
+                      target_hash=service._target_hash(api.cfg, "default"), status="review", raw=raw)
+    service._shape(job, api.cfg)
+    service.JOBS[job.id] = job
+    url = f"/api/import/plex-recovery/{job.id}"
+    assert all(row["status"] == "missing_identity" for row in job.rows)
+    original = deepcopy(job.raw)
+    row = next(row for row in job.rows if row["item"]["episode"] == 1)
+    calls = []
+
+    def search(cfg, route, query, **kwargs):
+        calls.append(route["item"]["type"])
+        return {"results": [dict(type=route["item"]["type"], title="Miss Hokusai", year=2015, ids={"tmdb": "123"})]}
+
+    monkeypatch.setattr(interactive_sync_mapping, "search_candidates", search)
+    params = dict(revision=0, row_id=row["id"], catalog="tmdb", q="Miss Hokusai")
+    for kind in ("episode", "movie"):
+        result = api.client.get(url + "/match-search", params={**params, "media_type": kind})
+        assert result.status_code == 200, result.text
+    assert calls == ["show", "movie"]
+    payload = dict(revision=0, row_id=row["id"], title="Miss Hokusai", tmdb="123", media_type="movie",
+                   catalog="tmdb", match_query="Miss Hokusai")
+    result = api.client.post(url + "/match", json=payload)
+    assert result.status_code == 200, result.text
+    item = job.raw[int(row["id"])]["item"]
+    assert item == dict(type="movie", title="Miss Hokusai", year=2015, ids={"tmdb": "123"},
+                        watched=True, watched_at=original[int(row["id"])]["item"]["watched_at"])
+    other = next(i for i in range(len(original)) if str(i) != row["id"])
+    assert job.raw[other] == original[other]
+    assert not importer._existing_keys(api.cfg, "default")["history"]
+    result = api.client.post(url + "/commit", json=dict(import_id=job.id, revision=1, mode="selected", row_ids=[row["id"]]))
+    assert result.status_code == 200, result.text
+    assert result.json()["applied"] == 1
+    stored = list(importer._existing_keys(api.cfg, "default")["history"].values())
+    assert len(stored) == 1 and stored[0]["type"] == "movie"
+    assert stored[0]["watched_at"] == item["watched_at"]
+    assert not {"season", "episode", "show_ids", "series_title"}.intersection(stored[0])
+
+
 def test_removed_shows_resolve_once_and_legacy_and_hama_guids_need_no_lookup(tmp_path, monkeypatch):
     monkeypatch.setattr(recovery, "query_edges", lambda *a, **kw: [])
     path = library(tmp_path / "lib.db", views=[

@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
-import {mappingAppliesToRow, candidateConflict, correctedItem, correctedEpisode, mappingGroups, sameSeason, seriesTitle} from "../assets/js/interactive-sync-mapping.js";
+import {mappingAppliesToRow, candidateConflict, correctedItem, correctedEpisode, movieDraft, mappingGroups, sameSeason, seriesTitle} from "../assets/js/interactive-sync-mapping.js";
 
 test("status conflicts show actual labels and default to leaving both sides unchanged", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
@@ -98,12 +98,42 @@ test("episode suggestions keep enriched IDs for the same show and discard IDs fo
 
 
 const workspaceSource=readFileSync(new URL("../assets/js/interactive-sync-mapping.js",import.meta.url),"utf8");
+
+test("movie conversion discards episode identity while keeping the original watch and source unchanged", () => {
+  const original = {type:"episode",title:"S01E01",series_title:"Miss 267970",series_year:2016,
+    ids:{tvdb:"999"},show_ids:{tmdb:"267970"},season:1,episode:1,watched_at:"2017-02-08T23:33:27Z"};
+  const draft = movieDraft(original);
+  assert.equal(draft.type,"movie");
+  assert.equal(draft.title,"Miss 267970");
+  assert.equal(draft.watched_at,original.watched_at);
+  assert.deepEqual(draft.ids,{});
+  for (const key of ["show_ids","season","episode","series_title"]) assert.equal(draft[key],undefined);
+  assert.equal(original.type,"episode");
+  assert.equal(original.episode,1);
+  assert.deepEqual(original.ids,{tvdb:"999"});
+});
+
+test("type conversion is unavailable to other mapping workspaces and requires a movie ID before saving", () => {
+  const code = workspaceSource.slice(workspaceSource.indexOf("  const canConvert ="), workspaceSource.indexOf("  const cache ="));
+  const row = {source:"CROSSWATCH",feature:"history",item:{type:"episode",ids:{},show_ids:{tmdb:"267970"},season:1,episode:1}};
+  const evaluate = extra => vm.runInNewContext(code + "({allowed:canConvert,ready:saveable(drafts[0])})", {
+    allowMovieConversion:true,direct:true,standalone:true,recovery:false,rows:[row],
+    drafts:[{row,item:movieDraft(row.item),dirty:true}], ...extra,
+  });
+  assert.equal(evaluate({}).allowed,true);
+  assert.equal(evaluate({}).ready,false);
+  const ready = {row,item:{...movieDraft(row.item),ids:{tmdb:"267970"}},dirty:true};
+  assert.equal(evaluate({drafts:[ready]}).ready,true);
+  for (const extra of [{allowMovieConversion:false},{direct:false},{recovery:true},{rows:[row,row]},
+    {rows:[{...row,source:"PLEX"}]},{rows:[{...row,feature:"ratings"}]}]) assert.equal(evaluate(extra).allowed,false);
+});
+
 function recoveryWorkspaceFixture() {
   const nodes=new Map(),calls=[],saved=[];
   const $=id=>{if(!nodes.has(id))nodes.set(id,{value:"recovery",querySelectorAll:()=>[]});return nodes.get(id);};
   const make=(id,title)=>({row:{id,item:{type:"show",title,ids:{}}},item:{type:"show",title,ids:{}},checked:true,dirty:false});
   const drafts=[make("1","Known"),make("2","Ambiguous"),make("3","Unavailable")];
-  const sandbox=vm.createContext({$,drafts,recovery:true,correctedItem,seriesTitle,AbortController,
+  const sandbox=vm.createContext({$,drafts,recovery:true,converting:()=>false,correctedItem,seriesTitle,AbortController,
     searchController:null,searching:false,saving:false,closed:false,backgroundRun:null,metadataLanguage:()=>"nl-NL",updateLanguage(){},refreshSearchSelects(){},lock(){},status(text){sandbox.statusText=text;},
     paint(d){d.dirty=true;},draftStatus(){},showSearch(){},matchEpisodes:async()=>0,
     search:async(row)=>{
@@ -447,4 +477,28 @@ test("completion report distinguishes cloud outcomes and escapes titles", () => 
   assert.match(context.html, /Not run/);
   assert.match(context.html, /History is disabled. &lt;not markup&gt;/);
   assert.doesNotMatch(context.html, /0 matched/);
+});
+
+
+test("Tracker import reviews use the shared selection controls without permanent mapping edits", () => {
+  const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
+  const fn = source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
+  const context = {host:{contains:()=>false,innerHTML:""},document:{activeElement:null},window:{},
+    session:{tracker_import:true,status:"review",pair:{source:"TRAKT",target:"CROSSWATCH"},counts:{changes:1,selected:1},features:["history"]},
+    pageData:{total:1,items:[{id:"one",key:"tmdb:949",item:{type:"movie",title:"Heat"},feature:"history",operation:"add",result:"add",provider:"CROSSWATCH",selectable:true,selected:true}]},
+    page:0,PAGE_SIZE:75,pageLoading:false,downloadOpen:false,query:"",feature:"",result:"",labels:{add:"Add"},pending:()=>false,
+    origin:()=>["tracker","Tracker"],aiButton:()=>"",esc:value=>String(value??""),endpoint:value=>value,progressHTML:()=>"",statusMappingHTML:()=>"",
+    number:value=>Number(value||0),title:item=>item.title,value:()=>"",reasonDetailsHTML:()=>""};
+  vm.createContext(context);
+  vm.runInContext(fn+"render();",context);
+  assert.match(context.host.innerHTML,/Review your import/);
+  assert.match(context.host.innerHTML,/href="#tracker"/);
+  assert.match(context.host.innerHTML,/data-select="one"/);
+  assert.match(context.host.innerHTML,/Apply selected \(1\)/);
+  assert.match(context.host.innerHTML,/Nothing is written back to the source/);
+  assert.doesNotMatch(context.host.innerHTML,/data-map=|data-action="map-selected"|Mappings are saved permanently/);
+  context.session.tracker_import=false;
+  vm.runInContext("render();",context);
+  assert.match(context.host.innerHTML,/data-map="one"/);
+  assert.match(context.host.innerHTML,/data-action="map-selected"/);
 });

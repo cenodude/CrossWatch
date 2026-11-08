@@ -736,6 +736,14 @@ def item_origin(payload: OriginRequest, request: Any) -> dict[str, Any]:
         require_mapping_pair(cfg, request, pair_id, provider, instance, payload.feature)
     pairs = [p for p in feeding_pairs(cfg, user, provider, instance, payload.feature)
              if user_can_access_instance(cfg, user, p["provider"], p["instance"])]
+    imports = []
+    if provider == "CROSSWATCH":
+        from services.tracker_import import origin_sources
+
+        imports = [p for p in origin_sources(cfg, instance, payload.feature)
+                   if user_can_access_instance(cfg, user, p["provider"], p["instance"])]
+        known = {(p["provider"], p["instance"]) for p in pairs}
+        pairs.extend(p for p in imports if (p["provider"], p["instance"]) not in known)
     policy = _load_policy()
     fixes = fix_index(policy)
     raw = _load_current_state_features({payload.feature}) if pairs else {}
@@ -749,4 +757,5 @@ def item_origin(payload: OriginRequest, request: Any) -> dict[str, Any]:
     key = payload.key.strip()
     result["row_fix"] = find_fix(fixes, pair_id, provider, instance, payload.feature, key) if key else None
     result["pairs"] = [{k: p[k] for k in ("pair_id", "pair_label", "provider", "instance")} for p in pairs]
+    result["import_sources"] = [{k: p[k] for k in ("provider", "instance")} for p in imports]
     return result
