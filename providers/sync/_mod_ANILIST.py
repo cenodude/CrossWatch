@@ -55,7 +55,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "1.0"
+__VERSION__ = "1.1"
 _MANUAL_RATING_SCALE = {"step": 1}
 os.environ.setdefault("CW_ANILIST_UA", http_user_agent("AniList", override_env="CW_ANILIST_UA"))
 __all__ = ["get_manifest", "ANILISTModule", "OPS"]

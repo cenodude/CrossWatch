@@ -18,6 +18,11 @@ from providers.sync import _mod_MYANIMELIST as module
 from providers.sync.myanimelist import _common, _history, _ratings, _watchlist
 
 
+@pytest.fixture(autouse=True)
+def isolated_blackbox(config_base, monkeypatch):
+    monkeypatch.setattr("cw_platform.orchestrator._blackbox.STATE_DIR", config_base / ".cw_state")
+
+
 def media(ident=1, **values):
     return {"id": ident, "title": "Anime", "media_type": "tv", "num_episodes": 12,
             "status": "finished_airing", **values}
@@ -110,6 +115,84 @@ def test_reads_share_snapshot_and_do_not_invent_dates(adapter):
     assert {row["episode"] for row in history.values()} == {13, 14, 15}
     assert not any("watched_at" in row for row in history.values())
     assert len(adapter.client.calls) == 1
+
+
+@pytest.fixture
+def dual_numbering(adapter, monkeypatch):
+    monkeypatch.setenv("CW_PAIR_SRC", "MYANIMELIST")
+    monkeypatch.setenv("CW_PAIR_DST", "CROSSWATCH")
+    paths = storage.paths("v3")
+    paths["mappings"].write_text(json.dumps({
+        "tvdb_show:10:s3": {"mal:1": {"13-24": "1-12"}},
+        "tmdb_show:30:s1": {"mal:1": {"1-12": "1-12"}},
+    }), encoding="utf-8")
+    storage.rebuild_sqlite_from_mappings(release_tag="v3")
+    adapter.client.rows["1"].update(num_episodes_watched=3)
+    return adapter
+
+
+def test_history_keeps_both_coordinate_representations_for_cw(dual_numbering):
+    rows = list(_history.build_index(dual_numbering).values())
+    assert len(rows) == 6
+    assert all(len(row["show_ids"]) == 1 and "_cw_anime_map" not in row for row in rows)
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+@pytest.mark.parametrize("preexisting_tmdb", [False, True])
+def test_mal_to_crosswatch_stores_one_episode_and_repeated_sync_adds_nothing(dual_numbering, config_base, monkeypatch, mode, preexisting_tmdb):
+    from cw_platform.orchestrator.facade import Orchestrator
+    from cw_platform.tracker_store import TrackerStore
+    from providers.sync import _mod_CROSSWATCH as crosswatch
+
+    monkeypatch.setattr(module, "MyAnimeListClient", lambda *a: dual_numbering.client)
+    monkeypatch.setattr(module.OPS, "health", lambda cfg: {"ok": True, "status": "ok", "features": module.supported_features()})
+    monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"MYANIMELIST": module.OPS, "CROSSWATCH": crosswatch.OPS})
+    root = config_base / "tracker"
+    if preexisting_tmdb:
+        initial = [{"type": "episode", "show_ids": {"tmdb": "30"}, "series_title": "Anime", "season": 1,
+                    "episode": n, "watched": True, "_cw_watched_state": True} for n in (1, 2, 3)]
+        TrackerStore(root).write_state("history", {canonical_key(row): row for row in initial})
+    cfg = {**dual_numbering.raw_cfg, "crosswatch": {"connected": True, "root_dir": str(root)},
+           "runtime": {"snapshot_ttl_sec": 0, "apply_chunk_pause_ms": 0},
+           "sync": {"dry_run": False, "enable_add": True, "enable_remove": False},
+           "pairs": [{"id": "mal-to-cw", "enabled": True, "source": "MYANIMELIST", "target": "CROSSWATCH", "mode": mode,
+                      "feature": "history", "features": {"history": {"enable": True, "add": True, "remove": False, "use_anime_mapping": True}}}]}
+    Orchestrator(cfg).run()
+    rows = [row for feature, key, row, text in TrackerStore(root).iter_records() if feature == "history"]
+    assert len(rows) == 3
+    if not preexisting_tmdb:
+        assert all(len(row["_cw_anime_aliases"]) == 2 and "_cw_anime_map" not in row for row in rows)
+    repeated = Orchestrator(cfg).run()
+    assert repeated["added"] == 0
+    assert TrackerStore(root).record_count() == 3
+    assert not any(call[0] != "GET" for call in dual_numbering.client.calls)
+
+
+@pytest.mark.parametrize("provider", ["SIMKL", "MDBLIST", "FLOPPY", "TRAKT", "TMDB", "WETRAKR", "MYANIMELIST", "ANILIST", "KITSU"])
+@pytest.mark.parametrize("mapping_enabled", [False, True])
+def test_non_tracker_history_keeps_original_coordinate_variants(dual_numbering, monkeypatch, provider, mapping_enabled):
+    monkeypatch.setenv("CW_PAIR_SRC", "MYANIMELIST")
+    monkeypatch.setenv("CW_PAIR_DST", provider)
+    cfg = {**dual_numbering.raw_cfg, "_cw_pair_feature_options": {"feature": "history", "use_anime_mapping": mapping_enabled}}
+    adapter = SimpleNamespace(raw_cfg=cfg, client=dual_numbering.client)
+    rows = list(_history.build_index(adapter).values())
+    assert len(rows) == 6
+    assert {canonical_key(row) for row in rows} == {
+        *(f"tvdb:10#s03e{n:02d}" for n in (13, 14, 15)),
+        *(f"tmdb:30#s01e{n:02d}" for n in (1, 2, 3)),
+    }
+    assert all(len(row["show_ids"]) == 1 and "_cw_anime_map" not in row and "_cw_episode_order" not in row for row in rows)
+
+
+def test_mal_history_uses_tmdb_when_tvdb_mapping_is_absent(mapping, monkeypatch):
+    monkeypatch.setenv("CW_PAIR_SRC", "MYANIMELIST")
+    monkeypatch.setenv("CW_PAIR_DST", "CROSSWATCH")
+    paths = storage.paths("v3")
+    paths["mappings"].write_text(json.dumps({"tmdb_show:30:s2": {"mal:1": {"4-6": "1-3"}}}), encoding="utf-8")
+    storage.rebuild_sqlite_from_mappings(release_tag="v3")
+    rows = _common.episode_items(mapping, "1", 3, "Anime")
+    assert [(row["season"], row["episode"]) for row in rows] == [(2, 4), (2, 5), (2, 6)]
+    assert all(row["show_ids"] == {"tmdb": "30"} for row in rows)
 
 
 def test_grouped_history_budget_and_preservation(adapter):
@@ -375,7 +458,7 @@ def test_capture_and_sync_api_discover_myanimelist(mapping, monkeypatch, config_
     monkeypatch.setattr("cw_platform.config_base.load_config", lambda: mapping)
     providers = json.loads(api_sync_providers().body)
     provider = next(row for row in providers if row["name"] == "MYANIMELIST")
-    assert provider["version"] == "0.2" and provider["configured"]
+    assert provider["version"] == "0.3" and provider["configured"]
     assert provider["features"]["history"] and not provider["features"]["progress"]
     monkeypatch.setattr(snapshots, "CONFIG", config_base)
     monkeypatch.setattr(module.MYANIMELISTModule, "build_index", lambda self, feature: {canonical_key(movie()): movie()})
@@ -566,3 +649,20 @@ def test_history_filters_keep_explicit_undated_watches_but_not_synthetic_rows():
     assert set(filter_history_events(rows, event_mode=False)) == {"tmdb:1", "tvdb:10#s01e01"}
     assert filter_history_events(rows, event_mode=True) == {}
     assert _eventish_count("history", rows) == 2
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+@pytest.mark.parametrize("remove_mode", ["source_deletes", "mirror"])
+def test_upgrading_duplicate_baselines_does_not_remove_watched_episodes(dual_numbering, config_base, monkeypatch, mode, remove_mode):
+    from tests.test_crosswatch_anime_history import check_upgrade
+
+    monkeypatch.setattr(module, "MyAnimeListClient", lambda *a: dual_numbering.client)
+    monkeypatch.setattr(module.OPS, "health", lambda cfg: {"ok": True, "status": "ok", "features": module.supported_features()})
+    root = config_base / "upgrade-tracker"
+    cfg = {**dual_numbering.raw_cfg, "crosswatch": {"connected": True, "root_dir": str(root)},
+           "runtime": {"snapshot_ttl_sec": 0, "apply_chunk_pause_ms": 0},
+           "sync": {"dry_run": False, "enable_add": True, "enable_remove": True, "include_observed_deletes": True, "allow_mass_delete": True},
+           "pairs": [{"id": "upgrade", "enabled": True, "source": "MYANIMELIST", "target": "CROSSWATCH", "mode": mode,
+                      "feature": "history", "features": {"history": {"enable": True, "add": True, "remove": True, "remove_mode": remove_mode, "use_anime_mapping": True}}}]}
+    check_upgrade(monkeypatch, cfg, module, _common, "MYANIMELIST", root)
+    assert not any(call[0] != "GET" for call in dual_numbering.client.calls)
