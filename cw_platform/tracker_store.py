@@ -1534,10 +1534,11 @@ class TrackerStore:
         action: str,
         expected: Mapping[str, Any] | None = None,
         follow: Mapping[str, Any] | None = None,
-    ) -> str:
+        note_status: Mapping[str, Any] | None = None,
+    ) -> str | None:
         if feature not in FEATURES:
             raise ValueError(f"Unsupported kind: {feature!r}")
-        return self.apply([(feature, key, new_key, data) for key, new_key, data in changes], action=action, expected=expected, follow=follow)
+        return self.apply([(feature, key, new_key, data) for key, new_key, data in changes], action=action, expected=expected, follow=follow, note_status=note_status)
 
     def apply(
         self,
@@ -1546,14 +1547,18 @@ class TrackerStore:
         action: str,
         expected: Mapping[Any, Any] | None = None,
         follow: Mapping[str, Any] | None = None,
-    ) -> str:
+        note_status: Mapping[str, Any] | None = None,
+    ) -> str | None:
         rows = list(changes)
         if not rows:
             raise ValueError("no_changes")
         if any(feature not in FEATURES for feature, *_ in rows):
             raise ValueError("Unsupported kind")
+        if note_status is not None and note_status.get("status") not in ("", *NOTE_STATUSES):
+            raise ValueError("invalid_status")
         batch = uuid.uuid4().hex
         now = time.time_ns()
+        changed_features: set[str] = set()
         with self.mutation(), self._db(create=True) as conn:
             assert conn is not None
             with self._write(conn):
@@ -1570,6 +1575,8 @@ class TrackerStore:
                     if target and target != key and self._item_text(conn, feature, target) is not None:
                         raise TrackerConflict("key_exists", target)
                     after = _dumps(dict(data)) if data is not None else None
+                    if note_status is not None and target == key and _loads(before) == data:
+                        continue
                     if key:
                         conn.execute("DELETE FROM items WHERE scope='' AND feature=? AND item_key=?", (feature, key))
                     if target and data is not None:
@@ -1580,9 +1587,21 @@ class TrackerStore:
                         (batch, feature, action, key or target, target, before, after, now, _change_find(before, after)),
                     )
                     self._forget_checks(conn, feature, [key, target])
+                    changed_features.add(feature)
                 if follow:
                     self._follow_note(conn, follow, batch, now)
-                self._touch(conn, [row[0] for row in rows], now)
+                if note_status is not None:
+                    note_key = str(note_status["key"])
+                    before_note = self._note_get(conn, note_key)
+                    after_note = _note_norm({**note_status, **(before_note or {}), "status": note_status["status"]})
+                    if not any(after_note.get(field) for field in ("status", "started", "finished", "notes", "tags", "fields")):
+                        after_note = None
+                    if before_note != after_note:
+                        self._note_put(conn, note_key, after_note, now)
+                        self._note_change(conn, batch, note_key, note_key if after_note is not None else None, before_note, after_note, now)
+                if not conn.execute("SELECT 1 FROM changes WHERE batch=? LIMIT 1", (batch,)).fetchone():
+                    return None
+                self._touch(conn, changed_features, now)
                 self._prune_changes(conn, now)
         self._log(rows[0][0], "info", "tracker_items_changed", action=action, count=len(rows), batch=batch)
         return batch

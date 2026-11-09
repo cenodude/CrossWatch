@@ -1286,7 +1286,13 @@
       selection.hidden = true;
       root.querySelector(".cw-root").appendChild(selection);
       createBulkStatusMenu();
-      new ResizeObserver(() => root.style.setProperty("--cw-selection-height", `${selection.offsetHeight}px`)).observe(selection);
+      const header = document.querySelector("body > header");
+      const layoutObserver = new ResizeObserver(() => {
+        root.style.setProperty("--cw-selection-height", `${selection.offsetHeight}px`);
+        root.style.setProperty("--trk-header-height", `${header?.offsetHeight || 0}px`);
+      });
+      layoutObserver.observe(selection);
+      if (header) layoutObserver.observe(header);
       const filters = root.querySelector('[data-trk-slot="filters"]');
       const media = window.matchMedia?.(NARROW);
       const fold = () => { filters.open = !media?.matches; };
@@ -1819,6 +1825,7 @@
       <form class="trk-form" data-trk-form="edit" novalidate>
         <div class="trk-fields">
           ${dateRow}${ratingRow}${progressRow}
+          <label class="trk-field"><span>${child ? "Show status" : "Status"}</span><select class="cw-select" data-trk-edit="status">${[{id:"",label:"No status"}, ...STATUSES].map(s => `<option value="${s.id}"${(item.status || "") === s.id ? " selected" : ""}>${esc(s.label)}</option>`).join("")}</select></label>
           <label class="trk-field trk-field-wide"><span>${child ? "Show title" : "Title"}</span><input type="text" class="cw-input" data-trk-edit="title" value="${esc((child ? item.series_title : item.title) ?? "")}" maxlength="300"></label>
           <label class="trk-field"><span>Year</span><input type="number" class="cw-input" data-trk-edit="year" min="1870" max="2100" value="${esc((child ? item.series_year : item.year) ?? "")}"></label>
         </div>
@@ -2549,6 +2556,9 @@
     const scroll = dialog.scrollTop;
     const active = dialog.contains(document.activeElement) ? document.activeElement : null;
     const keep = ["data-trk-log-q", "data-trk-note-tag", "data-trk-change-q"].find((name) => active?.hasAttribute?.(name));
+    const editValues = sheet.mode === "edit" && !focusFirst
+      ? Array.from(dialog.querySelectorAll("[data-trk-edit], [data-trk-id]"), input => [input.hasAttribute("data-trk-edit") ? "data-trk-edit" : "data-trk-id", input.dataset.trkEdit || input.dataset.trkId, input.value])
+      : [];
     const renderers = {
       edit: renderEdit, delete: renderDelete, rate: renderRate, log: renderLog, title: renderTitleSheet,
       views: renderSavedViews,
@@ -2556,6 +2566,10 @@
       changes: renderChanges, import: renderImport, notes: renderNotes, fields: renderFields, "title-edit": renderTitleEdit, "notes-bulk": renderNotesBulk,
     };
     dialog.innerHTML = (renderers[sheet.mode] || renderChanges)();
+    for (const [attr, name, value] of editValues) {
+      const input = dialog.querySelector(`[${attr}="${name}"]`);
+      if (input) input.value = value;
+    }
     dialog.scrollTop = scroll;
     if (sheet.mode === "rate") wireRatingPreview(dialog);
     if (el.hidden) {
@@ -2603,6 +2617,8 @@
       changes.date = date && !Number.isNaN(d.getTime()) ? d.toISOString() : "";
     }
     const rating = val("rating");
+    const status = val("status");
+    if (status !== null && status !== (item.status || "")) changes.status = status;
     if (rating !== null && Number(rating) !== Number(item.rating)) changes.rating = Number(rating);
     const pct = val("progress_percent");
     if (pct !== null && pct !== "" && Number(pct) !== Math.round(Number(item.progress_percent))) changes.progress_percent = Number(pct);
@@ -2632,6 +2648,7 @@
   }
 
   async function saveEdit() {
+    if (sheet.busy) return;
     const changes = formChanges();
     if (!Object.keys(changes).length) {
       closeSheet();
