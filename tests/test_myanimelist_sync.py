@@ -157,7 +157,9 @@ def test_mal_to_crosswatch_stores_one_episode_and_repeated_sync_adds_nothing(dua
            "sync": {"dry_run": False, "enable_add": True, "enable_remove": False},
            "pairs": [{"id": "mal-to-cw", "enabled": True, "source": "MYANIMELIST", "target": "CROSSWATCH", "mode": mode,
                       "feature": "history", "features": {"history": {"enable": True, "add": True, "remove": False, "use_anime_mapping": True}}}]}
-    Orchestrator(cfg).run()
+    first = Orchestrator(cfg).run()
+    assert first["added"] == (0 if preexisting_tmdb else 3)
+    assert first["errors"] == first["unresolved"] == 0
     rows = [row for feature, key, row, text in TrackerStore(root).iter_records() if feature == "history"]
     assert len(rows) == 3
     if not preexisting_tmdb:

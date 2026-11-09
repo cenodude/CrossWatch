@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import math
 import re
+import time
 import uuid
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
@@ -14,6 +15,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from cw_platform.access_policy import request_user, user_can_access_instance
+from cw_platform.anime_mapping.history_coords import alias_context, tmdb_coordinate
 from cw_platform.config_base import CONFIG, load_config
 from cw_platform.history_events import history_epoch_from_item
 from cw_platform.id_map import ID_KEYS, canonical_key, minimal as id_minimal
@@ -39,6 +41,7 @@ router = APIRouter(prefix="/api/tracker", tags=["tracker"])
 _DATE_FIELDS = ("watched_at", "rated_at", "progress_at", "collected_at", "listed_at", "added_at")
 _EDIT_DATE = {"history": "watched_at", "ratings": "rated_at", "progress": "progress_at", "collection": "collected_at"}
 _EDIT_IDS = ("imdb", "tmdb", "tvdb", "trakt", "simkl", "mal", "anilist", "kitsu", "anidb")
+_ANIME_ALIASES: dict[str, Any] = {"at": float("-inf"), "context": ("", None)}
 _IDENTITY = ("ids", "show_ids", "title", "year")
 _IMDB = re.compile(r"^tt\d{5,10}$")
 _NUMERIC = re.compile(r"^\d{1,12}$")
@@ -85,7 +88,14 @@ def _int(value: Any) -> int | None:
         return None
 
 
-def _art(item: Mapping[str, Any]) -> dict[str, str] | None:
+def _anime_aliases() -> tuple[str, Any]:
+    now = time.monotonic()
+    if now - _ANIME_ALIASES["at"] > 5:
+        _ANIME_ALIASES.update(at=now, context=alias_context(_cfg()))
+    return _ANIME_ALIASES["context"]
+
+
+def _art(item: Mapping[str, Any]) -> dict[str, Any] | None:
     typ = str(item.get("type") or "").lower()
     ids = _map(item.get("ids"))
     show_ids = _map(item.get("show_ids"))
@@ -93,6 +103,9 @@ def _art(item: Mapping[str, Any]) -> dict[str, str] | None:
         tmdb = _text(ids.get("tmdb"))
         return {"kind": "movie", "tmdb": tmdb} if tmdb else None
     tmdb = _text(show_ids.get("tmdb")) or (_text(ids.get("tmdb")) if typ == "show" else None)
+    coordinate = tmdb_coordinate(item, _anime_aliases()) if typ == "episode" else None
+    if coordinate and tmdb in (None, coordinate[0]):
+        return {"kind": "tv", "tmdb": coordinate[0], "season": coordinate[1], "episode": coordinate[2]}
     return {"kind": "tv", "tmdb": tmdb} if tmdb else None
 
 
@@ -983,7 +996,7 @@ def tracker_check_start(request: Request, payload: dict[str, Any] = Body(default
     cfg, inst, store = _store(payload.get("provider_instance"), request)
     if not _tmdb_key(cfg):
         return _error("tmdb_key_missing", 400)
-    job = tracker_check.start(store, _tmdb_provider(), instance=inst)
+    job = tracker_check.start(store, _tmdb_provider(), instance=inst, aliases=alias_context(cfg))
     if job.get("error"):
         return _error(str(job["error"]), 409)
     return {"ok": True, "provider_instance": inst, "job": job}

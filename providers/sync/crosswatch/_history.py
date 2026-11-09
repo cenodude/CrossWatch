@@ -3,15 +3,11 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import time
 from copy import copy
 from typing import Any, Iterable, Mapping
 
-from cw_platform.anime_mapping.episodes import resolve_absolute, resolve_axis_coordinate_map
-from cw_platform.anime_mapping.history_coords import ALIAS_FIELD, coordinate_tokens
-from cw_platform.anime_mapping.overrides import overrides_path
-from cw_platform.anime_mapping.storage import index_ready, paths as mapping_paths
-from cw_platform.history_events import has_history_watch, history_sync_key, minimal_history_item
+from cw_platform.anime_mapping.history_coords import ALIAS_FIELD, alias_context, alias_release_tag, coordinate_tokens, current_aliases
+from cw_platform.history_events import has_history_watch, history_epoch_from_item, history_sync_key, minimal_history_item
 from cw_platform.id_map import canonical_key
 from cw_platform.tracker_history_identity import PLEX_ORIGINS, TYPE_ORIGINS, event_identities, plex_origins, type_origins
 
@@ -34,8 +30,6 @@ from ._common import (
 )
 
 _dbg, _info, _warn, _error = make_logger("history")
-_ALIASES: dict[str, Any] = {"key": None, "rows": None}
-_MISS_SECONDS = 300.0
 
 
 def _rewatches_enabled(adapter: Any) -> bool:
@@ -48,59 +42,17 @@ def _history_key(adapter: Any, item: Mapping[str, Any], fallback_key: Any = None
 
 
 def _mapping_tag(adapter: Any) -> str:
-    cfg = getattr(adapter, "config", {}) or {}
-    block = cfg.get("anime_mapping") or {}
-    options = cfg.get("_cw_pair_feature_options") or {}
-    if not block.get("enabled") or options.get("use_anime_mapping") is False:
-        return ""
-    return str(block.get("release_tag") or "v3")
+    return alias_release_tag(getattr(adapter, "config", None))
 
 
 def _alias_context(adapter: Any) -> tuple[str, dict[Any, Any] | None]:
-    tag = _mapping_tag(adapter)
-    if not tag:
-        return "", None
-    try:
-        files = mapping_paths(tag)
-        key = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) if p.exists() else str(p)
-                    for p in (files["db"], files["state"], overrides_path()))
-        if _ALIASES["key"] != key:
-            _ALIASES.update(key=key, rows={} if index_ready(tag) else None)
-        return tag, _ALIASES["rows"]
-    except Exception:
-        return tag, None
-
-
-def _resolve_aliases(tag: str, rows: dict[Any, Any], item: Mapping[str, Any], fresh: bool) -> list[str]:
-    ids = {str(k): str(v) for k, v in (item.get("show_ids") or {}).items() if v}
-    axes = [(p, i) for p, i in ids.items() if p in ("tvdb", "tmdb")]
-    if not axes:
-        return []
-    own = (int(item["season"]), int(item["episode"]))
-    key = (tuple(sorted(ids.items())), own)
-    cached = rows.get(key)
-    if fresh or cached is None or cached[1] < time.monotonic():
-        hit = resolve_absolute(item, release_tag=tag)
-        coords = resolve_axis_coordinate_map({hit.namespace: hit.target_id}, hit.absolute, release_tag=tag) if hit else {}
-        tokens = sorted(f"{p}:{i}#s{s:02d}e{e:02d}".lower() for (p, i), (s, e) in coords.items())
-        valid = all(coords.get(axis) == own for axis in axes) and len(coords) == len({p for p, _ in coords}) > 1
-        rows[key] = (tokens, float("inf")) if valid else ([], time.monotonic() + _MISS_SECONDS)
-    return rows[key][0]
+    return alias_context(getattr(adapter, "config", None))
 
 
 def _anime_identity(item: Mapping[str, Any], context: tuple[str, dict[Any, Any] | None], fresh: bool = False) -> dict[str, Any]:
-    tag, rows = context
     out = dict(item)
-    saved = sorted(coordinate_tokens(item))
     out.pop(ALIAS_FIELD, None)
-    if not tag or item.get("type") != "episode":
-        return out
-    aliases = saved
-    if rows is not None:
-        try:
-            aliases = _resolve_aliases(tag, rows, item, fresh)
-        except Exception:
-            aliases = saved
+    aliases = current_aliases(item, context, fresh)
     if aliases:
         out[ALIAS_FIELD] = aliases
     return out
@@ -291,7 +243,28 @@ def filter_cached_adds(adapter: Any, items: list[dict[str, Any]]) -> list[dict[s
     reader = copy(adapter)
     reader.config = {**getattr(adapter, "config", {}), "_cw_readonly": True, "_cw_history_rewatches": True}
     corrected = type_origins(_load_state(reader).get("items") or {})
-    return [item for item in items if event_identities(item).isdisjoint(corrected)] if corrected else items
+    kept = [item for item in items if event_identities(item).isdisjoint(corrected)] if corrected else items
+    return _distinct_episodes(adapter, kept)
+
+
+def _distinct_episodes(adapter: Any, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    context = _alias_context(adapter)
+    if context[1] is None:
+        return items
+    slots: dict[str, int] = {}
+    out: list[dict[str, Any]] = []
+    for item in items:
+        aliased = _anime_identity(item, context) if isinstance(item, Mapping) else {}
+        keys = _anime_keys(adapter, aliased) if coordinate_tokens(aliased) else set()
+        slot = next((slots[k] for k in keys if k in slots), None)
+        if slot is None:
+            slot = len(out)
+            out.append(item)
+        elif (history_epoch_from_item(item) or 0) > (history_epoch_from_item(out[slot]) or 0):
+            out[slot] = item
+        for k in keys:
+            slots.setdefault(k, slot)
+    return out
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
