@@ -148,7 +148,9 @@ class StatusAdapter(NativeStatusAdapter):
                     declared.add("hold" if last.get("status") == "paused" else last.get("status"))
                 users.append({**user, "tracking": {**tracking, "last": {k: v for k, v in last.items() if k not in {"status", "tracked_at"}}}
                               if isinstance(tracking, Mapping) and isinstance(last, Mapping) else {}})
-            if declared != {native}:
+            if not explicit and declared == {"none"}:
+                native = "untracked"
+            elif declared != {native}:
                 native = "ambiguous"
             protected = {part: sorted(digest(value) for value in values) for part, values in preserved[key].items() if values}
             protected["user"] = sorted({digest(user) for user in users})
