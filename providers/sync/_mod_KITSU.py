@@ -17,7 +17,7 @@ from ._mod_common import build_op_result, build_session
 from ._log import log
 from .kitsu import _history, _ratings, _watchlist
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 _MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "KITSUModule", "OPS"]
 _FEATURES = {"watchlist": _watchlist, "ratings": _ratings, "history": _history}

@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from typing import Any, Iterable
 
@@ -15,6 +16,15 @@ ABSOLUTE_FRAGMENT = "#abs:"
 _MIN_ABSOLUTE_RUN = 2
 _MAX_DUPLICATE_RATIO = 0.98
 _MAX_ORDINARY_SEASON = 50
+ALIAS_FIELD = "_cw_anime_aliases"
+_ALIAS_TOKEN = re.compile(r"(?:tvdb|tmdb):[^#\s]+#s\d{2,}e\d{2,}")
+
+
+def coordinate_tokens(item: Mapping[str, Any]) -> set[str]:
+    rows = item.get(ALIAS_FIELD)
+    if not isinstance(rows, list):
+        return set()
+    return {row for row in rows if isinstance(row, str) and _ALIAS_TOKEN.fullmatch(row)}
 
 
 def _as_int(value: Any) -> int | None:
@@ -157,7 +167,7 @@ class HistoryCoordinateAliases:
         if not self.enabled or not isinstance(item, Mapping) or not _is_episode(item):
             return set()
 
-        tokens: set[str] = set()
+        tokens: set[str] = coordinate_tokens(item)
         prefixes = show_tokens(item)
         if not prefixes:
             return tokens

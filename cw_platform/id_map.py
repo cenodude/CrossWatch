@@ -474,6 +474,7 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         "_cw_event_key",
         "_cw_rewatch_sync",
         "_cw_anime_map",
+        "_cw_anime_aliases",
     ):
         if opt in item and item.get(opt) not in (None, ""):
             out[opt] = item.get(opt)
