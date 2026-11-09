@@ -31,6 +31,8 @@ def features(env):
             return Response({**SEASON, "media_id": SHOW["id"]})
         ratings = path.startswith("/sync/ratings")
         playing = path.startswith("/sync/tracking/playing/")
+        if method != "GET" and (ratings or path.startswith("/scrobble/")) and not env.reject_write:
+            env.server.bump()
         if method == "GET" and (ratings or playing):
             kind = path.rsplit("/", 1)[-1][:-1]
             rows = [copy.deepcopy(row) for row in (env.ratings if ratings else env.playing).values() if row["type"] == kind]
@@ -378,6 +380,47 @@ def test_progress_removal_zero_entry_is_not_confirmed_as_absent(features):
     assert not result["ok"] and not result["confirmed_keys"]
 
 
+def test_playing_list_is_read_only_when_movie_or_episode_activity_moves(features):
+    features.server.activities["all"] = WHEN
+    features.playing[MOVIE["id"]] = {**MOVIE, "playback": {"status": "paused", "progress_percent": 40,
+                                                         "runtime_seconds": 6000, "tracked_at": LATER}}
+    assert len(features.adapter.build_index("progress")) == 1
+    features.server.calls.clear()
+    features.playing.clear()
+    assert len(features.adapter.build_index("progress")) == 1
+    assert [path for _, path, _ in features.server.calls] == ["/sync/last_activities"]
+    features.server.activities["movies"].update(all=LATER, last_playback_at=LATER)
+    features.server.activities["all"] = LATER
+    assert features.adapter.build_index("progress") == {}
+    assert any(path == "/sync/tracking/playing/movies" for _, path, _ in features.server.calls)
+
+
+@pytest.mark.parametrize("unavailable", [False, True])
+@pytest.mark.parametrize("operation", ["add", "remove"])
+def test_progress_write_sees_playback_started_elsewhere_during_the_run(features, operation, unavailable):
+    from cw_platform.log_context import log_run_id
+
+    features.server.activities["all"] = WHEN
+    features.playing[MOVIE["id"]] = {**MOVIE, "playback": {"status": "paused", "tracked_at": WHEN, "progress_percent": 10, "runtime_seconds": 6000}}
+    token = log_run_id.set("run-progress")
+    try:
+        features.adapter.build_index("progress")
+        features.playing[MOVIE["id"]] = {**MOVIE, "playback": {"status": "playing", "tracked_at": WHEN, "progress_percent": 80, "runtime_seconds": 6000}}
+        features.server.activities["movies"].update(all=LATER, last_playback_at=LATER)
+        features.server.activities["all"] = LATER
+        if unavailable:
+            previous = features.server.hook
+            features.server.hook = lambda method, path, kwargs: (Response({"error": "unavailable"}, 503) if path == "/sync/last_activities"
+                                                                 else previous(method, path, kwargs))
+        features.server.calls.clear()
+        result = getattr(features.adapter, operation)("progress", [progress_item()])
+    finally:
+        log_run_id.reset(token)
+    assert result["results"][0]["reason"] == "active_session"
+    assert not any(method in ("POST", "DELETE") for method, _, _ in features.server.calls)
+    assert features.playing[MOVIE["id"]]["playback"]["progress_percent"] == 80
+
+
 def test_progress_removal_batch_shares_preflight_and_verification(features, monkeypatch):
     sources = [progress_item(media) for media in (MOVIE, EPISODE)]
     assert features.adapter.add("progress", sources)["ok"]
@@ -391,7 +434,7 @@ def test_progress_removal_batch_shares_preflight_and_verification(features, monk
     monkeypatch.setattr(features.adapter, "build_index", read)
     result = features.adapter.remove("progress", sources)
     assert result["ok"] and len(result["confirmed_keys"]) == 2 and not features.playing
-    assert len(reads) == 2 and all(kwargs.get("force_refresh") for _, kwargs in reads)
+    assert len(reads) == 2 and not any(kwargs.get("force_refresh") for _, kwargs in reads)
 
 
 @pytest.mark.parametrize("applied", [True, False])

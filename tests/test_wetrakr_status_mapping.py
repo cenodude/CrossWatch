@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -21,7 +23,8 @@ def media(ident, kind="show"):
 
 
 @pytest.fixture
-def server(monkeypatch):
+def server(monkeypatch, config_base):
+    _status._SNAPSHOTS.clear()
     state = SimpleNamespace(
         lists={"/sync/tracking/watching/shows": [media(1), media(2)],
                "/sync/tracking/dropped/movies": [media(3, "movie")],
@@ -52,7 +55,8 @@ def server(monkeypatch):
             state.lists.setdefault(f"/sync/tracking/{native}/{group}", []).append(media(ident, "show" if group == "shows" else "movie"))
             return SimpleNamespace(json=lambda: {"added": {"total": 1}, "notFound": {"shows": []}})
         if path == "/sync/last_activities":
-            return SimpleNamespace(json=lambda: {"all": state.activity})
+            content = json.dumps([state.lists, state.statuses, state.history, state.notes, state.ratings, state.playback], sort_keys=True, default=str)
+            return SimpleNamespace(json=lambda: {"all": f"{state.activity}:{hashlib.sha256(content.encode()).hexdigest()}"})
         if "/history/" in path:
             kind = "movie" if path.endswith("movies") else "episode"
             rows = [row for row in state.history if kind in row]
@@ -87,6 +91,17 @@ def test_reads_all_pages_and_prefers_explicit_movie_status_over_historical_watch
     assert rows["show:4"].observation.state == ReadState.UNKNOWN
     assert rows["show:4"].observation.native_status == "waiting"
     assert any(path == "/sync/tracking/watching/shows" and opts["params"]["page"] == 2 for _, path, opts in server.calls)
+
+
+def test_unchanged_activity_reuses_status_snapshot(server):
+    first = server.adapter.read()
+    server.calls.clear()
+    assert server.adapter.read() == first
+    assert [path for _, path, _ in server.calls] == ["/sync/last_activities"]
+    server.notes[0]["text"] = "Changed"
+    server.calls.clear()
+    assert server.adapter.read()["show:1"].observation.protected_token != first["show:1"].observation.protected_token
+    assert any(path == "/sync/notes/all" for _, path, _ in server.calls)
 
 
 def test_moving_journal_boundary_does_not_invalidate_snapshot(server):

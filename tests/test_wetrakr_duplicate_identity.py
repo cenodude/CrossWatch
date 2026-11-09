@@ -64,7 +64,7 @@ def test_duplicate_progress_entry_is_skipped_with_warning(monkeypatch, warnings)
     playback = {"progress_percent": 40, "runtime_seconds": 7200, "status": "paused", "tracked_at": "2026-01-01T00:00:00Z"}
     movie_copy = {**MOVIE, "id": 96}
     rows = {"movie": [{**MOVIE, "playback": playback}, {**movie_copy, "playback": playback}], "episode": []}
-    monkeypatch.setattr(_progress, "pages", lambda adapter, path, **kw: rows["movie" if path.endswith("/movies") else "episode"])
+    monkeypatch.setattr(_progress, "playing_rows", lambda adapter, **kw: rows)
     monkeypatch.setattr(_progress, "log", lambda *a, **kw: None)
     monkeypatch.setattr(_progress, "raise_if_cancelled", lambda: None)
     index = _progress.build_index.__wrapped__(SimpleNamespace(config={}))

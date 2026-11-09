@@ -101,7 +101,7 @@ export function mountStatusMapping(host, state) {
             <div class="cw-status-actions"><button type="button" data-status-reset><span class="material-symbols-rounded" aria-hidden="true">restart_alt</span>Reset defaults</button>${draft ? '<details class="cw-status-menu"><summary aria-label="More mapping options"><span class="material-symbols-rounded" aria-hidden="true">more_horiz</span></summary><button type="button" data-status-legacy>Use existing behavior</button></details>' : ""}</div>
           </footer>
           <details class="cw-status-help"><summary>How it works</summary><div>
-            <p>This switch also controls Use source watch status in History. History must be enabled for these rules to run.</p>
+            <p>This is the same switch as Status mapping in History options. History must be enabled for these rules to run.</p>
             <p>Planned stays managed by Watchlist. Excluded statuses stay unchanged. Mappings never delete titles or create watched plays.</p>
             ${!writable.includes("completed") && target.media?.[media]?.effects?.completed ? `<p>${esc(target.media[media].effects.completed)}</p>` : ""}
             <p>${draft ? "Custom rules apply to this pair only." : "Existing behavior applies until you edit a rule."} Reset defaults applies to the selected direction and title type, and resets the conflict preference.</p>

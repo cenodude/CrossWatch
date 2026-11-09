@@ -103,7 +103,7 @@ def test_ratings_without_global_section_use_account_activity(env):
     assert [path for _, path, _ in env.server.calls] == ["/sync/last_activities"]
 
 
-@pytest.mark.parametrize("reason", ["empty", "partial", "mixed", "wrong_owner", "expired", "small", "stale", "force"])
+@pytest.mark.parametrize("reason", ["empty", "partial", "mixed", "wrong_owner", "expired", "small", "force"])
 def test_unsafe_or_unhelpful_journal_falls_back_to_full_snapshot(env, reason):
     feature = "history"
     state, original, endpoint = setup_removal(env, feature, size=2 if reason == "small" else 2000)
@@ -117,15 +117,10 @@ def test_unsafe_or_unhelpful_journal_falls_back_to_full_snapshot(env, reason):
         state.journal[0]["id"] = 999
     elif reason == "expired":
         state.journal_error = Response({}, 400)
-    elif reason == "stale":
-        path = common.cache_path(env.adapter, feature)
-        data = json.loads(path.read_text())
-        data["sections"]["movies"]["checked_at"] = time.time() - common.MAX_CACHE_AGE - 1
-        path.write_text(json.dumps(data))
     current = env.adapter.build_index(feature, force_refresh=reason == "force")
     assert len(current) == len(state.rows)
     assert any(kw["params"]["limit"] == 500 for _, path, kw in env.server.calls if path == endpoint)
-    if reason in ("small", "stale", "force"):
+    if reason in ("small", "force"):
         assert not any(path == "/sync/journal" for _, path, _ in env.server.calls)
 
 
