@@ -85,6 +85,11 @@ def test_complete_history_and_status_precedence(server):
     assert any(path == "history" and kw["params"]["page"] == 3 for _, path, kw in server.calls)
 
 
+def test_long_show_with_rounded_zero_percent_reads_as_watching(server):
+    server.shows[1].update(watch_pct=0, season_states={"10": {"watch_pct": 4}})
+    assert server.adapter.read()["show:1"].observation.status == Status.WATCHING
+
+
 def test_native_show_ids_and_preservation_round_trip(server):
     before = server.adapter.read()["show:1"]
     server.adapter.write(before, Status.DROPPED)

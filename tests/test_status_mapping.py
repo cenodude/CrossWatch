@@ -383,6 +383,21 @@ def test_completed_destination_is_protected(mapping_case):
     assert (result.outcome, result.reason) == ("skip", "completed_destination_preserved")
 
 
+def test_same_status_on_both_sides_is_unchanged_even_with_a_different_rule(mapping_case):
+    scope, caps, raw = one_way(mapping_case)
+    raw["directions"]["a_to_b"]["shows"]["completed"] = {"include": True, "target": "watching"}
+    result = run_plan((scope, caps, raw), observed(Status.COMPLETED), observed(Status.COMPLETED))
+    assert (result.outcome, result.reason) == ("noop", "same_status")
+    item = ItemScope(scope, "shows", "native-a", "native-b")
+    a, b = observed(Status.COMPLETED), observed(Status.DROPPED)
+    result = run_plan((scope, caps, raw), a, b, checks={Direction.FORWARD: TransitionCheck(item, a, b, Status.WATCHING, verified=True)})
+    assert (result.outcome, result.desired) == ("write", Status.WATCHING)
+    raw["directions"]["a_to_b"]["shows"]["dropped"] = {"include": True, "target": "on_hold"}
+    a, b = observed(Status.DROPPED), observed(Status.DROPPED)
+    result = run_plan((scope, caps, raw), a, b, checks={Direction.FORWARD: TransitionCheck(item, a, b, Status.ON_HOLD, verified=True)})
+    assert (result.outcome, result.desired) == ("write", Status.ON_HOLD)
+
+
 @pytest.mark.parametrize("reason", [
     "watchlist_membership_would_change", "history_would_expand", "resume_would_clear",
     "start_date_would_change", "rewatch_state_would_change", "tracking_entry_required",

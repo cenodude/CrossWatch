@@ -25,6 +25,10 @@ export function statusMappingPayload(state) {
     : enabled && hasStatusMapping(state) ? defaultMapping(state) : null;
   if (!current) return null;
   const out = clone(current);
+  for (const [dir, kinds] of Object.entries(out.directions || {})) for (const [kind, rules] of Object.entries(kinds || {})) {
+    const writable = meta(state, dir === "b_to_a" ? state.src : state.dst)?.capabilities?.status_mapping?.media?.[kind]?.writable;
+    if (rules && Array.isArray(writable) && !writable.includes("completed")) delete rules.completed;
+  }
   if (!twoWay(state)) {
     delete out.directions.b_to_a;
     if (out.conflict === "prefer_b") out.conflict = "leave_unchanged";
@@ -45,7 +49,7 @@ export function mappingDefaults(state, direction, media) {
   const source = meta(state, reverse ? state.dst : state.src)?.capabilities?.status_mapping?.media?.[media];
   const target = meta(state, reverse ? state.src : state.dst)?.capabilities?.status_mapping?.media?.[media];
   const writable = target?.writable || [];
-  return Object.fromEntries((source?.readable || []).filter(status => status !== "planned" && writable.length).map(status => [status, {
+  return Object.fromEntries((source?.readable || []).filter(status => status !== "planned" && writable.length && (status !== "completed" || writable.includes(status))).map(status => [status, {
     include: target?.defaults?.[status]?.include === true && writable.includes(status),
     target: writable.includes(status) ? status : writable[0],
   }]));

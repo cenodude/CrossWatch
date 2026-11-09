@@ -161,7 +161,7 @@ class StatusAdapter(NativeStatusAdapter):
                        and state.get("completed") is not True)
             completed = state.get("completed") is True if show else state["watched"]
             caught_up = (show and state["watched"] and type(aired) is int and type(watched_count) is int and watched_count >= aired
-                         and state.get("has_unwatched_aired") is False and state.get("completed") is False)
+                         and state.get("has_unwatched_aired") is not True and state.get("completed") is not True)
             untracked = not state["watched"] and not counts[key]
             native = ("planned" if key in listed else "dropped_seasons" if key in season_hidden else
                       "completed" if completed else "dropped" if key in hidden else

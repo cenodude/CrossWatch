@@ -26,11 +26,12 @@ class StatusAdapter(NativeStatusAdapter):
             params=_params(headers, extended="full_anime_seasons", episode_watched_at="yes"), timeout=adapter.cfg.timeout)
         response.raise_for_status()
         data = response.json()
-        if not isinstance(data, dict) or any(not isinstance(data.get(bucket), list) for bucket in ("movies", "shows", "anime")):
+        if (not isinstance(data, dict) or data.get("error") or data.get("errors")
+                or any(not isinstance(data.get(bucket, []), list) for bucket in ("movies", "shows", "anime"))):
             raise RuntimeError("simkl_status_incomplete_read")
         rows = {}
         for bucket in ("movies", "shows", "anime"):
-            for entry in data[bucket]:
+            for entry in data.get(bucket, []):
                 item = _normalize_row(bucket, entry)
                 ids = item.get("ids") or {}
                 ident = str(ids.get("simkl") or ids.get("simkl_id") or "")

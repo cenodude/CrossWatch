@@ -61,14 +61,15 @@ test("disabled mapping stays compact and can be configured without enabling",asy
   await page.keyboard.press("Enter");
   assert.equal(await page.locator("[data-status-direction]").isVisible(),true);
   assert.equal(await page.locator("[data-status-optin]").isChecked(),false);
-  await page.locator('[data-status-include="completed"]').check();
-  assert.equal(await page.locator('[data-status-target="completed"]').isDisabled(),false);
-  await page.locator('[data-status-target="completed"]').selectOption("dropped");
+  assert.equal(await page.locator('[data-status-include="completed"]').count(),0);
+  await page.locator('[data-status-include="watching"]').check();
+  assert.equal(await page.locator('[data-status-target="watching"]').isDisabled(),false);
+  await page.locator('[data-status-target="watching"]').selectOption("dropped");
   await setSwitch(page.locator("[data-status-optin]"),true);
   await setSwitch(page.locator("[data-status-optin]"),false);
   assert.equal(await page.locator("[data-status-direction]").isVisible(),false);
   await page.locator(".cw-status-editor>summary").click();
-  assert.equal(await page.locator('[data-status-target="completed"]').inputValue(),"dropped");
+  assert.equal(await page.locator('[data-status-target="watching"]').inputValue(),"dropped");
 });
 
 test("mobile History shortcut navigates without enabling History",async t=>{
@@ -108,8 +109,21 @@ test("switching on and saving without edits stores the rules shown",async t=>{
     assert.deepEqual(saved.directions[dir][media].on_hold,{include:true,target:"on_hold"});
     assert.deepEqual(saved.directions[dir][media].dropped,{include:true,target:"dropped"});
     assert.equal(saved.directions[dir][media].watching.include,false);
-    assert.equal(saved.directions[dir][media].completed.include,false);
+    assert.equal(saved.directions[dir][media].completed,undefined);
   }
+});
+
+test("a saved Completed rule is dropped when the destination cannot write Completed",async t=>{
+  const pair=structuredClone(initialPair);
+  pair.features.history.use_source_status=true;
+  pair.status_mapping={version:1,a:{provider:"anilist",instance:"default"},b:{provider:"myanimelist",instance:"default"},conflict:"leave_unchanged",
+    directions:{a_to_b:{shows:{completed:{include:true,target:"watching"},dropped:{include:true,target:"dropped"}}},b_to_a:{shows:{dropped:{include:true,target:"dropped"}}}}};
+  const {page,saves}=await fixture(t,"original",1280,pair);
+  assert.equal(await page.locator('[data-status-include="completed"]').count(),0);
+  await page.locator("#cx-inline-save").click();
+  await page.waitForFunction(()=>!document.querySelector("#host"));
+  assert.equal(saves[0].status_mapping.directions.a_to_b.shows.completed,undefined);
+  assert.deepEqual(saves[0].status_mapping.directions.a_to_b.shows.dropped,{include:true,target:"dropped"});
 });
 
 test("existing pairs switched on without rules keep their behavior until saved",async t=>{
