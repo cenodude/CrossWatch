@@ -1664,7 +1664,7 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-grid-date{flex:0 1 auto;min-width:0;padding:4px 8px;border-radius:8px;font-size:11px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #page-tracker .trk-grid-copy{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 10px;padding:12px 14px}
 #page-tracker .trk-grid-copy>*{grid-column:1/-1}
-#page-tracker .trk-grid-copy>strong{grid-column:1/-1;grid-row:1;font-size:15px;line-height:1.4;overflow-wrap:anywhere}
+#page-tracker .trk-grid-copy>strong{grid-column:1/-1;grid-row:1;min-width:0;font-size:15px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #page-tracker .trk-grid-copy>small{grid-column:1;grid-row:2;font-size:12px}
 #page-tracker .trk-grid-tools{grid-column:2;grid-row:2;align-self:center;display:flex;justify-content:flex-end;align-items:center;gap:6px}
 #page-tracker .trk-grid-progress{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px}
