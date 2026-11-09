@@ -23,6 +23,9 @@
   function mount(opts) {
     const host = opts && opts.host;
     if (!host) return null;
+    const owner = {};
+    host.__cwWlOwner = owner;
+    const active = () => host.__cwWlOwner === owner;
 
     const features = opts.features || [];
     const getLibs = opts.getLibs || (() => []);
@@ -89,6 +92,7 @@
     }
 
     function render() {
+      if (!active()) return;
       const libs = getLibs();
       host.innerHTML = `
         <div class="cw-wl" style="--wl-feature-count:${featureCount}">
@@ -124,6 +128,7 @@
         await load(force);
         host.__cwWlLoadedAt = Date.now();
       } catch (_) { ok = false; }
+      if (!active()) return;
       render();
       if (flash) {
         const nb = host.querySelector(".cw-wl-load");

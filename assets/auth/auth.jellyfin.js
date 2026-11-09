@@ -16,6 +16,7 @@
   let S = new Set();
   let lastLibraries = [];
   let hydrated = false;
+  let loadedInstance = null;
   let connected = false;
 
   const JFY_SUBTAB_KEY = "cw.ui.jellyfin.auth.subtab.v1";
@@ -57,6 +58,7 @@
     jfyProfile?.ensureUI(() => {
       try { jfyQcStop({ cancel: true }); } catch {}
       hydrated = false;
+      loadedInstance = null;
       hydrateFromConfig(true);
       jfyLoadLibraries?.();
     });
@@ -254,6 +256,7 @@
 
   async function hydrateFromConfig(force = false) {
     if (hydrated && !force) return;
+    const inst = getJfyInstance();
     try {
       let cfg = !force && window.__cfg && Object.keys(window.__cfg).length ? window.__cfg : null;
       if (!cfg) {
@@ -273,6 +276,7 @@
       setConnected(!!(jf.access_token || "").trim(), jf.auth_method);
       try { initMethod(); } catch {}
 
+      loadedInstance = null;
       H = new Set((jf.history?.libraries || []).map(String));
       R = new Set((jf.ratings?.libraries || []).map(String));
       P = new Set((jf.progress?.libraries || []).map(String));
@@ -280,6 +284,7 @@
       S = new Set((jf.scrobble?.libraries || []).map(String));
 
       hydrated = true;
+      loadedInstance = getJfyInstance() === inst ? inst : null;
       if (lastLibraries.length) renderLibraries(lastLibraries);
       else await jfyLoadLibraries();
       syncJfySetupTabs({ auto: true });
@@ -391,7 +396,7 @@
     if (server) jf.server = server;
     if (user) { jf.user = user; jf.username = user || jf.username || ""; }
     const uid = v("#jfy_user_id"); if (uid) jf.user_id = uid;
-    if (hydrated) {
+    if (hydrated && loadedInstance === getJfyInstance()) {
       const vs = Q("#jfy_verify_ssl"), vs2 = Q("#jfy_verify_ssl_dup");
       jf.verify_ssl = !!((vs && vs.checked) || (vs2 && vs2.checked));
       jf.history = Object.assign({}, jf.history || {}, { libraries: Array.from(H) });
@@ -748,6 +753,17 @@
   window.cwAuth = window.cwAuth || {};
   window.cwAuth.jellyfin = window.cwAuth.jellyfin || {};
   window.cwAuth.jellyfin.init = ensureHydrate;
+  window.cwAuth.jellyfin.whitelist = {
+    read: (inst) => hydrated && loadedInstance === inst ? { hist: [...H], rate: [...R], prog: [...P], coll: [...C], scr: [...S] } : null,
+    write: (inst, sets) => {
+      if (!hydrated || loadedInstance !== inst) return;
+      H = new Set((sets?.hist || []).map(String));
+      R = new Set((sets?.rate || []).map(String));
+      P = new Set((sets?.prog || []).map(String));
+      C = new Set((sets?.coll || []).map(String));
+      S = new Set((sets?.scr || []).map(String));
+    },
+  };
   window.cwAuth.jellyfin.rehydrate = () => { try { hydrateFromConfig(true); } catch {} };
 
   window.jfyAuto = jfyAuto;

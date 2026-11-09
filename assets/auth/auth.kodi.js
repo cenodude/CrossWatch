@@ -19,6 +19,7 @@
   });
   const SUBTAB_KEY = "cw.ui.kodi.auth.subtab.v1";
   let H = new Set();
+  let loadedInstance = null;
   let R = new Set();
   let P = new Set();
   let C = new Set();
@@ -512,6 +513,8 @@
 
   async function hydrate() {
     profile?.ensureUI(() => { void hydrate(); });
+    const inst = profile?.getInstance?.() || "default";
+    loadedInstance = null;
     const cfg = window._cfgCache || await Shared.getConfig();
     const k = cfgBlock(cfg, true);
 
@@ -523,6 +526,7 @@
     P = new Set((k?.progress?.libraries || []).map(String));
     C = new Set((k?.collection?.libraries || []).map(String));
     S = new Set((k?.scrobble?.libraries || []).map(String));
+    loadedInstance = (profile?.getInstance?.() || "default") === inst ? inst : null;
     syncHidden();
     renderLibraries(lastLibraries);
     void loadAddon();
@@ -659,20 +663,30 @@
     if (username) k.username = username;
     if (passInfo.hasValue && !passInfo.masked) k.password = passInfo.value;
     k.verify_ssl = verify_ssl;
-    k.history = k.history || {};
-    k.ratings = k.ratings || {};
-    k.progress = k.progress || {};
-    k.collection = k.collection || {};
-    k.scrobble = k.scrobble || {};
+    if (loadedInstance !== inst) return;
     syncHidden();
-    k.history.libraries = Array.from(H);
-    k.ratings.libraries = Array.from(R);
-    k.progress.libraries = Array.from(P);
-    k.collection.libraries = Array.from(C);
-    k.scrobble.libraries = Array.from(S);
+    k.history = Object.assign({}, k.history || {}, { libraries: Array.from(H) });
+    k.ratings = Object.assign({}, k.ratings || {}, { libraries: Array.from(R) });
+    k.progress = Object.assign({}, k.progress || {}, { libraries: Array.from(P) });
+    k.collection = Object.assign({}, k.collection || {}, { libraries: Array.from(C) });
+    k.scrobble = Object.assign({}, k.scrobble || {}, { libraries: Array.from(S) });
   });
 
   window.cwAuth = window.cwAuth || {};
-  window.cwAuth.kodi = { init: boot, hydrate };
+  window.cwAuth.kodi = {
+    init: boot,
+    hydrate,
+    whitelist: {
+      read: (inst) => loadedInstance === inst ? { hist: [...H], rate: [...R], prog: [...P], coll: [...C], scr: [...S] } : null,
+      write: (inst, sets) => {
+        if (loadedInstance !== inst) return;
+        H = new Set((sets?.hist || []).map(String));
+        R = new Set((sets?.rate || []).map(String));
+        P = new Set((sets?.prog || []).map(String));
+        C = new Set((sets?.coll || []).map(String));
+        S = new Set((sets?.scr || []).map(String));
+      },
+    },
+  };
   boot();
 })();

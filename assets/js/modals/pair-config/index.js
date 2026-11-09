@@ -121,10 +121,12 @@ function droppedTagAllowed(state,key){
 function droppedMode(state,key){
   const blk=(state?.pairProviders?.[key])||{};
   const mode=String(blk.history_dropped_mode||"").trim().toLowerCase();
-  if(mode==="tag") return droppedTagAllowed(state,key)?"tag":"sync";
+  if(mode==="tag") return droppedTagAllowed(state,key)&&!statusMappingActive(state)?"tag":"sync";
   if(mode==="ignore"||mode==="sync") return mode;
   return blk.history_ignore_dropped_shows?"ignore":"sync";
 }
+function statusMappingActive(state){return !!statusMappingPayload({...state,twoWay:isTwoWayMode(state)})}
+function droppedTagSaved(state){return droppedProviders(state).some(key=>String(state?.pairProviders?.[key]?.history_dropped_mode||"").trim().toLowerCase()==="tag")}
 function droppedPairMode(state){
   const modes=droppedProviders(state).map(key=>droppedMode(state,key));
   return modes.includes("tag")?"tag":modes.includes("ignore")?"ignore":"sync";
@@ -1821,14 +1823,21 @@ function renderFeaturePanel(state){
       : "";
     const droppedKeys = droppedProviders(state);
     const droppedPair = droppedPairMode(state);
-    const droppedOpt = (value, label) => `<option value="${value}" ${droppedPair === value ? "selected" : ""}>${label}</option>`;
+    const mappingActive = statusMappingActive(state);
+    const droppedOpt = (value, label, off = false) => `<option value="${value}" ${droppedPair === value ? "selected" : ""}${off ? " disabled" : ""}>${label}</option>`;
+    const droppedTag = droppedKeys.some(key => droppedTagAllowed(state, key))
+      ? droppedOpt("tag", mappingActive ? "Sync + tag dropped (off with status mapping)" : "Sync + tag dropped", mappingActive)
+      : "";
+    const droppedNote = mappingActive && droppedTagSaved(state)
+      ? `<div class="opt-row muted" style="grid-column:1/-1">Status mapping now handles dropped shows for this pair, so tagging is off.</div>`
+      : "";
     const droppedBlock = droppedKeys.length
       ? `<div class="grid2 compact"><div class="opt-row" style="grid-column:1/-1">
           <label for="cx-hs-dropped" data-tip-id="cx-hs-dropped">Dropped shows</label>
           <select id="cx-hs-dropped" class="input small">
-            ${droppedOpt("sync", "Sync normally")}${droppedOpt("ignore", "Ignore dropped")}${droppedKeys.some(key => droppedTagAllowed(state, key)) ? droppedOpt("tag", "Sync + tag dropped") : ""}
+            ${droppedOpt("sync", "Sync normally")}${droppedOpt("ignore", "Ignore dropped")}${droppedTag}
           </select>
-        </div></div>`
+        </div>${droppedNote}</div>`
       : "";
     const hsCumulative = hasCumulativeAnimeHistory(state);
     const hsRemoveAllowed = historyRemoveAllowed(state);
@@ -2207,7 +2216,7 @@ function bindChangeHandlers(state,root){
       state.pairProviders=state.pairProviders||{};
       droppedProviders(state).forEach(key=>{
         const blk=Object.assign({},state.pairProviders[key]||{});
-        const tag=mode==="tag"&&droppedTagAllowed(state,key);
+        const tag=mode==="tag"&&droppedTagAllowed(state,key)&&!statusMappingActive(state);
         blk.history_ignore_dropped_shows=mode==="ignore";
         if(tag) blk.history_dropped_mode="tag";
         else delete blk.history_dropped_mode;
