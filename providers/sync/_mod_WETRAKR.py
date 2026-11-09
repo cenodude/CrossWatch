@@ -16,7 +16,7 @@ from providers.sync._log import log
 from providers.sync.wetrakr import _history, _playlists, _progress, _ratings, _watchlist
 from providers.sync.wetrakr._common import WRITE_BATCH_SIZE, WeTrakrSyncError, body_of, commit_snapshot, dropped_show_tokens, item_key, request, tag_dropped_shows, write_lock
 
-__VERSION__ = "0.3"
+__VERSION__ = "0.4"
 _MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "WETRAKRModule", "OPS"]
 _FEATURES = {"watchlist": True, "history": True, "ratings": True, "progress": True, "playlists": True, "collection": False}

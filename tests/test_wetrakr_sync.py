@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import json
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 from urllib.parse import urlsplit
 
@@ -46,6 +47,11 @@ class Server:
         self.sequence = 0
         self.activities = {kind: {"all": WHEN} for kind in ("movies", "shows", "episodes")}
 
+    def bump(self):
+        self.writes = getattr(self, "writes", 0) + 1
+        stamp = (datetime.fromisoformat(WHEN.replace("Z", "+00:00")) + timedelta(hours=self.writes)).isoformat().replace("+00:00", "Z")
+        self.activities = {kind: {**value, "all": stamp} if isinstance(value, dict) else stamp for kind, value in self.activities.items()}
+
     def play(self, media, when=WHEN):
         self.sequence += 1
         self.history.append({"id": f"play-{self.sequence}", "watched_at": when, media["type"]: copy.deepcopy(media)})
@@ -82,6 +88,7 @@ class Server:
                         deduped[row[kind]["id"]] = {**row[kind], "watched_at": row["watched_at"]}
                 rows = list(deduped.values())
             return Response(rows, headers={"X-Pagination-Page": "1", "X-Pagination-Page-Count": "1", "X-Pagination-Item-Count": str(len(rows))})
+        self.bump()
         if method == "DELETE":
             event_id = path.rsplit("/", 1)[-1]
             self.history = [row for row in self.history if row["id"] != event_id]
@@ -151,7 +158,7 @@ def test_registry_profiles_capabilities_and_ids(env):
     from cw_platform.orchestrator._history_rewatches import history_rewatch_pair_enabled
 
     assert load_sync_ops("WETRAKR") is OPS
-    assert get_manifest()["version"] == "0.3"
+    assert get_manifest()["version"] == "0.4"
     assert OPS.is_configured(env.view)
     assert not OPS.is_configured(env.cfg)
     assert sync_provider_supports_feature("wetrakr", "watchlist")
@@ -270,9 +277,65 @@ def test_bulk_write_uses_one_request_and_one_verification_for_500_items(env, mon
     assert result["ok"] and len(result["confirmed_keys"]) == 500
     writes = [kwargs["json"] for method, _, kwargs in env.server.calls if method == "POST"]
     assert len(writes) == 1 and len(writes[0]["movies"]) == 500
-    assert reads == [{"force_refresh": True}, {"force_refresh": True}]
+    assert reads == [{}, {}]
     remaining = env.server.planning if feature == "watchlist" else env.server.history
     assert len(remaining) == (0 if remove else 500)
+
+
+def test_run_shares_last_activities_until_a_write(env):
+    from cw_platform.log_context import log_run_id
+
+    token = log_run_id.set("run-1")
+    try:
+        env.adapter.build_index("watchlist")
+        env.server.calls.clear()
+        env.adapter.build_index("watchlist")
+        assert env.server.calls == []
+        assert env.adapter.add("watchlist", [item(MOVIE)])["ok"]
+        paths = [(method, path) for method, path, _ in env.server.calls]
+        post = paths.index(("POST", "/sync/tracking"))
+        assert paths[:post] == [("GET", "/sync/last_activities")]
+        assert ("GET", "/sync/last_activities") in paths[post:]
+    finally:
+        log_run_id.reset(token)
+    env.server.calls.clear()
+    env.adapter.build_index("watchlist")
+    assert [path for _, path, _ in env.server.calls] == ["/sync/last_activities"]
+
+
+def test_activity_read_overtaken_by_a_write_is_not_shared(env):
+    from cw_platform.log_context import log_run_id
+
+    old = copy.deepcopy(env.server.activities)
+    fired = []
+
+    def hook(method, path, kwargs):
+        if path == "/sync/last_activities" and not fired:
+            fired.append(True)
+            common.request(env.adapter, "POST", "/sync/tracking", json={"movies": [{"id": MOVIE["id"], "status": "planning"}]})
+            return Response(old)
+        return None
+
+    token = log_run_id.set("run-race")
+    try:
+        env.server.hook = hook
+        assert common._activities(env.adapter) == old
+        env.server.hook = None
+        assert common._activities(env.adapter)["movies"]["all"] != old["movies"]["all"]
+    finally:
+        log_run_id.reset(token)
+
+
+def test_write_with_fresh_snapshot_skips_list_reads_before_post(env):
+    env.server.planning = [SHOW]
+    env.adapter.build_index("watchlist")
+    env.server.calls.clear()
+    result = env.adapter.add("watchlist", [item(MOVIE)])
+    assert result["ok"] and env.server.planning[-1]["id"] == MOVIE["id"]
+    paths = [(method, path) for method, path, _ in env.server.calls]
+    post = paths.index(("POST", "/sync/tracking"))
+    assert paths[:post] and set(paths[:post]) == {("GET", "/sync/last_activities")}
+    assert ("GET", "/sync/tracking/planning/movies") in paths[post:]
 
 
 def test_bulk_uncertain_write_verifies_first_500_and_defers_remaining_items(env, monkeypatch):
@@ -523,12 +586,16 @@ def test_activity_rate_limit_never_returns_stale_cache(env):
         env.adapter.build_index("watchlist")
 
 
-def test_expired_snapshot_refreshes_even_when_activity_misses_change(env, monkeypatch):
+def test_unchanged_activity_keeps_snapshot_without_age_limit(env, monkeypatch):
+    now = [1000.0]
+    monkeypatch.setattr(common.time, "time", lambda: now[0])
     env.server.planning = [MOVIE]
-    env.adapter.build_index("watchlist")
-    monkeypatch.setattr(common, "MAX_CACHE_AGE", 0)
+    first = env.adapter.build_index("watchlist")
+    now[0] += 30 * 86400
     env.server.planning = []
-    assert env.adapter.build_index("watchlist") == {}
+    env.server.calls.clear()
+    assert env.adapter.build_index("watchlist") == first
+    assert [path for _, path, _ in env.server.calls] == ["/sync/last_activities"]
 
 
 def test_cache_separates_watch_modes_profiles_and_accounts(env):
@@ -761,7 +828,7 @@ def test_empty_delta_falls_back_to_complete_section(env):
     assert "from_date" in reads[0]["params"] and "from_date" not in reads[1]["params"]
 
 
-def test_delta_does_not_postpone_periodic_full_refresh(env, monkeypatch):
+def test_delta_snapshot_stays_cached_without_age_limit(env, monkeypatch):
     now = [1000.0]
     monkeypatch.setattr(common.time, "time", lambda: now[0])
     env.server.activities["movies"] = tracking_activity()
@@ -770,11 +837,10 @@ def test_delta_does_not_postpone_periodic_full_refresh(env, monkeypatch):
     now[0] += 100
     env.server.activities["movies"] = tracking_activity(LATER)
     env.adapter.build_index("watchlist")
-    now[0] += common.MAX_CACHE_AGE
+    now[0] += 30 * 86400
     env.server.calls.clear()
     env.adapter.build_index("watchlist")
-    reads = [kw for _, path, kw in env.server.calls if "/tracking/" in path]
-    assert len(reads) == 2 and all("from_date" not in kw["params"] for kw in reads)
+    assert [path for _, path, _ in env.server.calls] == ["/sync/last_activities"]
 
 
 def test_delta_pagination_keeps_from_date_on_every_page(env):

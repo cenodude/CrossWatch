@@ -1847,13 +1847,6 @@ function renderFeaturePanel(state){
         </label>
       </div>
       ${animeNote ? `<div class="muted">${animeNote}</div>` : ""}
-      ${hsSourceStatus ? `<div class="opt-row">
-        <label for="cx-hs-source-status">Use source watch status</label>
-        <label class="switch">
-          <input id="cx-hs-source-status" type="checkbox" ${hs.use_source_status ? "checked" : ""}>
-          <span class="slider"></span>
-        </label>
-      </div>` : ""}
       ${hsCumulative ? `<div class="opt-row muted" title="This provider only holds anime, so this is always on for history.">
         <label for="cx-hs-anime-only">Anime-only sync</label>
         <label class="switch">
@@ -1932,6 +1925,13 @@ left.innerHTML = `
         </div>` : ""}
       </div>
       ${droppedBlock}
+      ${hsSourceStatus ? `<div class="opt-row">
+        <label for="cx-hs-source-status">Status mapping</label>
+        <label class="switch">
+          <input id="cx-hs-source-status" type="checkbox" ${hs.use_source_status ? "checked" : ""}>
+          <span class="slider"></span>
+        </label>
+      </div>` : ""}
       ${animeRow}`];
 
     if (hasPlex(state)) parts.push(`<div class="panel-title small">Plex</div><div class="opt-row"><label for="plx-marked-watched">Marked Watched</label><label class="switch"><input id="plx-marked-watched" type="checkbox" ${getPairMarkedWatchedValue(state)?"checked":""}><span class="slider"></span></label></div><div class="muted">Include watched items from your Plex library, even when no playback-history entry is available. Applies only to this pair.</div>`);

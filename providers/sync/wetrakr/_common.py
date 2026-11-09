@@ -6,6 +6,7 @@ from __future__ import annotations
 from importlib import import_module
 from cw_platform.interactive_reads import accepted_result, replaying, replace_retained
 
+import copy
 import hashlib
 import json
 import os
@@ -25,6 +26,7 @@ import requests
 from cw_platform.config_base import CONFIG_BASE
 from cw_platform.history_events import history_epoch_from_item, history_sync_key
 from cw_platform.id_map import canonical_key
+from cw_platform.log_context import log_run_id
 from cw_platform.orchestrator._history_rewatches import history_event_matches, history_timestamp_tolerance_seconds
 from cw_platform.run_control import cancel_requested, raise_if_cancelled
 from providers.auth import _auth_WETRAKR as auth
@@ -32,7 +34,6 @@ from providers.sync._log import log
 from providers.sync._mod_common import SimpleRateLimiter, build_op_result
 
 SCHEMA = 2
-MAX_CACHE_AGE = 3600
 WRITE_BATCH_SIZE = 500
 READ_PAGE_SIZE = 500
 DELTA_PAGE_SIZE = 100
@@ -118,6 +119,10 @@ def request(adapter: Any, method: str, path: str, **kwargs: Any) -> Any:
                                               timeout=20, max_retries=1, **kwargs)
         except (requests.RequestException, auth.WeTrakrAuthError) as exc:
             raise WeTrakrSyncError("request_failed") from exc
+        finally:
+            if bucket == "WRITE":
+                state["generation"] = state.get("generation", 0) + 1
+                state.pop("activities", None)
         headers = {str(k).lower(): str(v) for k, v in response.headers.items()}
         state["minute"][bucket] = {k: headers[k] for k in ("ratelimit-limit", "ratelimit-remaining", "ratelimit-reset") if k in headers}
         if response.status_code == 429:
@@ -234,15 +239,35 @@ def _save(path: Path, sections: Mapping[str, Any]) -> None:
                 pass
 
 
-def _activities(adapter: Any) -> dict[str, Any]:
+def _activities(adapter: Any, *, fresh: bool = False) -> dict[str, Any]:
+    state = _state(adapter)
+    run = log_run_id.get()
+    shared = state.get("activities")
+    if not fresh and run and shared and shared[0] == run:
+        return copy.deepcopy(shared[1])
+    generation = state.get("generation", 0)
     try:
         data = body_of(request(adapter, "GET", "/sync/last_activities"))
     except WeTrakrSyncError as exc:
+        _forget_activities(state)
         if exc.status_code in (401, 403, 429) or exc.retry_after:
             raise
         log("WETRAKR", "cache", "warn", "activities_unavailable_full_refresh")
         return {}
-    return dict(data) if isinstance(data, Mapping) else {}
+    value = dict(data) if isinstance(data, Mapping) else {}
+    if not value:
+        _forget_activities(state)
+        return value
+    with state["lock"]:
+        if run and state.get("generation", 0) == generation:
+            state["activities"] = (run, copy.deepcopy(value))
+    return value
+
+
+def _forget_activities(state: dict[str, Any]) -> None:
+    with state["lock"]:
+        state["generation"] = state.get("generation", 0) + 1
+        state.pop("activities", None)
 
 
 def _stamp(value: Any) -> datetime | None:
@@ -257,11 +282,9 @@ def _stamp(value: Any) -> datetime | None:
 
 def refresh_strategy(cached: Mapping[str, Any], current: Mapping[str, Any], feature: str, *, force: bool = False) -> str:
     rows = cached.get("rows")
-    checked = cached.get("checked_at")
-    fresh = isinstance(checked, (int, float)) and 0 <= time.time() - checked < MAX_CACHE_AGE
     valid = isinstance(rows, list) and all(isinstance(row, dict) for row in rows)
     previous = cached.get("activity")
-    if force or not fresh or not valid or not isinstance(previous, Mapping):
+    if force or not valid or not isinstance(previous, Mapping):
         return "full"
     before, after = _stamp(previous.get("all")), _stamp(current.get("all"))
     if before is None or after is None or after < before:
@@ -499,7 +522,7 @@ def tracking_rows(adapter: Any, feature: str, *, force: bool = False) -> dict[st
                 progress.tick(completed, force=True)
             log("WETRAKR", feature, "debug", "snapshot_section", section=section, strategy=strategy, count=len(rows))
         if refreshed:
-            after = _activities(adapter)
+            after = _activities(adapter, fresh=True)
             for kind in kinds:
                 section = f"{kind}s"
                 old_activity = activity_for(before, feature, section)
@@ -510,6 +533,29 @@ def tracking_rows(adapter: Any, feature: str, *, force: bool = False) -> dict[st
                 if _stamp(new_activity.get("all")) is None:
                     sections[section]["activity"] = {}
             adapter._pending_snapshot = (path, sections)
+        return result
+
+
+def playing_rows(adapter: Any, *, force: bool = False,
+                 on_page: Callable[[int], None] | None = None) -> dict[str, list[Mapping[str, Any]]]:
+    kinds = ("movie", "episode")
+    with write_lock(adapter):
+        path = cache_path(adapter, "playing")
+        cached = _read(path).get("sections", {})
+        activity = _activities(adapter)
+        marker = {f"{kind}s": activity.get(f"{kind}s") for kind in kinds}
+        rows = cached.get("rows")
+        if (not force and _stamp(activity.get("all")) is not None and cached.get("marker") == marker
+                and isinstance(rows, Mapping) and all(isinstance(rows.get(kind), list) for kind in kinds)):
+            return {kind: list(rows[kind]) for kind in kinds}
+        result: dict[str, list[Mapping[str, Any]]] = {}
+        done = 0
+        for kind in kinds:
+            result[kind] = pages(adapter, f"/sync/tracking/playing/{kind}s",
+                                 on_page=(lambda count, base=done: on_page(base + count)) if on_page else None)
+            done += len(result[kind])
+        if _stamp(activity.get("all")) is not None:
+            _save(path, {"marker": marker, "rows": result})
         return result
 
 
@@ -772,7 +818,9 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
         return build_op_result(ok=not unresolved, unresolved=unresolved, unresolved_keys=[r["key"] for r in unresolved])
     with write_lock(adapter):
         try:
-            before = adapter.build_index(feature, force_refresh=True)
+            if not replaying():
+                _activities(adapter, fresh=True)
+            before = adapter.build_index(feature)
             matches = matching(adapter, feature, selected, before)
         except WeTrakrSyncError as exc:
             return build_op_result(ok=False, unresolved_keys=list(selected) + [r["key"] for r in unresolved], unresolved=unresolved,
@@ -850,7 +898,7 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
                 replace_retained(import_module(f"providers.sync.wetrakr._{feature}").build_index, before)
                 continue
             try:
-                after = adapter.build_index(feature, force_refresh=True)
+                after = adapter.build_index(feature)
                 verified = matching(adapter, feature, {k: pending[k] for k in batch}, after)
                 for key in batch:
                     removed_event = event_mode and remove and not any(

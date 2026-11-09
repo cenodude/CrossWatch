@@ -15,7 +15,7 @@ from cw_platform.run_control import raise_if_cancelled
 from providers.sync._log import log
 from providers.sync._mod_common import build_op_result
 from providers.sync._progress_policy import as_epoch, decide_progress_write
-from ._common import WeTrakrSyncError, add_index_item, body_of, identifier, int_value, item_key, matching, media_item, pages, request, write_lock
+from ._common import WeTrakrSyncError, _activities, add_index_item, body_of, identifier, int_value, item_key, matching, media_item, playing_rows, request, write_lock
 
 
 def number(value: Any) -> float | None:
@@ -37,18 +37,17 @@ def ignored_reason(response: Any) -> str | None:
 @retained_read
 def build_index(adapter: Any, *, force: bool = False) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
-    completed = 0
     progress = getattr(adapter, "_read_progress", None)
 
     def on_page(count: int) -> None:
         raise_if_cancelled()
         if progress is not None:
-            progress.tick(completed + count)
-        log("WETRAKR", "progress", "info", "index_page", count=completed + count)
+            progress.tick(count)
+        log("WETRAKR", "progress", "info", "index_page", count=count)
 
+    snapshot = playing_rows(adapter, force=force, on_page=on_page)
     for kind in ("movie", "episode"):
-        rows = pages(adapter, f"/sync/tracking/playing/{kind}s", on_page=on_page)
-        for row in rows:
+        for row in snapshot[kind]:
             item = media_item(row, kind)
             playback = row.get("playback")
             if not isinstance(playback, Mapping):
@@ -66,7 +65,6 @@ def build_index(adapter: Any, *, force: bool = False) -> dict[str, dict[str, Any
                         _wetrakr_playback_status=playback["status"])
             key = item_key(adapter, "progress", item)
             add_index_item(out, "progress", key, item)
-        completed += len(rows)
     log("WETRAKR", "progress", "info", "index_done", count=len(out))
     return out
 
@@ -137,7 +135,9 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
                                unresolved=unresolved, unresolved_keys=[row["key"] for row in unresolved])
     with write_lock(adapter):
         try:
-            current = adapter.build_index("progress", force_refresh=True)
+            if not replaying():
+                _activities(adapter, fresh=True)
+            current = adapter.build_index("progress")
             matches = matching(adapter, "progress", selected, current)
         except WeTrakrSyncError as exc:
             return build_op_result(ok=False, error=exc.reason, retry_after=exc.retry_after,
@@ -191,7 +191,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             return accepted_result(result, confirmed)
         if attempted:
             try:
-                after = adapter.build_index("progress", force_refresh=True)
+                after = adapter.build_index("progress")
                 matches = matching(adapter, "progress", attempted, after)
                 for key, item in attempted.items():
                     target = after.get(matches.get(key, ""), {})
@@ -224,7 +224,9 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
                                unresolved=unresolved, unresolved_keys=[row["key"] for row in unresolved])
     with write_lock(adapter):
         try:
-            before = adapter.build_index("progress", force_refresh=True)
+            if not replaying():
+                _activities(adapter, fresh=True)
+            before = adapter.build_index("progress")
             matches = matching(adapter, "progress", selected, before)
         except WeTrakrSyncError as exc:
             return build_op_result(ok=False, error=exc.reason, retry_after=exc.retry_after,
@@ -286,7 +288,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
             return result
         if attempted:
             try:
-                after = adapter.build_index("progress", force_refresh=True)
+                after = adapter.build_index("progress")
                 remaining = matching(adapter, "progress", attempted, after)
                 for key in attempted:
                     if key not in remaining:

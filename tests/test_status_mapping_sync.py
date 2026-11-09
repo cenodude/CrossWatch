@@ -54,6 +54,77 @@ def run(case, pairs=None):
     return runtime.run_status_mappings(case.ctx, pairs or [case.pair], {}, {}, store=case.store)
 
 
+def test_status_writes_share_one_preflight_and_one_readback_per_side(sync_case, monkeypatch):
+    case = sync_case
+    for ident in ("2", "3", "4", "5"):
+        case.rows["a"][ident] = row(Status.DROPPED, ident)
+        case.rows["b"][ident] = row(Status.WATCHING, ident)
+    reads = {"a": 0, "b": 0}
+    original = case.adapter.read
+
+    def counted(self):
+        reads[self.cfg["endpoint"]] += 1
+        return original(self)
+
+    monkeypatch.setattr(case.adapter, "read", counted)
+    assert run(case)["updated"] == 5
+    assert len(case.writes) == 5
+    assert reads == {"a": 3, "b": 3}
+
+
+def test_chained_pair_does_not_forward_a_status_changed_earlier_in_the_batch(sync_case):
+    case = sync_case
+    case.rows["c"] = {"1": row(Status.ON_HOLD)}
+    second = deepcopy(case.pair)
+    second.update(id="chain", source="B", target="C")
+    second["status_mapping"]["a"] = {"provider": "b", "instance": "default"}
+    second["status_mapping"]["b"] = {"provider": "c", "instance": "default"}
+    result = run(case, [case.pair, second])
+    assert case.writes == [("b", "1", Status.DROPPED)]
+    assert result["updated"] == 1 and result["unresolved"] >= 1
+    assert case.rows["c"]["1"].observation.status == Status.ON_HOLD
+    assert not any(event == "status_mapping:updated" and value["pair_id"] == "chain" for event, value in case.events)
+
+
+def test_later_write_to_an_earlier_source_waits_for_the_next_run(sync_case):
+    case = sync_case
+    case.rows["c"] = {"1": row(Status.ON_HOLD)}
+    second = deepcopy(case.pair)
+    second.update(id="reverse", source="C", target="A")
+    second["status_mapping"]["a"] = {"provider": "c", "instance": "default"}
+    second["status_mapping"]["b"] = {"provider": "a", "instance": "default"}
+    result = run(case, [case.pair, second])
+    assert case.writes == [("b", "1", Status.DROPPED)]
+    assert result["updated"] == 1 and result["errors"] == 0
+    assert case.rows["a"]["1"].observation.status == Status.DROPPED
+    item = runtime.ItemScope(runtime.pair_scope(case.pair), "shows", "1", "1")
+    assert not case.store.get(item).get("pending")
+    result = run(case, [case.pair, second])
+    assert case.writes == [("b", "1", Status.DROPPED), ("a", "1", Status.ON_HOLD)]
+    assert result["updated"] == 1
+
+
+def test_failed_preflight_read_is_not_repeated_per_title(sync_case, monkeypatch):
+    case = sync_case
+    for ident in ("2", "3"):
+        case.rows["a"][ident] = row(Status.DROPPED, ident)
+        case.rows["b"][ident] = row(Status.WATCHING, ident)
+    reads = {"a": 0, "b": 0}
+    original = case.adapter.read
+
+    def failing(self):
+        endpoint = self.cfg["endpoint"]
+        reads[endpoint] += 1
+        if reads[endpoint] > 1:
+            raise RuntimeError("provider unavailable")
+        return original(self)
+
+    monkeypatch.setattr(case.adapter, "read", failing)
+    assert run(case)["errors"] == 3
+    assert case.writes == []
+    assert reads == {"a": 2, "b": 1}
+
+
 def test_one_way_write_persists_and_is_idempotent(sync_case):
     case = sync_case
     assert run(case)["updated"] == 1
