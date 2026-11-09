@@ -70,6 +70,91 @@ def test_edit_and_undo_restore_the_record_and_log_both(base):
     assert nested.value.code == "not_undoable"
 
 
+@pytest.mark.parametrize("status", ["watching", "planned", "completed", "on_hold", "dropped", ""])
+def test_edit_status_preserves_notes_and_undo_restores_both(client, base, status):
+    store = TrackerStore(base)
+    note_key = "movie:tmdb:949"
+    store.save_note(note_key, {"type": "movie", "title": "Heat", "status": "planned", "notes": "Keep this", "tags": ["Favorite"]})
+    before = store.note(note_key)
+    response = client.post("/api/tracker/edit", json={"feature": "history", "key": "tmdb:949", "changes": {"title": "Heat edited", "status": status}})
+    assert response.status_code == 200, response.text
+    assert store.item("history", "tmdb:949")["title"] == "Heat edited"
+    assert store.note(note_key)["status"] == (status or None)
+    assert store.note(note_key)["notes"] == "Keep this"
+    assert store.note(note_key)["tags"] == ["Favorite"]
+    assert "status" not in store.item("history", "tmdb:949")
+    store.undo(response.json()["batch"])
+    assert store.item("history", "tmdb:949") == MOVIE
+    assert store.note(note_key) == before
+
+
+def test_edit_episode_status_updates_show_and_detail_records(client, base):
+    response = client.post("/api/tracker/edit", json={"feature": "history", "key": "tmdb:95396#s01e02", "changes": {"status": "on_hold"}})
+    assert response.status_code == 200, response.text
+    store = TrackerStore(base)
+    assert store.note("show:tmdb:95396")["status"] == "on_hold"
+    assert store.item("history", "tmdb:95396#s01e02") == EPISODE
+    detail = client.get("/api/tracker/title", params={"key": "tmdb:95396#s01e02"}).json()
+    assert detail["plays"][0]["status"] == "on_hold"
+    store.undo(response.json()["batch"])
+    assert store.note("show:tmdb:95396") is None
+
+
+def test_edit_status_follows_changed_identity_and_undo(client, base):
+    store = TrackerStore(base)
+    old_key = "movie:tmdb:329865"
+    store.save_note(old_key, {"type": "movie", "title": "Arrival", "status": "planned", "notes": "Keep me"})
+    before = store.note(old_key)
+    response = client.post("/api/tracker/edit", json={"feature": "history", "key": "tmdb:329865", "changes": {"ids": {"tmdb": "123"}, "status": "completed"}})
+    assert response.status_code == 200, response.text
+    assert store.note(old_key) is None
+    assert store.note("movie:tmdb:123")["notes"] == "Keep me"
+    assert store.note("movie:tmdb:123")["status"] == "completed"
+    store.undo(response.json()["batch"])
+    assert store.note(old_key) == before
+    assert store.note("movie:tmdb:123") is None
+    assert store.item("history", "tmdb:329865") == ARRIVAL
+
+
+@pytest.mark.parametrize("status", ["invalid", None, 1, [], {}])
+def test_edit_invalid_status_does_not_change_record(client, base, status):
+    response = client.post("/api/tracker/edit", json={"feature": "history", "key": "tmdb:949", "changes": {"title": "Changed", "status": status}})
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_status"
+    assert TrackerStore(base).item("history", "tmdb:949") == MOVIE
+
+
+def test_edit_status_noop_does_not_create_undo_batch(client, base):
+    response = client.post("/api/tracker/edit", json={"feature": "history", "key": "tmdb:949", "changes": {"status": ""}})
+    assert response.status_code == 200, response.text
+    assert response.json()["batch"] is None
+    assert TrackerStore(base).change_count() == 0
+
+
+def test_edit_clearing_status_removes_empty_note_and_can_undo(client, base):
+    store = TrackerStore(base)
+    store.save_note("movie:tmdb:949", {"type": "movie", "title": "Heat", "status": "completed"})
+    response = client.post("/api/tracker/edit", json={"feature": "history", "key": "tmdb:949", "changes": {"status": ""}})
+    assert response.status_code == 200, response.text
+    assert store.note("movie:tmdb:949") is None
+    assert store.item("history", "tmdb:949") == MOVIE
+    store.undo(response.json()["batch"])
+    assert store.note("movie:tmdb:949")["status"] == "completed"
+
+
+def test_edit_status_failure_rolls_back_record_change(client, base, monkeypatch):
+    def fail(*args):
+        raise RuntimeError("note write failed")
+
+    monkeypatch.setattr(TrackerStore, "_note_put", fail)
+    with pytest.raises(RuntimeError, match="note write failed"):
+        client.post("/api/tracker/edit", json={"feature": "history", "key": "tmdb:949", "changes": {"title": "Edited", "status": "completed"}})
+    store = TrackerStore(base)
+    assert store.item("history", "tmdb:949") == MOVIE
+    assert store.note("movie:tmdb:949") is None
+    assert store.change_count() == 0
+
+
 def test_bulk_delete_is_one_change_and_one_undo(base):
     store = TrackerStore(base)
     batch = store.change_items("history", [("tmdb:949", None, None), ("tmdb:329865", None, None)], action="delete")

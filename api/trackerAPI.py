@@ -724,21 +724,33 @@ def tracker_edit(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
         return blocked
     if not key or not isinstance(changes, Mapping) or not changes:
         return _error("no_changes", 400)
+    if "status" in changes and (not isinstance(changes["status"], str) or changes["status"] not in ("", *NOTE_STATUSES)):
+        return _error("invalid_status", 400)
     _, inst, store = _store(payload.get("provider_instance"), request)
     try:
         current = store.item(feature, key)
         if not isinstance(current, Mapping):
             return _error("not_found", 404)
         try:
-            updated = _edited(feature, current, changes)
+            updated = _edited(feature, current, {k: v for k, v in changes.items() if k != "status"})
         except ValueError as exc:
             return _error(str(exc), 400)
-        if updated == dict(current):
+        if updated == dict(current) and "status" not in changes:
             return _error("no_changes", 400)
         new_key = _item_key(feature, key, current, updated)
+        note_status = None
+        if "status" in changes:
+            ident = _identity_of(updated, new_key)
+            child = updated.get("type") in _CHILD_TYPES
+            note_status = {
+                "key": _title_key(ident), "status": changes["status"],
+                "type": "show" if ident["show"] else "movie",
+                "title": updated.get("series_title") if child else updated.get("title"),
+                "year": updated.get("series_year") if child else updated.get("year"), "tmdb": ident.get("tmdb") or None,
+            }
         batch = store.change_items(
             feature, [(key, new_key, updated)], action="edit", expected={key: dict(current)},
-            follow=_note_follow(key, current, new_key, updated),
+            follow=_note_follow(key, current, new_key, updated), note_status=note_status,
         )
     except TrackerUnreadable:
         return _unreadable()
@@ -1240,6 +1252,7 @@ def tracker_title(
     for name, item_key, data in related:
         row = _row(item_key, data, name)
         row["feature"] = name
+        row["status"] = saved.get("status") if saved else None
         row["check"] = _check_row(checks.get(name, {}).get(item_key))
         rows[name].append(row)
     head_source = anchor or next((data for _, _, data in related), {})
