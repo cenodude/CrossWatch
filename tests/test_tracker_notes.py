@@ -38,6 +38,26 @@ def _save(api, key, **fields):
     return api.post("/api/tracker/note", json={"key": key, **fields})
 
 
+@pytest.mark.parametrize("feature", ["history", "watchlist", "ratings", "progress", "collection"])
+def test_item_status_labels_use_movie_and_parent_show_notes(api, base, feature):
+    TrackerStore(base).write_state(feature, {
+        "tmdb:949": {**MOVIE, "rating": 8},
+        "tmdb:95396#s01e02": EPISODE,
+        "tmdb:1": WRONG,
+    })
+    assert _save(api, "movie:tmdb:949", status="completed").status_code == 200
+    assert _save(api, "show:tmdb:95396", status="dropped").status_code == 200
+    response = api.get("/api/tracker/items", params={"feature": feature})
+    assert response.status_code == 200, response.text
+    rows = {row["key"]: row for row in response.json()["items"]}
+    assert rows["tmdb:949"]["status"] == "completed"
+    assert rows["tmdb:95396#s01e02"]["status"] == "dropped"
+    assert rows["tmdb:1"]["status"] is None
+    assert _save(api, "show:tmdb:95396", status="", notes="Keep my note").status_code == 200
+    rows = {row["key"]: row for row in api.get("/api/tracker/items", params={"feature": feature}).json()["items"]}
+    assert rows["tmdb:95396#s01e02"]["status"] is None
+
+
 def test_title_carries_its_note_and_saving_works_during_a_sync(api, base):
     title = api.get("/api/tracker/title?feature=history&key=tmdb:949").json()
     assert (title["note_key"], title["note"]) == ("movie:tmdb:949", None)

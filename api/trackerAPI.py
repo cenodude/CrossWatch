@@ -641,6 +641,8 @@ def tracker_items(
                 until=_month_end(month),
             )
             checks = store.checks_for(feature, [key for key, _ in rows])
+            note_keys = {key: _title_key(_identity_of(item, key)) for key, item in rows}
+            notes = store.notes_for(note_keys.values())
             ratings = {}
             if feature != "ratings":
                 for key, item in rows:
@@ -657,6 +659,7 @@ def tracker_items(
         row = _row(key, item, feature)
         row["user_rating"] = row["rating"] if feature == "ratings" else ratings.get(key)
         row["check"] = _check_row(checks.get(key))
+        row["status"] = (notes.get(note_keys[key]) or {}).get("status")
         items.append(row)
     return {
         "ok": True,

@@ -14,12 +14,13 @@ function render(state) {
   return vm.runInNewContext(renderer + "renderGrid()", {
     state: {picked:new Set(),items:[],shows:[],noteRows:[],ref:null,...state}, esc,
     listFeature:()=>state.view, cardTitle:item=>item.series_title || item.title,
+    cardItem:item=>item.art?.tmdb || item.ids?.tmdb ? item : null, canCard:Boolean,
     artUrl:item=>item.art ? `/art/tmdb/${item.art.kind}/${item.art.tmdb}?size=w500` : "",
     isChild:item=>item.type === "episode", typeMeta:item=>({label:item.type,icon:"movie"}),
     episodeCode:item=>item.episode ? `S${item.season}E${item.episode}` : "", se:(s,e)=>`S${s}E${e}`,
     timelineOn:()=>!!state.byDay, dayLabel:String, timeText:()=>"22:00", whenText:String,
     symbol:()=>"icon", icon:()=>"icon", healthIcon:()=>"", progressCell:()=>"progress", nextCell:()=>"next",
-    statusPill:()=>"",tagChips:()=>"",extraCell:()=>"",pager:()=>"pager",
+    statusPill:status=>status ? `<span class="trk-status" data-status="${status}">${status}</span>` : "",tagChips:()=>"",extraCell:()=>"",pager:()=>"pager",
     renderShows:()=>"empty shows",renderTitles:()=>"empty titles",renderList:()=>"empty list",
   });
 }
@@ -30,6 +31,7 @@ test("record cards retain half ratings, episode artwork, selection and editing",
   assert.match(html,/Your rating: 7.5 out of 10/);
   assert.match(html,/data-trk-pick="0" checked/);
   assert.match(html,/data-trk-row-edit="0"/);
+  assert.match(html,/data-trk-row-info/);
   assert.match(html,/is-selected/);
   assert.match(html,/&lt;Title>/);
 });
@@ -41,6 +43,18 @@ test("day groups do not duplicate headings and retain load more", () => {
   assert.match(html,/data-trk-action="more"/);
   assert.match(html,/22:00/);
 });
+
+for (const view of ["history","shows","titles","watchlist","ratings","progress","collection","cleanup"]) {
+  test(`${view}: optional saved status labels share the artwork footer with the date`,()=>{
+    const items=[{key:"one",type:"movie",title:"One",date:"today",last_watched:"today",updated:"today",status:"dropped",user_rating:7.5},{key:"two",type:"movie",title:"Two",date:"today"}];
+    const state={view,items,shows:items,noteRows:items};
+    const html=render(state);
+    assert.equal((html.match(/class="trk-grid-status"/g)||[]).length,1);
+    assert.match(html,/trk-grid-labels.*trk-grid-date.*trk-grid-status/);
+    assert.match(html,/data-status="dropped"/);
+    assert.doesNotMatch(render({...state,showStatusLabels:false}),/class="trk-grid-status"/);
+  });
+}
 
 test("show and note cards preserve their detail references", () => {
   assert.match(render({view:"shows",shows:[{key:"show",title:"Show"}]}),/data-trk-ref-show="show"/);

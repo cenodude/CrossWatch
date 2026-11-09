@@ -127,6 +127,7 @@
     media: "",
     byDay: false,
     hideDropped: false,
+    showStatusLabels: true,
     statusMenu: false,
     month: "",
     months: [],
@@ -190,6 +191,7 @@
       if (!saved.layouts && saved.layout === "grid") state.layouts[state.view] = "grid";
       state.byDay = saved.byDay === true;
       state.hideDropped = saved.hideDropped === true;
+      state.showStatusLabels = saved.showStatusLabels !== false;
       if (Number.isInteger(saved.zoom)) state.zoom = saved.zoom;
       if (typeof saved.instance === "string" && saved.instance) state.instance = saved.instance;
       if (typeof saved.q === "string") state.q = saved.q.slice(0, 200);
@@ -207,7 +209,7 @@
 
   function saveView() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ view: state.view, layouts: state.layouts, media: state.media, byDay: state.byDay, hideDropped: state.hideDropped, zoom: state.zoom, pageSize: state.pageSize, instance: state.instance, q: state.q, sort: state.sort, noteStatus: state.noteStatus, noteTag: state.noteTag, cleanFeature: state.cleanFeature, healthFilter: state.healthFilter, duplicates: state.duplicates, offset: state.offset, ref: state.ref, scrollTop: state.scrollTop }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ view: state.view, layouts: state.layouts, media: state.media, byDay: state.byDay, hideDropped: state.hideDropped, showStatusLabels: state.showStatusLabels, zoom: state.zoom, pageSize: state.pageSize, instance: state.instance, q: state.q, sort: state.sort, noteStatus: state.noteStatus, noteTag: state.noteTag, cleanFeature: state.cleanFeature, healthFilter: state.healthFilter, duplicates: state.duplicates, offset: state.offset, ref: state.ref, scrollTop: state.scrollTop }));
     } catch {}
   }
 
@@ -473,7 +475,7 @@
     if (state.view === "shows") {
       return more + chip('data-trk-action="hide-dropped"', "Hide dropped", { active: state.hideDropped, iconName: "do_not_disturb_on", title: "Leave out shows you dropped" });
     }
-    if (state.view === "titles") return renderNoteFilters();
+    if (state.view === "titles") return renderNoteFilters() + more;
     let out = `<div class="trk-seg" role="group" aria-label="Type">${MEDIA.map((m) => chip(`data-trk-media="${m.id}"`, m.label, { active: state.media === m.id, iconName: m.icon })).join("")}</div>`;
     if (timelineOn() && state.month) {
       out += `<button type="button" class="cw-filter-chip active" data-trk-action="month-clear" title="Back to the latest plays">${symbol("event", "cw-type-icon")}<span>${esc(monthName(state.month))} and older</span>${symbol("close", "cw-type-icon")}</button>`;
@@ -482,9 +484,10 @@
   }
 
   function renderExtraFilters() {
-    if (state.view === "titles") return "";
+    const labels = `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="status-labels"${state.showStatusLabels !== false ? " checked" : ""}>Show status labels on cards</label>`;
+    if (state.view === "titles") return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Additional filters">${labels}</div>`;
     const sort = ["shows", "cleanup"].includes(state.view) ? "" : `<label class="trk-status-filter"><span>Sort</span><select class="cw-select" data-trk-input="sort" aria-label="Sort results">${[["recent","Newest first"],["oldest","Oldest first"],["title","Title A-Z"]].map(([value,label]) => `<option value="${value}"${state.sort === value ? " selected" : ""}>${label}</option>`).join("")}</select></label>`;
-    return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Additional filters">${renderNoteFilters()}${sort}${state.view === "history" ? `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="duplicates"${state.duplicates ? " checked" : ""}>Possible duplicates</label>` : ""}<button type="button" class="cw-btn" data-trk-action="filters-clear">Clear filters</button><small>${state.view === "history" && state.duplicates ? "Same title, episode and watch time. Compare the entries before deleting; watches at different times are kept." : "Status and tags use your local My titles details."}</small></div>`;
+    return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Additional filters">${renderNoteFilters()}${sort}${state.view === "history" ? `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="duplicates"${state.duplicates ? " checked" : ""}>Possible duplicates</label>` : ""}${labels}<button type="button" class="cw-btn" data-trk-action="filters-clear">Clear filters</button><small>${state.view === "history" && state.duplicates ? "Same title, episode and watch time. Compare the entries before deleting; watches at different times are kept." : "Status and tags use your local My titles details."}</small></div>`;
   }
 
   function renderControls() {
@@ -539,7 +542,58 @@
       <button type="button" class="cw-selection-button" data-trk-action="pick-visible"${state.loading || state.picking ? " disabled" : ""}>${icon("visibility")}<span>Visible</span></button>
       <button type="button" class="cw-selection-button" data-trk-action="pick-all"${state.loading || state.picking ? " disabled" : ""} title="Select every result matching these filters">${icon("checklist")}<span>${state.picking ? "Selecting…" : "All results"}</span></button>
       <button type="button" class="cw-selection-button" data-trk-action="clear-picked">${icon("close")}<span>Clear</span></button>
-      <span class="cw-selection-actions"><button type="button" class="cw-selection-button" data-trk-action="status-picked"${state.picking ? " disabled" : ""}>${icon("flag")}<span>Set status</span></button>${state.view === "shows" ? "" : `<button type="button" class="cw-selection-button is-danger" data-trk-action="delete-picked"${state.picking ? " disabled" : ""}>${icon("delete")}<span>${state.view === "titles" ? "Remove from My titles" : "Delete"}</span></button>`}</span>`;
+      <span class="cw-selection-actions"><button type="button" class="cw-selection-button" data-trk-action="status-picked" popovertarget="trk-bulk-status-menu" aria-haspopup="menu" aria-expanded="false"${state.picking || state.bulkStatusBusy ? " disabled" : ""}>${icon("flag")}<span>${state.bulkStatusBusy ? "Saving…" : "Set status"}</span></button>${state.view === "shows" ? "" : `<button type="button" class="cw-selection-button is-danger" data-trk-action="delete-picked"${state.picking ? " disabled" : ""}>${icon("delete")}<span>${state.view === "titles" ? "Remove from My titles" : "Delete"}</span></button>`}</span>`;
+  }
+
+  function createBulkStatusMenu() {
+    const menu = document.createElement("div");
+    menu.id = "trk-bulk-status-menu";
+    menu.className = "trk-status-menu trk-bulk-status-menu";
+    menu.setAttribute("popover", "auto");
+    menu.setAttribute("role", "menu");
+    menu.setAttribute("aria-label", "Set status for selected titles");
+    menu.innerHTML = [...STATUSES, {id:"",label:"No status",icon:"remove"}].map(s => `<button type="button" class="trk-status-item" role="menuitem" tabindex="-1" data-trk-bulk-set-status="${s.id}" data-status="${s.id}">${symbol(s.icon)}<span>${esc(s.label)}</span></button>`).join("");
+    const trigger = () => state.root?.querySelector('[data-trk-action="status-picked"]');
+    const position = () => {
+      const rect = trigger()?.getBoundingClientRect();
+      if (!rect) return;
+      const width = Math.min(220, window.innerWidth - 24);
+      menu.style.width = `${width}px`;
+      menu.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - width - 12))}px`;
+      menu.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+      menu.style.maxHeight = `${Math.max(0, rect.top - 20)}px`;
+    };
+    menu.addEventListener("beforetoggle", event => {
+      const open = event.newState === "open";
+      trigger()?.setAttribute("aria-expanded", String(open));
+      if (open) position();
+    });
+    menu.addEventListener("toggle", () => {
+      if (menu.matches(":popover-open")) menu.querySelector("button")?.focus({preventScroll:true});
+    });
+    menu.addEventListener("keydown", event => {
+      const buttons = Array.from(menu.querySelectorAll("button"));
+      const index = buttons.indexOf(document.activeElement);
+      if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+        event.preventDefault();
+        const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowUp" ? -1 : 1) + buttons.length) % buttons.length;
+        buttons[next]?.focus();
+      } else if (event.key === "Escape" || event.key === "Tab") {
+        event.preventDefault();
+        event.stopPropagation();
+        menu.hidePopover();
+        trigger()?.focus({preventScroll:true});
+      }
+    });
+    menu.addEventListener("click", event => {
+      const item = event.target.closest("[data-trk-bulk-set-status]");
+      if (!item) return;
+      menu.hidePopover();
+      trigger()?.focus({preventScroll:true});
+      void applyBulkStatus(item.dataset.trkBulkSetStatus);
+    });
+    window.addEventListener("resize", () => { if (menu.isConnected && menu.matches(":popover-open")) position(); });
+    state.root.querySelector(".cw-root").appendChild(menu);
   }
 
   function emptyState(text, symbolName = "table_rows") {
@@ -715,11 +769,13 @@
       const refName = shows ? "show" : notes ? "note" : "key";
       const selected = state.ref?.[refName] === item.key && (shows || notes || state.ref?.feature === feature);
       const title = shows || notes ? item.title || item.key : cardTitle(item);
+      const card = canCard(cardItem(item, shows || isChild(item) || item.type === "show"));
       const art = item.art || (item.ids?.tmdb ? {kind: item.type === "movie" ? "movie" : "tv", tmdb: item.ids.tmdb} : null);
       const url = artUrl({...item, art}, "w500");
       const image = url ? `${url}&kind=${isChild(item) && item.season != null && item.episode != null ? `still&season=${encodeURIComponent(item.season)}&episode=${encodeURIComponent(item.episode)}` : "backdrop"}` : "";
       const rating = feature === "ratings" && !shows && !notes ? item.rating : item.user_rating;
       const date = shows ? item.last_watched : notes ? item.updated : item.date;
+      const status = state.showStatusLabels !== false ? statusPill(item.status) : "";
       const episode = shows ? item.last_season != null ? `Last ${se(item.last_season, item.last_episode)}` : "" : episodeCode(item);
       const meta = [isChild(item) ? item.series_year : item.year, shows ? "Show" : typeMeta(item).label, episode].filter(Boolean).join(" · ");
       let heading = "";
@@ -731,11 +787,10 @@
         <div class="trk-grid-art"><span class="trk-grid-placeholder" aria-hidden="true">${symbol(shows ? "tv" : typeMeta(item).icon)}</span>${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}
           <input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}">
           ${rating != null ? `<span class="cw-media-card-score" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}
-          ${notes && item.status ? `<span class="trk-grid-status">${statusPill(item.status)}</span>` : ""}
-          ${date ? `<span class="trk-grid-date">${esc(timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}
+          ${date || status ? `<div class="trk-grid-labels">${date ? `<span class="trk-grid-date" title="${esc(whenText(date))}">${esc(timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}${status ? `<span class="trk-grid-status">${status}</span>` : ""}</div>` : ""}
         </div>
         <div class="trk-grid-copy"><strong>${esc(title)}</strong><small>${esc(meta)}</small>${shows ? `<div class="trk-grid-progress">${progressCell(item)}${nextCell(item)}</div>` : notes ? tagChips(item.tags, 3) : feature === "progress" ? extraCell(item, feature) : ""}
-          ${!shows && !notes ? `<div class="trk-grid-tools">${healthIcon(item, state.view === "cleanup")}<button type="button" class="trk-icon" data-trk-row-edit="${index}" title="Edit" aria-label="Edit ${esc(title)}">${icon("edit")}</button></div>` : ""}
+          ${card || (!shows && !notes) ? `<div class="trk-grid-tools">${!shows && !notes ? `${healthIcon(item, state.view === "cleanup")}<button type="button" class="trk-icon" data-trk-row-edit="${index}" title="Edit" aria-label="Edit ${esc(title)}">${icon("edit")}</button>` : ""}${card ? `<button type="button" class="trk-icon" data-trk-row-info title="Open details" aria-label="Open details for ${esc(title)}">${icon("info")}</button>` : ""}</div>` : ""}
         </div></article>`;
     }).join("");
     const more = timelineOn() ? state.items.length < state.total ? `<div class="cw-pager"><button type="button" class="cw-btn" data-trk-action="more"${state.loading ? " disabled" : ""}>Show older plays</button></div>` : "" : pager();
@@ -854,13 +909,20 @@
       return;
     }
     const show = data?.show || isChild(head) || head.type === "show";
-    const detail = show ? record ? episodeLabel(record) : "" : head.year ? String(head.year) : "";
+    const item = cardItem(head, show);
+    const meta = data?.heroMeta || (item ? window.CW?.Meta?.peek?.(item) : null);
+    const seasons = Number(meta?.detail?.number_of_seasons) || 0;
+    const runtime = Number(meta?.runtime_minutes) || 0;
+    const detail = [meta?.year || head.year, show ? "TV Series" : "Movie", show && record ? episodeLabel(record) : "",
+      show ? seasons ? plural(seasons, "season", "seasons") : "" : runtime ? `${runtime} min` : "",
+      show ? meta?.detail?.status : "", ...(Array.isArray(meta?.genres) ? meta.genres.slice(0, 2) : [])].filter(Boolean).join(" · ");
+    const status = statusPill(data ? data.note?.status : head.status);
     const episode = record?.type === "episode" && record.title && record.title !== title && !/^S\d+\s*[·-]?\s*E\d+$/i.test(record.title) ? record.title : "";
     const art = head?.art;
     const logoUrl = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?kind=logo&size=w500` : "";
-    const signature = JSON.stringify([title, detail, episode, logoUrl]);
+    const signature = JSON.stringify([title, detail, episode, logoUrl, status]);
     if (selection?.dataset.logoSelection === signature) return;
-    setSlot("selection", `<div class="trk-hero-selection"><div class="trk-hero-title-line"><span class="trk-hero-heading"><strong title="${esc(title)}">${esc(title)}</strong>${logoUrl ? `<img class="trk-hero-logo" alt="${esc(title)}" hidden>` : ""}</span>${detail ? `<span class="trk-hero-meta">${esc(detail)}</span>` : ""}</div>${episode ? `<small title="${esc(episode)}">${esc(episode)}</small>` : ""}</div>`);
+    setSlot("selection", `<div class="trk-hero-selection"><div class="trk-hero-title-line"><span class="trk-hero-heading"><strong title="${esc(title)}">${esc(title)}</strong>${logoUrl ? `<img class="trk-hero-logo" alt="${esc(title)}" hidden>` : ""}</span><div class="trk-hero-details"><span class="trk-hero-meta">${esc(detail)}</span>${episode ? `<small title="${esc(episode)}">${esc(episode)}</small>` : ""}${status}</div></div></div>`);
     if (selection) selection.dataset.logoSelection = signature;
     const logo = selection?.querySelector(".trk-hero-logo");
     const label = selection?.querySelector(".trk-hero-heading strong");
@@ -1136,7 +1198,7 @@
         ${card ? `<button type="button" class="trk-poster is-link${url ? "" : " is-empty"}" data-trk-detail="card" title="Open details" aria-label="Open details for ${esc(head.title || "")}">` : `<div class="trk-poster${url ? "" : " is-empty"}">`}${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-poster-fallback">${symbol(t.icon)}</span>${rating != null ? `<span class="cw-rating-score trk-cover-rating" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}${card ? "</button>" : "</div>"}
         <div class="trk-detail-copy">
           <div class="trk-detail-meta"><span class="trk-detail-kind">${symbol(t.icon)}${esc(t.label)}</span>${statusPill(data.note?.status)}</div>
-          <span class="trk-detail-head"><strong class="trk-detail-title">${esc(head.title || "")}</strong>${recordCount(data) ? `<button type="button" class="trk-icon trk-title-edit" data-trk-detail="edit-title" title="Edit title, year and IDs on every record" aria-label="Edit title, year and IDs">${icon("edit")}</button>` : ""}</span>
+          <span class="trk-detail-head"><strong class="trk-detail-title">${esc(head.title || "")}</strong>${recordCount(data) ? `<button type="button" class="trk-icon trk-title-edit" data-trk-detail="edit-title" title="Edit title, year and IDs on every record" aria-label="Edit title, year and IDs">${icon("edit")}</button>` : ""}${card ? `<button type="button" class="trk-icon trk-title-info" data-trk-detail="card" title="Open details" aria-label="Open details for ${esc(head.title || "")}">${icon("info")}</button>` : ""}</span>
           ${head.year ? `<span class="trk-detail-sub">${esc(head.year)}</span>` : ""}
           <span class="trk-detail-sub">${esc(watchedLine)}</span>
           ${badges ? `<div class="trk-badges">${badges}</div>` : ""}
@@ -1149,7 +1211,6 @@
         <button type="button" class="cw-btn" data-trk-detail="list" title="${listed ? "Remove from watchlist" : "Add to watchlist"}" aria-label="${listed ? "Remove from watchlist" : "Add to watchlist"}">${icon(listed ? "bookmark_remove" : "bookmark_add")}</button>
         ${info ? "" : `<button type="button" class="cw-btn" data-trk-detail="map" title="Choose the correct movie or show for this tracker entry" aria-label="Fix match">${icon("compare_arrows")}</button>`}
         ${recordCount(data) ? `<button type="button" class="cw-btn" data-trk-detail="origin" title="Where does this come from?" aria-label="Where does this come from?">${icon("alt_route")}</button>` : ""}
-        ${card ? `<button type="button" class="cw-btn" data-trk-detail="card" title="Open details" aria-label="Open details">${icon("info")}</button>` : ""}
       </div>
       ${episodePreviews(data)}
       ${noteBlock(data)}
@@ -1191,7 +1252,6 @@
             <div class="cw-head-copy cw-page-hero-copy">
               <div class="cw-page-hero-kicker">CW TRACKER</div>
               <div class="cw-title-row"><div>
-                <div class="cw-title cw-page-hero-title">Tracker</div>
                 <div class="cw-sub cw-page-hero-sub trk-hero-context" data-trk-slot="selection" aria-live="polite" aria-atomic="true">Everything you watched, rated and want to watch</div>
               </div></div>
             </div>
@@ -1222,6 +1282,7 @@
       selection.setAttribute("aria-label", "Selected tracker records");
       selection.hidden = true;
       root.querySelector(".cw-root").appendChild(selection);
+      createBulkStatusMenu();
       new ResizeObserver(() => root.style.setProperty("--cw-selection-height", `${selection.offsetHeight}px`)).observe(selection);
       const filters = root.querySelector('[data-trk-slot="filters"]');
       const media = window.matchMedia?.(NARROW);
@@ -1458,6 +1519,7 @@
       const data = await getJSON(`/api/tracker/title?${inst()}&${params}`);
       if (id !== state.titleRequest) return;
       state.title = data;
+      void loadHeroMetadata(data, id);
       cardModal()?.updateTracker?.(data);
       if (data.show && data.title?.art?.tmdb) loadProgress([data.title.art.tmdb]);
     } catch (err) {
@@ -1470,7 +1532,18 @@
     if (sheet.mode === "title") renderSheet();
   }
 
-  function selectRef(ref) {
+  async function loadHeroMetadata(data, id) {
+    const item = cardItem(data.title, data.show);
+    if (!item) return;
+    try {
+      const meta = await window.CW?.Meta?.get?.(item, "detail", { seriesInfo: true });
+      if (id !== state.titleRequest || state.title !== data || !meta) return;
+      data.heroMeta = meta;
+      updateHeroSelection();
+    } catch {}
+  }
+
+  function selectRef(ref, { openMedia = false } = {}) {
     state.ref = ref;
     saveView();
     state.statusMenu = false;
@@ -1482,8 +1555,10 @@
       tr.setAttribute("aria-selected", String(on));
     });
     setSlot("title", renderTitle());
-    if (narrow()) openSheet("title");
-    loadTitle();
+    if (narrow() && !openMedia) openSheet("title");
+    loadTitle().then(() => {
+      if (openMedia && state.ref === ref) openCard();
+    });
   }
 
   let moveTimer = 0;
@@ -1873,15 +1948,13 @@
   }
 
   function renderNotesBulk() {
-    const removing = sheet.noteAction === "remove";
-    const count = sheet.sourceView ? plural(sheet.keys.length, "selected entry", "selected entries") : plural(sheet.keys.length, "title", "titles");
-    return `${sheetHead(removing ? "delete" : "flag", removing ? `Remove ${count} from My titles?` : `Change status for ${count}`, "My titles")}
+    const count = plural(sheet.keys.length, "title", "titles");
+    return `${sheetHead("delete", `Remove ${count} from My titles?`, "My titles")}
       <form class="trk-form" data-trk-form="notes-bulk">
-        ${removing ? `<p class="trk-note">Removes their local statuses, notes, tags and dates. Watch history, ratings, watchlist and collection entries are kept.</p>`
-          : `<label class="trk-field trk-field-wide"><span>Status</span><select class="cw-select" data-trk-bulk-status aria-label="New status"><option value="choose" disabled${sheet.bulkStatus === null ? " selected" : ""}>Choose a status</option>${[...STATUSES, {id:"",label:"No status"}].map(s => `<option value="${esc(s.id)}"${sheet.bulkStatus === s.id ? " selected" : ""}>${esc(s.label)}</option>`).join("")}</select></label><p class="trk-note">Changes only the local status. Notes, tags and dates are kept. Episodes use the status of their show; each title is changed once. Clearing the last detail removes a title from My titles.</p>`}
+        <p class="trk-note">Removes their local statuses, notes, tags and dates. Watch history, ratings, watchlist and collection entries are kept.</p>
         <p class="trk-note">You can undo this batch from Changes.</p>
         ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : ""}
-        <footer class="trk-sheet-foot"><button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button><button type="submit" class="cw-btn ${removing ? "danger" : "primary"}"${sheet.busy || (!removing && sheet.bulkStatus === null) ? " disabled" : ""}>${icon(removing ? "delete" : "check")}<span>${removing ? "Remove from My titles" : "Apply status"}</span></button></footer>
+        <footer class="trk-sheet-foot"><button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button><button type="submit" class="cw-btn danger"${sheet.busy ? " disabled" : ""}>${icon("delete")}<span>Remove from My titles</span></button></footer>
       </form>`;
   }
 
@@ -2575,18 +2648,43 @@
     }
   }
 
+  async function applyBulkStatus(status) {
+    if (state.bulkStatusBusy || state.picking || !state.picked.size || (status !== "" && !statusOf(status))) return;
+    const instance = state.instance, view = state.view, keys = Array.from(state.picked);
+    const notes = view === "titles";
+    state.bulkStatusBusy = true;
+    renderSlots(false);
+    try {
+      const data = await getJSON(notes ? "/api/tracker/notes/bulk" : "/api/tracker/titles/status", {
+        provider_instance: instance, keys, action: "status", status,
+        ...(notes ? {} : {view, feature:view === "shows" ? "history" : listFeature()}),
+      });
+      toast.show(data.count ? `Updated ${plural(data.count, "title", "titles")}` : "No titles changed", data.batch ? {undo:() => undo(data.batch, instance)} : {});
+      if (state.instance === instance && state.view === view) {
+        keys.forEach(key => state.picked.delete(key));
+        state.offset = 0;
+        state.progress = {};
+        await refresh();
+      }
+    } catch (err) {
+      toast.show(writeError(err), {tone:"bad"});
+    } finally {
+      state.bulkStatusBusy = false;
+      renderSlots(false);
+    }
+  }
+
   async function saveNotesBulk() {
-    if (sheet.busy || !sheet.keys.length || (sheet.noteAction === "status" && sheet.bulkStatus === null)) return;
+    if (sheet.busy || !sheet.keys.length) return;
     sheet.busy = true;
     sheet.error = "";
     renderSheet();
     try {
-      const data = await getJSON(sheet.sourceView ? "/api/tracker/titles/status" : "/api/tracker/notes/bulk", {provider_instance: state.instance, keys: sheet.keys, action: sheet.noteAction, status: sheet.bulkStatus, ...(sheet.sourceView ? {view:sheet.sourceView,feature:sheet.feature} : {})});
-      const removing = sheet.noteAction === "remove";
-      if (removing && sheet.keys.includes(state.ref?.note)) { state.ref = null; state.title = null; }
+      const data = await getJSON("/api/tracker/notes/bulk", {provider_instance: state.instance, keys: sheet.keys, action: "remove"});
+      if (sheet.keys.includes(state.ref?.note)) { state.ref = null; state.title = null; }
       closeSheet();
       state.picked.clear();
-      toast.show(data.count ? `${removing ? "Removed" : "Updated"} ${plural(data.count, "title", "titles")}` : "No titles changed", data.batch ? {undo: () => undo(data.batch)} : {});
+      toast.show(data.count ? `Removed ${plural(data.count, "title", "titles")}` : "No titles changed", data.batch ? {undo: () => undo(data.batch)} : {});
       state.offset = 0;
       state.progress = {};
       await refresh();
@@ -2616,9 +2714,9 @@
     }
   }
 
-  async function undo(batch) {
+  async function undo(batch, instance = state.instance) {
     try {
-      await getJSON("/api/tracker/undo", { provider_instance: state.instance, batch });
+      await getJSON("/api/tracker/undo", { provider_instance: instance, batch });
       toast.show("Change undone");
       if (sheet.mode === "changes") await loadChanges(false);
       state.progress = {};
@@ -3236,12 +3334,6 @@
   }
 
   function onSheetChange(event) {
-    if (sheet.mode === "notes-bulk" && event.target.hasAttribute("data-trk-bulk-status")) {
-      sheet.bulkStatus = event.target.value;
-      renderSheet();
-      sheet.el.querySelector("[data-trk-bulk-status]")?.focus();
-      return;
-    }
     if (sheet.mode === "notes" && event.target.matches("select[data-trk-note-field], input[type=checkbox][data-trk-note-field]")) {
       noteInput(event.target);
       return;
@@ -3450,6 +3542,11 @@
         setSlot("main", renderMain());
         return;
       }
+      const rowInfo = event.target.closest("[data-trk-row-info]");
+      if (rowInfo) {
+        selectRef(rowRef(rowInfo.closest(".trk-play")), { openMedia: true });
+        return;
+      }
       const rowEdit = event.target.closest("[data-trk-row-edit]");
       if (rowEdit) {
         const item = state.items[Number(rowEdit.dataset.trkRowEdit)];
@@ -3509,9 +3606,8 @@
       }
       else if (action === "check") startCheck();
       else if (action === "check-cancel") cancelCheck();
-      else if (action === "status-picked" && state.picked.size) openSheet("notes-bulk", { keys: Array.from(state.picked), noteAction: "status", bulkStatus: null, sourceView: state.view === "titles" ? "" : state.view, feature: state.view === "shows" ? "history" : listFeature() });
       else if (action === "delete-picked" && state.picked.size) {
-        if (state.view === "titles") openSheet("notes-bulk", { keys: Array.from(state.picked), noteAction: "remove", sourceView: "" });
+        if (state.view === "titles") openSheet("notes-bulk", { keys: Array.from(state.picked) });
         else openSheet("delete", { keys: Array.from(state.picked), feature: listFeature() });
       }
       else if (action === "pick-visible") {
@@ -3598,6 +3694,10 @@
         state.noteStatus = event.target.value;
         if (state.noteStatus) state.hideDropped = false;
         reload();
+      } else if (input === "status-labels") {
+        state.showStatusLabels = event.target.checked;
+        saveView();
+        setSlot("main", renderMain());
       } else if (input === "duplicates") {
         state.duplicates = event.target.checked;
         reload();
