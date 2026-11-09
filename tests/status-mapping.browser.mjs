@@ -11,6 +11,8 @@ const caps = {labels:{watching:"Watching",on_hold:"On hold",dropped:"Dropped",co
 const initialPair = {id:"pair-1",source:"ANILIST",target:"MYANIMELIST",source_instance:"default",target_instance:"default",mode:"two-way",enabled:true,
   features:{watchlist:{enable:true,add:true,remove:false},history:{enable:false,add:false,remove:false,use_source_status:false}}};
 
+const labels = {ANILIST:"AniList",MYANIMELIST:"MyAnimeList",TRAKT:"Trakt",SIMKL:"SIMKL"};
+
 async function setSwitch(input, checked) {
   if (await input.isChecked() === checked) return;
   await input.focus();
@@ -33,8 +35,8 @@ async function fixture(t, theme="original", width=1280, pair=initialPair, expand
       try{return route.fulfill({body:await readFile(new URL(".."+path,import.meta.url)),contentType:path.endsWith(".css")?"text/css":path.endsWith(".svg")?"image/svg+xml":path.endsWith(".woff2")?"font/woff2":"text/javascript"});}
       catch{return route.fulfill({status:404,body:""});}
     }
-    if(path==="/api/sync/providers") return route.fulfill({json:["ANILIST","MYANIMELIST"].map(name=>({name,label:name==="ANILIST"?"AniList":"MyAnimeList",features:{history:true,watchlist:true,ratings:true},capabilities:{bidirectional:true,status_mapping:providerCaps},configured:true}))});
-    if(path==="/api/provider-instances") return route.fulfill({json:{ANILIST:[{id:"default",label:"Alice",configured:true}],MYANIMELIST:[{id:"default",label:"Bob",configured:true}]}});
+    if(path==="/api/sync/providers") return route.fulfill({json:[pair.source,pair.target].map(name=>({name,label:labels[name]||name,features:{history:true,watchlist:true,ratings:true},capabilities:{bidirectional:true,status_mapping:providerCaps},configured:true}))});
+    if(path==="/api/provider-instances") return route.fulfill({json:{[pair.source]:[{id:"default",label:"Alice",configured:true}],[pair.target]:[{id:"default",label:"Bob",configured:true}]}});
     if(path==="/api/user-profiles") return route.fulfill({json:[]});
     if(path==="/api/config") return route.fulfill({json:{anime_mapping:{enabled:true},sync:{},pairs:[pair]}});
     if(path.startsWith("/api/pairs")&&route.request().method()==="PUT") {saves.push(route.request().postDataJSON());return route.fulfill({json:{ok:true}});}
@@ -217,3 +219,22 @@ for(const theme of ["original","flat-dark","flat-light"]) {
     await page.locator(".cw-status-mapping").screenshot({path:new URL(`../.pytest_tmp_status_visual/${theme}-empty.png`,import.meta.url).pathname.replace(/^\/(\w:)/,"$1")});
   });
 }
+
+test("status mapping turns off dropped tagging and saves without the tag",async t=>{
+  const pair={id:"pair-2",source:"TRAKT",target:"SIMKL",source_instance:"default",target_instance:"default",mode:"one-way",enabled:true,
+    providers:{trakt:{history_dropped_mode:"tag"}},
+    features:{history:{enable:true,add:true,remove:false,use_source_status:true}},
+    status_mapping:{version:1,a:{provider:"trakt",instance:"default"},b:{provider:"simkl",instance:"default"},conflict:"leave_unchanged",
+      directions:{a_to_b:{shows:{dropped:{include:true,target:"dropped"}}}}}};
+  const {page,saves}=await fixture(t,"original",1280,pair,false);
+  await page.locator("#cx-tab-history").click();
+  const tag=page.locator('#cx-hs-dropped option[value="tag"]');
+  assert.equal(await tag.isDisabled(),true);
+  assert.equal(await page.locator("#cx-hs-dropped").inputValue(),"sync");
+  assert.match(await page.locator("#cx-main, .cx-main").first().textContent(),/Status mapping now handles dropped shows/);
+  await page.locator("#cx-inline-save").click();
+  await page.waitForFunction(()=>!document.querySelector("#host"));
+  assert.equal(saves.length,1);
+  assert.equal(saves[0].providers?.trakt?.history_dropped_mode,undefined);
+  assert.equal(saves[0].status_mapping.directions.a_to_b.shows.dropped.include,true);
+});

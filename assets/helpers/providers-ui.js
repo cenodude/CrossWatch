@@ -1430,6 +1430,30 @@
     sel.innerHTML = Array.from(values || []).map((value) => `<option selected value="${esc(value)}">${esc(value)}</option>`).join("");
   }
 
+  const CONNECTION_WHITELIST_FEATURES = { hist: "history", rate: "ratings", prog: "progress", coll: "collection", scr: "scrobble" };
+
+  function connectionWhitelistOwner(info) {
+    const name = { PLEX: "plex", JELLYFIN: "jellyfin", EMBY: "emby", KODI: "kodi" }[info?.key];
+    return name ? window.cwAuth?.[name]?.whitelist || null : null;
+  }
+
+  function connectionWhitelistFromConfig(config, info, inst) {
+    const block = providerConfigBlock(config, info?.provider);
+    const source = String(inst || "default").toLowerCase() === "default" ? block : block?.instances?.[inst];
+    return Object.fromEntries(Object.entries(CONNECTION_WHITELIST_FEATURES).map(([feature, key]) => [feature, new Set((source?.[key]?.libraries || []).map(String))]));
+  }
+
+  function bindConnectionWhitelistSwitch(panel, info) {
+    panel.__cwWhitelistInfo = info;
+    if (panel.__cwWhitelistSwitchBound) return;
+    panel.__cwWhitelistSwitchBound = true;
+    panel.addEventListener("change", (ev) => {
+      if (!ev.target?.closest?.(".cw-profile-switcher")) return;
+      if (!panel.querySelector('.cw-subpanel[data-sub="whitelist"].active')) return;
+      void renderConnectionWhitelist(panel, panel.__cwWhitelistInfo, { force: true });
+    });
+  }
+
   function markConnectionWhitelistHydrated(info) {
     if (info?.key === "PLEX") window.__plexHydrated = true;
     else if (info?.key === "JELLYFIN") {
@@ -1454,6 +1478,9 @@
     const host = document.getElementById(cfg.host || `${cfg.prefix}_lib_matrix`);
     if (!host) return false;
     const inst = connectionWhitelistInstance(panel, info);
+    const generation = (host.__cwConnectionWhitelistGeneration || 0) + 1;
+    host.__cwConnectionWhitelistGeneration = generation;
+    const current = () => host.__cwConnectionWhitelistGeneration === generation && host.__cwConnectionWhitelistInstance === inst;
     if (host.__cwConnectionWhitelistInstance !== inst) {
       host.__cwConnectionWhitelistInstance = inst;
       host.__cwConnectionWhitelistSets = null;
@@ -1461,23 +1488,36 @@
       host.__cwConnectionWhitelistHandle = null;
     }
     await ensureConnectionWhitelistTable();
-    if (!window.cwWhitelistTable) return false;
+    if (!window.cwWhitelistTable || !current()) return false;
 
-    const sets = host.__cwConnectionWhitelistSets || {
-      hist: connectionWhitelistRead(cfg.prefix, "hist"),
-      rate: connectionWhitelistRead(cfg.prefix, "rate"),
-      prog: connectionWhitelistRead(cfg.prefix, "prog"),
-      coll: connectionWhitelistRead(cfg.prefix, "coll"),
-      scr: connectionWhitelistRead(cfg.prefix, "scr"),
-    };
-    host.__cwConnectionWhitelistSets = sets;
+    bindConnectionWhitelistSwitch(panel, info);
+    const owner = connectionWhitelistOwner(info);
+    if (!host.__cwConnectionWhitelistSets) {
+      const owned = owner?.read?.(inst);
+      let initial = owned
+        ? Object.fromEntries(Object.keys(CONNECTION_WHITELIST_FEATURES).map((feature) => [feature, new Set((owned[feature] || []).map(String))]))
+        : null;
+      if (!initial && owner) {
+        const loaded = connectionWhitelistFromConfig(await loadConfig(true), info, inst);
+        if (!current()) return false;
+        initial = loaded;
+      }
+      host.__cwConnectionWhitelistSets = host.__cwConnectionWhitelistSets || initial
+        || Object.fromEntries(Object.keys(CONNECTION_WHITELIST_FEATURES).map((feature) => [feature, connectionWhitelistRead(cfg.prefix, feature)]));
+    }
+    const sets = host.__cwConnectionWhitelistSets;
+    const owns = () => host.__cwConnectionWhitelistInstance === inst && host.__cwConnectionWhitelistSets === sets;
     const syncHidden = () => {
+      if (!owns()) return;
       Object.keys(sets).forEach((feature) => connectionWhitelistWrite(cfg.prefix, feature, sets[feature]));
+      connectionWhitelistOwner(info)?.write?.(inst, Object.fromEntries(Object.entries(sets).map(([feature, set]) => [feature, [...set]])));
       markConnectionWhitelistHydrated(info);
     };
     const ensureLibs = async (force = false) => {
       if (force || !Array.isArray(host.__cwConnectionWhitelistLibs)) {
-        host.__cwConnectionWhitelistLibs = await loadConnectionWhitelistLibraries(panel, info, cfg);
+        const libs = await loadConnectionWhitelistLibraries(panel, info, cfg);
+        if (!owns()) return null;
+        host.__cwConnectionWhitelistLibs = libs;
       }
       return host.__cwConnectionWhitelistLibs;
     };
@@ -1499,12 +1539,13 @@
         selectedIds: () => Object.values(sets).flatMap((set) => [...(set || [])]),
         setOn: (feature, id, on) => { if (on) sets[feature]?.add(String(id)); else sets[feature]?.delete(String(id)); },
         commit: syncHidden,
-        load: async () => { host.__cwConnectionWhitelistLibs = await ensureLibs(true); syncHidden(); },
+        load: async () => { if (await ensureLibs(true)) syncHidden(); },
       });
     }
 
     if (opts.force || !Array.isArray(host.__cwConnectionWhitelistLibs) || !host.__cwConnectionWhitelistLibs.length) {
-      host.__cwConnectionWhitelistLibs = await ensureLibs(!!opts.force);
+      await ensureLibs(!!opts.force);
+      if (!current()) return false;
     }
     syncHidden();
     host.__cwConnectionWhitelistHandle?.render?.();

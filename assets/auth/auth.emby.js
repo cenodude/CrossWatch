@@ -17,6 +17,7 @@
   let S = new Set(); // scrobble lib ids
   let lastLibraries = [];
   let hydrated = false;
+  let loadedInstance = null;
   let connected = false;
 
   const EMBY_SUBTAB_KEY = "cw.ui.emby.auth.subtab.v1";
@@ -55,7 +56,7 @@
 
   function ensureEmbyInstanceUI() {
     embyProfile?.ensureUI(async () => {
-      try { hydrated = false; } catch {}
+      try { hydrated = false; loadedInstance = null; } catch {}
       try { await hydrateFromConfig(true); } catch {}
     });
   }
@@ -243,6 +244,7 @@
 
   async function hydrateFromConfig(force = false) {
     if (hydrated && !force) return;
+    const inst = getEmbyInstance();
     try {
       let cfg = !force && window.__cfg && Object.keys(window.__cfg).length ? window.__cfg : null;
       if (!cfg) {
@@ -261,6 +263,7 @@
       if (v2) v2.checked = !!em.verify_ssl;
       setConnected(!!(em.access_token || "").trim());
 
+      loadedInstance = null;
       H = new Set((em.history?.libraries || []).map(String));
       R = new Set((em.ratings?.libraries || []).map(String));
       P = new Set((em.progress?.libraries || []).map(String));
@@ -268,6 +271,7 @@
       S = new Set((em.scrobble?.libraries || []).map(String));
 
       hydrated = true;
+      loadedInstance = getEmbyInstance() === inst ? inst : null;
       if (lastLibraries.length) renderLibraries(lastLibraries);
       else await embyLoadLibraries();
       syncEmbySetupTabs({ auto: true });
@@ -389,17 +393,13 @@
     em.user_id = user_id;
     em.verify_ssl = verify_ssl;
 
-    em.history = em.history || {};
-    em.ratings = em.ratings || {};
-    em.progress = em.progress || {};
-    em.collection = em.collection || {};
-    em.scrobble = em.scrobble || {};
-
-    em.history.libraries = [...H];
-    em.ratings.libraries = [...R];
-    em.progress.libraries = [...P];
-    em.collection.libraries = [...C];
-    em.scrobble.libraries = [...S];
+    if (hydrated && loadedInstance === getEmbyInstance()) {
+      em.history = Object.assign({}, em.history || {}, { libraries: [...H] });
+      em.ratings = Object.assign({}, em.ratings || {}, { libraries: [...R] });
+      em.progress = Object.assign({}, em.progress || {}, { libraries: [...P] });
+      em.collection = Object.assign({}, em.collection || {}, { libraries: [...C] });
+      em.scrobble = Object.assign({}, em.scrobble || {}, { libraries: [...S] });
+    }
 
     return cfg;
   }
@@ -489,6 +489,17 @@
   window.cwAuth = window.cwAuth || {};
   window.cwAuth.emby = window.cwAuth.emby || {};
   window.cwAuth.emby.init = ensureHydrate;
+  window.cwAuth.emby.whitelist = {
+    read: (inst) => hydrated && loadedInstance === inst ? { hist: [...H], rate: [...R], prog: [...P], coll: [...C], scr: [...S] } : null,
+    write: (inst, sets) => {
+      if (!hydrated || loadedInstance !== inst) return;
+      H = new Set((sets?.hist || []).map(String));
+      R = new Set((sets?.rate || []).map(String));
+      P = new Set((sets?.prog || []).map(String));
+      C = new Set((sets?.coll || []).map(String));
+      S = new Set((sets?.scr || []).map(String));
+    },
+  };
   window.cwAuth.emby.rehydrate = () => { try { hydrateFromConfig(true); } catch {} };
 
   window.embyAuto = embyAuto;

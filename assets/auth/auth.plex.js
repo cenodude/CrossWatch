@@ -59,6 +59,7 @@ async function refreshPlexInstanceOptions(preserve = true) {
 
 function ensurePlexInstanceUI() {
   plexProfile?.ensureUI(async () => {
+    getPlexState().instance = null;
     try { await hydratePlexFromConfigRaw(); } catch {}
     try { refreshPlexLibraries(); } catch {}
     try { mountPlexUserPicker(); } catch {}
@@ -586,6 +587,7 @@ async function plexDeleteToken() {
 
   // Config
   async function hydratePlexFromConfigRaw() {
+    const inst = getPlexInstance();
     try {
       const r = await fetch("/api/config", { cache: "no-store" }); if (!r.ok) return;
       const cfg = await r.json(); const p = getPlexCfgBlock(cfg);
@@ -597,6 +599,7 @@ async function plexDeleteToken() {
       st.coll = new Set((p.collection?.libraries || []).map(x => String(x)));
       st.scr  = new Set((p.scrobble?.libraries || []).map(x => String(x)));
       st.hydrated = true;
+      st.instance = getPlexInstance() === inst ? inst : null;
       w.__plexHydrated = true;
       if (st.libs.length) mountPlexLibraryMatrix();
       await waitFor("#plex_server_url"); await waitFor("#plex_username");
@@ -1122,7 +1125,7 @@ const tags = [
     const uiReady = !!st.hydrated ||
       !!document.querySelector("#plex_lib_matrix .cw-wl-row") ||
       !!document.querySelector("#plex_lib_history option, #plex_lib_ratings option, #plex_lib_progress option, #plex_lib_collection option, #plex_lib_scrobble option");
-    if (uiReady) {
+    if (uiReady && st.instance === getPlexInstance()) {
       const toInts = (set) => Array.from(set || []).map(x => parseInt(String(x), 10)).filter(Number.isFinite);
       const hist = toInts(st.hist);
       const rate = toInts(st.rate);
@@ -1240,6 +1243,21 @@ const tags = [
   w.cwAuth.plex = w.cwAuth.plex || {};
   w.cwAuth.plex.init = initPlexAuthUI;
   w.cwAuth.plex.rehydrate = () => { try { hydratePlexFromConfigRaw(); } catch {} };
+  w.cwAuth.plex.whitelist = {
+    read: (inst) => {
+      const st = getPlexState();
+      return st.hydrated && st.instance === inst ? { hist: [...st.hist], rate: [...st.rate], prog: [...st.prog], coll: [...st.coll], scr: [...st.scr] } : null;
+    },
+    write: (inst, sets) => {
+      const st = getPlexState();
+      if (!st.hydrated || st.instance !== inst) return;
+      st.hist = new Set((sets?.hist || []).map(String));
+      st.rate = new Set((sets?.rate || []).map(String));
+      st.prog = new Set((sets?.prog || []).map(String));
+      st.coll = new Set((sets?.coll || []).map(String));
+      st.scr = new Set((sets?.scr || []).map(String));
+    },
+  };
 
   d.addEventListener("tab-changed", async (ev) => {
     const onSettings = ev?.detail?.id ? /settings/i.test(ev.detail.id) : !!q("#sec-plex");
