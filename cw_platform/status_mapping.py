@@ -293,6 +293,8 @@ def plan_status(
         if rule.target == target.status:
             return Decision("noop", "already_mapped", direction, rule.target)
         if target.status == Status.COMPLETED:
+            if source.status == Status.COMPLETED:
+                return Decision("noop", "same_status", direction, source.status)
             return Decision("skip", "completed_destination_preserved", direction)
         check = checks.get(direction)
         if check is None or not check.verified or (check.item, check.source, check.target, check.desired) != (item, source, target, rule.target):

@@ -159,7 +159,7 @@ class StatusAdapter(NativeStatusAdapter):
                     raise RuntimeError("scrob_status_invalid_show_state")
                 if state["dropped"] != (key in hidden) or (key in native and native[key]["id"] != state["id"]):
                     raise RuntimeError("scrob_status_changed_show_identity")
-            partial = show and state["watch_started"] and not state["watched"] and 0 < state["watch_pct"] < 100 and bool(counts[key])
+            partial = show and state["watch_started"] and not state["watched"] and state["watch_pct"] < 100 and bool(counts[key])
             watched = state.get("watched") is True or bool(counts[key]) and not show
             completed = watched and (not show or str(state.get("status") or "").lower() in {"ended", "canceled"})
             repeat = key in repeated or bool(state.get("rewatch"))

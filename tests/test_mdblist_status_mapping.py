@@ -88,12 +88,25 @@ def test_clamped_cursor_pagination_and_native_states(server):
     assert rows["show:1"].observation.status == Status.WATCHING
     assert rows["show:2"].observation.status == Status.COMPLETED
     assert rows["show:3"].observation.state == ReadState.UNKNOWN
+    assert rows["show:3"].observation.native_status == "caught_up"
     assert any(kw.get("params", {}).get("cursor") == "2" for _, kw in server.calls)
     server.rows["/sync/dropped"] = [("shows", {"show": show(1)})]
     assert server.adapter.read()["show:1"].observation.status == Status.DROPPED
     server.rows["/watchlist/items"] = [("shows", show(1))]
     server.native[1]["watchlist"] = True
     assert server.adapter.read()["show:1"].observation.status == Status.PLANNED
+
+
+@pytest.mark.parametrize("watched,flags,native", [
+    (10, {"inprogress": True, "completed": None, "has_unwatched_aired": None}, "caught_up"),
+    (12, {"inprogress": True, "completed": None, "has_unwatched_aired": None}, "caught_up"),
+    (5, {"inprogress": True, "completed": None, "has_unwatched_aired": None}, "unknown"),
+    (5, {"inprogress": True, "completed": None, "has_unwatched_aired": True}, "watching"),
+    (10, {"inprogress": None, "completed": True, "has_unwatched_aired": None}, "completed"),
+])
+def test_null_progress_flags_read_as_not_set(server, watched, flags, native):
+    server.native[3].update(watched_episode_count=watched, **flags)
+    assert server.adapter.read()["show:3"].observation.native_status == native
 
 
 def test_drop_restore_preserves_history_dates_ratings_collection_and_progress(server):
