@@ -29,6 +29,7 @@ except Exception:
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 from providers.scrobble._watched_gate import resolve_stop_action
 from providers.scrobble.simkl import rewatches
+from providers.scrobble.routes import progress_step
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
 except ImportError:
@@ -237,7 +238,7 @@ def _progress_step(cfg: dict[str, Any]) -> int:
         step_i = int(step)
     except Exception:
         step_i = 25
-    return max(1, min(25, step_i))
+    return int(progress_step(step_i))
 
 
 def _quantize_progress(p: int, step: int, action: str) -> int:

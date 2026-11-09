@@ -2049,14 +2049,12 @@ html body img:is([src*="/assets/img/placeholder_poster.svg"],[src*="/art/tmdb/"]
 #cx-modal .cw-status-map-row>label{display:flex;align-items:center;gap:10px;min-width:0;font-size:13px;cursor:pointer}
 #cx-modal .cw-status-target{display:flex;gap:4px;align-items:center;min-width:0}
 #cx-modal .cw-status-info{position:relative;flex:0 0 auto}
-#cx-modal :is(.cw-status-info,.cw-status-menu)>summary{display:grid;place-items:center;width:32px;height:34px;cursor:pointer}
+#cx-modal .cw-status-info>summary{display:grid;place-items:center;width:32px;height:34px;cursor:pointer}
 #cx-modal .cw-status-info p{position:absolute;z-index:6;right:0;top:36px;width:240px;max-width:70vw;box-sizing:border-box;padding:10px;font-size:12px}
 #cx-modal .cw-status-footer{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 #cx-modal .cw-status-conflict{display:flex;align-items:center;gap:10px;min-width:0;flex:1;max-width:400px;font-size:12px}
 #cx-modal .cw-status-actions{display:flex;align-items:center;gap:4px}
 #cx-modal .cw-status-actions>button{display:flex;align-items:center;gap:4px;white-space:nowrap}
-#cx-modal .cw-status-menu{position:relative}
-#cx-modal .cw-status-menu>button{position:absolute;z-index:5;right:0;top:36px;white-space:nowrap}
 #cx-modal .cw-status-help{font-size:12px}
 #cx-modal .cw-status-help>summary{width:fit-content;cursor:pointer;padding-block:4px}
 #cx-modal .cw-status-help>div{display:grid;gap:6px;padding:8px 0}

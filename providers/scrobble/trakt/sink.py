@@ -34,6 +34,7 @@ from services.activity import record_scrobble_event
 from cw_platform.event_archive import record_watch
 from cw_platform.event_archive.playback_recorder import record_playback
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
+from providers.scrobble.routes import progress_step
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
 except ImportError:
@@ -306,7 +307,7 @@ def _trakt_progress_step(cfg: dict[str, Any]) -> int:
         step = int(step)
     except Exception:
         step = 25
-    return max(1, min(25, step))
+    return int(progress_step(step))
 
 
 def _quantize_progress(prog: float | int, step: int, action: str) -> int:

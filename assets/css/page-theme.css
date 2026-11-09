@@ -1107,7 +1107,7 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-hero-backdrop{opacity:.24}
 #cx-modal .cw-status-notice{border:1px solid var(--cw-theme-border);border-radius:8px;background:color-mix(in srgb,var(--cw-theme-accent) 5%,var(--cw-theme-input));color:var(--cw-theme-muted)}
 #cx-modal .cw-status-notice button,#cx-modal .cw-status-actions>button{border-color:transparent;background:transparent;color:var(--cw-theme-muted)}
 #cx-modal .cw-page-status-mapping :is(button,summary):hover{color:var(--cw-theme-accent)}
-#cx-modal :is(.cw-status-info p,.cw-status-menu>button){background:var(--cw-theme-input);border:1px solid var(--cw-theme-border-strong);border-radius:8px;box-shadow:0 6px 18px #0002}
+#cx-modal .cw-status-info p{background:var(--cw-theme-input);border:1px solid var(--cw-theme-border-strong);border-radius:8px;box-shadow:0 6px 18px #0002}
 #cx-modal .cw-status-info>summary{color:var(--cw-theme-muted)}
 #cx-modal .cw-page-status-mapping input[type="checkbox"]{accent-color:var(--cw-theme-accent)}
 #cx-modal .cw-page-status-mapping select:disabled{color:var(--cw-theme-muted);background:transparent;border-color:transparent;cursor:not-allowed;opacity:.65}

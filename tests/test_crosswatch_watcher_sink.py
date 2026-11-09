@@ -89,7 +89,7 @@ def test_crosswatch_watcher_sink_writes_progress_and_history(monkeypatch, tmp_pa
                 "route_sink": "crosswatch",
                 "route_sink_instance": "CW-P01",
             },
-            "trakt": {"watched_at": 90, "progress_step": 5},
+            "trakt": {"watched_at": 90, "progress_step": 15},
         },
     }
     events: list[dict[str, Any]] = []
@@ -103,9 +103,9 @@ def test_crosswatch_watcher_sink_writes_progress_and_history(monkeypatch, tmp_pa
 
     sink.send(_episode_event("start", 12.0))
     assert sink.send(_episode_event("start", 13.0)) == {
-        "ok": True, "log_status": "skipped", "reason": "progress_step", "previous_progress": 12.0, "progress_step": 5.0}
+        "ok": True, "log_status": "skipped", "reason": "progress_step", "previous_progress": 12.0, "progress_step": 15.0}
     assert len(ops.added) == 1
-    sink.send(_episode_event("pause", 20.0))
+    sink.send(_episode_event("pause", 30.0))
     sink.send(_episode_event("stop", 92.0))
     assert sink.send(_episode_event("stop", 92.0))["reason"] == "session_completed"
 
@@ -127,6 +127,57 @@ def test_crosswatch_watcher_sink_writes_progress_and_history(monkeypatch, tmp_pa
     assert history_item["watched_at"]
     assert {"kind": "watch", "action": "stop", "source_provider": "kodi", "source_instance": "living-room", "destination_provider": "crosswatch", "destination_instance": "CW-P01", "progress": 92.0} in events
     assert {"kind": "activity", "source": "kodi", "source_instance": "living-room", "target": "crosswatch", "target_instance": "CW-P01", "progress": 92.0} in events
+
+
+def test_crosswatch_sink_adds_up_small_progress_steps(monkeypatch, tmp_path: Path) -> None:
+    ops = _FakeCrossWatchOps()
+    cfg = {
+        "crosswatch": {"root_dir": str(tmp_path / "cw_provider"), "instances": {"CW-P01": {"label": "Desk"}}},
+        "scrobble": {"watch": {"route_provider": "jellyfin", "route_sink": "crosswatch", "route_sink_instance": "CW-P01"},
+                     "trakt": {"watched_at": 90, "progress_step": 15}},
+    }
+    monkeypatch.setattr(crosswatch_sink, "CROSSWATCH_OPS", ops)
+    monkeypatch.setattr(crosswatch_sink, "_tmdb_enrich", lambda *_args, **_kwargs: {"ids": {"tmdb": "124800"}})
+    monkeypatch.setattr(crosswatch_sink, "record_watch", lambda *args, **kwargs: None)
+    monkeypatch.setattr(crosswatch_sink, "record_scrobble_event", lambda *args, **kwargs: None)
+    sink = CrossWatchSink(cfg_provider=lambda: cfg, instance_id="CW-P01")
+
+    for progress in (10.0, 15.0, 20.0, 25.0, 30.0):
+        sink.send(_episode_event("start", progress))
+    sink.send(_episode_event("pause", 31.0))
+    sink.send(_episode_event("pause", 31.0))
+    sink.send(_episode_event("stop", 40.0))
+
+    assert [call["items"][0]["progress_percent"] for call in ops.added] == [10.0, 25.0, 31.0, 40.0]
+
+
+def test_crosswatch_sink_retries_progress_after_a_failed_write(monkeypatch, tmp_path: Path) -> None:
+    ops = _FakeCrossWatchOps()
+    outcomes = [True, False, True]
+    real_add = ops.add
+
+    def add(cfg: dict[str, Any], items, *, feature: str, dry_run: bool = False) -> dict[str, Any]:
+        result = real_add(cfg, items, feature=feature, dry_run=dry_run)
+        return {**result, "ok": outcomes.pop(0)}
+
+    ops.add = add  # type: ignore[method-assign]
+    cfg = {
+        "crosswatch": {"root_dir": str(tmp_path / "cw_provider"), "instances": {"CW-P01": {"label": "Desk"}}},
+        "scrobble": {"watch": {"route_provider": "jellyfin", "route_sink": "crosswatch", "route_sink_instance": "CW-P01"},
+                     "trakt": {"watched_at": 90, "progress_step": 15}},
+    }
+    monkeypatch.setattr(crosswatch_sink, "CROSSWATCH_OPS", ops)
+    monkeypatch.setattr(crosswatch_sink, "_tmdb_enrich", lambda *_args, **_kwargs: {"ids": {"tmdb": "124800"}})
+    monkeypatch.setattr(crosswatch_sink, "record_watch", lambda *args, **kwargs: None)
+    monkeypatch.setattr(crosswatch_sink, "record_scrobble_event", lambda *args, **kwargs: None)
+    sink = CrossWatchSink(cfg_provider=lambda: cfg, instance_id="CW-P01")
+
+    sink.send(_episode_event("start", 10.0))
+    sink.send(_episode_event("start", 25.0))
+    sink.send(_episode_event("pause", 25.0))
+    sink.send(_episode_event("pause", 25.0))
+
+    assert [call["items"][0]["progress_percent"] for call in ops.added] == [10.0, 25.0, 25.0]
 
 
 def test_scrobbler_route_modal_lists_crosswatch_sink() -> None:

@@ -79,7 +79,7 @@ test("mobile History shortcut navigates without enabling History",async t=>{
   assert.equal(await page.locator("#cx-hs-enable").evaluate(el=>el===document.activeElement),true);
 });
 
-test("help and overflow actions preserve existing mapping behavior",async t=>{
+test("help explains the rules and no legacy option remains",async t=>{
   const effectsCaps=structuredClone(caps);
   effectsCaps.media.shows.effects.on_hold="Provider-specific hold behavior.";
   const {page}=await fixture(t,"flat-dark",1280,initialPair,true,effectsCaps);
@@ -88,11 +88,37 @@ test("help and overflow actions preserve existing mapping behavior",async t=>{
   assert.match(await page.locator(".cw-status-info p").innerText(),/Provider-specific/);
   await page.locator(".cw-status-help>summary").click();
   assert.match(await page.locator(".cw-status-help").innerText(),/Planned stays managed by Watchlist/);
+  assert.match(await page.locator(".cw-status-help").innerText(),/Rules apply to this pair only/);
   await page.locator('[data-status-target="dropped"]').selectOption("on_hold");
-  await page.locator(".cw-status-menu>summary").click();
-  await page.getByRole("button",{name:"Use existing behavior"}).click();
+  assert.equal(await page.locator(".cw-status-menu").count(),0);
+  assert.equal(await page.getByRole("button",{name:"Use existing behavior"}).count(),0);
+});
+
+test("switching on and saving without edits stores the rules shown",async t=>{
+  const {page,saves}=await fixture(t);
+  await setSwitch(page.getByRole("checkbox",{name:"Enable status syncing"}),true);
+  await page.locator("#cx-inline-save").click();
+  await page.waitForFunction(()=>!document.querySelector("#host"));
+  const saved=saves[0].status_mapping;
+  assert.equal(saves[0].features.history.use_source_status,true);
+  assert.deepEqual(saved.a,{provider:"anilist",instance:"default"});
+  assert.deepEqual(saved.b,{provider:"myanimelist",instance:"default"});
+  assert.equal(saved.conflict,"leave_unchanged");
+  for(const dir of ["a_to_b","b_to_a"]) for(const media of ["shows","movies"]) {
+    assert.deepEqual(saved.directions[dir][media].on_hold,{include:true,target:"on_hold"});
+    assert.deepEqual(saved.directions[dir][media].dropped,{include:true,target:"dropped"});
+    assert.equal(saved.directions[dir][media].watching.include,false);
+    assert.equal(saved.directions[dir][media].completed.include,false);
+  }
+});
+
+test("existing pairs switched on without rules keep their behavior until saved",async t=>{
+  const pair=structuredClone(initialPair);
+  pair.features.history.use_source_status=true;
+  const {page,saves}=await fixture(t,"original",1280,pair);
   assert.equal(await page.evaluate(()=>document.querySelector("#cx-modal").__state.statusMapping),null);
-  assert.equal(await page.locator("[data-status-optin]").isChecked(),false);
+  await page.getByRole("button",{name:"Cancel",exact:true}).click();
+  assert.equal(saves.length,0);
 });
 
 test("fixture passes script-like pair data without executing it",async t=>{

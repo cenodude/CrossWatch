@@ -21,6 +21,7 @@ from cw_platform.config_base import load_config
 from cw_platform.provider_instances import normalize_instance_id
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 from providers.scrobble.currently_watching import update_from_payload as _cw_update_payload
+from providers.scrobble.routes import progress_step
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent, ScrobbleSink
 from providers.scrobble.sources import source_enabled
 from providers.scrobble.stremio.addon import PlayerEvent
@@ -138,6 +139,10 @@ class StremioWatchService:
             return cfg if isinstance(cfg, dict) else {}
         except Exception:
             return {}
+
+    def _progress_step(self) -> float:
+        cfg = self._active_cfg()
+        return progress_step((((cfg.get("scrobble") or {}).get("trakt") or {}).get("progress_step") or 25))
 
     def _force_stop_at(self) -> float:
         cfg = self._active_cfg()
@@ -281,8 +286,14 @@ class StremioWatchService:
                 return False, "not_started"
             progress = max(1.0, percent) if item.action == "start" else percent
             last = session.get("last_sent")
-            if last and last[0] == item.action and abs(float(last[1]) - progress) < 1.0:
-                return False, "duplicate"
+            if last and last[0] == item.action:
+                moved = abs(float(last[1]) - progress)
+                if moved < 1.0:
+                    return False, "duplicate"
+                if item.action == "start" and moved < self._progress_step():
+                    if session.get("matched"):
+                        self._card(session, progress, "playing")
+                    return False, "progress_step"
             if not self._send(session, item.action, progress):
                 return False, "no_matching_route"
             session["last_sent"] = (item.action, progress)

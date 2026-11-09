@@ -16,6 +16,7 @@ from providers.sync._mod_CROSSWATCH import OPS as CROSSWATCH_OPS
 from services.activity import record_scrobble_event
 from cw_platform.event_archive import record_watch
 from services.playback_progress.models import utc_now_iso
+from providers.scrobble.routes import progress_step
 
 try:
     from _logging import log as BASE_LOG
@@ -87,10 +88,10 @@ def _progress_step(cfg: Mapping[str, Any]) -> float:
         source = (sc or {}).get("crosswatch") or {}
         value = source.get("progress_step")
         if value is None:
-            value = ((sc or {}).get("trakt") or {}).get("progress_step", 5)
-        return max(1.0, min(25.0, float(value)))
+            value = ((sc or {}).get("trakt") or {}).get("progress_step", 25)
+        return progress_step(value)
     except Exception:
-        return 5.0
+        return progress_step(None)
 
 
 def _slug(value: Any) -> str:
@@ -266,15 +267,16 @@ class CrossWatchSink(ScrobbleSink):
             parts.append(f"{ev.media_type}:{ev.title or ''}:{ev.year or ''}:{ev.season or ''}:{ev.number or ''}")
         return "|".join(parts)
 
-    def _should_write_progress(self, ev: ScrobbleEvent, cfg: Mapping[str, Any], progress: float) -> bool:
+    def _should_write_progress(self, ev: ScrobbleEvent, cfg: Mapping[str, Any], progress: float, action: str) -> bool:
         key = (str(ev.session_key or "?"), self._media_key(ev))
         previous = self._p_sess.get(key)
-        self._p_sess[key] = progress
         if previous is None:
-            return progress > 0
-        if progress < previous:
-            return True
-        return (progress - previous) >= _progress_step(cfg)
+            write = progress > 0
+        elif action in ("pause", "stop") or progress < previous:
+            write = progress != previous
+        else:
+            write = (progress - previous) >= _progress_step(cfg)
+        return write
 
     def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> dict[str, Any] | None:
         cfg = cfg or (self._cfg_provider() if self._cfg_provider else None) or _cfg()
@@ -322,11 +324,12 @@ class CrossWatchSink(ScrobbleSink):
             return
 
         previous = self._p_sess.get((str(ev.session_key or "?"), self._media_key(ev)))
-        if action in {"start", "pause", "stop"} and self._should_write_progress(ev, cfg, progress):
+        if action in {"start", "pause", "stop"} and self._should_write_progress(ev, cfg, progress, action):
             result = CROSSWATCH_OPS.add(view, [item], feature="progress", dry_run=False) or {}
             if not result.get("ok"):
                 record_watch(ev, action="start", source_provider=src, source_instance=src_inst, destination_provider="crosswatch", destination_instance=self._instance_id, status="fail", progress=progress, reason="crosswatch_progress_failed")
                 return
+            self._p_sess[(str(ev.session_key or "?"), self._media_key(ev))] = progress
             _log(f"scrobble {action or 'update'} user='{mask_account(ev.account)}' p={progress:.1f}% media='{ev.title or '?'}'", "INFO")
         elif action not in {"start", "pause", "stop"}:
             return {"ok": True, "log_status": "skipped", "reason": "invalid_action"}

@@ -32,6 +32,7 @@ from providers.sync.kodi._common import (
     uniqueid_name,
     uniqueid_namespace,
 )
+from providers.scrobble.routes import progress_step
 
 BASE_POLL_SECONDS = 10.0
 MIN_POLL_SECONDS = 1.5
@@ -345,7 +346,7 @@ class KodiWatchService:
     def _progress_step(self) -> float:
         cfg = self._active_cfg()
         try:
-            return max(1.0, float((((cfg.get("scrobble") or {}).get("trakt") or {}).get("progress_step") or 25)))
+            return progress_step((((cfg.get("scrobble") or {}).get("trakt") or {}).get("progress_step") or 25))
         except Exception:
             return 25.0
 

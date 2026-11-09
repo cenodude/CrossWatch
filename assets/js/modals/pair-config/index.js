@@ -2770,7 +2770,7 @@ function buildPayload(state,wrap){
   const features=sanitizeFeaturesForPair({src,dst,twoWay:modeTwo},{watchlist,ratings,history,progress,playlists:get("playlists"),collection});
   if(state.pair_remove_mode_touched) applyPairRemoveMode(features,state.pair_remove_mode);
   const payload={source:src,target:dst,source_instance:String(srcInst||"default"),target_instance:String(dstInst??"default"),enabled,mode:modeTwo?"two-way":"one-way",features};
-  payload.status_mapping=statusMappingPayload({...state,src,dst,src_instance:srcInst,dst_instance:dstInst,mode:payload.mode,twoWay:modeTwo});
+  payload.status_mapping=statusMappingPayload({...state,src,dst,src_instance:srcInst,dst_instance:dstInst,mode:payload.mode,twoWay:modeTwo,statusEnabled:!!features.history?.use_source_status});
   payload.path_matching=supportsPathMatching({src,dst})&&!!state.path_matching;
   payload.match_users=supportsMatchUsers({src,dst})&&!!state.match_users;
   payload.user_matches=payload.match_users?{...(state.user_matches||{})}:{};

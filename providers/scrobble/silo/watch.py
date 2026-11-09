@@ -41,6 +41,7 @@ from providers.scrobble.routes import watch_poll_seconds
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent, ScrobbleSink, mask_account
 from providers.scrobble.sources import source_enabled
 from providers.sync.silo._common import as_int, ids_from_content_id, item_detail, item_ids, library, safe_json, selected_libraries, series_id_of, silo_request
+from providers.scrobble.routes import progress_step
 
 BASE_POLL_SECONDS = 10.0
 MIN_POLL_SECONDS = 2.0
@@ -372,7 +373,7 @@ class SiloWatchService:
             except Exception:
                 last_emit = percent
             jump = abs(percent - last_emit)
-            if jump >= max(1.0, self._scrobble_setting("progress_step", 25.0)):
+            if jump >= progress_step(self._scrobble_setting("progress_step", 25.0)):
                 emit_action = "start"
                 session["seek_pending"] = bool(jump >= SEEK_JUMP_PERCENT)
         session["state"] = state

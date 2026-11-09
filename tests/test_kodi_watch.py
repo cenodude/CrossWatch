@@ -267,17 +267,17 @@ def test_progress_update_detection(monkeypatch):
         **{
             "Player.GetActivePlayers": [active(), active(), active()],
             "Player.GetItem": [{"item": movie_item()}, {"item": movie_item()}, {"item": movie_item()}],
-            "Player.GetProperties": [props(1, 10), props(1, 12), props(1, 16)],
+            "Player.GetProperties": [props(1, 10), props(1, 12), props(1, 26)],
             "Profiles.GetCurrentProfile": [profile()],
         }
     )
-    service, disp = svc(script, progress_step=5)
+    service, disp = svc(script, progress_step=15)
 
     service._tick()
     service._tick()
     service._tick()
 
-    assert [(e.action, int(e.progress)) for e in disp.events] == [("start", 10), ("start", 16)]
+    assert [(e.action, int(e.progress)) for e in disp.events] == [("start", 10), ("start", 26)]
 
 
 def test_stop_after_two_successful_empty_polls(monkeypatch):

@@ -21,7 +21,7 @@ from providers.scrobble.scrobble import Dispatcher, ScrobbleSink, ScrobbleEvent,
 from providers.scrobble.currently_watching import update_from_event as _cw_update, update_from_payload as _cw_update_payload
 from providers.scrobble.manual_marks import MarkTracker, MediaServerMarkPoller
 from providers.scrobble.media_filters import event_ignore_reason, log_media_filter_drop
-from providers.scrobble.routes import watch_poll_seconds
+from providers.scrobble.routes import progress_step, watch_poll_seconds
 from providers.scrobble.sources import source_enabled
 
 _HTTP = requests.Session()
@@ -1048,7 +1048,7 @@ class EmbyWatchService(MediaServerMarkPoller):
                     except Exception:
                         last_prog = 0
 
-                if last_prog is not None and abs(int(p) - int(last_prog)) >= 5:
+                if last_prog is not None and abs(int(p) - int(last_prog)) >= progress_step((((cfg.get("scrobble") or {}).get("trakt") or {}).get("progress_step") or 25)):
                     ev = self._build_event(s, "playing", p)
                     if ev:
                         self._emit(ev, cfg)

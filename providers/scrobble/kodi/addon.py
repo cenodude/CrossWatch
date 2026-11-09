@@ -27,7 +27,7 @@ from cw_platform.config_base import CONFIG
 from cw_platform.provider_instances import get_provider_block, normalize_instance_id
 from providers.scrobble.currently_watching import update_from_event as _cw_update
 from providers.scrobble.currently_watching import update_from_payload as _cw_update_payload
-from providers.scrobble.routes import build_route_cfg_by_id, route_profile_accepts
+from providers.scrobble.routes import build_route_cfg_by_id, progress_step, route_profile_accepts
 from providers.scrobble.scrobble import ScrobbleEvent, mask_account
 from providers.scrobble.sources import source_enabled
 from providers.sync.kodi._common import EXTERNAL_ID_KEYS, is_placeholder_id, path_scope_status, strip_path_userinfo
@@ -54,6 +54,10 @@ RATING_MEMORY = 512
 
 _LAST_RATINGS: dict[str, tuple[int, float]] = {}
 _RATING_LOCK = threading.Lock()
+
+PROGRESS_MEMORY = 512
+_LAST_PROGRESS: dict[str, float] = {}
+_PROGRESS_LOCK = threading.Lock()
 
 _STATE: dict[str, dict[str, Any]] = {}
 _STATE_LOCK = threading.Lock()
@@ -328,6 +332,7 @@ def reset_state() -> None:
     global _STATE_LOADED
     clear_pair_codes()
     clear_ratings()
+    clear_progress()
     with _STATE_LOCK:
         _STATE.clear()
         _STATE_LOADED = True
@@ -721,6 +726,25 @@ def clear_ratings() -> None:
         _LAST_RATINGS.clear()
 
 
+def _progress_held(key: str, name: str, progress: float, step: float) -> bool:
+    with _PROGRESS_LOCK:
+        last = _LAST_PROGRESS.pop(key, None)
+        if name in ("stop", "pause"):
+            return False
+        if name == "progress" and last is not None and abs(progress - last) < step:
+            _LAST_PROGRESS[key] = last
+            return True
+        _LAST_PROGRESS[key] = progress
+        while len(_LAST_PROGRESS) > PROGRESS_MEMORY:
+            _LAST_PROGRESS.pop(next(iter(_LAST_PROGRESS)), None)
+    return False
+
+
+def clear_progress() -> None:
+    with _PROGRESS_LOCK:
+        _LAST_PROGRESS.clear()
+
+
 def _split_ids(ids: Mapping[str, Any], media_type: str) -> tuple[dict[str, str], dict[str, str]]:
     own: dict[str, str] = {}
     show: dict[str, str] = {}
@@ -916,6 +940,12 @@ def handle(app: Any, cfg: dict[str, Any], instance_id: Any, payload: Mapping[str
             if matched_event is None:
                 matched_event = routed
             if item.deliverable:
+                step = progress_step(_dict(_dict(_dict(route_cfg).get("scrobble")).get("trakt")).get("progress_step"))
+                target = _watch_block(route_cfg)
+                key = json.dumps([str(getattr(runner, "route_id", "") or ""), _text(target.get("route_sink"), 40).lower(),
+                                  normalize_instance_id(target.get("route_sink_instance")), routed.session_key])
+                if _progress_held(key, name, float(routed.progress), step):
+                    continue
                 dispatcher.dispatch(routed)
         except Exception as exc:
             _log(f"add-on route dispatch error: {type(exc).__name__}: {exc}", "ERROR")

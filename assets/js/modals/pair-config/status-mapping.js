@@ -12,11 +12,19 @@ export function hasStatusMapping(state) {
   return [state.src, state.dst].every(provider => !!meta(state, provider)?.capabilities?.status_mapping);
 }
 
+function defaultMapping(state) {
+  return {version:1, a:endpoint(state, "src"), b:endpoint(state, "dst"), conflict:"leave_unchanged",
+    directions:Object.fromEntries((twoWay(state) ? ["a_to_b", "b_to_a"] : ["a_to_b"]).map(dir => [dir, Object.fromEntries(["shows", "movies"].map(kind => [kind, mappingDefaults(state, dir, kind)]))]))};
+}
+
 export function statusMappingPayload(state) {
   const saved = state.statusMapping;
   const matches = (value, expected) => value?.provider === expected.provider && value?.instance === expected.instance;
-  if (!saved || !matches(saved.a, endpoint(state, "src")) || !matches(saved.b, endpoint(state, "dst"))) return null;
-  const out = clone(saved);
+  const enabled = state.statusEnabled ?? state.options?.history?.use_source_status;
+  const current = saved && matches(saved.a, endpoint(state, "src")) && matches(saved.b, endpoint(state, "dst")) ? saved
+    : enabled && hasStatusMapping(state) ? defaultMapping(state) : null;
+  if (!current) return null;
+  const out = clone(current);
   if (!twoWay(state)) {
     delete out.directions.b_to_a;
     if (out.conflict === "prefer_b") out.conflict = "leave_unchanged";
@@ -48,11 +56,8 @@ export function mountStatusMapping(host, state) {
   let direction = twoWay(state) ? state.statusDirection || "a_to_b" : "a_to_b";
   let media = state.statusMedia || "shows";
   const persist = change => {
-    const draft = statusMappingPayload(state) || {version:1, a:endpoint(state,"src"), b:endpoint(state,"dst"), conflict:"leave_unchanged", directions:{}};
-    if (!Object.keys(draft.directions).length) {
-      for (const dir of twoWay(state) ? ["a_to_b", "b_to_a"] : ["a_to_b"])
-        draft.directions[dir] = Object.fromEntries(["shows", "movies"].map(kind => [kind, mappingDefaults(state, dir, kind)]));
-    }
+    const draft = statusMappingPayload(state) || defaultMapping(state);
+    if (!Object.keys(draft.directions || {}).length) draft.directions = defaultMapping(state).directions;
     draft.directions[direction] ||= {};
     const defaults = mappingDefaults(state, direction, media);
     const stored = draft.directions[direction][media];
@@ -99,13 +104,13 @@ export function mountStatusMapping(host, state) {
           </div>
           <footer class="cw-status-footer">
             <label class="cw-status-conflict">Conflicts<select data-status-conflict aria-label="Status conflict policy"><option value="leave_unchanged">Leave unchanged</option><option value="prefer_a">Prefer ${esc(title(state,"src"))}</option>${twoWay(state) ? `<option value="prefer_b">Prefer ${esc(title(state,"dst"))}</option>` : ""}</select></label>
-            <div class="cw-status-actions"><button type="button" data-status-reset><span class="material-symbols-rounded" aria-hidden="true">restart_alt</span>Reset defaults</button>${draft ? '<details class="cw-status-menu"><summary aria-label="More mapping options"><span class="material-symbols-rounded" aria-hidden="true">more_horiz</span></summary><button type="button" data-status-legacy>Use existing behavior</button></details>' : ""}</div>
+            <div class="cw-status-actions"><button type="button" data-status-reset><span class="material-symbols-rounded" aria-hidden="true">restart_alt</span>Reset defaults</button></div>
           </footer>
           <details class="cw-status-help"><summary>How it works</summary><div>
             <p>This is the same switch as Status mapping in History options. History must be enabled for these rules to run.</p>
             <p>Planned stays managed by Watchlist. Excluded statuses stay unchanged. Mappings never delete titles or create watched plays.</p>
             ${!writable.includes("completed") && target.media?.[media]?.effects?.completed ? `<p>${esc(target.media[media].effects.completed)}</p>` : ""}
-            <p>${draft ? "Custom rules apply to this pair only." : "Existing behavior applies until you edit a rule."} Reset defaults applies to the selected direction and title type, and resets the conflict preference.</p>
+            <p>Rules apply to this pair only. Reset defaults applies to the selected direction and title type, and resets the conflict preference.</p>
           </div></details>
         </div>
       </details>
@@ -124,7 +129,6 @@ export function mountStatusMapping(host, state) {
     host.querySelectorAll("[data-status-target]").forEach(select => select.onchange = () => {persist(value => {value.directions[direction][media][select.dataset.statusTarget].target = select.value;}); render(`[data-status-target="${select.dataset.statusTarget}"]`);});
     host.querySelector("[data-status-conflict]").onchange = event => {persist(value => {value.conflict = event.target.value;}); render("[data-status-conflict]");};
     host.querySelector("[data-status-reset]").onclick = () => {persist(value => {value.directions[direction][media] = mappingDefaults(state, direction, media); value.conflict = "leave_unchanged";}); render("[data-status-reset]");};
-    host.querySelector("[data-status-legacy]")?.addEventListener("click", () => {state.statusMapping = null; render("[data-status-optin]");});
     if (focus) host.querySelector(focus)?.focus();
   };
   render();
