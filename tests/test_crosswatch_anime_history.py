@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cw_platform.anime_mapping import storage
+from cw_platform.anime_mapping import history_coords, storage
 from cw_platform.anime_mapping.history_coords import HistoryCoordinateAliases, coordinate_tokens
 from cw_platform.id_map import canonical_key, minimal
 from providers.sync.crosswatch import _history
@@ -30,8 +30,8 @@ def check_upgrade(monkeypatch, cfg, module, reader_module, name, root):
         result = Orchestrator(cfg).run()
         assert result["errors"] == result["unresolved"] == result["added"] == result["removed"] == 0
         assert TrackerStore(root).record_count() == 6
-    monkeypatch.setattr(_history, "_ALIASES", {"key": None, "rows": None})
-    monkeypatch.setattr(_history, "index_ready", lambda tag: False)
+    monkeypatch.setattr(history_coords, "_ALIAS_CACHE", {"key": None, "rows": None})
+    monkeypatch.setattr(history_coords, "index_ready", lambda tag: False)
     result = Orchestrator(cfg).run()
     assert result["errors"] == result["added"] == result["removed"] == 0
     assert TrackerStore(root).record_count() == 6
@@ -45,8 +45,8 @@ def episode(provider="tvdb", number=1, watched_at="2026-10-07T00:00:00Z"):
 
 
 def unavailable_index(monkeypatch):
-    monkeypatch.setattr(_history, "_ALIASES", {"key": None, "rows": None})
-    monkeypatch.setattr(_history, "index_ready", lambda tag: False)
+    monkeypatch.setattr(history_coords, "_ALIAS_CACHE", {"key": None, "rows": None})
+    monkeypatch.setattr(history_coords, "index_ready", lambda tag: False)
 
 
 @pytest.fixture
@@ -78,6 +78,28 @@ def test_cw_stores_equivalent_coordinates_once(adapter, reverse, separate_batche
     for batch in (rows, list(reversed(rows))):
         _history.add(adapter, batch)
         assert len(_history.build_index(adapter)) == 3
+
+
+def test_planned_adds_keep_one_item_per_episode(adapter):
+    rows = [episode("tvdb", n) for n in (1, 2, 3)] + [episode("tmdb", 1, "2026-10-08T00:00:00Z"), episode("tmdb", 2), episode("tmdb", 3)]
+    assert _history.filter_cached_adds(adapter, rows) == [rows[3], rows[1], rows[2]]
+    zones = [episode(watched_at="2026-10-07T01:00:00+02:00"), episode("tmdb", watched_at="2026-10-07T00:00:00Z")]
+    assert _history.filter_cached_adds(adapter, zones) == [zones[1]]
+    adapter.config["_cw_history_rewatches"] = True
+    viewings = [episode(), episode("tmdb"), episode(watched_at="2026-10-08T00:00:00Z"), episode("tmdb", watched_at="2026-10-08T00:00:00Z")]
+    assert _history.filter_cached_adds(adapter, viewings) == [viewings[0], viewings[2]]
+
+
+@pytest.mark.parametrize("mode", ["global_off", "pair_off", "index_missing"])
+def test_planned_adds_unchanged_without_mapping(adapter, monkeypatch, mode):
+    if mode == "global_off":
+        adapter.config["anime_mapping"]["enabled"] = False
+    elif mode == "pair_off":
+        adapter.config["_cw_pair_feature_options"] = {"use_anime_mapping": False}
+    else:
+        unavailable_index(monkeypatch)
+    rows = [episode(), episode("tmdb"), {**episode("tmdb"), "show_ids": {"tmdb": "999"}}]
+    assert _history.filter_cached_adds(adapter, rows) == rows
 
 
 def test_newer_alias_updates_watch_without_mixing_numbering(adapter):
@@ -132,7 +154,7 @@ def test_mapping_failure_keeps_ordinary_history_working(adapter, monkeypatch):
     def broken(*args, **kwargs):
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(_history, "resolve_absolute", broken)
+    monkeypatch.setattr(history_coords, "resolve_absolute", broken)
     assert _history.add(adapter, [episode(), episode("tmdb")]) == (2, [])
     assert len(_history.build_index(adapter)) == 2
     assert _history.remove(adapter, [episode("tmdb")]) == (1, [])
@@ -144,8 +166,8 @@ def test_only_incoming_items_are_resolved(adapter, monkeypatch):
              "watched": True, "watched_at": "2026-10-07T00:00:00Z"} for n in range(200)]
     _history.add(adapter, rows)
     calls = []
-    real = _history.resolve_absolute
-    monkeypatch.setattr(_history, "resolve_absolute", lambda item, **kw: calls.append(1) or real(item, **kw))
+    real = history_coords.resolve_absolute
+    monkeypatch.setattr(history_coords, "resolve_absolute", lambda item, **kw: calls.append(1) or real(item, **kw))
     for _ in range(3):
         _history.build_index(adapter)
     assert not calls
@@ -205,7 +227,7 @@ def test_failed_lookup_is_not_trusted_after_recovery(adapter, monkeypatch):
         assert not any(_history.ALIAS_FIELD in _history._anime_identity(row, context) for row in (episode(), episode("tmdb")))
     _history.add(adapter, [episode(), episode("tmdb")])
     assert len(_history.build_index(adapter)) == 1
-    monkeypatch.setattr(_history, "_MISS_SECONDS", 0.0)
+    monkeypatch.setattr(history_coords, "ALIAS_MISS_SECONDS", 0.0)
     with monkeypatch.context() as broken:
         broken.setattr("cw_platform.anime_mapping.episodes.query_edges", lambda *a, **kw: [])
         _history._anime_identity(episode(number=2), _history._alias_context(adapter))
@@ -259,3 +281,50 @@ def test_alternate_coordinate_removes_stored_episode(adapter):
 @pytest.mark.parametrize("metadata", [None, {}, "tvdb:10#s03e13", [None, 5, "", "imdb:tt1#s01e01", "tvdb:10#s3e1", "tvdb:#s03e13"]])
 def test_invalid_coordinate_metadata_is_ignored(metadata):
     assert coordinate_tokens({_history.ALIAS_FIELD: metadata}) == set()
+
+
+ANIME_SHOW = {"id": 30, "name": "Anime", "original_name": "Anime", "first_air_date": "2020-01-01"}
+ANIME_SEASON = {"season_number": 1, "episodes": [{"episode_number": n, "season_number": 1} for n in range(1, 12)]}
+
+
+def check(item, aliases=("", None)):
+    from services.tracker_check import Lookups, classify
+    from tests.test_tracker_check import FakeTmdb
+
+    other_season = {"season_number": 3, "episodes": [{"episode_number": n, "season_number": 3} for n in range(1, 14)]}
+    tmdb = FakeTmdb({("show", "30", None): ANIME_SHOW, ("show", "30", 1): ANIME_SEASON,
+                     ("show", "77", None): {**ANIME_SHOW, "id": 77}, ("show", "77", 3): other_season})
+    return classify(item, Lookups(tmdb, pause=0), aliases)[0], tmdb.calls
+
+
+def tvdb_episode(number, **extra):
+    return {"type": "episode", "series_title": "Anime", "show_ids": {"tvdb": "10"}, "season": 3, "episode": number + 12, **extra}
+
+
+def test_health_check_uses_the_anime_mapping(adapter):
+    aliases = history_coords.alias_context(adapter.config)
+    assert check(tvdb_episode(1), aliases) == ("ok", [("show", "30", None), ("show", "30", 1)])
+    assert check(tvdb_episode(12), aliases)[0] == "episode_missing"
+    assert check(tvdb_episode(1))[0] == "no_tmdb"
+    assert check({**tvdb_episode(1), "show_ids": {"tvdb": "999"}}, aliases)[0] == "no_tmdb"
+
+
+def test_health_check_uses_saved_aliases_without_mapping_index(adapter, monkeypatch):
+    unavailable_index(monkeypatch)
+    item = tvdb_episode(1, _cw_anime_aliases=["tmdb:30#s01e01", "tvdb:10#s03e13"])
+    assert check(item, history_coords.alias_context(adapter.config))[0] == "ok"
+    other_show = {**item, "show_ids": {"tmdb": "77"}}
+    assert check(other_show, history_coords.alias_context(adapter.config))[0] == "ok"
+    adapter.config["anime_mapping"]["enabled"] = False
+    assert check(item, history_coords.alias_context(adapter.config))[0] == "no_tmdb"
+
+
+def test_tracker_artwork_uses_the_anime_mapping(adapter, monkeypatch):
+    from api import trackerAPI
+
+    monkeypatch.setattr(trackerAPI, "_anime_aliases", lambda: history_coords.alias_context(adapter.config))
+    assert trackerAPI._art(tvdb_episode(1)) == {"kind": "tv", "tmdb": "30", "season": 1, "episode": 1}
+    assert trackerAPI._art({**tvdb_episode(1), "show_ids": {"tvdb": "999"}}) is None
+    assert trackerAPI._art({**tvdb_episode(1), "show_ids": {"tmdb": "77"}}) == {"kind": "tv", "tmdb": "77"}
+    monkeypatch.setattr(trackerAPI, "_anime_aliases", lambda: ("", None))
+    assert trackerAPI._art(tvdb_episode(1)) is None

@@ -36,6 +36,18 @@ test("record cards retain half ratings, episode artwork, selection and editing",
   assert.match(html,/&lt;Title>/);
 });
 
+test("anime episode stills use the TMDB numbering from the artwork", () => {
+  const html = render({view:"history",items:[{key:"anime",title:"Anime",type:"episode",season:3,episode:13,art:{kind:"tv",tmdb:"30",season:1,episode:1},date:"today"}]});
+  assert.match(html,/\/art\/tmdb\/tv\/30\?size=w500&amp;kind=still&amp;season=1&amp;episode=1/);
+});
+
+test("undated history rows show no date", () => {
+  const whenText = vm.runInNewContext(source.slice(source.indexOf("  function whenText("), source.indexOf("  function timeText(")) + "whenText");
+  assert.equal(whenText(null), "");
+  assert.equal(whenText(""), "");
+  assert.notEqual(whenText("2026-10-07T00:00:00Z"), "");
+});
+
 test("day groups do not duplicate headings and retain load more", () => {
   const items = [1,2].map(key=>({key:String(key),type:"movie",title:"Movie",date:"today"}));
   const html = render({view:"history",byDay:true,items,total:3});

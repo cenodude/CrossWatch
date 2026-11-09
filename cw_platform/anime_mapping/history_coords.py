@@ -4,11 +4,14 @@
 from __future__ import annotations
 
 import re
+import threading
+import time
 from collections.abc import Mapping
 from typing import Any, Iterable
 
-from .episodes import resolve_axis_coordinates
-from .storage import index_ready, normalize_release_tag
+from .episodes import resolve_absolute, resolve_axis_coordinate_map, resolve_axis_coordinates
+from .overrides import overrides_path
+from .storage import index_ready, normalize_release_tag, paths
 
 NATIVE_ANIME_ID_KEYS = ("mal", "anilist", "anidb", "kitsu")
 ABSOLUTE_ID_KEYS = ("tmdb", "imdb", "mal", "anilist", "anidb", "kitsu", "simkl")
@@ -18,6 +21,9 @@ _MAX_DUPLICATE_RATIO = 0.98
 _MAX_ORDINARY_SEASON = 50
 ALIAS_FIELD = "_cw_anime_aliases"
 _ALIAS_TOKEN = re.compile(r"(?:tvdb|tmdb):[^#\s]+#s\d{2,}e\d{2,}")
+_ALIAS_CACHE: dict[str, Any] = {"key": None, "rows": None}
+_ALIAS_LOCK = threading.Lock()
+ALIAS_MISS_SECONDS = 300.0
 
 
 def coordinate_tokens(item: Mapping[str, Any]) -> set[str]:
@@ -25,6 +31,72 @@ def coordinate_tokens(item: Mapping[str, Any]) -> set[str]:
     if not isinstance(rows, list):
         return set()
     return {row for row in rows if isinstance(row, str) and _ALIAS_TOKEN.fullmatch(row)}
+
+
+def alias_release_tag(cfg: Mapping[str, Any] | None) -> str:
+    block = cfg.get("anime_mapping") if isinstance(cfg, Mapping) else None
+    options = cfg.get("_cw_pair_feature_options") if isinstance(cfg, Mapping) else None
+    if not isinstance(block, Mapping) or not block.get("enabled"):
+        return ""
+    if isinstance(options, Mapping) and options.get("use_anime_mapping") is False:
+        return ""
+    return str(block.get("release_tag") or "v3")
+
+
+def alias_context(cfg: Mapping[str, Any] | None) -> tuple[str, dict[Any, Any] | None]:
+    tag = alias_release_tag(cfg)
+    if not tag:
+        return "", None
+    try:
+        files = paths(tag)
+        key = tuple((str(p), p.stat().st_mtime_ns, p.stat().st_size) if p.exists() else str(p)
+                    for p in (files["db"], files["state"], overrides_path()))
+        with _ALIAS_LOCK:
+            if _ALIAS_CACHE["key"] != key:
+                _ALIAS_CACHE.update(key=key, rows={} if index_ready(tag) else None)
+            return tag, _ALIAS_CACHE["rows"]
+    except Exception:
+        return tag, None
+
+
+def _resolve_aliases(tag: str, rows: dict[Any, Any], item: Mapping[str, Any], fresh: bool) -> list[str]:
+    ids = {str(k): str(v) for k, v in (item.get("show_ids") or {}).items() if v}
+    axes = [(p, i) for p, i in ids.items() if p in ("tvdb", "tmdb")]
+    if not axes:
+        return []
+    own = (int(item["season"]), int(item["episode"]))
+    key = (tuple(sorted(ids.items())), own)
+    cached = rows.get(key)
+    if fresh or cached is None or cached[1] < time.monotonic():
+        hit = resolve_absolute(item, release_tag=tag)
+        coords = resolve_axis_coordinate_map({hit.namespace: hit.target_id}, hit.absolute, release_tag=tag) if hit else {}
+        tokens = sorted(f"{p}:{i}#s{s:02d}e{e:02d}".lower() for (p, i), (s, e) in coords.items())
+        valid = all(coords.get(axis) == own for axis in axes) and len(coords) == len({p for p, _ in coords}) > 1
+        rows[key] = (tokens, float("inf")) if valid else ([], time.monotonic() + ALIAS_MISS_SECONDS)
+    return rows[key][0]
+
+
+def current_aliases(item: Mapping[str, Any], context: tuple[str, dict[Any, Any] | None], fresh: bool = False) -> list[str]:
+    tag, rows = context
+    if not tag or str(item.get("type") or "").strip().lower() != "episode":
+        return []
+    saved = sorted(coordinate_tokens(item))
+    if rows is None:
+        return saved
+    try:
+        return _resolve_aliases(tag, rows, item, fresh)
+    except Exception:
+        return saved
+
+
+def tmdb_coordinate(item: Mapping[str, Any], context: tuple[str, dict[Any, Any] | None]) -> tuple[str, int, int] | None:
+    for token in current_aliases(item, context):
+        provider, _, rest = token.partition(":")
+        show, _, numbers = rest.partition("#s")
+        season, _, episode = numbers.partition("e")
+        if provider == "tmdb":
+            return show, int(season), int(episode)
+    return None
 
 
 def _as_int(value: Any) -> int | None:

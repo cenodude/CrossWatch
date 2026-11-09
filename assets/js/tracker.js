@@ -239,6 +239,7 @@
   }
 
   function whenText(value) {
+    if (!value) return "";
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return "";
     return d.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -772,7 +773,9 @@
       const card = canCard(cardItem(item, shows || isChild(item) || item.type === "show"));
       const art = item.art || (item.ids?.tmdb ? {kind: item.type === "movie" ? "movie" : "tv", tmdb: item.ids.tmdb} : null);
       const url = artUrl({...item, art}, "w500");
-      const image = url ? `${url}&kind=${isChild(item) && item.season != null && item.episode != null ? `still&season=${encodeURIComponent(item.season)}&episode=${encodeURIComponent(item.episode)}` : "backdrop"}` : "";
+      const stillSeason = art?.season ?? item.season;
+      const stillEpisode = art?.episode ?? item.episode;
+      const image = url ? `${url}&kind=${isChild(item) && stillSeason != null && stillEpisode != null ? `still&season=${encodeURIComponent(stillSeason)}&episode=${encodeURIComponent(stillEpisode)}` : "backdrop"}` : "";
       const rating = feature === "ratings" && !shows && !notes ? item.rating : item.user_rating;
       const date = shows ? item.last_watched : notes ? item.updated : item.date;
       const status = state.showStatusLabels !== false ? statusPill(item.status) : "";
