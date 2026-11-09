@@ -38,7 +38,9 @@ test("titles keep their direct filters and a selected tag remains clear after de
   state.notes.tags = [];
   assert.match(run("renderFilters()"),/value="Sci-fi" selected/);
   assert.match(run("renderFilters()"),/All statuses \(3\)/);
-  assert.equal(run("renderExtraFilters()"),"");
+  assert.match(run("renderExtraFilters()"),/data-trk-input="status-labels" checked/);
+  state.showStatusLabels = false;
+  assert.doesNotMatch(run("renderExtraFilters()"),/data-trk-input="status-labels" checked/);
   assert.deepEqual(state.notes.tags,[]);
 });
 

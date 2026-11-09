@@ -9,6 +9,55 @@ import vm from "node:vm";
 const source = readFileSync(new URL("../assets/js/tracker.js", import.meta.url), "utf8");
 const selection = source.slice(source.indexOf("  function selectableItems("), source.indexOf("  function setAddMenu("));
 
+function statusSave(getJSON, view = "history") {
+  const state = {instance:"CW-P01",view,offset:50,picked:new Set(["first","second"]),picking:false};
+  const messages = [];
+  let refreshed = false;
+  const context = vm.createContext({state,getJSON,statusOf:status=>["watching","completed"].includes(status),listFeature:()=>"history",renderSlots:()=>{},plural:(n,label)=>`${n} ${label}`,writeError:error=>error.message,undo:(...args)=>args,refresh:async()=>{refreshed=true;},toast:{show:(text,options)=>messages.push({text,...options})}});
+  const code = source.slice(source.indexOf("  async function applyBulkStatus("),source.indexOf("  async function saveNotesBulk("));
+  vm.runInContext(code,context);
+  return {state,messages,run:status=>{context.status=status;return vm.runInContext("applyBulkStatus(status)",context);},refreshed:()=>refreshed};
+}
+
+for (const view of ["history","shows","titles"]) {
+  test(`${view}: menu status applies directly to selected titles and offers undo`,async()=>{
+    let sent;
+    const app=statusSave(async(url,body)=>{sent={url,body};return {count:2,batch:"batch"};},view);
+    await app.run("watching");
+    assert.equal(sent.url,view==="titles"?"/api/tracker/notes/bulk":"/api/tracker/titles/status");
+    assert.equal(sent.body.provider_instance,"CW-P01");
+    assert.deepEqual(Array.from(sent.body.keys),["first","second"]);
+    assert.equal(sent.body.action,"status");
+    assert.equal(sent.body.status,"watching");
+    assert.equal(sent.body.view,view==="titles"?undefined:view);
+    assert.equal(app.state.picked.size,0);
+    assert.equal(app.state.bulkStatusBusy,false);
+    assert.equal(app.refreshed(),true);
+    assert.deepEqual(app.messages[0].undo(),["batch","CW-P01"]);
+  });
+}
+
+test("failed menu status saves keep selected titles available for retry",async()=>{
+  const app=statusSave(async()=>{throw Error("offline");});
+  await app.run("completed");
+  assert.deepEqual([...app.state.picked],["first","second"]);
+  assert.equal(app.state.bulkStatusBusy,false);
+  assert.equal(app.refreshed(),false);
+  assert.equal(app.messages[0].tone,"bad");
+});
+
+test("clearing status is supported and repeated clicks cannot submit twice",async()=>{
+  let finish, calls=0, sent;
+  const app=statusSave((url,body)=>{calls++;sent=body;return new Promise(resolve=>{finish=resolve;});});
+  const pending=app.run("");
+  await app.run("completed");
+  assert.equal(calls,1);
+  assert.equal(sent.status,"");
+  finish({count:2});
+  await pending;
+  assert.equal(app.state.bulkStatusBusy,false);
+});
+
 function setup(getJSON, overrides = {}) {
   const state = {view:"titles",instance:"CW-P01",q:"Show",noteStatus:"dropped",noteTag:"Later",total:205,request:1,picked:new Set(["previous"]),noteRows:[{key:"note"}],items:[{key:"history"}],...overrides};
   const errors = [];

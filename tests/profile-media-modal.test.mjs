@@ -161,7 +161,7 @@ function deferred() {
 }
 
 function loadingModal() {
-  const metas = [], requests = [], body = {innerHTML:"",scrollTop:0}, panel = {innerHTML:""};
+  const metas = [], requests = [], body = {innerHTML:"",scrollTop:0,querySelector:()=>null}, panel = {innerHTML:""};
   const root = {hidden:true,classList:{toggle(){}},addEventListener(){},querySelector:selector => selector === ".cw-mm-body" ? body : selector === ".cw-mm-panel" ? panel : {style:{},focus(){}},querySelectorAll:()=>[]};
   const context = {
     window:{addEventListener(){},CW:{Meta:{get:() => {const d=deferred();metas.push(d);return d.promise;}},ProfileDateTime:{format:date=>date.toISOString()}}},

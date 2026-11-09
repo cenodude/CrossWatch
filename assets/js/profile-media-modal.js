@@ -462,6 +462,13 @@
       return;
     }
     body.innerHTML = `${tagline()}${top()}${livesCard()}${tabs()}<div class="cw-mm-panel" role="tabpanel">${panel()}</div>`;
+    const logo = body.querySelector(".cw-mm-title-logo");
+    const label = body.querySelector(".cw-mm-title-text");
+    if (logo && label) {
+      logo.onload = () => { logo.hidden = false; label.hidden = true; };
+      logo.onerror = () => { logo.hidden = true; label.hidden = false; };
+      logo.src = logo.dataset.src;
+    }
   }
 
   function renderPanel() {
@@ -496,12 +503,15 @@
     ].filter(Boolean);
     const genres = Array.isArray(meta?.genres) ? meta.genres.slice(0, 3) : [];
     const overview = meta?.overview || (state.loading ? "Loading details..." : "No description available.");
+    const tmdb = tmdbOf(item);
+    const status = trackerData()?.note?.status;
+    const statusLabel = TRACKER_STATUS[status];
     return `<div class="cw-mm-top">
       <img class="cw-mm-poster" src="${esc(posterUrl(item))}" alt="" decoding="async" onerror="${placeholder}">
       <div class="cw-mm-heading">
-        <h2 id="cw-mm-title">${esc(title)}</h2>
+        <h2 id="cw-mm-title" aria-label="${esc(title)}"><span class="cw-mm-title-text">${esc(title)}</span>${tmdb ? `<img class="cw-mm-title-logo" data-src="/art/tmdb/${artType(item)}/${encodeURIComponent(tmdb)}?kind=logo&size=w500" alt="" hidden>` : ""}</h2>
         <p class="cw-mm-sub">${esc([year, movie ? "Movie" : "TV Series"].filter(Boolean).join(" • "))}</p>
-        <div class="cw-mm-chips">${chips.map((chip) => `<span class="cw-mm-chip">${esc(chip)}</span>`).join("")}${genres.map((genre) => `<span class="cw-mm-chip is-genre">${esc(genre)}</span>`).join("")}</div>
+        <div class="cw-mm-chips">${chips.map((chip) => `<span class="cw-mm-chip">${esc(chip)}</span>`).join("")}${genres.map((genre) => `<span class="cw-mm-chip is-genre">${esc(genre)}</span>`).join("")}${statusLabel ? `<span class="cw-mm-trk-status" data-status="${esc(status)}" aria-label="Watch status: ${esc(statusLabel)}">${esc(statusLabel)}</span>` : ""}</div>
         <div class="cw-mm-actions">${actions()}</div>
         <p class="cw-mm-overview">${esc(overview)}</p>
       </div>
@@ -819,11 +829,11 @@
       map: "Choose the correct movie or show for this tracker entry",
       notes: "Edit personal dates, status, tags and notes. These stay in CrossWatch and do not sync",
     };
-    const button = (action, symbol, label, primary = false) => `<button type="button" class="cw-mm-btn${primary ? " is-primary" : ""}" data-mm-trk="${action}" title="${esc(hints[action])}">${icon(symbol)}${esc(label)}</button>`;
+    const button = (action, symbol, label, primary = false) => `<button type="button" class="cw-mm-btn${primary ? " is-primary" : " is-icon"}" data-mm-trk="${action}" title="${esc(`${label}: ${hints[action]}`)}" aria-label="${esc(label)}">${icon(symbol)}${primary ? esc(label) : ""}</button>`;
     const actions = [
       button("log", "add_circle", show ? "Log episode" : plays.length ? "Log rewatch" : "Mark watched", true),
-      button("rate", rating != null ? "star" : "star_outline", rating != null ? `${rating}/10` : "Rate"),
-      button("list", listed ? "bookmark_remove" : "bookmark_add", listed ? "Unlist" : "Watchlist"),
+      button("rate", rating != null ? "star" : "star_outline", rating != null ? `Change rating (${rating}/10)` : "Rate"),
+      button("list", listed ? "bookmark_remove" : "bookmark_add", listed ? "Remove from watchlist" : "Add to watchlist"),
       button("map", "compare_arrows", "Fix match"),
       ...(data.note_key ? [button("notes", "edit_note", data.note ? "My notes" : "Add notes")] : []),
     ].join("");
