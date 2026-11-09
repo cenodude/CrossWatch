@@ -98,7 +98,7 @@ from services.scheduling import SyncScheduler
 from services.statistics import Stats
 
 from cw_platform.orchestrator import Orchestrator, minimal
-from cw_platform.config_base import load_config, save_config, CONFIG as CONFIG_DIR
+from cw_platform.config_base import load_config, save_config, update_config, CONFIG as CONFIG_DIR
 from cw_platform.tls import ensure_self_signed_cert, resolve_tls_paths
 from cw_platform.orchestrator import canonical_key
 
@@ -226,8 +226,7 @@ def _apply_auth_reset_env_once() -> None:
         print("[BOOT] CW_RESET_AUTH_ONCE ignored: no existing config.json found.")
         return
 
-    try:
-        cfg = load_config() or {}
+    def _reset_auth(cfg: dict[str, Any]) -> None:
         a = cfg.setdefault("app_auth", {})
         if not isinstance(a, dict):
             a = {}
@@ -253,7 +252,9 @@ def _apply_auth_reset_env_once() -> None:
         a["sessions"] = []
         a["api_tokens"] = []
         a["last_login_at"] = 0
-        save_config(cfg)
+
+    try:
+        update_config(_reset_auth)
         print("[BOOT] CW_RESET_AUTH_ONCE detected: app authentication was reset. Remove the env var and set a new username/password in the UI.")
     except Exception as exc:
         print(f"[BOOT] CW_RESET_AUTH_ONCE failed: {exc}")
