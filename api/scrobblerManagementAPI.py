@@ -1225,8 +1225,8 @@ def api_scrobbler_settings(request: Request, payload: dict[str, Any] = Body(...)
                 trakt_policy[key] = val
         if "watch_progress_step" in payload:
             val = _coerce_int(payload.get("watch_progress_step"), "watch_progress_step")
-            if val < 1 or val > 25:
-                raise ValidationFailure([_err("watch_progress_step", "invalid_range", "Value must be between 1 and 25")])
+            if val < 15 or val > 50:
+                raise ValidationFailure([_err("watch_progress_step", "invalid_range", "Value must be between 15 and 50")])
             trakt_policy["progress_step"] = val
         wh = sc.setdefault("webhook", {})
         if not isinstance(wh, dict):

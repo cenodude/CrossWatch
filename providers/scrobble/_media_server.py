@@ -20,6 +20,7 @@ from providers.scrobble._watched_gate import resolve_stop_action
 from providers.scrobble.routes import same_scrobble_endpoint, scrobble_sink_config
 from providers.scrobble.scrobble import ScrobbleEvent, _log
 from services.activity import record_scrobble_event
+from providers.scrobble.routes import progress_step
 
 CACHE_TTL = 900
 CACHE_MAX = 1024
@@ -207,7 +208,7 @@ class MediaServerSink:
         policy = ((watch.get("route_options") or {}).get("scrobble") or {})
         defaults = ((cfg.get("scrobble") or {}).get("trakt") or {})
         threshold = float(policy.get("watched_at", defaults.get("watched_at", 90)))
-        step = float(policy.get("progress_step", defaults.get("progress_step", 25)))
+        step = progress_step(policy.get("progress_step", defaults.get("progress_step", 25)))
         progress = max(0.0, min(100.0, progress))
         action = resolve_stop_action(progress, threshold) if event.action == "stop" else event.action
         complete = action == "stop"

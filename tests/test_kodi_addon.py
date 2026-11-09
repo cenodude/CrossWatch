@@ -206,6 +206,39 @@ def test_handle_gives_each_route_its_own_viewer_once() -> None:
     assert [e.account for e in disps["R4"].events] == ["anna"]
 
 
+def test_progress_pings_follow_the_progress_step() -> None:
+    cfg = make_cfg([route("R1", "all")])
+    cfg["scrobble"]["trakt"]["progress_step"] = 15
+    disp = FakeDispatcher()
+    app = make_app(cfg, {"R1": disp})
+    for event, percent in (("start", 10.0), ("progress", 20.0), ("progress", 26.0), ("progress", 30.0), ("pause", 31.0), ("progress", 33.0), ("stop", 96.0)):
+        addon.handle(app, cfg, "default", playback(event, percent=percent))
+    assert [(e.action, round(e.progress)) for e in disp.events] == [("start", 10), ("start", 26), ("pause", 31), ("start", 33), ("stop", 96)]
+
+
+def test_progress_step_is_clamped_and_per_route() -> None:
+    cfg = make_cfg([route("R1", "all"), {**route("R2", "all"), "options": {"scrobble": {"progress_step": 50}}}])
+    cfg["scrobble"]["trakt"]["progress_step"] = 1
+    disps = {"R1": FakeDispatcher(), "R2": FakeDispatcher()}
+    app = make_app(cfg, disps)
+    for event, percent in (("start", 10.0), ("progress", 20.0), ("progress", 40.0)):
+        addon.handle(app, cfg, "default", playback(event, percent=percent))
+    assert [round(e.progress) for e in disps["R1"].events] == [10, 40]
+    assert [round(e.progress) for e in disps["R2"].events] == [10]
+
+
+def test_progress_memory_follows_the_destination() -> None:
+    cfg = make_cfg([route("R1", "all")])
+    cfg["scrobble"]["trakt"]["progress_step"] = 25
+    disp = FakeDispatcher()
+    app = make_app(cfg, {"R1": disp})
+    addon.handle(app, cfg, "default", playback("start", percent=10.0))
+    cfg["scrobble"]["watch"]["routes"][0]["sink_instance"] = "other"
+    addon.handle(app, cfg, "default", playback("progress", percent=15.0))
+    addon.handle(app, cfg, "default", playback("progress", percent=20.0))
+    assert [round(e.progress) for e in disp.events] == [10, 15]
+
+
 def test_handle_empty_viewers_leaves_whitelists_to_the_dispatcher() -> None:
     cfg = make_cfg([route("R1", "anna", ["anna"])])
     disp = FakeDispatcher(accept=False)

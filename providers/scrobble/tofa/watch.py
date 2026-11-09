@@ -50,6 +50,7 @@ from providers.sync.tofa._common import (
     selected_libraries,
     tofa_request,
 )
+from providers.scrobble.routes import progress_step
 
 RECV_TIMEOUT_SECONDS = 5.0
 OFFLINE_INITIAL_RETRY_SECONDS = 15.0
@@ -414,7 +415,7 @@ class TofaWatchService:
             except Exception:
                 last_emit = percent
             jump = abs(percent - last_emit)
-            if jump >= max(1.0, self._scrobble_setting("progress_step", 25.0)):
+            if jump >= progress_step(self._scrobble_setting("progress_step", 25.0)):
                 emit_action = "start"
                 session["seek_pending"] = bool(jump >= SEEK_JUMP_PERCENT)
         session["state"] = state

@@ -214,6 +214,27 @@ def test_loading_pause_and_repeated_start_are_not_dispatched() -> None:
     assert [e.action for e in disp.events] == ["start", "pause"]
 
 
+def test_playing_updates_follow_the_progress_step() -> None:
+    cfg = make_cfg([route()])
+    cfg["scrobble"]["trakt"]["progress_step"] = 15
+    disp = FakeDispatcher()
+    app = make_app(make_service(cfg, disp))
+    replies = [addon.handle(app, cfg, "default", "movie", MOVIE, player(action, position, 100000))
+               for action, position in (("start", 10000), ("start", 20000), ("start", 26000), ("pause", 27000), ("start", 28000), ("stop", 97000))]
+    assert replies[1] == {"success": False, "ignored": "progress_step"}
+    assert [(e.action, round(e.progress)) for e in disp.events] == [("start", 10), ("start", 26), ("pause", 27), ("start", 28), ("stop", 97)]
+
+
+def test_held_start_still_refreshes_the_card(isolated_state) -> None:
+    cfg = make_cfg([route()])
+    cfg["scrobble"]["trakt"]["progress_step"] = 25
+    app = make_app(make_service(cfg, FakeDispatcher()))
+    addon.handle(app, cfg, "default", "movie", MOVIE, player("start", 10000, 100000))
+    isolated_state.clear()
+    assert addon.handle(app, cfg, "default", "movie", MOVIE, player("start", 20000, 100000)) == {"success": False, "ignored": "progress_step"}
+    assert isolated_state == [("payload", "playing")]
+
+
 def test_unknown_duration_mid_playback_is_tracked_but_not_dispatched() -> None:
     cfg = make_cfg([route()])
     disp = FakeDispatcher()

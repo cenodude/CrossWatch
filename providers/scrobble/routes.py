@@ -27,9 +27,21 @@ ROUTE_RATINGS_MODES = {"off", "custom"}
 ROUTE_SCROBBLE_POLICY_RANGES = {
     "watched_at": (0.0, 100.0),
     "force_stop_at": (0.0, 100.0),
-    "progress_step": (1.0, 25.0),
+    "progress_step": (15.0, 50.0),
 }
 ROUTE_SCROBBLE_POLICY_KEYS = set(ROUTE_SCROBBLE_POLICY_RANGES)
+
+
+def progress_step(value: Any, default: float = 25.0) -> float:
+    low, high = ROUTE_SCROBBLE_POLICY_RANGES["progress_step"]
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    if number != number:
+        number = default
+    return min(high, max(low, number))
+
 ROUTE_WATCH_POLICY_RANGES = {
     "pause_debounce_seconds": (0, 3600),
     "suppress_start_at": (0, 100),

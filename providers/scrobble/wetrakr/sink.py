@@ -23,6 +23,7 @@ from providers.sync._mod_WETRAKR import WETRAKRModule
 from providers.sync.wetrakr._common import WeTrakrSyncError, account_key, body_of, identity_tokens, int_value, request, resolve_child, write_lock
 from providers.sync.wetrakr._progress import ignored_reason, number, scrobble_media
 from services.activity import record_scrobble_event
+from providers.scrobble.routes import progress_step
 
 try:
     from _logging import log as BASE_LOG
@@ -162,7 +163,7 @@ class WeTrakrSink:
                 if progress >= _setting(config, "suppress_start_at", 99, watch=True):
                     return {"ok": True, "skipped": True, "reason": "start_suppressed"}
                 body["progress"] = max(2, progress)
-                step = max(1, min(25, _setting(config, "progress_step", 25)))
+                step = progress_step(_setting(config, "progress_step", 25))
                 if (state.get("action") == "start" and not event.raw.get("_cw_seek")
                         and abs(progress - state.get("progress", 0)) < step):
                     return {"ok": True, "skipped": True, "reason": "progress_step",
