@@ -160,9 +160,13 @@ class StatusAdapter(NativeStatusAdapter):
                        and state.get("inprogress") is True and state.get("has_unwatched_aired") is True
                        and state.get("completed") is not True)
             completed = state.get("completed") is True if show else state["watched"]
-            native = ("planned" if key in listed else "unknown" if key in season_hidden else
+            caught_up = (show and state["watched"] and type(aired) is int and type(watched_count) is int and watched_count >= aired
+                         and state.get("has_unwatched_aired") is False and state.get("completed") is False)
+            untracked = not state["watched"] and not counts[key]
+            native = ("planned" if key in listed else "dropped_seasons" if key in season_hidden else
                       "completed" if completed else "dropped" if key in hidden else
-                      "watching" if partial and state["watched"] and counts[key] else "unknown")
+                      "watching" if partial and state["watched"] and counts[key] else
+                      "caught_up" if caught_up else "untracked" if untracked else "unknown")
             obs = observation(native, self.statuses, {**protected, "state": state}, watchlisted=key in listed, rewatching=key in repeats)
             result[key] = Record(key, "shows" if show else "movies", item, obs,
                 {"partial": partial, "completed": completed, "has_history": bool(counts[key]) and state["watched"],

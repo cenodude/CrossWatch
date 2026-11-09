@@ -74,6 +74,7 @@ def snapshot(adapter):
 
 
 class StatusAdapter(NativeStatusAdapter):
+    notice = "Scrob cannot report what changed, so every status sync reads your whole Scrob library. With a large library this can take a while."
     capabilities = {
         "shows": Capabilities(frozenset({Status.PLANNED, Status.WATCHING, Status.COMPLETED, Status.DROPPED}),
                               frozenset({Status.WATCHING, Status.DROPPED})),
@@ -162,7 +163,10 @@ class StatusAdapter(NativeStatusAdapter):
             watched = state.get("watched") is True or bool(counts[key]) and not show
             completed = watched and (not show or str(state.get("status") or "").lower() in {"ended", "canceled"})
             repeat = key in repeated or bool(state.get("rewatch"))
-            label = "planned" if key in listed else "completed" if completed else "dropped" if key in hidden else "watching" if partial else "unknown"
+            caught_up = show and state["watched"] is True and str(state.get("status") or "").strip().lower() not in {"", "ended", "canceled"}
+            untracked = not state["watch_started"] and state["watched"] is False and not counts[key] if show else False
+            label = ("planned" if key in listed else "completed" if completed else "dropped" if key in hidden else "watching" if partial else
+                     "caught_up" if caught_up else "untracked" if untracked else "unknown")
             personal = {k: state[k] for k in ("id", "watched", "watch_pct", "watch_started", "rewatch", "season_states", "user_rating", "in_lists", "in_library", "episode_order") if k in state}
             obs = observation(label, self.statuses, {"snapshot": protected, "state": personal}, watchlisted=key in listed, rewatching=repeat)
             if not show and label == "unknown" and state.get("watched") is False and not counts[key]:

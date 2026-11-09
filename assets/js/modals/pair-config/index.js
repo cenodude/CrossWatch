@@ -1830,7 +1830,9 @@ function renderFeaturePanel(state){
       : "";
     const droppedNote = mappingActive && droppedTagSaved(state)
       ? `<div class="opt-row muted" style="grid-column:1/-1">Status mapping now handles dropped shows for this pair, so tagging is off.</div>`
-      : "";
+      : mappingActive && hs.use_source_status
+        ? `<div class="opt-row muted" style="grid-column:1/-1">Status mapping handles the dropped status for this pair. This setting only controls the plays of dropped shows.</div>`
+        : "";
     const droppedBlock = droppedKeys.length
       ? `<div class="grid2 compact"><div class="opt-row" style="grid-column:1/-1">
           <label for="cx-hs-dropped" data-tip-id="cx-hs-dropped">Dropped shows</label>

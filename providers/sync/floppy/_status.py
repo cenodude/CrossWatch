@@ -46,6 +46,7 @@ def read_rows(adapter, path, **kwargs):
 
 
 class StatusAdapter(NativeStatusAdapter):
+    notice = "Floppy cannot report what changed, so every status sync reads your whole Floppy library. With a large library this can take a while."
     capabilities = {media: Capabilities(frozenset(Status), frozenset({Status.WATCHING, Status.ON_HOLD, Status.DROPPED}))
                     for media in ("movies", "shows")}
     effects = {
