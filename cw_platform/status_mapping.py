@@ -157,6 +157,9 @@ def parse_mapping(
     return MappingConfig(scope, conflict, ordered, fingerprint)
 
 
+UNTRACKED_STATES = frozenset({"waiting", "caught_up_or_untracked", "caught_up", "untracked", "dropped_seasons"})
+
+
 @dataclass(frozen=True)
 class Observation:
     state: ReadState
@@ -248,6 +251,9 @@ def plan_status(
     if config.scope != item.pair or item.media not in {"movies", "shows"} or not item.a_id or not item.b_id:
         return Decision("skip", "scope_mismatch")
     if a.state == ReadState.UNKNOWN or b.state == ReadState.UNKNOWN:
+        unknown = [side for side in (a, b) if side.state == ReadState.UNKNOWN]
+        if all(side.native_status in UNTRACKED_STATES for side in unknown):
+            return Decision("skip", "caught_up")
         return Decision("skip", "incomplete_read")
     if a.state == ReadState.CLEARED or b.state == ReadState.CLEARED:
         return Decision("skip", "explicit_clear_not_supported")

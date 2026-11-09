@@ -112,6 +112,7 @@ def progress(adapter, ident, watched):
         if not watched <= known or not aired or type(details.get("number_of_episodes")) is not int or len(known) != details["number_of_episodes"]:
             return None
         return {"title": details.get("name"), "partial": bool(watched & aired) and bool(aired - watched),
+                "caught_up": bool(aired) and aired <= watched and details["status"].lower() not in {"ended", "canceled"},
                 "completed": details["status"].lower() in {"ended", "canceled"} and known <= aired and known <= watched}
     except Exception:
         return None
@@ -185,8 +186,10 @@ class StatusAdapter(NativeStatusAdapter):
             partial = bool(detail and detail["partial"])
             if detail and detail.get("title"):
                 item["title"] = detail["title"]
+            caught_up = bool(show and detail and detail.get("caught_up"))
+            untracked = not show and not counts[key]
             native = ("planned" if key in listed else "completed" if completed else "dropped" if key in hidden and show else
-                      "watching" if partial else "unknown")
+                      "watching" if partial else "caught_up" if caught_up else "untracked" if untracked else "unknown")
             obs = observation(native, self.statuses, protected, watchlisted=key in listed, rewatching=repeat)
             result[key] = Record(key, "shows" if show else "movies", item, obs,
                                  {"partial": partial, "completed": completed, "has_history": bool(counts[key]), "has_playback": key in active})

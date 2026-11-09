@@ -155,7 +155,7 @@ class StatusAdapter(NativeStatusAdapter):
             rewatching = any(count > 1 for count in plays[key].values())
             obs = observation(native, self.statuses, protected, watchlisted="planning" in states, rewatching=rewatching)
             item = entries[0][1]
-            if "waiting" in states:
+            if native == "waiting":
                 obs = Observation(ReadState.UNKNOWN, native_status="waiting")
             result[key] = Record(key, "movies" if item["type"] == "movie" else "shows", item, obs,
                                  {"completed_show": item["type"] == "show" and "watched" in states,

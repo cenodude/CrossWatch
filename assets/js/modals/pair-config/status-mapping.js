@@ -83,6 +83,7 @@ export function mountStatusMapping(host, state) {
         <summary>Configure mappings<span class="material-symbols-rounded" aria-hidden="true">expand_more</span></summary>
         <div class="cw-status-body">
           ${!history.enable ? '<div class="cw-status-notice"><span>History is off</span><button type="button" data-status-history>History settings<span aria-hidden="true"> &rarr;</span></button></div>' : ""}
+          ${[...new Set([state.src, state.dst].map(provider => meta(state, provider)?.capabilities?.status_mapping?.notice).filter(Boolean))].map(text => `<div class="cw-status-notice"><span>${esc(text)}</span></div>`).join("")}
           <div class="cw-status-selectors">
             <select data-status-direction aria-label="Status direction"><option value="a_to_b" ${!reverse ? "selected" : ""}>${esc(title(state,"src"))} &rarr; ${esc(title(state,"dst"))}</option>${twoWay(state) ? `<option value="b_to_a" ${reverse ? "selected" : ""}>${esc(title(state,"dst"))} &rarr; ${esc(title(state,"src"))}</option>` : ""}</select>
             <div class="cw-status-media" role="group" aria-label="Title type">${["shows", "movies"].map(kind => `<button type="button" data-status-media="${kind}" aria-pressed="${media === kind}">${kind === "shows" ? "Shows" : "Movies"}</button>`).join("")}</div>

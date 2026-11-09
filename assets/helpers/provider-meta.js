@@ -109,6 +109,12 @@
     if (!src) return logoHtml(k, cls);
     return `<img class="${cls}" src="${src}" alt="${k} logo" width="28" height="28" loading="lazy">`;
   }
+  function mdblistAccountDetails(data) {
+    const username = String(data?.username || "").trim();
+    const plan = String(data?.plan || data?.vip_type || data?.patron_status || (data?.vip ? "Supporter" : data?.vip === false ? "Free" : "")).trim();
+    const label = plan.replace(/^active[_ -]/i, "").replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    return [username ? `Account: ${username}` : "", label ? `Plan: ${label}` : "", ...dailyQuotaDetails(data)].filter(Boolean);
+  }
   function dailyQuotaDetails(data) {
     const remaining = data?.daily_remaining;
     const reset = Number(data?.daily_resets_at);
@@ -130,7 +136,7 @@
   window.CW.ProviderMeta = {
     providers, order, get, normalizeToken, keyOf, matchKey, label, instanceLabel, shortLabel, aliases, aliasesMap, badgeId, sectionId, authGroupId,
     statusLegacy, tone, statusProviders, authProviders, watchlistProviders, scrobblerSinks, syncSurfaceProvider, assetPath, logoPath, logLogoPath, brandInfo, logoHtml,
-    logLogoHtml, dailyQuotaDetails, logo: logoPath, logLogo: logLogoPath,
+    logLogoHtml, mdblistAccountDetails, dailyQuotaDetails, logo: logoPath, logLogo: logLogoPath,
     labels: Object.fromEntries(order.map((key) => [key, label(key)])),
   };
 })();

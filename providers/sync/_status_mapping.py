@@ -37,7 +37,7 @@ class Record:
 def observation(native: str, statuses: dict[str, Status], protected: Any, *, watchlisted: bool, rewatching: bool = False) -> Observation:
     status = statuses.get(native)
     if status is None:
-        return Observation(ReadState.UNKNOWN)
+        return Observation(ReadState.UNKNOWN, native_status=str(native or ""))
     return Observation(ReadState.PRESENT, status, native, digest(protected), watchlisted, rewatching)
 
 
@@ -61,12 +61,14 @@ def provider_caps(provider: str) -> dict[str, Any]:
                          for s in ORDER if Status(s) in caps.readable and Status(s) in caps.writable},
             "effects": cls.effects,
         } for media, caps in cls.capabilities.items()},
+        **({"notice": cls.notice} if cls.notice else {}),
     }
 
 
 class NativeStatusAdapter:
     capabilities: dict[str, Capabilities] = {}
     effects: dict[str, str] = {}
+    notice = ""
     creates_missing = False
 
     def __init__(self, cfg: dict[str, Any]):

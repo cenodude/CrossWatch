@@ -102,20 +102,57 @@ def test_trakt_refresh_shares_settings_and_does_not_fetch_counts(monkeypatch):
     assert len(calls) == 1
 
 
-def test_mdblist_refresh_shares_user_response(monkeypatch):
+@pytest.mark.parametrize("auth", [{"api_key": "secret"}, {"auth_method": "device_code", "access_token": "token"}])
+def test_mdblist_refresh_shares_user_response(monkeypatch, auth):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
     from providers.auth import runtime
 
     calls = []
-    cfg = {"mdblist": {"api_key": "secret"}}
+    cfg = {"mdblist": auth, "pairs": []}
+    reset = int(time.time()) + 3600
 
     def request(*args, **kwargs):
         calls.append(args)
-        return SimpleNamespace(status_code=200, text=json.dumps({"user_id": 12, "username": "Test"}))
+        return SimpleNamespace(status_code=200, text=json.dumps({
+            "user_id": 12, "username": "Test", "plan": "free", "is_supporter": False,
+            "api_requests": 1000, "api_requests_count": 119,
+            "rate_limit": 1000, "rate_limit_remaining": 881, "rate_limit_reset": reset,
+        }))
 
     monkeypatch.setattr(runtime, "request_with_auth", request)
-    assert probes._probe_mdblist_detail(cfg, max_age_sec=0) == (True, "")
+    app = FastAPI()
+    probes.register_probes(app, lambda: cfg)
+    client = TestClient(app)
+    response = client.get("/api/status?fresh=1")
+    assert response.status_code == 200
+    info = response.json()["providers"]["MDBLIST"]
+    assert info["connected"] is True
+    assert info["username"] == "Test"
+    assert info["plan"] == "free"
+    assert info["vip"] is False
+    assert info["daily_limit"] == 1000
+    assert info["daily_remaining"] == 881
+    assert info["daily_resets_at"] == reset
+    assert info["daily_seen_at"] > 0
+    assert info["limits"] == {"api_requests": 1000, "api_requests_count": 119}
     assert probes.mdblist_user_info(cfg)["user_id"] == 12
+    assert client.get("/api/status").json()["providers"]["MDBLIST"]["daily_remaining"] == 881
     assert len(calls) == 1
+
+
+@pytest.mark.parametrize("quota, expected", [(None, None), ("invalid", None), (-1, None), (True, None), (0, 0), ("42", 42)])
+def test_mdblist_quota_preserves_unknown_and_zero(monkeypatch, quota, expected):
+    cfg = {"mdblist": {"api_key": "secret"}}
+    monkeypatch.setattr(probes, "_authenticated_account", lambda *a: (200, json.dumps({
+        "user_id": 12, "is_supporter": True, "plan": "supporter",
+        "rate_limit": quota, "rate_limit_remaining": quota, "rate_limit_reset": quota,
+    })))
+    info = probes.mdblist_user_info(cfg, max_age_sec=0)
+    assert info["vip"] is True
+    assert info["plan"] == "supporter"
+    for key in ("daily_limit", "daily_remaining", "daily_resets_at"):
+        assert info[key] == expected
 
 
 def test_anilist_refresh_shares_viewer_response(monkeypatch):

@@ -334,8 +334,7 @@
       case "EMBY":
         return { vip: !!data?.premiere, detail: data?.premiere ? "Plan: Premiere" : "" };
       case "MDBLIST": {
-        const plan = txt(data?.vip_type || data?.patron_status || (data?.vip ? "VIP" : ""));
-        return { vip: !!data?.vip, detail: plan ? `Plan: ${titleCase(plan.replace(/^active[_ -]/i, ""))}` : "" };
+        return { vip: !!data?.vip, detail: (meta.mdblistAccountDetails?.(data) || []).join("\n") };
       }
       case "CROSSWATCH":
         return { vip: true, detail: ["Plan: VIP", txt(data?.vip_text) || "You've earned it"].join("\n") };
