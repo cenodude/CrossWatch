@@ -4,10 +4,10 @@
 import assert from "node:assert/strict";
 import {readFile, readdir} from "node:fs/promises";
 import test from "node:test";
-import {chromium} from "playwright";
+import {chromium, webkit} from "playwright";
 
 async function fixture(t, view, total = 75) {
-  const browser = await chromium.launch({headless:true});
+  const browser = await (process.env.CW_SELECTION_BROWSER === "webkit" ? webkit : chromium).launch({headless:true});
   t.after(() => browser.close());
   const page = await browser.newPage({viewport:{width:1500,height:900}});
   page.setDefaultTimeout(6000);
@@ -139,19 +139,20 @@ for (const view of ["editor","tracker"]) {
     const {page,bar} = await fixture(t,view);
     await page.locator(view === "editor" ? "#cw-select-page" : '[data-trk-pick="0"]').check();
     for (const theme of ["original","flat-dark","flat-light"]) {
-      for (const width of [1500,390]) {
-        await page.setViewportSize({width,height:900});
+      for (const [width,height] of [[1500,900],[1194,834],[844,390],[740,360],[667,375],[390,844]]) {
+        await page.setViewportSize({width,height});
         await page.evaluate(({theme,width})=>{
           if (theme === "original") document.documentElement.removeAttribute("data-cw-theme");
           else document.documentElement.setAttribute("data-cw-theme",theme);
-          document.body.classList.toggle("cw-has-bottom-nav",width<720);
+          document.body.classList.toggle("cw-has-bottom-nav",width<=760);
         },{theme,width});
         await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight));
         await page.waitForTimeout(100);
         const box = await bar.boundingBox();
         assert.ok(box.x>=0 && box.x+box.width<=width);
-        assert.ok(box.y>0 && box.y+box.height<=900-(width<720?65:0));
+        assert.ok(box.y>0 && box.y+box.height<=height-(width<=760?65:0));
         for (const button of await bar.locator("button:visible").all()) {
+          await button.scrollIntoViewIfNeeded();
           const rect = await button.boundingBox();
           assert.ok(rect.x>=box.x && rect.x+rect.width<=box.x+box.width);
           assert.ok(rect.y>=box.y && rect.y+rect.height<=box.y+box.height);

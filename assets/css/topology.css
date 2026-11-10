@@ -3,9 +3,8 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 #sec-sync{--cw-sync-surface:var(--cw-theme-surface);--cw-sync-raised:var(--cw-theme-surface-raised);--cw-sync-border:var(--cw-theme-border);--cw-sync-card:linear-gradient(115deg,color-mix(in srgb,var(--cw-theme-accent) 4%,var(--cw-sync-raised)),var(--cw-sync-surface));--cw-sync-badge:color-mix(in srgb,var(--cw-theme-accent) 22%,var(--cw-sync-surface))}
-html[data-cw-theme="flat-dark"] #sec-sync{--cw-sync-surface:#080a0d;--cw-sync-raised:#0b0e13;--cw-sync-border:#1c222c;--cw-sync-card:linear-gradient(115deg,color-mix(in srgb,var(--cw-theme-accent) 1.5%,var(--cw-sync-raised)),var(--cw-sync-surface))}
+html[data-cw-theme="flat-dark"] #sec-sync{--cw-sync-surface:var(--cw-theme-surface);--cw-sync-raised:var(--cw-theme-surface-raised);--cw-sync-border:var(--cw-theme-border);--cw-sync-card:linear-gradient(115deg,color-mix(in srgb,var(--cw-theme-accent) 1.5%,var(--cw-sync-raised)),var(--cw-sync-surface))}
 .topology-summary{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:24px;margin:18px 0 24px;padding:22px;border:1px solid var(--cw-sync-border);border-radius:18px;background:var(--cw-sync-card);box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 8px 24px rgba(0,0,0,.08)}
-html[data-cw-theme="flat-dark"] .topology-summary{--cw-theme-surface:#080a0d;--cw-theme-surface-raised:#0b0e13;--cw-theme-border:#1c222c}
 .topology-summary-content{display:flex;align-items:flex-start;gap:22px;flex:1 1 540px;min-width:0}
 
 
@@ -28,7 +27,7 @@ html[data-cw-theme="flat-dark"] .topology-summary{--cw-theme-surface:#080a0d;--c
 #sec-sync #pairs_list .pair-pill-text{display:flex;flex-direction:column;gap:3px;min-width:0;text-align:left;line-height:1.25}
 #sec-sync #pairs_list .pair-pill-text>span,#sec-sync #pairs_list .pair-instance-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sec-sync #pairs_list .pair-instance-name{display:block;font-size:10px;font-weight:500;color:var(--cw-theme-muted)!important;letter-spacing:0;text-transform:none}
-#sec-sync #pairs_list .ord-badge{background:var(--cw-sync-badge)!important;border-color:color-mix(in srgb,var(--cw-theme-accent) 35%,var(--cw-sync-border))!important;color:var(--cw-theme-text)!important;border-radius:11px;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)!important}
+
 #sec-sync #pairs_list .arrow{background:var(--cw-sync-badge)!important;border-color:color-mix(in srgb,var(--cw-theme-accent) 22%,var(--cw-sync-border))!important;color:var(--cw-theme-accent)!important}
 #sec-sync #pairs_list .pair-actions{background:transparent!important;border-color:transparent!important}
 #sec-sync #pairs_list .pair-left{flex:1 1 auto;min-width:0}
@@ -109,7 +108,6 @@ html:has(.cw-topology-shell),body:has(.cw-topology-shell){overflow:hidden}
 @media(max-width:600px){.topology-route-details summary small{display:none}.topology-modal-head>.topology-heading-icon{width:38px;height:38px;font-size:23px}.topology-health-stats{gap:6px}}
 @media(prefers-reduced-motion:reduce){.topology-modal *{transition:none!important}}
 @media(max-width:1000px){.topology-graph{height:auto;flex:none;min-height:0}.topology-svg{height:auto}.topology-content{grid-template-columns:minmax(0,1fr)}.topology-finding-list{grid-template-columns:repeat(2,minmax(0,1fr))}.topology-findings .topology-empty{min-height:140px;grid-column:1/-1}.topology-capability-note{grid-column:1/-1}}
-@media(max-width:720px){#sec-sync #pairs_list .pair-left{display:grid;grid-template-columns:30px minmax(0,1fr) 26px minmax(0,1fr);gap:8px;width:100%}#sec-sync #pairs_list .ord-badge{min-width:30px;width:30px;height:30px}#sec-sync #pairs_list .pair-pill.src,#sec-sync #pairs_list .pair-pill.dst{width:100%;min-width:0;padding:8px 10px;font-size:12px}#sec-sync #pairs_list .pair-pill.mode{grid-column:2/-1;width:fit-content;min-width:0;min-height:30px;padding:5px 10px;font-size:11px}#sec-sync #pairs_list .pair-actions{padding:0;justify-content:flex-start;gap:8px}}
 @media(max-width:760px){.topology-summary{gap:18px;padding:18px}.topology-summary-content{flex-basis:100%;gap:14px}.topology-summary .topology-kicker{font-size:15px}.topology-summary-actions{width:100%}.topology-summary-actions .btn{flex:1;font-size:13px;min-height:44px;padding:10px 14px}.topology-summary-title{gap:8px 14px}.topology-status{font-size:12px}.topology-status .material-symbol{font-size:18px}.topology-counters{font-size:12px;margin-top:16px;gap:10px 0}.topology-counters>span{gap:6px;padding-right:10px;margin-right:10px}.topology-counters strong{font-size:19px}.topology-copy{font-size:12px;margin-top:12px}.topology-copy .topology-scope{display:block;margin:4px 0 0}.topology-modal-head{padding:20px 18px 16px}.topology-modal-body{padding:16px 18px}.topology-modal-head h2{font-size:21px}.topology-finding-list{grid-template-columns:minmax(0,1fr)}.topology-features button{padding:8px 10px}}
 
 @container(max-width:600px){.topology-legend .topology-legend-label{display:none}.topology-map-footer{gap:10px}.topology-legend{gap:10px}}

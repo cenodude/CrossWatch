@@ -8,6 +8,10 @@
   let _limitTimer = 0;
   let _limitTries = 0;
   const _renderedPairs = new WeakMap();
+  let _pairDrag = null;
+  let _reorderBusy = false;
+  const _resettingPairs = new Set();
+  const _pairMenuHosts = new WeakSet();
 
   const key = (s) => String(s || "").trim().toUpperCase();
   const brandKey = (k) => key(k).toLowerCase().replace(/[^a-z0-9]/g, "") || "x";
@@ -316,6 +320,47 @@
   }
   window.cxPairsDeleteClick = pairDeleteClick;
 
+  function pairResetFeatures(pair) {
+    return ["watchlist", "ratings", "history", "progress", "playlists", "collection"].filter(name => truthy(pair.features?.[name]));
+  }
+
+  async function resetPairCard(btn) {
+    const id = btn.dataset.pairReset;
+    const pair = window.cx?.pairs?.find(pair => String(pair.id) === id);
+    if (!pair || _resettingPairs.has(id) || window.CW?.AuthState?.read?.().isManaged) return;
+    const features = pairResetFeatures(pair);
+    if (!features.length) return;
+    const endpoint = side => `${providerLabel(pair[side])} (${providerMeta()?.instanceLabel?.(pair[side], pair[`${side}_instance`] || "default") || pair[`${side}_instance`] || "Default"})`;
+    const label = `${endpoint("source")} → ${endpoint("target")}`;
+    const message = `Give ${label} a fresh start?\n\nThis resets the sync memory for ${features.join(", ")} and clears retry and blocked items for this pair. Your pair settings stay as they are.\n\nThe next sync reads fresh provider data. Recent deletions won't carry across, and a two-way pair can add missing items back. Other pairs keep their sync state.\n\nReady to reset this pair?`;
+    if (!window.confirm(message)) return;
+    _resettingPairs.add(id);
+    btn.disabled = true;
+    btn.setAttribute("aria-busy", "true");
+    try {
+      const response = await fetch("/api/maintenance/clear-pair-state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pair_id: id, features, clear_retry: true }),
+      });
+      if (response.status === 409) throw new Error("A sync or database maintenance task is running. Wait for it to finish, then reset the pair again.");
+      if (response.status === 403) throw new Error("You don't have permission to reset this pair.");
+      const data = await response.json();
+      if (!response.ok || data?.ok !== true) throw new Error("The reset couldn't finish. Please try again.");
+      window.alert("Pair reset! Its next sync will start fresh.");
+    } catch (error) {
+      window.alert(error.message || "The reset couldn't finish. Please try again.");
+    } finally {
+      _resettingPairs.delete(id);
+      document.querySelectorAll("[data-pair-reset]").forEach(button => {
+        if (button.dataset.pairReset !== id) return;
+        const current = window.cx?.pairs?.find(pair => String(pair.id) === id);
+        button.disabled = !current || !pairResetFeatures(current).length || !!window.CW?.AuthState?.read?.().isManaged;
+        button.removeAttribute("aria-busy");
+      });
+    }
+  }
+
   async function openPlaylistMappingsForPair(pairId, trigger) {
     const id = String(pairId || "").trim();
     if (!id) return;
@@ -382,6 +427,7 @@
   }
 
   function renderPairsOverlay() {
+    if (_pairDrag || _reorderBusy) return;
     const containers = ensureHost(); if (!containers) return;
     const { host, board } = containers;
 
@@ -419,7 +465,7 @@
         <div class="pair-card brand-${brandKey(src)} dst-${brandKey(dst)} ${enabled ? "" : "pair-disabled"}" data-id="${pr.id || ""}" data-source="${src}" data-target="${dst}" data-mode="${modeLabel}" style="--src-solid:${srcTone.solid};--src-rgb:${srcTone.rgb};--dst-solid:${dstTone.solid};--dst-rgb:${dstTone.rgb};--accent:${srcTone.solid};--accent-rgb:${srcTone.rgb}">
           <div class="pair-row">
             <div class="pair-left">
-              <span class="ord-badge" data-tip="Sync order">${displayIndex}</span>
+              <button type="button" class="ord-badge cw-page-pair-handle" data-tip="Drag to reorder · or use arrow keys" aria-label="Reorder pair ${displayIndex}: ${esc(providerLabel(src))} to ${esc(providerLabel(dst))}. Use Up or Down arrow keys."><span class="pair-order">${displayIndex}</span><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2h.01M8 2h.01M4 6h.01M8 6h.01M4 10h.01M8 10h.01"/></svg></button>
               ${pill(src, srcInst, "src")}
               <span class="arrow" data-tip="${modeLabel}">${arrow}</span>
               ${pill(dst, dstInst, "dst")}
@@ -428,7 +474,7 @@
             <div class="pair-actions">
               <div class="pair-feature-summary">
               <span class="pair-pill mode pair-mobile-mode">${modeLabel}</span>
-              <div class="feat-beads" role="group" aria-label="Enabled features">
+              <div class="feat-beads cw-page-pair-features" role="group" aria-label="Enabled features">
                 ${bead("wl", "Watchlist", f.watchlist)}
                 ${bead("rt", "Ratings", f.ratings)}
                 ${bead("hi", "History", f.history)}
@@ -438,7 +484,7 @@
               </div>
               </div>
 
-              <div class="pair-action-buttons" role="group" aria-label="Sync pair actions">
+              <div class="pair-action-buttons cw-page-pair-actions" role="group" aria-label="Sync pair actions">
               <button type="button" class="icon-btn" data-tip="Run and review sync" aria-label="Run and review sync" ${enabled ? "" : "disabled"} data-interactive-pair="${esc(pr.id)}">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M8 5l11 7-11 7V5z"></path></svg><span class="pair-action-label">Run</span>
               </button>
@@ -453,11 +499,8 @@
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M12 3v6"></path><path d="M5.6 7a8 8 0 1 0 12.8 0"></path></svg><span class="pair-action-label pair-power-label"><span class="pair-power-on">Enabled</span><span class="pair-power-off">Disabled</span></span>
               </label>
 
-              <button type="button" class="icon-btn" data-tip="Move left" onclick="window.movePair && window.movePair('${pr.id}','prev')" aria-label="Move left">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M15 18l-6-6 6-6"></path></svg><span class="pair-action-label">Earlier</span>
-              </button>
-              <button type="button" class="icon-btn" data-tip="Move right" onclick="window.movePair && window.movePair('${pr.id}','next')" aria-label="Move right">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg><span class="pair-action-label">Later</span>
+              <button type="button" class="icon-btn" data-tip="Reset pair" data-pair-reset="${esc(pr.id)}" aria-label="Reset pair" ${_resettingPairs.has(String(pr.id)) || window.CW?.AuthState?.read?.().isManaged || !pairResetFeatures(pr).length ? "disabled" : ""}>
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 11a9 9 0 1 1 2.6 7M3 4v7h7"></path></svg><span class="pair-action-label">Reset</span>
               </button>
               <button type="button" class="icon-btn" data-tip="Edit" onclick="window.cxPairsEditClick(this)" aria-label="Edit">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"></path><path d="M14.06 4.94l3.75 3.75"></path></svg><span class="pair-action-label">Edit</span>
@@ -465,7 +508,11 @@
               <button type="button" class="icon-btn danger cw-danger-confirm" data-tip="Delete" onclick="window.cxPairsDeleteClick(this, '${pr.id}')" aria-label="Delete">
                 <svg viewBox="0 0 24 24" class="ico" aria-hidden="true">${PAIR_DELETE_ICON}</svg><span class="pair-action-label">Delete</span>
               </button>
+              <button type="button" class="icon-btn pair-more" popovertarget="pair-overflow-${displayIndex}" aria-label="More pair actions" aria-expanded="false">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><circle cx="5" cy="12" r="1"></circle><circle cx="12" cy="12" r="1"></circle><circle cx="19" cy="12" r="1"></circle></svg><span class="pair-action-label">More</span>
+              </button>
               </div>
+              <div id="pair-overflow-${displayIndex}" class="pair-overflow cw-page-pair-actions" popover="auto" role="group" aria-label="More pair actions"></div>
             </div>
           </div>
         </div>`;
@@ -479,43 +526,217 @@
     refreshIdentityTips(board, pairs);
     scheduleViewportLimit(0);
     installTooltip(host);
+    installPairReorder(host, board);
+    installPairMenus(host);
     refreshBadges(board);
+  }
+
+  function syncPairMenus(host) {
+    const style = getComputedStyle(host);
+    const compact = host.clientWidth - parseFloat(style.paddingLeft || 0) - parseFloat(style.paddingRight || 0) <= 380;
+    for (const card of host.querySelectorAll(".pair-card")) {
+      const actions = card.querySelector(".pair-action-buttons");
+      const more = actions.querySelector(".pair-more");
+      const menu = card.querySelector(".pair-overflow");
+      const secondary = [...card.querySelectorAll('[data-pair-logs],[data-pair-reset],button[aria-label="Edit"],button[aria-label="Delete"]')];
+      if (compact) secondary.filter(button => button.parentElement !== menu).forEach(button => menu.appendChild(button));
+      else {
+        if (menu.matches(":popover-open")) menu.hidePopover();
+        for (const button of secondary.filter(button => button.parentElement !== actions)) actions.insertBefore(button, button.hasAttribute("data-pair-logs") ? actions.querySelector(".power") : more);
+      }
+    }
+  }
+
+  function positionPairMenu(menu) {
+    const anchor = menu.closest(".pair-card").querySelector(".pair-more").getBoundingClientRect();
+    const bounds = menu.getBoundingClientRect();
+    if (anchor.bottom < 0 || anchor.top > innerHeight) { menu.hidePopover(); return; }
+    menu.style.left = `${Math.max(12, Math.min(anchor.right - bounds.width, innerWidth - bounds.width - 12))}px`;
+    menu.style.top = `${Math.max(12, Math.min(anchor.bottom + 8 + bounds.height <= innerHeight - 12 ? anchor.bottom + 8 : anchor.top - bounds.height - 8, innerHeight - bounds.height - 12))}px`;
+  }
+
+  function installPairMenus(host) {
+    syncPairMenus(host);
+    if (_pairMenuHosts.has(host)) return;
+    _pairMenuHosts.add(host);
+    new ResizeObserver(() => syncPairMenus(host)).observe(host);
+    host.addEventListener("beforetoggle", event => {
+      const menu = event.target;
+      if (!menu.matches(".pair-overflow")) return;
+      const more = menu.closest(".pair-card").querySelector(".pair-more");
+      if (event.newState === "open") {
+        syncPairMenus(host);
+        more.setAttribute("aria-expanded", "true");
+        requestAnimationFrame(() => {
+          if (!menu.matches(":popover-open")) return;
+          positionPairMenu(menu);
+          menu.querySelector("button:not(:disabled)")?.focus({preventScroll:true});
+        });
+        return;
+      }
+      more.setAttribute("aria-expanded", "false");
+      if (menu.contains(document.activeElement)) more.focus({preventScroll:true});
+      resetPairDelete();
+    }, true);
   }
 
   function refreshBadges(board) {
     [...board.querySelectorAll(".pair-card")].forEach((el, i) => {
-      const b = el.querySelector(".ord-badge"); if (b) b.textContent = String(i + 1);
+      const b = el.querySelector(".pair-order"); if (b) b.textContent = String(i + 1);
+      const handle = el.querySelector(".cw-page-pair-handle");
+      if (handle) handle.setAttribute("aria-label", `Reorder pair ${i + 1}: ${providerLabel(el.dataset.source)} to ${providerLabel(el.dataset.target)}. Use Up or Down arrow keys.`);
     });
   }
 
-  if (typeof window.movePair !== "function") {
-    window.movePair = async function (id, dir) {
-      try {
-        const list = Array.isArray(window.cx?.pairs) ? window.cx.pairs : [];
-        const idx = list.findIndex((p) => String(p.id) === String(id)); if (idx < 0) return;
-        const newIdx = dir === "prev" ? Math.max(0, idx - 1) : Math.min(list.length - 1, idx + 1); if (newIdx === idx) return;
+  function animatePairOrder(board, change) {
+    const cards = [...board.querySelectorAll(".pair-card")];
+    const before = new Map(cards.map(card => [card, card.getBoundingClientRect().top]));
+    cards.forEach(card => card.getAnimations().forEach(animation => animation.cancel()));
+    change();
+    refreshBadges(board);
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    cards.forEach(card => {
+      const dy = before.get(card) - card.getBoundingClientRect().top;
+      if (Math.abs(dy) > 1) card.animate([{ translate: `0 ${dy}px` }, { translate: "0 0" }], { duration: 180, easing: "ease-out" });
+    });
+  }
 
-        const [item] = list.splice(idx, 1); list.splice(newIdx, 0, item);
-        document.dispatchEvent(new Event("cw:sync-data-changed"));
+  function pairOrderNotice(host, message) {
+    host.querySelector(".pair-order-status").textContent = message;
+  }
 
-        const board = document.querySelector("#pairs_list .pairs-board");
-        const el = board?.querySelector(`.pair-card[data-id="${id}"]`);
-        if (el) {
-          if (dir === "prev") {
-            const prev = el.previousElementSibling;
-            if (prev) board.insertBefore(el, prev);
-          } else {
-            const next = el.nextElementSibling;
-            if (next) board.insertBefore(el, next.nextSibling);
-          }
-          refreshBadges(board);
+  async function savePairOrder(host, board, original) {
+    const cards = [...board.querySelectorAll(".pair-card")];
+    const order = cards.map(card => card.dataset.id);
+    if (cards.every((card, index) => card === original[index])) return;
+    _reorderBusy = true;
+    board.inert = true;
+    board.setAttribute("aria-busy", "true");
+    const focused = document.activeElement;
+    pairOrderNotice(host, "Saving pair order…");
+    try {
+      const response = await fetch("/api/pairs/reorder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(order) });
+      const data = await response.json();
+      if (!response.ok || data?.ok !== true) throw new Error("reorder_failed");
+      const pairs = window.cx?.pairs || [];
+      const savedOrder = Array.isArray(data.final_order) ? data.final_order.map(String) : order;
+      window.cx.pairs = [...pairs].sort((a, b) => savedOrder.indexOf(String(a.id)) - savedOrder.indexOf(String(b.id)));
+      animatePairOrder(board, () => {
+        for (const id of savedOrder) {
+          const card = cards.find(card => card.dataset.id === id);
+          if (card) board.appendChild(card);
         }
+      });
+      pairOrderNotice(host, "Pair order saved.");
+      window._invalidatePairsCache?.();
+      document.dispatchEvent(new Event("cw:sync-data-changed"));
+    } catch {
+      animatePairOrder(board, () => original.forEach(card => board.appendChild(card)));
+      pairOrderNotice(host, "Couldn't save the order. Your previous order is restored.");
+      window.alert("Couldn't save the pair order. Your previous order is restored. Please try again.");
+    } finally {
+      board.inert = false;
+      board.removeAttribute("aria-busy");
+      _reorderBusy = false;
+      _renderedPairs.delete(board);
+      if (focused?.isConnected) focused.focus({ preventScroll: true });
+      scheduleViewportLimit();
+    }
+  }
 
-        try {
-          await fetch("/api/pairs/reorder", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(list.map((p) => p.id)) });
-        } catch (_) {}
-      } catch (e) { console.warn("[movePair] failed", e); }
+  function installPairReorder(host, board) {
+    if (board.dataset.reorderBound) return;
+    board.dataset.reorderBound = "1";
+    const status = document.createElement("div");
+    status.className = "pair-order-status sr-only";
+    status.setAttribute("role", "status");
+    host.appendChild(status);
+
+    const move = () => {
+      const drag = _pairDrag;
+      if (!drag?.moving) return;
+      const others = [...board.querySelectorAll(".pair-card")].filter(card => card !== drag.card);
+      const top = board.getBoundingClientRect().top;
+      const next = others.find(card => drag.y < top + card.offsetTop + card.offsetHeight / 2) || null;
+      if (drag.card.nextElementSibling === next) return;
+      animatePairOrder(board, () => board.insertBefore(drag.card, next));
+      pairOrderNotice(host, `Pair moved to position ${[...board.children].indexOf(drag.card) + 1}. Release to save, or press Escape to cancel.`);
     };
+    const scroll = () => {
+      const drag = _pairDrag;
+      if (!drag) return;
+      if (drag.moving) {
+        const bounds = host.getBoundingClientRect();
+        const top = Math.max(0, bounds.top);
+        const bottom = Math.min(window.innerHeight, bounds.bottom);
+        const dy = drag.y < top + 48 ? -12 : drag.y > bottom - 48 ? 12 : 0;
+        if (dy) {
+          const before = host.scrollTop;
+          host.scrollTop += dy;
+          if (host.scrollTop === before) window.scrollBy(0, dy);
+          move();
+        }
+      }
+      drag.frame = requestAnimationFrame(scroll);
+    };
+    const finish = (cancel = false) => {
+      const drag = _pairDrag;
+      if (!drag) return;
+      _pairDrag = null;
+      cancelAnimationFrame(drag.frame);
+      drag.card.classList.remove("pair-reordering");
+      board.classList.remove("pair-ordering");
+      if (board.hasPointerCapture(drag.pointerId)) board.releasePointerCapture(drag.pointerId);
+      drag.handle.focus({ preventScroll: true });
+      if (cancel) {
+        animatePairOrder(board, () => drag.original.forEach(card => board.appendChild(card)));
+        pairOrderNotice(host, "Reordering cancelled.");
+      } else {
+        savePairOrder(host, board, drag.original);
+      }
+    };
+    board.addEventListener("pointerdown", event => {
+      const handle = event.target.closest(".cw-page-pair-handle");
+      if (!handle || event.button !== 0 || event.isPrimary === false || _pairDrag || _reorderBusy || board.children.length < 2) return;
+      event.preventDefault();
+      handle.focus({ preventScroll: true });
+      _pairDrag = { handle, card: handle.closest(".pair-card"), pointerId: event.pointerId, startY: event.clientY, y: event.clientY, original: [...board.children], moving: false };
+      board.setPointerCapture(event.pointerId);
+      _pairDrag.frame = requestAnimationFrame(scroll);
+    });
+    board.addEventListener("pointermove", event => {
+      const drag = _pairDrag;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      drag.y = event.clientY;
+      if (!drag.moving && Math.abs(drag.y - drag.startY) < 6) return;
+      drag.moving = true;
+      drag.card.classList.add("pair-reordering");
+      board.classList.add("pair-ordering");
+      move();
+    });
+    board.addEventListener("pointerup", event => { if (event.pointerId === _pairDrag?.pointerId) finish(); });
+    board.addEventListener("pointercancel", () => finish(true));
+    board.addEventListener("lostpointercapture", () => finish(true));
+    window.addEventListener("blur", () => finish(true));
+    document.addEventListener("keydown", event => {
+      if (event.key !== "Escape" || !_pairDrag) return;
+      event.preventDefault();
+      event.stopPropagation();
+      finish(true);
+    }, true);
+    board.addEventListener("keydown", event => {
+      const handle = event.target.closest(".cw-page-pair-handle");
+      if (!handle || _pairDrag || _reorderBusy || !["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+      event.preventDefault();
+      const card = handle.closest(".pair-card");
+      const original = [...board.children];
+      const target = event.key === "ArrowUp" ? card.previousElementSibling : event.key === "ArrowDown" ? card.nextElementSibling?.nextElementSibling : event.key === "Home" ? board.firstElementChild : null;
+      if (event.key === "ArrowUp" && !target) return;
+      animatePairOrder(board, () => board.insertBefore(card, target || null));
+      handle.focus({ preventScroll: true });
+      card.scrollIntoView({ block: "nearest" });
+      savePairOrder(host, board, original);
+    });
   }
 
   function watchSyncSection() {
@@ -530,7 +751,7 @@
   }
 
   async function renderOrEnhance(force = false) {
-    if (_renderBusy) return;
+    if (_renderBusy || _pairDrag || _reorderBusy) return;
     _renderBusy = true;
     try { await loadPairsIfNeeded(!!force); renderPairsOverlay(); }
     finally { _renderBusy = false; }
@@ -549,6 +770,10 @@
   document.addEventListener("cx-state-change", renderOrEnhance);
   window.addEventListener("auth-changed", () => renderOrEnhance());
   document.addEventListener("click", event => {
+    const menu = event.target.closest?.(".pair-overflow:popover-open");
+    if (menu && event.target.closest("button:not(.danger)")) menu.hidePopover();
+    const reset = event.target.closest?.("[data-pair-reset]");
+    if (reset && !reset.disabled) resetPairCard(reset);
     const logs = event.target.closest?.('[data-pair-logs]');
     if (logs) window.openLogs?.({pairId:logs.dataset.pairLogs, latest:true});
     const button = event.target.closest?.("[data-interactive-pair]");
@@ -557,9 +782,17 @@
   window.addEventListener("cx:pairs:changed", () => { renderOrEnhance(true); });
 
   window.addEventListener("resize", () => {
+    document.querySelectorAll("#pairs_list .pair-overflow:popover-open").forEach(menu => menu.hidePopover());
+    const host = document.getElementById("pairs_list");
+    if (host?.querySelector(".pair-more")) syncPairMenus(host);
     clearTimeout(_resizeTimer);
     _resizeTimer = setTimeout(() => scheduleViewportLimit(0), 120);
   }, { passive: true });
+
+  window.addEventListener("scroll", event => {
+    const menu = document.querySelector("#pairs_list .pair-overflow:popover-open");
+    if (menu && !(event.target instanceof Node && menu.contains(event.target))) positionPairMenu(menu);
+  }, {capture:true, passive:true});
 
   const _origRender = window.renderConnections;
   window.renderConnections = function () { try { if (typeof _origRender === "function") _origRender(); } catch {} renderOrEnhance(); };

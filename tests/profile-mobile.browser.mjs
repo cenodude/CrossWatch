@@ -5,15 +5,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {execFileSync} from "node:child_process";
 import {readFile, mkdir} from "node:fs/promises";
-import {chromium} from "playwright";
+import {chromium, webkit} from "playwright";
 
 const template = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_profile_html({'is_admin':True,'username':'mobile','display_name':'Mobile preview'}))"], {encoding:"utf8",maxBuffer:1024*1024});
 const items = ["The Grand Budapest Hotel", "A long episode title with plenty of words", "Arrival"].map((title,index)=>({key:`movie:tmdb:${index+1}`,type:"movie",title,year:2014,ids:{tmdb:String(index+1)},tmdb:String(index+1),sort_epoch:1793989800,watched_at:"2026-11-06T18:30:00Z",last_collected_at:1793989800,rating:8.5,watch_count:3,watch_epochs:[1793989800],providers:["PLEX","TRAKT"],sources_by_provider:{PLEX:["default"],TRAKT:["default"]},progress:45,can_update_progress:true,can_mark_watched:true,can_remove_progress:true,provider:"PLEX",provider_instance:"default",duration:120,remaining_minutes:66,media:{resolution:"4k",hdr:"dolby_vision",audio:"truehd"}}));
 
 async function fixture(t,theme,width) {
-  const browser=await chromium.launch({headless:true});
+  const browser=await (process.env.CW_PROFILE_BROWSER === "webkit" ? webkit : chromium).launch({headless:true});
   t.after(()=>browser.close());
-  const page=await browser.newPage({viewport:{width,height:844},hasTouch:width<800,isMobile:width<800,reducedMotion:'reduce'});
+  const page=await browser.newPage({viewport:{width,height:844},hasTouch:width<=760,isMobile:width<=760,reducedMotion:'reduce'});
   page.setDefaultTimeout(6000);
   const errors=[];
   page.on('pageerror',error=>errors.push(error.message));
@@ -69,11 +69,12 @@ async function snapshot(page,name) {
 }
 
 for(const theme of ['original','flat-dark','flat-light']) {
-  for(const width of [320,390,1440]) {
-    test(`${theme}: profile covers and controls at ${width}px`,async t=>{
+  for(const [width, height] of [[320,740],[390,844],[740,360],[844,390],[932,430],[768,1024],[1024,768],[1194,834],[1366,1024],[1440,900]]) {
+    test(`${theme}: profile covers and controls at ${width}x${height}`,async t=>{
       const {page,state}=await fixture(t,theme,width);
+      await page.setViewportSize({width, height});
       for(const section of ['overview','collection','history','ratings','watchlist','playback','account']) {
-        if(width<800) await page.locator('.cw-profile-mobile-view select').selectOption(section);
+        if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption(section);
         else await page.locator(`[data-profile-tab="${section}"]`).click();
         const panel=page.locator(`#profile-panel-${section}`);
         await panel.waitFor();
@@ -85,7 +86,7 @@ for(const theme of ['original','flat-dark','flat-light']) {
         }
         await snapshot(page,`${theme}-${width}-${section}`);
         assert.equal(await page.evaluate(w=>document.documentElement.scrollWidth>w+1,width),false,section);
-        if(width<800&&section==='overview') {
+        if(width<=760&&section==='overview') {
           assert.ok((await panel.locator('.cw-cw-card').first().boundingBox()).width>=180);
           const cover=await panel.locator('.cw-cw-art').first().boundingBox();
           const badge=await panel.locator('.cw-cw-providers .cw-profile-provider-badge').first().boundingBox();
@@ -94,7 +95,7 @@ for(const theme of ['original','flat-dark','flat-light']) {
           const status=await panel.locator('.cw-profile-watchlist-status').first().boundingBox();
           assert.ok(title.y+title.height<=status.y);
         }
-        if(width<800&&['collection','history','ratings','watchlist','playback'].includes(section)) {
+        if(width<=760&&['collection','history','ratings','watchlist','playback'].includes(section)) {
           const select=panel.locator('.cw-tl-select').first();
           assert.ok((await select.boundingBox()).width>=44);
           assert.equal(await select.evaluate(el=>getComputedStyle(el,'::before').width),'22px');
@@ -111,7 +112,7 @@ for(const theme of ['original','flat-dark','flat-light']) {
             await panel.locator('[data-playback-action="update_progress"]').first().tap();
             await page.locator('#profile-playback-edit[open]').waitFor();
             const dialog=await page.locator('#profile-playback-edit').boundingBox();
-            assert.ok(dialog.x>=0&&dialog.x+dialog.width<=width,JSON.stringify(dialog));
+            assert.ok(dialog.x>=0&&dialog.x+dialog.width<=width&&dialog.y>=0&&dialog.y+dialog.height<=height+1,JSON.stringify(dialog));
             if(process.env.CW_PROFILE_SCREENSHOTS) await page.screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/${theme}-${width}-dialog.png`});
             await page.locator('#profile-playback-edit [data-playback-dialog-cancel]').tap();
           }
@@ -124,7 +125,7 @@ for(const theme of ['original','flat-dark','flat-light']) {
         }
       }
       state.empty=true;
-      if(width<800) await page.locator('.cw-profile-mobile-view select').selectOption('watchlist');
+      if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('watchlist');
       else await page.locator('[data-profile-tab="watchlist"]').click();
       await page.locator('#profile-watchlist-refresh').click();
       await page.locator('#profile-watchlist-list .cw-profile-empty').waitFor();

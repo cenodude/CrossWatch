@@ -113,8 +113,8 @@ test("stars fit desktop and narrow dialogs in each theme, including unavailable 
   const {page} = await fixture(t, [target("MDBLIST", {...half,values:half.values.filter(value => value >= 1)})]);
   for (const theme of ["original","flat-dark","flat-light"]) {
     await page.evaluate(theme => document.documentElement.dataset.cwTheme = theme, theme);
-    for (const width of [1100,375]) {
-      await page.setViewportSize({width,height:850});
+    for (const [width,height] of [[1100,850],[1024,768],[844,390],[740,360],[375,812],[320,740]]) {
+      await page.setViewportSize({width,height});
       const layout = await page.locator(".cw-mw-stars").evaluate(node => {
         const rect = node.getBoundingClientRect();
         const lit = getComputedStyle(node.querySelector(".is-lit"));

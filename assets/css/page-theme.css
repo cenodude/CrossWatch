@@ -1216,3 +1216,11 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-hero-backdrop{opacity:.24}
   body.cw-profile-page #profile-watchlist .cw-profile-watchlist-sync{font-size:10px}
   body.cw-profile-page :is(.cw-collection-controls select,.cw-collection-search input,.cw-set-input,.cw-tl-dialog input[type="number"]){font-size:16px}
 }
+
+#pairs_list .cw-page-pair-handle{border:1px solid color-mix(in srgb,var(--cw-theme-accent) 35%,var(--cw-theme-border));border-radius:11px;background:color-mix(in srgb,var(--cw-theme-accent) 18%,var(--cw-theme-surface));color:var(--cw-theme-text);font-family:inherit;font-size:14px;font-weight:800;line-height:1}
+#pairs_list .cw-page-pair-handle svg{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+#pairs_list .cw-page-pair-handle:hover,#pairs_list .cw-page-pair-handle:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:2px}
+#pairs_list .pair-reordering{outline:2px solid var(--cw-theme-accent);outline-offset:-2px}
+#pairs_list .pair-overflow{border:1px solid var(--cw-theme-border-strong);border-radius:14px;background:var(--cw-theme-surface-raised);color:var(--cw-theme-text);box-shadow:0 12px 32px rgba(0,0,0,.24)}
+#pairs_list .cw-page-pair-features .bead{border-color:var(--cw-theme-border-strong)}
+#pairs_list .cw-page-pair-actions>.icon-btn{font-family:inherit}
