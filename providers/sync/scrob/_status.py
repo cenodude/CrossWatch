@@ -10,6 +10,7 @@ from cw_platform.status_mapping import Capabilities, Observation, ReadState, Sta
 from cw_platform.run_control import raise_if_cancelled
 from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation
 from ._common import cfg_section, paged_get, scrob_request, status_object, status_resume, status_rows
+from ._watchlist import watchlist_rows
 
 
 def title(media, kind=None):
@@ -130,8 +131,8 @@ class StatusAdapter(NativeStatusAdapter):
                 hidden.add(key)
                 if kind == "series":
                     native[key] = row
-        name = str(cfg_section(adapter).get("watchlist_name") or "Watchlist").strip().lower()
-        matches = [row["id"] for row in data["lists"] if str(row.get("name") or "").strip().lower() == name]
+        name = str(cfg_section(adapter).get("watchlist_name") or "Watchlist")
+        matches = [row["id"] for row in watchlist_rows(data["lists"], name)]
         if len(matches) > 1:
             raise RuntimeError("scrob_status_ambiguous_watchlist")
         for ident, detail in data["list_details"].items():

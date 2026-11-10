@@ -10,8 +10,8 @@ from cw_platform.interactive_reads import read_once, use_review_reads
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
 from cw_platform.run_control import raise_if_cancelled
 from cw_platform.status_mapping import (
-    ConflictPolicy, Decision, Direction, Endpoint, ExecutionScope, ItemScope, PairScope, Status, TransitionCheck,
-    StatusMappingValidationError, parse_mapping, plan_status, verified_baseline, verify_status_write,
+    ConflictPolicy, Decision, Direction, Endpoint, ExecutionScope, ItemScope, PairScope, ReadState, Status, TransitionCheck,
+    StatusMappingValidationError, UNTRACKED_STATES, parse_mapping, plan_status, verified_baseline, verify_status_write,
 )
 from cw_platform.status_mapping_store import StatusStore, decode_item, decode_observation, encode_observation
 from providers.sync._status_mapping import NativeStatusAdapter, adapter_class
@@ -208,7 +208,10 @@ def _run_status_mappings(ctx, pairs, cfg, health_map, *, store, adapter_override
                         destinations[candidate.native_id] = candidate
                         covered.update(_tokens(candidate, allow_mapping))
             matched = list(matched_records(left, right, allow_mapping=allow_mapping))
-            missing = len(left) - len(matched) + (len(right) - len(matched) if scope.two_way else 0)
+            paired = {id(record) for match in matched for record in match}
+            missing = sum(1 for side in ((left, right) if scope.two_way else (left,)) for record in side.values()
+                          if id(record) not in paired and record.observation.state != ReadState.ABSENT
+                          and not (record.observation.state == ReadState.UNKNOWN and record.observation.native_status in UNTRACKED_STATES))
             summary.update(source_count=len(snapshots[scope.a]), destination_count=len(snapshots[scope.b]), matched=len(matched), unmatched=missing)
             publish_status(ctx, pair, "read", **summary)
             if missing:

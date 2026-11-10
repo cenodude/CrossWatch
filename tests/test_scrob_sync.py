@@ -982,6 +982,16 @@ def test_watchlist_index_reads_the_named_list():
     assert movie["year"] == 1999
 
 
+def test_watchlist_prefers_the_native_list_over_a_same_named_one():
+    lists = {"lists": [{"id": 4, "name": "Watchlist", "is_watchlist": False}, {"id": 7, "name": "Watchlist", "is_watchlist": True}]}
+    adapter = FakeAdapter({("GET", "lists"): ResponseStub(200, lists)})
+    assert _watchlist.resolve_list_id(adapter, create=True) == 7
+    assert not [c for c in adapter.calls if c.get("method") == "POST"]
+    lists = {"lists": [{"id": 4, "name": "Watchlist", "is_watchlist": False}]}
+    adapter = FakeAdapter({("GET", "lists"): ResponseStub(200, lists)})
+    assert _watchlist.resolve_list_id(adapter, create=True) == 4
+
+
 def test_watchlist_index_is_empty_when_the_list_is_missing():
     adapter = FakeAdapter({("GET", "lists"): ResponseStub(200, {"lists": []})})
     assert _watchlist.build_index(adapter) == {}

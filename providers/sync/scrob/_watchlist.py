@@ -51,6 +51,15 @@ def watchlist_name(adapter: Any) -> str:
     return str(section.get("watchlist_name") or "Watchlist").strip() or "Watchlist"
 
 
+def watchlist_rows(rows: Any, name: str) -> list[Mapping[str, Any]]:
+    rows = [r for r in rows or [] if isinstance(r, Mapping)]
+    native = [r for r in rows if r.get("is_watchlist") is True]
+    if native:
+        return native
+    wanted = name.strip().lower()
+    return [r for r in rows if str(r.get("name") or "").strip().lower() == wanted]
+
+
 def _find_list(adapter: Any, name: str) -> Mapping[str, Any] | None:
     resp = scrob_request(adapter, "GET", PATH_LISTS)
     if not ok_status(resp):
@@ -62,12 +71,8 @@ def _find_list(adapter: Any, name: str) -> Mapping[str, Any] | None:
     rows = data.get("lists")
     if not isinstance(rows, list):
         raise ScrobError("scrob_watchlist_lists_invalid_response")
-    rows = [r for r in rows if isinstance(r, Mapping)]
-    wanted = name.strip().lower()
-    for row in rows:
-        if str(row.get("name") or "").strip().lower() == wanted:
-            return row
-    return None
+    found = watchlist_rows(rows, name)
+    return found[0] if found else None
 
 
 def _create_list(adapter: Any, name: str) -> Mapping[str, Any] | None:
