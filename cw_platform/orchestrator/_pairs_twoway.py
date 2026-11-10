@@ -133,6 +133,8 @@ from ._history_rewatches import (
     history_rewatches_requested,
 )
 from ._history_copies import config_with_history_copies, copy_gap_adds, history_copies_requested, take_copy_gaps
+from ._history_resets import apply_reset_unwatches, load_reset_plan, preview_reset_unwatches
+from ._pair_skips import record_pair_skips
 from ._pairs_utils import (
     declared_types_for,
     ratings_step_for,
@@ -709,6 +711,20 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             B_eff, eff_filtered_B = _filter_index_for_dropped_shows(B_eff, dropped_B)
             if prev_filtered_B or cur_filtered_B or eff_filtered_B:
                 emit("debug", msg="provider.dropped.filtered", provider=b, feature=feature, scope="side_b", prev=prev_filtered_B, current=cur_filtered_B, effective=eff_filtered_B)
+
+    reset_plan = load_reset_plan(feature, fcfg, [(a, aops, a_cfg), (b, bops, b_cfg)],
+                                 event_mode=history_event_mode, one_way=False, emit=emit)
+    if reset_plan:
+        (prevA, A_cur, A_eff), (prevB, B_cur, B_eff) = reset_plan.view_pair(
+            (prevA, A_cur, A_eff), (prevB, B_cur, B_eff), emit=emit,
+            aliases=_build_history_coordinate_aliases(cfg, feature, (A_eff, B_eff)))
+        if reset_plan.trakt_side == 0:
+            manual_adds_A, manual_adds_B = reset_plan.trakt_manual(manual_adds_A), reset_plan.server_manual(manual_adds_B)
+        else:
+            manual_adds_A, manual_adds_B = reset_plan.server_manual(manual_adds_A), reset_plan.trakt_manual(manual_adds_B)
+    reset_ops, reset_cfg, reset_src_inst, reset_dst_inst, reset_down = (
+        (bops, b_cfg, src_inst, dst_inst, b_down) if not reset_plan or reset_plan.server_side == 1
+        else (aops, a_cfg, dst_inst, src_inst, a_down))
 
     # Keep rich metadata when the provider index is presence-only.
     A_eff = _enrich_index_payload(A_eff, prevA, feature)
@@ -2140,6 +2156,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                         feature=feature, source=view_B, source_tokens=tag_tokens_B, target=_with_planned(view_A, planned_A),
                         target_tokens=lambda: tag_tokens_A or dropped_A or _load_provider_dropped_tokens(aops, a_cfg), down=a_down,
                     )
+            if reset_plan and not (a_down or b_down or A_suspect or B_suspect):
+                reset_plan.unwatch = reset_plan.settle(planned_B if reset_plan.server_side == 1 else planned_A,
+                                                       alias=_alias_index, find=_find_in_idx,
+                                                       unblocked=lambda items: _filter_manual_block(items, manual_blocks))
+                preview_reset_unwatches(reset_plan, review=review, feature=feature, dst_inst=reset_dst_inst,
+                                        src_inst=reset_src_inst, down=reset_down)
             return {"cancelled": cancelled, "library_skipped": len(library_skipped_A) + len(library_skipped_B)}
 
     B_eff = {path_native_keys_B.get(key, key): item for key, item in B_eff.items()}
@@ -2712,6 +2734,16 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             target_tokens=lambda: tag_tokens_A or dropped_A or _load_provider_dropped_tokens(aops, a_cfg),
             dry_run=dry_run_flag, emit=emit, review=review, src_inst=dst_inst, dst_inst=src_inst,
         )
+
+    if reset_plan and not (cancelled or a_down or b_down or A_suspect or B_suspect):
+        reset_plan.unwatch = reset_plan.settle(add_to_B if reset_plan.server_side == 1 else add_to_A,
+                                               alias=_alias_index, find=_find_in_idx,
+                                               unblocked=lambda items: _filter_manual_block(items, manual_blocks))
+        apply_reset_unwatches(reset_plan, dst_ops=reset_ops, dst_cfg=reset_cfg, feature=feature, dry_run=dry_run_flag,
+                              emit=emit, review=review, src_inst=reset_src_inst, dst_inst=reset_dst_inst)
+    if not (cancelled or dry_run_flag) and getattr(ctx, "write_state_json", True):
+        record_pair_skips(ctx.state_store, feature, ((a, src_inst), (b, dst_inst)),
+                          dropped=set(dropped_A) | set(dropped_B), reset_plan=reset_plan, emit=emit)
 
     try:
         if cancelled:

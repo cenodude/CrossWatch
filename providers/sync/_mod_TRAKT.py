@@ -106,7 +106,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.1"
+__VERSION__ = "2.2"
 _MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
@@ -900,6 +900,11 @@ class _TraktOPS:
 
     def tag_dropped_shows(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         return self._adapter(cfg).tag_dropped_shows(items)
+
+    def rewatch_resets(self, cfg: Mapping[str, Any]) -> list[dict[str, Any]]:
+        from .trakt._resets import load_rewatch_resets
+
+        return load_rewatch_resets(self._adapter(cfg))
 
     def _pl(self) -> Any:
         if feat_playlists is None:

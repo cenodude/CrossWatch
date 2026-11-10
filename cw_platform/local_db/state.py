@@ -900,6 +900,7 @@ def clear_pair_state(base_path: str | Path, pair_scope: str) -> tuple[int, int]:
             conn.execute("DELETE FROM pair_scope_owners WHERE pair_scope=?", (pair_scope,))
             conn.execute("DELETE FROM episode_group_state WHERE pair_scope=?", (pair_scope,))
             conn.execute("DELETE FROM episode_group_scrobbles WHERE pair_scope=?", (pair_scope,))
+            conn.execute("DELETE FROM pair_analyzer_skips WHERE pair_scope=?", (pair_scope,))
         _invalidate()
         return removed
 
@@ -922,6 +923,7 @@ def clear_state(base_path: str | Path) -> None:
         with conn:
             conn.execute("DELETE FROM episode_group_state")
             conn.execute("DELETE FROM episode_group_scrobbles")
+            conn.execute("DELETE FROM pair_analyzer_skips")
             conn.execute("DELETE FROM pair_baseline_items")
             conn.execute("DELETE FROM pair_scope_owners")
             conn.execute("DELETE FROM pair_feature_state")

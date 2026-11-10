@@ -1558,6 +1558,8 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     uid = adapter.cfg.user_id
     qlim = int(_history_limit(adapter) or 25)
     delay = _history_delay_ms(adapter)
+    items = list(items or [])
+    force_clear = any(isinstance(it, Mapping) and bool(it.get("_cw_force_clear")) for it in items)
     wants, mids, pre_unresolved = _prepare_mids(adapter, items)
     shadow = _shadow_load()
     ok = 0
@@ -1574,7 +1576,7 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[
     for chunk in chunked(mids, qlim):
         for k, iid in chunk:
             cur = int(shadow.get(k, 0))
-            nxt = max(0, cur - 1)
+            nxt = 0 if force_clear else max(0, cur - 1)
             shadow[k] = nxt
             if nxt == 0:
                 if _unmark_played(http, uid, iid):

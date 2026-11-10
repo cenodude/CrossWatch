@@ -76,8 +76,8 @@ _AUDIT_STATUS = {
     "audit_2fa_failed": "failed",
     "audit_2fa_required": "informational",
 }
-_PAST = {"add": "added", "remove": "removed", "update": "updated", "tag_dropped": "marked dropped"}
-_VERB = {"tag_dropped": "mark dropped"}
+_PAST = {"add": "added", "remove": "removed", "update": "updated", "tag_dropped": "marked dropped", "rewatch_reset": "marked unwatched"}
+_VERB = {"tag_dropped": "mark dropped", "rewatch_reset": "mark unwatched"}
 _SEVERITY = {
     "completed": "success", "resolved": "success", "rated": "success",
     "warning": "warning", "blackboxed": "warning", "unresolved": "warning",

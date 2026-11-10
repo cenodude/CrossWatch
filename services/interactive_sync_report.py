@@ -137,6 +137,7 @@ class SyncReport:
             "writes:skipped": "Writes were skipped by the sync engine.",
             "pair:skip": "The pair was skipped by the sync engine.",
             "run:pair:skip": "The pair was skipped by the sync engine.",
+            "history:rewatch_reset_unavailable": "Trakt rewatch resets were skipped because Plex is not reading marked watched items.",
         }
         reason = reasons.get(name)
         if "mass_delete" in name or "massdelete" in name:
