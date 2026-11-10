@@ -122,7 +122,7 @@ def episode_items(cfg: Mapping[str, Any], ident: str, count: int, title: str) ->
         if not coords:
             coords = [(p, i, s, e) for (p, i), (s, e) in resolve_axis_coordinate_map(
                 {"mal": ident}, episode, release_tag=tag).items()]
-        for provider, show_id, season, ep in set(coords):
+        for provider, show_id, season, ep in sorted(set(coords)):
             ruled = find_episode_overrides({provider: show_id}, season, ep, prefer="mal")
             if ruled:
                 hit = ruled_target(tag, ruled)

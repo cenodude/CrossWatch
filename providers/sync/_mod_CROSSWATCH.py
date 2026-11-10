@@ -125,7 +125,7 @@ try:
 except Exception:
     make_snapshot_progress = None  # type: ignore[assignment]
 
-__VERSION__ = "2.0"
+__VERSION__ = "2.1"
 _MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "CROSSWATCHModule", "OPS"]
 

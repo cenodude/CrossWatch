@@ -30,6 +30,21 @@ from ._common import (
 )
 
 _dbg, _info, _warn, _error = make_logger("history")
+_WATCH_FIELDS = ("watched", "watched_at", "_cw_watched_state")
+_AXIS_ORDER = ("tvdb", "tmdb")
+
+
+def _axis_rank(item: Mapping[str, Any]) -> int:
+    ids = item.get("show_ids") or {}
+    return next((n for n, axis in enumerate(_AXIS_ORDER) if isinstance(ids, Mapping) and ids.get(axis)), len(_AXIS_ORDER))
+
+
+def _replaces_numbering(incoming: Mapping[str, Any], stored: Mapping[str, Any]) -> bool:
+    return _axis_rank(incoming) < _axis_rank(stored) and not stored.get(TYPE_ORIGINS) and not stored.get(PLEX_ORIGINS)
+
+
+def _with_watch(item: Mapping[str, Any], source: Mapping[str, Any]) -> dict[str, Any]:
+    return {**item, **{field: source[field] for field in _WATCH_FIELDS if field in source}}
 
 
 def _rewatches_enabled(adapter: Any) -> bool:
@@ -260,8 +275,13 @@ def _distinct_episodes(adapter: Any, items: list[dict[str, Any]]) -> list[dict[s
         if slot is None:
             slot = len(out)
             out.append(item)
-        elif (history_epoch_from_item(item) or 0) > (history_epoch_from_item(out[slot]) or 0):
-            out[slot] = item
+        else:
+            current = out[slot]
+            newer = (history_epoch_from_item(item) or 0) > (history_epoch_from_item(current) or 0)
+            if _axis_rank(item) < _axis_rank(current):
+                out[slot] = item if newer else _with_watch(item, current)
+            elif newer:
+                out[slot] = _with_watch(current, item) if _axis_rank(current) < _axis_rank(item) else item
         for k in keys:
             slots.setdefault(k, slot)
     return out
@@ -310,13 +330,22 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             unresolved_src.append(obj)
             continue
         incoming_aliases = accepted.get(ALIAS_FIELD)
-        matches = set().union(*(aliases.get(alias, ()) for alias in _anime_keys(adapter, accepted, key)))
+        matches = {match for match in set().union(*(aliases.get(alias, ()) for alias in _anime_keys(adapter, accepted, key))) if match in cur}
         if existing is None and len(matches) == 1:
-            key = matches.pop()
-            existing = cur[key]
-            if str(existing.get("watched_at") or "") >= str(accepted.get("watched_at") or ""):
+            match = matches.pop()
+            stored = cur[match]
+            newer = str(stored.get("watched_at") or "") < str(accepted.get("watched_at") or "")
+            if _replaces_numbering(accepted, stored):
+                if not newer:
+                    accepted = _with_watch(accepted, stored)
+                    key = _history_key(adapter, accepted) or key
+                incoming_aliases = incoming_aliases or (saved and stored.get(ALIAS_FIELD))
+                del cur[match]
+            elif not newer:
                 continue
-            accepted = {**existing, **{field: accepted[field] for field in ("watched", "watched_at", "_cw_watched_state") if field in accepted}}
+            else:
+                key, existing = match, stored
+                accepted = _with_watch(existing, accepted)
         if existing is None or (str(existing.get("watched_at") or "") <= str(accepted.get("watched_at") or "")):
             if isinstance(existing, Mapping):
                 accepted = merge_tracker_identity(existing, accepted)
