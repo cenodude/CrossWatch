@@ -86,14 +86,14 @@ test("picker fits desktop, tablet and mobile in every theme",async t=>{
   const {page,picker,dialog}=await fixture(t);
   await page.locator("#add").click();
   await mkdir(".tmp",{recursive:true});
-  for(const theme of ["original","flat-dark","flat-light"]) for(const width of [1400,800,390,320]) {
-    await page.setViewportSize({width,height:900});
+  for(const theme of ["original","flat-dark","flat-light"]) for(const [width,height] of [[1400,900],[1194,834],[1024,768],[800,1024],[932,430],[844,390],[740,360],[390,844],[320,740]]) {
+    await page.setViewportSize({width,height});
     await page.evaluate(theme=>{
       document.documentElement.dataset.cwTheme=theme==="original"?"":theme;
       document.documentElement.className=theme==="original"?"cw-theme-original":theme==="flat-light"?"cw-theme-light":"";
     },theme);
     const box=await dialog.boundingBox();
-    assert.ok(box.x>=0&&box.x+box.width<=width&&box.y>=0&&box.y+box.height<=900);
+    assert.ok(box.x>=0&&box.x+box.width<=width&&box.y>=0&&box.y+box.height<=height);
     assert.equal(await picker.evaluate(el=>el.scrollWidth<=el.clientWidth),true);
     assert.equal(await picker.locator(".cw-auth-picker-results").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
     const inputBox=await picker.getByRole("searchbox").boundingBox();

@@ -794,7 +794,7 @@
           ${rating != null ? `<span class="cw-media-card-score" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}
           ${date || status ? `<div class="trk-grid-labels">${date ? `<span class="trk-grid-date" title="${esc(whenText(date))}">${esc(timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}${status ? `<span class="trk-grid-status">${status}</span>` : ""}</div>` : ""}
         </div>
-        <div class="trk-grid-copy"><strong title="${esc(title)}">${esc(title)}</strong><small>${esc(meta)}</small>${shows ? `<div class="trk-grid-progress">${progressCell(item)}${nextCell(item)}</div>` : notes ? tagChips(item.tags, 3) : feature === "progress" ? extraCell(item, feature) : ""}
+        <div class="trk-grid-copy"><strong title="${esc(title)}">${esc(title)}</strong><small>${esc(meta)}</small>${shows ? `<div class="trk-grid-progress">${progressCell(item)}</div>` : notes ? tagChips(item.tags, 3) : feature === "progress" ? extraCell(item, feature) : ""}
           ${card || (!shows && !notes) ? `<div class="trk-grid-tools">${!shows && !notes ? `${healthIcon(item, state.view === "cleanup")}<button type="button" class="trk-icon" data-trk-row-edit="${index}" title="Edit" aria-label="Edit ${esc(title)}">${icon("edit")}</button>` : ""}${card ? `<button type="button" class="trk-icon" data-trk-row-info title="Open details" aria-label="Open details for ${esc(title)}">${icon("info")}</button>` : ""}</div>` : ""}
         </div></article>`;
     }).join("");

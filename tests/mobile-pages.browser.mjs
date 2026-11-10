@@ -5,7 +5,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {readFile, readdir, mkdir} from "node:fs/promises";
-import {chromium} from "playwright";
+import {chromium, webkit} from "playwright";
 
 const styles = ["fonts/material-symbols-rounded", "themes/tokens", "css/base", "crosswatch", "css/layout", "css/components", "css/pages", "css/page-theme", "ui-shell"];
 const titles = ["The Grand Budapest Hotel", "A very long movie title that needs room on a small phone screen", "Arrival"];
@@ -14,7 +14,7 @@ const findings = items.map(item => ({...item,provider:"PLEX",feature:"history",t
 const events = items.map((item, i) => ({...item,id:String(i+1),event_type:"write_failed",severity:"error",domain:"sync",feature:"history",provider:"TRAKT",created_at:1793989800,reason_message:"The destination could not match this title.",title:item.title,summary:"History update failed",item_key:item.key}));
 
 async function fixture(t, kind, theme = "flat-dark", width = 390) {
-  const browser = await chromium.launch({headless:true});
+  const browser = await (process.env.CW_MOBILE_BROWSER === "webkit" ? webkit : chromium).launch({headless:true});
   t.after(() => browser.close());
   const page = await browser.newPage({viewport:{width,height:844},hasTouch:width<800,isMobile:width<800});
   page.setDefaultTimeout(6000);
@@ -69,14 +69,16 @@ async function screenshot(page, name) {
 }
 
 async function noOverflow(page) {
-  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth > innerWidth + 1),false);
+  const layout = await page.evaluate(() => ({width: innerWidth, scroll: document.documentElement.scrollWidth, overflow: [...document.querySelectorAll("main *")].filter(el => el.checkVisibility() && el.getBoundingClientRect().right > innerWidth + 1).slice(0, 8).map(el => el.className || el.id)}));
+  assert.ok(layout.scroll <= layout.width + 1, JSON.stringify(layout));
 }
 
 for(const theme of ["original","flat-dark","flat-light"]) {
-  for(const width of [320,390]) {
+  for(const [width, height] of [[320,740],[390,844],[740,360]]) {
     for(const kind of ["editor","tracker","events","analyzer"]) {
-      test(`${theme} ${kind}: phone workflow at ${width}px`,async t=>{
+      test(`${theme} ${kind}: phone workflow at ${width}x${height}`,async t=>{
         const {page,state,requests}=await fixture(t,kind,theme,width);
+        await page.setViewportSize({width, height});
         await noOverflow(page);
         await screenshot(page,`${theme}-${kind}-${width}`);
         if(kind==="editor") {
@@ -207,4 +209,23 @@ for(const theme of ["original","flat-dark","flat-light"]) {
       }
     });
   }
+}
+
+for (const theme of ["original", "flat-dark", "flat-light"]) for (const kind of ["editor", "tracker", "events", "analyzer"]) {
+  test(`${theme} ${kind}: tablet portrait, landscape and desktop layouts`, async t => {
+    const {page} = await fixture(t, kind, theme, 1194);
+    for (const [width, height] of [[844,390],[932,430],[768,1024],[1024,768],[1194,834],[1366,1024],[1920,1080]]) {
+      await page.setViewportSize({width, height});
+      await screenshot(page, `audit-${theme}-${kind}-${width}x${height}`);
+      await noOverflow(page);
+      if (["editor", "tracker"].includes(kind) && width <= 1320) {
+        const bounds = await page.locator(".cw-wrap").evaluate(el => ({wrap: el.getBoundingClientRect().width, main: el.querySelector(".cw-main").getBoundingClientRect().width}));
+        assert.ok(Math.abs(bounds.wrap - bounds.main) <= 1, JSON.stringify({theme, kind, width, ...bounds}));
+      }
+      if (kind === "tracker") {
+        const rows = await page.locator(".trk-toolbar .trk-seg button").evaluateAll(buttons => buttons.map(el => el.getBoundingClientRect().top));
+        assert.ok(Math.max(...rows) - Math.min(...rows) <= 1, `${theme} ${width}: media filters wrap inside their group`);
+      }
+    }
+  });
 }
