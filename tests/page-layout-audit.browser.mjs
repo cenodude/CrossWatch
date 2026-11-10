@@ -147,15 +147,21 @@ test("sign-in and verification controls remain reachable in portrait and landsca
   const browser = await engines[process.env.CW_AUDIT_BROWSER || "chromium"].launch({headless: true});
   t.after(() => browser.close());
   const page = await browser.newPage();
+  const layoutHtml = await page.evaluate(source => {
+    const doc = new DOMParser().parseFromString(source, "text/html");
+    doc.querySelectorAll("script").forEach(el => el.remove());
+    return "<!doctype html>" + doc.documentElement.outerHTML;
+  }, html);
   await page.route("https://signin.test/**", async route => {
     const path = new URL(route.request().url()).pathname;
     if (path.startsWith("/assets/")) {
       try { return route.fulfill({body: await readFile(new URL(".." + path, import.meta.url)), contentType: path.endsWith(".css") ? "text/css" : path.endsWith(".svg") ? "image/svg+xml" : "font/woff2"}); }
       catch { return route.fulfill({status: 404, body: ""}); }
     }
-    return route.fulfill({contentType: "text/html", body: html.replace(/<script[\s\S]*?<\/script>/g, "")});
+    return route.fulfill({contentType: "text/html", body: layoutHtml});
   });
   await page.goto("https://signin.test/login");
+  assert.equal(await page.locator("script").count(), 0);
   await page.locator("#totp-wrap").evaluate(el => el.classList.remove("cw-totp-hidden"));
   for (const [width, height] of viewports) {
     await page.setViewportSize({width, height});
