@@ -119,7 +119,7 @@ _INDEXES = (
     "CREATE INDEX IF NOT EXISTS changes_filter ON changes(batch, scope, action, undone_ns, find)",
     "CREATE INDEX IF NOT EXISTS changes_created ON changes(created_ns)",
 )
-ATTENTION_CODES: tuple[str, ...] = ("no_tmdb", "not_found", "mismatch", "incomplete", "episode_missing")
+ATTENTION_CODES: tuple[str, ...] = ("no_tmdb", "not_found", "mismatch", "incomplete", "episode_missing", "episode_unverified")
 _EDIT_FIELDS: tuple[str, ...] = (
     "type", "title", "year", "series_title", "series_year", "ids", "show_ids", "season", "episode", "rating",
     "rated_at", "watched_at", "progress_at", "progress_percent", "progress_ms", "collected_at",

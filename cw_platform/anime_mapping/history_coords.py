@@ -90,13 +90,49 @@ def current_aliases(item: Mapping[str, Any], context: tuple[str, dict[Any, Any] 
 
 
 def tmdb_coordinate(item: Mapping[str, Any], context: tuple[str, dict[Any, Any] | None]) -> tuple[str, int, int] | None:
+    tag, rows = context
+    if not tag or str(item.get("type") or "").strip().lower() != "episode":
+        return None
+    ids = show_ids_of(item)
+    order = str(item.get("_cw_episode_order") or "").strip().lower()
+    if order and order not in ("tvdb", "tmdb"):
+        return None
+    axes = [axis for axis in ("tvdb", "tmdb") if ids.get(axis)]
+    if rows is not None:
+        own = _episode_coordinate(item)
+        if own is None or order and not ids.get(order):
+            return None
+        key = ("tmdb_coordinate", order, tuple(sorted(ids.items())), own)
+        cached = rows.get(key)
+        if cached is None or cached[1] < time.monotonic():
+            candidates = set()
+            try:
+                for source in [order] if order else axes or [""]:
+                    selected = {k: v for k, v in ids.items() if k not in ("tvdb", "tmdb") or k == source}
+                    hit = resolve_absolute({**item, "show_ids": selected}, release_tag=tag)
+                    if hit is None:
+                        continue
+                    native = {hit.namespace: hit.target_id}
+                    if source:
+                        original = resolve_axis_coordinate_map(native, hit.absolute, release_tag=tag, target_provider=source)
+                        if original.get((source, ids[source])) != own:
+                            continue
+                    coords = resolve_axis_coordinate_map(native, hit.absolute, release_tag=tag, target_provider="tmdb")
+                    candidates.update((ident, season, episode) for (_, ident), (season, episode) in coords.items())
+                value = candidates.pop() if len(candidates) == 1 else None
+            except Exception:
+                value = None
+            cached = (value, float("inf") if value else time.monotonic() + ALIAS_MISS_SECONDS)
+            rows[key] = cached
+        return cached[0]
+    candidates = set()
     for token in current_aliases(item, context):
         provider, _, rest = token.partition(":")
         show, _, numbers = rest.partition("#s")
         season, _, episode = numbers.partition("e")
         if provider == "tmdb":
-            return show, int(season), int(episode)
-    return None
+            candidates.add((show, int(season), int(episode)))
+    return candidates.pop() if len(candidates) == 1 else None
 
 
 def _as_int(value: Any) -> int | None:

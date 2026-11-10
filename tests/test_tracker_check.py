@@ -74,7 +74,7 @@ def _episode(**extra):
     (_episode(), "ok"),
     (_episode(episode=40), "episode_missing"),
     (_episode(season=7), "episode_missing"),
-    (_episode(episode=40, _anime_absolute=40), "ok"),
+    (_episode(episode=40, _anime_absolute=40), "episode_unverified"),
     (_episode(show_ids={}), "no_tmdb"),
     ({"type": "person", "ids": {"tmdb": "1"}}, "skipped"),
 ])
