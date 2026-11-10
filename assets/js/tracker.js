@@ -1286,13 +1286,7 @@
       selection.hidden = true;
       root.querySelector(".cw-root").appendChild(selection);
       createBulkStatusMenu();
-      const header = document.querySelector("body > header");
-      const layoutObserver = new ResizeObserver(() => {
-        root.style.setProperty("--cw-selection-height", `${selection.offsetHeight}px`);
-        root.style.setProperty("--trk-header-height", `${header?.offsetHeight || 0}px`);
-      });
-      layoutObserver.observe(selection);
-      if (header) layoutObserver.observe(header);
+      new ResizeObserver(() => root.style.setProperty("--cw-selection-height", `${selection.offsetHeight}px`)).observe(selection);
       const filters = root.querySelector('[data-trk-slot="filters"]');
       const media = window.matchMedia?.(NARROW);
       const fold = () => { filters.open = !media?.matches; };

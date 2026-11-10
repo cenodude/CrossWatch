@@ -74,7 +74,7 @@ def test_cw_stores_equivalent_coordinates_once(adapter, reverse, separate_batche
     stored = _history.build_index(adapter)
     assert len(stored) == 3
     assert all(len(coordinate_tokens(row)) == 2 and "_cw_anime_map" not in row for row in stored.values())
-    assert all(len(row["show_ids"]) == 1 for row in stored.values())
+    assert all(row["show_ids"] == {"tvdb": "10"} for row in stored.values())
     for batch in (rows, list(reversed(rows))):
         _history.add(adapter, batch)
         assert len(_history.build_index(adapter)) == 3
@@ -82,9 +82,9 @@ def test_cw_stores_equivalent_coordinates_once(adapter, reverse, separate_batche
 
 def test_planned_adds_keep_one_item_per_episode(adapter):
     rows = [episode("tvdb", n) for n in (1, 2, 3)] + [episode("tmdb", 1, "2026-10-08T00:00:00Z"), episode("tmdb", 2), episode("tmdb", 3)]
-    assert _history.filter_cached_adds(adapter, rows) == [rows[3], rows[1], rows[2]]
+    assert _history.filter_cached_adds(adapter, rows) == [{**rows[0], "watched_at": "2026-10-08T00:00:00Z"}, rows[1], rows[2]]
     zones = [episode(watched_at="2026-10-07T01:00:00+02:00"), episode("tmdb", watched_at="2026-10-07T00:00:00Z")]
-    assert _history.filter_cached_adds(adapter, zones) == [zones[1]]
+    assert _history.filter_cached_adds(adapter, zones) == [{**zones[0], "watched_at": "2026-10-07T00:00:00Z"}]
     adapter.config["_cw_history_rewatches"] = True
     viewings = [episode(), episode("tmdb"), episode(watched_at="2026-10-08T00:00:00Z"), episode("tmdb", watched_at="2026-10-08T00:00:00Z")]
     assert _history.filter_cached_adds(adapter, viewings) == [viewings[0], viewings[2]]
@@ -100,6 +100,29 @@ def test_planned_adds_unchanged_without_mapping(adapter, monkeypatch, mode):
         unavailable_index(monkeypatch)
     rows = [episode(), episode("tmdb"), {**episode("tmdb"), "show_ids": {"tmdb": "999"}}]
     assert _history.filter_cached_adds(adapter, rows) == rows
+
+
+@pytest.mark.parametrize("order", ["tvdb_first", "tmdb_first", "mixed"])
+def test_planned_adds_use_one_numbering_regardless_of_order(adapter, order):
+    rows = []
+    for n in range(1, 7):
+        pair = [episode("tvdb", n), episode("tmdb", n)]
+        if order == "tmdb_first" or (order == "mixed" and n % 2):
+            pair.reverse()
+        rows += pair
+    planned = _history.filter_cached_adds(adapter, rows)
+    assert [(row["show_ids"], row["episode"]) for row in planned] == [({"tvdb": "10"}, n + 12) for n in range(1, 7)]
+
+
+@pytest.mark.parametrize("newer", [False, True])
+def test_stored_tmdb_row_moves_to_tvdb_numbering(adapter, newer):
+    _history.add(adapter, [episode("tmdb", watched_at="2026-10-08T00:00:00Z")])
+    _history.add(adapter, [episode(watched_at="2026-10-09T00:00:00Z" if newer else "2026-10-07T00:00:00Z")])
+    [row] = _history.build_index(adapter).values()
+    assert row["show_ids"] == {"tvdb": "10"}
+    assert (row["season"], row["episode"]) == (3, 13)
+    assert row["watched_at"] == ("2026-10-09T00:00:00Z" if newer else "2026-10-08T00:00:00Z")
+    assert len(coordinate_tokens(row)) == 2
 
 
 def test_newer_alias_updates_watch_without_mixing_numbering(adapter):
@@ -241,6 +264,19 @@ def test_stored_aliases_work_without_mapping_index(adapter, monkeypatch):
     assert len(_history.build_index(adapter)) == 1
     [row] = _history.build_index(adapter).values()
     assert HistoryCoordinateAliases().tokens(row) == {"tvdb:10#s03e13", "tmdb:30#s01e01"}
+
+
+def test_numbering_move_keeps_saved_aliases_without_mapping_index(adapter, monkeypatch):
+    _history.add(adapter, [episode("tmdb")])
+    unavailable_index(monkeypatch)
+    _history.add(adapter, [episode(watched_at="2026-10-08T00:00:00Z")])
+    [row] = _history.build_index(adapter).values()
+    assert row["show_ids"] == {"tvdb": "10"}
+    assert HistoryCoordinateAliases().tokens(row) == {"tvdb:10#s03e13", "tmdb:30#s01e01"}
+    _history.add(adapter, [episode("tmdb", watched_at="2026-10-09T00:00:00Z")])
+    assert len(_history.build_index(adapter)) == 1
+    assert _history.remove(adapter, [episode("tmdb")]) == (1, [])
+    assert not _history.build_index(adapter)
 
 
 def test_unrelated_or_unmapped_episodes_are_preserved(adapter):
