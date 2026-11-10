@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from cw_platform.status_mapping import Observation, ReadState, Status
-from providers.sync._status_mapping import ANIME_CAPS, NativeStatusAdapter, Record, complete_fields, observation
+from providers.sync._status_mapping import ANIME_CAPS, NativeStatusAdapter, Record, complete_fields, observation, skipped
 
 
 FIELDS = "id mediaId status progress repeat score(format: POINT_100) notes private hiddenFromStatusLists customLists advancedScores startedAt {year month day} completedAt {year month day}"
@@ -62,7 +62,8 @@ class StatusAdapter(NativeStatusAdapter):
                        if complete(entry) else Observation(ReadState.UNKNOWN))
                 row = Record(ident, "movies" if item["type"] == "movie" else "shows", item, obs, {"entry": entry, "native_ids": native_ids})
                 if ident in rows and rows[ident] != row:
-                    raise RuntimeError("anilist_status_inconsistent_entry")
+                    rows[ident] = skipped(ident, row.media, item, "anilist_status_inconsistent_entry")
+                    continue
                 rows[ident] = row
         return rows
 

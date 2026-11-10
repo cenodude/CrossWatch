@@ -34,9 +34,8 @@ class StatusAdapter(NativeStatusAdapter):
         for _, media in client.entries():
             ident = str(media["id"])
             record = self.detail(ident)
-            if record is None:
-                raise RuntimeError("myanimelist_status_snapshot_changed")
-            rows[ident] = record
+            if record is not None:
+                rows[ident] = record
         return rows
 
     def detail(self, ident):

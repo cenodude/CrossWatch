@@ -7,7 +7,7 @@ from collections import Counter
 from collections.abc import Mapping
 
 from cw_platform.status_mapping import Capabilities, Status
-from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation
+from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation, skipped
 from ._common import status_pages
 
 
@@ -73,7 +73,9 @@ def states(client, titles):
                                            for k in ("inprogress", "completed", "has_unwatched_aired"))
                         or any(k not in row or (row[k] is not None and (type(row[k]) is not int or row[k] < 0))
                                for k in ("watched_episode_count", "total_episodes_aired"))):
-                    raise RuntimeError("mdblist_status_invalid_progress")
+                    seen.add(row["id"])
+                    result[f"{kind}:{row['id']}"] = {"_cw_skipped": "mdblist_status_invalid_progress"}
+                    continue
                 seen.add(row["id"])
                 result[f"{kind}:{row['id']}"] = row
             if seen != set(batch):
@@ -122,28 +124,37 @@ class StatusAdapter(NativeStatusAdapter):
         if not isinstance(playback, list) or any(not isinstance(row, Mapping) for row in playback):
             raise RuntimeError("mdblist_status_invalid_playback")
         titles, listed, hidden, season_hidden = {}, set(), set(), set()
+        bad = {}
         for rows, membership in ((watched, None), (plays, None), (watchlist, listed), (dropped, hidden), (seasons, season_hidden)):
             for bucket, row in rows:
-                key, item = title(bucket, row)
+                found = self.identify(bucket, row)
+                if found is None:
+                    continue
+                key, item = found
                 titles[key] = item
                 if membership is not None:
                     if membership is not season_hidden and key in membership:
-                        raise RuntimeError("mdblist_status_duplicate_title")
+                        bad[key] = "mdblist_status_duplicate_title"
                     membership.add(key)
         counts, repeated = Counter(), Counter()
         play_ids = set()
         for bucket, row in plays:
+            found = self.identify(bucket, row)
+            if found is None:
+                continue
+            key, _ = found
             if bucket not in {"movies", "episodes"} or not row.get("play_id") or row["play_id"] in play_ids or not row.get("watched_at"):
-                raise RuntimeError("mdblist_status_invalid_play")
+                bad[key] = "mdblist_status_invalid_play"
+                continue
             play_ids.add(row["play_id"])
-            key, _ = title(bucket, row)
             episode_id = ((row.get("episode") or {}).get("ids") or {}).get("tmdb")
             if bucket == "episodes" and not episode_id:
-                raise RuntimeError("mdblist_status_missing_episode")
+                bad[key] = "mdblist_status_missing_episode"
+                continue
             counts[key] += 1
             repeated[(key, episode_id)] += 1
         repeats = {key for (key, _), count in repeated.items() if count > 1}
-        active = {title("movies" if row.get("type") == "movie" else "episodes", row)[0] for row in playback}
+        active = {found[0] for found in (self.identify("movies" if row.get("type") == "movie" else "episodes", row) for row in playback) if found}
         protected = {name: sorted(digest((bucket, preserved(row))) for bucket, row in rows) for name, rows in
                      (("plays", plays), ("watchlist", watchlist), ("ratings", ratings), ("collection", collection), ("seasons", seasons))}
         protected["playback"] = sorted(digest(preserved({k: v for k, v in row.items()
@@ -152,9 +163,11 @@ class StatusAdapter(NativeStatusAdapter):
         result = {}
         for key, item in titles.items():
             state = native_states[key]
-            if state["watchlist"] != (key in listed):
-                raise RuntimeError("mdblist_status_watchlist_changed")
             show = item["type"] == "show"
+            code = bad.get(key) or state.get("_cw_skipped") or ("mdblist_status_watchlist_changed" if state["watchlist"] != (key in listed) else "")
+            if code:
+                result[key] = skipped(key, "shows" if show else "movies", item, code)
+                continue
             aired, watched_count = state.get("total_episodes_aired"), state.get("watched_episode_count")
             partial = (show and type(aired) is int and type(watched_count) is int and 0 < watched_count < aired
                        and state.get("inprogress") is True and state.get("has_unwatched_aired") is True
@@ -174,6 +187,15 @@ class StatusAdapter(NativeStatusAdapter):
         if before != activities(client):
             raise RuntimeError("mdblist_status_snapshot_changed")
         return result
+
+    def identify(self, bucket, row):
+        try:
+            return title(bucket, row)
+        except RuntimeError as exc:
+            if str(exc) != "mdblist_status_missing_identity":
+                raise
+            self.skip_unidentified(str(exc))
+            return None
 
     def blockers(self, record, desired):
         if record.observation.watchlisted or record.observation.status == Status.PLANNED:

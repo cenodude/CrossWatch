@@ -233,3 +233,53 @@ def test_punchplay_status_creates_the_interaction_for_a_title_without_one(monkey
     listed = adapter.missing_record(replace(source, item={"ids": {"tmdb": "4"}}), snapshot)
     assert listed.observation.status == Status.PLANNED and listed.observation.watchlisted is True
     assert adapter.missing_record(replace(source, item={"ids": {"imdb": "tt1"}}), snapshot) is None
+
+
+def _skipped(rows):
+    return {key: row.raw["_cw_skipped"] for key, row in rows.items() if isinstance(row.raw, dict) and row.raw.get("_cw_skipped")}
+
+
+def test_simkl_skips_duplicate_and_unidentified_rows(monkeypatch):
+    from providers.sync.simkl import _history
+    show = {"status": "hold", "show": {"title": "Show", "ids": {"simkl": 1, "tmdb": 2}}}
+    other = {"status": "dropped", "show": {"title": "Other", "ids": {"simkl": 3, "tmdb": 4}}}
+    data = {"movies": [], "shows": [show, deepcopy(show), other, {"status": "hold", "show": {"title": "No id", "ids": {}}}], "anime": []}
+    monkeypatch.setattr(SIMKL, "adapter", lambda self: SimpleNamespace(client=SimpleNamespace(session=SimpleNamespace(
+        get=lambda *a, **k: SimpleNamespace(raise_for_status=lambda: None, json=lambda: deepcopy(data)))), cfg=SimpleNamespace(timeout=5)))
+    monkeypatch.setattr(_history, "_headers", lambda *args, **kwargs: {})
+    adapter = SIMKL({})
+    rows = adapter.read()
+    assert _skipped(rows) == {"shows:1": "simkl_status_duplicate_entry"}
+    assert rows["shows:3"].observation.status == Status.DROPPED
+    assert adapter.unidentified == ["simkl_status_missing_identity"]
+
+
+def test_anilist_skips_an_inconsistent_entry(monkeypatch):
+    def entry(ident, status, progress=0):
+        return {"id": ident * 10, "mediaId": ident, "status": status, "progress": progress, "repeat": 0, "notes": "", "score": 0,
+                "private": False, "completedAt": {"year": None, "month": None, "day": None},
+                "startedAt": {"year": None, "month": None, "day": None}, "hiddenFromStatusLists": False, "customLists": {},
+                "advancedScores": {}, "media": {"id": ident, "format": "TV", "title": {"english": f"Anime {ident}"}}}
+    lists = [{"entries": [entry(1, "PAUSED"), entry(2, "CURRENT")]}, {"entries": [entry(1, "DROPPED")]}]
+    monkeypatch.setattr(AniList, "client", lambda self: SimpleNamespace(viewer=lambda: {"id": 9},
+                        gql=lambda *a, **k: {"MediaListCollection": {"lists": deepcopy(lists)}}))
+    rows = AniList({}).read()
+    assert _skipped(rows) == {"1": "anilist_status_inconsistent_entry"}
+    assert rows["2"].observation.status == Status.WATCHING
+
+
+def test_punchplay_skips_duplicate_and_unidentified_interactions(monkeypatch):
+    from providers.sync.punchplay import _status as module
+    interactions = [{"tmdbId": 1, "kind": "show", "scope": "title", "showStatus": "ON_HOLD"},
+                    {"tmdbId": 1, "kind": "show", "scope": "title", "showStatus": "DROPPED"},
+                    {"tmdbId": 3, "kind": "show", "scope": "title", "showStatus": "DROPPED"},
+                    {"kind": "show", "scope": "title", "showStatus": "DROPPED"}]
+    snapshots = {"interaction": interactions, "history": [], "playback": []}
+    monkeypatch.setattr(module.StatusAdapter, "adapter", lambda self: object())
+    monkeypatch.setattr(module, "snapshot_pages", lambda adapter, resource, **kwargs: iter([deepcopy(snapshots[resource])]))
+    monkeypatch.setattr(module, "build_index", lambda adapter: {})
+    adapter = module.StatusAdapter({})
+    rows = adapter.read()
+    assert _skipped(rows) == {"show:1": "punchplay_status_duplicate_entry"}
+    assert rows["show:3"].observation.status == Status.DROPPED
+    assert adapter.unidentified == ["punchplay_status_missing_identity"]

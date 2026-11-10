@@ -2,6 +2,7 @@
 # Applier logic for adding/removing items in destination services.
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
+import re
 from collections.abc import Sequence, Mapping
 from typing import Any, Callable, cast
 from ._scope import provider_call
@@ -43,6 +44,32 @@ def _retry(fn: Callable[[], Any], *, attempts: int = 3, base_sleep: float = 0.5,
                     pass
             __import__("time").sleep(base_sleep * (2 ** i))
     raise last  # type: ignore
+
+
+_MAX_FAILED_CHUNKS = 3
+_PROVIDER_DOWN_STATUS = {401, 403, 429, 502, 503, 504}
+_PROVIDER_DOWN_TEXT = re.compile(
+    r"(?:\bhttp[ _]?|_http_|\bstatus[ _:=]*)(?:401|403|429|502|503|504)\b|^(?:401|403|429|502|503|504) (?:client|server) error",
+    re.IGNORECASE,
+)
+
+
+def _provider_down(exc: BaseException | None) -> bool:
+    try:
+        import requests
+        network = (ConnectionError, TimeoutError, requests.ConnectionError, requests.Timeout)
+    except ImportError:
+        network = (ConnectionError, TimeoutError)
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, network):
+            return True
+        status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+        if status in _PROVIDER_DOWN_STATUS or _PROVIDER_DOWN_TEXT.search(str(exc)):
+            return True
+        exc = exc.__cause__ or exc.__context__
+    return False
 
 
 def _ui_spotlight_items(
@@ -198,6 +225,7 @@ def _normalize(
     feature: str,
     emit,
     instance: str | None = None,
+    persist: bool = True,
 ) -> dict[str, Any]:
     res = dict(res or {})
     attempted = len(items)
@@ -372,9 +400,9 @@ def _normalize(
                     d["_cw_match_details"] = details
                 to_store.append(d)
 
-            if to_store:
+            if persist and to_store:
                 record_unresolved(dst, feature, to_store, hint=f"{tag}:provider_unresolved", instance=instance)
-            elif int(confirmed or 0) == 0 and items:
+            elif persist and int(confirmed or 0) == 0 and items:
                 record_unresolved(dst, feature, [dict(it) for it in items], hint=f"{tag}:fallback_unresolved", instance=instance)
         except Exception:
             pass
@@ -521,8 +549,8 @@ def _apply_chunked(
         "unresolved_keys": [],
         "errors": 0,
     }
-    def merge(chunk, raw):
-        res = _normalize(raw, chunk, tag, dst=dst, feature=feature, emit=emit, instance=instance)
+    def merge(chunk, raw, persist=True):
+        res = _normalize(raw, chunk, tag, dst=dst, feature=feature, emit=emit, instance=instance, persist=persist)
         agg["ok"] = agg["ok"] and res["ok"]
         agg["attempted"] += res["attempted"]
         agg["confirmed"] += res["confirmed"]
@@ -557,6 +585,7 @@ def _apply_chunked(
         return res
 
     pending: list[tuple[Sequence[Mapping[str, Any]], dict[str, Any]]] = []
+    failed_in_row = 0
     for i in range(0, total, csize):
         if cancel_requested():
             agg["cancelled"] = True
@@ -569,6 +598,20 @@ def _apply_chunked(
             agg["cancelled"] = True
             emit(f"{tag}:cancelled", dst=dst, feature=feature, done=done, total=total)
             break
+        except Exception as exc:
+            failed_in_row += 1
+            if _provider_down(exc) or failed_in_row >= _MAX_FAILED_CHUNKS:
+                raise
+            emit(f"{tag}:chunk_failed", dst=dst, feature=feature, done=done, total=total, count=len(chunk),
+                 error=f"{type(exc).__name__}: {str(exc)[:160]}")
+            failed = merge(chunk, {"ok": False, "confirmed": 0, "errors": 1,
+                          "unresolved": [{"item": dict(item), "reason": f"{tag}:failed"} for item in chunk if isinstance(item, Mapping)]},
+                  persist=False)
+            agg.setdefault("uncertain_keys", []).extend(failed.get("unresolved_keys") or [])
+            done += len(chunk)
+            emit(f"{tag}:progress", dst=dst, feature=feature, done=done, total=total, ok=False)
+            continue
+        failed_in_row = 0
         if finalize is not None:
             res = dict(raw or {})
             pending.append((chunk, res))

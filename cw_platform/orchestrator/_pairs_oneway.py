@@ -133,6 +133,8 @@ def compute_effective_add(
     verify_after_write,
     provider_skipped,
     deferred_keys=(),
+    uncertain_keys=(),
+    cancelled=False,
 ) -> dict[str, Any]:
     unres = set(still_unresolved or set())
     deferred = set(deferred_keys or ())
@@ -151,7 +153,9 @@ def compute_effective_add(
     success_keys = conf if (verify_after_write or have_exact_keys) else conf[:eff]
     success_keys = list(dict.fromkeys(list(success_keys) + skipped_success))
     sset = set(success_keys)
-    failed_keys = [k for k in (attempted_keys or []) if k not in sset and k not in skset]
+    uncertain = set(uncertain_keys or ())
+    failed_keys = [] if cancelled else [k for k in (attempted_keys or []) if k not in sset and k not in skset and k not in uncertain
+                                        and (not strict_pessimist or k in unres)]
     return {
         "effective": int(eff),
         "prov_confirmed": int(pc),
@@ -2075,6 +2079,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             if verify_after_write and _apply_verify_after_write_supported(dst_ops):
                 try:
                     unresolved_again = set(load_unresolved_keys(dst, feature, cross_features=_cross_feature_unresolved(feature), instance=dst_cfg.get("_cw_provider_instance")) or [])
+                    if have_exact_keys:
+                        unresolved_again -= unresolved_before
                     confirmed_keys = [k for k in confirmed_keys if k not in unresolved_again]
                 except Exception:
                     pass
@@ -2105,6 +2111,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 verify_after_write=verify_after_write,
                 provider_skipped=bool(res_add.get("skipped")),
                 deferred_keys=(add_res or {}).get("deferred_keys", []),
+                uncertain_keys=(add_res or {}).get("uncertain_keys", []),
+                cancelled=bool((add_res or {}).get("cancelled")),
             )
             prov_confirmed = _decision["prov_confirmed"]
             added_effective = _decision["effective"]

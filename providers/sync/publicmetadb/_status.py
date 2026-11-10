@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 from cw_platform.run_control import raise_if_cancelled
 from cw_platform.status_mapping import Capabilities, Status
-from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation
+from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation, skipped
 from ._common import _tmdb_metadata_api_key, _tmdb_metadata_provider, paged_items
 
 
@@ -140,45 +140,64 @@ class StatusAdapter(NativeStatusAdapter):
         data = snapshot(adapter)
         titles, hidden, listed, active = {}, set(), set(), set()
         counts, coords = Counter(), defaultdict(Counter)
-        seen = set()
+        seen, bad = set(), {}
         for row in data["watched"]:
-            key, item = title(row)
-            if not row.get("id") or row["id"] in seen or "watched_at" not in row:
-                raise RuntimeError("publicmetadb_status_invalid_history")
-            seen.add(row["id"])
+            found = self.identify(row)
+            if found is None:
+                continue
+            key, item = found
             titles[key] = item
+            if not row.get("id") or row["id"] in seen or "watched_at" not in row:
+                bad[key] = "publicmetadb_status_invalid_history"
+                continue
+            seen.add(row["id"])
             counts[key] += 1
             if item["type"] == "show":
                 season, episode = row.get("season"), row.get("episode")
                 if type(season) is not int or type(episode) is not int or season < 0 or episode <= 0:
-                    raise RuntimeError("publicmetadb_status_invalid_episode")
+                    bad[key] = "publicmetadb_status_invalid_episode"
+                    continue
                 coords[key][(season, episode)] += 1
         for name, target in (("dropped", hidden), ("resume", active)):
             for row in data[name]:
-                key, item = title(row)
+                found = self.identify(row)
+                if found is None:
+                    continue
+                key, item = found
                 if name == "dropped" and key in target:
-                    raise RuntimeError("publicmetadb_status_duplicate_title")
+                    bad[key] = "publicmetadb_status_duplicate_title"
                 titles[key] = item
                 target.add(key)
         for ident in watchlists(adapter, data["lists"]):
             for row in data[f"lists/{quote(ident, safe='')}/items"]:
-                key, item = title(row)
+                found = self.identify(row)
+                if found is None:
+                    continue
+                key, item = found
                 titles[key] = item
                 listed.add(key)
         aggregates = {}
         for row in data["watched/shows"]:
-            key, item = title(row, show=True)
+            found = self.identify(row, show=True)
+            if found is None:
+                continue
+            key, item = found
+            titles[key] = item
             regular = {coord for coord in coords[key] if coord[0] > 0}
             if key in aggregates or type(row.get("watched_episodes")) is not int or row["watched_episodes"] != len(regular):
-                raise RuntimeError("publicmetadb_status_inconsistent_progress")
+                bad[key] = "publicmetadb_status_inconsistent_progress"
+                continue
             aggregates[key] = row
-            titles[key] = item
-        if any(key not in aggregates for key in coords):
-            raise RuntimeError("publicmetadb_status_missing_progress")
+        for key in coords:
+            if key not in aggregates:
+                bad.setdefault(key, "publicmetadb_status_missing_progress")
         protected = fingerprints({k: v for k, v in data.items() if k != "dropped"})
         result = {}
         for key, item in titles.items():
             show = item["type"] == "show"
+            if key in bad:
+                result[key] = skipped(key, "shows" if show else "movies", item, bad[key])
+                continue
             repeat = any(n > 1 for n in coords[key].values()) if show else counts[key] > 1
             detail = (progress(adapter, item["ids"]["tmdb"], {coord for coord in coords[key] if coord[0] > 0})
                       if show and key not in listed and not repeat else None)
@@ -196,6 +215,15 @@ class StatusAdapter(NativeStatusAdapter):
         if fingerprints(data) != fingerprints(snapshot(adapter)):
             raise RuntimeError("publicmetadb_status_snapshot_changed")
         return result
+
+    def identify(self, row, *, show=False):
+        try:
+            return title(row, show=show)
+        except RuntimeError as exc:
+            if str(exc) != "publicmetadb_status_invalid_identity":
+                raise
+            self.skip_unidentified(str(exc))
+            return None
 
     def blockers(self, record, desired):
         if record.observation.watchlisted or record.observation.status == Status.PLANNED:

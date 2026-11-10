@@ -178,16 +178,12 @@ def test_existing_unwatched_movie_can_be_dropped_without_creation(server):
         server.adapter.write(after, Status.WATCHING)
 
 
-@pytest.mark.parametrize("case", ["missing_paging", "bad_row", "empty_page", "total", "page_count", "duplicate", "list_count", "show_id", "flag", "snapshot"])
+@pytest.mark.parametrize("case", ["missing_paging", "bad_row", "empty_page", "total", "page_count", "duplicate", "list_count", "snapshot"])
 def test_incomplete_or_inconsistent_reads_fail(server, case):
     if case == "duplicate":
         server.data["history"].append(deepcopy(server.data["history"][0]))
     elif case == "list_count":
         server.data["lists/7"]["item_count"] = 1
-    elif case == "show_id":
-        server.shows[1]["tmdb_id"] = 7
-    elif case == "flag":
-        server.shows[1]["dropped"] = True
     else:
         def hook(method, path, kwargs):
             if path == "shows/1" and case == "snapshot":
@@ -304,3 +300,20 @@ def test_runtime_readback_and_pending_writes(server, config_base, tmp_path, mode
         server.data["history/dropped"]["shows"] = []
         assert run_status_mappings(ctx, [pair], cfg, {}, store=store)["updated"] == 1
         assert tracker.note("show:tmdb:1")["status"] == "watching"
+
+
+def _skipped(rows):
+    return {key: row.raw["_cw_skipped"] for key, row in rows.items() if isinstance(row.raw, dict) and row.raw.get("_cw_skipped")}
+
+
+@pytest.mark.parametrize("case,code", [("show_id", "scrob_status_invalid_show_state"), ("flag", "scrob_status_changed_show_identity")])
+def test_inconsistent_show_state_skips_only_that_show(server, case, code):
+    if case == "show_id":
+        server.shows[1]["tmdb_id"] = 7
+    else:
+        server.shows[1]["dropped"] = True
+    rows = server.adapter.read()
+    skipped = _skipped(rows)
+    assert list(skipped.values()) == [code]
+    assert len(rows) > len(skipped)
+    assert not server.writes

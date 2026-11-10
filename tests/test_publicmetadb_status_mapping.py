@@ -114,12 +114,10 @@ def test_unsafe_transitions_are_preserved(server, case):
     assert not server.writes
 
 
-@pytest.mark.parametrize("case", ["missing_paging", "bad_row", "empty_middle", "changed_total", "repeated_page", "wrong_page", "history_duplicate", "aggregate", "snapshot_changed"])
+@pytest.mark.parametrize("case", ["missing_paging", "bad_row", "empty_middle", "changed_total", "repeated_page", "wrong_page", "history_duplicate", "snapshot_changed"])
 def test_failed_reads_do_not_publish_partial_snapshots(server, case):
     if case == "history_duplicate":
         server.rows["watched"].append(deepcopy(server.rows["watched"][0]))
-    elif case == "aggregate":
-        server.rows["watched/shows"][0]["watched_episodes"] = 2
     else:
         def hook(name, page, data):
             if name == "watched":
@@ -266,3 +264,16 @@ def test_shared_runtime_verifies_reads_and_does_not_retry_uncertain_writes(serve
         assert run_status_mappings(ctx, [pair], cfg, {}, store=store)["updated"] == 1
         assert tracker.note("show:tmdb:1")["status"] == "watching"
         assert len(server.writes) == 1
+
+
+def _skipped(rows):
+    return {key: row.raw["_cw_skipped"] for key, row in rows.items() if isinstance(row.raw, dict) and row.raw.get("_cw_skipped")}
+
+
+def test_inconsistent_show_progress_skips_only_that_show(server):
+    server.rows["watched/shows"][0]["watched_episodes"] = 2
+    rows = server.adapter.read()
+    skipped = _skipped(rows)
+    assert list(skipped.values()) == ["publicmetadb_status_inconsistent_progress"]
+    assert len(rows) == 3
+    assert not server.writes

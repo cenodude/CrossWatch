@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from cw_platform.run_control import raise_if_cancelled
 from cw_platform.status_mapping import Capabilities, Status
-from providers.sync._status_mapping import ANIME_CAPS, NativeStatusAdapter, Record, observation
+from providers.sync._status_mapping import ANIME_CAPS, NativeStatusAdapter, Record, observation, skipped
 
 
 class StatusAdapter(NativeStatusAdapter):
@@ -36,15 +36,18 @@ class StatusAdapter(NativeStatusAdapter):
                 ids = item.get("ids") or {}
                 ident = str(ids.get("simkl") or ids.get("simkl_id") or "")
                 if not ident:
-                    raise RuntimeError("simkl_status_missing_identity")
+                    self.skip_unidentified("simkl_status_missing_identity")
+                    continue
                 native = str(entry.get("status") or "")
                 protected = {k: v for k, v in entry.items() if k not in {"status", "last_watched_at", "last_updated_at", "last_updated", "movie", "show", "anime"}}
                 protected["last_watched_at"] = entry.get("last_watched_at")
                 obs = observation(native, self.statuses, protected, watchlisted=native == "plantowatch", rewatching=bool(entry.get("rewatching")))
                 key = f"{bucket}:{ident}"
+                media = "movies" if item.get("type") == "movie" else "shows"
                 if key in rows:
-                    raise RuntimeError("simkl_status_duplicate_entry")
-                rows[key] = Record(key, "movies" if item.get("type") == "movie" else "shows", item, obs, {"bucket": bucket, "entry": entry})
+                    rows[key] = skipped(key, media, item, "simkl_status_duplicate_entry")
+                    continue
+                rows[key] = Record(key, media, item, obs, {"bucket": bucket, "entry": entry})
         return rows
 
     def write(self, record, desired):

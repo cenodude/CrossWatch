@@ -8,7 +8,7 @@ from collections.abc import Mapping
 
 from cw_platform.status_mapping import Capabilities, Observation, ReadState, Status
 from cw_platform.run_control import raise_if_cancelled
-from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation
+from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation, skipped
 from ._common import cfg_section, paged_get, scrob_request, status_object, status_resume, status_rows
 from ._watchlist import watchlist_rows
 
@@ -35,7 +35,8 @@ def preserved(value):
     if "media" in value:
         media = value["media"]
         if not isinstance(media, Mapping):
-            raise RuntimeError("scrob_status_missing_media")
+            result["media"] = media
+            return result
         result["media"] = {k: v for k, v in media.items() if k in {
             "id", "tmdb_id", "tvdb_id", "imdb_id", "type", "show_tmdb_id", "show_tvdb_id", "season_number", "episode_number",
             "watched", "watch_started", "watch_pct", "rewatch", "play_count", "last_watched_at", "user_rating", "in_lists", "in_library"}}
@@ -66,9 +67,8 @@ def snapshot(adapter):
         rows = status_rows(value, "items")
         if value.get("id") != ident or type(value.get("item_count")) is not int or len(rows) != value["item_count"] or row.get("item_count") != len(rows):
             raise RuntimeError("scrob_status_incomplete_list")
-        ids = [r.get("id") for r in rows]
-        if any(type(i) is not int for i in ids) or len(ids) != len(set(ids)):
-            raise RuntimeError("scrob_status_duplicate_list_item")
+        if any(type(r.get("id")) is not int for r in rows):
+            raise RuntimeError("scrob_status_invalid_list")
         details[ident] = value
     result["list_details"] = details
     return result
@@ -96,11 +96,16 @@ class StatusAdapter(NativeStatusAdapter):
         adapter = self.adapter()
         data = snapshot(adapter)
         titles, hidden, listed, active, native = {}, set(), set(), set(), {}
-        counts, repeats = Counter(), Counter()
+        counts, repeats, bad = Counter(), Counter(), {}
         def add(media, kind=None):
             if not isinstance(media, Mapping):
-                raise RuntimeError("scrob_status_missing_media")
-            value = title(media, kind)
+                self.skip_unidentified("scrob_status_missing_media")
+                return None
+            try:
+                value = title(media, kind)
+            except RuntimeError as exc:
+                self.skip_unidentified(str(exc))
+                return None
             if value is None:
                 return None
             key, item = value
@@ -108,8 +113,8 @@ class StatusAdapter(NativeStatusAdapter):
             if item["type"] == "movie":
                 ident = media.get("id")
                 if type(ident) is not int or ident <= 0 or (key in native and native[key]["id"] != ident):
-                    raise RuntimeError("scrob_status_ambiguous_movie")
-                if key not in native or "watched" in media:
+                    bad[key] = "scrob_status_ambiguous_movie"
+                elif key not in native or "watched" in media:
                     native[key] = media
             return key
         for row in data["history"]:
@@ -117,7 +122,8 @@ class StatusAdapter(NativeStatusAdapter):
             if key is None:
                 continue
             if type(row.get("completed")) is not bool or "watched_at" not in row or type(row.get("play_count")) is not int:
-                raise RuntimeError("scrob_status_invalid_history")
+                bad[key] = "scrob_status_invalid_history"
+                continue
             if row["completed"]:
                 counts[key] += 1
                 repeats[(key, row["media"].get("id"))] += max(1, row["play_count"])
@@ -127,7 +133,7 @@ class StatusAdapter(NativeStatusAdapter):
                 if key is None:
                     continue
                 if key in hidden:
-                    raise RuntimeError("scrob_status_duplicate_dropped")
+                    bad[key] = "scrob_status_duplicate_dropped"
                 hidden.add(key)
                 if kind == "series":
                     native[key] = row
@@ -151,15 +157,21 @@ class StatusAdapter(NativeStatusAdapter):
         result = {}
         for key, item in titles.items():
             show = item["type"] == "show"
+            media = "shows" if show else "movies"
+            if key in bad:
+                result[key] = skipped(key, media, item, bad[key])
+                continue
             state = status_object(adapter, f"shows/{item['ids']['tmdb']}") if show else native[key]
             if show:
                 if (state.get("tmdb_id") != int(item["ids"]["tmdb"]) or type(state.get("id")) is not int or state["id"] <= 0
                         or any(type(state.get(k)) is not bool for k in ("watched", "watch_started", "dropped"))
                         or type(state.get("watch_pct")) not in (int, float) or not 0 <= state["watch_pct"] <= 100
                         or "rewatch" not in state or not isinstance(state.get("season_states"), Mapping)):
-                    raise RuntimeError("scrob_status_invalid_show_state")
+                    result[key] = skipped(key, media, item, "scrob_status_invalid_show_state")
+                    continue
                 if state["dropped"] != (key in hidden) or (key in native and native[key]["id"] != state["id"]):
-                    raise RuntimeError("scrob_status_changed_show_identity")
+                    result[key] = skipped(key, media, item, "scrob_status_changed_show_identity")
+                    continue
             partial = show and state["watch_started"] and not state["watched"] and state["watch_pct"] < 100 and bool(counts[key])
             watched = state.get("watched") is True or bool(counts[key]) and not show
             completed = watched and (not show or str(state.get("status") or "").lower() in {"ended", "canceled"})

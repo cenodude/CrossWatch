@@ -147,13 +147,11 @@ def test_protected_transitions_never_write(server, case):
     assert not server.writes
 
 
-@pytest.mark.parametrize("case", ["missing_pagination", "empty_middle", "repeated_cursor", "repeated_page", "changed_total", "bad_row", "http", "activity", "missing_state", "duplicate_state", "watchlist_changed", "duplicate_play"])
+@pytest.mark.parametrize("case", ["missing_pagination", "empty_middle", "repeated_cursor", "repeated_page", "changed_total", "bad_row", "http", "activity", "missing_state", "duplicate_state", "duplicate_play"])
 def test_incomplete_or_inconsistent_reads_fail(server, case):
     if case in {"missing_state", "duplicate_state"}:
         server.client.post = lambda *a, **k: response({"type": "show", "provider": "tmdb", "not_found": [],
              "items": [] if case == "missing_state" else [server.native[1], server.native[1], server.native[3]]})
-    elif case == "watchlist_changed":
-        server.native[1]["watchlist"] = True
     elif case == "duplicate_play":
         server.rows["plays"].append(deepcopy(server.rows["plays"][0]))
     else:
@@ -208,8 +206,9 @@ def test_state_batches_are_complete_without_a_total_title_cap(server):
 @pytest.mark.parametrize("field,value", [("completed", "false"), ("inprogress", 1), ("watched_episode_count", -1)])
 def test_invalid_progress_is_not_coerced(server, field, value):
     server.native[1][field] = value
-    with pytest.raises(RuntimeError, match="invalid_progress"):
-        server.adapter.read()
+    rows = server.adapter.read()
+    assert _skipped(rows) == {"show:1": "mdblist_status_invalid_progress"}
+    assert rows["show:1"].observation.status is None
 
 
 def test_movie_completion_is_read_only_and_planned_stays_frozen(server):
@@ -275,3 +274,15 @@ def test_runtime_verifies_readback_and_keeps_uncertain_writes_pending(server, co
         assert run_status_mappings(ctx, [pair], cfg, {}, store=store)["updated"] == 1
         assert tracker.note("show:tmdb:1")["status"] == "watching"
         assert len(server.writes) == 1
+
+
+def _skipped(rows):
+    return {key: row.raw["_cw_skipped"] for key, row in rows.items() if isinstance(row.raw, dict) and row.raw.get("_cw_skipped")}
+
+
+def test_watchlist_change_during_read_skips_only_that_title(server):
+    server.native[1]["watchlist"] = True
+    rows = server.adapter.read()
+    assert _skipped(rows) == {"show:1": "mdblist_status_watchlist_changed"}
+    assert len(rows) > 1
+    assert not server.writes
