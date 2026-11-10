@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import vm from "node:vm";
-import {mappingAppliesToRow, candidateConflict, correctedItem, correctedEpisode, movieDraft, mappingGroups, sameSeason, seriesTitle} from "../assets/js/interactive-sync-mapping.js";
+import {mappingAppliesToRow, candidateConflict, changeSummary, correctedItem, correctedEpisode, movieDraft, mappingGroups, sameSeason, seriesTitle} from "../assets/js/interactive-sync-mapping.js";
 
 test("status conflicts show actual labels and default to leaving both sides unchanged", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
@@ -606,4 +606,14 @@ test("Apply requires confirmation for dry run and never reuses it", async () => 
   assert.equal(requests.length,2);
   assert.equal(requests[1].body.confirm_dry_run,undefined);
   assert.equal(prompts.length,3);
+});
+
+test("change summary reports a filled year", () => {
+  const original = {type:"movie", title:"Ant-Man", ids:{tmdb:"102899"}};
+  assert.equal(changeSummary(original, {...original, year:2015}), "year");
+  assert.equal(changeSummary({...original, year:2015}, {...original, year:2015}), "");
+  assert.equal(changeSummary({type:"episode", series_title:"Show", season:1, episode:1, show_ids:{tmdb:"1"}}, {type:"episode", series_title:"Show", series_year:2020, season:1, episode:1, show_ids:{tmdb:"1"}}), "year");
+  assert.equal(changeSummary({type:"episode", series_title:"Show", year:2020, season:1, episode:1, show_ids:{tmdb:"1"}}, {type:"episode", series_title:"Show", year:2020, series_year:2020, season:1, episode:1, show_ids:{tmdb:"1"}}), "year");
+  assert.equal(changeSummary(original, {...original, year:"2015"}), "year");
+  assert.equal(changeSummary({...original, year:2015}, {...original, year:"2015"}), "");
 });

@@ -466,6 +466,15 @@ def test_api_replace_takes_the_mapped_identity_and_keeps_the_watch(client, base)
     assert row["watched_at"] == MOVIE["watched_at"]
     assert client.post("/api/tracker/replace", json={"feature": "history", "key": "tmdb:603", "item": {"title": "x"}}).status_code == 400
 
+def test_api_replace_fills_a_missing_year_from_the_same_match(client, base):
+    TrackerStore(base).write_state("history", {"tmdb:102899": {"type": "movie", "title": "Ant-Man", "ids": {"tmdb": "102899"}, "watched_at": MOVIE["watched_at"]}})
+    mapped = {"type": "movie", "title": "Ant-Man", "year": 2015, "ids": {"tmdb": "102899"}}
+    res = client.post("/api/tracker/replace", json={"feature": "history", "key": "tmdb:102899", "item": mapped})
+    assert res.status_code == 200, res.text
+    assert _items(base, "history")["tmdb:102899"]["year"] == 2015
+    again = client.post("/api/tracker/replace", json={"feature": "history", "key": "tmdb:102899", "item": mapped})
+    assert again.status_code == 400 and again.json()["error"] == "no_changes"
+
 
 @pytest.mark.parametrize("endpoint", ["replace", "edit-title"])
 @pytest.mark.parametrize("original_imdb", ["tt0113277", "tt0133093"])
