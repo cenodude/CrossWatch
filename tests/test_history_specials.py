@@ -181,6 +181,11 @@ class _MDBListResponse:
         return self._payload
 
 
+@pytest.fixture(autouse=True)
+def _mdblist_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(mdblist_history, "state_file", lambda name: tmp_path / name)
+
+
 def _mdblist_adapter(*, rewatches: bool = True) -> SimpleNamespace:
     return SimpleNamespace(
         config={"_cw_history_rewatches": rewatches},
@@ -261,7 +266,7 @@ def test_mdblist_rewatch_add_uses_report_added_and_confirms_new_play(monkeypatch
     assert result["unresolved"] == []
 
 
-def test_mdblist_rewatch_add_marks_collapsed_play_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mdblist_rewatch_add_marks_acknowledged_play_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_request(adapter, method, url, **kwargs):
         return _MDBListResponse(
             payload={
@@ -295,8 +300,9 @@ def test_mdblist_rewatch_add_marks_collapsed_play_unresolved(monkeypatch: pytest
     )
 
     assert result["confirmed_keys"] == []
-    assert result["unresolved"][0]["hint"] == "mdblist_play_collapsed"
-    assert result["unresolved"][0]["key"] == "tmdb:949@1767225600"
+    assert result["skipped_keys"] == ["tmdb:949@1767225600"]
+    assert result["unresolved"] == []
+    assert result["count"] == 0
 
 
 def test_mdblist_rewatch_remove_uses_play_id(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -417,7 +423,7 @@ def test_mdblist_rewatch_remove_show_falls_back_to_item_remove(monkeypatch: pyte
     assert result["unresolved"] == []
 
 
-def test_mdblist_rewatch_add_without_play_report_confirms_attempted(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mdblist_rewatch_add_without_play_report_stays_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_request(adapter, method, url, **kwargs):
         return _MDBListResponse(payload={"added": {"movies": 1}, "not_found": {}})
 
@@ -441,11 +447,11 @@ def test_mdblist_rewatch_add_without_play_report_confirms_attempted(monkeypatch:
         ],
     )
 
-    assert result["confirmed_keys"] == ["tmdb:949@1767225600"]
-    assert result["unresolved"] == []
+    assert result["confirmed_keys"] == []
+    assert result["unresolved"][0]["hint"] == "mdblist_play_report_missing"
 
 
-def test_mdblist_rewatch_add_unchanged_play_is_confirmed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mdblist_rewatch_add_empty_play_report_stays_unresolved(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_request(adapter, method, url, **kwargs):
         return _MDBListResponse(
             payload={
@@ -475,8 +481,8 @@ def test_mdblist_rewatch_add_unchanged_play_is_confirmed(monkeypatch: pytest.Mon
         ],
     )
 
-    assert result["confirmed_keys"] == ["tmdb:22293@1550178000"]
-    assert result["unresolved"] == []
+    assert result["confirmed_keys"] == []
+    assert result["unresolved"][0]["hint"] == "mdblist_play_report_missing"
 
 
 def test_mdblist_rewatch_add_matches_millisecond_watched_at(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -120,6 +120,7 @@ OUTCOMES = {
     "floppy_collection_episodes_only": ("Individual episodes required", "Floppy collection sync requires individual episodes for TV items. Whole shows and seasons cannot be added by this operation."),
     "floppy_watchlist_missing": ("Destination watchlist unavailable", "CrossWatch could not identify the destination watchlist. Check the selected Floppy list before retrying."),
     "mdblist_play_collapsed": ("Separate watch not created", "MDBList reported that this request did not add a separate play. Check the destination history before retrying this watch."),
+    "mdblist_play_report_missing": ("Watch not confirmed", "MDBList did not return an acknowledgment for this watch. CrossWatch will retry it."),
     "play_not_found": ("Watch event not found", "The destination could not find the requested watch event to remove. Refresh destination history and check its event ID."),
     "play_response_unmatched": ("Watch response could not be matched", "CrossWatch could not associate a returned watch event with the submitted entries. Check destination history before retrying; a watch may already have been recorded."),
     "invalid_api_path": ("Invalid provider request path", "CrossWatch could not construct a valid provider request path. Check the connection configuration and report the failure if it persists."),
