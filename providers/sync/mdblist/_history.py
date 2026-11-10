@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import os
 import time
@@ -60,6 +61,7 @@ URL_REMOVE = f"{BASE}/sync/watched/remove"
 URL_REMOVE_PLAYS = f"{BASE}/sync/watched/plays/remove"
 
 PLAY_REPORT_MAX_ITEMS = 100
+PLAY_MERGE_WINDOW_SECONDS = 12 * 60 * 60
 
 IMDB_RE = re.compile(r'^tt\d+$')
 EP_TAG_RE = re.compile(r'^S\d{2}E\d{2}$')
@@ -107,6 +109,68 @@ def _log(msg: str, **fields: Any) -> None:
 
 def _cache_path() -> Path:
     return state_file("mdblist_history.index.json")
+
+
+def _acknowledged_path(adapter: Any) -> Path:
+    cfg = _cfg(adapter)
+    account = next((str(cfg.get(k)) for k in ("user_id", "username", "api_key", "access_token") if cfg.get(k)), "")
+    instance = str(getattr(adapter, "instance_id", None) or "default")
+    scope = hashlib.sha256(json.dumps([instance, account]).encode("utf-8")).hexdigest()[:20]
+    return state_file(f"mdblist_history.acknowledged.{scope}.json")
+
+
+def _load_acknowledged(adapter: Any) -> set[str]:
+    data = read_json(_acknowledged_path(adapter))
+    keys = data.get("keys") if isinstance(data, Mapping) else None
+    return {key for key in keys if isinstance(key, str) and "@" in key} if isinstance(keys, list) else set()
+
+
+def _save_acknowledged(adapter: Any, keys: set[str]) -> None:
+    write_json(_acknowledged_path(adapter), {"keys": sorted(keys)})
+
+
+def _acknowledgment_keys(item: Mapping[str, Any]) -> set[str]:
+    kind = _type_norm(item.get("type"))
+    if kind not in ("movie", "episode"):
+        return set()
+    variants = [item]
+    show_ids = item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else {}
+    for field in ("ids", "show_ids") if kind == "episode" else ("ids",):
+        ids = item.get(field)
+        if not isinstance(ids, Mapping):
+            continue
+        for provider, value in ids.items():
+            variant = dict(item, ids={}, show_ids={})
+            variant[field] = {provider: value}
+            if kind == "episode" and field == "ids" and show_ids:
+                if str(value) == str(show_ids.get(provider)):
+                    continue
+                variant.pop("season", None)
+                variant.pop("episode", None)
+            variants.append(variant)
+    return {f"{kind}:{key}" for variant in variants if (key := _event_key(variant)) and not key.startswith("unknown:")}
+
+
+def _prune_acknowledged(adapter: Any, index: Mapping[str, Any]) -> None:
+    acknowledged = _load_acknowledged(adapter)
+    if not acknowledged:
+        return
+    events = {key for item in index.values() if isinstance(item, Mapping) for key in _acknowledgment_keys(item)}
+    times: dict[str, list[int]] = {}
+    for key in events:
+        base, _, timestamp = key.rpartition("@")
+        times.setdefault(base, []).append(int(timestamp))
+    remaining = set()
+    for key in acknowledged - events:
+        base, _, timestamp = key.rpartition("@")
+        try:
+            watched_at = int(timestamp)
+        except ValueError:
+            continue
+        if any(abs(watched_at - remote_at) <= PLAY_MERGE_WINDOW_SECONDS for remote_at in times.get(base, [])):
+            remaining.add(key)
+    if remaining != acknowledged:
+        _save_acknowledged(adapter, remaining)
 
 _cfg = cfg_section
 _cfg_int = cfg_int
@@ -1081,6 +1145,7 @@ def _build_event_index(
             pass
 
     _dbg("index_fetch_counts", count=len(out), latest_seen=latest_seen or "-", source="plays", complete=complete_fetch)
+    _prune_acknowledged(adapter, out)
     _info("index_done", count=len(out), source="plays")
     return out
 
@@ -1786,6 +1851,7 @@ def _event_write_result(
     confirmed_keys: Iterable[str],
     unresolved: list[dict[str, Any]],
     attempted: int,
+    skipped_keys: Iterable[str] = (),
 ) -> dict[str, Any]:
     confirmed = [str(k) for k in dict.fromkeys(k for k in confirmed_keys if k)]
     unresolved_keys = [
@@ -1794,11 +1860,15 @@ def _event_write_result(
         if isinstance(u, Mapping) and str(u.get("key") or "").strip()
     ]
     unresolved_key_set = set(unresolved_keys)
-    confirmed = [k for k in confirmed if k not in unresolved_key_set]
+    skipped = [str(k) for k in dict.fromkeys(k for k in skipped_keys if k) if k not in unresolved_key_set]
+    confirmed = [k for k in confirmed if k not in unresolved_key_set and k not in skipped]
     return {
         "ok": not unresolved,
         "count": len(confirmed),
         "confirmed_keys": confirmed,
+        "skipped": len(skipped),
+        "skipped_keys": skipped,
+        "presence_confirmed_keys": confirmed,
         "unresolved": unresolved,
         "unresolved_keys": list(dict.fromkeys(unresolved_keys)),
         "attempted": attempted,
@@ -1817,6 +1887,7 @@ def _merge_event_results(
         confirmed_keys=confirmed,
         unresolved=unresolved,
         attempted=int(second.get("attempted") or 0),
+        skipped_keys=list(first.get("skipped_keys") or []) + list(second.get("skipped_keys") or []),
     )
 
 
@@ -1979,6 +2050,17 @@ def _write(
         chunk_size = max(1, min(chunk_size, PLAY_REPORT_MAX_ITEMS))
 
     attempted_total = len(items_list)
+    skipped_keys: list[str] = []
+    acknowledged = _load_acknowledged(adapter) if event_mode and not unwatch else set()
+    if acknowledged:
+        pending = []
+        for item in items_list:
+            destination = _with_mdblist_anime_coordinate(adapter, item)
+            if _acknowledgment_keys(destination) & acknowledged:
+                skipped_keys.append(_source_event_key(adapter, item))
+            else:
+                pending.append(item)
+        items_list = pending
     play_result: dict[str, Any] | None = None
     if event_mode and unwatch:
         rollup_items = [it for it in items_list if _type_norm(it.get("type")) in ("show", "season")]
@@ -2002,7 +2084,7 @@ def _write(
         if event_mode:
             return _merge_event_results(
                 play_result,
-                _event_write_result(confirmed_keys=[], unresolved=[], attempted=attempted_total),
+                _event_write_result(confirmed_keys=[], unresolved=[], attempted=attempted_total, skipped_keys=skipped_keys),
             )
         return 0, []
 
@@ -2028,6 +2110,11 @@ def _write(
 
     def _unresolved_for_sent(bucket_name: str, sent: Mapping[str, Any], hint: str) -> list[dict[str, Any]]:
         ids = sent.get("ids") if isinstance(sent.get("ids"), Mapping) else {}
+        if event_mode and bucket_name in ("movies", "episodes"):
+            candidate = {"type": bucket_name[:-1], "ids": ids, "watched_at": sent.get("watched_at")}
+            matches = [item for item in accepted if _same_event_candidate(adapter, candidate, item)]
+            if matches:
+                return [_unresolved_entry(item, hint) for item in matches]
         if bucket_name == "episodes":
             attempted = _episode_attempt_for_row(sent)
             if attempted is not None:
@@ -2042,6 +2129,8 @@ def _write(
         if not isinstance(plays, list):
             return None
         applied = 0
+        acknowledged_before = set(acknowledged)
+        failed_keys = {str(entry.get("key") or "") for entry in unresolved}
         for row in plays:
             if not isinstance(row, Mapping):
                 continue
@@ -2052,11 +2141,19 @@ def _write(
             if matched is None:
                 unresolved.append(_unresolved_entry(play_item, "play_response_unmatched"))
                 continue
+            if _source_event_key(adapter, matched) in failed_keys or canonical_key(id_minimal(matched)) in failed_keys:
+                continue
             if row.get("added") is False:
-                unresolved.append(_unresolved_entry(matched, "mdblist_play_collapsed"))
+                skipped_keys.append(_source_event_key(adapter, matched))
+                acknowledged.update(_acknowledgment_keys(matched))
+                continue
+            if row.get("added") is not True:
+                unresolved.append(_unresolved_entry(matched, "mdblist_play_report_missing"))
                 continue
             confirmed_keys.append(_source_event_key(adapter, matched))
             applied += 1
+        if acknowledged != acknowledged_before:
+            _save_acknowledged(adapter, acknowledged)
         return applied
 
     def _apply_success(payload_rows: list[dict[str, Any]], bucket_name: str, data: Mapping[str, Any], *, is_unwatch: bool) -> int:
@@ -2278,12 +2375,15 @@ def _write(
                 base = str(canonical_key(id_minimal(it)) or "").strip()
             except Exception:
                 base = ""
-            if base and base in failed_keys:
+            if key in failed_keys or (base and base in failed_keys) or key in skipped_keys:
+                continue
+            if not unwatch and _type_norm(it.get("type")) in ("movie", "episode") and key not in confirmed_keys:
+                unresolved.append(_unresolved_entry(it, "mdblist_play_report_missing"))
                 continue
             confirmed_keys.append(key)
         return _merge_event_results(
             play_result,
-            _event_write_result(confirmed_keys=confirmed_keys, unresolved=unresolved, attempted=attempted_total),
+            _event_write_result(confirmed_keys=confirmed_keys, unresolved=unresolved, attempted=attempted_total, skipped_keys=skipped_keys),
         )
     return ok, unresolved
 

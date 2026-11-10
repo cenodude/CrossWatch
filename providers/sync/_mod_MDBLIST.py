@@ -146,7 +146,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.1"
+__VERSION__ = "2.2"
 _MANUAL_RATING_SCALE = {"step": 0.5, "min": 1}
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
