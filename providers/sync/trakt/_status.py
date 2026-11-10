@@ -155,7 +155,6 @@ class StatusAdapter(NativeStatusAdapter):
         protected = {name: sorted(digest(preserved_row(row)) for row in rows) for name, rows in
                      (("history", history), ("watchlist", watchlist), ("ratings", ratings), ("playback", playback), ("notes", notes))}
         titles, listed, hidden = {}, set(), set()
-        plays = Counter()
         counts = Counter()
         play_ids = defaultdict(list)
         bad = {}
@@ -182,11 +181,9 @@ class StatusAdapter(NativeStatusAdapter):
                     if item["type"] == "show" and not episode_id:
                         bad[key] = "trakt_status_missing_episode"
                         continue
-                    plays[(key, episode_id)] += 1
                     counts[key] += 1
                     play_ids[key].append(row["id"])
         active = {found[0] for found in map(self.identify, playback) if found}
-        repeats = {key for (key, _), count in plays.items() if count > 1}
         hidden_at = ((before.get("shows") or {}).get("hidden_at"), (before.get("seasons") or {}).get("hidden_at"))
         kept_progress = {}
         result = {}
@@ -197,7 +194,7 @@ class StatusAdapter(NativeStatusAdapter):
                 continue
             progress = {}
             partial = completed = False
-            repeat = key in repeats
+            repeat = False
             if item["type"] == "show":
                 marker = (tuple(sorted(str(value) for value in play_ids.get(key, ()))), hidden_at)
                 ended = media.get("status") in {"ended", "canceled"}
@@ -217,7 +214,7 @@ class StatusAdapter(NativeStatusAdapter):
                     continue
                 partial = 0 < watched < aired
                 completed = aired > 0 and watched == aired and media.get("status") in {"ended", "canceled"}
-                repeat |= bool(progress["reset_at"])
+                repeat = bool(progress["reset_at"])
             else:
                 completed = bool(counts[key])
             native = ("planned" if key in listed else "dropped" if key in hidden else

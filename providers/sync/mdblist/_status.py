@@ -95,7 +95,7 @@ class StatusAdapter(NativeStatusAdapter):
     }
     effects = {
         "dropped": "Sets MDBList's Dropped flag on an existing partly watched show. No watches or Watchlist entries are created.",
-        "watching": "Restores a Dropped show with verified incomplete progress. Dropped seasons, completed titles and rewatches are preserved.",
+        "watching": "Restores a Dropped show with verified incomplete progress. Dropped seasons and completed titles are preserved.",
         "completed": "Read from explicit completed state. Caught-up returning shows are not Completed. Completion writes are unavailable.",
     }
     statuses = {status.value: status for status in Status}
@@ -136,7 +136,7 @@ class StatusAdapter(NativeStatusAdapter):
                     if membership is not season_hidden and key in membership:
                         bad[key] = "mdblist_status_duplicate_title"
                     membership.add(key)
-        counts, repeated = Counter(), Counter()
+        counts = Counter()
         play_ids = set()
         for bucket, row in plays:
             found = self.identify(bucket, row)
@@ -152,8 +152,6 @@ class StatusAdapter(NativeStatusAdapter):
                 bad[key] = "mdblist_status_missing_episode"
                 continue
             counts[key] += 1
-            repeated[(key, episode_id)] += 1
-        repeats = {key for (key, _), count in repeated.items() if count > 1}
         active = {found[0] for found in (self.identify("movies" if row.get("type") == "movie" else "episodes", row) for row in playback) if found}
         protected = {name: sorted(digest((bucket, preserved(row))) for bucket, row in rows) for name, rows in
                      (("plays", plays), ("watchlist", watchlist), ("ratings", ratings), ("collection", collection), ("seasons", seasons))}
@@ -180,7 +178,7 @@ class StatusAdapter(NativeStatusAdapter):
                       "completed" if completed else "dropped" if key in hidden else
                       "watching" if partial and state["watched"] and counts[key] else
                       "caught_up" if caught_up else "untracked" if untracked else "unknown")
-            obs = observation(native, self.statuses, {**protected, "state": state}, watchlisted=key in listed, rewatching=key in repeats)
+            obs = observation(native, self.statuses, {**protected, "state": state}, watchlisted=key in listed)
             result[key] = Record(key, "shows" if show else "movies", item, obs,
                 {"partial": partial, "completed": completed, "has_history": bool(counts[key]) and state["watched"],
                  "has_playback": key in active, "dropped_seasons": key in season_hidden})

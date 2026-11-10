@@ -125,15 +125,16 @@ test("flat-dark surfaces, secondary text and disabled sync actions remain distin
   const colors = await page.evaluate(() => {
     const root = getComputedStyle(document.documentElement);
     const token = name => root.getPropertyValue(name).trim();
-    return {background: token("--bg"), panel: token("--panel"), raised: token("--cw-theme-surface-strong"), border: token("--border"), text: token("--fg"), muted: token("--muted"), disabled: getComputedStyle(document.querySelector(".is-header-actions button:disabled")).opacity};
+    return {background: token("--bg"), panel: token("--panel"), raised: token("--cw-theme-surface-strong"), border: token("--border"), text: token("--fg"), muted: token("--muted"), shadow: getComputedStyle(document.querySelector(".is-route")).boxShadow, disabled: getComputedStyle(document.querySelector(".is-header-actions button:disabled")).opacity};
   });
   const luminance = hex => {
     const linear = hex.slice(1).match(/../g).map(part => parseInt(part, 16) / 255).map(c => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4);
     return linear.reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
   };
   const contrast = (a, b) => { const values = [luminance(a), luminance(b)].sort((a, b) => b - a); return (values[0] + .05) / (values[1] + .05); };
-  assert.ok(contrast(colors.panel, colors.background) >= 1.1);
-  assert.ok(contrast(colors.border, colors.panel) >= 1.6);
+  for (const surface of [colors.background, colors.panel, colors.raised]) assert.ok(luminance(surface) < .01, "Flat-dark surfaces should stay near black");
+  assert.ok(contrast(colors.border, colors.panel) < 1.3, "Panel borders should stay subdued");
+  assert.notEqual(colors.shadow, "none", "Panels should use shadows for depth");
   for (const background of [colors.background, colors.panel, colors.raised]) {
     assert.ok(contrast(colors.text, background) >= 4.5);
     assert.ok(contrast(colors.muted, background) >= 4.5);

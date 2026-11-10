@@ -181,12 +181,18 @@ def test_stale_early_counts_do_not_hide_later_history(server):
     assert any(path == "/sync/history" and kw["params"]["page"] == 4 for path, kw in server.calls)
 
 
-@pytest.mark.parametrize("case", ["reset", "repeat", "playback", "planned", "completed", "zero_history"])
+def test_repeated_plays_do_not_block_a_status_write(server):
+    server.rows["/sync/history"].append({**server.rows["/sync/history"][0], "id": 4})
+    row = server.adapter.read()["show:1"]
+    assert row.observation.rewatching is False
+    server.adapter.write(row, Status.DROPPED)
+    assert server.adapter.read()["show:1"].observation.status == Status.DROPPED
+
+
+@pytest.mark.parametrize("case", ["reset", "playback", "planned", "completed", "zero_history"])
 def test_unsafe_transitions_never_write(server, case):
     if case == "reset":
         server.progress[1]["reset_at"] = "now"
-    elif case == "repeat":
-        server.rows["/sync/history"].append({**server.rows["/sync/history"][0], "id": 4})
     elif case == "playback":
         server.rows["/sync/playback"] = [{"id": 9, "show": show(1), "progress": 50}]
     elif case == "planned":

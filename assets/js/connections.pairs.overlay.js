@@ -2,11 +2,6 @@
 
 (function () {
   let _renderBusy = false;
-  let _lastHost = null;
-  let _lastBoard = null;
-  let _resizeTimer = 0;
-  let _limitTimer = 0;
-  let _limitTries = 0;
   const _renderedPairs = new WeakMap();
   let _pairDrag = null;
   let _reorderBusy = false;
@@ -32,41 +27,6 @@
   };
   const isPlaylistManagedPair = (pair) => String(playlistBlock(pair).managed_by || "").trim().toLowerCase() === "playlists";
 
-
-  function scheduleViewportLimit(delay = 0) {
-    clearTimeout(_limitTimer);
-    _limitTimer = setTimeout(() => applyPairsViewportLimit(5), delay);
-  }
-
-  function applyPairsViewportLimit(visibleCount = 5) {
-    const host = _lastHost;
-    const board = _lastBoard;
-    if (!host || !board) return;
-
-    if (!host.offsetParent) {
-      if (_limitTries++ < 10) scheduleViewportLimit(80);
-      return;
-    }
-    _limitTries = 0;
-
-    const cards = [...board.querySelectorAll(".pair-card")];
-    if (window.matchMedia("(max-width: 760px)").matches || cards.length <= visibleCount) {
-      host.style.maxHeight = "";
-      host.style.overflowY = "";
-      host.style.paddingRight = "";
-      return;
-    }
-
-    const nth = cards[visibleCount - 1];
-    if (!nth || nth.offsetHeight < 12) { scheduleViewportLimit(60); return; }
-
-    const pb = parseFloat(getComputedStyle(board).paddingBottom || "0") || 0;
-    const max = nth.offsetTop + nth.offsetHeight + pb;
-
-    host.style.maxHeight = Math.ceil(max) + "px";
-    host.style.overflowY = "auto";
-    host.style.paddingRight = "6px";
-  }
 
   function ensureHost() {
     const host = document.getElementById("pairs_list");
@@ -132,6 +92,14 @@
       show(el, e);
     }, { passive: true });
 
+    host.addEventListener("focusin", event => {
+      const el = event.target.closest?.("[data-tip]");
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      show(el, { clientX: rect.left, clientY: rect.bottom });
+    });
+    host.addEventListener("focusout", hide);
+    host.addEventListener("keydown", event => { if (event.key === "Escape") hide(); });
     host.addEventListener("pointermove", move, { passive: true });
     host.addEventListener("pointerout", hide, { passive: true });
     host.addEventListener("pointerdown", hide, { passive: true });
@@ -391,7 +359,7 @@
   }
 
   function pairModeTip(pr, modeLabel) {
-    const lines = [modeLabel];
+    const lines = [`${modeLabel}: ${providerLabel(pr.source)} ${modeLabel === "Two-way" ? "and" : "to"} ${providerLabel(pr.target)}`];
     const profile = pairProfileLabel(pr);
     if (profile) lines.push(`Belongs to profile: ${profile}`);
     if (pr?.match_users) {
@@ -419,8 +387,11 @@
         _identityLabels = data && typeof data === "object" ? data : {};
         board.querySelectorAll(".pair-card[data-id]").forEach((el) => {
           const pr = pairs.find((p) => String(p.id) === el.dataset.id);
-          const pill = el.querySelector(".pair-pill.mode[data-pair-who]");
-          if (pr && pill) pill.setAttribute("data-tip", pairModeTip(pr, el.dataset.mode || ""));
+          if (pr) el.querySelectorAll("[data-pair-who]").forEach(indicator => {
+            const tip = pairModeTip(pr, el.dataset.mode || "");
+            indicator.setAttribute("data-tip", tip);
+            if (indicator.getAttribute("role") === "img") indicator.setAttribute("aria-label", tip);
+          });
         });
       })
       .catch(() => {});
@@ -431,8 +402,6 @@
     const containers = ensureHost(); if (!containers) return;
     const { host, board } = containers;
 
-    _lastHost = host;
-    _lastBoard = board;
 
     const pairs = Array.isArray(window.cx?.pairs) ? window.cx.pairs : [];
     if (!pairs.length) { host.style.display = "none"; board.innerHTML = ""; _renderedPairs.delete(board); return; }
@@ -455,7 +424,9 @@
       const dstInst = inst(pr.target_instance);
       const isTwo = (pr.mode || "one-way").toLowerCase().includes("two");
       const modeLabel = isTwo ? "Two-way" : "One-way";
-      const arrow = isTwo ? "↔" : "→";
+      const directionPath = isTwo ? "M7 7h26m-4-4 4 4-4 4M33 17H7m4-4-4 4 4 4" : "M7 12h26m-5-5 5 5-5 5";
+      const directionTip = esc(pairModeTip(pr, modeLabel));
+      const people = pairWhoBadge(pr);
       const enabled = pr.enabled !== false;
       const f = pr.features || {};
       const srcTone = brandTone(src);
@@ -465,15 +436,14 @@
         <div class="pair-card brand-${brandKey(src)} dst-${brandKey(dst)} ${enabled ? "" : "pair-disabled"}" data-id="${pr.id || ""}" data-source="${src}" data-target="${dst}" data-mode="${modeLabel}" style="--src-solid:${srcTone.solid};--src-rgb:${srcTone.rgb};--dst-solid:${dstTone.solid};--dst-rgb:${dstTone.rgb};--accent:${srcTone.solid};--accent-rgb:${srcTone.rgb}">
           <div class="pair-row">
             <div class="pair-left">
-              <button type="button" class="ord-badge cw-page-pair-handle" data-tip="Drag to reorder · or use arrow keys" aria-label="Reorder pair ${displayIndex}: ${esc(providerLabel(src))} to ${esc(providerLabel(dst))}. Use Up or Down arrow keys."><span class="pair-order">${displayIndex}</span><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M4 2h.01M8 2h.01M4 6h.01M8 6h.01M4 10h.01M8 10h.01"/></svg></button>
+              <button type="button" class="ord-badge cw-page-pair-handle" data-tip="Drag to reorder · or use arrow keys" aria-label="Reorder pair ${displayIndex}: ${esc(providerLabel(src))} to ${esc(providerLabel(dst))}. Use Up or Down arrow keys."><span class="pair-order">${displayIndex}</span></button>
               ${pill(src, srcInst, "src")}
-              <span class="arrow" data-tip="${modeLabel}">${arrow}</span>
+              <span class="cw-page-pair-direction" role="img" tabindex="0" aria-label="${directionTip}" data-pair-who data-tip="${directionTip}"><svg viewBox="0 0 40 24" aria-hidden="true"><path d="${directionPath}"/></svg></span>
               ${pill(dst, dstInst, "dst")}
-              <span class="pair-pill mode" data-pair-who data-tip="${esc(pairModeTip(pr, modeLabel))}">${modeLabel}${pairWhoBadge(pr)}</span>
             </div>
             <div class="pair-actions">
               <div class="pair-feature-summary">
-              <span class="pair-pill mode pair-mobile-mode">${modeLabel}</span>
+              ${people ? `<span data-pair-who data-tip="${directionTip}">${people}</span>` : ""}
               <div class="feat-beads cw-page-pair-features" role="group" aria-label="Enabled features">
                 ${bead("wl", "Watchlist", f.watchlist)}
                 ${bead("rt", "Ratings", f.ratings)}
@@ -485,8 +455,8 @@
               </div>
 
               <div class="pair-action-buttons cw-page-pair-actions" role="group" aria-label="Sync pair actions">
-              <button type="button" class="icon-btn" data-tip="Run and review sync" aria-label="Run and review sync" ${enabled ? "" : "disabled"} data-interactive-pair="${esc(pr.id)}">
-                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M8 5l11 7-11 7V5z"></path></svg><span class="pair-action-label">Run</span>
+              <button type="button" class="icon-btn cw-page-pair-run" data-tip="Interactive sync" aria-label="Interactive sync" ${enabled ? "" : "disabled"} data-interactive-pair="${esc(pr.id)}">
+                <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M8 5l11 7-11 7V5z"></path></svg><span class="pair-action-label">Sync</span>
               </button>
 
               <button type="button" class="icon-btn" data-tip="Latest logs" aria-label="Latest logs" data-pair-logs="${esc(pr.id)}">
@@ -524,7 +494,6 @@
       _renderedPairs.set(board, html);
     }
     refreshIdentityTips(board, pairs);
-    scheduleViewportLimit(0);
     installTooltip(host);
     installPairReorder(host, board);
     installPairMenus(host);
@@ -640,7 +609,6 @@
       _reorderBusy = false;
       _renderedPairs.delete(board);
       if (focused?.isConnected) focused.focus({ preventScroll: true });
-      scheduleViewportLimit();
     }
   }
 
@@ -671,9 +639,7 @@
         const bottom = Math.min(window.innerHeight, bounds.bottom);
         const dy = drag.y < top + 48 ? -12 : drag.y > bottom - 48 ? 12 : 0;
         if (dy) {
-          const before = host.scrollTop;
-          host.scrollTop += dy;
-          if (host.scrollTop === before) window.scrollBy(0, dy);
+          window.scrollBy(0, dy);
           move();
         }
       }
@@ -739,17 +705,6 @@
     });
   }
 
-  function watchSyncSection() {
-    const sec = document.getElementById("sec-sync");
-    if (!sec || sec.dataset.cxPairsWatch) return;
-    sec.dataset.cxPairsWatch = "1";
-
-    const obs = new MutationObserver(() => {
-      if (sec.classList.contains("open")) scheduleViewportLimit(120);
-    });
-    obs.observe(sec, { attributes: true, attributeFilter: ["class"] });
-  }
-
   async function renderOrEnhance(force = false) {
     if (_renderBusy || _pairDrag || _reorderBusy) return;
     _renderBusy = true;
@@ -758,13 +713,11 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    watchSyncSection();
     renderOrEnhance();
   });
   document.addEventListener("cw-settings-pane-changed", (ev) => {
     if (String(ev?.detail?.pane || "").toLowerCase() === "sync") {
       renderOrEnhance(true);
-      scheduleViewportLimit(120);
     }
   });
   document.addEventListener("cx-state-change", renderOrEnhance);
@@ -785,8 +738,6 @@
     document.querySelectorAll("#pairs_list .pair-overflow:popover-open").forEach(menu => menu.hidePopover());
     const host = document.getElementById("pairs_list");
     if (host?.querySelector(".pair-more")) syncPairMenus(host);
-    clearTimeout(_resizeTimer);
-    _resizeTimer = setTimeout(() => scheduleViewportLimit(0), 120);
   }, { passive: true });
 
   window.addEventListener("scroll", event => {

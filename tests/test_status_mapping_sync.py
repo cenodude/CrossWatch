@@ -1030,6 +1030,44 @@ def _reviews(case):
     return [kwargs["reason"] for name, kwargs in case.events if name == "status_mapping:review"]
 
 
+def test_rewatching_destination_is_reported_with_its_provider(sync_case):
+    case = sync_case
+    target = case.rows["b"]["1"]
+    case.rows["b"]["1"] = replace(target, observation=replace(target.observation, rewatching=True))
+    result = run(case)
+    assert case.writes == [] and result["updated"] == 0
+    assert _reviews(case) == ["Skipped, being rewatched on B, status left unchanged"]
+
+
+def test_rewatching_source_still_writes_to_the_crosswatch_tracker(monkeypatch, tmp_path, config_base):
+    from cw_platform.tracker_store import TrackerStore
+    from providers.sync._status_mapping import adapter_class
+    source = row(Status.DROPPED)
+    source = replace(source, item={"type": "show", "ids": {"tmdb": "1"}, "title": "Rewatched show"},
+                     observation=replace(source.observation, rewatching=True))
+
+    class Source(NativeStatusAdapter):
+        capabilities = {"shows": Capabilities(frozenset(Status), frozenset())}
+
+        def read(self):
+            return {"1": deepcopy(source)}
+
+    monkeypatch.setattr(runtime, "adapter_class", lambda name: Source if name == "source" else adapter_class(name))
+    target = TrackerStore(tmp_path / "tracker")
+    cfg = {"crosswatch": {"root_dir": str(tmp_path / "tracker")}}
+    pair = {"id": "rewatch", "source": "SOURCE", "target": "CROSSWATCH", "mode": "one-way",
+            "features": {"history": {"enable": True, "use_source_status": True}},
+            "status_mapping": {"version": 1, "a": {"provider": "source", "instance": "default"},
+                               "b": {"provider": "crosswatch", "instance": "default"},
+                               "directions": {"a_to_b": {"shows": {"dropped": {"include": True, "target": "dropped"}}}}}}
+    events = []
+    ctx = SimpleNamespace(dry_run=False, interactive=None, emit=lambda name, **kwargs: events.append((name, kwargs)))
+    result = runtime.run_status_mappings(ctx, [pair], cfg, {}, store=StatusStore(tmp_path / "state.sqlite3"))
+    assert result["updated"] == 1
+    assert target.note("show:tmdb:1")["status"] == "dropped"
+    assert not any("rewatch" in str(kwargs.get("reason")) for name, kwargs in events)
+
+
 def test_a_skipped_title_is_reported_and_the_rest_still_syncs(sync_case):
     case = sync_case
     case.rows["a"]["2"] = row(Status.DROPPED, "2")

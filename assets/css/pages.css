@@ -1310,15 +1310,16 @@ body.cw-has-bottom-nav:has(>header.cw-nav-open) #cw-quick-add{visibility:hidden}
 #pairs_list .pairs-board{position:relative}
 #sec-sync #pairs_list .pair-card{--btn:44px}
 #sec-sync #pairs_list .pair-card .pair-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px 16px}
-#sec-sync #pairs_list .pair-card .pair-left{display:grid;grid-template-columns:44px minmax(0,160px) 26px minmax(0,160px) max-content;align-items:center;gap:8px;min-width:0;width:100%}
+#sec-sync #pairs_list .pair-card .pair-left{display:grid;grid-template-columns:44px minmax(0,160px) 36px minmax(0,160px);align-items:center;gap:8px;min-width:0;width:100%}
 #sec-sync #pairs_list .pair-card .pair-pill.src,#sec-sync #pairs_list .pair-card .pair-pill.dst{width:100%;min-width:0;box-sizing:border-box}
 #sec-sync #pairs_list .pair-card .pair-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;width:100%;margin:0;padding:0;box-sizing:border-box}
 #pairs_list .pair-feature-summary{display:flex;align-items:center;gap:12px;min-width:0}
 #pairs_list .pair-action-buttons{display:flex;align-items:center;gap:8px;flex:none;min-width:0}
 #pairs_list .pair-action-buttons>.icon-btn{flex:none;box-sizing:border-box}
-#pairs_list .pair-mobile-mode,#pairs_list .pair-action-label,#pairs_list .pair-action-buttons>.pair-more{display:none}
+#pairs_list .pair-action-label,#pairs_list .pair-action-buttons>.pair-more{display:none}
 #sec-sync #pairs_list .cw-page-pair-handle{width:44px;min-width:44px;height:44px;padding:3px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:2px;touch-action:none;user-select:none;cursor:grab}
-#pairs_list .cw-page-pair-handle svg{width:12px;height:12px;flex-shrink:0}
+#pairs_list .cw-page-pair-direction{display:flex;align-items:center;justify-content:center;width:36px;height:44px}
+#pairs_list .cw-page-pair-direction svg{width:36px;height:24px}
 #pairs_list .pair-ordering .cw-page-pair-handle{cursor:grabbing}
 #pairs_list .pair-ordering .pair-actions{pointer-events:none}
 #pairs_list .pair-reordering{z-index:3}
@@ -1327,15 +1328,12 @@ body.cw-has-bottom-nav:has(>header.cw-nav-open) #cw-quick-add{visibility:hidden}
 #pairs_list .pair-overflow>.icon-btn{flex:none;display:flex;justify-content:flex-start;gap:12px;width:100%;height:auto;min-height:44px;padding:10px 12px;box-sizing:border-box}
 #pairs_list .pair-overflow .pair-action-label{display:block;font-size:13px}
 #pairs_list .power[aria-checked=true] .pair-power-off,#pairs_list .power[aria-checked=false] .pair-power-on{display:none}
-@container pair-list (max-width:1100px){
+@container pair-list (max-width:860px){
 #sec-sync #pairs_list .pair-card .pair-row{grid-template-columns:minmax(0,1fr)}
-#sec-sync #pairs_list .pair-card .pair-left{grid-template-columns:44px minmax(0,1fr) 26px minmax(0,1fr) auto}
+#sec-sync #pairs_list .pair-card .pair-left{grid-template-columns:44px minmax(0,1fr) 36px minmax(0,1fr)}
 }
 @container pair-list (max-width:680px){
-#sec-sync #pairs_list .pair-card .pair-left{grid-template-columns:44px minmax(0,1fr) 26px minmax(0,1fr)}
 #sec-sync #pairs_list .pair-card .pair-pill.src,#sec-sync #pairs_list .pair-card .pair-pill.dst{padding:8px;font-size:12px}
-#pairs_list .pair-left>.mode{display:none}
-#pairs_list .pair-mobile-mode{display:inline-flex;flex:none;margin:0;font-size:11px;padding:6px 8px;white-space:nowrap}
 #pairs_list .pair-feature-summary>.feat-beads{display:flex;flex-wrap:nowrap;gap:6px;padding:8px;min-width:0;margin:0;box-sizing:border-box}
 #pairs_list .pair-feature-summary .bead{flex:0 0 10px;width:10px;height:10px;box-sizing:border-box}
 }

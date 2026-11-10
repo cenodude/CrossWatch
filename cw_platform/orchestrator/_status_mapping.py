@@ -316,6 +316,9 @@ def _run_status_mappings(ctx, pairs, cfg, health_map, *, store, adapter_override
                 if decision.outcome != "write":
                     if pending and decision.reason == "caught_up":
                         report(pair, "A previous status write could not be verified. Review the provider before retrying.", item=a.item)
+                    elif decision.reason == "rewatch_state_preserved":
+                        rewatching = scope.a if decision.direction == Direction.REVERSE else scope.b
+                        report(pair, f"Skipped, being rewatched on {rewatching.provider.upper()}, status left unchanged", item=a.item)
                     elif decision.reason not in {"excluded", "source_absent", "watchlist_managed", "caught_up"}:
                         report(pair, decision.reason.replace("_", " "), item=a.item)
                     else:

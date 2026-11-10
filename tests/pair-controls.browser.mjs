@@ -8,7 +8,7 @@ import {readFile, mkdir} from "node:fs/promises";
 import {chromium, webkit} from "playwright";
 
 const sheets = ["themes/tokens.css", "css/base.css", "crosswatch.css", "css/layout.css", "css/components.css", "css/pages.css", "css/page-theme.css", "ui-shell.css", "css/topology.css"];
-const pairs = Array.from({length: 8}, (_, i) => ({id: `pair-${i}`, source: "WETRAKR", target: i % 2 ? "SCROB" : "FLOPPY", enabled: i !== 1, mode: "two-way", features: {watchlist: true, history: {enable: true}, ratings: false}}));
+const pairs = Array.from({length: 8}, (_, i) => ({id: `pair-${i}`, source: "WETRAKR", target: i % 2 ? "SCROB" : "FLOPPY", enabled: i !== 1, mode: i % 2 ? "one-way" : "two-way", features: {watchlist: true, history: {enable: true}, ratings: false}}));
 
 async function open(t, {theme = "original", width = 1024, height = 768, touch = false, reducedMotion = "no-preference"} = {}) {
   const browser = await (process.env.CW_PAIR_BROWSER === "webkit" ? webkit : chromium).launch({headless: true});
@@ -49,10 +49,22 @@ const saved = page => page.waitForFunction(() => document.querySelector(".pair-o
 for (const theme of ["original", "flat-dark", "flat-light"]) {
   test(`${theme}: phone, tablet portrait/landscape and desktop fit with accessible controls`, async t => {
     const {page} = await open(t, {theme, touch: true});
-    for (const [width, height] of [[320, 740], [390, 844], [740, 360], [844, 390], [932, 430], [768, 1024], [1024, 768], [1280, 800], [1920, 1080]]) {
+    const run = page.getByRole("button", {name: "Interactive sync", exact: true}).first();
+    assert.equal(await run.getAttribute("data-tip"), "Interactive sync");
+    assert.notEqual(await run.evaluate(el => getComputedStyle(el).background), await page.getByRole("button", {name: "Latest logs", exact: true}).first().evaluate(el => getComputedStyle(el).background));
+    const direction = page.getByRole("img", {name: "Two-way: WETRAKR and FLOPPY", exact: true}).first();
+    assert.equal(await page.getByRole("img", {name: "One-way: WETRAKR to SCROB", exact: true}).count(), 4);
+    assert.equal(await page.locator(".pair-pill.mode,.pair-mobile-mode,.pair-left>.arrow").count(), 0);
+    assert.equal(await direction.locator("svg").count(), 1);
+    await direction.focus();
+    await page.waitForFunction(() => document.querySelector(".cx-tip.on")?.textContent === "Two-way: WETRAKR and FLOPPY");
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator(".cx-tip.on").count(), 0);
+    for (const [width, height] of [[320, 740], [390, 844], [740, 360], [844, 390], [932, 430], [768, 1024], [1024, 768], [1194, 834], [1280, 800], [1366, 1024], [1440, 900], [1920, 1080]]) {
       await page.setViewportSize({width, height});
       await page.waitForTimeout(180);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${width}: page overflow`);
+      assert.equal(await page.locator("#pairs_list").evaluate(el => el.scrollHeight > el.clientHeight + 1), false, `${width}: nested pair scrollbar`);
       const issues = await page.locator(".pair-card").first().evaluate(card => {
         const bounds = card.getBoundingClientRect();
         return [...card.querySelectorAll("button, label.power, .pair-pill.src, .pair-pill.dst")].flatMap(el => {
@@ -64,11 +76,13 @@ for (const theme of ["original", "flat-dark", "flat-light"]) {
       assert.deepEqual(issues, [], `${width}: clipped or small controls`);
       const rows = await page.locator(".pair-card").first().evaluate(card => {
         const centers = selectors => [...card.querySelectorAll(selectors)].filter(el => el.checkVisibility()).map(el => { const r = el.getBoundingClientRect(); return r.top + r.height / 2; });
-        return [centers(".pair-action-buttons>.icon-btn"), centers(".cw-page-pair-handle,.pair-pill.src,.pair-left>.arrow,.pair-pill.dst")];
+        const rows = [centers(".pair-action-buttons>.icon-btn"), centers(".cw-page-pair-handle,.pair-pill.src,.cw-page-pair-direction,.pair-pill.dst")];
+        if (card.closest("#pairs_list").clientWidth > 860) rows.push(centers(".cw-page-pair-handle,.pair-pill.src,.pair-pill.dst,.cw-page-pair-direction,.pair-action-buttons>.icon-btn,.feat-beads"));
+        return rows;
       });
       for (const row of rows) assert.ok(Math.max(...row) - Math.min(...row) <= 1, `${width}: controls wrapped onto another row: ${JSON.stringify(row)}`);
       assert.equal(await page.getByRole("button", {name: "Move left", exact: true}).count(), 0);
-      assert.equal(await page.locator(".pair-card").nth(1).getByRole("button", {name: "Run and review sync"}).isDisabled(), true);
+      assert.equal(await page.locator(".pair-card").nth(1).getByRole("button", {name: "Interactive sync"}).isDisabled(), true);
       await page.locator(".cw-page-pair-handle").first().focus();
       assert.equal(await page.locator(".cw-page-pair-handle").first().evaluate(el => getComputedStyle(el).outlineStyle), "solid");
       if (process.env.CW_PAIR_SCREENSHOTS) {
@@ -142,13 +156,15 @@ test("keyboard reorder supports reduced motion and restores order after a reject
 });
 
 test("dragging at the edge scrolls to later pairs and Escape cancels without saving", async t => {
-  const {page, requests} = await open(t, {width: 1440, height: 700});
+  const {page, requests} = await open(t, {width: 1440, height: 450});
   const handle = await page.locator(".cw-page-pair-handle").first().boundingBox();
   const host = await page.locator("#pairs_list").boundingBox();
   await page.mouse.move(handle.x + 20, handle.y + 20);
   await page.mouse.down();
-  await page.mouse.move(handle.x + 20, Math.min(688, host.y + host.height - 8));
+  await page.mouse.move(handle.x + 20, Math.min(438, host.y + host.height - 8));
   await page.waitForFunction(() => document.querySelector(".pairs-board").lastElementChild.dataset.id === "pair-0");
+  assert.ok(await page.evaluate(() => window.scrollY > 0));
+  assert.equal(await page.locator("#pairs_list").evaluate(el => el.scrollTop), 0);
   assert.equal(requests.length, 0);
   await page.keyboard.press("Escape");
   await page.mouse.up();

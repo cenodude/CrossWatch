@@ -96,7 +96,7 @@ class StatusAdapter(NativeStatusAdapter):
         adapter = self.adapter()
         data = snapshot(adapter)
         titles, hidden, listed, active, native = {}, set(), set(), set(), {}
-        counts, repeats, bad = Counter(), Counter(), {}
+        counts, bad = Counter(), {}
         def add(media, kind=None):
             if not isinstance(media, Mapping):
                 self.skip_unidentified("scrob_status_missing_media")
@@ -126,7 +126,6 @@ class StatusAdapter(NativeStatusAdapter):
                 continue
             if row["completed"]:
                 counts[key] += 1
-                repeats[(key, row["media"].get("id"))] += max(1, row["play_count"])
         for bucket, kind in (("shows", "series"), ("movies", "movie")):
             for row in data["dropped"][bucket]:
                 key = add(row, kind)
@@ -153,7 +152,6 @@ class StatusAdapter(NativeStatusAdapter):
             if key:
                 active.add(key)
         protected = digest(preserved({k: v for k, v in data.items() if k != "dropped"}))
-        repeated = {key for (key, _), count in repeats.items() if count > 1}
         result = {}
         for key, item in titles.items():
             show = item["type"] == "show"
@@ -175,7 +173,7 @@ class StatusAdapter(NativeStatusAdapter):
             partial = show and state["watch_started"] and not state["watched"] and state["watch_pct"] < 100 and bool(counts[key])
             watched = state.get("watched") is True or bool(counts[key]) and not show
             completed = watched and (not show or str(state.get("status") or "").lower() in {"ended", "canceled"})
-            repeat = key in repeated or bool(state.get("rewatch"))
+            repeat = bool(state.get("rewatch"))
             caught_up = show and state["watched"] is True and str(state.get("status") or "").strip().lower() not in {"", "ended", "canceled"}
             untracked = not state["watch_started"] and state["watched"] is False and not counts[key] if show else False
             label = ("planned" if key in listed else "completed" if completed else "dropped" if key in hidden else "watching" if partial else

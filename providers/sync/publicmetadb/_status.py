@@ -198,9 +198,8 @@ class StatusAdapter(NativeStatusAdapter):
             if key in bad:
                 result[key] = skipped(key, "shows" if show else "movies", item, bad[key])
                 continue
-            repeat = any(n > 1 for n in coords[key].values()) if show else counts[key] > 1
             detail = (progress(adapter, item["ids"]["tmdb"], {coord for coord in coords[key] if coord[0] > 0})
-                      if show and key not in listed and not repeat else None)
+                      if show and key not in listed else None)
             completed = bool(detail and detail["completed"]) if show else bool(counts[key])
             partial = bool(detail and detail["partial"])
             if detail and detail.get("title"):
@@ -209,7 +208,7 @@ class StatusAdapter(NativeStatusAdapter):
             untracked = not show and not counts[key]
             native = ("planned" if key in listed else "completed" if completed else "dropped" if key in hidden and show else
                       "watching" if partial else "caught_up" if caught_up else "untracked" if untracked else "unknown")
-            obs = observation(native, self.statuses, protected, watchlisted=key in listed, rewatching=repeat)
+            obs = observation(native, self.statuses, protected, watchlisted=key in listed)
             result[key] = Record(key, "shows" if show else "movies", item, obs,
                                  {"partial": partial, "completed": completed, "has_history": bool(counts[key]), "has_playback": key in active})
         if fingerprints(data) != fingerprints(snapshot(adapter)):

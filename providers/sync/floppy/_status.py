@@ -3,7 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import defaultdict
 from collections.abc import Mapping
 
 from cw_platform.status_mapping import Capabilities, Observation, ReadState, Status
@@ -124,16 +124,14 @@ class StatusAdapter(NativeStatusAdapter):
                 result[key] = skipped(key, media, item, "floppy_status_incomplete_lists")
                 continue
             seasons = children[key]["season"]
-            episodes = children[key]["episode"]
             native = str(row.get("status"))
             protected = {
                 "entry": personal(row, omit_status=True),
                 "history": sorted(digest(personal(entry, omit_status=single)) for entry in history),
-                "children": {kind: sorted(digest(personal(entry)) for entry in entries) for kind, entries in children[key].items()},
+                "children": {kind: sorted(digest(personal(entry)) for entry in children[key][kind]) for kind in ("season", "episode")},
                 "playback": sorted(digest(entry) for entry in playback[key]),
             }
-            repeat = any(rewatching(entry) for entry in [row, *history, *seasons]) or any(
-                count > 1 for count in Counter(str(entry.get("item_id")) for entry in episodes).values())
+            repeat = any(rewatching(entry) for entry in [row, *history, *seasons])
             listed = native == "0" or any(str(entry["list_id"]) in watchlists for entry in lists)
             obs = (observation(native, self.statuses, protected, watchlisted=listed, rewatching=repeat)
                    if agrees else Observation(ReadState.UNKNOWN))
