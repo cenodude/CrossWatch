@@ -56,6 +56,8 @@ export function changeSummary(original, item) {
   const parts = [];
   if (original.type !== item.type) parts.push(`${original.type} to ${item.type}`);
   if (seriesTitle(original) !== seriesTitle(item)) parts.push("title");
+  const yearOf = value => String((["episode", "season"].includes(value.type) ? value.series_year : value.year) ?? "");
+  if (yearOf(original) !== yearOf(item)) parts.push("year");
   if (["season", "episode", "part"].some(key => (original[key] ?? "") !== (item[key] ?? ""))) parts.push("numbering");
   for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) {
     if (String(before[key] ?? "") === String(after[key] ?? "")) continue;
@@ -407,10 +409,12 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
             finally { searching = false; if (!closed) lock(false); }
             if (closed) return;
           }
+          const yearField = draft => ["episode", "season"].includes(draft.item.type) ? "series_year" : "year";
+          const fillsYear = draft => Boolean(match.year) && !draft.item[yearField(draft)];
           const pending = recovery || parts.length ? selected : selected.filter(draft => {
             const current = draft.item.show_ids || draft.item.ids || {};
             const merged = matchedIds(current, match.ids);
-            return !merged || Object.keys(merged).length !== Object.keys(current).length;
+            return fillsYear(draft) || !merged || Object.keys(merged).length !== Object.keys(current).length;
           });
           if (!pending.length) {
             status("This is already the title these items are matched to. Nothing to fix; choose another title or edit the numbering below.");
@@ -419,10 +423,12 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
           pending.forEach(draft => {
             draft.review = "";
             const current = draft.item.show_ids || draft.item.ids || {};
+            const missingYear = fillsYear(draft);
             draft.item = correctedItem(draft.item, {ids:(!recovery && !parts.length && matchedIds(current, match.ids)) || match.ids, title:match.title});
             if (recovery) draft.matchSearch = matchSearch;
             if (converting() && match.year) draft.item.year = match.year;
             if (recovery && match.year) draft.item.year = match.year;
+            if (missingYear) draft.item[yearField(draft)] = match.year;
             applyParts(draft, match, parts);
             paint(draft);
           });
