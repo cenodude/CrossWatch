@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from .coordinates import covers, translate
-from .overrides import find_episode_override, find_source_override
+from .overrides import find_episode_override, find_source_override, find_source_overrides
 from .storage import normalize_release_tag, query_edges, query_show_pair
 
 NATIVE_ORDER = ("anidb", "mal", "anilist")
@@ -397,6 +397,7 @@ def resolve_axis_coordinate_map(
     absolute: Any,
     *,
     release_tag: str = "v3",
+    target_provider: str = "",
 ) -> dict[tuple[str, str], tuple[int, int]]:
     abs_num = _as_int(absolute)
     if abs_num is None or abs_num <= 0:
@@ -408,6 +409,20 @@ def resolve_axis_coordinate_map(
     }
     if not clean:
         return {}
+    if target_provider:
+        ruled = {
+            (row.ident, row.season, row.episode)
+            for namespace, ident in clean.items()
+            for row in find_source_overrides(namespace, ident, abs_num)
+            if row.provider == target_provider
+        }
+        if ruled:
+            if len(ruled) != 1:
+                return {}
+            ident, season, episode = ruled.pop()
+            return {(target_provider, ident): (season, episode)}
+        return {key: coord for key, coord in _axis_coordinates(normalize_release_tag(release_tag), clean, abs_num).items()
+                if key[0] == target_provider}
     ruled = _override_source_coordinate(clean, abs_num)
     if ruled is not None:
         return {(ruled.provider, ruled.ident): (ruled.season, ruled.episode)}

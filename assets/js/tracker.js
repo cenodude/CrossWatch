@@ -390,6 +390,8 @@
         return { state: "attention", icon: "edit_note", title: "Title or year missing", text: `TMDB has ${tm}.`, fix: ["tmdb"] };
       case "episode_missing":
         return { state: "attention", icon: "playlist_remove", title: "Episode not on TMDB", text: `TMDB has no ${spot} for this show. Check the match or the episode number.`, fix: ["map"] };
+      case "episode_unverified":
+        return { state: "attention", icon: "help", title: "Episode not verified", text: "The show matches TMDB, but its episode numbering could not be translated. Check the anime mapping and run Check all again.", fix: ["map"] };
       case "ok":
         return { state: "ok", icon: "verified", title: "Matches TMDB", text: "", fix: [] };
       default:
@@ -3008,7 +3010,7 @@
     const record = titleAnchor(data);
     if (!record) return;
     const count = recordCount(data);
-    const perEpisode = record.check?.code === "episode_missing";
+    const perEpisode = ["episode_missing", "episode_unverified"].includes(record.check?.code);
     const feature = record.feature || "history";
     const version = encodeURIComponent(window.APP_VERSION || "1");
     const original = {

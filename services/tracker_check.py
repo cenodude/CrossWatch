@@ -15,7 +15,8 @@ from typing import Any, NamedTuple
 
 import requests
 
-from cw_platform.anime_mapping.history_coords import tmdb_coordinate
+from cw_platform.anime_mapping.history_coords import coordinate_tokens, tmdb_coordinate
+from cw_platform.anime_mapping.storage import query_edges
 from cw_platform.tracker_store import ATTENTION_CODES, TrackerStore
 
 AliasContext = tuple[str, Any]
@@ -201,6 +202,29 @@ def _external_tmdb(item: Mapping[str, Any], kind: str, ids: Mapping[str, Any], l
     return ""
 
 
+def _anime_episode(item: Mapping[str, Any], ids: Mapping[str, Any], aliases: AliasContext) -> bool:
+    namespaces = ("mal", "anilist", "anidb", "kitsu")
+    if any(item.get(field) not in (None, "", {}, []) for field in _ANIME_FIELDS) or any(ids.get(ns) for ns in namespaces):
+        return True
+    saved_shows = {token.partition("#")[0] for token in coordinate_tokens(item)}
+    if any(f"{provider}:{str(ids.get(provider) or '').strip().lower()}" in saved_shows for provider in ("tvdb", "tmdb")):
+        return True
+    tag, cache = aliases
+    if not tag or cache is None:
+        return False
+    for provider in ("tvdb", "tmdb"):
+        ident = str(ids.get(provider) or "").strip()
+        if not ident:
+            continue
+        key = ("tracker_anime_show", provider, ident)
+        if key not in cache:
+            cache[key] = any(row.get("source_kind") == "show" and row.get("target_provider") in namespaces
+                             for row in query_edges(tag, provider, ident))
+        if cache[key]:
+            return True
+    return False
+
+
 def classify(item: Mapping[str, Any], lookups: Lookups, aliases: AliasContext = NO_ALIASES) -> tuple[str, dict[str, Any]] | None:
     typ = str(item.get("type") or "").lower()
     child = typ in ("season", "episode")
@@ -250,7 +274,10 @@ def classify(item: Mapping[str, Any], lookups: Lookups, aliases: AliasContext = 
         and stored_year is not None and detail["year"] is not None and abs(stored_year - detail["year"]) > 1
     ):
         return "mismatch", detail
-    if child and (coordinate or not any(item.get(field) not in (None, "", {}, []) for field in _ANIME_FIELDS)):
+    order = str(item.get("_cw_episode_order") or "").strip().lower()
+    if typ == "episode" and not coordinate and order != "tmdb" and _anime_episode(item, ids, aliases):
+        return "episode_unverified", {**detail, "season": _int(item.get("season")), "episode": _int(item.get("episode"))}
+    if child:
         season = coordinate[1] if coordinate else _int(item.get("season"))
         episode = coordinate[2] if coordinate else _int(item.get("episode"))
         if season is not None and season >= 0:
