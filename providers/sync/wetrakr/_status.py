@@ -84,7 +84,6 @@ class StatusAdapter(NativeStatusAdapter):
             watched = tracking_rows(history, "history")
             playing = playing_rows(adapter)
             preserved = defaultdict(lambda: defaultdict(list))
-            plays = defaultdict(lambda: defaultdict(int))
             for kind in ("movie", "episode"):
                 for row in watched[kind]:
                     media = row.get(kind)
@@ -94,7 +93,6 @@ class StatusAdapter(NativeStatusAdapter):
                     protected = {k: v for k, v in row.items() if k != kind}
                     protected["media_id"] = media.get("id")
                     preserved[key]["history"].append(protected)
-                    plays[key][str(media.get("id"))] += 1
                 for row in playing[kind]:
                     if not isinstance(row.get("playback"), Mapping):
                         raise WeTrakrSyncError("status_invalid_playback")
@@ -154,8 +152,7 @@ class StatusAdapter(NativeStatusAdapter):
                 native = "ambiguous"
             protected = {part: sorted(digest(value) for value in values) for part, values in preserved[key].items() if values}
             protected["user"] = sorted({digest(user) for user in users})
-            rewatching = any(count > 1 for count in plays[key].values())
-            obs = observation(native, self.statuses, protected, watchlisted="planning" in states, rewatching=rewatching)
+            obs = observation(native, self.statuses, protected, watchlisted="planning" in states)
             item = entries[0][1]
             if native == "waiting":
                 obs = Observation(ReadState.UNKNOWN, native_status="waiting")

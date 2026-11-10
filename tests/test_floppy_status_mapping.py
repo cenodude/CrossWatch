@@ -126,16 +126,22 @@ def test_show_transitions_cannot_cascade_or_create_seasons(server, seasons, desi
     assert server.rows["media/season"] == before
 
 
-@pytest.mark.parametrize("protection", ["planned", "completed", "rewatching", "playback", "repeat_episode"])
+def test_repeated_episode_plays_do_not_block_a_status_write(server):
+    server.rows["media/episode"].append({**server.rows["media/episode"][0], "consumption_id": 23})
+    row = server.adapter.read()["tv/tmdb/2"]
+    assert row.observation.rewatching is False
+    server.adapter.write(row, Status.ON_HOLD)
+    assert server.writes
+
+
+@pytest.mark.parametrize("protection", ["planned", "completed", "rewatching", "playback"])
 def test_protected_entries_never_write(server, protection):
     if protection in {"planned", "completed"}:
         server.change(20, status=0 if protection == "planned" else 3)
     elif protection == "rewatching":
         server.rows["media/season"][0]["rewatch_started_at"] = "now"
-    elif protection == "playback":
-        server.rows["playback/progress"] = [{"media_type": "episode", "ids": {"tmdb": 2}, "position_seconds": 100}]
     else:
-        server.rows["media/episode"].append({**server.rows["media/episode"][0], "consumption_id": 23})
+        server.rows["playback/progress"] = [{"media_type": "episode", "ids": {"tmdb": 2}, "position_seconds": 100}]
     row = server.adapter.read()["tv/tmdb/2"]
     with pytest.raises(RuntimeError, match="transition_blocked"):
         server.adapter.write(row, Status.ON_HOLD)

@@ -93,16 +93,24 @@ def test_missing_mapping_preserves_legacy_behavior(mapping_case):
     assert (result.outcome, result.reason) == ("skip", "legacy_behavior")
 
 
-@pytest.mark.parametrize("side", ["source", "destination"])
 @pytest.mark.parametrize("policy", list(ConflictPolicy))
-def test_active_rewatch_is_not_translated_to_an_ordinary_status(mapping_case, side, policy):
-    a, b = observed(Status.WATCHING), observed(Status.DROPPED)
-    if side == "source":
-        a = replace(a, native_status="REPEATING", rewatching=True)
-    else:
-        b = replace(b, rewatching=True)
-    result = run_plan(mapping_case, a, b, resolution=policy)
+def test_destination_rewatch_is_preserved(mapping_case, policy):
+    a, b = observed(Status.WATCHING), replace(observed(Status.DROPPED), rewatching=True)
+    result = run_plan(one_way(mapping_case), a, b, resolution=policy)
     assert (result.outcome, result.reason) == ("skip", "rewatch_state_preserved")
+
+
+def test_old_inferred_rewatch_baseline_does_not_cause_a_conflict(mapping_case):
+    case = one_way(mapping_case)
+    baseline = baseline_for(case, observed(Status.WATCHING), replace(observed(Status.WATCHING), rewatching=True))
+    result = run_plan(case, observed(Status.DROPPED), observed(Status.WATCHING), baseline=baseline)
+    assert (result.outcome, result.reason, result.desired) == ("write", "mapped", Status.DROPPED)
+
+
+def test_source_rewatch_does_not_block_the_destination(mapping_case):
+    a, b = replace(observed(Status.DROPPED), rewatching=True), observed(Status.WATCHING)
+    result = run_plan(one_way(mapping_case), a, b)
+    assert (result.outcome, result.reason, result.desired) == ("write", "mapped", Status.DROPPED)
 
 
 def test_parser_is_pure_and_fingerprints_semantic_rules(mapping_case):

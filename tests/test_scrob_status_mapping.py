@@ -118,12 +118,20 @@ def test_cancellation_during_forwarding_preflight_prevents_mutation(server):
         clear_cancel()
 
 
-@pytest.mark.parametrize("case", ["rewatch", "repeat", "forwarding", "unknown_forwarding", "playback", "playing", "planned", "completed", "numbering", "zero_history"])
+def test_repeated_plays_do_not_block_a_status_write(server):
+    server.data["history"].append({**server.data["history"][0], "id": 99})
+    server.shows[1]["dropped"] = True
+    server.data["history/dropped"]["shows"] = [{"id": 101, "tmdb_id": 1}]
+    row = server.adapter.read()["show:1"]
+    assert row.observation.rewatching is False
+    server.adapter.write(row, Status.WATCHING)
+    assert server.writes
+
+
+@pytest.mark.parametrize("case", ["rewatch", "forwarding", "unknown_forwarding", "playback", "playing", "planned", "completed", "numbering", "zero_history"])
 def test_guarded_transitions_never_write(server, case):
     if case == "rewatch":
         server.shows[1]["rewatch"] = {"started_at": "now", "watched": 0}
-    elif case == "repeat":
-        server.data["history"].append({**server.data["history"][0], "id": 99})
     elif case == "forwarding":
         server.data["auth/settings"]["trakt_push_dropped"] = True
     elif case == "unknown_forwarding":

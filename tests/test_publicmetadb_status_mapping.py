@@ -88,7 +88,16 @@ def test_drop_restore_preserve_snapshot_and_exact_write_payload(server):
                              ("DELETE", "/api/external/dropped/1/tv", {"max_retries": 1})]
 
 
-@pytest.mark.parametrize("case", ["planned", "completed", "repeat", "playback", "missing_metadata", "future", "today", "missing_date", "invalid_coordinates", "caught_up"])
+def test_repeated_plays_do_not_block_a_status_write(server):
+    server.rows["watched"].append({**history(1), "id": "repeat", "watched_at": "later"})
+    server.rows["dropped"] = [{"tmdb_id": 1, "media_type": "tv"}]
+    row = server.adapter.read()["show:1"]
+    assert row.observation.rewatching is False
+    server.adapter.write(row, Status.WATCHING)
+    assert server.writes
+
+
+@pytest.mark.parametrize("case", ["planned", "completed", "playback", "missing_metadata", "future", "today", "missing_date", "invalid_coordinates", "caught_up"])
 def test_unsafe_transitions_are_preserved(server, case):
     if case == "planned":
         server.rows["lists/watch/items"] = [{"tmdb_id": 1, "media_type": "tv"}]
@@ -97,8 +106,6 @@ def test_unsafe_transitions_are_preserved(server, case):
         server.details[1]["seasons"][0]["episode_count"] = 1
         server.details[1]["number_of_episodes"] = 1
         server.details[1]["status"] = "Ended" if case == "completed" else "Returning Series"
-    elif case == "repeat":
-        server.rows["watched"].append({**history(1), "id": "repeat", "watched_at": "later"})
     elif case == "playback":
         server.rows["resume"] = [{"id": "resume", "tmdb_id": 1, "media_type": "tv", "position_ms": 2000}]
     elif case == "missing_metadata":

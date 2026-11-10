@@ -15,7 +15,7 @@
   let feature = "", result = "", query = "", mappingDirty = false, mappingWorkspace = null;
   let pageData = { items: [], total: 0 }, pageLoading = false, pageRequest = 0, pageController = null, searchTimer = null;
   let progressTimer = null, progressReceived = Date.now(), pollFailures = 0;
-  let downloadOpen = false, downloadScope = "all", downloadFormat = "csv", downloading = false;
+  let downloadOpen = false, downloadScope = "all", downloadFormat = "csv", downloading = false, noticesExpanded = null;
   const PAGE_SIZE = 75;
   const css = document.createElement("link");
   css.rel = "stylesheet";
@@ -71,7 +71,7 @@
       const state = row.state === "skipped" ? "Not run" : row.state === "checking" ? "Check not completed" : row.state === "attention" ? "Needs review" : row.preview || row.dry_run ? "Preview checked" : "Checked";
       const counts = row.state === "skipped" ? "" : [["matched", "matched"], ["proposed", "proposed"], ["updated", "updated"], ["unchanged", "unchanged"], ["excluded", "excluded"], ["unmatched", "unmatched"], ["recovered", "previous writes confirmed"], ["not_selected", "not selected"], ["unresolved", "review notices"], ["errors", "errors"]]
         .filter(([key]) => row[key] || key === "matched" || key === (row.preview || row.dry_run ? "proposed" : "updated"))
-        .map(([key, label]) => `${number(row[key])} ${label}`).join(" · ");
+        .map(([key, label]) => key === "unresolved" && (session?.notices || []).length ? `<button class="is-link" data-action="show-notices">${number(row[key])} ${label}</button>` : `${number(row[key])} ${label}`).join(" · ");
       return `<p><strong>${esc(endpoint(row.src, row.src_instance))} ${row.mode === "two-way" ? "↔" : "→"} ${esc(endpoint(row.dst, row.dst_instance))}: ${state}</strong>${row.reason ? `<br>${esc(row.reason)}` : ""}${counts ? `<br>${counts}` : ""}</p>`;
     }).join("")}</section>`;
   }
@@ -83,6 +83,15 @@
   const number = value => Number(value || 0).toLocaleString();
   const noticeSubject = n => n.provider ? `${n.provider}${n.side ? ` (${n.side})` : ""}` : n.route || "";
   const noticeReason = n => { const reason = String(n.reason || n.event || "Provider notice"); return reason.includes(" ") ? reason : reason.replaceAll("_", " ").replaceAll(":", ": "); };
+  function noticesHTML(failedPlan, partialReady) {
+    const notices = session?.notices || [];
+    if (!notices.length) return "";
+    const all = noticesExpanded ?? (notices.length <= 5 || !!failedPlan || !!partialReady);
+    const heading = failedPlan ? "Failure notices and sync protections" : "Sync protections and provider notices";
+    const line = n => `<p><strong>${esc([n.feature, noticeSubject(n)].filter(Boolean).join(" / "))}</strong> ${esc(noticeReason(n))}${n.detail ? ` - ${esc(n.detail)}` : ""}${n.error ? `<br><strong>Error:</strong> ${esc(n.error)}` : ""}</p>`;
+    const toggle = notices.length > 3 ? `<button class="is-link" data-action="toggle-notices" aria-expanded="${all}">${all ? "Show fewer" : `Show all ${number(notices.length)} notices`}</button>` : "";
+    return `<section id="is-notices" class="is-notices" aria-label="${heading}"><strong>${heading} (${number(notices.length)})</strong>${(all ? notices : notices.slice(0, 3)).map(line).join("")}${toggle}</section>`;
+  }
   function aiQuestion() {
     const pair = session?.pair || {};
     const route = `${endpoint(pair.source, pair.source_instance)} ${pair.mode === "two-way" ? "↔" : "→"} ${endpoint(pair.target, pair.target_instance)}`;
@@ -355,7 +364,7 @@
       ${partialReady ? `<section class="is-notices" role="alert"><h2>Some features could not be planned</h2><p>You can apply changes from completed features. Failed features (${esc(session.failed_features.join(", "))}) are excluded. Review the notices and choose <strong>Refresh plan</strong> to retry them.</p></section>` : ""}
       ${failedPlan ? `<section class="is-notices" role="alert" aria-label="Incomplete sync plan"><h2>Partial plan: review incomplete</h2><p>${failedFeatures.length ? `Planning failed for ${esc(failedFeatures.join(", "))}. Those features have no proposals in this plan; the proposals below come from features that finished.` : "The proposals below were collected before planning stopped."} They are not the complete set of changes. Counts cover only this partial plan; a missing feature does not mean it has no changes.</p><p>Apply and Download review are disabled until a complete plan is available. Check the failure notices below and the matching provider or feature errors in Events or logs, then choose <strong>Refresh plan</strong> to reread providers and retry.</p>${(session.notices || []).length ? "" : "<p>No detailed failure notice was captured. Check Events or logs for the failed planning attempt.</p>"}</section>` : ""}
       ${done ? `<div class="is-metrics">${[["Added", summary.added], ["Updated", summary.updated], ["Removed", summary.removed], ["Unresolved", summary.unresolved], ["Errors", summary.errors], ["Changed since review", summary.not_applied]].map(([label, n]) => `<div><strong>${Number(n || 0)}</strong><span>${label}</span></div>`).join("")}</div>` : `<div class="is-metrics"><div><strong>${count}</strong><span>${failedPlan ? "Partial proposals" : "Proposed changes"}</span></div><div><strong>${selectedCount}</strong><span>Selected</span></div><div><strong>${session?.counts?.conflicts || 0}</strong><span>${failedPlan ? "Conflicts found so far" : "Conflicts to review"}</span></div><div><strong>${failedPlan && !session?.counts?.attention ? "Unknown" : session?.counts?.attention || 0}</strong><span>${failedPlan ? "Item checks incomplete" : "Need attention"}</span></div></div>`}
-      ${(session?.notices || []).length ? `<details class="is-notices" ${failedPlan || partialReady ? "open" : ""}><summary>${failedPlan ? "Failure notices and sync protections" : "Sync protections and provider notices"} (${session.notices.length})</summary>${session.notices.map(n => `<p><strong>${esc([n.feature, noticeSubject(n)].filter(Boolean).join(" / "))}</strong> ${esc(noticeReason(n))}${n.detail ? ` - ${esc(n.detail)}` : ""}${n.error ? `<br><strong>Error:</strong> ${esc(n.error)}` : ""}</p>`).join("")}</details>` : ""}
+      ${noticesHTML(failedPlan, partialReady)}
       <div class="is-toolbar"><label class="is-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input data-filter="query" type="search" maxlength="256" placeholder="Search titles or IDs" aria-label="Search proposed changes" value="${esc(query)}"></label><label>Feature<select data-filter="feature"><option value="">All features</option>${(session?.features || []).map(f => `<option value="${esc(f)}" ${feature === f ? "selected" : ""}>${esc(f.charAt(0).toUpperCase() + f.slice(1))}</option>`).join("")}</select></label><label>Result<select data-filter="result"><option value="">All results</option>${Object.entries(labels).map(([k, v]) => `<option value="${k}" ${result === k ? "selected" : ""}>${v}</option>`).join("")}</select></label></div>
       <div class="is-list-actions"><span>${pageLoading ? "Loading page..." : `${pageData.total} matching items`}</span>${hiddenCount ? `<button class="is-link" data-action="toggle-library" title="Items that are not in the destination library are left out of this sync.">${result === "not_in_library" ? "Back to proposed changes" : `${number(hiddenCount)} not in library (hidden)`}</button>` : ""}${session?.tracker_import ? "" : `<button class="is-btn is-small" data-action="map-selected" ${locked || !selectedCount ? "disabled" : ""} title="Edit checked items across all pages">Edit selected</button>`}<button class="is-link" data-action="select" ${locked ? "disabled" : ""}>Select filtered</button><button class="is-link" data-action="deselect" ${locked ? "disabled" : ""}>Deselect filtered</button></div>
       <div class="is-table-wrap" aria-busy="${pageLoading}"><table class="is-table"><thead><tr><th scope="col"><span class="sr-only">Selected</span></th><th scope="col">Item</th><th scope="col">Feature</th><th scope="col">Proposed change</th><th scope="col">Review</th></tr></thead><tbody>${rows.map(row => {
@@ -472,6 +481,18 @@
       host.querySelector(downloadOpen ? '[data-download="scope"]' : '[data-action="toggle-download"]')?.focus();
       return;
     }
+    if (name === "toggle-notices") {
+      noticesExpanded = button.getAttribute("aria-expanded") !== "true";
+      render();
+      host.querySelector('[data-action="toggle-notices"]')?.focus();
+      return;
+    }
+    if (name === "show-notices") {
+      noticesExpanded = true;
+      render();
+      host.querySelector("#is-notices")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     if (name === "download-review") return downloadReview();
     if (name === "map-selected") return mapping();
     if (name === "download-report" && session.report) {
@@ -531,7 +552,7 @@
     if (next === route && busy) return;
     route = next;
     const current = ++generation;
-    downloadOpen = false; downloadScope = "all"; downloadFormat = "csv";
+    downloadOpen = false; downloadScope = "all"; downloadFormat = "csv"; noticesExpanded = null;
     clearTimeout(timer); clearInterval(progressTimer); pollFailures = 0;
     const params = new URLSearchParams(next.split("?")[1] || "");
     if (params.has("pair")) {

@@ -21,7 +21,7 @@ test("status conflicts show actual labels and default to leaving both sides unch
     pageData:{total:2,items:[row,update]},page:0,PAGE_SIZE:100,pageLoading:false,downloadOpen:false,downloading:false,
     query:"",feature:"",result:"",labels:{update:"Update"},pending:()=>false,origin:()=>["main","Main"],aiButton:()=>"",
     esc:value=>String(value ?? ""),endpoint:p=>p,progressHTML:()=>"",number:value=>Number(value || 0),title:item=>item.title,
-    reasonDetailsHTML:()=>""};
+    reasonDetailsHTML:()=>"",noticesHTML:()=>""};
   vm.createContext(context);
   vm.runInContext(value + render + "render();", context);
   assert.match(context.host.innerHTML,/AniList: On hold/);
@@ -428,7 +428,7 @@ test("failed plans identify partial progress proposals and expose failure detail
     session:{status:"error",pair:{source:"WETRAKR",target:"FLOPPY"},counts:{changes:2,selected:0,attention:0,conflicts:0},
       features:["progress"],notices:[{event:"feature:error",feature:"history",provider:"WETRAKR",side:"source",route:"WETRAKR to FLOPPY",reason:"feature:error",
         detail:"Provider <diagnostic>",error:"History <failure>"}]},
-    pageData:{total:2,items:rows},page:0,PAGE_SIZE:100,pageLoading:false,downloadOpen:false,downloading:false,
+    pageData:{total:2,items:rows},page:0,PAGE_SIZE:100,pageLoading:false,downloadOpen:false,downloading:false,noticesExpanded:null,
     query:"",feature:"",result:"",labels:{add:"Add"},pending:()=>false,origin:()=>["main","Main"],aiButton:()=>"",
     esc:value=>String(value ?? "").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;"),
     endpoint:(p,i)=>p,progressHTML:()=>"",number:value=>Number(value || 0),title:item=>item.title,
@@ -440,7 +440,7 @@ test("failed plans identify partial progress proposals and expose failure detail
   assert.match(html, /<strong>2<\/strong><span>Partial proposals/);
   assert.match(html, /Unknown<\/strong><span>Item checks incomplete/);
   assert.doesNotMatch(html, /Need attention/);
-  assert.match(html, /<details class="is-notices" open>/);
+  assert.match(html, /<section id="is-notices" class="is-notices" aria-label="Failure notices and sync protections"><strong>Failure notices and sync protections \(1\)<\/strong><p>/);
   assert.match(html, /history \/ WETRAKR \(source\)/);
   assert.doesNotMatch(html, /history \/ FLOPPY/);
   assert.match(html, /Planning failed for history from WETRAKR \(source\)\. Those features have no proposals in this plan/);
@@ -478,13 +478,36 @@ test("failed plans identify partial progress proposals and expose failure detail
   context.session.status = "review";
   context.session.notices = [{reason:"Existing notice"}];
   vm.runInContext("render();", context);
-  assert.doesNotMatch(context.host.innerHTML, /Partial plan:|Item checks incomplete|class="is-notices" open/);
+  assert.doesNotMatch(context.host.innerHTML, /Partial plan:|Item checks incomplete|toggle-notices/);
+  assert.match(context.host.innerHTML, /Sync protections and provider notices \(1\)<\/strong><p><strong><\/strong> Existing notice<\/p>/);
   assert.match(context.host.innerHTML, /<strong>0<\/strong><span>Need attention/);
   context.session.status = "error";
   context.session.report = {outcome:"failed"};
   vm.runInContext("render();", context);
   assert.match(context.host.innerHTML, /Completed report/);
   assert.doesNotMatch(context.host.innerHTML, /Partial plan:/);
+});
+
+test("notices stay visible and the status mapping count links to them", () => {
+  const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
+  const fn = source.slice(source.indexOf("  const noticeSubject"), source.indexOf("  function aiQuestion()"))
+    + source.slice(source.indexOf("  function statusMappingHTML("), source.indexOf("  const duration ="));
+  const notices = Array.from({length: 8}, (_, i) => ({feature:"history", provider:"SCROB", reason:`Notice ${i + 1}`}));
+  const context = {session:{notices}, noticesExpanded:null, number:value=>Number(value || 0).toLocaleString("en-US"),
+    esc:value=>String(value ?? ""), endpoint:p=>p};
+  vm.createContext(context);
+  vm.runInContext(fn + "globalThis.collapsed = noticesHTML(false, false); globalThis.summary = statusMappingHTML([{src:'WETRAKR',dst:'SCROB',matched:4,unresolved:2,state:'attention'}]);", context);
+  assert.equal((context.collapsed.match(/<p>/g) || []).length, 3);
+  assert.match(context.collapsed, /data-action="toggle-notices" aria-expanded="false">Show all 8 notices<\/button>/);
+  assert.match(context.summary, /<button class="is-link" data-action="show-notices">2 review notices<\/button>/);
+  vm.runInContext("noticesExpanded = true; globalThis.expanded = noticesHTML(false, false); session.notices = session.notices.slice(0, 5); noticesExpanded = null; globalThis.few = noticesHTML(false, false);", context);
+  assert.equal((context.expanded.match(/<p>/g) || []).length, 8);
+  assert.match(context.expanded, /aria-expanded="true">Show fewer<\/button>/);
+  assert.equal((context.few.match(/<p>/g) || []).length, 5);
+  vm.runInContext("session.notices = []; globalThis.none = noticesHTML(false, false); globalThis.plain = statusMappingHTML([{src:'A',dst:'B',matched:1,unresolved:2}]);", context);
+  assert.equal(context.none, "");
+  assert.match(context.plain, /2 review notices/);
+  assert.doesNotMatch(context.plain, /show-notices/);
 });
 
 test("completion report distinguishes cloud outcomes and escapes titles", () => {
@@ -533,7 +556,7 @@ test("Tracker import reviews use the shared selection controls without permanent
     session:{tracker_import:true,status:"review",pair:{source:"TRAKT",target:"CROSSWATCH"},counts:{changes:1,selected:1},features:["history"]},
     pageData:{total:1,items:[{id:"one",key:"tmdb:949",item:{type:"movie",title:"Heat"},feature:"history",operation:"add",result:"add",provider:"CROSSWATCH",selectable:true,selected:true}]},
     page:0,PAGE_SIZE:75,pageLoading:false,downloadOpen:false,query:"",feature:"",result:"",labels:{add:"Add"},pending:()=>false,
-    origin:()=>["tracker","Tracker"],aiButton:()=>"",esc:value=>String(value??""),endpoint:value=>value,progressHTML:()=>"",statusMappingHTML:()=>"",
+    origin:()=>["tracker","Tracker"],aiButton:()=>"",esc:value=>String(value??""),endpoint:value=>value,progressHTML:()=>"",statusMappingHTML:()=>"",noticesHTML:()=>"",
     number:value=>Number(value||0),title:item=>item.title,value:()=>"",reasonDetailsHTML:()=>""};
   vm.createContext(context);
   vm.runInContext(fn+"render();",context);
@@ -556,7 +579,7 @@ test("Review footer explains the one-time dry run confirmation", () => {
     session:{dry_run:true,status:"review",pair:{source:"WETRAKR",target:"FLOPPY"},counts:{changes:1,selected:1},features:["history"]},
     pageData:{total:1,items:[{id:"one",key:"tmdb:949",item:{type:"movie",title:"Heat"},feature:"history",operation:"add",result:"add",provider:"FLOPPY",selectable:true,selected:true}]},
     page:0,PAGE_SIZE:75,pageLoading:false,downloadOpen:false,query:"",feature:"",result:"",labels:{add:"Add"},pending:()=>false,
-    origin:()=>["sync","Synchronization"],aiButton:()=>"",esc:value=>String(value??""),endpoint:value=>value,progressHTML:()=>"",statusMappingHTML:()=>"",
+    origin:()=>["sync","Synchronization"],aiButton:()=>"",esc:value=>String(value??""),endpoint:value=>value,progressHTML:()=>"",statusMappingHTML:()=>"",noticesHTML:()=>"",
     number:value=>Number(value||0),title:item=>item.title,value:()=>"",reasonDetailsHTML:()=>""};
   vm.createContext(context);
   vm.runInContext(fn+"render();",context);

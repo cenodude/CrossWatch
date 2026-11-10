@@ -6,7 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
@@ -277,7 +277,7 @@ def plan_status(
         gate = execution.get(direction, ExecutionScope())
         if not authorized(direction):
             return Decision("skip", "opt_in_disabled", direction)
-        if source.rewatching or target.rewatching:
+        if target.rewatching:
             return Decision("skip", "rewatch_state_preserved", direction)
         if source.state == ReadState.ABSENT:
             return Decision("skip", "source_absent", direction)
@@ -320,9 +320,9 @@ def plan_status(
         if not a_changed and not b_changed:
             reason = "unchanged_since_baseline" if (a, b) == (baseline.a, baseline.b) else "status_unchanged"
             return Decision("noop", reason)
-        if a_changed and b == baseline.b:
+        if a_changed and replace(b, rewatching=False) == replace(baseline.b, rewatching=False):
             return forward
-        if b_changed and a == baseline.a and reverse is not None:
+        if b_changed and replace(a, rewatching=False) == replace(baseline.a, rewatching=False) and reverse is not None:
             return reverse
     elif not item.pair.two_way:
         return forward

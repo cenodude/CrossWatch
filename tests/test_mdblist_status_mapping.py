@@ -121,7 +121,16 @@ def test_drop_restore_preserves_history_dates_ratings_collection_and_progress(se
                              ("/sync/dropped/remove", {"json": {"shows": [{"ids": {"tmdb": 1}}]}, "max_retries": 0})]
 
 
-@pytest.mark.parametrize("case", ["null_progress", "zero_history", "completed", "planned", "season", "repeat", "playback", "caught_up"])
+def test_repeated_plays_do_not_block_a_status_write(server):
+    server.rows["plays"].append(("episodes", {**server.rows["plays"][0][1], "play_id": 99}))
+    server.rows["/sync/dropped"] = [("shows", {"show": show(1)})]
+    record = server.adapter.read()["show:1"]
+    assert record.observation.rewatching is False
+    server.adapter.write(record, Status.WATCHING)
+    assert server.writes
+
+
+@pytest.mark.parametrize("case", ["null_progress", "zero_history", "completed", "planned", "season", "playback", "caught_up"])
 def test_protected_transitions_never_write(server, case):
     if case == "null_progress":
         server.native[1]["watched_episode_count"] = None
@@ -134,8 +143,6 @@ def test_protected_transitions_never_write(server, case):
         server.rows["/watchlist/items"] = [("shows", show(1))]
     elif case == "season":
         server.rows["/sync/seasons/dropped"] = [("seasons", {"show": show(1), "season": {"number": 2}, "dropped_at": "old"})]
-    elif case == "repeat":
-        server.rows["plays"].append(("episodes", {**server.rows["plays"][0][1], "play_id": 99}))
     elif case == "playback":
         server.playback = [{"type": "episode", "show": show(1), "progress": 30}]
     else:

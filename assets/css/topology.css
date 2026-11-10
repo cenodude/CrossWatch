@@ -28,15 +28,15 @@ html[data-cw-theme="flat-dark"] #sec-sync{--cw-sync-surface:var(--cw-theme-surfa
 #sec-sync #pairs_list .pair-pill-text>span,#sec-sync #pairs_list .pair-instance-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #sec-sync #pairs_list .pair-instance-name{display:block;font-size:10px;font-weight:500;color:var(--cw-theme-muted)!important;letter-spacing:0;text-transform:none}
 
-#sec-sync #pairs_list .arrow{background:var(--cw-sync-badge)!important;border-color:color-mix(in srgb,var(--cw-theme-accent) 22%,var(--cw-sync-border))!important;color:var(--cw-theme-accent)!important}
+
 #sec-sync #pairs_list .pair-actions{background:transparent!important;border-color:transparent!important}
 #sec-sync #pairs_list .pair-left{flex:1 1 auto;min-width:0}
 #sec-sync #pairs_list .pair-actions{flex:0 0 auto}
 #sec-sync #pairs_list .pair-pill.src,#sec-sync #pairs_list .pair-pill.dst{flex:0 1 var(--chip-w);min-width:96px}
-#sec-sync #pairs_list .pair-pill.mode{flex:0 0 auto;width:auto;min-width:0;padding:8px 14px}
+
 #sec-sync #pairs_list .feat-beads{background:var(--cw-sync-surface)!important;border-color:var(--cw-sync-border)!important}
-#sec-sync #pairs_list .icon-btn:not(.power):not(.danger){background:color-mix(in srgb,var(--cw-theme-text) 8%,var(--cw-sync-raised))!important;border-color:color-mix(in srgb,var(--cw-theme-text) 35%,var(--cw-sync-border))!important;color:var(--cw-theme-text)!important}
-#sec-sync #pairs_list .icon-btn:not(.power):not(.danger):not(:disabled):hover,#sec-sync #pairs_list .icon-btn:not(.power):not(.danger):focus-visible{background:var(--cw-sync-badge)!important;border-color:var(--cw-theme-accent)!important}
+#sec-sync #pairs_list .icon-btn:not(.power):not(.danger):not(.cw-page-pair-run){background:color-mix(in srgb,var(--cw-theme-text) 8%,var(--cw-sync-raised))!important;border-color:color-mix(in srgb,var(--cw-theme-text) 35%,var(--cw-sync-border))!important;color:var(--cw-theme-text)!important}
+#sec-sync #pairs_list .icon-btn:not(.power):not(.danger):not(.cw-page-pair-run):not(:disabled):hover,#sec-sync #pairs_list .icon-btn:not(.power):not(.danger):not(.cw-page-pair-run):focus-visible{background:var(--cw-sync-badge)!important;border-color:var(--cw-theme-accent)!important}
 #sec-sync #pairs_list .icon-btn:focus-visible,#sec-sync #pairs_list .icon-btn:has(input:focus-visible){outline:2px solid var(--cw-theme-accent);outline-offset:3px}
 #sec-sync #pairs_list .icon-btn:disabled{cursor:not-allowed!important;transform:none!important}
 #sec-sync #pairs_list .pair-card.pair-disabled{background:var(--cw-sync-surface)!important;border-color:var(--cw-sync-border)!important}

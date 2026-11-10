@@ -149,13 +149,13 @@ def test_planned_is_recognized_and_completed_show_cannot_be_overwritten(server):
     assert not server.writes
 
 
-def test_playback_and_rewatch_history_are_preserved(server):
+def test_playback_is_preserved_and_repeated_plays_are_not_a_rewatch(server):
     server.playback = [{**media(3, "movie"), "playback": {"status": "paused", "progress_percent": 50}}]
     row = server.adapter.read()["movie:3"]
     assert row.observation.status == Status.DROPPED
     assert "playback" in server.adapter.blockers(row, Status.DROPPED)[0]
     server.history.append({**server.history[0], "id": "play2"})
-    assert server.adapter.read()["movie:3"].observation.rewatching is True
+    assert server.adapter.read()["movie:3"].observation.rewatching is False
 
 
 @pytest.mark.parametrize("broken", ["history", "rating", "notes", "activities", "paging"])
