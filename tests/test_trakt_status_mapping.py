@@ -204,12 +204,10 @@ def test_unsafe_transitions_never_write(server, case):
     assert not server.writes
 
 
-@pytest.mark.parametrize("case", ["missing_header", "empty_page", "changed_total", "bad_row", "activity", "progress", "duplicate_history"])
+@pytest.mark.parametrize("case", ["missing_header", "empty_page", "changed_total", "bad_row", "activity", "duplicate_history"])
 def test_failed_reads_are_not_complete_snapshots(server, case):
     if case == "duplicate_history":
         server.rows["/sync/history"].append(deepcopy(server.rows["/sync/history"][0]))
-    elif case == "progress":
-        server.progress[1].pop("reset_at")
     else:
         def hook(path, kwargs):
             if path == "/sync/ratings" and case == "activity":
@@ -298,3 +296,16 @@ def test_runtime_verifies_readback_instead_of_success_counters(server, config_ba
         assert run_status_mappings(ctx, [pair], cfg, {}, store=store)["updated"] == 1
         assert tracker.note("show:tmdb:1")["status"] == "watching"
         assert len(server.writes) == 1
+
+
+def _skipped(rows):
+    return {key: row.raw["_cw_skipped"] for key, row in rows.items() if isinstance(row.raw, dict) and row.raw.get("_cw_skipped")}
+
+
+def test_invalid_show_progress_skips_only_that_show(server):
+    server.progress[1].pop("reset_at")
+    rows = server.adapter.read()
+    skipped = _skipped(rows)
+    assert list(skipped.values()) == ["trakt_status_invalid_progress"]
+    assert len(rows) > len(skipped)
+    assert not server.writes

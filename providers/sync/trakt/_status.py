@@ -13,7 +13,7 @@ from typing import Any
 
 from cw_platform.status_mapping import Capabilities, Observation, ReadState, Status
 from providers.sync._pagination import page_numbers
-from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation
+from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation, skipped
 from ._common import TraktPager
 
 
@@ -158,33 +158,43 @@ class StatusAdapter(NativeStatusAdapter):
         plays = Counter()
         counts = Counter()
         play_ids = defaultdict(list)
+        bad = {}
         for rows, membership in ((history, None), (watchlist, listed), (dropped, hidden)):
             seen = set()
             for row in rows:
-                key, item, media = title(row)
+                found = self.identify(row)
+                if found is None:
+                    continue
+                key, item, media = found
                 titles[key] = (item, media)
                 if membership is not None:
                     if membership is hidden and key in seen:
-                        raise RuntimeError("trakt_status_duplicate_title")
+                        bad[key] = "trakt_status_duplicate_title"
                     seen.add(key)
                     membership.add(key)
                 else:
                     if not row.get("id") or row["id"] in seen:
-                        raise RuntimeError("trakt_status_invalid_history")
+                        bad[key] = "trakt_status_invalid_history"
+                        continue
                     seen.add(row["id"])
                     episode = row.get("episode") or {}
                     episode_id = (episode.get("ids") or {}).get("trakt")
                     if item["type"] == "show" and not episode_id:
-                        raise RuntimeError("trakt_status_missing_episode")
+                        bad[key] = "trakt_status_missing_episode"
+                        continue
                     plays[(key, episode_id)] += 1
                     counts[key] += 1
                     play_ids[key].append(row["id"])
-        active = {title(row)[0] for row in playback}
+        active = {found[0] for found in map(self.identify, playback) if found}
         repeats = {key for (key, _), count in plays.items() if count > 1}
         hidden_at = ((before.get("shows") or {}).get("hidden_at"), (before.get("seasons") or {}).get("hidden_at"))
         kept_progress = {}
         result = {}
         for key, (item, media) in titles.items():
+            kind = "shows" if item["type"] == "show" else "movies"
+            if key in bad:
+                result[key] = skipped(key, kind, item, bad[key])
+                continue
             progress = {}
             partial = completed = False
             repeat = key in repeats
@@ -203,7 +213,8 @@ class StatusAdapter(NativeStatusAdapter):
                 aired, watched = progress.get("aired"), progress.get("completed")
                 if (type(aired) is not int or type(watched) is not int or aired < 0 or watched < 0
                         or watched > aired or "reset_at" not in progress or not isinstance(progress.get("seasons"), list)):
-                    raise RuntimeError("trakt_status_invalid_progress")
+                    result[key] = skipped(key, kind, item, "trakt_status_invalid_progress")
+                    continue
                 partial = 0 < watched < aired
                 completed = aired > 0 and watched == aired and media.get("status") in {"ended", "canceled"}
                 repeat |= bool(progress["reset_at"])
@@ -221,6 +232,15 @@ class StatusAdapter(NativeStatusAdapter):
         with _CACHE_LOCK:
             _CACHE[cache_id] = {"lists": cache["lists"], "progress": kept_progress}
         return result
+
+    def identify(self, row):
+        try:
+            return title(row)
+        except RuntimeError as exc:
+            if str(exc) != "trakt_status_missing_identity":
+                raise
+            self.skip_unidentified(str(exc))
+            return None
 
     def blockers(self, record, desired):
         obs = record.observation

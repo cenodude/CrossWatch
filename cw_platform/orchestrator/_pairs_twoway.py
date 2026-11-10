@@ -2458,6 +2458,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             if verify_after_write and _apply_verify_after_write_supported(aops):
                 try:
                     unresolved_again = set(load_unresolved_keys(a, feature, cross_features=_cross_feature_unresolved(feature), instance=a_cfg.get("_cw_provider_instance")) or [])
+                    if have_exact_keys_A:
+                        unresolved_again -= unresolved_before_A
                     confirmed_A = [k for k in confirmed_A if k not in unresolved_again]
                 except Exception:
                     pass
@@ -2472,6 +2474,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 verify_after_write=verify_after_write,
                 provider_skipped=bool((resA_add or {}).get("skipped")),
                 deferred_keys=(resA_add or {}).get("deferred_keys", []),
+                uncertain_keys=(resA_add or {}).get("uncertain_keys", []),
+                cancelled=bool((resA_add or {}).get("cancelled")),
             )
             prov_count_A = _decision_A["prov_confirmed"]
             eff_add_A = _decision_A["effective"]
@@ -2597,6 +2601,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             if verify_after_write and _apply_verify_after_write_supported(bops):
                 try:
                     unresolved_again = set(load_unresolved_keys(b, feature, cross_features=_cross_feature_unresolved(feature), instance=b_cfg.get("_cw_provider_instance")) or [])
+                    if have_exact_keys_B:
+                        unresolved_again -= unresolved_before_B
                     confirmed_B = [k for k in confirmed_B if k not in unresolved_again]
                 except Exception:
                     pass
@@ -2611,6 +2617,8 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 verify_after_write=verify_after_write,
                 provider_skipped=bool((resB_add or {}).get("skipped")),
                 deferred_keys=(resB_add or {}).get("deferred_keys", []),
+                uncertain_keys=(resB_add or {}).get("uncertain_keys", []),
+                cancelled=bool((resB_add or {}).get("cancelled")),
             )
             prov_count_B = _decision_B["prov_confirmed"]
             eff_add_B = _decision_B["effective"]

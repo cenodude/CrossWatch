@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from cw_platform.status_mapping import Capabilities, Observation, ReadState, Status
-from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation
+from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation, skipped
 from ._common import PLATFORM_BASE, punchplay_request, snapshot_pages
 from ._history import _row_data
 from ._ratings import _to_minimal
@@ -44,13 +44,15 @@ class StatusAdapter(NativeStatusAdapter):
                 entry = dict(_row_data(raw))
                 item = _to_minimal(entry)
                 if item is None:
-                    raise RuntimeError("punchplay_status_missing_identity")
+                    self.skip_unidentified("punchplay_status_missing_identity")
+                    continue
                 if item["type"] not in {"movie", "show"}:
                     continue
                 ident = str(item["ids"]["tmdb"])
                 key = f"{item['type']}:{ident}"
                 if key in rows:
-                    raise RuntimeError("punchplay_status_duplicate_entry")
+                    rows[key] = skipped(key, "movies" if item["type"] == "movie" else "shows", item, "punchplay_status_duplicate_entry")
+                    continue
                 native = str(entry.get("showStatus") or entry.get("show_status") or "")
                 membership = (item["type"], ident) in listed
                 protected = {k: v for k, v in entry.items() if k not in STATUS_FIELDS | IDENTITY_FIELDS}
