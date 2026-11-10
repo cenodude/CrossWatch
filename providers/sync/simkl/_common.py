@@ -169,8 +169,14 @@ def record_quota(key: str, headers: Mapping[str, Any] | None) -> None:
     remaining = _int_or_none(hdrs.get("x-ratelimit-remaining"))
     if not key or remaining is None:
         return
+    observation = (time.time(), _int_or_none(hdrs.get("x-ratelimit-limit")), remaining)
     with _QUOTA_LOCK:
-        _QUOTA_SEEN[key] = (time.time(), _int_or_none(hdrs.get("x-ratelimit-limit")), remaining)
+        if _QUOTA_SEEN.get(key) == observation:
+            return
+        _QUOTA_SEEN[key] = observation
+    from cw_platform.connection_status import bust_status
+
+    bust_status()
 
 
 def latest_quota(key: str) -> dict[str, Any]:
@@ -185,7 +191,7 @@ def latest_quota(key: str) -> dict[str, Any]:
     seen_at, limit, remaining = seen if seen else (0.0, None, None)
     resets_at = blocked or _next_eastern_midnight(seen_at or now)
     if seen and not blocked and resets_at <= now:
-        return {}
+        return {"daily_quota_expired": True}
     out: dict[str, Any] = {
         "daily_limit": limit,
         "daily_remaining": 0 if blocked else remaining,

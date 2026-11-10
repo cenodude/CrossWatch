@@ -38,11 +38,11 @@ for (const [plan, vip, label] of [["free", false, "Free"], ["supporter", true, "
   });
 }
 
-test("MDBList shows exhausted quotas but hides missing and expired observations", () => {
+test("MDBList shows exhausted quotas but hides missing observations", () => {
   const app = setup();
   const data = { username: "tester", plan: "free", daily_remaining: 0, daily_limit: 1000, daily_seen_at: Date.now() / 1000 };
   assert.match(app.context.providerMeta("MDBLIST", data).detail, /API calls left today: 0 \/ 1000/);
-  for (const quota of [{ daily_remaining: null }, { daily_remaining: -1 }, { daily_remaining: "invalid" }, { daily_resets_at: Date.now() / 1000 - 1 }]) {
+  for (const quota of [{ daily_remaining: null }, { daily_remaining: -1 }, { daily_remaining: "invalid" }]) {
     assert.equal(app.context.providerMeta("MDBLIST", { ...data, ...quota }).detail, "Account: tester\nPlan: Free");
   }
   assert.equal(app.context.providerMeta("MDBLIST", {}).detail, "");

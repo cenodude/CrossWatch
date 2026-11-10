@@ -3209,11 +3209,17 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "rep_instance": inst_sum.get("rep"),
                 }
             if "MDBLIST" in active_providers:
+                from providers.sync.mdblist import _auth as mdblist_auth
+
                 inst_map, inst_sum = _instances_payload("MDBLIST")
+                quota_mdbl = mdblist_auth.latest_quota((cfg_mdbl or {}).get("mdblist") or {})
+                if info_mdbl.get("daily_remaining") is not None and quota_mdbl.get("daily_seen_at", 0) < (info_mdbl.get("daily_seen_at") or 0):
+                    quota_mdbl = {}
                 providers_out["MDBLIST"] = {
                     "connected": mdbl_ok,
                     **({} if mdbl_ok else {"reason": mdbl_reason}),
                     **info_mdbl,
+                    **quota_mdbl,
                     "instances": inst_map,
                     "instances_summary": inst_sum,
                     "rep_instance": inst_sum.get("rep"),
@@ -3338,6 +3344,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "connected": wetrakr_ok,
                     **({} if wetrakr_ok else {"reason": wetrakr_reason}),
                     **userinfo.get("WETRAKR", {}),
+                    "daily_quota_expired": False,
                     "daily_remaining": None,
                     "daily_limit": None,
                     "daily_resets_at": None,

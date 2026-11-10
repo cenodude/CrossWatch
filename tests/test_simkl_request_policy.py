@@ -413,6 +413,21 @@ def test_quota_headers_feed_the_status_fields_and_zero_on_daily_limit():
     assert _common.latest_quota(http.token_key("token"))["daily_remaining"] == 0
 
 
+def test_expired_quota_waits_for_an_observation_then_recovers(monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(_common, "time", SimpleNamespace(time=lambda: clock[0]))
+    monkeypatch.setattr(_common, "_next_eastern_midnight", lambda seen: 2000 if seen < 2000 else 3000)
+    key = _common.quota_account_key({"access_token": "token"})
+    assert _common.latest_quota(key) == {}
+    _common.record_quota(key, {"X-RateLimit-Remaining": "42"})
+    assert _common.latest_quota(key)["daily_remaining"] == 42
+    clock[0] = 2000
+    assert _common.latest_quota(key) == {"daily_quota_expired": True}
+    _common.record_quota(key, {"X-RateLimit-Remaining": "999"})
+    assert _common.latest_quota(key)["daily_remaining"] == 999
+    assert "daily_quota_expired" not in _common.latest_quota(key)
+
+
 def test_end_of_sync_refresh_updates_warm_settings_and_quota(monkeypatch):
     from api import probesAPI as probes
     from providers.sync import _mod_SIMKL as simkl

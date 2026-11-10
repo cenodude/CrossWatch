@@ -145,7 +145,10 @@ def test_quota_rotation_order_missing_headers_and_reset(store, monkeypatch):
     assert wt.latest_quota(block(store))["daily_remaining"] == 12
     assert wt.latest_quota({**block(store), "user_id": "other"}) == {}
     monkeypatch.setattr(wt.time, "time", lambda: 1060)
-    assert wt.latest_quota(block(store)) == {}
+    assert wt.latest_quota(block(store)) == {"daily_quota_expired": True}
+    wt.record_quota(block(store), {"x-quota-remaining": "999", "x-quota-reset": "60"}, started_at=1060)
+    assert wt.latest_quota(block(store))["daily_remaining"] == 999
+    assert "daily_quota_expired" not in wt.latest_quota(block(store))
 
 
 def test_quota_without_valid_reset_expires_without_inventing_limit(store, monkeypatch):
@@ -155,7 +158,7 @@ def test_quota_without_valid_reset_expires_without_inventing_limit(store, monkey
     assert quota["daily_remaining"] == 0
     assert "daily_limit" not in quota and "daily_resets_at" not in quota
     monkeypatch.setattr(wt.time, "time", lambda: 1300)
-    assert wt.latest_quota(block(store)) == {}
+    assert wt.latest_quota(block(store)) == {"daily_quota_expired": True}
 
 
 def test_probe_returns_quota_from_normal_account_request(store, monkeypatch):

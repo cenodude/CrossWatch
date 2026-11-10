@@ -323,12 +323,7 @@
         const premium = plan === "pro" || plan === "vip";
         const label = plan ? (plan === "vip" ? "VIP" : titleCase(plan)) : "";
         const lines = label ? [`Plan: ${label}`] : [];
-        const left = Number(data?.daily_remaining);
-        if (data?.daily_remaining != null && Number.isFinite(left)) {
-          const limit = Number(data?.daily_limit);
-          lines.push(`API calls left today: ${left}${Number.isFinite(limit) && limit > 0 ? ` / ${limit}` : ""}`);
-          if (data?.daily_resets_label) lines.push(`Resets: ${txt(data.daily_resets_label)}`);
-        }
+        lines.push(...(meta.dailyQuotaDetails?.(data) || []));
         return { vip: premium, detail: lines.join("\n") };
       }
       case "EMBY":

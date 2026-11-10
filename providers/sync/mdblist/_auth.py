@@ -3,7 +3,9 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+import hashlib
 import os
+import threading
 import time
 from collections.abc import Mapping, MutableMapping
 from typing import Any
@@ -23,6 +25,48 @@ CLIENT_ID_ENV = "CROSSWATCH_MDBLIST_CLIENT_ID"
 SCOPE = "write"
 REFRESH_SKEW_SEC = 300
 UA = http_user_agent("MDBListAuth", override_env="CW_MDBLIST_UA")
+_QUOTA_LOCK = threading.Lock()
+_QUOTA_SEEN: dict[str, dict[str, Any]] = {}
+
+
+def _quota_key(block: Mapping[str, Any]) -> str:
+    method = active_method(block)
+    token = str((block.get("api_key") or block.get("key") or "") if method == "api_key" else (block.get("access_token") or "")).strip()
+    return hashlib.sha256(f"{method}:{token}".encode()).hexdigest() if token else ""
+
+
+def record_quota(block: Mapping[str, Any], headers: Mapping[str, Any], *, started_at: float) -> None:
+    key = _quota_key(block)
+    values = {str(k).lower(): str(v).strip() for k, v in headers.items()}
+
+    def header_int(name: str) -> int | None:
+        value = values.get(name, "")
+        return int(value) if value.isascii() and value.isdecimal() and len(value) <= 15 else None
+
+    remaining = header_int("x-ratelimit-remaining")
+    if not key or remaining is None:
+        return
+    observation = {
+        "daily_remaining": remaining,
+        "daily_limit": header_int("x-ratelimit-limit"),
+        "daily_resets_at": header_int("x-ratelimit-reset"),
+        "daily_seen_at": time.time(),
+        "started_at": started_at,
+    }
+    with _QUOTA_LOCK:
+        if _QUOTA_SEEN.get(key, {}).get("started_at", -1) > started_at:
+            return
+        _QUOTA_SEEN[key] = observation
+    from cw_platform.connection_status import bust_status
+
+    bust_status()
+
+
+def latest_quota(block: Mapping[str, Any]) -> dict[str, Any]:
+    with _QUOTA_LOCK:
+        seen = dict(_QUOTA_SEEN.get(_quota_key(block), {}))
+    seen.pop("started_at", None)
+    return seen
 
 
 class MDBListAuthError(RuntimeError):
@@ -437,8 +481,19 @@ def request_with_auth(
     from providers.sync._mod_common import request_with_retries
 
     call = request_func or request_with_retries
+
+    def send(req_kwargs: dict[str, Any]) -> requests.Response:
+        started_at = time.monotonic()
+        response = call(session, method, url, timeout=timeout, max_retries=max_retries, **req_kwargs)
+        block = {
+            "api_key": (req_kwargs.get("params") or {}).get("apikey"),
+            "access_token": str((req_kwargs.get("headers") or {}).get("Authorization") or "").removeprefix("Bearer "),
+        }
+        record_quota(block, getattr(response, "headers", None) or {}, started_at=started_at)
+        return response
+
     req_kwargs = merge_auth_kwargs(cfg, instance_id=instance_id, kwargs=kwargs)
-    resp = call(session, method, url, timeout=timeout, max_retries=max_retries, **req_kwargs)
+    resp = send(req_kwargs)
     if getattr(resp, "status_code", None) != 401 or active_method(provider_block(cfg, instance_id)) != "device_code":
         return resp
 
@@ -447,4 +502,4 @@ def request_with_auth(
         return resp
     fresh_cfg = _load_full_cfg()
     req_kwargs = merge_auth_kwargs(fresh_cfg, instance_id=instance_id, kwargs=kwargs, refresh=False)
-    return call(session, method, url, timeout=timeout, max_retries=max_retries, **req_kwargs)
+    return send(req_kwargs)

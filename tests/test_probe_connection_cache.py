@@ -83,6 +83,56 @@ def test_verified_providers_check_once_after_restart_then_stop_polling(provider,
     assert len(calls) == 4
 
 
+@pytest.mark.parametrize("provider", ["wetrakr", "simkl"])
+def test_quota_recovery_invalidates_cached_status_without_provider_requests(monkeypatch, provider):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from providers.auth import _auth_WETRAKR as wetrakr
+    from providers.sync.simkl import _common as simkl
+
+    quota = wetrakr if provider == "wetrakr" else simkl
+    clock = [time.time()]
+    monkeypatch.setattr(quota, "time", SimpleNamespace(time=lambda: clock[0]))
+    monkeypatch.setattr(quota, "_QUOTA_SEEN", {})
+    monkeypatch.setattr(simkl, "_QUOTA_BLOCKS", {})
+    monkeypatch.setattr(probes, "_simkl_local_verdict", lambda block: (True, ""))
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("Quota status must not make a provider request")
+
+    monkeypatch.setattr(probes.requests.sessions.Session, "request", unexpected)
+    monkeypatch.setattr(probes, "_http_get", unexpected)
+    block = {"access_token": "quota-token", "client_id": "client", "expires_at": clock[0] + 172800}
+    cfg = {provider: block, "pairs": []}
+    connections.update(provider, cfg, connected=True, checked_at=time.time(), userinfo={"plan": "free"})
+
+    def record(headers):
+        if provider == "wetrakr":
+            quota.record_quota(block, headers, started_at=clock[0])
+        else:
+            quota.record_quota(simkl.quota_account_key(block), headers)
+
+    prefix = "X-Quota" if provider == "wetrakr" else "X-RateLimit"
+    headers = {f"{prefix}-Remaining": "42", f"{prefix}-Limit": "1000", f"{prefix}-Reset": "60"}
+    record(headers)
+    clock[0] += 86400
+    app = FastAPI()
+    probes.register_probes(app, lambda: cfg)
+    client = TestClient(app)
+    expired = client.get("/api/status").json()["providers"][provider.upper()]
+    assert expired["daily_quota_expired"] is True
+    assert probes.STATUS_CACHE["data"]["providers"][provider.upper()]["daily_quota_expired"] is True
+    record(headers)
+    fresh = client.get("/api/status").json()["providers"][provider.upper()]
+    assert fresh["daily_remaining"] == 42
+    assert not fresh.get("daily_quota_expired")
+    assert fresh["connected"] is True
+    cached = probes.STATUS_CACHE["data"]
+    record(headers)
+    record({})
+    assert probes.STATUS_CACHE["data"] is cached
+
+
 def test_trakt_refresh_shares_settings_and_does_not_fetch_counts(monkeypatch):
     calls = []
     cfg = {"trakt": {"client_id": "client", "access_token": "token"}}
