@@ -71,6 +71,15 @@ def test_resources_mark_the_watchlist_builtin(monkeypatch):
     assert res["5"].extra["can_rename"] and res["5"].extra["can_delete"] and not res["5"].can_reorder
 
 
+def test_native_watchlist_flag_decides_builtin(monkeypatch):
+    old = {**WATCHLIST, "id": 4, "is_watchlist": False}
+    native = {**WATCHLIST, "id": 7, "is_watchlist": True}
+    adapter, _ = _adapter(monkeypatch, {("GET", "lists"): {"lists": [old, native, MINE]}})
+    res = {r.id: r for r in pl.list_resources(adapter)}
+    assert res["7"].extra["builtin"] and not res["7"].extra["can_delete"]
+    assert not res["4"].extra["builtin"] and res["4"].extra["can_delete"]
+
+
 def test_snapshot_maps_movies_shows_seasons_and_episodes(monkeypatch):
     adapter, _ = _adapter(monkeypatch, {})
     snap = pl.get_snapshot(adapter, "5")

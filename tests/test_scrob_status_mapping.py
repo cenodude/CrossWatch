@@ -247,6 +247,18 @@ def test_ratings_continuation_is_not_silently_ignored(server):
         server.adapter.read()
 
 
+def test_native_watchlist_wins_over_a_same_named_list(server):
+    server.data["lists"]["lists"] = [{"id": 4, "name": "Watchlist", "item_count": 1, "is_watchlist": False},
+                                     {"id": 7, "name": "Watchlist", "item_count": 0, "is_watchlist": True}]
+    server.data["lists/4"] = {"id": 4, "name": "Watchlist", "item_count": 1, "privacy_level": "private",
+                              "items": [{"id": 8, "media": {"id": 501, "type": "series", "tmdb_id": 1}}]}
+    assert server.adapter.read()["show:1"].observation.status == Status.WATCHING
+    for row in server.data["lists"]["lists"]:
+        row.pop("is_watchlist")
+    with pytest.raises(RuntimeError, match="ambiguous_watchlist"):
+        server.adapter.read()
+
+
 def test_empty_watchlist_is_not_created(server):
     server.data["lists"]["lists"] = []
     assert len(server.adapter.read()) == 3

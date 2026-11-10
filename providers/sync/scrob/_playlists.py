@@ -62,7 +62,7 @@ def _resource(adapter: Any, row: Mapping[str, Any], *, public: bool = False) -> 
     if not lid:
         return None
     name = str(row.get("name") or "").strip() or str(lid)
-    builtin = not public and name.lower() == watchlist_name(adapter).lower()
+    builtin = not public and (row.get("is_watchlist") is True if "is_watchlist" in row else name.lower() == watchlist_name(adapter).lower())
     extra: dict[str, Any] = {
         "item_count": positive_int(row.get("item_count")) or 0,
         "private": str(row.get("privacy_level") or "private").lower() != "public",

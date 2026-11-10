@@ -54,6 +54,19 @@ def run(case, pairs=None):
     return runtime.run_status_mappings(case.ctx, pairs or [case.pair], {}, {}, store=case.store)
 
 
+@pytest.mark.parametrize("native,counted", [("untracked", False), ("caught_up", False), ("waiting", False), ("", True)])
+def test_unmatched_titles_without_a_status_are_not_reported(sync_case, native, counted):
+    case = sync_case
+    case.rows["a"]["9"] = Record("9", "shows", {"type": "show", "ids": {"tmdb": "9"}, "title": "Only A"},
+                                 Observation(ReadState.UNKNOWN, native_status=native), {})
+    case.rows["a"]["8"] = Record("8", "shows", {"type": "show", "ids": {"tmdb": "8"}, "title": "Absent A"}, Observation(ReadState.ABSENT), {})
+    run(case)
+    read = next(kwargs for name, kwargs in case.events if name == "status_mapping:read")
+    reviews = [kwargs["reason"] for name, kwargs in case.events if name == "status_mapping:review" and "no unique matching" in kwargs["reason"]]
+    assert read["unmatched"] == int(counted)
+    assert len(reviews) == int(counted)
+
+
 def test_status_writes_share_one_preflight_and_one_readback_per_side(sync_case, monkeypatch):
     case = sync_case
     for ident in ("2", "3", "4", "5"):
