@@ -116,18 +116,20 @@
     return [username ? `Account: ${username}` : "", label ? `Plan: ${label}` : "", ...dailyQuotaDetails(data)].filter(Boolean);
   }
   function dailyQuotaDetails(data) {
+    if (data?.daily_quota_expired) return ["Awaiting updated quota"];
     const remaining = data?.daily_remaining;
     const reset = Number(data?.daily_resets_at);
     const seen = Number(data?.daily_seen_at);
     const now = Date.now() / 1000;
     if (remaining == null || !Number.isFinite(Number(remaining)) || Number(remaining) < 0) return [];
-    if ((reset > 0 && reset <= now) || (!(reset > 0) && (!seen || now - seen >= 300))) return [];
+    if ((reset > 0 && reset <= now) || (!(reset > 0) && seen > 0 && now - seen >= 300)) return ["Awaiting updated quota"];
+    if (!(reset > 0) && !seen) return [];
     const limit = Number(data?.daily_limit);
     const lines = [`API calls left today: ${Number(remaining)}${Number.isFinite(limit) && limit > 0 ? ` / ${limit}` : ""}`];
     if (reset > 0 && Number.isFinite(reset)) {
       const date = new Date(reset * 1000);
       const options = { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", timeZoneName: "short" };
-      const label = window.CW?.ProfileDateTime?.format?.(date, options) || date.toLocaleString(undefined, options);
+      const label = data?.daily_resets_label || window.CW?.ProfileDateTime?.format?.(date, options) || date.toLocaleString(undefined, options);
       lines.push(`Resets: ${label}`);
     }
     return lines;

@@ -684,6 +684,7 @@
     const instanceTip = instancesTooltip(info);
     if (instanceTip) tips.push(instanceTip);
     if (providerKey === "MDBLIST") tips.push(...(META.mdblistAccountDetails?.(info) || []));
+    if (providerKey === "SIMKL") tips.push(...(META.dailyQuotaDetails?.(info) || []));
     if (providerKey === "WETRAKR" && info && typeof info === "object") {
       if (info.username) tips.push(`Account: ${info.username}`);
       if (info.vip || info.plan === "vip") tips.push("Plan: VIP");

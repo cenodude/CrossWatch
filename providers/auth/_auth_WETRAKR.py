@@ -93,9 +93,12 @@ def record_quota(block: Mapping[str, Any], headers: Mapping[str, Any], *, starte
     observation = {**parsed, "daily_seen_at": now, "started_at": started_at}
     with _QUOTA_LOCK:
         previous = _QUOTA_SEEN.get(key, {})
-        if previous.get("started_at", 0) > started_at:
+        if previous.get("started_at", 0) > started_at or previous == observation:
             return
         _QUOTA_SEEN[key] = observation
+    from cw_platform.connection_status import bust_status
+
+    bust_status()
 
 
 def latest_quota(block: Mapping[str, Any]) -> dict[str, Any]:
@@ -106,7 +109,7 @@ def latest_quota(block: Mapping[str, Any]) -> dict[str, Any]:
     reset = seen.get("daily_resets_at")
     now = time.time()
     if (reset is not None and reset <= now) or (reset is None and now - seen["daily_seen_at"] >= 300):
-        return {}
+        return {"daily_quota_expired": True}
     seen.pop("started_at", None)
     return seen
 

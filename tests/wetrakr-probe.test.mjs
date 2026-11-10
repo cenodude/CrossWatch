@@ -46,11 +46,39 @@ test("zero is displayed and a missing daily limit is not invented", () => {
   assert.equal(app.details({ ...data, daily_limit: 1000 })[0], "API calls left today: 0 / 1000");
 });
 
-test("missing, malformed and expired observations are hidden", () => {
+test("missing and malformed observations are hidden", () => {
   const app = setup();
-  const now = Date.now() / 1000;
   for (const data of [{}, { daily_remaining: null }, { daily_remaining: "invalid" }, { daily_remaining: -1 },
-    { daily_remaining: 42, daily_resets_at: now - 1 }, { daily_remaining: 42, daily_seen_at: now - 301 }]) {
+    { daily_remaining: 42 }]) {
     assert.equal(app.details(data).length, 0);
   }
 });
+
+for (const provider of ["MDBLIST", "WETRAKR", "SIMKL"]) {
+  test(`${provider} tooltips show expired quota and recover with a fresh observation`, () => {
+    const app = setup();
+    const now = Date.now() / 1000;
+    const account = { connected: true, username: "tester", plan: "free", account_type: "vip" };
+    for (const quota of [
+      { daily_quota_expired: true },
+      { daily_remaining: 42, daily_resets_at: now - 1 },
+      { daily_remaining: 42, daily_seen_at: now - 300 },
+    ]) {
+      const data = { ...account, ...quota };
+      const info = app.context.providerMeta(provider, data);
+      app.context.setBadge("badge", provider, data, false, provider, data);
+      for (const text of [info.detail, app.badge.title]) {
+        assert.match(text, /Awaiting updated quota/);
+        assert.doesNotMatch(text, /API calls left today:|Resets:/);
+      }
+      assert.match(info.detail, /Plan:/);
+    }
+    const data = { ...account, daily_remaining: 0, daily_limit: 1000, daily_resets_at: now + 3600 };
+    app.context.setBadge("badge", provider, data, false, provider, data);
+    for (const text of [app.context.providerMeta(provider, data).detail, app.badge.title]) {
+      assert.match(text, /API calls left today: 0 \/ 1000/);
+      assert.match(text, /Resets:/);
+      assert.doesNotMatch(text, /Awaiting updated quota/);
+    }
+  });
+}
