@@ -493,6 +493,27 @@ class RunRecorder:
             self._flush()
             return
 
+        if event == "history:rewatch_reset":
+            src, si, dst, di = self._destination_route(f.get("dst"), f.get("destination_instance"))
+            failed = int(f.get("errors") or 0)
+            not_found = int(f.get("not_found") or 0)
+            route = dict(
+                operation="rewatch_reset", source_provider=src or None, destination_provider=dst or None,
+                source_instance=si or None, destination_instance=di or None,
+            )
+            titles = [str(title) for title in _as_list(f.get("items")) if str(title or "").strip()]
+            self._add(
+                event_type="write_attempted", severity="warn" if failed or not_found else "info",
+                reason_code="errors" if failed else None, **route,
+                detail=_fit_titles({"attempted": int(f.get("attempted") or 0), "unwatched": int(f.get("confirmed") or 0),
+                                    "not_found": not_found, "failed": failed}, titles),
+            )
+            if failed:
+                self._add(event_type="write_failed", severity="error", reason_code="rewatch_reset_failed",
+                          reason=str(f.get("error") or "rewatch_reset_failed"), **route)
+            self._flush()
+            return
+
         if event == "archive:item_failures":
             src, si, dst, di = self._destination_route(f.get("provider"), f.get("destination_instance"))
             op = str(f.get("op") or "add")

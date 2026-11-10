@@ -110,8 +110,8 @@ class SyncProgress:
             elif name in ("rate:slow", "rate:low", "rate_limit_retry", "http_retry"):
                 self.recent.append(dict(at=time.time(), text=f"{provider or 'Provider'} is rate limiting or retrying requests"))
                 self.activity = time.monotonic()
-            elif name in ("feature:error", "feature:unsupported", "writes:skipped", "mass_delete:blocked", "snapshot:suspect", "playlist:mapping:error"):
-                messages = {"feature:error": "Provider reported an error", "feature:unsupported": "Feature unavailable", "writes:skipped": "Provider writes skipped", "mass_delete:blocked": "Mass delete protection activated", "snapshot:suspect": "Provider data needs verification", "playlist:mapping:error": "Playlist mapping reported an error"}
+            elif name in ("feature:error", "feature:unsupported", "writes:skipped", "mass_delete:blocked", "snapshot:suspect", "playlist:mapping:error", "history:rewatch_reset_unavailable"):
+                messages = {"feature:error": "Provider reported an error", "feature:unsupported": "Feature unavailable", "writes:skipped": "Provider writes skipped", "mass_delete:blocked": "Mass delete protection activated", "snapshot:suspect": "Provider data needs verification", "playlist:mapping:error": "Playlist mapping reported an error", "history:rewatch_reset_unavailable": "Trakt rewatch resets skipped"}
                 detail = str(event.get("detail") or "")[:300]
                 self.recent.append(dict(at=time.time(), text=f"{subject}: {messages[name]}" + (f" ({detail})" if detail else "")))
                 self.activity = time.monotonic()

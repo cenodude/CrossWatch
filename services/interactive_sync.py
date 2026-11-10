@@ -121,7 +121,7 @@ def build(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, sto
             return
         name = str(event.get("event") or "")
         feature = str(event.get("feature") or "")
-        if name in {"history:cloud_read", "feature:error", "feature:unsupported", "pair:skip", "run:pair:skip", "playlist:mapping:error", "writes:skipped"} or "mass_delete" in name or "massdelete" in name:
+        if name in {"history:cloud_read", "history:rewatch_reset_unavailable", "feature:error", "feature:unsupported", "pair:skip", "run:pair:skip", "playlist:mapping:error", "writes:skipped"} or "mass_delete" in name or "massdelete" in name:
             if name in PRIORITY_NOTICES and len(plan.notices) >= 100:
                 replace = next((i for i, notice in enumerate(plan.notices) if notice.get("event") not in PRIORITY_NOTICES), None)
                 if replace is not None:

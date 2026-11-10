@@ -110,6 +110,16 @@ function applyPairRemoveMode(features, mode){
 }
 function isTwoWayMode(state){return !!ID("cx-mode-two")?.checked||String(state?.mode||"").toLowerCase().startsWith("two")}
 function allCopiesAllowed(state){return same(state?.dst,"jellyfin")||(isTwoWayMode(state)&&same(state?.src,"jellyfin"))}
+const TRAKT_RESET_SERVERS=["plex","jellyfin","emby","kodi","tofa"];
+function traktResetsAllowed(state){
+  const server=p=>TRAKT_RESET_SERVERS.some(name=>same(p,name));
+  return (same(state?.src,"trakt")&&server(state?.dst))||(isTwoWayMode(state)&&same(state?.dst,"trakt")&&server(state?.src));
+}
+function traktResetsNeedVip(state){
+  const trakt=(window.__CW_PROVIDER_STATUS__?.providers||window._statusCache?.providers||{}).TRAKT;
+  if(!trakt||trakt.vip!==false) return false;
+  return pairInstanceForKind(state,"trakt")===String(trakt.rep_instance||"default");
+}
 const DROPPED_PROVIDERS=["trakt","mdblist","simkl","wetrakr","flicklist","crosswatch"];
 function droppedProviders(state){return [...new Set([state?.src,state?.dst].map(p=>String(p||"").trim().toLowerCase()))].filter(p=>DROPPED_PROVIDERS.includes(p))}
 function droppedTagAllowed(state,key){
@@ -1086,7 +1096,7 @@ function applySubDisable(feature){
       "#cx-rt-add","#cx-rt-remove","#cx-rt-library-only","#cx-rt-anime-map","#cx-rt-anime-only","#cx-rt-type-all","#cx-rt-type-movies","#cx-rt-type-shows","#cx-rt-type-seasons","#cx-rt-type-episodes","#cx-rt-mode","#cx-rt-from-date","#cx-rt-specials",
       "#st-rt-liked-min","#st-rt-loved-min"
     ],
-    history: ["#plx-marked-watched", "#plx-cloud-read", "#plx-discover-fallback", "#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-undated-today", "#cx-hs-all-copies", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-hs-dropped"],
+    history: ["#plx-marked-watched", "#plx-cloud-read", "#plx-discover-fallback", "#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-undated-today", "#cx-hs-all-copies", "#cx-hs-trakt-resets", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-hs-dropped"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
     progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-library-only","#cx-pr-anime-map"],
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes","#cx-co-media","#cx-co-media-upd"]
@@ -1934,6 +1944,13 @@ left.innerHTML = `
             <span class="slider"></span>
           </label>
         </div>` : ""}
+        ${traktResetsAllowed(state) ? `<div class="opt-row" style="grid-column:1/-1">
+          <label for="cx-hs-trakt-resets" data-tip-id="cx-hs-trakt-resets">Follow Trakt rewatch resets${traktResetsNeedVip(state) ? ' <span class="muted">(needs Trakt VIP)</span>' : ""}</label>
+          <label class="switch">
+            <input id="cx-hs-trakt-resets" type="checkbox" ${hs.trakt_rewatch_resets && !traktResetsNeedVip(state) ? "checked" : ""} ${traktResetsNeedVip(state) ? 'disabled data-locked="1"' : ""}>
+            <span class="slider"></span>
+          </label>
+        </div>` : ""}
       </div>
       ${droppedBlock}
       ${hsSourceStatus ? `<div class="opt-row">
@@ -2436,6 +2453,12 @@ function bindChangeHandlers(state,root){
         update_all_copies: !!ID("cx-hs-all-copies")?.checked && allCopiesAllowed(state),
       });
       state.visited.add("history");
+    }
+
+    if (id === "cx-hs-trakt-resets") {
+      state.options.history = Object.assign({}, state.options.history || {}, {
+        trakt_rewatch_resets: !!ID("cx-hs-trakt-resets")?.checked && traktResetsAllowed(state),
+      });
     }
 
     if(id.startsWith("cx-pl-")){

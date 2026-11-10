@@ -41,6 +41,7 @@ from cw_platform.anime_mapping.service import (
 from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config
 from cw_platform.orchestrator._history_rewatches import history_event_matches, history_timestamp_tolerance_seconds
 from cw_platform.orchestrator._unresolved import is_remove_retry
+from cw_platform.orchestrator._pair_skips import PairSkips, load_pair_skips
 from cw_platform.local_db.legacy_files import DB_MANAGED_ARTIFACTS
 from cw_platform.memory_release import register_cache
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names
@@ -1964,43 +1965,47 @@ def _pair_map(cfg: dict[str, Any], _state: dict[str, Any]) -> dict[tuple[str, st
             mp[k].append(dst)
 
     for pr in pairs:
-        if not isinstance(pr, dict):
-            continue
-
-        src = str(pr.get("src") or pr.get("source") or "").upper().strip()
-        dst = str(pr.get("dst") or pr.get("target") or "").upper().strip()
-        if not (src and dst):
-            continue
-        if pr.get("enabled") is False:
-            continue
-
-        si = normalize_instance_id(pr.get("src_instance") or pr.get("source_instance"))
-        ti = normalize_instance_id(pr.get("dst_instance") or pr.get("target_instance"))
-        src_tok = _prov_token(src, si)
-        dst_tok = _prov_token(dst, ti)
-
-        mode = str(pr.get("mode") or "one-way").lower()
-        feats = pr.get("features")
-        feats_list: list[str] = []
-        if isinstance(feats, (list, tuple)):
-            feats_list = [str(f).lower() for f in feats]
-        elif isinstance(feats, dict):
-            for name in _ANALYZER_FEATURES:
-                f = feats.get(name)
-                if isinstance(f, bool):
-                    if f:
-                        feats_list.append(name)
-                elif isinstance(f, dict) and (f.get("enable") or f.get("enabled")):
-                    feats_list.append(name)
-        else:
-            feats_list = ["history"]
-
-        for f in feats_list:
+        for src_tok, f, dst_tok in _pair_routes(pr):
             add(src_tok, f, dst_tok)
-            if mode in ("two-way", "bi", "both", "mirror", "two", "two_way", "two way"):
-                add(dst_tok, f, src_tok)
 
     return mp
+
+
+def _pair_routes(pr: Any) -> list[tuple[str, str, str]]:
+    if not isinstance(pr, dict):
+        return []
+    src = str(pr.get("src") or pr.get("source") or "").upper().strip()
+    dst = str(pr.get("dst") or pr.get("target") or "").upper().strip()
+    if not (src and dst) or pr.get("enabled") is False:
+        return []
+
+    si = normalize_instance_id(pr.get("src_instance") or pr.get("source_instance"))
+    ti = normalize_instance_id(pr.get("dst_instance") or pr.get("target_instance"))
+    src_tok = _prov_token(src, si)
+    dst_tok = _prov_token(dst, ti)
+
+    mode = str(pr.get("mode") or "one-way").lower()
+    feats = pr.get("features")
+    feats_list: list[str] = []
+    if isinstance(feats, (list, tuple)):
+        feats_list = [str(f).lower() for f in feats]
+    elif isinstance(feats, dict):
+        for name in _ANALYZER_FEATURES:
+            f = feats.get(name)
+            if isinstance(f, bool):
+                if f:
+                    feats_list.append(name)
+            elif isinstance(f, dict) and (f.get("enable") or f.get("enabled")):
+                feats_list.append(name)
+    else:
+        feats_list = ["history"]
+
+    out: list[tuple[str, str, str]] = []
+    for f in feats_list:
+        out.append((src_tok, f, dst_tok))
+        if mode in ("two-way", "bi", "both", "mirror", "two", "two_way", "two way"):
+            out.append((dst_tok, f, src_tok))
+    return out
 
 
 def _history_rewatch_pair_set(cfg: dict[str, Any]) -> set[tuple[str, str]]:
@@ -2628,6 +2633,12 @@ class _AnalysisContext:
     episode_groups: Any = None
 
     cloud_confirmations: dict[str, set[str]] = field(default_factory=dict)
+    pair_skips: PairSkips | None = None
+
+    def skip_reason(self, src: str, feat: str, dst: str, item: Mapping[str, Any]) -> str:
+        if not self.pair_skips:
+            return ""
+        return self.pair_skips.reason(feat, _norm_prov_token(src), _norm_prov_token(dst), item)
 
     def cloud_confirmed(self, target, item):
         from types import SimpleNamespace
@@ -2705,7 +2716,21 @@ def _analysis_context(s: dict[str, Any], cfg: dict[str, Any] | None = None) -> _
         history_keys=_history_key_index(s),
         history_rewatch_pairs=_history_rewatch_pair_set(config),
         anime_coords=_AnimeHistoryCoords(s, config),
+        pair_skips=_pair_skips_for(config),
     )
+
+
+def _pair_skips_for(config: Mapping[str, Any]) -> PairSkips:
+    entries: list[tuple[str, str, list[tuple[str, str]]]] = []
+    try:
+        for index, pair in enumerate(config.get("pairs") or [], 1):
+            routes: dict[str, list[tuple[str, str]]] = defaultdict(list)
+            for src_tok, feature, dst_tok in _pair_routes(pair):
+                routes[feature].append((src_tok, dst_tok))
+            entries.extend((pair_feature_scope(config, pair, feature, index), feature, found) for feature, found in routes.items())
+        return load_pair_skips(CONFIG_DIR, entries)
+    except Exception:
+        return load_pair_skips(CONFIG_DIR, ())
 
 
 def _history_peer_matches(ctx: _AnalysisContext, src: str, dst: str) -> dict[str, str]:
@@ -2761,6 +2786,8 @@ def _target_peer_match(
     if not _passes_pair_type_filter(ctx.pair_types, prov_key, feat_key, dst_key, item):
         return "filtered"
     if not ctx.passes_anime_filter(prov_key, feat_key, dst_key, item):
+        return "filtered"
+    if ctx.skip_reason(prov_key, feat_key, dst_key, item):
         return "filtered"
 
     vv = dict(item)
@@ -2856,6 +2883,7 @@ def _eligible_targets(ctx: _AnalysisContext, prov: str, feat: str, item: dict[st
         and _passes_pair_lib_filter(ctx.pair_libs, prov_key, feat_key, dst, item)
         and _passes_pair_type_filter(ctx.pair_types, prov_key, feat_key, dst, item)
         and ctx.passes_anime_filter(prov_key, feat_key, dst, item)
+        and not ctx.skip_reason(prov_key, feat_key, dst, item)
     ]
 
 
@@ -2937,6 +2965,8 @@ def _pair_stats(
                     continue
                 if not analysis.passes_anime_filter(prov, feat, dst, v):
                     continue
+                if analysis.skip_reason(prov, feat, dst, v):
+                    continue
 
                 if not _coverage_comparable(feat, v):
                     not_comparable += 1
@@ -3005,6 +3035,7 @@ def _pair_exclusions(
             excluded_types: dict[str, int] = {}
             excluded_libs: dict[str, int] = {}
             excluded_anime = 0
+            excluded_skips: dict[str, int] = {}
 
             scanned_total = 0
             accepted_total = 0
@@ -3030,8 +3061,13 @@ def _pair_exclusions(
                     excluded_anime += 1
                     continue
 
+                skip = analysis.skip_reason(prov, feat, dst, v)
+                if skip:
+                    excluded_skips[skip] = excluded_skips.get(skip, 0) + 1
+                    continue
+
                 accepted_total += 1
-            total = sum(excluded_types.values()) + sum(excluded_libs.values()) + excluded_anime
+            total = sum(excluded_types.values()) + sum(excluded_libs.values()) + excluded_anime + sum(excluded_skips.values())
             if not total:
                 continue
 
@@ -3049,6 +3085,10 @@ def _pair_exclusions(
                 rec["excluded_libraries"] = excluded_libs
             if excluded_anime:
                 rec["excluded_anime_only"] = excluded_anime
+            if excluded_skips.get("dropped"):
+                rec["excluded_dropped"] = excluded_skips["dropped"]
+            if excluded_skips.get("rewatch_reset"):
+                rec["excluded_rewatch_reset"] = excluded_skips["rewatch_reset"]
 
             allowed_types = analysis.pair_types.get((prov, feat, dst))
             allowed_libs = analysis.pair_libs.get((prov, feat, dst))
