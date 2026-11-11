@@ -175,3 +175,13 @@ def test_managed_users_cannot_create_trackers_through_import_preview(cfg):
     response = _client(ANN).post("/api/tracker/import/preview", json={"provider_instance": "new", "source": "TRAKT", "source_instance": "TRAKT-P01", "features": ["history"]})
     assert response.status_code == 403
     assert cfg["crosswatch"]["instances"] == before
+
+
+def test_episode_watch_editor_respects_tracker_scope_and_write_permission(cfg):
+    api = _client(ANN)
+    assert api.get("/api/tracker/watch-editor?provider_instance=CW-P02&tmdb=123").status_code == 403
+    assert api.post("/api/tracker/history/bulk", json={"provider_instance": "CW-P02"}).status_code == 403
+    readonly = {**ANN, "permissions": {"write": False}}
+    for method, path in (("GET", "/api/tracker/watch-editor"), ("POST", "/api/tracker/history/bulk")):
+        assert appAuthAPI.non_admin_api_allowed(path, method)
+        assert not crosswatch._non_admin_permission_allowed(readonly, path, method)

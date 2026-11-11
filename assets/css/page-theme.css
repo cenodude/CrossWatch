@@ -156,6 +156,9 @@ dialog.cw-page-panel {
 #layout .cw-themed-page .cw-page-toolbar {
   background: var(--cw-page-toolbar-bg);
 }
+#page-tracker .trk-overview-log{background:transparent;border:0;box-shadow:none;color:var(--cw-theme-muted);font:inherit;font-size:13px}
+#page-tracker .trk-overview-log:hover,#page-tracker .trk-overview-log:focus-visible{color:var(--cw-theme-accent)}
+#page-tracker .trk-overview-log:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:3px;border-radius:4px}
 #page-tracker .trk-overview-open{background:transparent;color:var(--cw-theme-text);box-shadow:none}
 #page-tracker .trk-overview-quick,#page-tracker .trk-cover-action{background:transparent;color:#fff;box-shadow:none}
 #page-tracker .trk-overview-quick::before,#page-tracker .trk-cover-action::before{content:"";position:absolute;inset:5px;z-index:-1;border-radius:7px;background:rgba(12,14,18,.45)}
@@ -940,6 +943,11 @@ button.cw-mm-provider[data-ia-chip]:hover,button.cw-mm-provider[data-mm-episode]
 #page-tracker .trk-rating .material-symbol{color:var(--cw-theme-warning)}
 #page-tracker :is(.trk-progress,.trk-meter){background:var(--cw-theme-surface-strong)}
 #page-tracker :is(.trk-progress,.trk-meter) i{background:var(--cw-theme-accent)}
+#page-tracker .trk-watch-summary{font-size:13px;font-variant-numeric:tabular-nums}
+#page-tracker .trk-watch-summary-head{font-size:14px}
+#page-tracker .trk-watch-summary-head>strong:last-child:not(:first-child){color:var(--cw-theme-accent)}
+#page-tracker .trk-watch-summary-count,#page-tracker .trk-watch-summary-stats dt{color:var(--cw-theme-muted)}
+#page-tracker .trk-watch-summary-stats dd{color:var(--cw-theme-text)}
 #page-tracker .trk-poster{background:var(--cw-theme-surface-strong);border:1px solid var(--cw-theme-border);color:var(--cw-theme-muted)}
 #page-tracker .trk-detail-title{color:var(--cw-theme-text)}
 #page-tracker .trk-detail-health{border:1px solid var(--cw-theme-border);background:var(--cw-theme-surface)}
@@ -999,9 +1007,9 @@ input.cw-timestamp-input::-webkit-datetime-edit-second-field{font-family:Arial,s
 #page-tracker .trk-add-menu{border:1px solid var(--cw-theme-border-strong);border-radius:var(--cw-page-control-radius);background:var(--cw-theme-surface-raised);color:var(--cw-theme-text);box-shadow:var(--cw-page-shadow)}
 #page-tracker .trk-add-item{border:0;border-radius:6px;background:transparent;color:inherit;font:inherit;font-size:14px;cursor:pointer}
 #page-tracker .trk-add-item:hover{background:var(--cw-page-hover-bg)}
-#page-tracker :is(.trk-toolbar,.trk-change-filters) .trk-seg .cw-filter-chip{border-color:transparent;background:transparent}
-#page-tracker :is(.trk-toolbar,.trk-change-filters) .trk-seg .cw-filter-chip:hover{background:var(--cw-page-hover-bg)}
-#page-tracker :is(.trk-toolbar,.trk-change-filters) .trk-seg .cw-filter-chip.active{border-color:var(--cw-page-selected-border);background:var(--cw-page-selected-bg);color:var(--cw-page-selected-text)}
+#page-tracker :is(.trk-extra-filters,.trk-change-filters) .trk-seg .cw-filter-chip{border-color:transparent;background:transparent}
+#page-tracker :is(.trk-extra-filters,.trk-change-filters) .trk-seg .cw-filter-chip:hover{background:var(--cw-page-hover-bg)}
+#page-tracker :is(.trk-extra-filters,.trk-change-filters) .trk-seg .cw-filter-chip.active{border-color:var(--cw-page-selected-border);background:var(--cw-page-selected-bg);color:var(--cw-page-selected-text)}
 #page-tracker .trk-next{color:var(--cw-theme-accent)}
 #page-tracker .trk-badge{border:1px solid var(--cw-theme-border);background:var(--cw-theme-surface);color:var(--cw-theme-text)}
 #page-tracker .trk-badge .material-symbol{color:var(--cw-theme-muted)}
@@ -1042,6 +1050,36 @@ input.cw-timestamp-input::-webkit-datetime-edit-second-field{font-family:Arial,s
 #page-tracker .trk-picked{border:1px solid var(--cw-theme-border);background:var(--cw-theme-surface);color:var(--cw-theme-text)}
 #page-tracker .trk-picked .material-symbol{color:var(--cw-theme-muted)}
 #page-tracker .trk-check{color:var(--cw-theme-text)}
+#page-tracker .trk-watch-row{font-size:14px;font-weight:400}
+#page-tracker .trk-watch-row small{color:var(--cw-theme-muted);font-size:12px;font-weight:400}
+#page-tracker label.trk-watch-row:hover{background:var(--cw-theme-surface)}
+#page-tracker label.trk-watch-row:has(:checked){background:var(--cw-page-selected-bg)}
+#page-tracker .trk-watch-editor .cw-ia-sheet-title h2{font-size:22px;letter-spacing:-.4px}
+#page-tracker .trk-watch-steps li{color:var(--cw-theme-muted);font-size:12px;border-bottom:2px solid transparent}
+#page-tracker .trk-watch-steps li[aria-current]{color:var(--cw-theme-text);border-bottom-color:var(--cw-theme-accent)}
+#page-tracker .trk-watch-steps li.is-done{color:var(--cw-theme-accent)}
+#page-tracker .trk-watch-heading h3{font-size:19px;font-weight:650;letter-spacing:-.25px}
+#page-tracker .trk-watch-heading small{color:var(--cw-theme-muted);font-size:12px}
+#page-tracker .trk-watch-choice{background:var(--cw-theme-surface);color:var(--cw-theme-text);border:1px solid transparent;box-shadow:none;font:inherit}
+#page-tracker .trk-watch-choice:hover:not(:disabled){background:var(--cw-page-hover-bg)}
+#page-tracker .trk-watch-choice[aria-pressed="true"]{background:var(--cw-page-selected-bg);border-color:color-mix(in srgb,var(--cw-theme-accent) 35%,transparent)}
+#page-tracker .trk-watch-choice:disabled{opacity:.45;cursor:default}
+#page-tracker .trk-watch-choice b{font-size:15px;font-weight:600}
+#page-tracker .trk-watch-choice small,#page-tracker .trk-watch-selection small,#page-tracker .trk-watch-season-pick small{font-size:12px;font-weight:400;color:var(--cw-theme-muted)}
+#page-tracker .trk-watch-choice>.material-symbols-rounded{color:var(--cw-theme-muted);font-size:23px}
+#page-tracker .trk-watch-choice[aria-pressed="true"]>.material-symbols-rounded{color:var(--cw-theme-accent)}
+#page-tracker .trk-watch-choice-count{font-size:20px;font-variant-numeric:tabular-nums}
+#page-tracker .trk-watch-selection{font-size:13px}
+#page-tracker .trk-watch-season{background:var(--cw-theme-surface)}
+#page-tracker .trk-watch-season-pick,#page-tracker .trk-watch-season-expand{color:var(--cw-theme-text);background:transparent;border:0;font:inherit;box-shadow:none}
+#page-tracker .trk-watch-season-pick[aria-pressed="true"]>.material-symbols-rounded{color:var(--cw-theme-accent)}
+#page-tracker .trk-watch-season-pick b{font-size:14px;font-weight:600}
+#page-tracker .trk-watch-season-pick:disabled{opacity:.5;cursor:default}
+#page-tracker .trk-watch-season-expand:hover{background:var(--cw-page-hover-bg)}
+#page-tracker .trk-watch-totals{border-block:1px solid color-mix(in srgb,var(--cw-theme-muted) 12%,transparent)}
+#page-tracker .trk-watch-totals dt{font-size:12px;color:var(--cw-theme-muted)}
+#page-tracker .trk-watch-totals dd{font-size:28px;font-weight:600;font-variant-numeric:tabular-nums}
+#page-tracker .trk-watch-totals>div:last-child dd{color:var(--cw-theme-accent)}
 #page-tracker .trk-match{border:1px solid var(--cw-theme-border);background:transparent;color:var(--cw-theme-text)}
 #page-tracker .trk-match:hover{background:var(--cw-page-hover-bg)}
 #page-tracker .trk-match-poster{background:var(--cw-theme-surface-strong);color:var(--cw-theme-muted)}
@@ -1069,6 +1107,9 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-months{--hist-tone-rgb:70,86
 #page-tracker .trk-grid-status .trk-status{background:color-mix(in srgb,var(--trk-status) 20%,#080b10);color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.2)}
 #page-tracker .trk-grid-status .material-symbol{color:color-mix(in srgb,var(--trk-status) 75%,#fff)}
 #page-tracker .trk-extra-filters{border-top:1px solid var(--cw-theme-border)}
+#page-tracker .trk-filter-toggle{background:transparent;border:0;box-shadow:none;color:var(--cw-theme-muted);font:inherit;font-size:12px}
+#page-tracker .trk-filter-toggle:hover{background:var(--cw-page-hover-bg);color:var(--cw-theme-text)}
+#page-tracker .trk-filter-toggle.active{color:var(--cw-theme-accent);background:var(--cw-page-selected-bg)}
 #page-tracker .trk-extra-filters>small{color:var(--cw-theme-muted)}
 :is(#page-tracker,.cw-mm-trk) :is(.trk-status-btn,.trk-status-item){--trk-status:var(--cw-theme-muted)}
 :is(#page-tracker,.cw-mm-trk) .trk-status-btn{border:1px solid color-mix(in srgb,var(--trk-status) 40%,var(--cw-theme-border));background:color-mix(in srgb,var(--trk-status) 12%,transparent);color:var(--cw-theme-text)}
