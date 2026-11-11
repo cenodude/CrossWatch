@@ -12,6 +12,7 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
     t.after(() => browser.close());
     const page = await browser.newPage({viewport:{width,height:900},reducedMotion:"reduce"});
     page.setDefaultTimeout(5000);
+    await page.addInitScript(() => localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"history"})));
     const errors = [], writes = [];
     page.on("pageerror", error => errors.push(error.message));
     const child = width < 800;

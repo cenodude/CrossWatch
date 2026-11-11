@@ -1669,6 +1669,26 @@ class TrackerStore:
             out.append((feature, key, value))
         return out
 
+    def watched_episodes(self, show_keys: Iterable[str]) -> dict[str, set[tuple[int, int]]]:
+        keys = list(dict.fromkeys(show_keys))
+        found: dict[str, set[tuple[int, int]]] = {}
+        with self._db() as conn:
+            if conn is None:
+                return found
+            try:
+                for offset in range(0, len(keys), 200):
+                    batch = keys[offset:offset + 200]
+                    marks = ",".join("?" for _ in batch)
+                    rows = conn.execute(
+                        "SELECT DISTINCT show_key, season, episode FROM items WHERE scope='' AND feature='history'"
+                        f" AND kind='episode' AND show_key IN ({marks}) AND season>0 AND episode>0", batch,
+                    )
+                    for key, season, episode in rows:
+                        found.setdefault(key, set()).add((season, episode))
+            except sqlite3.Error as exc:
+                raise TrackerUnreadable("history", [DB_NAME]) from exc
+        return found
+
     def status_keys(self, status: str) -> set[str]:
         with self._db() as conn:
             if conn is None:

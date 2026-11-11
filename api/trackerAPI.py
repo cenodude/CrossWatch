@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from cw_platform.access_policy import request_user, user_can_access_instance
 from cw_platform.anime_mapping.history_coords import alias_context, tmdb_coordinate
@@ -35,6 +35,7 @@ from cw_platform.tracker_store import (
 )
 from cw_platform.value_coercion import coerce_bool
 from services import tracker_check, tracker_import, tracker_migration, tracker_storage_maintenance
+from services.tracker_overview import overview_events
 
 router = APIRouter(prefix="/api/tracker", tags=["tracker"])
 
@@ -1320,6 +1321,63 @@ def tracker_shows(
         show["status"] = saved.get("status") if saved else None
         show["tags"] = saved.get("tags") if saved else []
     return {"ok": True, "provider_instance": inst, "total": total, "offset": offset, "shows": shows}
+
+
+@router.get("/overview", dependencies=_READY)
+def tracker_overview(request: Request, provider_instance: str | None = Query("default")) -> Any:
+    cfg, inst, store = _store(provider_instance, request)
+    recent: list[dict[str, Any]] = []
+    continuing: list[dict[str, Any]] = []
+    try:
+        with store.session():
+            history_total, history = store.query("history", limit=200)
+            progress_total, progress = store.query("progress", limit=200)
+            identities = {key: _identity_of(item, key) for key, item in progress}
+            notes = store.notes_for(_title_key(ident) for ident in identities.values())
+            previous = None
+            for key, item in history:
+                ident = _identity_of(item, key)
+                group = _title_key(ident) if item.get("type") == "episode" else key
+                if group == previous:
+                    recent[-1]["plays"] += 1
+                    continue
+                previous = group
+                recent.append({**_row(key, item, "history"), "ref": {"feature": "history", "key": key}, "plays": 1})
+            seen = set()
+            for key, item in progress:
+                ident = identities[key]
+                group = _title_key(ident)
+                percent = item.get("progress_percent")
+                if not isinstance(percent, (int, float)) or not 0 < percent < 100 or group in seen:
+                    continue
+                if (notes.get(group) or {}).get("status") in {"dropped", "completed"}:
+                    continue
+                matches = store.related(**ident, feature="history")
+                if any((data.get("season"), data.get("episode")) == (item.get("season"), item.get("episode")) and str(data.get("watched_at") or "") >= str(item.get("progress_at") or "") for _, _, data in matches):
+                    continue
+                seen.add(group)
+                row = {**_row(key, item, "progress"), "ref": {"feature": "progress", "key": key}}
+                duration, position = item.get("duration_ms"), item.get("progress_ms")
+                if isinstance(duration, (int, float)) and isinstance(position, (int, float)) and duration > position >= 0:
+                    row["remaining_minutes"] = math.ceil((duration - position) / 60000)
+                continuing.append(row)
+    except TrackerUnreadable:
+        return _unreadable()
+    return {"ok": True, "provider_instance": inst, "recent": recent, "continue": continuing,
+            "history_more": history_total > 200, "progress_more": progress_total > 200, "metadata_available": bool(_tmdb_key(cfg))}
+
+
+@router.get("/overview/shows", dependencies=_READY)
+def tracker_overview_shows(request: Request, provider_instance: str | None = Query("default"), day: str = Query("", max_length=10)) -> Any:
+    cfg, inst, store = _store(provider_instance, request)
+    try:
+        today = date.fromisoformat(day) if day else datetime.now(timezone.utc).date()
+    except ValueError:
+        return _error("invalid_date", 400)
+    if not _tmdb_key(cfg):
+        return {"ok": True, "provider_instance": inst, "continue": [], "airing": [], "done": True, "total": 0, "unavailable": 0, "metadata_available": False}
+    return StreamingResponse(overview_events(store, _tmdb_provider(), today, request.is_disconnected),
+                             media_type="application/x-ndjson", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 @router.get("/notes", dependencies=_READY)

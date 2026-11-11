@@ -281,6 +281,7 @@
     document.body.appendChild(root);
     root.addEventListener("click", onClick);
     root.addEventListener("toggle", (event) => {
+      if (event.target.matches?.("[data-mm-providers]") && event.target.isConnected) state.providersExpanded = event.target.open;
       if (!event.target.matches?.("[data-mm-collection]") || !event.target.isConnected) return;
       if (collectionView) collectionView.open = event.target.open;
       if (event.target.open) void loadCollection();
@@ -288,6 +289,14 @@
     document.addEventListener("keydown", (event) => {
       if (root.hidden || event.key !== "Escape") return;
       if (document.getElementById("cw-trailer")?.classList.contains("show")) return;
+      const statusMenu = root.querySelector("[data-mm-status-picker][open]");
+      if (statusMenu) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        statusMenu.open = false;
+        statusMenu.querySelector("summary")?.focus();
+        return;
+      }
       if (!state.stacked && document.querySelector(".cw-ia-pop:not([hidden]),.cw-ia-sheet-wrap:not([hidden]),.cx-backdrop")) return;
       event.preventDefault();
       if (state.stacked) event.stopImmediatePropagation();
@@ -396,6 +405,9 @@
       actionOthers: null,
       actionPairless: null,
       tab: "overview",
+      providersExpanded: false,
+      historyExpanded: false,
+      statusBusy: false,
       seasons: sameTitle ? new Map([...state.seasons].filter(([, data]) => !data.loading && !data.error)) : new Map(),
       season: null,
       episode: null,
@@ -504,14 +516,12 @@
     const genres = Array.isArray(meta?.genres) ? meta.genres.slice(0, 3) : [];
     const overview = meta?.overview || (state.loading ? "Loading details..." : "No description available.");
     const tmdb = tmdbOf(item);
-    const status = trackerData()?.note?.status;
-    const statusLabel = TRACKER_STATUS[status];
     return `<div class="cw-mm-top">
       <img class="cw-mm-poster" src="${esc(posterUrl(item))}" alt="" decoding="async" onerror="${placeholder}">
       <div class="cw-mm-heading">
         <h2 id="cw-mm-title" aria-label="${esc(title)}"><span class="cw-mm-title-text">${esc(title)}</span>${tmdb ? `<img class="cw-mm-title-logo" data-src="/art/tmdb/${artType(item)}/${encodeURIComponent(tmdb)}?kind=logo&size=w500" alt="" hidden>` : ""}</h2>
         <p class="cw-mm-sub">${esc([year, movie ? "Movie" : "TV Series"].filter(Boolean).join(" • "))}</p>
-        <div class="cw-mm-chips">${chips.map((chip) => `<span class="cw-mm-chip">${esc(chip)}</span>`).join("")}${genres.map((genre) => `<span class="cw-mm-chip is-genre">${esc(genre)}</span>`).join("")}${statusLabel ? `<span class="cw-mm-trk-status" data-status="${esc(status)}" aria-label="Watch status: ${esc(statusLabel)}">${esc(statusLabel)}</span>` : ""}</div>
+        <div class="cw-mm-chips">${chips.map((chip) => `<span class="cw-mm-chip">${esc(chip)}</span>`).join("")}${genres.map((genre) => `<span class="cw-mm-chip is-genre">${esc(genre)}</span>`).join("")}</div>
         <div class="cw-mm-actions">${actions()}</div>
         <p class="cw-mm-overview">${esc(overview)}</p>
       </div>
@@ -523,7 +533,7 @@
     const tmdb = tmdbOf(item);
     const imdb = meta?.ids?.imdb || item?.ids?.imdb || "";
     const out = [];
-    if (window.CW?.Trailer?.has?.(meta)) out.push(`<button class="cw-mm-btn is-primary" type="button" data-mm-trailer>${icon("play_arrow")}Watch trailer</button>`);
+    if (window.CW?.Trailer?.has?.(meta)) out.push(`<button class="cw-mm-btn${state.tracker ? "" : " is-primary"}" type="button" data-mm-trailer>${icon("play_arrow")}Watch trailer</button>`);
     out.push(`<a class="cw-mm-btn" href="https://www.themoviedb.org/${artType(item)}/${encodeURIComponent(tmdb)}" target="_blank" rel="noopener">TMDB</a>`);
     if (imdb) out.push(`<a class="cw-mm-btn" href="https://www.imdb.com/title/${encodeURIComponent(imdb)}/" target="_blank" rel="noopener">IMDb</a>`);
     if (removable()) out.push(`<button type="button" class="cw-mm-btn is-danger" data-mm-clear-all aria-haspopup="dialog" title="Remove from everything" aria-label="Remove from everything">${icon("delete")}Remove</button>`);
@@ -556,8 +566,11 @@
 
   function livesCard() {
     const presence = state.presence;
+    const section = (content) => state.tracker
+      ? `<details class="cw-mm-lives" data-mm-providers${state.providersExpanded ? " open" : ""}><summary>Providers${icon("expand_more")}</summary>${content}</details>`
+      : `<section class="cw-mm-lives"><h3>Providers</h3>${content}</section>`;
     if (!presence) {
-      return `<section class="cw-mm-lives"><h3>Providers</h3><p class="cw-mm-muted">${state.presenceLoading ? "Checking your providers..." : "Sync status is not available."}</p></section>`;
+      return section(`<p class="cw-mm-muted">${state.presenceLoading ? "Checking your providers..." : "Sync status is not available."}</p>`);
     }
     const tiles = LIVES.filter(([key]) => key in presence).map(([key, symbol, label]) => {
       const entry = presence[key];
@@ -577,7 +590,7 @@
         ${chips}
       </div>`;
     }).join("");
-    return `<section class="cw-mm-lives"><h3>Providers</h3><div class="cw-mm-live-grid">${tiles}</div></section>`;
+    return section(`<div class="cw-mm-live-grid">${tiles}</div>`);
   }
 
   function removable() {
@@ -814,12 +827,22 @@
   }
 
   const TRACKER_STATUS = { watching: "Watching", planned: "Plan to watch", completed: "Completed", on_hold: "On hold", dropped: "Dropped" };
+  const TRACKER_STATUS_ICONS = { watching: "play_circle", planned: "schedule", completed: "task_alt", on_hold: "pause_circle", dropped: "do_not_disturb_on" };
+
+  function trackerStatus(data) {
+    const current = data.note?.status || "";
+    const label = TRACKER_STATUS[current] || "Set a status";
+    const disabled = !data.note_key || state.statusBusy || window.CW?.AuthState?.read?.()?.permissions?.write === false;
+    const symbol = (name, extra = "") => `<span class="material-symbol ${extra}" aria-hidden="true">${name}</span>`;
+    const choices = [...Object.entries(TRACKER_STATUS), ["", "No status"]].map(([value, text]) => `<button type="button" class="trk-status-item${value === current ? " is-current" : ""}" data-mm-trk-status="${value}" data-status="${value}" aria-pressed="${value === current}"${disabled ? " disabled" : ""}>${symbol(TRACKER_STATUS_ICONS[value] || "remove")}<span>${text}</span>${value === current ? symbol("check", "trk-status-check") : ""}</button>`).join("");
+    return `<details class="trk-status-pick" data-mm-status-picker><summary class="trk-status-btn${current ? "" : " is-empty"}" data-status="${esc(current)}" aria-label="Watch status: ${label}">${symbol(TRACKER_STATUS_ICONS[current] || "flag")}<span>${label}</span>${symbol("expand_more", "trk-status-caret")}</summary><div class="trk-status-menu" role="group" aria-label="Watch status">${choices}</div></details>`;
+  }
 
   function trackerBox() {
     const data = trackerData();
     if (!data) return "";
     const show = !isMovie();
-    const plays = data.plays || [];
+    const plays = [...(data.plays || [])].sort((a, b) => playEpoch(b) - playEpoch(a));
     const rating = data.ratings?.[0]?.rating ?? null;
     const listed = (data.watchlist || []).length > 0;
     const hints = {
@@ -831,26 +854,27 @@
     };
     const button = (action, symbol, label, primary = false) => `<button type="button" class="cw-mm-btn${primary ? " is-primary" : " is-icon"}" data-mm-trk="${action}" title="${esc(`${label}: ${hints[action]}`)}" aria-label="${esc(label)}">${icon(symbol)}${primary ? esc(label) : ""}</button>`;
     const actions = [
-      button("log", "add_circle", show ? "Log episode" : plays.length ? "Log rewatch" : "Mark watched", true),
+      button("log", "add_circle", "Watched", true),
       button("rate", rating != null ? "star" : "star_outline", rating != null ? `Change rating (${rating}/10)` : "Rate"),
       button("list", listed ? "bookmark_remove" : "bookmark_add", listed ? "Remove from watchlist" : "Add to watchlist"),
       button("map", "compare_arrows", "Fix match"),
       ...(data.note_key ? [button("notes", "edit_note", data.note ? "My notes" : "Add notes")] : []),
     ].join("");
     const note = data.note;
-    const status = note?.status ? TRACKER_STATUS[note.status] : "";
     const tags = (note?.tags || []).slice(0, 8).map((tag) => `<span class="cw-mm-trk-tag">${esc(tag)}</span>`).join("");
-    const noteLine = status || tags ? `<div class="cw-mm-trk-note">${status ? `<span class="cw-mm-trk-status" data-status="${esc(note.status)}">${esc(status)}</span>` : ""}${tags}</div>` : "";
-    const when = (play) => {
+    const noteLine = tags ? `<div class="cw-mm-trk-note">${tags}</div>` : "";
+    const when = (play, time = false) => {
       const epoch = playEpoch(play);
-      return epoch ? dateFmt.format(new Date(epoch * 1000), { hour: "2-digit", minute: "2-digit" }) : "";
+      if (!epoch) return "";
+      const date = new Date(epoch * 1000);
+      return time ? window.CW.ProfileDateTime.format(date, { hour: "2-digit", minute: "2-digit" }) : dateFmt.format(date);
     };
-    const rows = plays.slice(0, 6).map((play) => `<li class="cw-mm-trk-play"><span>${esc(when(play))}</span>${show && play.season != null ? `<b>${esc(episodeCode(play))}</b>` : ""}<span class="cw-mm-trk-tools"><button type="button" class="cw-mm-trk-icon" data-mm-trk-edit="${esc(play.key)}" title="Change date" aria-label="Change date">${icon("edit_calendar")}</button><button type="button" class="cw-mm-trk-icon is-danger" data-mm-trk-delete="${esc(play.key)}" title="Delete play" aria-label="Delete play">${icon("delete")}</button></span></li>`).join("");
-    const more = plays.length > 6 ? `<li class="cw-mm-muted">${esc(plural(plays.length - 6, "older play"))}</li>` : "";
-    return `<div class="cw-mm-box cw-mm-trk"><h4>In your tracker <small>${esc(state.tracker.label || "")}</small></h4>
+    const rows = (state.historyExpanded ? plays : plays.slice(0, 5)).map((play) => `<li class="cw-mm-trk-play">${show ? `<b>${play.season != null ? esc(`S${play.season} E${play.episode}`) : ""}</b>` : ""}<span>${esc(when(play))}</span><span>${esc(when(play, true))}</span><button type="button" class="cw-mm-trk-icon" data-mm-trk-edit="${esc(play.key)}" title="Edit play" aria-label="Edit play${show ? ` ${esc(episodeCode(play))}` : ""}">${icon("edit")}</button></li>`).join("");
+    const more = plays.length > 5 ? `<button type="button" class="cw-mm-btn cw-mm-history-more" data-mm-history-more aria-expanded="${!!state.historyExpanded}">${state.historyExpanded ? "Show less" : `Show ${esc(plural(plays.length - 5, "older play"))}`}</button>` : "";
+    return `<div class="cw-mm-box cw-mm-trk"><div class="cw-mm-trk-header">${trackerStatus(data)}<small class="cw-mm-muted">${esc(state.tracker.label || "")}</small></div>
       ${noteLine}
       <div class="cw-mm-trk-actions">${actions}</div>
-      ${rows ? `<ul class="cw-mm-trk-plays">${rows}${more}</ul>` : `<p class="cw-mm-muted">No plays in this tracker yet.</p>`}</div>`;
+      <h4>Watch history</h4>${rows ? `<ul class="cw-mm-trk-plays${show ? "" : " is-movie"}">${rows}</ul>${more}` : `<p class="cw-mm-muted">No plays in this tracker yet.</p>`}</div>`;
   }
 
   const initialsOf = (name) => String(name || "?").split(/\s+/).map((part) => part[0] || "").join("").slice(0, 2).toUpperCase();
@@ -1137,6 +1161,29 @@
       close();
       return;
     }
+    if (target?.closest?.("[data-mm-history-more]")) {
+      state.historyExpanded = !state.historyExpanded;
+      renderPanel();
+      root.querySelector("[data-mm-history-more]")?.focus({ preventScroll: true });
+      return;
+    }
+    const statusChoice = target?.closest?.("[data-mm-trk-status]");
+    if (statusChoice && !statusChoice.disabled && !state.statusBusy && state.tracker?.onAction) {
+      const seq = state.seq;
+      state.statusBusy = true;
+      renderPanel();
+      root.querySelector("[data-mm-status-picker] summary")?.focus({ preventScroll: true });
+      Promise.resolve(state.tracker.onAction("status", statusChoice.dataset.mmTrkStatus)).finally(() => {
+        if (seq !== state.seq || root.hidden) return;
+        const restoreFocus = root.querySelector("[data-mm-status-picker]")?.contains(document.activeElement);
+        state.statusBusy = false;
+        renderPanel();
+        if (restoreFocus) root.querySelector("[data-mm-status-picker] summary")?.focus({ preventScroll: true });
+      });
+      return;
+    }
+    const picker = root.querySelector("[data-mm-status-picker][open]");
+    if (picker && !picker.contains(target)) picker.open = false;
     const trk = target?.closest?.("[data-mm-trk],[data-mm-trk-edit],[data-mm-trk-delete]");
     if (trk && state.tracker?.onAction) {
       const action = trk.dataset.mmTrk || (trk.dataset.mmTrkEdit ? "edit" : "delete");

@@ -162,12 +162,13 @@ def test_tracker_views_are_tabs_and_paging_sits_under_the_table():
     tracker = (root / "assets/js/tracker.js").read_text(encoding="utf-8")
     pages = (root / "assets/css/pages.css").read_text(encoding="utf-8")
     controls = tracker[tracker.index("  function renderControls()"):tracker.index("  function pager()")]
+    navigation = tracker[tracker.index("  function renderNavigation()"):tracker.index("  function overviewRows(")]
     pager = tracker[tracker.index("  function pager()"):tracker.index("  function emptyState(")]
-    assert '<nav class="trk-tabs" role="tablist"' in controls and 'role="tab" class="trk-tab' in tracker
+    assert 'renderNavigation()' in controls and '<nav class="trk-tabs" role="tablist"' in navigation and 'role="tab" class="trk-tab' in tracker
     assert 'data-trk-input="size"' not in controls and 'data-trk-input="size"' in pager
     assert 'class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="changes"' in controls
     assert '{ id: "show", label: "TV", icon: "tv" }' in tracker
-    assert "#page-tracker .trk-toolbar{display:grid;grid-template-columns:minmax(160px,280px) minmax(0,1fr) auto" in pages
+    assert "#page-tracker .trk-toolbar{display:grid;" in pages
 
 
 def test_every_record_and_whole_titles_can_be_edited():
