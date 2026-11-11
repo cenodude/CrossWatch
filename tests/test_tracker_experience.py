@@ -159,13 +159,17 @@ def test_title_panel_gathers_every_list_for_a_movie(client):
     assert watch["plays"] == [] and watch["watchlist"][0]["key"] == "tmdb:603"
 
 
-def test_title_panel_for_a_show_lists_seasons(client):
+def test_title_panel_for_a_show_lists_seasons(client, base):
+    store = TrackerStore(base)
+    store.save_checks((feature, key, "ok", {"runtime": 45}, raw) for feature, key, item, raw in store.iter_records() if feature == "history" and item.get("show_ids", {}).get("tmdb") == "95396")
     data = client.get("/api/tracker/title", params={"feature": "history", "key": "tmdb:95396#s01e02"}).json()
     assert data["show"] is True and data["show_key"] == "tmdb:95396"
     assert data["title"]["title"] == "Severance" and data["title"]["art"] == {"kind": "tv", "tmdb": "95396"}
     assert [(s["season"], [e["episode"] for e in s["episodes"]]) for s in data["seasons"]] == [(1, [1, 2]), (2, [1])]
     same = client.get("/api/tracker/title", params={"show": "tmdb:95396"}).json()
     assert len(same["plays"]) == 3
+    assert same["history_complete"] is True
+    assert [play["check"]["runtime"] for play in same["plays"]] == [45, 45, 45]
 
 
 def test_shows_view_lists_progress_per_show(client):

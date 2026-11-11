@@ -133,6 +133,7 @@ def _check_row(entry: tuple[str, dict[str, Any], int] | None) -> dict[str, Any] 
         "season": detail.get("season"),
         "episode": detail.get("episode"),
         "source": detail.get("source"),
+        "runtime": _int(detail.get("runtime")),
         "fetched_at": _iso_ts(detail.get("fetched_at")),
         "checked_at": _iso_ts(checked_ns / 1_000_000_000),
     }
@@ -1281,6 +1282,7 @@ def tracker_title(
         "show_key": (f"tmdb:{ident['tmdb']}" if ident.get("tmdb") else f"title:{str(ident.get('title') or '').lower()}") if is_show else None,
         "title": head,
         "plays": plays,
+        "history_complete": len(related) < 5000,
         "ratings": rows["ratings"],
         "watchlist": rows["watchlist"],
         "collection": rows["collection"],
@@ -1747,3 +1749,101 @@ def tracker_add(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
     except TrackerConflict as exc:
         return _error(exc.code, 409, key=exc.key)
     return {"ok": True, "provider_instance": inst, "batch": batch, "count": len(keys), "key": keys[0] if keys else None}
+
+
+@router.get("/watch-editor", dependencies=_READY)
+def tracker_watch_editor(request: Request, provider_instance: str | None = Query("default"), tmdb: str = Query("", max_length=20)) -> Any:
+    cfg, inst, store = _store(provider_instance, request)
+    detail = _show_detail(cfg, tmdb.strip())
+    if detail is None:
+        return _error("not_found", 404)
+    try:
+        with store.mutation():
+            plays = [{"key": key, "season": item.get("season"), "episode": item.get("episode"), "date": str(item.get("watched_at") or "")}
+                     for _, key, item in store.related(show=True, tmdb=tmdb.strip(), feature="history", limit=None)
+                     if item.get("type") == "episode"]
+            revision = store.revision()
+    except TrackerUnreadable:
+        return _unreadable()
+    return {"ok": True, "provider_instance": inst, "revision": revision, "plays": plays,
+            "seasons": [{"season": season, "episodes": count, "name": name} for season, count, name in _season_counts(detail, specials=True)]}
+
+
+@router.post("/history/bulk", dependencies=_READY)
+def tracker_history_bulk(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
+    blocked = _write_guard("history")
+    if blocked is not None:
+        return blocked
+    _, inst, store = _store(payload.get("provider_instance"), request)
+    action = payload.get("action")
+    scope = payload.get("scope", "latest")
+    episodes = payload.get("episodes")
+    pick = _map(payload.get("show"))
+    tmdb = str(_map(pick.get("ids")).get("tmdb") or "")
+    if not isinstance(action, str) or not isinstance(scope, str) or action not in {"add", "rewatch", "dates", "remove"} or scope not in {"latest", "all"}:
+        return _error("invalid_action", 400)
+    if not tmdb.isdecimal() or not isinstance(episodes, list) or not 1 <= len(episodes) <= _MAX_ADD:
+        return _error("invalid_episodes", 400)
+    try:
+        selected = {}
+        for raw in episodes:
+            row = _map(raw)
+            season, episode = _int(row.get("season")), _int(row.get("episode"))
+            if season is None or season < 0 or episode is None or episode < 1 or (season, episode) in selected:
+                return _error("invalid_episodes", 400)
+            stamp = _iso(row.get("watched_at")) if action != "remove" else None
+            if stamp and datetime.fromisoformat(stamp.replace("Z", "+00:00")) > datetime.now(timezone.utc):
+                return _error("invalid_date", 400)
+            selected[(season, episode)] = stamp
+        with store.mutation():
+            if not isinstance(payload.get("revision"), str) or payload["revision"] != store.revision():
+                return _error("changed_since", 409)
+            watched: dict[tuple[int, int], list[tuple[str, Any]]] = {}
+            for _, key, item in store.related(show=True, tmdb=tmdb, feature="history", limit=None):
+                if item.get("type") == "episode":
+                    watched.setdefault((item.get("season"), item.get("episode")), []).append((key, item))
+            changes = []
+            expected = {}
+            event_mode = store.history_event_mode()
+            for (season, episode), stamp in selected.items():
+                plays = sorted(watched.get((season, episode), []), key=lambda row: history_epoch_from_item(row[1]) or 0, reverse=True)
+                if action == "add" and plays or action in {"dates", "remove", "rewatch"} and not plays:
+                    return _error("changed_since", 409)
+                if action in {"add", "rewatch"}:
+                    item = _new_item("history", {"type": "episode", "series_title": pick.get("title"), "series_year": pick.get("year"), "show_ids": pick.get("ids"), "season": season, "episode": episode, "watched_at": stamp})
+                    if any(history_epoch_from_item(item) == history_epoch_from_item(current) for _, current in plays):
+                        return _error("duplicate_watch_times", 409)
+                    changes.append(("history", None, _new_key("history", item, action == "rewatch" or event_mode), item))
+                else:
+                    for key, current in plays if scope == "all" else plays[:1]:
+                        expected[("history", key)] = current
+                        date = stamp
+                        if action == "dates" and scope == "all":
+                            delta = datetime.fromisoformat(stamp.replace("Z", "+00:00")) - datetime.fromisoformat(_iso(plays[0][1].get("watched_at")).replace("Z", "+00:00"))
+                            date = (datetime.fromisoformat(_iso(current.get("watched_at")).replace("Z", "+00:00")) + delta).isoformat()
+                        updated = _edited("history", current, {"date": date}) if action == "dates" else None
+                        if updated and scope == "latest" and any(history_epoch_from_item(updated) == history_epoch_from_item(other) for other_key, other in plays if other_key != key):
+                            return _error("duplicate_watch_times", 409)
+                        if updated == current:
+                            continue
+                        new_key = _item_key("history", key, current, updated) if updated else None
+                        changes.append(("history", key, new_key, updated))
+            if not changes:
+                return _error("no_changes", 400)
+            targets = [new_key for _, _, new_key, item in changes if item is not None]
+            if len(set(targets)) != len(targets):
+                return _error("duplicate_watch_times", 409)
+            count = len(changes)
+            unlist = str(payload.get("remove_from_watchlist") or "") if action in {"add", "rewatch"} else ""
+            if unlist and isinstance(store.item("watchlist", unlist), Mapping):
+                changes.append(("watchlist", unlist, None, None))
+            batch = store.apply(changes, action="delete" if action == "remove" else "edit" if action == "dates" else "add", expected=expected)
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    except TrackerUnreadable:
+        return _unreadable()
+    except KeyError:
+        return _error("not_found", 404)
+    except TrackerConflict as exc:
+        return _error(exc.code, 409, key=exc.key)
+    return {"ok": True, "provider_instance": inst, "batch": batch, "count": count}

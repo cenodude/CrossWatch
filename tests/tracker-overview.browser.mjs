@@ -98,7 +98,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   assert.equal(await page.locator('.trk-tabs [data-trk-view="cleanup"]').count(),0);
   assert.equal(await page.locator("[data-trk-slot=filters]").isVisible(),true);
   assert.equal(await page.locator('[data-trk-overview-open^="continue:"]').count(),4);
-  assert.equal(await page.locator('[data-trk-overview-open^="recent:"]').count(),8);
+  assert.equal(await page.locator('[data-trk-overview-open^="recent:"]').count(),10);
   assert.equal(await page.evaluate(() => window.injected),undefined);
   assert.equal(await page.locator('.trk-calendar-day').count(),30);
   assert.equal(await page.locator('.trk-calendar-day.is-today time').getAttribute('datetime'),"2026-11-10");
@@ -126,12 +126,14 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
     await page.locator('[data-trk-calendar="today"]').click();
     assert.equal(await timeline.evaluate(el => Math.round(el.scrollLeft)),0);
     const more = page.locator('[data-trk-overview-more="recent"]');
+    const recent = page.locator('[data-trk-overview-open^="recent:"]');
+    const step = await page.locator('[aria-labelledby="trk-overview-recent"] .trk-cover-grid').evaluate(el => getComputedStyle(el).gridTemplateColumns.split(/\s+/).length * 2);
+    assert.equal(await recent.count(),step);
     await more.click();
-    assert.equal(await page.locator('[data-trk-overview-open^="recent:"]').count(),16);
+    assert.equal(await recent.count(),Math.min(step*2,20));
+    while (await recent.count() < 20) await more.click();
     await more.click();
-    assert.equal(await page.locator('[data-trk-overview-open^="recent:"]').count(),20);
-    await more.click();
-    assert.equal(await page.locator('[data-trk-overview-open^="recent:"]').count(),8);
+    assert.equal(await recent.count(),step);
     if (process.env.CW_OVERVIEW_SCREENSHOTS) {
       await mkdir(process.env.CW_OVERVIEW_SCREENSHOTS,{recursive:true});
       await page.evaluate(() => window.scrollTo(0,0));
@@ -175,7 +177,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   app.fail(true);
   await page.locator('[data-trk-action="refresh"]').click();
   await page.locator(".trk-overview-notice").filter({hasText:"couldn't be checked"}).waitFor();
-  assert.equal(await page.locator('[data-trk-overview-open^="recent:"]').count(),8);
+  assert.equal(await page.locator('[data-trk-overview-open^="recent:"]').count(),10);
   app.fail(false); app.empty(true); app.metadata(false);
   await page.locator('[data-trk-action="refresh"]').click();
   await page.locator(".trk-overview-empty").filter({hasText:"TMDB API key"}).waitFor();
@@ -361,6 +363,11 @@ test("streaming overview preserves existing cards, batches rendering and aborts 
 
 test("cached overview skips show rebuilding and shares the compact History cards", async t => {
   const {page, requests, drops} = await fixture(t,"flat-dark",{touch:false});
+  assert.equal(await page.locator('[data-trk-slot="controls"] [data-trk-action="log"]').count(),0);
+  const logWatch = page.locator('.trk-overview-section[aria-labelledby="trk-overview-recent"] [data-trk-action="log"]');
+  await logWatch.click();
+  await page.locator('.trk-sheet:visible [data-trk-log-q]').waitFor();
+  await page.keyboard.press('Escape');
   const cached = {continue:episodes.slice(0,2),airing:episodes,total:4,checked:4,done:true,unavailable:0};
   await page.route("**/api/tracker/overview?**", route => route.fulfill({json:{revision:"warm",metadata_available:true,hero:episodes[0],continue:rows,recent:rows.map(row=>({...row,progress_percent:null,ref:{feature:"history",key:row.key}})),shows:cached}}));
   const streamCount = requests.filter(path => path === "/api/tracker/overview/shows").length;
@@ -408,5 +415,41 @@ test("cached overview skips show rebuilding and shares the compact History cards
     await mkdir(process.env.CW_OVERVIEW_SCREENSHOTS,{recursive:true});
     await page.evaluate(() => window.scrollTo(0,0));
     await page.screenshot({path:`${process.env.CW_OVERVIEW_SCREENSHOTS}/overview-updated.png`,fullPage:true});
+  }
+});
+
+
+test("Continue watching links to Shows for next episodes and Progress for saved playback", async t => {
+  const {page} = await fixture(t,"flat-dark");
+  let continuing = [];
+  await page.route("**/api/tracker/overview?**", route => route.fulfill({json:{metadata_available:true,continue:continuing,recent:[],shows:{continue:episodes.slice(0,2),airing:episodes,done:true}}}));
+  await page.route("**/api/tracker/shows?**", route => route.fulfill({json:{shows:[{key:"tmdb:100",title:"Show 1",art:{kind:"tv",tmdb:"100"},watched:1,total:10}],total:1}}));
+  await page.locator('[data-trk-action="refresh"]').click();
+  const section = page.locator('[aria-labelledby="trk-overview-continue"]');
+  await section.getByRole('button',{name:'View shows',exact:true}).click();
+  await page.locator('.trk-tabs [data-trk-view="shows"][aria-selected="true"]').waitFor();
+  await page.locator('[data-trk-ref-show="tmdb:100"]').waitFor();
+  continuing = rows.slice(0,1);
+  await page.locator('.trk-tabs [data-trk-view="overview"]').click();
+  await section.getByRole('button',{name:'Playback progress',exact:true}).click();
+  await page.locator('.trk-tabs [data-trk-view="progress"][aria-selected="true"]').waitFor();
+  await page.locator('[data-trk-ref-key="movie:0"]').waitFor();
+});
+
+
+test("Recently watched fills two responsive rows and expands in full rows", async t => {
+  const {page} = await fixture(t,"flat-dark");
+  const cards = page.locator('[data-trk-overview-open^="recent:"]');
+  const more = page.locator('[data-trk-overview-more="recent"]');
+  for (const [width,count] of [[1440,10],[1024,6],[740,4],[390,2],[1440,10]]) {
+    await page.setViewportSize({width,height:900});
+    await page.waitForFunction(count => document.querySelectorAll('[data-trk-overview-open^="recent:"]').length === count,count);
+    const rows = await cards.evaluateAll(items => new Set(items.map(el => Math.round(el.getBoundingClientRect().top))).size);
+    assert.equal(rows,2);
+    await more.click();
+    assert.equal(await cards.count(),count*2);
+    while (await cards.count() < 20) await more.click();
+    await more.click();
+    assert.equal(await cards.count(),count);
   }
 });

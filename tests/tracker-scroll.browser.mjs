@@ -13,7 +13,7 @@ const plays = Array.from({length:8}, (_, index) => ({key:`play:${index}`,type:"e
 const source = await readFile(new URL("../ui_frontend.py", import.meta.url), "utf8");
 const assets = new Map();
 
-async function fixture(browser, theme, width, height) {
+async function fixture(browser, theme, width, height, details = {}) {
   const page = await browser.newPage({viewport:{width,height},hasTouch:width<=1366,isMobile:width<768,reducedMotion:"reduce"});
   page.setDefaultTimeout(7000);
   const errors = [];
@@ -49,6 +49,7 @@ async function fixture(browser, theme, width, height) {
       const title = shows.find(show => show.key === url.searchParams.get("show")) || shows[0];
       const empty = title.key === "show:1";
       json = {title,show:true,plays:empty ? [] : plays,ratings:[],watchlist:[],collection:[],progress:[],attention:[],note:null,note_key:empty ? "" : title.key,seasons:empty ? [] : [{season:29,episodes:plays.map(play => ({episode:play.episode,watched_at:play.date}))}]};
+      if (!empty) Object.assign(json, details);
     }
     if (path === "/api/tracker/show-progress") json = url.searchParams.get("tmdb") === "2" ? {available:false} : {available:true,seasons,watched:8,total:348,next:{season:29,episode:9}};
     if (path === "/api/metadata/tmdb/season") json = {episodes:[9,10].map(episode => ({episode,name:`Upcoming episode ${episode}`,air_date:"2026-12-01",runtime:22,overview:"A longer episode description to check the expanded title panel at different screen sizes."}))};
@@ -74,6 +75,106 @@ async function checkScroll(page, label) {
   assert.ok(result.scroll <= result.width + 1, `${label}: horizontal overflow ${JSON.stringify(result)}`);
   assert.deepEqual(result.nested, [], `${label}: nested vertical scrollbars`);
 }
+
+test("Search filters keep tracker toolbars compact and retain view-specific controls", async t => {
+  const browser = await chromium.launch({headless:true});
+  t.after(() => browser.close());
+  for (const [theme,width,height] of [["original",1440,900],["flat-dark",1440,900],["flat-light",1440,900],["flat-dark",390,844]]) {
+    const {page,errors} = await fixture(browser,theme,width,height);
+    const viewSelect = async view => {
+      if(width < 768) await page.locator('#trk-mobile-view').selectOption(view,{force:true});
+      else {
+        if(view === 'cleanup') await page.locator('.trk-others>summary').click();
+        await page.locator(`[data-trk-view="${view}"]`).click();
+      }
+    };
+    const toggle = page.locator('[data-trk-action="filters"]');
+    const filters = page.locator('#trk-extra-filters');
+    assert.equal(await filters.isVisible(),false);
+    assert.equal(await page.locator('[data-trk-action="hide-dropped"]').isVisible(),false);
+    const search = await page.locator('.trk-search').boundingBox(), button = await toggle.boundingBox();
+    assert.ok(button.x >= search.x && button.x + button.width <= search.x + search.width);
+    assert.equal(await page.locator('.trk-toolbar>.trk-filters').count(),0);
+    await toggle.click();
+    await page.locator('[data-trk-action="hide-dropped"]').click();
+    assert.equal(await toggle.getAttribute('aria-label'),'Filters (1 active)');
+    await toggle.click();
+    assert.equal(await filters.isVisible(),false);
+    assert.equal(await toggle.getAttribute('aria-label'),'Filters (1 active)');
+    for (const view of ['history','watchlist','ratings','progress','collection','titles']) {
+      await viewSelect(view);
+      assert.equal(await filters.isVisible(),false);
+      await toggle.click();
+      assert.equal(await filters.locator('.trk-status-filter').first().isVisible(),true);
+      if(view !== 'titles') {
+        await filters.locator('[data-trk-media="movie"]').click();
+        assert.equal(await filters.locator('[data-trk-media="movie"]').getAttribute('aria-pressed'),'true');
+        assert.equal(await toggle.getAttribute('aria-label'),'Filters (1 active)');
+      }
+      await filters.locator('[data-trk-action="filters-clear"]').click();
+      assert.equal(await toggle.getAttribute('aria-label'),'Filters');
+      await toggle.focus();
+      await page.keyboard.press('Escape');
+      assert.equal(await filters.isVisible(),false);
+      assert.equal(await toggle.evaluate(el=>el===document.activeElement),true);
+    }
+    await viewSelect('cleanup');
+    await toggle.click();
+    assert.equal(await filters.locator('[data-trk-input="clean-feature"]').count(),1);
+    assert.equal(await filters.locator('[data-trk-health]').count(),3);
+    await checkScroll(page,theme + ' filters');
+    await viewSelect('history');
+    if(process.env.CW_FILTER_SCREENSHOTS) {
+      await mkdir(process.env.CW_FILTER_SCREENSHOTS,{recursive:true});
+      await page.locator('[data-trk-slot="controls"]').screenshot({path:`${process.env.CW_FILTER_SCREENSHOTS}/${theme}-${width}.png`});
+    }
+    assert.deepEqual(errors,[]);
+    await page.close();
+  }
+});
+
+test("Compact watch summary uses cached history and omits missing or incomplete data", async t => {
+  const browser = await chromium.launch({headless:true});
+  t.after(() => browser.close());
+  for (const theme of ["original","flat-dark","flat-light"]) {
+    const details = {plays:[...plays, {...plays[0],key:"rewatch",date:"2026-10-09T12:00:00Z"}].map(play => ({...play,check:{runtime:20}})),watchlist:[{date:"2025-01-01T12:00:00Z"}]};
+    const {page,errors} = await fixture(browser,theme,1440,900,details);
+    const panel = page.locator('[data-trk-slot="title"]');
+    const select = index => page.locator(`.trk-grid-card[data-trk-ref-show="show:${index}"]`).click();
+    await select(0);
+    const summary = panel.locator('.trk-watch-summary');
+    await summary.locator('[role="progressbar"]').waitFor();
+    assert.equal(await summary.locator('[role="progressbar"]').getAttribute('aria-valuenow'),'2');
+    assert.match(await summary.textContent(),/8 of 348 episodes watched.*340 episodes left/);
+    const row = label => summary.locator('.trk-watch-summary-stats>div').filter({has:page.locator('dt',{hasText:label})}).locator('dd');
+    assert.equal(await row('Time watched').textContent(),'≈ 3 hours');
+    assert.match(await row('Time watched').getAttribute('title'),/Includes rewatches/);
+    assert.equal(await row('Watching span').textContent(),'8 days');
+    assert.ok(await row('First watched').getAttribute('title'));
+    await checkScroll(page,theme + ' progress summary');
+    if(process.env.CW_PROGRESS_SCREENSHOTS) {
+      await mkdir(process.env.CW_PROGRESS_SCREENSHOTS,{recursive:true});
+      await summary.screenshot({path:`${process.env.CW_PROGRESS_SCREENSHOTS}/${theme}.png`});
+    }
+    await select(1);
+    await panel.locator('.trk-detail-title').filter({hasText:'Example show 1'}).waitFor();
+    assert.equal(await panel.locator('.trk-watch-summary').count(),0);
+    details.plays[0].check = null;
+    details.watchlist = [];
+    await select(0);
+    await summary.waitFor();
+    assert.equal(await row('Time watched').count(),0);
+    assert.equal(await row('Added to watchlist').count(),0);
+    await select(1);
+    await panel.locator('.trk-detail-title').filter({hasText:'Example show 1'}).waitFor();
+    details.history_complete = false;
+    await select(0);
+    await summary.waitFor();
+    assert.equal(await summary.locator('dl').count(),0);
+    assert.deepEqual(errors,[]);
+    await page.close();
+  }
+});
 
 for (const theme of ["original","flat-dark","flat-light"]) {
   test(`${theme}: tracker details and scrolling across phones, tablets and computers`, async t => {

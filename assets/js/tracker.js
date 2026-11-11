@@ -124,7 +124,8 @@
     stats: null,
     view: "overview",
     overview: null,
-    overviewLimits: { continue: 4, recent: 8 },
+    overviewLimits: { continue: 1, recent: 1 },
+    overviewRecentStep: 10,
     overviewBusy: "",
     layouts: {},
     cleanFeature: "history",
@@ -523,13 +524,14 @@
   function renderOverview(kinds = ["continue", "airing", "recent"]) {
     const data = state.overview;
     if (!data) return `<div class="cw-empty" role="status">${esc(state.loading ? "Loading your overview…" : "Your overview is unavailable. Refresh to try again.")}</div>`;
-    const sections = [["continue", "Continue watching", "progress", "View progress"], ["airing", "Airing soon", "", ""], ["recent", "Recently watched", "history", "View history"]];
+    const playback = data.continue.length > 0;
+    const sections = [["continue", "Continue watching", playback ? "progress" : "shows", playback ? "Playback progress" : "View shows"], ["airing", "Airing soon", "", ""], ["recent", "Recently watched", "history", "View history"]];
     return `<div class="trk-overview">${sections.filter(([kind]) => kinds.includes(kind)).map(([kind, title, view, link]) => {
-      const rows = overviewRows(kind), limit = state.overviewLimits[kind];
+      const rows = overviewRows(kind), step = kind === "recent" ? state.overviewRecentStep : 4, limit = state.overviewLimits[kind] * step;
       const message = kind === "airing" ? !data.metadata_available ? "Add a TMDB API key in Settings to see upcoming episodes." : data.checking ? "Looking for upcoming episodes…" : data.unavailable ? "No upcoming episodes found in the available metadata." : "No episodes scheduled in the next 30 days." : kind === "continue" ? data.checking ? "Finding your next episodes…" : "You're all caught up. Start a movie or show to see it here." : "Your recent watches will appear here once you log or sync them.";
       if (kind === "airing") return renderAiringTimeline(rows, data, message);
-      const more = rows.length > (kind === "recent" ? 8 : 4) ? `<button type="button" class="cw-btn trk-overview-more" data-trk-overview-more="${kind}" aria-expanded="${limit > (kind === "recent" ? 8 : 4)}">${rows.length > limit ? "Show more" : "Show less"}</button>` : "";
-      return `<section class="trk-overview-section" aria-labelledby="trk-overview-${kind}"><div class="trk-overview-section-head"><div><h2 id="trk-overview-${kind}">${title}</h2></div>${view ? `<button type="button" class="cw-btn" data-trk-view="${view}">${link}${icon("arrow_forward")}</button>` : ""}</div>${rows.length ? kind === "recent" ? renderGrid(rows.slice(0, limit)) : `<div class="trk-overview-grid">${rows.slice(0, limit).map((row, index) => overviewCard(row, kind, index)).join("")}</div>` : `<p class="trk-overview-empty">${esc(message)}</p>`}${more}</section>`;
+      const more = rows.length > step ? `<button type="button" class="cw-btn trk-overview-more" data-trk-overview-more="${kind}" aria-expanded="${limit > step}">${rows.length > limit ? "Show more" : "Show less"}</button>` : "";
+      return `<section class="trk-overview-section" aria-labelledby="trk-overview-${kind}"><div class="trk-overview-section-head"><div class="trk-overview-heading"><h2 id="trk-overview-${kind}">${title}</h2>${kind === "recent" ? `<button type="button" class="trk-overview-log" data-trk-action="log">${icon("add")}<span>Log a watch</span></button>` : ""}</div>${view ? `<button type="button" class="cw-btn" data-trk-view="${view}">${link}${icon("arrow_forward")}</button>` : ""}</div>${rows.length ? kind === "recent" ? renderGrid(rows.slice(0, limit)) : `<div class="trk-overview-grid">${rows.slice(0, limit).map((row, index) => overviewCard(row, kind, index)).join("")}</div>` : `<p class="trk-overview-empty">${esc(message)}</p>`}${more}</section>`;
     }).join("")}</div>`;
   }
 
@@ -714,40 +716,41 @@
   }
 
   function renderFilters() {
-    const count = Number(state.view === "history" && !!state.duplicates) + Number(!!state.noteStatus) + Number(!!state.noteTag) + Number(state.sort !== "recent" && !["shows", "cleanup"].includes(state.view));
-    const more = `<button type="button" class="cw-filter-chip${count || state.filtersOpen ? " active" : ""}" data-trk-action="filters" aria-expanded="${state.filtersOpen}" aria-controls="trk-extra-filters">${symbol("filter_list")}<span>Filters${count ? ` (${count})` : ""}</span></button>`;
     if (state.view === "cleanup") {
       const lists = FEATURES.map((f) => `<option value="${f.id}"${f.id === state.cleanFeature ? " selected" : ""}>${esc(f.label)}</option>`).join("");
       const health = HEALTH.map((h) => `<button type="button" class="trk-clean-health" data-trk-health="${h.id}" aria-pressed="${state.healthFilter === h.id}">${symbol(h.icon)}<span>${esc(h.label)}</span><b>${esc(num(healthOf()[h.id]))}</b></button>`).join("");
-      return `<select class="cw-select trk-clean-list" data-trk-input="clean-feature" aria-label="List to clean up">${lists}</select>${more}<div class="trk-clean-health-options" role="group" aria-label="TMDB health">${health}</div>`;
+      return `<select class="cw-select trk-clean-list" data-trk-input="clean-feature" aria-label="List to clean up">${lists}</select><div class="trk-clean-health-options" role="group" aria-label="TMDB health">${health}</div>`;
     }
     if (state.view === "shows") {
-      return more + chip('data-trk-action="hide-dropped"', "Hide dropped", { active: state.hideDropped, iconName: "do_not_disturb_on", title: "Leave out shows you dropped" });
+      return chip('data-trk-action="hide-dropped"', "Hide dropped", { active: state.hideDropped, iconName: "do_not_disturb_on", title: "Leave out shows you dropped" });
     }
-    if (state.view === "titles") return renderNoteFilters() + more;
+    if (state.view === "titles") return "";
     let out = `<div class="trk-seg" role="group" aria-label="Type">${MEDIA.map((m) => chip(`data-trk-media="${m.id}"`, m.label, { active: state.media === m.id, iconName: m.icon })).join("")}</div>`;
     if (timelineOn() && state.month) {
       out += `<button type="button" class="cw-filter-chip active" data-trk-action="month-clear" title="Back to the latest plays">${symbol("event", "cw-type-icon")}<span>${esc(monthName(state.month))} and older</span>${symbol("close", "cw-type-icon")}</button>`;
     }
-    return out + more;
+    return out;
   }
 
   function renderExtraFilters() {
     const labels = `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="status-labels"${state.showStatusLabels !== false ? " checked" : ""}>Show status labels on cards</label>`;
-    if (state.view === "titles") return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Additional filters">${labels}</div>`;
-    const sort = ["shows", "cleanup"].includes(state.view) ? "" : `<label class="trk-status-filter"><span>Sort</span><select class="cw-select" data-trk-input="sort" aria-label="Sort results">${[["recent","Newest first"],["oldest","Oldest first"],["title","Title A-Z"]].map(([value,label]) => `<option value="${value}"${state.sort === value ? " selected" : ""}>${label}</option>`).join("")}</select></label>`;
-    return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Additional filters">${renderNoteFilters()}${sort}${state.view === "history" ? `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="duplicates"${state.duplicates ? " checked" : ""}>Possible duplicates</label>` : ""}${labels}<button type="button" class="cw-btn" data-trk-action="filters-clear">Clear filters</button><small>${state.view === "history" && state.duplicates ? "Same title, episode and watch time. Compare the entries before deleting; watches at different times are kept." : "Status and tags use your local My titles details."}</small></div>`;
+    const sort = ["shows", "cleanup", "titles"].includes(state.view) ? "" : `<label class="trk-status-filter"><span>Sort</span><select class="cw-select" data-trk-input="sort" aria-label="Sort results">${[["recent","Newest first"],["oldest","Oldest first"],["title","Title A-Z"]].map(([value,label]) => `<option value="${value}"${state.sort === value ? " selected" : ""}>${label}</option>`).join("")}</select></label>`;
+    return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Filters">${state.view !== "titles" ? `<div class="trk-filter-options">${renderFilters()}</div>` : ""}${renderNoteFilters()}${sort}${state.view === "history" ? `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="duplicates"${state.duplicates ? " checked" : ""}>Possible duplicates</label>` : ""}${labels}<button type="button" class="cw-btn" data-trk-action="filters-clear">Clear filters</button><small>${state.view === "history" && state.duplicates ? "Same title, episode and watch time. Compare the entries before deleting; watches at different times are kept." : "Status and tags use your local My titles details."}</small></div>`;
   }
 
   function renderControls() {
-    if (state.view === "overview") return `${renderNavigation()}<div class="trk-overview-controls"><button type="button" class="cw-btn primary" data-trk-action="log">${icon("add_circle")}<span>Log a watch</span></button></div>`;
+    if (state.view === "overview") return renderNavigation();
     const placeholder = state.view === "shows" ? "Filter shows / S01 / S01E02..." : state.view === "titles" ? "Filter my titles..." : "Filter by title...";
-    const middle = `<div class="trk-filters" role="group" aria-label="Filter">${renderFilters()}</div>`;
+    const count = Number(state.view === "history" && !!state.duplicates) + Number(!!state.noteStatus) + Number(!!state.noteTag)
+      + Number(state.sort !== "recent" && !["shows", "cleanup", "titles"].includes(state.view))
+      + Number(!["shows", "titles", "cleanup"].includes(state.view) && !!state.media)
+      + Number(state.view === "shows" && state.hideDropped) + Number(timelineOn() && !!state.month)
+      + Number(state.view === "cleanup" && !!state.healthFilter);
+    const filterLabel = `Filters${count ? ` (${count} active)` : ""}`;
     return `
       ${renderNavigation()}
       <div class="trk-toolbar${state.view === "cleanup" ? " trk-toolbar-cleanup" : ""}">
-        <input class="cw-input trk-search" data-trk-input="q" value="${esc(state.q)}" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}">
-        ${middle}
+        <div class="trk-search-wrap"><input class="cw-input trk-search" data-trk-input="q" value="${esc(state.q)}" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}"><button type="button" class="trk-filter-toggle${count || state.filtersOpen ? " active" : ""}" data-trk-action="filters" aria-label="${filterLabel}" title="${filterLabel}" aria-expanded="${state.filtersOpen}" aria-controls="trk-extra-filters">${icon("filter_list")}${count ? `<span>${count}</span>` : ""}</button></div>
         <div class="trk-actions">
           ${state.view === "history" ? `<button type="button" class="cw-filter-chip trk-icon-btn${state.byDay ? " active" : ""}" data-trk-action="by-day" aria-pressed="${state.byDay}" aria-label="Group by day" title="By day">${symbol("calendar_view_day", "cw-type-icon")}</button>` : ""}
           <div class="cw-type-filter trk-layout" role="group" aria-label="Display layout">${[['list', 'view_list', 'List'], ['grid', 'grid_view', 'Grid']].map(([value, glyph, label]) => `<button type="button" class="cw-filter-chip trk-icon-btn${(state.layouts[state.view] || "list") === value ? " active" : ""}" data-trk-layout="${value}" aria-pressed="${(state.layouts[state.view] || "list") === value}" aria-label="${label} view" title="${label} view">${symbol(glyph, "cw-type-icon")}</button>`).join("")}</div>
@@ -1243,15 +1246,49 @@
     return titleBody(state.title);
   }
 
+  function watchProgressSummary(data, progress) {
+    const total = Math.max(0, Number(progress?.total) || 0);
+    const watched = Math.max(0, Number(progress?.watched) || 0);
+    const pct = total ? Math.min(100, Math.round(watched / total * 100)) : 0;
+    const amount = value => new Intl.NumberFormat(undefined, {maximumFractionDigits:1}).format(value);
+    const unit = (value, label) => `${amount(value)} ${label}${Math.round(value * 10) === 10 ? "" : "s"}`;
+    const elapsed = ms => {
+      const days = Math.max(0, ms / 86400000);
+      if (days >= 365.25) return unit(days / 365.25, "year");
+      if (days >= 30.44) return unit(days / 30.44, "month");
+      if (days >= 1) return plural(Math.floor(days), "day", "days");
+      if (ms >= 3600000) return unit(ms / 3600000, "hour");
+      return ms >= 60000 ? plural(Math.floor(ms / 60000), "minute", "minutes") : "less than a minute";
+    };
+    const dates = rows => rows.map(row => Date.parse(row.date)).filter(value => Number.isFinite(value) && value > 0 && value <= Date.now());
+    const age = stamp => Date.now() - stamp < 60000 ? "Just now" : `${elapsed(Date.now() - stamp)} ago`;
+    const row = (label, value, hint = "") => `<div><dt>${label}</dt><dd${hint ? ` title="${esc(hint)}"` : ""}>${esc(value)}</dd></div>`;
+    const stats = [];
+    if (data.history_complete !== false) {
+      const listed = dates(data.watchlist || []), plays = dates(data.plays || []);
+      if (listed.length) { const stamp = Math.min(...listed); stats.push(row("Added to watchlist", age(stamp), whenText(new Date(stamp).toISOString()))); }
+      if (plays.length) {
+        const first = Math.min(...plays), last = Math.max(...plays);
+        stats.push(row("First watched", age(first), whenText(new Date(first).toISOString())));
+        stats.push(row("Last watched", age(last), whenText(new Date(last).toISOString())));
+        const runtimes = data.plays.map(play => Number(play.check?.runtime));
+        if (runtimes.every(minutes => Number.isFinite(minutes) && minutes > 0)) stats.push(row("Time watched", `≈ ${unit(runtimes.reduce((sum, minutes) => sum + minutes, 0) / 60, "hour")}`, "Estimated from cached runtimes. Includes rewatches."));
+        if (plays.length > 1) stats.push(row("Watching span", first === last ? "Same day" : elapsed(last - first), "Time between your first and latest watch."));
+      }
+    }
+    if (!progress?.available && !stats.length) return "";
+    return `<div class="trk-watch-summary"><div class="trk-watch-summary-head"><strong>Watch progress</strong>${progress?.available && total ? `<strong>${pct}%</strong>` : ""}</div>
+      ${progress?.available && total ? `<span class="trk-progress" role="progressbar" aria-label="Episodes watched" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-valuetext="${esc(`${num(watched)} of ${num(total)} episodes watched`)}"><i style="width:${pct}%"></i></span><div class="trk-watch-summary-count"><span>${esc(num(watched))} of ${esc(num(total))} episodes watched</span><span>${esc(plural(Math.max(0, total - watched), "episode", "episodes"))} left</span></div>` : ""}
+      ${stats.length ? `<dl class="trk-watch-summary-stats">${stats.join("")}</dl>` : ""}</div>`;
+  }
+
   function seasonBlock(data) {
     const tmdb = data.title?.art?.tmdb;
     const progress = tmdb ? state.progress[tmdb] : null;
     const watched = new Map(data.seasons.map((s) => [s.season, new Map(s.episodes.map((e) => [e.episode, e.watched_at]))]));
     const counts = progress?.available ? progress.seasons : data.seasons.map((s) => ({ season: s.season, episodes: Math.max(...s.episodes.map((e) => e.episode)) }));
-    if (!counts.length) return "";
-    const pct = progress?.available && progress.total ? Math.min(100, Math.round((progress.watched / progress.total) * 100)) : 0;
-    const next = data.note?.status === "dropped" ? `<span class="trk-sub">You dropped this show</span>` : progress?.next ? `<span class="trk-next">Next ${esc(se(progress.next.season, progress.next.episode))}</span>` : progress?.next_air ? `<span class="trk-sub">Next airs ${esc(dateText(progress.next_air.date))}</span>` : progress?.completed ? `<span class="trk-sub">Completed</span>` : "";
-    const head = progress?.available ? `<div class="trk-show-progress"><span class="trk-progress"><i style="width:${pct}%"></i></span><span>${esc(num(progress.watched))} of ${esc(plural(progress.total, "episode", "episodes"))}</span>${next}</div>` : "";
+    const head = watchProgressSummary(data, progress);
+    if (!counts.length) return head ? `<div class="trk-section">${head}</div>` : "";
     const ordered = [...counts].sort((a, b) => Number(b.season) - Number(a.season));
     const rows = (state.seasonsExpanded ? ordered : ordered.slice(0, 3)).map((s) => {
       const seen = watched.get(s.season) || new Map();
@@ -1266,7 +1303,7 @@
       return `<div class="trk-season"><button type="button" class="trk-season-head" data-trk-season="${s.season}" aria-expanded="${open}"><span>${esc(s.season ? `Season ${s.season}` : "Specials")}</span><span class="trk-progress"><i style="width:${Math.round((done / s.episodes) * 100)}%"></i></span><small>${esc(`${done}/${s.episodes}`)}</small>${symbol(open ? "expand_less" : "expand_more")}</button>${chips}</div>`;
     }).join("");
     const more = counts.length > 3 ? `<button type="button" class="cw-btn trk-detail-more" data-trk-expand="seasons" aria-expanded="${state.seasonsExpanded}">${state.seasonsExpanded ? "Show less" : `Show ${plural(counts.length - 3, "more season", "more seasons")}`}</button>` : "";
-    return `<div class="trk-section"><div class="trk-section-title">Progress</div>${head}<div class="trk-seasons">${rows}</div>${more}</div>`;
+    return `<div class="trk-section">${head}<div class="trk-seasons">${rows}</div>${more}</div>`;
   }
 
   const cardModal = () => window.CW?.ProfileMediaModal || null;
@@ -1586,6 +1623,19 @@
       const observer = new ResizeObserver(updateSticky);
       [side, header].filter(Boolean).forEach(el => observer.observe(el));
       window.addEventListener("resize", updateSticky);
+      let recentFrame = 0;
+      new ResizeObserver(() => {
+        cancelAnimationFrame(recentFrame);
+        recentFrame = requestAnimationFrame(() => {
+          if (state.view !== "overview") return;
+          const grid = root.querySelector('[aria-labelledby="trk-overview-recent"] .trk-cover-grid');
+          if (!grid?.clientWidth) return;
+          const step = getComputedStyle(grid).gridTemplateColumns.split(/\s+/).length * 2;
+          if (step === state.overviewRecentStep) return;
+          state.overviewRecentStep = step;
+          renderOverviewSlot();
+        });
+      }).observe(root.querySelector(".cw-main"));
       monthBar = null;
       bar()?.wire();
     }
@@ -2383,9 +2433,173 @@
     return r?.tmdb ? { type: log.type === "movie" ? "movie" : "show", title: r.title || "", year: r.year || "", ids: { tmdb: String(r.tmdb) } } : null;
   }
 
+  function episodePlays(log, season, episode) {
+    return log.playIndex?.get(`${season}:${episode}`) || [];
+  }
+
+  function watchSeasonRows(log, season = log.season) {
+    return Array.from({length:log.seasons?.find(s => s.season === season)?.episodes || 0}, (_, i) => ({season, episode:i + 1, ...log.metadata.get(season)?.find(ep => Number(ep.episode) === i + 1)}));
+  }
+
+  function watchEligible(log, ep) {
+    const watched = episodePlays(log, ep.season, Number(ep.episode)).length > 0;
+    return log.action === "add" ? !watched : watched;
+  }
+
+  function watchSelection(log) {
+    if (!log.advanced) return Number(log.episode) > 0 ? [{season:log.season, episode:Number(log.episode)}] : [];
+    return Array.from(log.selected, key => { const [season, episode] = key.split(":").map(Number); return {season, episode}; }).filter(ep => watchEligible(log, ep)).sort((a, b) => a.season - b.season || a.episode - b.episode);
+  }
+
+  async function loadWatchSeason(log, season = log.season, repaint = true) {
+    if (!log.pick?.tmdb || log.metadata.has(season)) return;
+    const tmdb = log.pick.tmdb;
+    log.seasonRequests ||= new Map();
+    const key = `${tmdb}:${season}`;
+    if (!log.seasonRequests.has(key)) log.seasonRequests.set(key, getJSON(`/api/metadata/tmdb/season?tmdb=${encodeURIComponent(tmdb)}&season=${season}`));
+    try {
+      const data = await log.seasonRequests.get(key);
+      if (log.pick?.tmdb !== tmdb) return;
+      log.metadata.set(season, data.episodes || []);
+    } catch (err) {
+      if (!repaint) throw new Error("Episode dates could not be loaded. Try again or choose a date.");
+    } finally {
+      log.seasonRequests.delete(key);
+      if (repaint && sheet.mode === "log" && sheet.log === log) renderSheet();
+    }
+  }
+
+  function watchEffects(log, episodes, action) {
+    return episodes.flatMap(ep => {
+      const plays = episodePlays(log, ep.season, ep.episode);
+      if (["add", "rewatch"].includes(action)) return [{...ep, before:null, after:ep.watched_at}];
+      return (log.scope === "all" ? plays : plays.slice(0, 1)).map(play => ({...ep, before:play.date,
+        after:action === "remove" ? null : new Date(Date.parse(ep.watched_at) + (log.scope === "all" ? Date.parse(play.date) - Date.parse(plays[0].date) : 0)).toISOString()}));
+    });
+  }
+
+  const WATCH_ACTIONS = [
+    ["add", "Mark episodes watched", "Only episodes you have not logged yet.", "check"],
+    ["rewatch", "Log a rewatch", "Keep your earlier watches.", "replay"],
+    ["dates", "Change watch dates", "Correct dates in your history.", "edit_calendar"],
+    ["remove", "Remove watches", "Remove entries from your history.", "delete_outline"],
+  ];
+
+  function renderWatchSeasons(log) {
+    const selected = watchSelection(log).length;
+    const eligible = log.seasons.flatMap(s => watchSeasonRows(log, s.season)).filter(ep => watchEligible(log, ep));
+    const scope = ["dates", "remove"].includes(log.action) ? `<label class="trk-field"><span>For rewatches</span><select class="cw-select" data-trk-log-scope><option value="latest"${log.scope === "latest" ? " selected" : ""}>Latest watch only</option><option value="all"${log.scope === "all" ? " selected" : ""}>All watches</option></select>${log.action === "dates" && log.scope === "all" ? `<small>Earlier watches move by the same amount as the latest watch.</small>` : ""}</label>` : "";
+    return `<div class="trk-watch-selection"><button type="button" class="cw-btn" data-trk-log-select="all">${eligible.length && eligible.every(ep => log.selected.has(`${ep.season}:${ep.episode}`)) ? "Clear selection" : "Select all eligible"}</button><span>${selected} selected <small>/ 200 max</small></span></div>
+      <div class="trk-watch-seasons">${log.seasons.map(s => {
+        const rows = watchSeasonRows(log, s.season), available = rows.filter(ep => watchEligible(log, ep));
+        const watched = rows.filter(ep => episodePlays(log, s.season, ep.episode).length).length;
+        const chosen = available.filter(ep => log.selected.has(`${s.season}:${ep.episode}`)).length;
+        const open = log.expanded?.has(s.season);
+        return `<section class="trk-watch-season"><div class="trk-watch-season-head"><button type="button" class="trk-watch-season-pick" data-trk-log-select="${s.season}" aria-pressed="${available.length && chosen === available.length ? "true" : "false"}"${available.length ? "" : " disabled"}>${icon(chosen ? chosen === available.length ? "check_box" : "indeterminate_check_box" : "check_box_outline_blank")}<span><b>${esc(s.name)}</b><small>${watched}/${s.episodes} watched${chosen ? ` &middot; ${chosen} selected` : ""}</small></span></button><button type="button" class="trk-watch-season-expand" data-trk-log-expand="${s.season}" aria-expanded="${!!open}" aria-label="${open ? "Collapse" : "Expand"} ${esc(s.name)}">${icon(open ? "expand_less" : "expand_more")}</button></div>
+        ${open ? `<ul class="trk-watch-list">${rows.map(ep => {
+          const plays = episodePlays(log, s.season, ep.episode), key = `${s.season}:${ep.episode}`;
+          return `<li><label class="trk-watch-row"><input type="checkbox" class="cw-checkbox" data-trk-watch-pick="${key}"${log.selected.has(key) ? " checked" : ""}${watchEligible(log, ep) ? "" : " disabled"}><span><b>${esc(se(s.season, ep.episode))}${ep.name ? ` &middot; ${esc(ep.name)}` : ""}</b><small>${plays.length ? `Watched &middot; ${esc(whenText(plays[0].date))} &middot; ${plural(plays.length, "play", "plays")}` : "Unwatched"}</small></span></label></li>`;
+        }).join("")}</ul>` : ""}</section>`;
+      }).join("")}</div>${scope}`;
+  }
+
+  function renderWatchDates(log) {
+    const choices = [["today", "Now", "Use the current time", "schedule"], ["release", "Release date", "Use each episode's air date", "event"], ["custom", "Custom date", "Choose a date and time", "edit_calendar"], ["range", "Date range", "Spread episodes across dates", "date_range"]];
+    const input = (attr, label, value) => `<label class="trk-field"><span>${label}</span><input type="datetime-local" step="1" class="cw-input cw-timestamp-input" ${attr} value="${esc(value)}" max="${esc(localInput(new Date().toISOString()))}"></label>`;
+    return `<div class="trk-watch-choices trk-watch-date-choices">${choices.map(([id, label, sub, glyph]) => `<button type="button" class="trk-watch-choice" data-trk-log-date-mode="${id}" aria-pressed="${log.whenMode === id}">${icon(glyph)}<span><b>${label}</b><small>${esc(sub)}</small></span>${icon(log.whenMode === id ? "check" : "")}</button>`).join("")}</div>
+      ${log.whenMode === "custom" ? input("data-trk-log-when", "Watch date and time", log.when) : log.whenMode === "range" ? `<div class="trk-fields trk-watch-fields">${input("data-trk-log-when", "From", log.when)}${input("data-trk-log-end", "To", log.end)}</div><p class="trk-note">Dates are spread evenly, in episode order.</p>` : ""}
+      ${log.watchlistKey && ["add", "rewatch"].includes(log.action) ? `<label class="trk-check"><input type="checkbox" class="cw-checkbox" data-trk-log-unlist${log.unlist ? " checked" : ""}><span>Remove from watchlist</span></label>` : ""}`;
+  }
+
+  function renderWatchReview(log) {
+    const {episodes, action, effects} = log.review;
+    const before = new Set(log.plays.map(p => `${p.season}:${p.episode}`)).size;
+    const removed = action === "remove" ? episodes.filter(ep => log.scope === "all" || episodePlays(log, ep.season, ep.episode).length === 1).length : 0;
+    const after = before + (action === "add" ? episodes.length : 0) - removed;
+    return `<div class="trk-watch-review"><p>${plural(episodes.length, "episode", "episodes")} &middot; ${plural(effects.length, "watch", "watches")} affected${["dates", "remove"].includes(action) ? ` &middot; ${log.scope === "all" ? "All watches" : "Latest watch only"}` : ""}</p>
+      <dl class="trk-watch-totals" aria-label="Watched episodes"><div><dt>Watched now</dt><dd>${before}</dd></div><div><dt>After this change</dt><dd>${after}</dd></div><div><dt>Difference</dt><dd>${after > before ? "+" : ""}${after - before}</dd></div></dl>
+      <details${effects.length <= 6 ? " open" : ""}><summary>Affected watches <span>${effects.length}</span></summary><ul class="trk-watch-list">${effects.map(ep => `<li class="trk-watch-row"><b>${esc(se(ep.season, ep.episode))}</b><span>${ep.before ? `${esc(whenText(ep.before))} &rarr; ` : ""}${ep.after ? esc(whenText(ep.after)) : "Remove"}</span></li>`).join("")}</ul></details></div>`;
+  }
+
+  function renderGuidedWatch(log) {
+    const step = log.review ? "review" : log.step || "action";
+    const steps = [["action", "Action"], ["episodes", "Episodes"], ...(log.action === "remove" ? [] : [["dates", "Dates"]]), ["review", "Review"]];
+    const current = steps.findIndex(([id]) => id === step);
+    const watched = log.seasons?.flatMap(s => watchSeasonRows(log, s.season)).filter(ep => episodePlays(log, ep.season, ep.episode).length).length || 0;
+    const total = log.seasons?.reduce((sum, s) => sum + s.episodes, 0) || 0;
+    const heading = {action:"What would you like to do?", episodes:"Which episodes?", dates:"When did you watch?", review:"Review changes"}[step];
+    const actionName = WATCH_ACTIONS.find(([id]) => id === log.action)?.[1] || "Episode editor";
+    const body = step === "action" ? `<div class="trk-watch-choices">${WATCH_ACTIONS.map(([id, label, sub, glyph]) => {
+      const count = id === "add" ? total - watched : watched;
+      return `<button type="button" class="trk-watch-choice" data-trk-log-operation="${id}" aria-pressed="${log.action === id}"${count ? "" : " disabled"}>${icon(glyph)}<span><b>${label}</b><small>${sub}</small></span><span class="trk-watch-choice-count">${count}<small>${count === 1 ? "episode" : "episodes"}</small></span>${icon(log.action === id ? "check" : "")}</button>`;
+    }).join("")}</div>` : step === "episodes" ? renderWatchSeasons(log) : step === "dates" ? renderWatchDates(log) : renderWatchReview(log);
+    const blocked = sheet.busy || !log.seasons?.length || (step === "action" && !log.action) || (step === "episodes" && (!watchSelection(log).length || watchSelection(log).length > 200));
+    return `<div class="trk-watch-editor">${sheetHead({...log.pick, art:{kind:"tv", tmdb:log.pick.tmdb}}, "Episode editor", log.pick.title)}
+      <ol class="trk-watch-steps" aria-label="Editing steps">${steps.map(([id, label], index) => `<li${index === current ? ' aria-current="step"' : ""} class="${index < current ? "is-done" : ""}">${label}</li>`).join("")}</ol>
+      <form class="trk-form" data-trk-form="log" novalidate><div class="trk-watch-heading">${step !== "action" ? `<small>${esc(actionName)}</small>` : ""}<h3>${heading}</h3></div>${body}
+      ${sheet.error ? `<p class="trk-error" role="alert">${esc(sheet.error)}</p><button type="button" class="cw-btn" data-trk-log-reload>Reload history</button>` : ""}
+      <footer class="trk-sheet-foot trk-watch-foot"><button type="button" class="cw-btn" ${step === "action" ? "data-trk-log-advanced" : "data-trk-log-back"}>${step === "action" ? "Quick watch" : "Back"}</button><button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button><button type="submit" class="cw-btn ${step === "review" && log.action === "remove" ? "danger" : "primary"}"${blocked ? " disabled" : ""}>${sheet.busy ? "Saving..." : step === "review" ? log.action === "remove" ? "Remove watches" : "Save changes" : step === "dates" || step === "episodes" && log.action === "remove" ? "Review changes" : "Next"}</button></footer></form></div>`;
+  }
+
+  function renderWatchEditor(log) {
+    if (!log.seasons) return `<p class="trk-note" role="status">Loading watch history...</p>`;
+    const seasonOptions = log.seasons.map(s => {
+      const watched = new Set(log.plays.filter(p => Number(p.season) === s.season).map(p => p.episode)).size;
+      return `<option value="${s.season}"${s.season === log.season ? " selected" : ""}>${esc(s.name)} · ${watched}/${s.episodes} watched</option>`;
+    }).join("");
+    const season = `<label class="trk-field"><span>Season</span><select class="cw-select" data-trk-log-season>${seasonOptions}</select></label>`;
+    const toggle = `<button type="button" class="cw-btn" data-trk-log-advanced aria-expanded="${log.advanced}">${icon(log.advanced ? "expand_less" : "tune")}<span>${log.advanced ? "Quick watch" : "Manage episodes"}</span></button>`;
+    const rows = watchSeasonRows(log);
+    if (!log.advanced) {
+      const plays = episodePlays(log, log.season, Number(log.episode));
+      return `<div class="trk-fields trk-watch-fields">${season}<label class="trk-field"><span>Episode</span><select class="cw-select" data-trk-log-episode>${rows.map(ep => `<option value="${ep.episode}"${Number(log.episode) === Number(ep.episode) ? " selected" : ""}>${esc(se(log.season, ep.episode))}${ep.name ? ` · ${esc(ep.name)}` : ""}${episodePlays(log, log.season, Number(ep.episode)).length ? " · Watched" : ""}</option>`).join("")}</select></label></div><div class="trk-watch-tools">${toggle}<span class="trk-note">${plays.length ? `Watched ${esc(whenText(plays[0].date))} · This adds a rewatch.` : "Not watched yet"}</span></div>`;
+    }
+  }
+
+  async function saveWatchEditor(log) {
+    if (log.advanced && !log.review) {
+      if (log.step === "action") {
+        if (!log.action) return;
+        log.step = "episodes";
+        renderSheet(true);
+        return;
+      }
+      if (log.step === "episodes" && log.action !== "remove") {
+        if (!watchSelection(log).length || watchSelection(log).length > 200) { sheet.error = "Choose between 1 and 200 episodes."; renderSheet(); return; }
+        sheet.error = "";
+        log.step = "dates";
+        renderSheet(true);
+        return;
+      }
+    }
+    const episodes = watchSelection(log);
+    if (!episodes.length || episodes.length > 200) { sheet.error = "Choose between 1 and 200 episodes."; renderSheet(); return; }
+    sheet.busy = true;
+    sheet.error = "";
+    renderSheet();
+    try {
+      if (!log.review) {
+        const action = log.advanced ? log.action : episodePlays(log, episodes[0].season, episodes[0].episode).length ? "rewatch" : "add";
+        const dated = action === "remove" ? episodes : await logWatchTimes(log, episodes);
+        if (sheet.log !== log || sheet.mode !== "log") return;
+        log.review = {action, episodes:dated, effects:watchEffects(log, dated, action)};
+        if (log.advanced) { sheet.busy = false; renderSheet(true); return; }
+      }
+      const data = await getJSON("/api/tracker/history/bulk", {provider_instance:state.instance, show:log.pick, revision:log.revision, action:log.review.action, scope:log.scope, episodes:log.review.episodes, remove_from_watchlist:log.unlist ? log.watchlistKey : ""});
+      await afterWrite(data, `${plural(data.count, "watch", "watches")} ${log.review.action === "remove" ? "removed" : "saved"}`);
+    } catch (err) {
+      if (sheet.log !== log || sheet.mode !== "log") return;
+      sheet.busy = false;
+      sheet.error = err?.code === "changed_since" ? "History changed while this dialog was open. Reload history and review your selection again." : err?.code === "duplicate_watch_times" || err?.code === "key_exists" ? "A watch already uses that date and time. Choose another time; no changes were saved." : writeError(err);
+      if (!log.advanced) log.review = null;
+      renderSheet();
+    }
+  }
+
   function renderLog() {
     const log = sheet.log;
     const picked = log.pick;
+    if (picked?.type === "show" && log.target === "history" && log.advanced) return renderGuidedWatch(log);
     let body;
     if (!picked) {
       const results = log.results.map((r, i) => {
@@ -2408,34 +2622,32 @@
       const cover = `<span class="trk-match-poster" data-trk-log-cover="${coverKind}">${coverUrl ? `<img src="${esc(coverUrl)}" alt="" decoding="async">` : symbol(coverKind)}</span>`;
       const targets = [["history", "Watched", "history"], ["watchlist", "Watchlist", "bookmark"], ["collection", "Collection", "video_library"]]
         .map(([id, label, ic]) => `<button type="button" class="cw-filter-chip${log.target === id ? " active" : ""}" data-trk-log-target="${id}" aria-pressed="${log.target === id}">${symbol(ic, "cw-type-icon")}<span>${esc(label)}</span></button>`).join("");
-      const count = log.seasons?.find((s) => s.season === log.season)?.episodes || 0;
-      const seasonSel = picked.type === "show" && log.target === "history"
-        ? (log.seasons
-          ? `<div class="trk-fields"><label class="trk-field"><span>Season</span><select class="cw-select" data-trk-log-season>${log.seasons.map((s) => `<option value="${s.season}"${s.season === log.season ? " selected" : ""}>${esc(s.name)} (${s.episodes})</option>`).join("")}</select></label>
-              <label class="trk-field"><span>Episode</span><select class="cw-select" data-trk-log-episode><option value="all"${log.episode === "all" ? " selected" : ""}>All ${count} episodes</option>${Array.from({ length: count }, (_, i) => i + 1).map((e) => `<option value="${e}"${String(log.episode) === String(e) ? " selected" : ""}>Episode ${e}</option>`).join("")}</select></label></div>`
-          : `<p class="trk-note">Loading seasons...</p>`)
-        : "";
+      const showHistory = picked.type === "show" && log.target === "history";
+      const seasonSel = showHistory ? renderWatchEditor(log) : "";
       const whenMode = log.whenMode || "today";
-      const whenChoices = [["today", "Today"], ["release", "Release date"], ["custom", "Choose date"]]
-        .map(([id, label]) => `<button type="button" class="cw-filter-chip${whenMode === id ? " active" : ""}" data-trk-log-date-mode="${id}" aria-pressed="${whenMode === id}">${esc(label)}</button>`).join("");
-      const whenRow = log.target === "history" ? `<div class="trk-field"><span>When</span><div class="cw-type-filter" role="group" aria-label="When">${whenChoices}</div>${whenMode === "custom" ? `<input type="datetime-local" step="1" class="cw-input cw-timestamp-input" data-trk-log-when aria-label="Watch date and time" value="${esc(log.when)}" max="${esc(localInput(new Date().toISOString()))}">` : ""}</div>` : "";
-      const unlist = log.target === "history" && log.watchlistKey ? `<label class="trk-check"><input type="checkbox" class="cw-checkbox" data-trk-log-unlist${log.unlist ? " checked" : ""}><span>Remove from watchlist</span></label>` : "";
+      const dateOptions = [["today", "Now"], ["release", "Release date"], ["custom", "Choose date"]];
+      if (showHistory && log.advanced) dateOptions.push(["range", "Date range"]);
+      const whenChoices = dateOptions.map(([id, label]) => `<button type="button" class="cw-filter-chip${whenMode === id ? " active" : ""}" data-trk-log-date-mode="${id}" aria-pressed="${whenMode === id}">${esc(label)}</button>`).join("");
+      const dateInput = (attr, label, value) => `<label class="trk-field"><span>${label}</span><input type="datetime-local" step="1" class="cw-input cw-timestamp-input" ${attr} value="${esc(value)}" max="${esc(localInput(new Date().toISOString()))}"></label>`;
+      const whenRow = log.target === "history" && !log.review && !(showHistory && log.advanced && log.action === "remove") ? `<div class="trk-field"><span>When</span><div class="cw-type-filter" role="group" aria-label="When">${whenChoices}</div>${whenMode === "custom" ? dateInput("data-trk-log-when", "Watch date and time", log.when) : whenMode === "range" ? `<div class="trk-fields">${dateInput("data-trk-log-when", "From", log.when)}${dateInput("data-trk-log-end", "To", log.end)}</div><small>Episodes are spread evenly in episode order between these dates.</small>` : ""}</div>` : "";
+      const unlist = log.target === "history" && log.watchlistKey && !log.review && (!log.advanced || ["add", "rewatch"].includes(log.action)) ? `<label class="trk-check"><input type="checkbox" class="cw-checkbox" data-trk-log-unlist${log.unlist ? " checked" : ""}><span>Remove from watchlist</span></label>` : "";
       body = `
-        <div class="trk-picked">${cover}<div><b>${esc(picked.title)}</b><small>${esc([picked.year, picked.type === "movie" ? "Movie" : "Show"].filter(Boolean).join(" · "))}</small></div>${log.fixed ? "" : `<button type="button" class="cw-btn" data-trk-log-repick>${icon("search")}<span>Change</span></button>`}</div>
-        <div class="cw-type-filter" role="group" aria-label="Add to">${targets}</div>
+        <div class="trk-picked">${cover}<div><b>${esc(picked.title)}</b><small>${esc([picked.year, picked.type === "movie" ? "Movie" : "Show"].filter(Boolean).join(" · "))}</small></div>${log.fixed || log.review ? "" : `<button type="button" class="cw-btn" data-trk-log-repick>${icon("search")}<span>Change</span></button>`}</div>
+        ${log.review ? "" : `<div class="cw-type-filter" role="group" aria-label="Add to">${targets}</div>`}
         ${seasonSel}
         ${whenRow}
         ${unlist}
         ${addEffectHtml(log.target)}`;
     }
     return `
-      ${sheetHead("add_circle", "Log a watch", picked ? "Pick where it goes and when" : "Find the movie or show")}
+      ${sheetHead("check_circle", log.review ? "Review changes" : "Watched", picked ? "" : "Find the movie or show")}
       <form class="trk-form" data-trk-form="log" novalidate>
         ${body}
-        ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : ""}
+        ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>${picked?.type === "show" ? `<button type="button" class="cw-btn" data-trk-log-reload>Reload history</button>` : ""}` : ""}
         <footer class="trk-sheet-foot">
           <button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button>
-          ${picked ? `<button type="submit" class="cw-btn primary"${sheet.busy || (picked.type === "show" && log.target === "history" && !log.seasons?.length) ? " disabled" : ""}>${icon("check")}<span>${log.target === "history" ? "Log it" : "Add it"}</span></button>` : ""}
+          ${log.review ? `<button type="button" class="cw-btn" data-trk-log-back>Back</button>` : ""}
+          ${picked ? `<button type="submit" class="cw-btn${log.review && log.action === "remove" ? " danger" : " primary"}"${sheet.busy || (picked.type === "show" && log.target === "history" && (!log.seasons?.length || (!log.review && !watchSelection(log).length))) ? " disabled" : ""}>${icon(log.review && log.action === "remove" ? "delete" : "check")}<span>${log.target !== "history" ? "Add it" : log.review ? log.action === "remove" ? "Remove watches" : "Save changes" : log.advanced && picked.type === "show" ? "Review changes" : "Watched"}</span></button>` : ""}
         </footer>
       </form>`;
   }
@@ -2873,6 +3085,7 @@
     const dialog = el.querySelector(".trk-sheet");
     const scroll = dialog.scrollTop;
     const active = dialog.contains(document.activeElement) ? document.activeElement : null;
+    const logFocus = sheet.mode === "log" && !focusFirst && active ? Array.from(active.attributes).find(a => a.name.startsWith("data-trk-log-") || a.name === "data-trk-watch-pick") : null;
     const keep = ["data-trk-log-q", "data-trk-note-tag", "data-trk-change-q"].find((name) => active?.hasAttribute?.(name));
     const editValues = sheet.mode === "edit" && !focusFirst
       ? Array.from(dialog.querySelectorAll("[data-trk-edit], [data-trk-id]"), input => [input.hasAttribute("data-trk-edit") ? "data-trk-edit" : "data-trk-id", input.dataset.trkEdit || input.dataset.trkId, input.value])
@@ -2899,6 +3112,8 @@
     if (kept && !kept.disabled) {
       kept.focus();
       kept.setSelectionRange?.(kept.value.length, kept.value.length);
+    } else if (logFocus) {
+      dialog.querySelector(`[${logFocus.name}="${CSS.escape(logFocus.value)}"]`)?.focus({preventScroll:true});
     } else if (focusFirst) {
       (search || dialog).focus({ preventScroll: true });
     }
@@ -3114,7 +3329,7 @@
   }
 
   function openLog(prefill) {
-    const log = { type: "movie", q: "", results: [], message: "", pick: null, fixed: false, target: "history", whenMode: "today", when: localInput(new Date().toISOString()), seasons: null, season: 1, episode: "all", watchlistKey: "", unlist: true, searchToken: 0 };
+    const log = { type: "movie", q: "", results: [], message: "", pick: null, fixed: false, target: "history", whenMode: "today", when: localInput(new Date().toISOString()), seasons: null, season: 1, episode: "", watchlistKey: "", unlist: true, searchToken: 0, advanced: false, action: "add", scope: "latest", selected: new Set(), plays: [], metadata: new Map(), review: null, end: localInput(new Date().toISOString()) };
     if (prefill) Object.assign(log, prefill, { fixed: true });
     openSheet("log", { log });
     if (log.pick?.type === "show") loadSeasons(log);
@@ -3130,7 +3345,7 @@
       pick: { type: head.type, tmdb: head.ids.tmdb, title: head.title, year: head.year, ids: head.ids },
       watchlistKey: data.watchlist[0]?.key || "",
       season: next?.season || 1,
-      episode: next?.episode || "all",
+      episode: next?.episode || "",
     });
   }
 
@@ -3142,9 +3357,29 @@
       return;
     }
     try {
-      const data = await getJSON(`/api/tracker/seasons?${inst()}&tmdb=${encodeURIComponent(log.pick.tmdb)}`);
+      const tmdb = log.pick.tmdb;
+      const data = await getJSON(`/api/tracker/watch-editor?${inst()}&tmdb=${encodeURIComponent(tmdb)}`);
+      if (sheet.log !== log || log.pick?.tmdb !== tmdb) return;
+      log.plays = data.plays || [];
+      log.playIndex = new Map();
+      for (const play of log.plays) {
+        const key = `${play.season}:${play.episode}`;
+        if (!log.playIndex.has(key)) log.playIndex.set(key, []);
+        log.playIndex.get(key).push(play);
+      }
+      for (const plays of log.playIndex.values()) plays.sort((a, b) => Date.parse(b.date) - Date.parse(a.date));
+      if (log.advanced) log.step = "episodes";
+      log.revision = data.revision;
+      log.selected.clear();
+      log.review = null;
       log.seasons = (data.seasons || []).filter((s) => s.episodes > 0);
       if (!log.seasons.some((s) => s.season === log.season)) log.season = log.seasons.find((s) => s.season > 0)?.season ?? log.seasons[0]?.season ?? 1;
+      if (!Number(log.episode)) {
+        const next = log.seasons.filter(s => s.season > 0).flatMap(s => Array.from({length:s.episodes}, (_, i) => ({season:s.season, episode:i + 1}))).find(ep => !episodePlays(log, ep.season, ep.episode).length);
+        if (next) { log.season = next.season; log.episode = String(next.episode); }
+        else log.episode = "1";
+      }
+      loadWatchSeason(log);
     } catch (err) {
       log.seasons = [];
       sheet.error = writeError(err);
@@ -3189,6 +3424,10 @@
     const tmdb = String(r.tmdb);
     log.pick = { type: log.type, tmdb, title: r.title, year: r.year, ids: { tmdb } };
     log.seasons = null;
+    log.metadata.clear();
+    log.selected.clear();
+    log.review = null;
+    log.episode = "";
     renderSheet();
     if (log.type === "show") loadSeasons(log);
     try {
@@ -3202,6 +3441,11 @@
 
   async function logWatchTimes(log, items) {
     const mode = log.whenMode || "custom";
+    if (mode === "range") {
+      const start = Date.parse(log.when), end = Date.parse(log.end);
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start > end || end > Date.now()) throw new Error("Choose a valid date range ending in the past or now.");
+      return items.map((item, i) => ({...item, watched_at:new Date(start + (end - start) * i / Math.max(1, items.length - 1)).toISOString()}));
+    }
     if (mode !== "release") {
       const date = mode === "today" ? new Date() : new Date(log.when);
       if (Number.isNaN(date.getTime()) || date.getTime() > Date.now()) throw new Error("Choose a valid watch date that is not in the future.");
@@ -3210,8 +3454,8 @@
     const pick = log.pick;
     let dates;
     if (pick.type === "show") {
-      const data = await getJSON(`/api/metadata/tmdb/season?tmdb=${encodeURIComponent(pick.tmdb)}&season=${encodeURIComponent(log.season)}`);
-      dates = items.map(item => data.episodes?.find(ep => Number(ep.episode) === item.episode)?.air_date);
+      for (const season of new Set(items.map(item => item.season))) await loadWatchSeason(log, season, false);
+      dates = items.map(item => log.metadata.get(item.season)?.find(ep => Number(ep.episode) === item.episode)?.air_date);
     } else {
       const data = await getJSON("/api/metadata/resolve", { entity: "movie", ids: pick.ids });
       dates = [data.result?.detail?.release_date];
@@ -3221,7 +3465,7 @@
       const stamp = `${date}T12:00:00Z`;
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(stamp))) throw new Error("No release date is available. Choose a date instead.");
       if (date > new Date().toISOString().slice(0, 10)) throw new Error("The release date is in the future. Choose a date instead.");
-      return { ...item, watched_at: stamp };
+      return { ...item, watched_at: new Date(Math.min(Date.parse(stamp), Date.now())).toISOString() };
     });
   }
 
@@ -3229,15 +3473,8 @@
     const log = sheet.log;
     const p = log.pick;
     if (!p) return;
-    let items;
-    if (log.target === "history" && p.type === "show") {
-      const season = Number(log.season);
-      const count = log.seasons?.find((s) => s.season === season)?.episodes || 0;
-      const eps = log.episode === "all" ? Array.from({ length: count }, (_, i) => i + 1) : [Number(log.episode)];
-      items = eps.map((e) => ({ type: "episode", series_title: p.title, series_year: p.year, season, episode: e, show_ids: { ...p.ids } }));
-    } else {
-      items = [{ type: p.type, title: p.title, year: p.year, ids: { ...p.ids } }];
-    }
+    if (log.target === "history" && p.type === "show") return saveWatchEditor(log);
+    let items = [{ type: p.type, title: p.title, year: p.year, ids: { ...p.ids } }];
     sheet.busy = true;
     sheet.error = "";
     renderSheet();
@@ -3593,6 +3830,35 @@
     }
     const log = sheet.log;
     if (sheet.mode === "log" && log) {
+      if (sheet.busy) return;
+      if (event.target.closest("[data-trk-log-back]")) {
+        if (log.review) log.review = null;
+        else log.step = log.step === "dates" ? "episodes" : "action";
+        sheet.error = ""; renderSheet(true); return;
+      }
+      if (event.target.closest("[data-trk-log-reload]")) { sheet.error = ""; loadSeasons(log); return; }
+      if (event.target.closest("[data-trk-log-advanced]")) {
+        log.advanced = !log.advanced; log.review = null; log.step = "action"; log.action = null; log.expanded = new Set(); sheet.error = "";
+        if (!log.advanced && log.whenMode === "range") log.whenMode = "today";
+        renderSheet(); return;
+      }
+      const operation = event.target.closest("[data-trk-log-operation]");
+      if (operation) { log.action = operation.dataset.trkLogOperation; log.selected.clear(); log.review = null; sheet.error = ""; renderSheet(); return; }
+      const select = event.target.closest("[data-trk-log-select]");
+      if (select) {
+        const eligible = (select.dataset.trkLogSelect === "all" ? log.seasons.flatMap(s => watchSeasonRows(log, s.season)) : watchSeasonRows(log, Number(select.dataset.trkLogSelect))).filter(ep => watchEligible(log, ep));
+        const all = eligible.every(ep => log.selected.has(`${ep.season}:${ep.episode}`));
+        eligible.forEach(ep => all ? log.selected.delete(`${ep.season}:${ep.episode}`) : log.selected.add(`${ep.season}:${ep.episode}`));
+        renderSheet(); return;
+      }
+      const expand = event.target.closest("[data-trk-log-expand]");
+      if (expand) {
+        const season = Number(expand.dataset.trkLogExpand);
+        log.expanded ||= new Set();
+        if (log.expanded.has(season)) log.expanded.delete(season);
+        else { log.expanded.add(season); loadWatchSeason(log, season); }
+        renderSheet(); return;
+      }
       const type = event.target.closest("[data-trk-log-type]");
       if (type) {
         log.type = type.dataset.trkLogType;
@@ -3620,6 +3886,7 @@
       }
       const target = event.target.closest("[data-trk-log-target]");
       if (target) {
+        log.review = null;
         log.target = target.dataset.trkLogTarget;
         renderSheet();
         return;
@@ -3716,12 +3983,19 @@
       return;
     }
     const log = sheet.log;
-    if (sheet.mode !== "log" || !log) return;
-    if (event.target.matches("[data-trk-log-season]")) {
-      log.season = Number(event.target.value);
-      log.episode = "all";
+    if (sheet.mode !== "log" || !log || sheet.busy) return;
+    if (event.target.matches("[data-trk-watch-pick]")) {
+      const key = event.target.dataset.trkWatchPick;
+      if (event.target.checked) log.selected.add(key); else log.selected.delete(key);
       renderSheet();
-    } else if (event.target.matches("[data-trk-log-episode]")) log.episode = event.target.value;
+    } else if (event.target.matches("[data-trk-log-scope]")) { log.scope = event.target.value; renderSheet(); }
+    else if (event.target.matches("[data-trk-log-end]")) log.end = event.target.value;
+    else if (event.target.matches("[data-trk-log-season]")) {
+      log.season = Number(event.target.value);
+      log.episode = String(watchSeasonRows(log).find(ep => !episodePlays(log, ep.season, ep.episode).length)?.episode || 1);
+      loadWatchSeason(log);
+      renderSheet();
+    } else if (event.target.matches("[data-trk-log-episode]")) { log.episode = event.target.value; renderSheet(); }
     else if (event.target.matches("[data-trk-log-when]")) log.when = event.target.value;
     else if (event.target.matches("[data-trk-log-unlist]")) log.unlist = event.target.checked;
   }
@@ -3864,8 +4138,8 @@
       }
       const overviewMore = event.target.closest("[data-trk-overview-more]");
       if (overviewMore) {
-        const kind = overviewMore.dataset.trkOverviewMore, step = kind === "recent" ? 8 : 4;
-        state.overviewLimits[kind] = state.overviewLimits[kind] >= overviewRows(kind).length ? step : state.overviewLimits[kind] + step;
+        const kind = overviewMore.dataset.trkOverviewMore, step = kind === "recent" ? state.overviewRecentStep : 4;
+        state.overviewLimits[kind] = state.overviewLimits[kind] * step >= overviewRows(kind).length ? 1 : state.overviewLimits[kind] + 1;
         renderOverviewSlot();
         return;
       }
@@ -3895,6 +4169,7 @@
         root.querySelector(".trk-others")?.removeAttribute("open");
         if (view.dataset.trkView === state.view) return;
         state.view = view.dataset.trkView;
+        state.filtersOpen = false;
         state.q = "";
         if (state.view === "cleanup" && !state.healthFilter) state.healthFilter = "attention";
         reload();
@@ -4007,7 +4282,7 @@
         state.root.querySelector('[data-trk-action="filters"]')?.focus();
       }
       else if (action === "filters-clear") {
-        state.noteStatus = ""; state.noteTag = ""; state.q = ""; state.media = ""; state.sort = "recent"; state.hideDropped = false; state.duplicates = false;
+        state.noteStatus = ""; state.noteTag = ""; state.q = ""; state.media = ""; state.sort = "recent"; state.hideDropped = false; state.duplicates = false; state.month = ""; state.healthFilter = "";
         reload();
       }
       else if (action === "pick-all") pickAllResults();
@@ -4020,6 +4295,13 @@
       }
     });
     root.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && state.filtersOpen && event.target.closest?.("#trk-extra-filters,.trk-search-wrap")) {
+        event.preventDefault();
+        state.filtersOpen = false;
+        renderSlots(true);
+        root.querySelector('[data-trk-action="filters"]')?.focus();
+        return;
+      }
       const others = event.target.closest?.(".trk-others");
       if (others && event.key === "Escape") {
         event.preventDefault();
@@ -4086,6 +4368,7 @@
       if (input === "view") {
         if (!VIEWS.some(view => view.id === event.target.value) || state.view === event.target.value) return;
         state.view = event.target.value;
+        state.filtersOpen = false;
         state.q = "";
         if (state.view === "cleanup" && !state.healthFilter) state.healthFilter = "attention";
         reload();
@@ -4135,7 +4418,7 @@
       const img = event.target;
       if (!(img instanceof HTMLImageElement)) return;
       if (img.closest(".trk-overview-art,.trk-calendar-release")) { img.hidden = true; return; }
-      const cover = img.closest("[data-trk-log-cover]");
+      const cover = img.closest("[data-trk-log-cover],.trk-watch-editor .cw-ia-sheet-poster");
       if (cover) {
         cover.innerHTML = symbol(cover.dataset.trkLogCover === "movie" ? "movie" : "tv");
         return;
