@@ -1415,23 +1415,19 @@
   function noteBlock(data) {
     if (!data.note_key) return "";
     const n = data.note;
-    const done = data.show && state.progress[data.title?.art?.tmdb]?.completed && !["completed", "dropped"].includes(n?.status);
-    const suggest = done ? `<button type="button" class="trk-note-suggest" data-trk-detail="complete">${symbol("task_alt")}<span>Every episode is watched. Mark it as completed?</span></button>` : "";
-    const head = `<div class="trk-section-title trk-note-head"><span>My notes</span>${n ? `<button type="button" class="trk-icon" data-trk-detail="notes" title="Edit my notes" aria-label="Edit my notes">${icon("edit")}</button>` : ""}</div>`;
-    const picker = statusPicker(n?.status || "");
-    if (!n) {
-      return `<div class="trk-section trk-note-block">${head}${suggest}${picker}<button type="button" class="trk-note-empty" data-trk-detail="notes">${symbol("edit_note")}<span>Add dates, tags or notes. They stay in CrossWatch and never sync.</span></button></div>`;
-    }
-    const dates = [n.started ? `Started ${dayText(n.started)}` : "", n.finished ? `Finished ${dayText(n.finished)}` : ""].filter(Boolean).join(" · ");
+    const dates = [n?.started ? `Started ${dayText(n.started)}` : "", n?.finished ? `Finished ${dayText(n.finished)}` : ""].filter(Boolean).join(" · ");
     const fields = state.noteFields
-      .filter((f) => fieldOk(f, n.fields?.[f.id]))
+      .filter((f) => fieldOk(f, n?.fields?.[f.id]))
       .map((f) => `<div class="trk-note-field"><dt>${esc(f.name)}</dt><dd>${esc(fieldText(f, n.fields[f.id]))}</dd></div>`)
       .join("");
-    return `<div class="trk-section trk-note-block">${head}${suggest}${picker}
+    const hasContent = !!(dates || n?.tags?.length || n?.notes || fields);
+    const head = `<div class="trk-section-title trk-note-head"><span>My notes</span>${hasContent ? `<button type="button" class="trk-icon" data-trk-detail="notes" title="Edit my notes" aria-label="Edit my notes">${icon("edit")}</button>` : ""}</div>`;
+    return `<div class="trk-section trk-note-block">${head}
         ${dates ? `<div class="trk-note-line"><span class="trk-sub">${esc(dates)}</span></div>` : ""}
-        ${tagChips(n.tags)}
-        ${n.notes ? `<p class="trk-note-text">${esc(n.notes)}</p>` : ""}
+        ${tagChips(n?.tags)}
+        ${n?.notes ? `<p class="trk-note-text">${esc(n.notes)}</p>` : ""}
         ${fields ? `<dl class="trk-note-fields">${fields}</dl>` : ""}
+        ${hasContent ? "" : `<button type="button" class="trk-note-empty" data-trk-detail="notes">${icon("add")}<span>Add notes</span></button>`}
       </div>`;
   }
 
@@ -1521,10 +1517,11 @@
       <div class="trk-detail-top">
         ${card ? `<button type="button" class="trk-poster is-link${url ? "" : " is-empty"}" data-trk-detail="card" title="Open details" aria-label="Open details for ${esc(head.title || "")}">` : `<div class="trk-poster${url ? "" : " is-empty"}">`}${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-poster-fallback">${symbol(t.icon)}</span>${rating != null ? `<span class="cw-rating-score trk-cover-rating" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}${card ? "</button>" : "</div>"}
         <div class="trk-detail-copy">
-          <div class="trk-detail-meta"><span class="trk-detail-kind">${symbol(t.icon)}${esc(t.label)}</span>${statusPill(data.note?.status)}</div>
+          <div class="trk-detail-meta"><span class="trk-detail-kind">${symbol(t.icon)}${esc(t.label)}</span></div>
           <span class="trk-detail-head"><strong class="trk-detail-title">${esc(head.title || "")}</strong>${recordCount(data) ? `<button type="button" class="trk-icon trk-title-edit" data-trk-detail="edit-title" title="Edit title, year and IDs on every record" aria-label="Edit title, year and IDs">${icon("edit")}</button>` : ""}${card ? `<button type="button" class="trk-icon trk-title-info" data-trk-detail="card" title="Open details" aria-label="Open details for ${esc(head.title || "")}">${icon("info")}</button>` : ""}</span>
           ${head.year ? `<span class="trk-detail-sub">${esc(head.year)}</span>` : ""}
           <span class="trk-detail-sub">${esc(watchedLine)}</span>
+          ${data.note_key ? statusPicker(data.note?.status || "") : ""}
           ${badges ? `<div class="trk-badges">${badges}</div>` : ""}
         </div>
       </div>
@@ -1537,10 +1534,11 @@
         ${recordCount(data) ? `<button type="button" class="cw-btn" data-trk-detail="origin" title="Where does this come from?" aria-label="Where does this come from?">${icon("alt_route")}</button>` : ""}
       </div>
       ${episodePreviews(data)}
-      ${noteBlock(data)}
+      ${data.show && data.note_key && state.progress[data.title?.art?.tmdb]?.completed && !["completed", "dropped"].includes(data.note?.status) ? `<button type="button" class="trk-note-suggest" data-trk-detail="complete">${symbol("task_alt")}<span>Every episode is watched. Mark it as completed?</span></button>` : ""}
       ${data.show ? seasonBlock(data) : ""}
       ${plays ? `<div class="trk-section"><div class="trk-section-title">${esc(data.show ? "Recent plays" : "Plays")}</div><ul class="trk-play-list">${plays}</ul>${morePlays}</div>` : ""}
-      ${listBlock(data)}`;
+      ${listBlock(data)}
+      ${noteBlock(data)}`;
   }
 
   function renderHealth() {

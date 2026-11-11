@@ -858,11 +858,12 @@
       button("rate", rating != null ? "star" : "star_outline", rating != null ? `Change rating (${rating}/10)` : "Rate"),
       button("list", listed ? "bookmark_remove" : "bookmark_add", listed ? "Remove from watchlist" : "Add to watchlist"),
       button("map", "compare_arrows", "Fix match"),
-      ...(data.note_key ? [button("notes", "edit_note", data.note ? "My notes" : "Add notes")] : []),
     ].join("");
     const note = data.note;
     const tags = (note?.tags || []).slice(0, 8).map((tag) => `<span class="cw-mm-trk-tag">${esc(tag)}</span>`).join("");
-    const noteLine = tags ? `<div class="cw-mm-trk-note">${tags}</div>` : "";
+    const noteDates = [note?.started ? `Started ${note.started}` : "", note?.finished ? `Finished ${note.finished}` : ""].filter(Boolean).join(" · ");
+    const hasNotes = !!(tags || note?.notes || noteDates || Object.keys(note?.fields || {}).length);
+    const noteLine = data.note_key ? `<div class="cw-mm-trk-notes"><h4>My notes</h4>${noteDates ? `<p class="cw-mm-muted">${esc(noteDates)}</p>` : ""}${tags ? `<div class="cw-mm-trk-note">${tags}</div>` : ""}${note?.notes ? `<p class="cw-mm-trk-note-text">${esc(note.notes)}</p>` : ""}<button type="button" class="cw-mm-notes-action" data-mm-trk="notes">${icon(hasNotes ? "edit_note" : "add")}<span>${hasNotes ? "Edit notes" : "Add notes"}</span></button></div>` : "";
     const when = (play, time = false) => {
       const epoch = playEpoch(play);
       if (!epoch) return "";
@@ -872,9 +873,8 @@
     const rows = (state.historyExpanded ? plays : plays.slice(0, 5)).map((play) => `<li class="cw-mm-trk-play">${show ? `<b>${play.season != null ? esc(`S${play.season} E${play.episode}`) : ""}</b>` : ""}<span>${esc(when(play))}</span><span>${esc(when(play, true))}</span><button type="button" class="cw-mm-trk-icon" data-mm-trk-edit="${esc(play.key)}" title="Edit play" aria-label="Edit play${show ? ` ${esc(episodeCode(play))}` : ""}">${icon("edit")}</button></li>`).join("");
     const more = plays.length > 5 ? `<button type="button" class="cw-mm-btn cw-mm-history-more" data-mm-history-more aria-expanded="${!!state.historyExpanded}">${state.historyExpanded ? "Show less" : `Show ${esc(plural(plays.length - 5, "older play"))}`}</button>` : "";
     return `<div class="cw-mm-box cw-mm-trk"><div class="cw-mm-trk-header">${trackerStatus(data)}<small class="cw-mm-muted">${esc(state.tracker.label || "")}</small></div>
-      ${noteLine}
       <div class="cw-mm-trk-actions">${actions}</div>
-      <h4>Watch history</h4>${rows ? `<ul class="cw-mm-trk-plays${show ? "" : " is-movie"}">${rows}</ul>${more}` : `<p class="cw-mm-muted">No plays in this tracker yet.</p>`}</div>`;
+      <h4>Watch history</h4>${rows ? `<ul class="cw-mm-trk-plays${show ? "" : " is-movie"}">${rows}</ul>${more}` : `<p class="cw-mm-muted">No plays in this tracker yet.</p>`}${noteLine}</div>`;
   }
 
   const initialsOf = (name) => String(name || "?").split(/\s+/).map((part) => part[0] || "").join("").slice(0, 2).toUpperCase();
