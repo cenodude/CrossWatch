@@ -96,7 +96,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   const app = await fixture(t,theme), {page,writes} = app;
   assert.equal(await page.locator('.trk-tabs [role="tab"]').first().textContent(),"space_dashboardOverview");
   assert.equal(await page.locator('.trk-tabs [data-trk-view="cleanup"]').count(),0);
-  assert.equal(await page.locator("[data-trk-slot=filters]").isVisible(),false);
+  assert.equal(await page.locator("[data-trk-slot=filters]").isVisible(),true);
   assert.equal(await page.locator('[data-trk-overview-open^="continue:"]').count(),4);
   assert.equal(await page.locator('[data-trk-overview-open^="recent:"]').count(),8);
   assert.equal(await page.evaluate(() => window.injected),undefined);
@@ -108,6 +108,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   for (const [width,height] of sizes) {
     await page.setViewportSize({width,height});
     await page.waitForTimeout(90);
+    assert.equal(await page.locator('[data-trk-slot="source"] .cw-icon-select-btn').isVisible(),true,`${theme} ${width}x${height}: Tracker selector`);
     const layout = await page.evaluate(() => ({width:innerWidth,scroll:document.documentElement.scrollWidth,nested:[...document.querySelectorAll("#page-tracker *")].filter(el=>el.checkVisibility()&&/auto|scroll/.test(getComputedStyle(el).overflowY)&&el.scrollHeight>el.clientHeight+1).map(el=>el.className)}));
     assert.ok(layout.scroll<=width+1,`${theme} ${width}x${height}: ${JSON.stringify(layout)}`);
     assert.deepEqual(layout.nested,[],`${theme} ${width}x${height}`);
@@ -190,7 +191,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: cover
   const before = requests.length;
   await cover.hover();
   assert.equal(await actions.evaluate(el => getComputedStyle(el).opacity),"1");
-  assert.equal(await cover.locator('.trk-overview-peek').evaluate(el => getComputedStyle(el).opacity),"1");
+  assert.equal(await page.locator('.trk-overview-peek').count(),0);
   assert.equal(requests.length,before);
   if (process.env.CW_OVERVIEW_SCREENSHOTS) {
     await mkdir(process.env.CW_OVERVIEW_SCREENSHOTS,{recursive:true});
@@ -205,7 +206,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: cover
   for (const [kind, name] of [["continue","Movie 1"],["recent","Movie 1"],["airing","Show 1"]]) {
     const target = page.locator(`[data-trk-overview-open="${kind}:0"]`);
     if (kind === 'airing') await target.click({position:{x:100,y:100}});
-    else await target.locator('.trk-overview-art').click({position:{x:100,y:100}});
+    else await target.locator(kind === 'recent' ? '.trk-grid-art' : '.trk-overview-art').click({position:{x:100,y:100}});
     const modal = page.locator('#cw-media-modal');
     await modal.waitFor();
     assert.equal(await modal.locator('#cw-mm-title').getAttribute('aria-label'),name);
@@ -241,7 +242,7 @@ test("touch covers expose accessible quick actions and open the real media card"
   assert.equal(await action.isVisible(),true);
   const bounds = await action.boundingBox();
   assert.ok(bounds.width >= 44 && bounds.height >= 44);
-  await page.locator('[data-trk-overview-open="recent:0"] .trk-overview-art').tap();
+  await page.locator('[data-trk-overview-open="recent:0"] .trk-grid-art').tap();
   await page.locator('#cw-media-modal').waitFor();
   assert.equal(await page.locator('#cw-mm-title').getAttribute('aria-label'),"Movie 1");
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth+1),false);
@@ -311,7 +312,8 @@ test("streaming overview preserves existing cards, batches rendering and aborts 
     window.overviewStream.enqueue(bytes.slice(17));
   },event);
   await send({airing:[{...episodes[0],title:"Première"}],checked:4,total:500,done:false});
-  await page.locator('.trk-calendar-copy strong').filter({hasText:"Première"}).waitFor();
+  await page.waitForTimeout(150);
+  assert.equal(await page.locator('.trk-calendar-release').count(),12);
   await page.evaluate(() => {
     window.firstRelease = document.querySelector('[data-trk-overview-open="airing:0"]');
     window.calendarNode.scrollLeft = 60;
@@ -337,6 +339,9 @@ test("streaming overview preserves existing cards, batches rendering and aborts 
       checked:i+4,total:500,done:false,
     })+"\n"));
   },episodes[2]);
+  await page.waitForTimeout(150);
+  assert.equal(await page.locator('.trk-calendar-release').count(),12);
+  await send({checked:500,total:500,done:true});
   await page.waitForFunction(() => document.querySelectorAll('.trk-calendar-release').length === 494);
   assert.ok(await page.evaluate(() => window.overviewPaints <= 3));
   assert.equal(await page.evaluate(() => window.streamRequests),1);
@@ -351,4 +356,57 @@ test("streaming overview preserves existing cards, batches rendering and aborts 
   await page.locator('.trk-tabs [data-trk-view="history"]').click();
   await page.waitForFunction(() => window.streamAborts === 2);
   assert.equal(await page.locator('.trk-overview').count(),0);
+});
+
+
+test("cached overview skips show rebuilding and shares the compact History cards", async t => {
+  const {page, requests, drops} = await fixture(t,"flat-dark",{touch:false});
+  const cached = {continue:episodes.slice(0,2),airing:episodes,total:4,checked:4,done:true,unavailable:0};
+  await page.route("**/api/tracker/overview?**", route => route.fulfill({json:{revision:"warm",metadata_available:true,hero:episodes[0],continue:rows,recent:rows.map(row=>({...row,progress_percent:null,ref:{feature:"history",key:row.key}})),shows:cached}}));
+  const streamCount = requests.filter(path => path === "/api/tracker/overview/shows").length;
+  await page.locator('[data-trk-action="refresh"]').click();
+  await page.locator('.trk-hero-heading strong').filter({hasText:"Show 1"}).waitFor({state:'attached'});
+  assert.equal(await page.locator('.trk-hero-logo').getAttribute('alt'),"Show 1");
+  assert.match(await page.locator('.trk-hero-backdrop').getAttribute('src'),/tv\/100/);
+  await page.locator('.trk-tabs [data-trk-view="history"]').click();
+  await page.locator('[data-trk-layout="grid"]').click();
+  const history = page.locator('.trk-grid-card').first();
+  await history.locator('.trk-grid-art').hover();
+  assert.equal(await history.locator('[data-trk-card-action]').count(),2);
+  assert.equal(await history.locator('[data-trk-row-info]').count(),1);
+  await history.locator('[data-trk-card-action="log"]').click();
+  await page.locator('.trk-sheet:visible').waitFor();
+  await page.keyboard.press('Escape');
+  await history.locator('.trk-grid-art').hover();
+  const title = await history.locator('.trk-grid-copy>strong').boundingBox();
+  const edit = await history.locator('[data-trk-row-edit]').boundingBox();
+  assert.ok(Math.abs(title.y + title.height/2 - edit.y - edit.height/2) < 2);
+  await history.locator('[data-trk-card-action="drop"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-trk-card-action="drop"]')?.disabled === false);
+  assert.equal(drops[0].feature,"history");
+  await page.locator('.trk-tabs [data-trk-view="overview"]').click();
+  const recent = page.locator('[data-trk-overview-open="recent:0"]');
+  await recent.waitFor();
+  assert.equal(await recent.locator('.trk-grid-art').count(),1);
+  assert.equal(await recent.locator('[data-trk-row-info]').count(),0);
+  assert.equal(await recent.locator('[data-trk-pick]').count(),0);
+  await recent.focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.openedTitle?.options.tracker);
+  await recent.locator('[data-trk-recent-edit]').click();
+  await page.locator('.trk-sheet:visible').waitFor();
+  await page.keyboard.press('Escape');
+  assert.equal(requests.filter(path => path === "/api/tracker/overview/shows").length,streamCount);
+  const positions = await page.evaluate(() => {
+    const controls = document.querySelector('[data-trk-slot="controls"]').getBoundingClientRect();
+    const source = document.querySelector('[data-trk-slot="source"]').getBoundingClientRect();
+    const main = document.querySelector('.cw-main').getBoundingClientRect();
+    return {aligned:Math.abs(controls.top-source.top)<2,separate:source.left>=controls.right,fullWidth:main.width>controls.width};
+  });
+  assert.deepEqual(positions,{aligned:true,separate:true,fullWidth:true});
+  if (process.env.CW_OVERVIEW_SCREENSHOTS) {
+    await mkdir(process.env.CW_OVERVIEW_SCREENSHOTS,{recursive:true});
+    await page.evaluate(() => window.scrollTo(0,0));
+    await page.screenshot({path:`${process.env.CW_OVERVIEW_SCREENSHOTS}/overview-updated.png`,fullPage:true});
+  }
 });

@@ -465,7 +465,7 @@
     const options = VIEWS.filter(v => v.id !== "cleanup").map(v => `<option value="${v.id}"${v.id === state.view ? " selected" : ""}>${esc(v.label)}${viewCount(v.id) ? ` (${num(viewCount(v.id))})` : ""}</option>`).join("");
     const attention = attentionTotal();
     return `<label class="cw-page-mobile-view" for="trk-mobile-view"><span>View</span><select id="trk-mobile-view" data-trk-input="view">${options}<optgroup label="Others"><option value="cleanup"${state.view === "cleanup" ? " selected" : ""}>Others · Clean up${attention ? ` (${num(attention)})` : ""}</option></optgroup></select></label>
-      <div class="trk-navigation"><nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav><details class="trk-others${state.view === "cleanup" ? " is-active" : ""}"><summary>${symbol("more_horiz")}<span>Others</span>${attention ? `<small aria-label="${esc(plural(attention, "record needs", "records need"))} attention">${esc(num(attention))}</small>` : ""}${symbol("expand_more")}</summary><div class="trk-others-menu cw-page-panel"><button type="button" class="cw-btn" data-trk-view="cleanup"${state.view === "cleanup" ? ' aria-current="page"' : ""}>${symbol("health_and_safety")}<span>Clean up</span>${attention ? `<small>${esc(num(attention))}</small>` : ""}</button></div></details></div>`;
+      <div class="trk-navigation"><nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav><details class="trk-others${state.view === "cleanup" ? " is-active" : ""}"><summary class="trk-tab${state.view === "cleanup" ? " active" : ""}">${symbol("more_horiz")}<span>Others</span>${attention ? `<small aria-label="${esc(plural(attention, "record needs", "records need"))} attention">${esc(num(attention))}</small>` : ""}${symbol("expand_more")}</summary><div class="trk-others-menu cw-page-panel"><button type="button" class="cw-btn" data-trk-view="cleanup"${state.view === "cleanup" ? ' aria-current="page"' : ""}>${symbol("health_and_safety")}<span>Clean up</span>${attention ? `<small>${esc(num(attention))}</small>` : ""}</button></div></details></div>`;
   }
 
   function overviewRows(kind) {
@@ -479,12 +479,11 @@
   function overviewCard(row, kind, index) {
     const title = cardTitle(row);
     const art = row.art;
-    const poster = kind === "recent";
-    const episode = !poster && row.has_still && row.season != null && row.episode != null;
-    const url = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?fallback=2&size=w500&kind=${poster ? "poster" : episode ? "still" : "backdrop"}${episode ? `&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : ""}` : "";
-    const detail = kind === "recent" ? [episodeLabel(row), row.plays > 1 ? plural(row.plays, "play", "plays") : "", whenText(row.date)] : [episodeLabel(row), row.remaining_minutes ? `${num(row.remaining_minutes)} min left` : row.episode_title || (row.progress_percent != null ? `${Math.round(row.progress_percent)}% watched` : "")];
+    const episode = row.has_still && row.season != null && row.episode != null;
+    const url = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?fallback=2&size=w500&kind=${episode ? "still" : "backdrop"}${episode ? `&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : ""}` : "";
+    const detail = [episodeLabel(row), row.remaining_minutes ? `${num(row.remaining_minutes)} min left` : row.episode_title || (row.progress_percent != null ? `${Math.round(row.progress_percent)}% watched` : "")];
     const writable = window.CW?.AuthState?.read?.()?.permissions?.write !== false;
-    return `<article class="trk-overview-card${poster ? " is-poster" : ""}"><button type="button" class="trk-overview-open" data-trk-overview-open="${kind}:${index}" aria-label="Open ${esc(title)}"><span class="trk-overview-art">${symbol(art?.kind === "movie" || row.type === "movie" ? "movie" : "tv")}${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-overview-peek" aria-hidden="true">${icon("info")}</span>${row.progress_percent != null ? `<span class="trk-overview-progress"><i style="width:${Math.max(0, Math.min(100, Number(row.progress_percent) || 0))}%"></i></span>` : ""}</span><strong>${esc(title)}</strong><span class="trk-overview-meta">${esc(detail.filter(Boolean).join(" · "))}</span></button>${kind === "continue" ? `<div class="trk-overview-actions"><button type="button" class="trk-overview-quick" data-trk-overview-watch="${index}"${state.overviewBusy || !writable ? " disabled" : ""} title="Mark watched" aria-label="Mark ${esc(title)} ${esc(episodeLabel(row))} watched">${icon("check")}</button><button type="button" class="trk-overview-quick" data-trk-overview-drop="${index}"${state.overviewBusy || !writable ? " disabled" : ""} title="Mark as dropped and hide from this overview" aria-label="Drop ${esc(title)}">${icon("do_not_disturb_on")}</button></div>` : ""}</article>`;
+    return `<article class="trk-overview-card"><button type="button" class="trk-overview-open" data-trk-overview-open="${kind}:${index}" aria-label="Open ${esc(title)}"><span class="trk-overview-art">${symbol(art?.kind === "movie" || row.type === "movie" ? "movie" : "tv")}${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}${row.progress_percent != null ? `<span class="trk-overview-progress"><i style="width:${Math.max(0, Math.min(100, Number(row.progress_percent) || 0))}%"></i></span>` : ""}</span><strong>${esc(title)}</strong><span class="trk-overview-meta">${esc(detail.filter(Boolean).join(" · "))}</span></button>${kind === "continue" ? `<div class="trk-overview-actions"><button type="button" class="trk-overview-quick" data-trk-overview-watch="${index}"${state.overviewBusy || !writable ? " disabled" : ""} title="Mark watched" aria-label="Mark ${esc(title)} ${esc(episodeLabel(row))} watched">${icon("check")}</button><button type="button" class="trk-overview-quick" data-trk-overview-drop="${index}"${state.overviewBusy || !writable ? " disabled" : ""} title="Mark as dropped and hide from this overview" aria-label="Drop ${esc(title)}">${icon("do_not_disturb_on")}</button></div>` : ""}</article>`;
   }
 
   function renderAiringTimeline(rows, data, message) {
@@ -512,7 +511,7 @@
         const title = cardTitle(row), art = row.art;
         const url = art?.tmdb ? `/art/tmdb/tv/${encodeURIComponent(art.tmdb)}?fallback=2&size=w780&kind=${row.has_still ? `still&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : "backdrop"}` : "";
         const label = offset === 0 ? "Today" : row.episode === 1 ? "Season premiere" : offset === 1 ? "Tomorrow" : `In ${offset} days`;
-        return `<button type="button" class="trk-calendar-release" data-trk-overview-open="airing:${index}" aria-label="${esc(`${dayText(iso)}: ${title}, ${episodeLabel(row)}`)}">${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-calendar-date">${day}<small>${esc(label)}</small></span><span class="trk-overview-peek" aria-hidden="true">${icon("info")}</span><span class="trk-calendar-copy"><strong>${esc(title)}</strong><span>${esc([episodeLabel(row), row.episode_title].filter(Boolean).join(" · "))}</span></span></button>`;
+        return `<button type="button" class="trk-calendar-release" data-trk-overview-open="airing:${index}" aria-label="${esc(`${dayText(iso)}: ${title}, ${episodeLabel(row)}`)}">${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-calendar-date">${day}<small>${esc(label)}</small></span><span class="trk-calendar-copy"><strong>${esc(title)}</strong><span>${esc([episodeLabel(row), row.episode_title].filter(Boolean).join(" · "))}</span></span></button>`;
       }).join("");
       return `<div class="trk-calendar-day${releases.length ? " has-releases" : ""}${offset === 0 ? " is-today" : ""}" data-calendar-date="${iso}"${releases.length ? ` style="--calendar-releases:${density.releases};--calendar-empty-days:${density.empty}"` : ""}>${cards || `${day}${offset === 0 ? '<span class="trk-calendar-today">Today</span>' : ""}`}</div>`;
     }).join("");
@@ -530,7 +529,7 @@
       const message = kind === "airing" ? !data.metadata_available ? "Add a TMDB API key in Settings to see upcoming episodes." : data.checking ? "Looking for upcoming episodes…" : data.unavailable ? "No upcoming episodes found in the available metadata." : "No episodes scheduled in the next 30 days." : kind === "continue" ? data.checking ? "Finding your next episodes…" : "You're all caught up. Start a movie or show to see it here." : "Your recent watches will appear here once you log or sync them.";
       if (kind === "airing") return renderAiringTimeline(rows, data, message);
       const more = rows.length > (kind === "recent" ? 8 : 4) ? `<button type="button" class="cw-btn trk-overview-more" data-trk-overview-more="${kind}" aria-expanded="${limit > (kind === "recent" ? 8 : 4)}">${rows.length > limit ? "Show more" : "Show less"}</button>` : "";
-      return `<section class="trk-overview-section" aria-labelledby="trk-overview-${kind}"><div class="trk-overview-section-head"><div><h2 id="trk-overview-${kind}">${title}</h2></div>${view ? `<button type="button" class="cw-btn" data-trk-view="${view}">${link}${icon("arrow_forward")}</button>` : ""}</div>${rows.length ? `<div class="trk-overview-grid${kind === "recent" ? " is-posters" : ""}">${rows.slice(0, limit).map((row, index) => overviewCard(row, kind, index)).join("")}</div>` : `<p class="trk-overview-empty">${esc(message)}</p>`}${more}</section>`;
+      return `<section class="trk-overview-section" aria-labelledby="trk-overview-${kind}"><div class="trk-overview-section-head"><div><h2 id="trk-overview-${kind}">${title}</h2></div>${view ? `<button type="button" class="cw-btn" data-trk-view="${view}">${link}${icon("arrow_forward")}</button>` : ""}</div>${rows.length ? kind === "recent" ? renderGrid(rows.slice(0, limit)) : `<div class="trk-overview-grid">${rows.slice(0, limit).map((row, index) => overviewCard(row, kind, index)).join("")}</div>` : `<p class="trk-overview-empty">${esc(message)}</p>`}${more}</section>`;
     }).join("")}</div>`;
   }
 
@@ -569,6 +568,33 @@
   }
 
   let overviewController = null;
+  const overviewCache = new Map();
+  const overviewCacheKey = () => {
+    const auth = window.CW?.AuthState?.read?.();
+    return JSON.stringify([auth?.user?.id || auth?.user?.username, auth?.profileId, auth?.role, auth?.permissions, state.instance]);
+  };
+
+  function rememberOverview() {
+    if (!state.overview || state.overview.checking || state.overview.calendar_error) return;
+    const key = overviewCacheKey();
+    overviewCache.delete(key);
+    overviewCache.set(key, state.overview);
+    while (overviewCache.size > 16) overviewCache.delete(overviewCache.keys().next().value);
+  }
+
+  async function loadOverviewHero(data) {
+    const head = data.hero || data.continue?.[0] || data.recent?.[0];
+    if (!head) return;
+    data.hero = head;
+    updateHeroSelection();
+    updateHeroBackdrop();
+    const item = cardItem(head, head.art?.kind === "tv" || isChild(head) || head.type === "show");
+    if (!item) return;
+    try {
+      data.heroMeta = await window.CW?.Meta?.get?.(item, "detail", {seriesInfo:true});
+      if (state.overview === data && state.view === "overview") updateHeroSelection();
+    } catch {}
+  }
 
   function stopOverview() {
     overviewController?.abort();
@@ -577,19 +603,23 @@
 
   async function loadOverviewShows(id, instance, controller) {
     const data = state.overview;
+    const retain = !!data.retained;
+    const next = [], airing = [];
     const active = () => !controller.signal.aborted && id === state.request && state.view === "overview" && instance === state.instance && !state.root.classList.contains("hidden");
     let paint = 0;
-    const flush = () => { clearTimeout(paint); paint = 0; if (active()) renderOverviewSlot(true); };
+    const flush = () => { clearTimeout(paint); paint = 0; if (active()) { renderOverviewSlot(true); rememberOverview(); } };
     const receive = page => {
       if (!active()) return;
       if (page.error || page.ok === false) throw new Error(page.error || "overview_unavailable");
-      data.next.push(...(page.continue || []));
-      data.airing.push(...(page.airing || []));
+      next.push(...(page.continue || []));
+      airing.push(...(page.airing || []));
+      if (!retain || page.done) { data.next = next; data.airing = airing; }
       data.unavailable += page.unavailable || 0;
       data.total = page.total || 0;
       data.metadata_available = page.metadata_available !== false;
       data.checked = page.checked ?? data.total;
       data.checking = !page.done;
+      if (page.done) data.retained = false;
       if (!paint) paint = setTimeout(flush, 100);
     };
     try {
@@ -710,7 +740,7 @@
   }
 
   function renderControls() {
-    if (state.view === "overview") return `${renderNavigation()}<div class="trk-overview-controls">${renderSource()}<button type="button" class="cw-btn primary" data-trk-action="log">${icon("add_circle")}<span>Log a watch</span></button></div>`;
+    if (state.view === "overview") return `${renderNavigation()}<div class="trk-overview-controls"><button type="button" class="cw-btn primary" data-trk-action="log">${icon("add_circle")}<span>Log a watch</span></button></div>`;
     const placeholder = state.view === "shows" ? "Filter shows / S01 / S01E02..." : state.view === "titles" ? "Filter my titles..." : "Filter by title...";
     const middle = `<div class="trk-filters" role="group" aria-label="Filter">${renderFilters()}</div>`;
     return `
@@ -980,15 +1010,16 @@
     return "";
   }
 
-  function renderGrid() {
-    const shows = state.view === "shows", notes = state.view === "titles";
-    const rows = shows ? state.shows : notes ? state.noteRows : state.items;
+  function renderGrid(recentRows = null) {
+    const recent = Array.isArray(recentRows);
+    const shows = !recent && state.view === "shows", notes = !recent && state.view === "titles";
+    const rows = recent ? recentRows : shows ? state.shows : notes ? state.noteRows : state.items;
     if (!rows.length) return shows ? renderShows() : notes ? renderTitles() : renderList();
-    const feature = listFeature();
+    const feature = recent ? "history" : listFeature();
     let previousDay = "";
     const cards = rows.map((item, index) => {
       const refName = shows ? "show" : notes ? "note" : "key";
-      const selected = state.ref?.[refName] === item.key && (shows || notes || state.ref?.feature === feature);
+      const selected = !recent && state.ref?.[refName] === item.key && (shows || notes || state.ref?.feature === feature);
       const title = shows || notes ? item.title || item.key : cardTitle(item);
       const card = canCard(cardItem(item, shows || isChild(item) || item.type === "show"));
       const art = item.art || (item.ids?.tmdb ? {kind: item.type === "movie" ? "movie" : "tv", tmdb: item.ids.tmdb} : null);
@@ -1002,24 +1033,50 @@
       const episode = shows ? item.last_season != null ? `Last ${se(item.last_season, item.last_episode)}` : "" : episodeCode(item);
       const meta = [isChild(item) ? item.series_year : item.year, shows ? "Show" : typeMeta(item).label, episode].filter(Boolean).join(" · ");
       let heading = "";
-      if (timelineOn()) {
+      if (!recent && timelineOn()) {
         const day = dayLabel(date);
         if (day !== previousDay) { heading = `<h3 class="trk-grid-day">${esc(day)}</h3>`; previousDay = day; }
       }
-      return `${heading}<article class="trk-play trk-grid-card${selected ? " is-selected" : ""}${state.picked.has(item.key) ? " is-picked" : ""}" data-trk-ref-${refName}="${esc(item.key)}" tabindex="0" aria-label="${esc(title)}" aria-selected="${selected}">
+      return `${heading}<article class="trk-play trk-grid-card${selected ? " is-selected" : ""}${state.picked.has(item.key) ? " is-picked" : ""}" data-trk-ref-${refName}="${esc(item.key)}"${recent ? ` data-trk-overview-open="recent:${index}"` : ""} tabindex="0" aria-label="${esc(title)}" aria-selected="${selected}">
         <div class="trk-grid-art"><span class="trk-grid-placeholder" aria-hidden="true">${symbol(shows ? "tv" : typeMeta(item).icon)}</span>${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}
-          <input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}">
+          ${!recent ? `<input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}">` : ""}
           ${rating != null ? `<span class="cw-media-card-score" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}
-          ${date || status ? `<div class="trk-grid-labels">${date ? `<span class="trk-grid-date" title="${esc(whenText(date))}">${esc(timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}${status ? `<span class="trk-grid-status">${status}</span>` : ""}</div>` : ""}
+          ${date || status ? `<div class="trk-grid-labels">${date ? `<span class="trk-grid-date" title="${esc(whenText(date))}">${esc(!recent && timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}${status ? `<span class="trk-grid-status">${status}</span>` : ""}</div>` : ""}
           ${shows ? progressCell(item, "bar") : ""}
-          ${card ? `<button type="button" class="trk-grid-info" data-trk-row-info title="Open details" aria-label="Open details for ${esc(title)}">${icon("info")}</button>` : ""}
+          ${cardActions(item, index, {recent, info:card && !recent})}
         </div>
         <div class="trk-grid-copy"><strong title="${esc(title)}">${esc(title)}</strong><small>${esc(meta)}</small>${shows ? `<div class="trk-grid-progress">${progressCell(item, "count")}</div>` : notes ? tagChips(item.tags, 3) : feature === "progress" ? extraCell(item, feature) : ""}
-          ${!shows && !notes ? `<div class="trk-grid-tools">${healthIcon(item, state.view === "cleanup")}<button type="button" class="trk-icon" data-trk-row-edit="${index}" title="Edit" aria-label="Edit ${esc(title)}">${icon("edit")}</button></div>` : ""}
+          ${!shows && !notes ? `<div class="trk-grid-tools">${healthIcon(item, state.view === "cleanup")}<button type="button" class="trk-icon" ${recent ? `data-trk-recent-edit="${index}"` : `data-trk-row-edit="${index}"`} title="Edit" aria-label="Edit ${esc(title)}">${icon("edit")}</button></div>` : ""}
         </div></article>`;
     }).join("");
-    const more = timelineOn() ? state.items.length < state.total ? `<div class="cw-pager"><button type="button" class="cw-btn" data-trk-action="more"${state.loading ? " disabled" : ""}>Show older plays</button></div>` : "" : pager();
+    const more = recent ? "" : timelineOn() ? state.items.length < state.total ? `<div class="cw-pager"><button type="button" class="cw-btn" data-trk-action="more"${state.loading ? " disabled" : ""}>Show older plays</button></div>` : "" : pager();
     return `<div class="trk-cover-grid">${cards}</div>${more}`;
+  }
+
+  function cardActions(item, index, {recent = false, info = false} = {}) {
+    const writable = window.CW?.AuthState?.read?.()?.permissions?.write !== false;
+    const disabled = !writable || !!state.overviewBusy;
+    const title = cardTitle(item);
+    return `<div class="trk-card-actions">${info ? `<button type="button" class="trk-cover-action" data-trk-row-info title="Open details" aria-label="Open details for ${esc(title)}">${icon("info")}</button>` : ""}<button type="button" class="trk-cover-action" data-trk-card-action="log" data-trk-card-index="${index}" data-trk-card-recent="${recent}" title="Watched" aria-label="Log a watch for ${esc(title)}"${disabled ? " disabled" : ""}>${icon("check")}</button><button type="button" class="trk-cover-action" data-trk-card-action="drop" data-trk-card-index="${index}" data-trk-card-recent="${recent}" title="Dropped" aria-label="Mark ${esc(title)} as dropped"${disabled || item.status === "dropped" ? " disabled" : ""}>${icon("do_not_disturb_on")}</button></div>`;
+  }
+
+  async function cardQuickAction(button) {
+    if (button.disabled || state.overviewBusy || window.CW?.AuthState?.read?.()?.permissions?.write === false) return;
+    const recent = button.dataset.trkCardRecent === "true";
+    const rows = recent ? overviewRows("recent") : state.view === "shows" ? state.shows : state.view === "titles" ? state.noteRows : state.items;
+    const row = rows[Number(button.dataset.trkCardIndex)];
+    if (!row) return;
+    const ref = recent ? row.ref : rowRef(button.closest(".trk-play"));
+    if (button.dataset.trkCardAction === "log") { selectRef(ref, {action:"log"}); return; }
+    const instance = state.instance;
+    state.overviewBusy = row.key;
+    button.disabled = true;
+    try {
+      const result = await getJSON("/api/tracker/titles/status", {provider_instance:instance, keys:[ref.show || ref.note || ref.key], status:"dropped", view:ref.show ? "shows" : ref.note ? "titles" : ref.feature, feature:ref.feature || "history"});
+      toast.show(`Dropped ${cardTitle(row)}`, {undo:result.batch ? () => undo(result.batch, instance) : null});
+      if (instance === state.instance) await refresh();
+    } catch (err) { toast.show(writeError(err), {tone:"bad"}); }
+    finally { state.overviewBusy = ""; button.disabled = false; renderSlots(false); }
   }
 
   function renderList() {
@@ -1117,21 +1174,21 @@
   }
 
   function renderSource() {
-    if (state.instances.length < 2) return "";
+    if (!state.instances.length) return "";
     const instances = state.instances.map((i) => `<option value="${esc(i.id)}"${i.id === state.instance ? " selected" : ""}>${esc(i.label)}</option>`).join("");
     return `<div class="ins-row"><div class="ins-kv"><label for="trk-instance">Tracker</label><select id="trk-instance" class="cw-select" data-trk-input="instance">${instances}</select></div></div>`;
   }
 
   function updateHeroSelection() {
-    const data = state.ref && state.view !== "overview" ? state.title : null;
-    const record = state.ref?.key && state.view !== "overview" ? findRecord(state.ref.key, state.ref.feature) || state.items.find((item) => item.key === state.ref.key) : null;
+    const data = state.view === "overview" ? state.overview?.hero ? {title:state.overview.hero, heroMeta:state.overview.heroMeta} : null : state.ref ? state.title : null;
+    const record = state.view === "overview" ? state.overview?.hero : state.ref?.key ? findRecord(state.ref.key, state.ref.feature) || state.items.find((item) => item.key === state.ref.key) : null;
     const head = data?.title || record;
-    const title = head ? data?.title?.title || cardTitle(head) : "";
+    const title = head ? cardTitle(head) : "";
     const selection = state.root?.querySelector('[data-trk-slot="selection"]');
     state.root?.querySelector(".cw-page-hero")?.classList.toggle("has-selection", !!title);
     if (!title) {
       if (selection) delete selection.dataset.logoSelection;
-      setSlot("selection", state.view === "overview" ? '<div class="trk-overview-heading"><strong>Your watching, at a glance</strong><span>Pick up a story, see what’s next, or revisit a recent watch.</span></div>' : "Everything you watched, rated and want to watch");
+      setSlot("selection", "Everything you watched, rated and want to watch");
       return;
     }
     const show = data?.show || isChild(head) || head.type === "show";
@@ -1162,7 +1219,7 @@
   function updateHeroBackdrop() {
     const image = state.root?.querySelector(".trk-hero-backdrop");
     if (!image) return;
-    const item = state.ref && state.view !== "overview" ? state.title?.title : null;
+    const item = state.view === "overview" ? state.overview?.hero : state.ref ? state.title?.title : null;
     const art = item?.art;
     const kind = art?.kind === "movie" ? "movie" : "tv";
     const url = art?.tmdb ? `/art/tmdb/${kind}/${encodeURIComponent(art.tmdb)}?fallback=2&kind=backdrop&size=w1280` : "";
@@ -1516,20 +1573,18 @@
       new ResizeObserver(() => root.style.setProperty("--cw-selection-height", `${selection.offsetHeight}px`)).observe(selection);
       const filters = root.querySelector('[data-trk-slot="filters"]');
       const media = window.matchMedia?.(NARROW);
-      const fold = () => { filters.open = !media?.matches || !!state.ref; };
+      const fold = () => { filters.open = state.view === "overview" || !media?.matches || !!state.ref; };
       fold();
       media?.addEventListener?.("change", fold);
-      const controls = root.querySelector('[data-trk-slot="controls"]');
       const side = root.querySelector(".cw-side");
       const header = document.querySelector("body > header");
       const updateSticky = () => {
         const top = (header?.getBoundingClientRect().height || 0) + 12;
         root.style.setProperty("--trk-sticky-top", `${top}px`);
         root.style.setProperty("--trk-side-top", `${Math.min(top, window.innerHeight - side.offsetHeight - 12)}px`);
-        controls.classList.toggle("trk-sticky-controls", controls.offsetHeight + top < window.innerHeight / 2);
       };
       const observer = new ResizeObserver(updateSticky);
-      [controls, side, header].filter(Boolean).forEach(el => observer.observe(el));
+      [side, header].filter(Boolean).forEach(el => observer.observe(el));
       window.addEventListener("resize", updateSticky);
       monthBar = null;
       bar()?.wire();
@@ -1547,6 +1602,14 @@
   function renderSlots(controls) {
     if (!state.root) return;
     state.root.classList.toggle("trk-overview-page", state.view === "overview");
+    const overview = state.view === "overview";
+    if (overview && state.overview?.scope !== overviewCacheKey()) state.overview = overviewCache.get(overviewCacheKey()) || null;
+    const main = state.root.querySelector('.cw-main');
+    const wrap = state.root.querySelector('.cw-wrap');
+    const controlsSlot = state.root.querySelector('[data-trk-slot="controls"]');
+    if (overview && controlsSlot.parentNode !== wrap) wrap.prepend(controlsSlot);
+    if (!overview && controlsSlot.parentNode !== main) main.prepend(controlsSlot);
+    state.root.querySelector('[data-trk-slot="filters"]').open = overview || !narrow() || !!state.ref;
     const selection = state.root.querySelector('[data-trk-slot="selection-bar"]');
     const focusedAction = selection?.contains(document.activeElement) ? document.activeElement.dataset.trkAction : "";
     if (state.picked.size) setSlot("selection-bar", renderSelection());
@@ -1565,7 +1628,7 @@
     }
     setSlot("import", renderImportBanner());
     setSlot("main", renderMain());
-    setSlot("source", state.view === "overview" ? "" : renderSource());
+    setSlot("source", renderSource());
     setSlot("title", renderTitle());
     setSlot("health", state.view === "cleanup" ? renderHealth() : "");
   }
@@ -1664,15 +1727,19 @@
       state.items = [];
       state.shows = [];
       state.noteRows = [];
-      if (state.view === "overview") state.overview = null;
+      if (state.view === "overview") state.overview = overviewCache.get(overviewCacheKey()) || (state.overview?.scope === overviewCacheKey() ? state.overview : null);
     }
     renderSlots(false);
     try {
       if (state.view === "overview") {
         const controller = overviewController = new AbortController();
-        const data = await getJSON(`/api/tracker/overview?${inst()}`, undefined, controller.signal);
+        const previous = state.overview;
+        const data = await getJSON(`/api/tracker/overview?${inst()}&day=${today()}`, undefined, controller.signal);
         if (id !== state.request) return;
-        state.overview = {...data, continue:data.continue || [], recent:data.recent || [], next:[], airing:[], checking:data.metadata_available !== false, checked:0, total:0, unavailable:0};
+        const saved = data.shows;
+        state.overview = {...data, scope:overviewCacheKey(), instance:state.instance, day:today(), continue:data.continue || [], recent:data.recent || [], next:data.metadata_available === false ? [] : saved?.continue || previous?.next || [], airing:data.metadata_available === false ? [] : saved?.airing || previous?.airing || [], retained:!saved && !!previous, checking:!saved && data.metadata_available !== false, checked:saved?.checked || 0, total:saved?.total || 0, unavailable:saved?.unavailable || 0};
+        void loadOverviewHero(state.overview);
+        rememberOverview();
         if (state.overview.checking) void loadOverviewShows(id, state.instance, controller);
       } else if (state.view === "titles") {
         const params = new URLSearchParams({
@@ -1794,7 +1861,7 @@
     } catch {}
   }
 
-  function selectRef(ref, { openMedia = false } = {}) {
+  function selectRef(ref, { openMedia = false, action = "" } = {}) {
     state.ref = ref;
     saveView();
     state.statusMenu = false;
@@ -1808,9 +1875,10 @@
       tr.setAttribute("aria-selected", String(on));
     });
     setSlot("title", renderTitle());
-    if (narrow() && !openMedia) state.root.querySelector('[data-trk-slot="filters"]').open = true;
+    if (narrow() && !openMedia && !action) state.root.querySelector('[data-trk-slot="filters"]').open = true;
     loadTitle().then(() => {
-      if (openMedia && state.ref === ref) openCard();
+      if (action && state.ref === ref && state.title) detailAction(action);
+      else if (openMedia && state.ref === ref) openCard();
       else if (narrow() && state.ref === ref) {
         const panel = state.root.querySelector('[data-trk-slot="title"]');
         panel.scrollIntoView({block: "start"});
@@ -3801,6 +3869,14 @@
         renderOverviewSlot();
         return;
       }
+      const quick = event.target.closest("[data-trk-card-action]");
+      if (quick) { void cardQuickAction(quick); return; }
+      const recentEdit = event.target.closest("[data-trk-recent-edit]");
+      if (recentEdit) {
+        const item = overviewRows("recent")[Number(recentEdit.dataset.trkRecentEdit)];
+        if (item) openSheet("edit", {item, feature:"history"});
+        return;
+      }
       const overviewCard = event.target.closest("[data-trk-overview-open]");
       if (overviewCard) { const [kind, index] = overviewCard.dataset.trkOverviewOpen.split(":"); overviewOpen(kind, Number(index)); return; }
       const overviewDropped = event.target.closest("[data-trk-overview-drop]");
@@ -3989,7 +4065,10 @@
       const row = event.target.closest?.(".trk-play");
       if (!row || (event.key !== "Enter" && event.key !== " ") || event.target.closest("input, button")) return;
       event.preventDefault();
-      selectRef(rowRef(row));
+      if (row.dataset.trkOverviewOpen) {
+        const [kind, index] = row.dataset.trkOverviewOpen.split(":");
+        overviewOpen(kind, Number(index));
+      } else selectRef(rowRef(row));
     });
     root.addEventListener("change", (event) => {
       const pick = event.target.dataset?.trkPick;
@@ -4082,6 +4161,18 @@
         pollImport();
       }
     });
+    let overviewChecking = false;
+    const checkOverview = async () => {
+      if (overviewChecking || document.hidden || root.hidden || root.classList.contains("hidden") || state.view !== "overview" || state.overview?.checking || state.overview?.revision == null) return;
+      overviewChecking = true;
+      const instance = state.instance;
+      try {
+        const info = await getJSON(`/api/tracker/overview/revision?${inst()}`);
+        if (state.view === "overview" && instance === state.instance && (info.revision !== state.overview?.revision || state.overview?.day !== today())) await refresh();
+      } catch {} finally { overviewChecking = false; }
+    };
+    setInterval(checkOverview, 60000);
+    document.addEventListener("visibilitychange", checkOverview);
     window.addEventListener("cw:tracker-migrated", () => {
       if (state.moving) refresh();
     });

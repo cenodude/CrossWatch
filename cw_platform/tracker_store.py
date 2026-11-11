@@ -483,6 +483,10 @@ class TrackerStore:
     def db_path(self) -> Path:
         return self.root / DB_NAME
 
+    def revision(self) -> str:
+        with self._db() as conn:
+            return _rev(conn) if conn is not None else ""
+
     def mutation(self) -> threading.RLock:
         key = str(self.root.resolve())
         with _MUTATION_GUARD:

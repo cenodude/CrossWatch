@@ -6,9 +6,10 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
-from threading import Event
+from threading import Event, Lock
 from typing import Any
 
 from cw_platform.tracker_store import TrackerStore
@@ -16,6 +17,30 @@ from cw_platform.tracker_store import TrackerStore
 
 _WORKERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tracker-overview")
 _AIRING_MAX_AGE = 24 * 60 * 60
+_RESULTS: OrderedDict[tuple[str, str | None, bool], tuple[str, date, float, dict[str, Any]]] = OrderedDict()
+_RESULTS_LOCK = Lock()
+
+
+def cached_overview(store: TrackerStore, today: date) -> dict[str, Any] | None:
+    key = (str(store.db_path.resolve()), store.scope, store.chained)
+    revision = store.revision()
+    with _RESULTS_LOCK:
+        entry = _RESULTS.get(key)
+        if entry and entry[0] == revision and entry[1] == today and time.time() - entry[2] < _AIRING_MAX_AGE:
+            _RESULTS.move_to_end(key)
+            return entry[3]
+    return None
+
+
+def _save_overview(store: TrackerStore, today: date, revision: str, result: dict[str, Any]) -> None:
+    if store.revision() != revision or result.get("unavailable") or result.get("error"):
+        return
+    key = (str(store.db_path.resolve()), store.scope, store.chained)
+    with _RESULTS_LOCK:
+        _RESULTS[key] = (revision, today, time.time(), result)
+        _RESULTS.move_to_end(key)
+        while len(_RESULTS) > 32:
+            _RESULTS.popitem(last=False)
 
 
 def _ongoing(detail: dict[str, Any]) -> bool:
@@ -45,6 +70,12 @@ def _inputs(store: TrackerStore, offset: int) -> tuple[int, list[tuple[dict[str,
 
 
 async def overview_events(store: TrackerStore, provider: Any, today: date, disconnected: Any):
+    cached = await asyncio.to_thread(cached_overview, store, today)
+    if cached is not None:
+        yield json.dumps(cached) + "\n"
+        return
+    revision = await asyncio.to_thread(store.revision)
+    collected: dict[str, Any] = {"continue": [], "airing": [], "unavailable": 0}
     cancelled = Event()
     offset = 0
     pending: dict[str, Any] = {"continue": [], "airing": [], "unavailable": 0}
@@ -56,6 +87,8 @@ async def overview_events(store: TrackerStore, provider: Any, today: date, disco
             if await disconnected():
                 return
             if not inputs:
+                collected.update(total=total, checked=offset, done=True)
+                await asyncio.to_thread(_save_overview, store, today, revision, collected)
                 yield json.dumps({**pending, "total": total, "checked": offset, "done": True}) + "\n"
                 return
             for start in range(0, len(inputs), 4):
@@ -67,10 +100,16 @@ async def overview_events(store: TrackerStore, provider: Any, today: date, disco
                     return
                 offset += len(batch)
                 for result in results:
+                    collected["continue"].extend(result["continue"])
+                    collected["airing"].extend(result["airing"])
+                    collected["unavailable"] += result["unavailable"]
                     pending["continue"].extend(result["continue"])
                     pending["airing"].extend(result["airing"])
                     pending["unavailable"] += result["unavailable"]
                 done = offset >= total
+                if done:
+                    collected.update(total=total, checked=offset, done=True)
+                    await asyncio.to_thread(_save_overview, store, today, revision, collected)
                 if done or time.monotonic() - flushed >= .15:
                     yield json.dumps({**pending, "total": total, "checked": offset, "done": done}) + "\n"
                     pending = {"continue": [], "airing": [], "unavailable": 0}
