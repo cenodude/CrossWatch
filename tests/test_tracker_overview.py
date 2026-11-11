@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 import asyncio
 import json
+import sqlite3
 import time
 from datetime import date, timedelta
 from threading import Event, Lock
@@ -14,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from api import trackerAPI
 from cw_platform.tracker_store import TrackerStore
-from services.tracker_overview import overview_events, show_overview
+from services.tracker_overview import cached_overview, overview_events, show_overview
 from providers.metadata import _meta_TMDB as tmdb
 
 
@@ -46,6 +47,8 @@ def app(tmp_path, monkeypatch):
     store = TrackerStore(root)
     cfg = {"crosswatch": {"root_dir": str(root)}, "tmdb": {"api_key": "test"}}
     monkeypatch.setattr(trackerAPI, "load_config", lambda: cfg)
+    from cw_platform import event_archive
+    monkeypatch.setattr(event_archive, "get_conn", lambda: None)
     meta = Metadata()
     monkeypatch.setattr(trackerAPI, "_tmdb_provider", lambda: meta)
     api = FastAPI()
@@ -117,7 +120,7 @@ def test_missing_metadata_and_failed_lookups_are_explicit(app):
     assert data["unavailable"] == 1 and data["airing"] == [] and data["continue"] == []
 
 
-@pytest.mark.parametrize("path", ["/overview", "/overview/shows"])
+@pytest.mark.parametrize("path", ["/overview", "/overview/shows", "/overview/revision"])
 def test_overview_enforces_instance_access_before_loading_data(app, monkeypatch, path):
     client, _, _, meta = app
     monkeypatch.setattr(trackerAPI, "user_can_access_instance", lambda *args: False)
@@ -279,3 +282,74 @@ def test_failed_daily_airing_refresh_keeps_cached_dates():
     data = show_overview({"key": "tmdb:1"}, {(1, 1)}, meta, DAY)
     assert data["unavailable"] == 1
     assert {(row["season"], row["episode"]) for row in data["airing"]} == {(1, 3), (1, 4), (2, 1)}
+
+
+def test_finished_overview_reuses_results_until_revision_or_day_changes(app, monkeypatch):
+    client, store, _, meta = app
+    store.write_state("history", {"one": episode()})
+
+    def fetch(day=DAY):
+        response = client.get(f"/api/tracker/overview/shows?day={day.isoformat()}")
+        assert response.status_code == 200
+        return [json.loads(line) for line in response.text.splitlines()]
+
+    first = fetch()
+    calls = len(meta.calls)
+    assert calls > 0
+    with monkeypatch.context() as patch:
+        from services import tracker_overview
+        patch.setattr(tracker_overview, "_inputs", lambda *args: pytest.fail("Cached results must skip rebuilding the show list"))
+        assert fetch() == first
+    assert len(meta.calls) == calls
+    data = client.get(f"/api/tracker/overview?day={DAY.isoformat()}").json()
+    assert data["shows"] == first[0]
+    revision = client.get("/api/tracker/overview/revision").json()["revision"]
+    store.save_note("show:tmdb:1", {"type": "show", "title": "Show 1", "status": "dropped"})
+    assert store.revision() != revision
+    assert cached_overview(store, DAY) is None
+    assert fetch()[0]["airing"] == []
+    assert cached_overview(store, DAY + timedelta(days=1)) is None
+
+
+def test_failed_metadata_is_not_saved_as_a_finished_overview(app):
+    client, store, _, meta = app
+    store.write_state("history", {"one": episode()})
+    meta.lookup = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline"))
+    client.get(f"/api/tracker/overview/shows?day={DAY.isoformat()}")
+    assert cached_overview(store, DAY) is None
+
+
+def test_overview_hero_prefers_watching_and_scrobbles_then_recent(app, monkeypatch):
+    from cw_platform import event_archive
+
+    client, store, _, _ = app
+    store.write_state("history", {"one": episode("1"), "two": episode("2", day=2)})
+    assert client.get("/api/tracker/overview").json()["hero"]["key"] == "two"
+    store.write_state("progress", {"resume": {"type": "movie", "title": "Resume", "ids": {"tmdb": "8"}, "progress_percent": 50, "progress_at": "2026-11-03T12:00:00Z"}})
+    assert client.get("/api/tracker/overview").json()["hero"]["key"] == "resume"
+    store.save_note("show:tmdb:3", {"type": "show", "title": "Watching", "ids": {"tmdb": "3"}, "status": "watching"})
+    assert client.get("/api/tracker/overview").json()["hero"]["title"] == "Watching"
+    conn = sqlite3.connect(":memory:", check_same_thread=False)
+    conn.execute("CREATE TABLE events(domain TEXT, event_type TEXT, destination_provider TEXT, destination_instance TEXT, item_key TEXT, created_at INTEGER, media_type TEXT)")
+    conn.execute("INSERT INTO events VALUES('scrobble','scrobble_completed','CROSSWATCH','default','tmdb:1',?,'episode')", (int(time.time()) + 60,))
+    conn.execute("INSERT INTO events VALUES('scrobble','scrobble_completed','CROSSWATCH','other','tmdb:2',?,'episode')", (int(time.time()) + 120,))
+    monkeypatch.setattr(event_archive, "get_conn", lambda: conn)
+    try:
+        assert client.get("/api/tracker/overview").json()["hero"]["key"] == "one"
+    finally:
+        conn.close()
+
+
+def test_overview_cache_is_scoped_and_rejects_results_changed_during_build(app, tmp_path):
+    from services.tracker_overview import _save_overview
+
+    _, store, _, _ = app
+    store.write_state("history", {"one": episode()})
+    result = {"continue": [], "airing": [], "done": True}
+    revision = store.revision()
+    _save_overview(store, DAY, revision, result)
+    assert cached_overview(store, DAY) == result
+    assert cached_overview(TrackerStore(tmp_path / "other"), DAY) is None
+    store.write_state("history", {"two": episode(number=2)})
+    _save_overview(store, DAY, revision, result)
+    assert cached_overview(store, DAY) is None

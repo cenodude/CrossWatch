@@ -35,7 +35,7 @@ from cw_platform.tracker_store import (
 )
 from cw_platform.value_coercion import coerce_bool
 from services import tracker_check, tracker_import, tracker_migration, tracker_storage_maintenance
-from services.tracker_overview import overview_events
+from services.tracker_overview import cached_overview, overview_events
 
 router = APIRouter(prefix="/api/tracker", tags=["tracker"])
 
@@ -1323,9 +1323,46 @@ def tracker_shows(
     return {"ok": True, "provider_instance": inst, "total": total, "offset": offset, "shows": shows}
 
 
+def _overview_hero(store: TrackerStore, recent: list[dict[str, Any]], continuing: list[dict[str, Any]], instance: str) -> dict[str, Any] | None:
+    candidates = list(continuing)
+    _, watching = store.notes(status="watching", limit=1)
+    if watching:
+        key, note, updated = watching[0]
+        row = _note_out(key, note, updated)
+        if row:
+            candidates.append({**row, "date": row.get("updated"), "ref": {"note": key}})
+    try:
+        from cw_platform.event_archive import get_conn
+
+        conn = get_conn()
+        event = conn.execute("SELECT item_key, created_at, media_type FROM events WHERE domain='scrobble' AND event_type='scrobble_completed' AND destination_provider='CROSSWATCH' AND destination_instance=? ORDER BY created_at DESC LIMIT 1", (instance,)).fetchone() if conn is not None else None
+        if event:
+            token, timestamp, media_type = event
+            for row in recent:
+                if media_type and row.get("type") != media_type:
+                    continue
+                tokens = {f"{key}:{value}" for ids in (row.get("ids"), row.get("show_ids")) for key, value in (ids or {}).items()}
+                if token in tokens:
+                    candidates.append({**row, "date": datetime.fromtimestamp(timestamp, timezone.utc).isoformat().replace("+00:00", "Z")})
+                    break
+    except Exception:
+        pass
+    return max(candidates, key=lambda row: str(row.get("date") or "")) if candidates else next(iter(recent), None)
+
+
+@router.get("/overview/revision", dependencies=_READY)
+def tracker_overview_revision(request: Request, provider_instance: str | None = Query("default")) -> Any:
+    _, inst, store = _store(provider_instance, request)
+    return {"ok": True, "provider_instance": inst, "revision": store.revision()}
+
+
 @router.get("/overview", dependencies=_READY)
-def tracker_overview(request: Request, provider_instance: str | None = Query("default")) -> Any:
+def tracker_overview(request: Request, provider_instance: str | None = Query("default"), day: str = Query("", max_length=10)) -> Any:
     cfg, inst, store = _store(provider_instance, request)
+    try:
+        today = date.fromisoformat(day) if day else datetime.now(timezone.utc).date()
+    except ValueError:
+        return _error("invalid_date", 400)
     recent: list[dict[str, Any]] = []
     continuing: list[dict[str, Any]] = []
     try:
@@ -1334,6 +1371,7 @@ def tracker_overview(request: Request, provider_instance: str | None = Query("de
             progress_total, progress = store.query("progress", limit=200)
             identities = {key: _identity_of(item, key) for key, item in progress}
             notes = store.notes_for(_title_key(ident) for ident in identities.values())
+            history_notes = store.notes_for(_title_key(_identity_of(item, key)) for key, item in history)
             previous = None
             for key, item in history:
                 ident = _identity_of(item, key)
@@ -1342,7 +1380,7 @@ def tracker_overview(request: Request, provider_instance: str | None = Query("de
                     recent[-1]["plays"] += 1
                     continue
                 previous = group
-                recent.append({**_row(key, item, "history"), "ref": {"feature": "history", "key": key}, "plays": 1})
+                recent.append({**_row(key, item, "history"), "status": (history_notes.get(_title_key(ident)) or {}).get("status"), "ref": {"feature": "history", "key": key}, "plays": 1})
             seen = set()
             for key, item in progress:
                 ident = identities[key]
@@ -1363,7 +1401,8 @@ def tracker_overview(request: Request, provider_instance: str | None = Query("de
                 continuing.append(row)
     except TrackerUnreadable:
         return _unreadable()
-    return {"ok": True, "provider_instance": inst, "recent": recent, "continue": continuing,
+    cached = cached_overview(store, today) if _tmdb_key(cfg) else None
+    return {"ok": True, "provider_instance": inst, "revision": store.revision(), "hero": _overview_hero(store, recent, continuing, inst), "shows": cached, "recent": recent, "continue": continuing,
             "history_more": history_total > 200, "progress_more": progress_total > 200, "metadata_available": bool(_tmdb_key(cfg))}
 
 

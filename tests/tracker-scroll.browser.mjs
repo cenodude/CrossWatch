@@ -125,7 +125,7 @@ for (const theme of ["original","flat-dark","flat-light"]) {
       await page.evaluate(() => window.scrollTo(0,1000));
       await page.waitForTimeout(80);
       const sticky = await controls.evaluate(el => ({top:el.getBoundingClientRect().top,expected:parseFloat(getComputedStyle(el).top),position:getComputedStyle(el).position}));
-      if (sticky.position === "sticky") assert.ok(Math.abs(sticky.top - sticky.expected) < 2, label + " sticky toolbar");
+      assert.notEqual(sticky.position, "sticky", label + " toolbar scrolls with the page");
       if (width > 1320) {
         const bounds = await side.evaluate(el => ({top:el.getBoundingClientRect().top,expected:parseFloat(getComputedStyle(el.parentElement).top)}));
         assert.ok(Math.abs(bounds.top - bounds.expected) < 2, label + " sticky details " + JSON.stringify(bounds));

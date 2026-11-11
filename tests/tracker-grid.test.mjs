@@ -12,6 +12,7 @@ const esc = value => String(value ?? "").replaceAll("&", "&amp;").replaceAll('"'
 
 function render(state) {
   return vm.runInNewContext(renderer + "renderGrid()", {
+    window:{CW:{AuthState:{read:()=>({permissions:{write:true}})}}},
     state: {picked:new Set(),items:[],shows:[],noteRows:[],ref:null,...state}, esc,
     listFeature:()=>state.view, cardTitle:item=>item.series_title || item.title,
     cardItem:item=>item.art?.tmdb || item.ids?.tmdb ? item : null, canCard:Boolean,
