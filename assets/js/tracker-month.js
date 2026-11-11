@@ -33,7 +33,7 @@ function art(row, type = "backdrop", eager = false) {
   return `<img src="${esc(sized)}" alt="" loading="${eager ? "eager" : "lazy"}" decoding="async"${eager ? ' fetchpriority="high"' : ""}>`;
 }
 
-export function openMonthReview({root, instance, label, openMedia, month = "", returnLabel = "Overview"}) {
+export function openMonthReview({root, instance, label, openMedia, onClose, month = "", returnLabel = "Overview"}) {
   active?.close(false);
   const profile = profileContext(), trackerLabel = label;
   label = profile.name || label;
@@ -79,6 +79,7 @@ export function openMonthReview({root, instance, label, openMedia, month = "", r
     window.removeEventListener("cw:month-theme-changed",restyle); window.removeEventListener("storage",restyle);
     host.remove(); root.classList.remove("is-month-review");
     if (active === api) active = null;
+    onClose?.(restore);
     if (restore) {window.scrollTo({top:scroll,behavior:"instant"}); previousFocus?.focus({preventScroll:true});}
   }
 

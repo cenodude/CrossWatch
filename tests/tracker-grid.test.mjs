@@ -88,7 +88,7 @@ function preferences(initial = {}) {
   const prefs = source.slice(source.indexOf("  function loadView("), source.indexOf("  async function getJSON("));
   const click = source.slice(source.indexOf("      if (layout) {"), source.indexOf('      const view = event.target.closest("[data-trk-view]")'));
   let saved = JSON.stringify(initial);
-  const state = {view:"history",layouts:{}};
+  const state = {view:"history",layouts:{},picked:new Set()};
   const views = ["history","shows","titles","watchlist","ratings","progress","collection","cleanup"];
   const context = vm.createContext({state,STORE_KEY:"test",VIEWS:views.map(id=>({id})),MEDIA:[],PAGE_SIZES:[],renderSlots:()=>{},localStorage:{getItem:()=>saved,setItem:(_,value)=>{saved=value;}}});
   vm.runInContext(prefs + "loadView();",context);

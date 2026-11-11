@@ -22,7 +22,7 @@ async function fixture(t,theme,width) {
   t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width,height:900},isMobile:width<800,hasTouch:width<800,reducedMotion:'reduce'});
   page.setDefaultTimeout(6000);
-  await page.addInitScript(() => { if (!localStorage.getItem("cw.tracker.view.v3")) localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"history"})); });
+  await page.addInitScript(() => { if (!localStorage.getItem("cw.tracker.view.v3")) localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"history",viewSelectedAt:Date.now()})); });
   const errors=[];
   page.on('pageerror',error=>errors.push(error.message));
   t.after(()=>assert.deepEqual(errors,[]));
@@ -63,9 +63,9 @@ async function fixture(t,theme,width) {
   await page.locator('.trk-play').first().waitFor();
   const select=async index=>{
     await page.locator('.trk-play').nth(index).click();
-    if(width<800) {
-      await page.locator('[data-trk-detail="back"]').waitFor();
-      await page.locator('[data-trk-detail="back"]').click();
+    if(width<=1320) {
+      await page.locator('.trk-title-sheet [data-trk-sheet="close"]').waitFor();
+      await page.locator('.trk-title-sheet [data-trk-sheet="close"]').click();
     }
   };
   return {page,select,release,logoRequested};
@@ -91,8 +91,9 @@ test('Tracker media card controls and watch history', async t => {
   assert.equal(await modal.locator('.cw-mm-trk>.cw-mm-trk-notes:last-child [data-mm-trk="notes"]').count(), 1);
   assert.equal(await modal.locator('.cw-mm-trk-actions [data-mm-trk="notes"]').count(), 0);
   assert.equal(await modal.locator('[data-mm-providers]').evaluate(el=>el.open), false);
+  await modal.locator('[data-mm-providers]').evaluate(el=>{window.providersToggled=new Promise(resolve=>el.addEventListener('toggle',resolve,{once:true}));});
   await modal.locator('[data-mm-providers] summary').click();
-  await page.waitForFunction(()=>document.querySelector('[data-mm-providers]').open);
+  await page.evaluate(()=>window.providersToggled);
   await page.evaluate(()=>CW.ProfileMediaModal.updateTracker(mediaData));
   assert.equal(await modal.locator('[data-mm-providers]').evaluate(el=>el.open), true);
   await modal.locator('[data-mm-providers] summary').click();

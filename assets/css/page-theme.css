@@ -704,6 +704,9 @@ dialog.eg-dialog{font-size:14px;line-height:1.45;background:var(--is-surface);co
 .cw-mobile-widget-count,.cw-mobile-widget-options p,.cw-mobile-widget-options small{color:var(--cw-theme-muted);font-size:12px}
 .cw-mobile-widget-options label:has(input:disabled){opacity:var(--cw-disabled-opacity,.55);cursor:default}
 .cw-mobile-widget-options input{accent-color:var(--accent)}
+.cw-mobile-shortcuts p{color:var(--cw-theme-muted);font-size:12px;line-height:1.5}
+.cw-mobile-shortcuts select{background:var(--cw-theme-input);color:var(--cw-theme-text);border:1px solid var(--cw-theme-border);border-radius:10px;font-family:inherit;color-scheme:inherit}
+.cw-mobile-shortcuts select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .cw-mobile-widget-reset{border:1px solid var(--cw-theme-border);border-radius:8px;background:var(--cw-page-control-bg);color:var(--cw-theme-text);font:inherit}
 .cw-mobile-widgets summary:focus-visible,.cw-mobile-widget-reset:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
@@ -719,7 +722,17 @@ dialog.eg-dialog{font-size:14px;line-height:1.45;background:var(--is-surface);co
 
 @media(max-width:760px){
   #page-editor .cw-table tbody,#page-tracker .cw-table tbody{--cw-table-cell-bg:transparent}
-  #page-editor .cw-table tbody tr,#page-tracker .cw-table tbody tr{background:var(--cw-theme-surface)}
+  #page-editor .cw-table tbody tr,#page-tracker .cw-table tbody tr{background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);border-radius:16px}
+  #page-editor .cw-mobile-row-meta,#page-tracker .trk-list-meta{color:var(--cw-theme-muted)}
+  #page-tracker .trk-list-art{background:var(--cw-theme-surface-raised);color:var(--cw-theme-muted);border-radius:8px}
+  #page-editor .cw-mobile-providers-toggle{background:var(--cw-theme-surface-raised);border:1px solid var(--cw-theme-border);border-radius:999px;color:var(--cw-theme-text);font-weight:600}
+  #page-editor .cw-table thead th{background:transparent;border:0;border-radius:8px;color:var(--cw-theme-muted)}
+  #page-editor .cw-mobile-sort label{color:var(--cw-theme-muted)}
+  #page-editor .cw-mobile-sort label::after{border-right:2px solid currentColor;border-bottom:2px solid currentColor}
+  #page-editor .cw-mobile-sort select{appearance:none}
+  #page-tracker .trk-table tbody tr.is-selected{background:var(--cw-page-selected-bg);box-shadow:inset 3px 0 0 var(--accent)}
+  #page-tracker .trk-table tbody tr.trk-day{border:0;border-radius:0;background:transparent}
+
   #page-editor .cw-table tbody tr:has(input[type=checkbox]:checked),#page-tracker .cw-table tbody tr:has(input[type=checkbox]:checked){border-color:var(--accent)}
 }
 
@@ -730,7 +743,7 @@ html.cw-compact .cw-ui-switch-track{background:var(--accent)}
 .cw-ui-mode-switch:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 @media(max-width:760px){
-  body.cw-has-bottom-nav>header #cw-mobile-navigation .tab{--cw-mobile-nav-card-bg:var(--cw-theme-surface-raised);--cw-mobile-nav-card-border:var(--cw-theme-border);background:var(--cw-theme-surface-raised);border:1px solid var(--cw-theme-border);border-radius:12px;color:var(--cw-theme-text)}
+  body.cw-has-bottom-nav>header #cw-mobile-navigation .tab{--cw-mobile-nav-card-bg:var(--cw-theme-surface-raised);--cw-mobile-nav-card-border:var(--cw-theme-border);background:var(--cw-theme-surface-raised);border:1px solid var(--cw-theme-border);border-radius:12px;color:var(--cw-theme-text);text-decoration:none}
   body.cw-has-bottom-nav>header #cw-mobile-navigation .tab.active{--cw-mobile-nav-card-border:var(--accent);border-color:var(--accent)}
   .cw-mobile-widget-options label{background:var(--cw-theme-surface-raised);border:1px solid var(--cw-theme-border);border-radius:12px;color:var(--cw-theme-text)}
   .cw-mobile-widget-options label:has(input:checked){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,var(--cw-theme-surface))}
@@ -866,6 +879,7 @@ button.cw-mm-provider[data-ia-chip]:hover,button.cw-mm-provider[data-mm-episode]
 .cw-page-item-actions .cw-ia-sheet{border:1px solid var(--cw-theme-border-strong);border-radius:calc(var(--cw-page-overlay-radius) + 6px);background:var(--cw-theme-surface-raised);box-shadow:var(--cw-page-overlay-shadow)}
 .cw-page-item-actions .cw-ia-sheet:focus{outline:none}
 .cw-page-item-actions .cw-ia-sheet-head{border-bottom:1px solid var(--cw-theme-border)}
+#page-tracker .trk-title-sheet>.cw-ia-sheet-head{background:var(--cw-theme-surface-raised)}
 .cw-page-item-actions .cw-ia-sheet-poster{border-radius:8px;background:var(--cw-theme-surface)}
 .cw-page-item-actions .cw-ia-sheet-title h2{font-size:20px;font-weight:800}
 .cw-page-item-actions .cw-ia-sheet-title small{color:var(--cw-theme-muted);font-size:13px}
@@ -933,7 +947,7 @@ button.cw-mm-provider[data-ia-chip]:hover,button.cw-mm-provider[data-mm-episode]
 @media (max-width:560px){.cw-ia-pop.is-sheet.cw-page-item-actions{border-width:1px 0 0;border-radius:calc(var(--cw-page-overlay-radius) + 6px) calc(var(--cw-page-overlay-radius) + 6px) 0 0;box-shadow:0 0 0 100vmax var(--cw-page-overlay-dim)}.cw-ia-pop.is-sheet.cw-page-item-actions::before{border-radius:2px;background:var(--cw-theme-border-strong)}.cw-page-item-actions .cw-ia-sheet{border-radius:calc(var(--cw-page-overlay-radius) + 6px) calc(var(--cw-page-overlay-radius) + 6px) 0 0}}
 @media (prefers-reduced-motion:reduce){[data-ia-state="work"]::before,[data-ia-state="ok"],[data-ia-state="fail"],.cw-ia-toast.cw-page-item-actions .cw-ia-toast-icon.is-spinning .material-symbols-rounded{animation:none}.cw-ia-toast.cw-page-item-actions .cw-ia-toast-bar.is-progress{transition:none}}
 #page-tracker .trk-table tbody tr.is-selected>td{background:var(--cw-page-selected-bg)}
-#page-tracker .trk-table tbody tr.is-selected>td:first-child{box-shadow:inset 3px 0 0 var(--cw-theme-accent)}
+@media(min-width:761px){#page-tracker .trk-table tbody tr.is-selected>td:first-child{box-shadow:inset 3px 0 0 var(--cw-theme-accent)}}
 #page-tracker .trk-table tbody tr:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:-2px}
 #page-tracker :is(.trk-ep,.trk-detail-sub,.trk-detail-empty,.trk-progress-text,.trk-detail-kind){color:var(--cw-theme-muted)}
 #page-tracker .trk-health.is-ok,#page-tracker .trk-table .trk-health.is-ok .material-symbol{color:var(--cw-theme-good)}

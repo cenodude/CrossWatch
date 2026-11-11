@@ -110,6 +110,34 @@
 
   function updateSortUI(ctx = {}) {
     const state = ctx.state;
+    const table = ctx.host?.querySelector(".cw-table-wrap");
+    if (table && !table.querySelector(".cw-mobile-sort")) {
+      const controls = document.createElement("div");
+      controls.className = "cw-mobile-sort";
+      const label = document.createElement("label");
+      label.textContent = "Sort by";
+      const select = document.createElement("select");
+      select.className = "cw-select";
+      select.setAttribute("aria-label", "Sort by");
+      select.onchange = () => ctx.host.querySelector(`th[data-sort="${select.value}"]`)?.click();
+      label.appendChild(select);
+      const direction = document.createElement("button");
+      direction.type = "button";
+      direction.className = "cw-btn";
+      direction.onclick = () => ctx.host.querySelector(`th[data-sort="${select.value}"]`)?.click();
+      controls.append(label, direction);
+      table.prepend(controls);
+    }
+    const controls = table?.querySelector(".cw-mobile-sort");
+    if (controls) {
+      const select = controls.querySelector("select");
+      select.replaceChildren(...ctx.sortHeaders.map(th => new Option(th.textContent.trim(), th.dataset.sort)));
+      select.value = state.sortKey;
+      const direction = controls.querySelector("button");
+      direction.innerHTML = `<span class="material-symbol" aria-hidden="true">${state.sortDir === "desc" ? "arrow_downward" : "arrow_upward"}</span>`;
+      direction.setAttribute("aria-label", state.sortDir === "desc" ? "Descending, switch to ascending" : "Ascending, switch to descending");
+      direction.title = direction.getAttribute("aria-label");
+    }
     ctx.sortHeaders.forEach(th => {
       const k = th.dataset.sort;
       th.classList.remove("sort-asc", "sort-desc");

@@ -67,6 +67,7 @@
         chip.setAttribute("aria-label", chip.title);
       } else {
         chip.type = "button";
+        chip.id = `cw-editor-destination-${row._rid}-${index}`;
         chip.title = `Not on ${name}. Click to send it there.`;
         chip.setAttribute("aria-label", chip.title);
         chip.onclick = () => call(ctx, "sendRow", row, target);
@@ -75,6 +76,24 @@
       else missing.push(chip);
     });
     wrap.append(...missing);
+    if (missing.length) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "cw-mobile-providers-toggle";
+      toggle.setAttribute("aria-controls", missing.map(chip => chip.id).join(" "));
+      const sync = () => {
+        const expanded = wrap.classList.contains("cw-presence-expanded");
+        toggle.textContent = expanded ? "Less" : `+${missing.length}`;
+        toggle.setAttribute("aria-expanded", String(expanded));
+        toggle.setAttribute("aria-label", `${toggle.textContent}, ${expanded ? "hide" : "show"} ${missing.length} destinations for ${row.title || row.key}`);
+      };
+      toggle.onclick = () => {
+        wrap.classList.toggle("cw-presence-expanded");
+        sync();
+      };
+      sync();
+      wrap.appendChild(toggle);
+    }
     return wrap;
   }
 
@@ -233,6 +252,11 @@
     const titleRow = document.createElement("div");
     titleRow.className = "cw-title-row";
     titleCell.appendChild(titleRow);
+    const mobileMeta = document.createElement("div");
+    mobileMeta.className = "cw-mobile-row-meta";
+    titleCell.appendChild(mobileMeta);
+    let mobileTitle;
+    const compactTitle = () => call(ctx, "formatEpisodeVisualTitle", row) || row.title || row.key || "Untitled";
 
     const titleIn = document.createElement("input");
     titleIn.name = fieldName("title");
@@ -245,11 +269,13 @@
     titleIn.oninput = e => {
       row.title = e.target.value;
       row.raw.title = e.target.value || null;
+      if (mobileTitle) mobileTitle.textContent = compactTitle();
       call(ctx, "markChanged");
     };
     titleIn.onblur = () => {
       const visual = call(ctx, "formatEpisodeVisualTitle", row);
       if (visual) titleIn.value = visual;
+      if (mobileTitle) mobileTitle.textContent = compactTitle();
     };
     if (ctx.merged) {
       const text = document.createElement("strong");
@@ -279,6 +305,7 @@
       const v = e.target.value.trim();
       const n = v ? parseInt(v, 10) : NaN;
       row.raw.year = Number.isFinite(n) ? n : null;
+      syncMobileMeta();
       call(ctx, "markChanged");
     };
 
@@ -446,13 +473,18 @@
     };
     syncFields();
     actionWrap.appendChild(fieldsToggle);
-    if (locked && !ctx.merged) {
-      const mobileTitle = document.createElement("strong");
+    if (!ctx.merged) {
+      mobileTitle = document.createElement("strong");
       mobileTitle.className = "cw-mobile-row-title";
-      mobileTitle.textContent = titleIn.value || row.key || "Untitled";
+      mobileTitle.textContent = compactTitle();
       titleCell.prepend(mobileTitle);
-      titleIn.classList.add("cw-locked-title-input");
+      titleIn.classList.add(locked ? "cw-locked-title-input" : "cw-mobile-title-input");
     }
+    const syncMobileMeta = () => {
+      const type = row.type || row.raw?.type || (row.episode ? "episode" : "");
+      mobileMeta.textContent = [type.charAt(0).toUpperCase() + type.slice(1), row.year].filter(Boolean).join(" · ");
+    };
+    syncMobileMeta();
 
     return tr;
   }

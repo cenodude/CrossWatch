@@ -930,7 +930,7 @@
       if (!insts || typeof insts !== "object") return false;
       return Object.values(insts).some((value) => value && typeof value === "object" && String(value.api_key || "").trim());
     };
-    return fromBlock(cfg.tmdb);
+    return cfg.tmdb_configured === true || fromBlock(cfg.tmdb);
   };
   const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
   const readStoredNumber = (key, fallback) => {
@@ -1117,7 +1117,7 @@
     const mobile = isMobileLayout();
     const tmdbReady = hasTmdbMetadata();
     const showDesktop = canWrite() && !mobile && onMainTab() && desktopEnabled() && tmdbReady;
-    const showMobile = canWrite() && mobile && onMainTab() && mobileEnabled() && tmdbReady;
+    const showMobile = canWrite() && mobile && ['main', 'tracker'].includes(currentTab()) && mobileEnabled() && tmdbReady;
     const showAny = showDesktop || showMobile;
     el.classList.toggle("hidden", !showAny);
     el.classList.toggle("is-desktop", showDesktop);

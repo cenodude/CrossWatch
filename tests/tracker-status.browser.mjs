@@ -12,7 +12,7 @@ for (const theme of ["original","flat-dark","flat-light"]) for (const width of [
     t.after(()=>browser.close());
     const page=await browser.newPage({viewport:{width,height:900},isMobile:width<800,hasTouch:width<800,reducedMotion:"reduce"});
     page.setDefaultTimeout(5000);
-    await page.addInitScript(() => localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"history"})));
+    await page.addInitScript(() => localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"history",viewSelectedAt:Date.now()})));
     const errors=[],writes=[];
     page.on("pageerror",error=>errors.push(error.message));
     const items=[1,2].map(id=>({key:`movie:${id}`,type:"movie",title:`Movie ${id}`,year:2026,date:"2026-11-08T12:00:00Z"}));

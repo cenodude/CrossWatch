@@ -57,7 +57,7 @@ async function fixture(browser, theme, width, height, details = {}) {
   });
   await page.goto("https://tracker-scroll.test/#tracker");
   await page.evaluate(() => {
-    localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"shows",layouts:{shows:"grid"}}));
+    localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"shows",viewSelectedAt:Date.now(),layouts:{shows:"grid"}}));
     window.CW = {AuthState:{read:()=>({isAdmin:true,isManaged:false,permissions:{write:true}})}};
   });
   for (const script of ["helpers/account-menu", "helpers/icon-select", "helpers/selection-bar", "js/tracker"]) await page.addScriptTag({url:`/assets/${script}.js`});
@@ -70,7 +70,7 @@ async function fixture(browser, theme, width, height, details = {}) {
 async function checkScroll(page, label) {
   const result = await page.evaluate(() => ({
     width:innerWidth, scroll:document.documentElement.scrollWidth,
-    nested:[...document.querySelectorAll("#page-tracker *")].filter(el => el.checkVisibility() && /auto|scroll/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 1).map(el => el.className),
+    nested:[...document.querySelectorAll("#page-tracker *")].filter(el => !el.classList.contains('cw-ia-sheet') && el.checkVisibility() && /auto|scroll/.test(getComputedStyle(el).overflowY) && el.scrollHeight > el.clientHeight + 1).map(el => el.className),
   }));
   assert.ok(result.scroll <= result.width + 1, `${label}: horizontal overflow ${JSON.stringify(result)}`);
   assert.deepEqual(result.nested, [], `${label}: nested vertical scrollbars`);
@@ -187,6 +187,59 @@ test("Compact watch summary uses cached history and omits missing or incomplete 
   }
 });
 
+for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: mobile title dialog preserves the list and returns from editing`, async t => {
+  const browser = await chromium.launch({headless:true});
+  t.after(()=>browser.close());
+  const {page,errors} = await fixture(browser,theme,390,844);
+  await page.waitForLoadState('networkidle');
+  const item = page.locator('.trk-grid-card[data-trk-ref-show="show:0"]');
+  await item.scrollIntoViewIfNeeded();
+  await item.focus();
+  const scroll = await page.evaluate(()=>scrollY);
+  let release;
+  const held = new Promise(resolve=>{release=resolve;});
+  await page.route('**/api/tracker/title?**',async route=>{await held;await route.fallback();});
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog',{name:'Title details'});
+  await dialog.waitFor();
+  assert.match(await dialog.textContent(),/Loading/);
+  assert.equal(await page.locator('[data-trk-slot="title"]').isVisible(),false);
+  assert.equal(await page.evaluate(()=>scrollY),scroll);
+  await mkdir('.tmp/tracker-title-dialog',{recursive:true});
+  await page.screenshot({path:`.tmp/tracker-title-dialog/${theme}-loading.png`});
+  release();
+  await dialog.locator('[data-trk-season="29"]').waitFor();
+  await page.screenshot({path:`.tmp/tracker-title-dialog/${theme}-details.png`});
+  const close = dialog.locator('[data-trk-sheet="close"]');
+  await close.focus();
+  await page.keyboard.press('Shift+Tab');
+  assert.equal(await dialog.evaluate(el=>el.contains(document.activeElement)),true);
+  await page.keyboard.press('Tab');
+  assert.equal(await close.evaluate(el=>el===document.activeElement),true);
+  await dialog.locator('[data-trk-play-edit]').first().click();
+  await page.locator('.trk-sheet [data-trk-form="edit"]').waitFor();
+  await page.screenshot({path:`.tmp/tracker-title-dialog/${theme}-edit.png`});
+  await page.keyboard.press('Escape');
+  await dialog.waitFor();
+  assert.equal(await page.locator('.trk-sheet:visible').count(),1);
+  await page.keyboard.press('Escape');
+  await dialog.waitFor({state:'hidden'});
+  assert.equal(await page.evaluate(()=>scrollY),scroll);
+  assert.equal(await item.evaluate(el=>el===document.activeElement),true);
+  assert.equal(await page.evaluate(()=>document.documentElement.classList.contains('cw-ia-sheet-open')),false);
+  await page.locator('.trk-grid-card[data-trk-ref-show="show:1"]').click();
+  await dialog.locator('.trk-detail-title').filter({hasText:'Example show 1'}).waitFor();
+  assert.equal(await dialog.locator('[data-trk-play-edit]').count(),0);
+  await page.screenshot({path:`.tmp/tracker-title-dialog/${theme}-empty.png`});
+  await page.locator('.trk-sheet-wrap .cw-ia-sheet-backdrop').click({position:{x:5,y:5}});
+  await dialog.waitFor({state:'hidden'});
+  await item.click();
+  await dialog.waitFor();
+  await page.evaluate(()=>document.querySelector('#page-tracker').classList.add('hidden'));
+  await page.waitForFunction(()=>!document.documentElement.classList.contains('cw-ia-sheet-open'));
+  assert.deepEqual(errors,[]);
+});
+
 for (const theme of ["original","flat-dark","flat-light"]) {
   test(`${theme}: tracker details and scrolling across phones, tablets and computers`, async t => {
     const browser = await ({chromium,webkit})[process.env.CW_AUDIT_BROWSER || "chromium"].launch({headless:true});
@@ -194,7 +247,7 @@ for (const theme of ["original","flat-dark","flat-light"]) {
     for (const [width,height] of viewports) {
       const {page,errors} = await fixture(browser,theme,width,height);
       const label = `${theme} ${width}x${height}`;
-      const panel = page.locator('[data-trk-slot="title"]');
+      const panel = page.locator(width <= 1320 ? '.trk-title-sheet .trk-detail' : '[data-trk-slot="title"]');
       const controls = page.locator('[data-trk-slot="controls"]');
       const side = page.locator(".cw-side");
       await checkScroll(page, label + " empty");
@@ -203,8 +256,8 @@ for (const theme of ["original","flat-dark","flat-light"]) {
       await panel.locator(".trk-episode-preview").last().waitFor();
       assert.deepEqual(await panel.locator("[data-trk-season]").evaluateAll(nodes => nodes.map(node => Number(node.dataset.trkSeason))), [29,28,27], label);
       assert.deepEqual(await panel.locator("[data-trk-play-edit]").evaluateAll(nodes => nodes.map(node => node.dataset.trkPlayEdit)), ["play:7","play:6","play:5"], label);
-      assert.equal(await page.locator(".trk-sheet:visible").count(),0,label);
-      if (width <= 1320) assert.equal(await page.locator('[data-trk-slot="filters"]').getAttribute("open"), "", label);
+      assert.equal(await page.locator(".trk-sheet:visible").count(),width <= 1320 ? 1 : 0,label);
+      if (width <= 1320) assert.equal(await page.locator('[data-trk-slot="title"]').isVisible(),false,label);
       await checkScroll(page, label + " collapsed");
       for (const kind of ["seasons","plays"]) {
         const button = panel.locator(`[data-trk-expand="${kind}"]`);
@@ -233,7 +286,7 @@ for (const theme of ["original","flat-dark","flat-light"]) {
         assert.equal(await panel.locator(`[data-trk-expand="${kind}"]`).getAttribute("aria-expanded"),"false",label);
       }
       await panel.locator('[data-trk-season="29"]').click();
-      if (width <= 1320) await panel.locator('[data-trk-detail="back"]').click();
+      if (width <= 1320) await page.locator('.trk-title-sheet [data-trk-sheet="close"]').click();
       await page.evaluate(() => window.scrollTo(0,1000));
       await page.waitForTimeout(80);
       const sticky = await controls.evaluate(el => ({top:el.getBoundingClientRect().top,expected:parseFloat(getComputedStyle(el).top),position:getComputedStyle(el).position}));
@@ -246,17 +299,19 @@ for (const theme of ["original","flat-dark","flat-light"]) {
       await panel.locator(".trk-detail-title").filter({hasText:"Example show 1"}).waitFor();
       assert.equal(await panel.locator("[data-trk-expand]").count(),0,label + " empty title");
       await checkScroll(page, label + " empty title");
-      if (width <= 1320) await panel.locator('[data-trk-detail="back"]').click();
+      if (width <= 1320) await page.locator('.trk-title-sheet [data-trk-sheet="close"]').click();
       await page.locator('.trk-grid-card[data-trk-ref-show="show:0"]').click();
       await panel.locator('[data-trk-season="29"]').waitFor();
       assert.equal(await panel.locator("[data-trk-season]").count(),3,label + " reset seasons");
       assert.equal(await panel.locator(".trk-play-row").count(),3,label + " reset plays");
       if (width === 1366 && height === 1024) {
         await page.setViewportSize({width:1024,height:1366});
-        await panel.locator('[data-trk-season="29"]').waitFor();
+        await page.locator('.trk-grid-card[data-trk-ref-show="show:0"]').click();
+        await page.locator('.trk-title-sheet [data-trk-season="29"]').waitFor();
         await checkScroll(page, label + " rotated to portrait");
-        assert.equal(await panel.isVisible(),true,label + " title retained on rotation");
+        assert.equal(await page.locator('.trk-title-sheet').isVisible(),true,label + " title retained on rotation");
         await page.setViewportSize({width,height});
+        await page.locator('.trk-sheet-wrap').waitFor({state:'hidden'});
         await checkScroll(page, label + " rotated to landscape");
       }
       if (process.env.CW_TRACKER_SCROLL_SCREENSHOTS) {

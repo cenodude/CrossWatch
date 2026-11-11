@@ -13,12 +13,14 @@ const click = source.slice(source.indexOf('    const saved = sheet.mode === "vie
 
 function setup() {
   const storage = new Map();
+  let now = Date.now();
   const state = {view:"history",instance:"desk",layouts:{history:"grid"},media:"show",pageSize:50,q:"Severance",sort:"title",noteStatus:"watching",noteTag:"Sci-fi",duplicates:true,offset:50,scrollTop:750,ref:{key:"episode",feature:"history"},picked:new Set(["episode"])};
-  const context = vm.createContext({state,STORE_KEY:"prefs",VIEWS:[{id:"history"},{id:"shows"}],MEDIA:[{id:"show"}],PAGE_SIZES:[50],
+  state.viewSelectedAt = now;
+  const context = vm.createContext({state,Date:class extends Date { static now() { return now; } },STORE_KEY:"prefs",VIEWS:[{id:"overview"},{id:"history"},{id:"shows"}],MEDIA:[{id:"show"}],PAGE_SIZES:[50],
     sheet:{mode:"views",views:[],el:{querySelector:()=>({value:"Watching TV"})}},renderSheet(){},closeSheet(){context.sheet.mode="";},refresh(){},
     localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)}});
   vm.runInContext(prefs+views+`function choose(index,remove=false) {const event={target:{closest:()=>({dataset:{trkSavedView:index,remove:String(remove)}})}};${click}}`,context);
-  return {context,state,storage};
+  return {context,state,storage,advance:milliseconds=>{now+=milliseconds;}};
 }
 
 test("browsing resumes with filters, page and selected title", () => {
@@ -33,6 +35,67 @@ test("browsing resumes with filters, page and selected title", () => {
   assert.equal(state.scrollTop,750);
   assert.equal(state.ref.key,"episode");
   assert.equal(state.duplicates,true);
+});
+
+test("monthly-review preference survives reload without replacing the underlying view", () => {
+  const {context:app,state,storage} = setup();
+  state.monthlyReview = true;
+  app.saveView();
+  state.monthlyReview = false;
+  app.loadView();
+  assert.equal(state.monthlyReview,true);
+  assert.equal(state.view,'history');
+  storage.set('prefs',JSON.stringify({view:'history',monthlyReview:'true'}));
+  app.loadView();
+  assert.equal(state.monthlyReview,false);
+});
+
+test("view choices expire at one hour without being extended by routine saves or visits", () => {
+  const {context:app,state,storage,advance} = setup();
+  app.rememberView();
+  const selectedAt = state.viewSelectedAt;
+  advance(3599999);
+  app.saveView();
+  app.loadView();
+  assert.equal(state.view,'history');
+  assert.equal(state.viewSelectedAt,selectedAt);
+  assert.equal(app.expireView(),false);
+  advance(1);
+  app.loadView();
+  assert.equal(state.view,'overview');
+  assert.equal(state.ref,null);
+  assert.equal(state.offset,0);
+  assert.equal(state.scrollTop,0);
+  assert.equal(state.monthlyReview,false);
+  assert.equal(JSON.parse(storage.get('prefs')).viewSelectedAt,selectedAt);
+});
+
+test("legacy, missing, invalid and future timestamps default to Overview", () => {
+  for (const timestamp of [undefined,null,0,'123',Date.now()+3600000]) {
+    const {context:app,state,storage} = setup();
+    storage.set('prefs',JSON.stringify({view:'shows',monthlyReview:true,viewSelectedAt:timestamp,ref:{key:'old'},offset:50,scrollTop:800}));
+    app.loadView();
+    assert.equal(state.view,'overview');
+    assert.equal(state.monthlyReview,false);
+    assert.equal(state.ref,null);
+  }
+});
+
+test("selecting another view starts a fresh hour", () => {
+  const {context:app,state,advance} = setup();
+  app.rememberView();
+  advance(3500000);
+  state.view='shows';
+  app.rememberView();
+  advance(100000);
+  app.loadView();
+  assert.equal(state.view,'shows');
+  state.monthlyReview=true;
+  app.rememberView();
+  advance(3600000);
+  assert.equal(app.expireView(),true);
+  assert.equal(state.view,'overview');
+  assert.equal(state.monthlyReview,false);
 });
 
 test("saved views restore filters and layout without carrying a stale selection or page", () => {
@@ -77,7 +140,7 @@ test("saved filter text stays escaped and cannot overwrite unrelated state", () 
   state.title = {ratings:[{rating:8}]};
   state.notes = {tags:[]};
   storage.set("prefs", JSON.stringify({q:markup,noteStatus:markup,noteTag:markup,cleanFeature:"history",healthFilter:"attention",
-    byDay:markup,statusMenu:markup,title:markup}));
+    viewSelectedAt:state.viewSelectedAt,byDay:markup,statusMenu:markup,title:markup}));
   app.loadView();
   assert.equal(state.q,markup);
   assert.equal(state.noteStatus,markup);
