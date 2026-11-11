@@ -11,7 +11,7 @@ async function fixture(t, {width=1440,height=900,theme="flat-dark"}={}) {
   t.after(() => browser.close());
   const page = await browser.newPage({viewport:{width,height},reducedMotion:"reduce"});
   page.setDefaultTimeout(6000);
-  await page.addInitScript(() => localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"history"})));
+  await page.addInitScript(() => localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"history",viewSelectedAt:Date.now()})));
   const writes=[], requests=[], errors=[];
   let fail=false;
   page.on("pageerror", error => errors.push(error.message));

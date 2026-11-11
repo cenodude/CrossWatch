@@ -94,6 +94,101 @@ async function choose(page, selector, value) {
   await page.locator(`.cw-icon-select-menu:not(.hidden) [data-value="${value}"]`).click();
 }
 
+for (const width of [390,1440]) test(`Tracker restores History and Month in review within one hour at ${width}px`,async t => {
+  const {page}=await fixture(t,"flat-dark",{width});
+  const leave = async () => {
+    await page.evaluate(()=>document.querySelector('#page-tracker').classList.add('hidden'));
+    await page.waitForFunction(()=>!document.querySelector('.mr-page'));
+  };
+  const returnToTracker = () => page.evaluate(async()=>{
+    const root=document.querySelector('#page-tracker');
+    root.classList.remove('hidden');
+    await TrackerPage.mount(root);
+  });
+  if (width < 760) await choose(page,'#trk-mobile-view','history');
+  else await page.locator('.trk-tabs [data-trk-view="history"]').click();
+  await leave();
+  await returnToTracker();
+  assert.equal(await page.locator('#trk-mobile-view').inputValue(),'history');
+  if (width < 760) await choose(page,'#trk-mobile-view','month-review');
+  else {
+    await page.locator('.trk-others summary').click();
+    await page.locator('[data-trk-month-open]').click();
+  }
+  await page.locator('.mr-page').waitFor();
+  await leave();
+  await returnToTracker();
+  await page.locator('.mr-page').waitFor();
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.tracker.view.v3')).monthlyReview),true);
+  await page.reload();
+  await page.addScriptTag({url:'/assets/js/tracker.js'});
+  await page.evaluate(()=>TrackerPage.mount(document.querySelector('#page-tracker')));
+  await page.locator('.mr-page').waitFor();
+  await page.locator('.mr-nav [data-mr="back"]').click();
+  assert.equal(await page.locator('#trk-mobile-view').inputValue(),'history');
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.tracker.view.v3')).monthlyReview),false);
+  await leave();
+  await returnToTracker();
+  assert.equal(await page.locator('.mr-page').count(),0);
+});
+
+for (const width of [390,1440]) test(`Tracker navigation expires the selected view after one hour at ${width}px`,async t => {
+  const {page}=await fixture(t,'flat-dark',{width});
+  await page.addScriptTag({url:'/assets/helpers/core.js'});
+  await page.evaluate(()=>window.showTab('tracker'));
+  assert.equal(await page.locator('#trk-mobile-view').inputValue(),'overview');
+  if (width < 760) await choose(page,'#trk-mobile-view','history');
+  else await page.locator('.trk-tabs [data-trk-view="history"]').click();
+  const chosenAt = await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.tracker.view.v3')).viewSelectedAt);
+  await page.clock.setFixedTime(new Date(chosenAt+3599999));
+  await page.evaluate(async()=>{
+    const root=document.querySelector('#page-tracker');
+    root.classList.add('hidden');
+    root.classList.remove('hidden');
+    await TrackerPage.mount(root);
+  });
+  assert.equal(await page.locator('#trk-mobile-view').inputValue(),'history');
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.tracker.view.v3')).viewSelectedAt),chosenAt);
+  await page.clock.setFixedTime(new Date(chosenAt+3600000));
+  await page.locator(width < 760 ? '#cw-mobile-bottom-nav [data-mobile-route="tracker"]' : '#tab-tracker').click();
+  await page.waitForFunction(()=>document.querySelector('#trk-mobile-view').value==='overview');
+  if (width < 760) await choose(page,'#trk-mobile-view','month-review');
+  else {
+    await page.locator('.trk-others summary').click();
+    await page.locator('[data-trk-month-open]').click();
+  }
+  await page.locator('.mr-page').waitFor();
+  const reviewAt=await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.tracker.view.v3')).viewSelectedAt);
+  await page.clock.setFixedTime(new Date(reviewAt+3600000));
+  await page.locator(width < 760 ? '#cw-mobile-bottom-nav [data-mobile-route="tracker"]' : '#tab-tracker').click();
+  await page.locator('.mr-page').waitFor({state:'detached'});
+  assert.equal(await page.locator('#trk-mobile-view').inputValue(),'overview');
+  await page.reload();
+  await page.addScriptTag({url:'/assets/js/tracker.js'});
+  await page.evaluate(()=>TrackerPage.mount(document.querySelector('#page-tracker')));
+  assert.equal(await page.locator('#trk-mobile-view').inputValue(),'overview');
+});
+
+test("Overview navigation and tracker selector have matching panel heights",async t => {
+  for (const theme of ['original','flat-dark','flat-light']) {
+    const {page}=await fixture(t,theme,{touch:false});
+    const panels=await page.evaluate(()=>{
+      const box=selector=>{const r=document.querySelector(selector).getBoundingClientRect();return {top:r.top,height:r.height};};
+      return {nav:box('[data-trk-slot="controls"]'),tracker:box('[data-trk-slot="source"]')};
+    });
+    assert.ok(Math.abs(panels.nav.top-panels.tracker.top)<1,`${theme}: ${JSON.stringify(panels)}`);
+    assert.ok(Math.abs(panels.nav.height-panels.tracker.height)<1,`${theme}: ${JSON.stringify(panels)}`);
+    const tabs=await page.evaluate(()=>{
+      const center=selector=>{const r=document.querySelector(selector).getBoundingClientRect();return r.top+r.height/2;};
+      return {tab:center('.trk-tabs .trk-tab span:last-child'),others:center('.trk-others>summary span:nth-child(2)')};
+    });
+    assert.ok(Math.abs(tabs.tab-tabs.others)<1,`${theme}: ${JSON.stringify(tabs)}`);
+    await page.setViewportSize({width:390,height:844});
+    assert.ok(await page.locator('#trk-instance + .cw-icon-select').isVisible());
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  }
+});
+
 test("Monthly notification links open the requested tracker and month",async t => {
   const {page}=await fixture(t,"flat-dark",{touch:false});
   await page.addScriptTag({url:'/assets/helpers/core.js'});
@@ -242,7 +337,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   const summary = page.locator(".trk-others summary");
   await summary.focus();
   await page.keyboard.press("ArrowDown");
-  assert.equal(await page.locator('.trk-others [data-trk-view="cleanup"]').evaluate(el=>el===document.activeElement),true);
+  assert.equal(await page.locator('.trk-others [data-trk-month-open]').evaluate(el=>el===document.activeElement),true);
   await page.keyboard.press("Escape");
   assert.equal(await page.locator(".trk-others").getAttribute("open"),null);
   await summary.click();
@@ -374,7 +469,7 @@ test("airing cards share available width according to release density", async t 
   await page.setViewportSize({width:390,height:844});
   assert.ok(await width() <= 300);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),false);
-  assert.equal(await page.locator('.trk-calendar').evaluate(el => el.scrollWidth > el.clientWidth),true);
+  await page.waitForFunction(() => { const calendar=document.querySelector('.trk-calendar'); return calendar.scrollWidth > calendar.clientWidth; });
   await page.setViewportSize({width:1900,height:900});
   app.empty(true);
   await page.locator('[data-trk-action="refresh"]').click();

@@ -14,6 +14,7 @@ function fakeDom() {
       get textContent() { return node._text + node.children.map(child => child.textContent || "").join(""); },
       set textContent(value) { node._text = String(value); node.children = []; },
       appendChild(child) { this.children.push(child); }, append(...children) { this.children.push(...children); },
+      prepend(...children) { this.children.unshift(...children); },
       replaceChildren(...children) { this._text = ""; this.children = [...children]; },
       hasAttribute(name) { return Object.hasOwn(this, name); },
       querySelectorAll(selector) { return this.children.flatMap(child => [

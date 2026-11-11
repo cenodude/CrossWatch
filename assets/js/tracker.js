@@ -123,6 +123,8 @@
     effects: {},
     stats: null,
     view: "overview",
+    monthlyReview: false,
+    viewSelectedAt: 0,
     overview: null,
     overviewLimits: { continue: 1, recent: 1 },
     overviewRecentStep: 10,
@@ -192,6 +194,8 @@
     try {
       const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
       if (VIEWS.some((v) => v.id === saved.view)) state.view = saved.view;
+      state.monthlyReview = saved.monthlyReview === true;
+      state.viewSelectedAt = saved.viewSelectedAt;
       if (MEDIA.some((m) => m.id === saved.media)) state.media = saved.media;
       if (PAGE_SIZES.includes(saved.pageSize)) state.pageSize = saved.pageSize;
       state.layouts = Object.fromEntries(VIEWS.map(({ id }) => [id, saved.layouts?.[id] === "grid" ? "grid" : "list"]));
@@ -212,11 +216,31 @@
       state.scrollTop = Number.isFinite(saved.scrollTop) && saved.scrollTop > 0 ? saved.scrollTop : 0;
       if (saved.ref && typeof saved.ref === "object" && ["note", "show", "key"].some(key => typeof saved.ref[key] === "string")) state.ref = saved.ref;
     } catch {}
+    expireView();
+  }
+
+  function rememberView() {
+    state.viewSelectedAt = Date.now();
+    saveView();
+  }
+
+  function expireView() {
+    const age = Date.now() - state.viewSelectedAt;
+    if (Number.isFinite(state.viewSelectedAt) && state.viewSelectedAt > 0 && age >= 0 && age < 60 * 60 * 1000) return false;
+    state.view = 'overview';
+    state.monthlyReview = false;
+    state.viewSelectedAt = 0;
+    state.ref = null;
+    state.title = null;
+    state.offset = 0;
+    state.scrollTop = 0;
+    state.picked.clear();
+    return true;
   }
 
   function saveView() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ view: state.view, layouts: state.layouts, media: state.media, byDay: state.byDay, hideDropped: state.hideDropped, showStatusLabels: state.showStatusLabels, zoom: state.zoom, pageSize: state.pageSize, instance: state.instance, q: state.q, sort: state.sort, noteStatus: state.noteStatus, noteTag: state.noteTag, cleanFeature: state.cleanFeature, healthFilter: state.healthFilter, duplicates: state.duplicates, offset: state.offset, ref: state.ref, scrollTop: state.scrollTop }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ view: state.view, viewSelectedAt: state.viewSelectedAt, monthlyReview: state.monthlyReview, layouts: state.layouts, media: state.media, byDay: state.byDay, hideDropped: state.hideDropped, showStatusLabels: state.showStatusLabels, zoom: state.zoom, pageSize: state.pageSize, instance: state.instance, q: state.q, sort: state.sort, noteStatus: state.noteStatus, noteTag: state.noteTag, cleanFeature: state.cleanFeature, healthFilter: state.healthFilter, duplicates: state.duplicates, offset: state.offset, ref: state.ref, scrollTop: state.scrollTop }));
     } catch {}
   }
 
@@ -296,6 +320,12 @@
 
   function cardTitle(item) {
     return isChild(item) ? item.series_title || item.title || item.key : item.title || item.series_title || item.key;
+  }
+
+  function listIdentity(item, content, date = "") {
+    const image = artUrl(item, "w185");
+    const meta = [episodeCode(item) || typeMeta(item).label, isChild(item) ? item.series_year : item.year, date].filter(Boolean).join(" · ");
+    return `<div class="cw-title-cell trk-list-identity"><span class="trk-list-art" aria-hidden="true">${symbol(typeMeta(item).icon)}${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}</span><div class="trk-list-copy">${content}<span class="trk-list-meta">${esc(meta)}</span></div></div>`;
   }
 
   function episodeLabel(item) {
@@ -591,12 +621,17 @@
     const key = reviewDismissKey();
     try {return localStorage.getItem(key) || reviewDismissals.get(key) || "";} catch {return reviewDismissals.get(key) || "";}
   }
-  function openMonthlyReview(button, month = "") {
+  let monthlyReviewPage = null;
+  function openMonthlyReview(button, month = "", remember = true) {
     button.disabled = true;
     state.root.querySelector(".trk-others")?.removeAttribute("open");
     import(`/assets/js/tracker-month.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`).then(({openMonthReview}) => {
-      openMonthReview({root:state.root, instance:state.instance, label:instanceLabel(), month,
+      if (state.root.hidden || state.root.classList.contains('hidden')) return;
+      monthlyReviewPage = openMonthReview({root:state.root, instance:state.instance, label:instanceLabel(), month,
+        onClose: restore => { monthlyReviewPage = null; if (restore) { state.monthlyReview = false; rememberView(); } },
         returnLabel:VIEWS.find(view => view.id === state.view)?.label || "Overview", openMedia:row => selectRef(row.ref, {openMedia:true})});
+      state.monthlyReview = true;
+      if (remember) rememberView();
     }).catch(() => toast.show("Could not open the monthly review. Try again.", {tone:"bad"})).finally(() => {button.disabled = false;});
   }
   const overviewCacheKey = () => {
@@ -693,6 +728,7 @@
     if (canCard(item)) selectRef(row.ref, {openMedia:true});
     else {
       state.view = row.ref.show ? "shows" : row.ref.feature || "history";
+      rememberView();
       state.q = "";
       reload();
       selectRef(row.ref);
@@ -941,14 +977,14 @@
         const flagged = group.items.find((i) => checkInfo(i).state === "attention");
         const inline = group.kind === "show"
           ? `<span class="trk-ep">${esc(episodeSummary(group.items))}</span>${many ? `<span class="trk-inline-sub">${esc(plural(group.items.length, "episode", "episodes"))}</span>` : ""}`
-          : lead.year ? `<span class="trk-inline-sub">${esc(lead.year)}</span>` : "";
+          : lead.year ? `<span class="trk-inline-sub trk-list-desktop-meta">${esc(lead.year)}</span>` : "";
         const openKey = `${day.label}|${group.key}`;
         const expanded = many && state.open.has(openKey);
         const toggle = many ? `<button type="button" class="trk-fold" data-trk-fold="${esc(openKey)}" aria-expanded="${expanded}" aria-label="${expanded ? "Hide" : "Show"} episodes">${symbol(expanded ? "expand_less" : "expand_more")}</button>` : "";
         const row = `<tr class="trk-play${selected ? " is-selected" : ""}" ${ref} tabindex="0" aria-selected="${!!selected}">
             <td class="trk-col-time">${esc(timeText(lead.date))}</td>
             <td class="cw-col-type">${typePill(group.kind === "show" ? { type: "show" } : lead)}</td>
-            <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(cardTitle(lead))}</strong>${inline}${toggle}</div></div></td>
+            <td class="cw-col-title">${listIdentity(group.kind === "show" ? {...lead, type:"show", year:lead.series_year || lead.year} : lead, `<div class="cw-title-row"><strong class="cw-merged-title">${esc(cardTitle(lead))}</strong>${inline}${toggle}</div>`)}</td>
             <td class="trk-col-health">${flagged ? healthIcon(flagged) : ""}</td>
           </tr>`;
         const children = expanded ? group.items.map((i) => `<tr class="trk-play trk-child" data-trk-ref-key="${esc(i.key)}" tabindex="0"><td class="trk-col-time">${esc(timeText(i.date))}</td><td></td><td class="cw-col-title"><span class="trk-child-title">${esc(episodeLabel(i) || cardTitle(i))}</span></td><td class="trk-col-health">${healthIcon(i)}</td></tr>`).join("") : "";
@@ -989,7 +1025,7 @@
       const last = show.last_season != null ? se(show.last_season, show.last_episode) : "";
       return `<tr class="trk-play${selected ? " is-selected" : ""}${state.picked.has(show.key) ? " is-picked" : ""}" data-trk-ref-show="${esc(show.key)}" tabindex="0" aria-selected="${selected}">
           <td class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="${index}"${state.picked.has(show.key) ? " checked" : ""} aria-label="Select ${esc(show.title || show.key)}"></td>
-          <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(show.title || show.key)}</strong>${statusPill(show.status)}</div>${show.year ? `<span class="trk-sub">${esc(show.year)}</span>` : ""}</div></td>
+          <td class="cw-col-title">${listIdentity(show, `<div class="cw-title-row"><strong class="cw-merged-title">${esc(show.title || show.key)}</strong>${statusPill(show.status)}</div>${show.year ? `<span class="trk-sub trk-list-desktop-meta">${esc(show.year)}</span>` : ""}`, last ? `Last watched: ${last}` : "")}</td>
           <td class="trk-col-progress">${progressCell(show)}</td>
           <td class="trk-col-next">${nextCell(show)}</td>
           <td class="trk-col-last-episode">${esc(last)}</td>
@@ -1014,7 +1050,7 @@
       return `<tr class="trk-play${selected ? " is-selected" : ""}${state.picked.has(n.key) ? " is-picked" : ""}" data-trk-ref-note="${esc(n.key)}" tabindex="0" aria-selected="${selected}">
           <td class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="${index}"${state.picked.has(n.key) ? " checked" : ""} aria-label="Select ${esc(n.title || n.key)}"></td>
           <td class="cw-col-type">${typePill({ type: n.type })}</td>
-          <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(n.title || n.key)}</strong>${n.year ? `<span class="trk-inline-sub">${esc(n.year)}</span>` : ""}</div>${dates ? `<span class="trk-sub">${esc(dates)}</span>` : ""}${tagChips(n.tags, 5)}</div></td>
+          <td class="cw-col-title">${listIdentity(n, `<div class="cw-title-row"><strong class="cw-merged-title">${esc(n.title || n.key)}</strong>${n.year ? `<span class="trk-inline-sub trk-list-desktop-meta">${esc(n.year)}</span>` : ""}</div>${dates ? `<span class="trk-sub">${esc(dates)}</span>` : ""}${tagChips(n.tags, 5)}`, agoText(n.updated))}</td>
           <td class="trk-col-status">${statusPill(n.status)}</td>
           <td class="trk-col-date">${esc(agoText(n.updated))}</td>
         </tr>`;
@@ -1126,7 +1162,7 @@
       return `<tr class="trk-play${selected ? " is-selected" : ""}" data-trk-ref-key="${esc(item.key)}" tabindex="0" aria-selected="${selected}">
           <td class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(cardTitle(item))}"></td>
           <td class="cw-col-type">${typePill(item)}</td>
-          <td class="cw-col-title"><div class="cw-title-cell"><div class="cw-title-row"><strong class="cw-merged-title">${esc(cardTitle(item))}</strong>${ep ? `<span class="trk-ep">${esc(ep)}</span>` : ""}</div></div></td>
+          <td class="cw-col-title">${listIdentity(item, `<div class="cw-title-row"><strong class="cw-merged-title">${esc(cardTitle(item))}</strong>${ep ? `<span class="trk-ep">${esc(ep)}</span>` : ""}</div>`, f.date ? feature === "history" ? whenText(item.date) : dateText(item.date) : "")}</td>
           <td class="cw-col-year"><span class="cw-merged-year">${esc(year || "")}</span></td>
           ${f.date ? `<td class="trk-col-date">${esc(feature === "history" ? whenText(item.date) : dateText(item.date))}</td>` : ""}
           ${extraColumn(feature) ? `<td class="trk-col-extra${feature !== "progress" ? " trk-col-rating" : ""}">${extraCell(item, feature)}</td>` : ""}
@@ -1207,7 +1243,7 @@
   function renderSource() {
     if (!state.instances.length) return "";
     const instances = state.instances.map((i) => `<option value="${esc(i.id)}"${i.id === state.instance ? " selected" : ""}>${esc(i.label)}</option>`).join("");
-    return `<div class="ins-row"><div class="ins-kv"><label for="trk-instance">Tracker</label><select id="trk-instance" class="cw-select" data-trk-input="instance">${instances}</select></div></div>`;
+    return `<div class="trk-source-row"><div class="ins-kv"><label for="trk-instance">Tracker</label><select id="trk-instance" class="cw-select" data-trk-input="instance">${instances}</select></div></div>`;
   }
 
   function updateHeroSelection() {
@@ -1636,7 +1672,10 @@
       new ResizeObserver(() => root.style.setProperty("--cw-selection-height", `${selection.offsetHeight}px`)).observe(selection);
       const filters = root.querySelector('[data-trk-slot="filters"]');
       const media = window.matchMedia?.(NARROW);
-      const fold = () => { filters.open = state.view === "overview" || !media?.matches || !!state.ref; };
+      const fold = () => {
+        filters.open = state.view === "overview" || !media?.matches;
+        if (!media?.matches && sheet.mode === 'title') closeSheet(false);
+      };
       fold();
       media?.addEventListener?.("change", fold);
       const side = root.querySelector(".cw-side");
@@ -1686,7 +1725,7 @@
     const controlsSlot = state.root.querySelector('[data-trk-slot="controls"]');
     if (overview && controlsSlot.parentNode !== wrap) wrap.prepend(controlsSlot);
     if (!overview && controlsSlot.parentNode !== main) main.prepend(controlsSlot);
-    state.root.querySelector('[data-trk-slot="filters"]').open = overview || !narrow() || !!state.ref;
+    state.root.querySelector('[data-trk-slot="filters"]').open = overview || !narrow();
     const selection = state.root.querySelector('[data-trk-slot="selection-bar"]');
     const focusedAction = selection?.contains(document.activeElement) ? document.activeElement.dataset.trkAction : "";
     if (state.picked.size) setSlot("selection-bar", renderSelection());
@@ -1924,7 +1963,10 @@
       if (err?.code !== "not_found") toast.show(errorText(err), { tone: "bad" });
     }
     setSlot("title", renderTitle());
-    if (sheet.mode === "title") renderSheet();
+    if (sheet.mode === "title") {
+      if (state.ref) renderSheet();
+      else closeSheet(false);
+    }
   }
 
   async function loadHeroMetadata(data, id) {
@@ -1952,15 +1994,10 @@
       tr.setAttribute("aria-selected", String(on));
     });
     setSlot("title", renderTitle());
-    if (narrow() && !openMedia && !action) state.root.querySelector('[data-trk-slot="filters"]').open = true;
+    if (narrow() && !openMedia && !action) openSheet('title');
     loadTitle().then(() => {
       if (action && state.ref === ref && state.title) detailAction(action);
       else if (openMedia && state.ref === ref) openCard();
-      else if (narrow() && state.ref === ref) {
-        const panel = state.root.querySelector('[data-trk-slot="title"]');
-        panel.scrollIntoView({block: "start"});
-        panel.querySelector('[data-trk-detail="back"]')?.focus({preventScroll: true});
-      }
     });
   }
 
@@ -3103,13 +3140,13 @@
   }
 
   function renderTitleSheet() {
-    const head = state.title?.title || {};
-    return `${sheetHead(head, head.title || "Title", "")}<div class="trk-form trk-detail">${state.title ? titleBody(state.title) : `<div class="trk-detail-empty">${symbol("hourglass_empty")}<span>Loading...</span></div>`}</div>`;
+    return `${sheetHead('info', 'Title details', '')}<div class="trk-form trk-detail">${state.title ? titleBody(state.title) : `<div class="trk-detail-empty" role="status">${symbol("hourglass_empty")}<span>Loading...</span></div>`}</div>`;
   }
 
   function renderSheet(focusFirst) {
     const el = ensureSheet();
     const dialog = el.querySelector(".trk-sheet");
+    dialog.classList.toggle('trk-title-sheet', sheet.mode === 'title');
     const scroll = dialog.scrollTop;
     const active = dialog.contains(document.activeElement) ? document.activeElement : null;
     const logFocus = sheet.mode === "log" && !focusFirst && active ? Array.from(active.attributes).find(a => a.name.startsWith("data-trk-log-") || a.name === "data-trk-watch-pick") : null;
@@ -3128,7 +3165,7 @@
       const input = dialog.querySelector(`[${attr}="${name}"]`);
       if (input) input.value = value;
     }
-    dialog.scrollTop = scroll;
+    dialog.scrollTop = focusFirst ? 0 : scroll;
     if (sheet.mode === "rate") wireRatingPreview(dialog);
     if (el.hidden) {
       el.hidden = false;
@@ -3149,21 +3186,39 @@
   }
 
   function openSheet(mode, extra = {}) {
-    if (!sheet.el || sheet.el.hidden) sheet.lastFocus = document.activeElement;
+    if (!sheet.el || sheet.el.hidden) {
+      sheet.lastFocus = document.activeElement;
+      sheet.pageScroll = window.scrollY;
+      sheet.returnToTitle = false;
+    } else if (sheet.mode === 'title' && mode !== 'title') {
+      sheet.returnToTitle = true;
+      sheet.detailScroll = sheet.el.querySelector('.trk-sheet').scrollTop;
+    }
     Object.assign(sheet, { mode, item: null, feature: "history", busy: false, error: "", keys: [], token: sheet.token + 1 }, extra);
     if (mode === "rate") { sheet.communityRating = ""; sheet.communityScore = null; }
     renderSheet(true);
     if (mode === "rate") loadCommunityRating(sheet.token);
   }
 
-  function closeSheet() {
+  function closeSheet(returnToTitle = true) {
     if (!sheet.el || sheet.el.hidden) return;
+    if (returnToTitle && sheet.returnToTitle && state.ref && narrow()) {
+      sheet.returnToTitle = false;
+      openSheet('title');
+      sheet.el.querySelector('.trk-sheet').scrollTop = sheet.detailScroll || 0;
+      return;
+    }
     changesObserver?.disconnect();
     changesObserver = null;
     sheet.el.hidden = true;
     sheet.mode = "";
+    sheet.returnToTitle = false;
     document.documentElement.classList.remove("cw-ia-sheet-open");
-    sheet.lastFocus?.focus?.({ preventScroll: true });
+    const focus = sheet.lastFocus?.isConnected ? sheet.lastFocus : state.root?.querySelector('.trk-play.is-selected');
+    if (!state.root?.hidden && !state.root?.classList.contains('hidden')) {
+      focus?.focus?.({ preventScroll: true });
+      window.scrollTo({top:sheet.pageScroll || 0,behavior:'instant'});
+    }
   }
 
   function formChanges() {
@@ -3201,7 +3256,7 @@
   }
 
   async function afterWrite(data, text) {
-    closeSheet();
+    if (sheet.mode !== 'title') closeSheet();
     toast.show(text, { undo: data?.batch ? () => undo(data.batch) : null });
     state.progress = {};
     await refresh();
@@ -3793,7 +3848,7 @@
           localStorage.setItem("cw.tracker.saved-views.v1", JSON.stringify(sheet.views));
           renderSheet();
         } else {
-          localStorage.setItem(STORE_KEY, JSON.stringify({...view.settings,offset:0,ref:null,scrollTop:0}));
+          localStorage.setItem(STORE_KEY, JSON.stringify({...view.settings,viewSelectedAt:Date.now(),monthlyReview:false,offset:0,ref:null,scrollTop:0}));
           state.ref = null; state.title = null; state.picked.clear();
           loadView(); closeSheet(); refresh();
         }
@@ -4065,7 +4120,7 @@
     }
     if (event.key !== "Tab") return;
     const dialog = sheet.el.querySelector(".trk-sheet");
-    const nodes = Array.from(dialog.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex='-1'])")).filter((n) => n.offsetParent !== null);
+    const nodes = Array.from(dialog.querySelectorAll("button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], summary, [tabindex]:not([tabindex='-1'])")).filter((n) => n.offsetParent !== null);
     if (!nodes.length) return;
     const first = nodes[0];
     const last = nodes[nodes.length - 1];
@@ -4142,7 +4197,7 @@
   function wire(root) {
     if (state.wired) return;
     state.wired = true;
-    new MutationObserver(() => { if (root.classList.contains("hidden") || root.hidden) stopOverview(); }).observe(root, {attributes:true, attributeFilter:["class", "hidden"]});
+    new MutationObserver(() => { if (root.classList.contains("hidden") || root.hidden) { stopOverview(); closeSheet(false); } }).observe(root, {attributes:true, attributeFilter:["class", "hidden"]});
     wireStatusMenu();
     document.addEventListener("click", (event) => {
       if (!event.target.closest?.(".trk-add-split")) setAddMenu(false, { focus: false });
@@ -4207,6 +4262,7 @@
         root.querySelector(".trk-others")?.removeAttribute("open");
         if (view.dataset.trkView === state.view) return;
         state.view = view.dataset.trkView;
+        rememberView();
         state.filtersOpen = false;
         state.q = "";
         if (state.view === "cleanup" && !state.healthFilter) state.healthFilter = "attention";
@@ -4231,6 +4287,7 @@
       if (health) {
         state.healthFilter = health.dataset.trkHealth;
         state.view = "cleanup";
+        rememberView();
         reload();
         return;
       }
@@ -4300,6 +4357,7 @@
       else if (action === "import-check") {
         dismissImport();
         state.view = "cleanup";
+        rememberView();
         state.healthFilter = "attention";
         startCheck();
         reload();
@@ -4407,6 +4465,7 @@
         if (event.target.value === "month-review") {event.target.value = state.view; openMonthlyReview(event.target); return;}
         if (!VIEWS.some(view => view.id === event.target.value) || state.view === event.target.value) return;
         state.view = event.target.value;
+        rememberView();
         state.filtersOpen = false;
         state.q = "";
         if (state.view === "cleanup" && !state.healthFilter) state.healthFilter = "attention";
@@ -4462,7 +4521,7 @@
         cover.innerHTML = symbol(cover.dataset.trkLogCover === "movie" ? "movie" : "tv");
         return;
       }
-      if (img.closest(".trk-grid-art")) { img.remove(); return; }
+      if (img.closest(".trk-grid-art,.trk-list-art")) { img.remove(); return; }
       if (img.classList.contains("trk-episode-backdrop")) { img.remove(); return; }
       if (!img.closest(".trk-poster")) return;
       img.closest(".trk-poster").classList.add("is-empty");
@@ -4516,7 +4575,9 @@
       state.ref = null; state.title = null; state.offset = 0; state.scrollTop = 0;
     }
     if (query.get("attention") === "1") {
+      state.monthlyReview = false;
       state.view = "cleanup";
+      rememberView();
       state.healthFilter = "attention";
       state.offset = 0;
       state.fromLink = true;
@@ -4536,14 +4597,15 @@
       sheet.el = null;
       loadView();
     }
+    if (expireView()) monthlyReviewPage?.close(false);
     const reviewMonth = readLink();
     wire(root);
     try {
       await window.__cwAuthBootstrapPromise;
     } catch {}
     await refresh();
-    if (reviewMonth) openMonthlyReview({},reviewMonth);
+    if (reviewMonth || state.monthlyReview) openMonthlyReview({},reviewMonth || '',!!reviewMonth);
   }
 
-  window.TrackerPage = { mount };
+  window.TrackerPage = { mount, resume: () => { if (expireView()) return mount(state.root); } };
 })();

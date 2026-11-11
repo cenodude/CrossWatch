@@ -23,6 +23,9 @@
     const ui = cfg?.ui || {};
     const auth = window.CW?.AuthState?.read?.();
     const prefs = auth?.preferences || auth?.user?.preferences || {};
+    try {
+      if (window.matchMedia('(max-width: 760px)').matches && localStorage.getItem('cw.mobile.playingCard') === '0') return false;
+    } catch {}
     return !!cfg && ui.show_playingcard !== false && prefs.playing_card !== false && hasTmdbKey(cfg);
   };
 
@@ -434,6 +437,7 @@
   };
 
   async function renderSelectedStream() {
+    if (!isUiEnabled()) { hide(true); return; }
     const p = selectedStream();
     if (!p) {
       hide(true);
@@ -484,6 +488,7 @@
     }
 
     const data = await fetchCurrentlyWatchingData(force);
+    if (!isUiEnabled()) { hide(true); return; }
     CARD.streams = Array.isArray(data?.streams) ? data.streams.slice() : [];
 
     if (!CARD.streams.length) {
@@ -517,5 +522,10 @@
   });
 
   window.updatePlayingCard = (payload) => refreshCard(keyOf(payload || {}), false);
+  const refreshVisibility = () => refreshCard(CARD.selectedKey, false).catch(() => {});
+  window.addEventListener('cw:mobile-playing-card-changed', refreshVisibility);
+  window.addEventListener('storage', event => { if (event.key === 'cw.mobile.playingCard' || event.key === null) refreshVisibility(); });
+  window.matchMedia('(max-width: 760px)').addEventListener('change', refreshVisibility);
+  document.addEventListener('config-saved', refreshVisibility);
   refreshCard("", false).catch(() => {});
 })();

@@ -79,12 +79,27 @@
     const nav = document.createElement('nav');
     nav.id = 'cw-mobile-bottom-nav';
     nav.setAttribute('aria-label', 'Mobile navigation');
-    const items = [['main', 'home', 'Home']];
+    const fixed = [['main', 'home', 'Home']];
+    if ($('tab-tracker')) fixed.push(['tracker', 'inventory_2', 'Tracker']);
+    const choices = [];
     if ($('tab-settings') && document.documentElement.dataset.cwRole !== 'user') {
-      items.push(['settings/providers', 'device_hub', 'Connections'], ['settings/sync', 'sync_alt', 'Sync pairs'], ['settings/scrobbler', 'sensors', 'Scrobbler']);
+      choices.push(['settings/providers', 'device_hub', 'Connections'], ['settings/sync', 'sync_alt', 'Sync pairs'], ['settings/scrobbler', 'sensors', 'Scrobbler']);
     }
+    for (const item of [['snapshots', 'photo_library', 'Captures'], ['playlists', 'queue_music', 'Playlists'], ['editor', 'edit_note', 'Editor']]) {
+      if ($(`tab-${item[0]}`)) choices.push(item);
+    }
+    const storageKey = 'cw.mobile.shortcuts.v1';
+    const defaults = choices.slice(0, 2).map(item => item[0]);
+    const readShortcuts = () => {
+      let saved;
+      try { saved = JSON.parse(localStorage.getItem(storageKey)); } catch {}
+      const valid = Array.isArray(saved) ? [...new Set(saved.filter(route => choices.some(item => item[0] === route)))].slice(0, 2) : [];
+      return [...valid, ...defaults.filter(route => !valid.includes(route))].slice(0, 2);
+    };
+    const shortcuts = readShortcuts();
     const routeBase = window.location.pathname === '/' ? '' : '/?ui=full';
-    nav.innerHTML = items.map(([route, icon, label]) => `<a href="${routeBase}#${route}" data-mobile-route="${route}"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><span>${label}</span></a>`).join('') +
+    const link = ([route, icon, label], extra = '') => `<a href="${routeBase}#${route}" data-mobile-route="${route}" ${extra}><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><span>${label}</span></a>`;
+    nav.innerHTML =
       '<button id="cw-mobile-more" type="button" aria-controls="cw-mobile-navigation" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span><span>More</span></button>';
     document.body.appendChild(nav);
     document.body.classList.add('cw-has-bottom-nav');
@@ -96,26 +111,64 @@
       icon.textContent = icons[tab.id] || 'info';
       tab.prepend(icon);
     });
+    const extra = document.createElement('div');
+    extra.className = 'cw-mobile-extra-destinations';
+    $('cw-mobile-navigation').prepend(extra);
+    const renderShortcuts = () => {
+      const items = [...fixed, ...shortcuts.map(route => choices.find(item => item[0] === route)).filter(Boolean)];
+      nav.querySelectorAll('a').forEach(node => node.remove());
+      $('cw-mobile-more').insertAdjacentHTML('beforebegin', items.map(item => link(item)).join(''));
+      extra.innerHTML = choices.filter(item => item[0].startsWith('settings/') && !shortcuts.includes(item[0])).map(item => link(item, 'class="tab"')).join('');
+      for (const route of ['main', 'tracker', 'snapshots', 'playlists', 'editor']) {
+        $(`tab-${route}`)?.classList.toggle('cw-mobile-pinned', items.some(item => item[0] === route));
+      }
+      update();
+    };
+    const installShortcuts = () => {
+      const picker = $('cw-mobile-widgets');
+      if (!picker || picker.querySelector('.cw-mobile-shortcuts') || choices.length < 2) return;
+      const controls = document.createElement('div');
+      controls.className = 'cw-mobile-shortcuts';
+      controls.innerHTML = `<h3>Navigation shortcuts</h3><p>${fixed.map(item => item[2]).join(', ')} and More stay fixed. Choose two shortcuts for this browser.</p>` + [0, 1].map(index => `<label for="cw-mobile-shortcut-${index}">Shortcut ${index + 1}</label><select id="cw-mobile-shortcut-${index}" data-cw-native-select="true">${choices.map(([route, , label]) => `<option value="${route}">${label}</option>`).join('')}</select>`).join('');
+      picker.querySelector('summary').after(controls);
+      const selects = [...controls.querySelectorAll('select')];
+      const sync = () => selects.forEach((select, index) => {
+        select.value = shortcuts[index];
+        [...select.options].forEach(option => { option.disabled = option.value === shortcuts[1 - index]; });
+      });
+      controls.addEventListener('change', event => {
+        const index = selects.indexOf(event.target);
+        if (index < 0 || shortcuts[1 - index] === event.target.value) return;
+        shortcuts[index] = event.target.value;
+        try { localStorage.setItem(storageKey, JSON.stringify(shortcuts)); } catch {}
+        sync();
+        renderShortcuts();
+      });
+      sync();
+    };
+    document.addEventListener('cw-mobile-settings-ready', installShortcuts);
     document.dispatchEvent(new Event('cw-mobile-navigation-ready'));
 
     $('cw-mobile-more').addEventListener('click', () => {
       $('cw-mobile-nav-toggle').click();
       if ($('cw-mobile-more').getAttribute('aria-expanded') === 'true') {
-        $('cw-mobile-navigation').querySelector('button, a[href]')?.focus();
+        [...$('cw-mobile-navigation').querySelectorAll('button, a[href], summary')].find(node => node.getClientRects().length)?.focus();
       }
     });
     nav.addEventListener('click', event => {
       if (event.target.closest('a, button')) mobileNavigationFeedback();
+      if (event.target.closest('[data-mobile-route="tracker"]') && window.location.pathname === '/' && window.location.hash === '#tracker') void window.TrackerPage?.resume?.();
       if (event.target.closest('a') && $('cw-mobile-more').getAttribute('aria-expanded') === 'true') $('cw-mobile-nav-toggle').click();
     });
     const update = () => {
       const route = window.location.pathname === '/' ? window.location.hash.slice(1).split('?')[0] || 'main' : '';
       let matched = false;
-      nav.querySelectorAll('[data-mobile-route]').forEach(link => {
+      document.querySelectorAll('[data-mobile-route]').forEach(link => {
         const active = link.dataset.mobileRoute === route;
         if (active) link.setAttribute('aria-current', 'page');
         else link.removeAttribute('aria-current');
-        matched ||= active;
+        link.classList.toggle('active', active);
+        matched ||= active && nav.contains(link);
       });
       $('cw-mobile-more').classList.toggle('is-current', !matched);
     };
@@ -123,7 +176,8 @@
     window.addEventListener('hashchange', update);
     document.addEventListener('tab-changed', scheduleUpdate);
     document.addEventListener('cw-settings-pane-changed', scheduleUpdate);
-    update();
+    renderShortcuts();
+    installShortcuts();
   }
 
   function normalizeAvatarUrl(value) {

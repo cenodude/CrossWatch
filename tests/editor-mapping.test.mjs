@@ -121,7 +121,7 @@ test("merged mapping navigation leaves unsaved changes untouched", async () => {
 test("merged rows keep a working mapping action beside Send", () => {
   const elements = [];
   const element = tag => {
-    const node = {tag, children:[], style:{}, dataset:{}, classList:{add() {}, toggle() {}},
+    const node = {tag, children:[], style:{}, dataset:{}, textContent:"", classList:{add() {}, toggle() {}},
       appendChild(child) { this.children.push(child); }, append(...children) { this.children.push(...children); },
       hasAttribute(name) { return Object.hasOwn(this, name); },
       querySelectorAll(selector) { return this.children.flatMap(child => [

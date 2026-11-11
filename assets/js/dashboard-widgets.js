@@ -698,6 +698,8 @@
       picker.className = "cw-mobile-widgets";
       picker.innerHTML = `<summary><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>Mobile settings</span><span class="cw-mobile-widget-count"></span></summary>
         <div class="cw-mobile-widget-options">
+          <h3>Visibility</h3>
+          <label><input type="checkbox" data-mobile-playing-card><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">play_circle</span><span>Playing card</span><small>Show on this device's mobile layout</small></label>
           <h3>Touch feedback</h3>
           <label><input type="checkbox" data-mobile-notification-alerts><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">notifications_active</span><span>Notification alerts</span><small>Banner and vibration when supported, while open</small></label>
           <label><input type="checkbox" data-mobile-haptics><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">vibration</span><span>Haptic feedback</span><small>Short vibration on menu taps</small></label>
@@ -708,6 +710,11 @@
           <button type="button" class="cw-mobile-widget-reset">Reset mobile widgets</button>
         </div>`;
       document.body.appendChild(picker);
+      const playingCard = picker.querySelector('[data-mobile-playing-card]');
+      playingCard.addEventListener('change', () => {
+        try { localStorage.setItem('cw.mobile.playingCard', playingCard.checked ? '1' : '0'); } catch {}
+        window.dispatchEvent(new CustomEvent('cw:mobile-playing-card-changed'));
+      });
       const providerStats = picker.querySelector('[data-mobile-provider-stats]');
       providerStats.checked = true;
       try { providerStats.checked = localStorage.getItem('cw.mobile.providerStats') !== '0'; } catch {}
@@ -755,16 +762,27 @@
     }
     const menu = $("#cw-mobile-navigation");
     if (menu && picker.parentElement !== menu) menu.appendChild(picker);
+    const playingCard = picker.querySelector('[data-mobile-playing-card]');
+    const cfg = window._cfgCache || currentConfig || {};
+    const auth = window.CW?.AuthState?.read?.();
+    const prefs = auth?.preferences || auth?.user?.preferences || {};
+    const reason = cfg.ui?.show_playingcard === false ? 'Disabled in main settings' : prefs.playing_card === false ? 'Disabled in your profile settings' : '';
+    let showPlayingCard = true;
+    try { showPlayingCard = localStorage.getItem('cw.mobile.playingCard') !== '0'; } catch {}
+    playingCard.checked = !reason && showPlayingCard;
+    playingCard.disabled = !!reason;
+    playingCard.parentElement.querySelector('small').textContent = reason || "Show on this device's mobile layout";
     let shown = 0;
     for (const input of picker.querySelectorAll("[data-mobile-widget]")) {
       const key = input.dataset.mobileWidget;
       const enabled = settings[key] !== false;
       input.checked = enabled && !widgetLayout[key]?.hidden;
       input.disabled = !enabled;
-      input.parentElement.querySelector("small").textContent = enabled ? "" : "Unavailable";
+      input.parentElement.querySelector("small").textContent = enabled ? "" : key === 'watchlist' && cfg.ui?.show_watchlist_preview !== false ? 'No watchlist content available' : 'Disabled in main settings';
       if (input.checked) shown += 1;
     }
     picker.querySelector(".cw-mobile-widget-count").textContent = `${shown} shown`;
+    document.dispatchEvent(new Event('cw-mobile-settings-ready'));
   }
 
   function showAllWidgets() {
@@ -2220,6 +2238,9 @@
       }
     });
     document.addEventListener("cw-mobile-navigation-ready", () => updateMobilePicker());
+    window.addEventListener('cw:auth-state-changed', () => updateMobilePicker());
+    window.addEventListener('storage', event => { if (event.key === 'cw.mobile.playingCard' || event.key === null) updateMobilePicker(); });
+    document.addEventListener('config-saved', () => updateMobilePicker());
     document.addEventListener("tab-changed", (event) => {
       const id = event?.detail?.id || event?.detail?.tab;
 

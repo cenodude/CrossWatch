@@ -31,7 +31,7 @@
             <span class="pc-progress-pct"></span>
             <span class="pc-progress-end">
               <span class="pc-progress-time"></span>
-              <button class="pc-close" type="button" title="Hide" aria-label="Hide card"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+              <button class="pc-close" type="button" title="Minimize" aria-label="Minimize card"><span class="material-symbols-rounded" aria-hidden="true">minimize</span></button>
             </span>
           </div>
           <div class="pc-progress-bg"><div class="pc-progress"></div></div>
