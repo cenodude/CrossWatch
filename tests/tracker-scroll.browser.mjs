@@ -144,6 +144,17 @@ test("Compact watch summary uses cached history and omits missing or incomplete 
     await select(0);
     const summary = panel.locator('.trk-watch-summary');
     await summary.locator('[role="progressbar"]').waitFor();
+    assert.equal(await panel.locator('.trk-detail-copy .trk-status-btn').count(),1);
+    assert.equal(await panel.locator('.trk-note-block .trk-status-btn').count(),0);
+    assert.equal(await panel.locator(':scope>.trk-note-block:last-child').count(),1);
+    assert.equal(await panel.locator('.trk-note-empty').textContent(),'addAdd notes');
+    await panel.locator('.trk-status-btn').click();
+    assert.equal(await panel.locator('[data-trk-set-status]').count(),5);
+    await checkScroll(page,theme + ' title status');
+    await page.keyboard.press('Escape');
+    await panel.locator('.trk-note-empty').click();
+    await page.locator('.trk-sheet:visible [data-trk-form="notes"]').waitFor();
+    await page.keyboard.press('Escape');
     assert.equal(await summary.locator('[role="progressbar"]').getAttribute('aria-valuenow'),'2');
     assert.match(await summary.textContent(),/8 of 348 episodes watched.*340 episodes left/);
     const row = label => summary.locator('.trk-watch-summary-stats>div').filter({has:page.locator('dt',{hasText:label})}).locator('dd');

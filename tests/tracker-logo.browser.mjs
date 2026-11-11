@@ -87,6 +87,9 @@ test('Tracker media card controls and watch history', async t => {
   const modal = page.locator('#cw-media-modal');
   assert.equal(await modal.locator('[data-mm-trailer]').getAttribute('class'), 'cw-mm-btn');
   assert.equal(await modal.locator('.cw-mm-chips [data-status]').count(), 0);
+  assert.equal(await modal.locator('.cw-mm-trk-header [data-mm-status-picker]').count(), 1);
+  assert.equal(await modal.locator('.cw-mm-trk>.cw-mm-trk-notes:last-child [data-mm-trk="notes"]').count(), 1);
+  assert.equal(await modal.locator('.cw-mm-trk-actions [data-mm-trk="notes"]').count(), 0);
   assert.equal(await modal.locator('[data-mm-providers]').evaluate(el=>el.open), false);
   await modal.locator('[data-mm-providers] summary').click();
   await page.waitForFunction(()=>document.querySelector('[data-mm-providers]').open);
