@@ -28,7 +28,7 @@ from .provider_instances import _safe_profile_dir_name, normalize_instance_id
 
 FEATURES: tuple[str, ...] = ("watchlist", "history", "ratings", "progress", "collection")
 DB_NAME = "tracker.db"
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 NOTES = "notes"
 NOTE_STATUSES: tuple[str, ...] = ("watching", "planned", "completed", "on_hold", "dropped")
 _NOTES_FILE = "notes.json"
@@ -83,6 +83,7 @@ _ITEM_NOTE_KEY = (
 
 _SCHEMA = (
     "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS history_revisions(day TEXT PRIMARY KEY, revision TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS states(scope TEXT NOT NULL, feature TEXT NOT NULL, ts INTEGER NOT NULL,"
     " updated_ns INTEGER NOT NULL, PRIMARY KEY(scope, feature))",
     "CREATE TABLE IF NOT EXISTS items(scope TEXT NOT NULL, feature TEXT NOT NULL, item_key TEXT NOT NULL,"
@@ -547,6 +548,22 @@ class TrackerStore:
             conn.executemany("UPDATE changes SET find=? WHERE id=?", [(_change_find(b, a), i) for i, b, a in rows])
         for statement in _INDEXES:
             conn.execute(statement)
+        conn.execute("INSERT OR IGNORE INTO history_revisions VALUES('', hex(randomblob(16)))")
+        for table in ("items", "checks"):
+            for event, refs in (("INSERT", ("NEW",)), ("DELETE", ("OLD",)), ("UPDATE", ("OLD", "NEW"))):
+                condition = ""
+                if event == "UPDATE":
+                    fields = ("scope", "feature", "item_key", "data", "when_at", "kind", "show_key") if table == "items" else ("scope", "feature", "item_key", "runtime")
+                    condition = " WHEN " + " OR ".join(f"OLD.{field} IS NOT NEW.{field}" for field in fields)
+                statements = []
+                for ref in refs:
+                    scope = f"{ref}.scope='' AND {ref}.feature='history'"
+                    if table == "items":
+                        source = f"SELECT substr({ref}.when_at,1,10), hex(randomblob(16)) WHERE {scope} AND {ref}.kind IN ('movie','episode')"
+                    else:
+                        source = f"SELECT substr(i.when_at,1,10), hex(randomblob(16)) FROM items i WHERE {scope} AND {ref}.runtime IS NOT NULL AND i.scope='' AND i.feature='history' AND i.item_key={ref}.item_key AND i.kind IN ('movie','episode')"
+                    statements.append("INSERT INTO history_revisions(day,revision) " + source + " ON CONFLICT(day) DO UPDATE SET revision=excluded.revision;")
+                conn.execute(f"CREATE TRIGGER IF NOT EXISTS history_revision_{table}_{event.lower()} AFTER {event} ON {table}{condition} BEGIN {' '.join(statements)} END")
 
     def _cached(self, conn: sqlite3.Connection, name: str, args: tuple[Any, ...], compute: Callable[[], Any]) -> Any:
         rev = _rev(conn)

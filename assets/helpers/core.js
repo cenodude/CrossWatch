@@ -1006,6 +1006,7 @@
     writeRouteHash(tab);
 
     if (state.currentTab === tab && !(tab === "editor" && byId("page-editor")?.querySelector("[data-editor-load-error]"))) {
+      if (tab === "tracker" && window.location.hash.startsWith("#tracker?")) await window.TrackerPage?.mount?.(byId("page-tracker"));
       if (tab === "interactive_sync") window.InteractiveSync?.refresh?.();
       if (tab === "maintenance") await window.MaintenancePage?.mount?.(byId("page-maintenance"));
       if (tab === "capture_compare") await window.CaptureComparePage?.mount?.(byId("page-capture_compare"));

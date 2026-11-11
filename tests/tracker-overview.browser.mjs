@@ -19,7 +19,7 @@ async function fixture(t, theme, {realMedia = false, touch = true, width = 1440,
   await page.clock.setFixedTime(new Date("2026-11-10T12:00:00Z"));
   page.setDefaultTimeout(7000);
   const errors = [], writes = [], requests = [], drops = [];
-  let empty = false, fail = false, metadata = true, release;
+  let empty = false, fail = false, metadata = true, release, reviewMonth = "2026-10";
   let hold = null;
   page.on("pageerror", error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors,[]));
@@ -53,7 +53,9 @@ async function fixture(t, theme, {realMedia = false, touch = true, width = 1440,
     let json = {ok:true};
     if (path === "/api/tracker/summary") json = {provider_instance:instance,instances:[{id:"default",label:"Default"},{id:"other",label:"Second tracker"}],counts:{history:24},health:{history:{attention:2}},notes:{total:0,statuses:{},tags:[]}};
     if (path === "/api/tracker/stats") json = {week:4,month:15,year:244,total:244};
-    if (path === "/api/tracker/overview") json = {metadata_available:metadata,continue:empty ? [] : rows,recent:empty ? [] : rows.map(row=>({...row,progress_percent:null,ref:{feature:"history",key:row.key},plays:2}))};
+    if (path === "/api/tracker/overview/revision") json = {revision:"fixture",review_month:reviewMonth};
+    if (path === "/api/tracker/overview/month") json = {ok:true,month:"2026-10",current_month:"2026-11",generated:1,pending:false,stale:false,report:{month:"2026-10",plays:0,titles:[],genres:[]}};
+    if (path === "/api/tracker/overview") json = {revision:"fixture",review_month:reviewMonth,metadata_available:metadata,continue:empty ? [] : rows,recent:empty ? [] : rows.map(row=>({...row,progress_percent:null,ref:{feature:"history",key:row.key},plays:2}))};
     if (path === "/api/tracker/overview/shows") {
       const pending = hold;
       if (pending && instance === "default") await pending;
@@ -83,7 +85,7 @@ async function fixture(t, theme, {realMedia = false, touch = true, width = 1440,
   await page.evaluate(() => TrackerPage.mount(document.querySelector("#page-tracker")));
   await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
   await page.evaluate(() => document.fonts.ready);
-  return {page,writes,requests,drops,airing:value=>{airing=value;},empty:value=>{empty=value;},fail:value=>{fail=value;},metadata:value=>{metadata=value;},hold:()=>{hold=new Promise(resolve=>{release=resolve;});},release:()=>{hold=null;release?.();}};
+  return {page,writes,requests,drops,reviewMonth:value=>{reviewMonth=value;},airing:value=>{airing=value;},empty:value=>{empty=value;},fail:value=>{fail=value;},metadata:value=>{metadata=value;},hold:()=>{hold=new Promise(resolve=>{release=resolve;});},release:()=>{hold=null;release?.();}};
 }
 
 async function choose(page, selector, value) {
@@ -91,6 +93,102 @@ async function choose(page, selector, value) {
   await button.click();
   await page.locator(`.cw-icon-select-menu:not(.hidden) [data-value="${value}"]`).click();
 }
+
+test("Monthly notification links open the requested tracker and month",async t => {
+  const {page}=await fixture(t,"flat-dark",{touch:false});
+  await page.addScriptTag({url:'/assets/helpers/core.js'});
+  await page.evaluate(()=>window.showTab('tracker'));
+  await page.addScriptTag({url:'/assets/helpers/notifications.js'});
+  let pending=true;
+  await page.route('https://overview.test/api/tracker/overview/month**',route=>{
+    const url=new URL(route.request().url());
+    return route.fulfill({json:{month:url.searchParams.get('month'),current_month:'2026-11',pending,stale:pending,report:pending?null:{plays:0,titles:[],genres:[]}}});
+  });
+  await choose(page,'#trk-instance','other');
+  await page.locator('[data-trk-month]').click();
+  await page.locator('.mr-month-input input').fill('2025-08');
+  await page.locator('.mr-month-input input').dispatchEvent('change');
+  await page.waitForResponse(response=>response.url().includes('month=2025-08'));
+  await page.locator('.mr-nav [data-mr="back"]').click();
+  pending=false;
+  await page.locator('#cw-notifications-button').click();
+  const link=page.locator('.cw-notification[href="#tracker?instance=other&month=2025-08"]');
+  await link.waitFor();
+  const response=page.waitForRequest(request=>request.url().includes('/overview/month?') && request.url().includes('month=2025-08'));
+  await link.click();
+  const url=new URL((await response).url());
+  assert.equal(url.searchParams.get('provider_instance'),'other');
+  assert.equal(url.searchParams.get('month'),'2025-08');
+  await page.locator('.mr-empty').waitFor();
+  assert.equal(await page.locator('.mr-month-input input').inputValue(),'2025-08');
+});
+
+test("Monthly review opens lazily from Overview and returns to the tracker",async t => {
+  const {page,requests} = await fixture(t,"flat-dark",{touch:false});
+  assert.equal(requests.includes("/api/tracker/overview/month"),false);
+  await page.locator("[data-trk-month]").click();
+  await page.locator(".mr-empty").waitFor();
+  assert.equal(await page.locator("#page-tracker>.cw-root").isVisible(),false);
+  assert.equal(requests.filter(p=>p==="/api/tracker/overview/month").length,1);
+  await page.locator('.mr-nav [data-mr="back"]').click();
+  assert.equal(await page.locator("[data-trk-month]").isVisible(),true);
+  assert.equal(await page.locator(".mr-page").count(),0);
+});
+
+test("Monthly banner and poster share the chosen holiday theme",async t=>{
+  const {page,requests}=await fixture(t,"flat-dark",{touch:false});
+  await page.waitForFunction(()=>document.querySelector('.trk-month-banner')?.dataset.monthTheme === 'halloween');
+  await page.locator('[data-trk-month]').click();
+  await page.locator('.mr-empty').waitFor();
+  await page.locator('.mr-options>summary').click();
+  await page.selectOption('[data-mr-theme]','christmas');
+  assert.equal(await page.locator('.mr-page').getAttribute('data-month-theme'),'christmas');
+  await page.locator('.mr-nav [data-mr="back"]').click();
+  await page.waitForFunction(()=>document.querySelector('.trk-month-banner')?.dataset.monthTheme === 'christmas');
+  assert.equal(await page.locator('.trk-month-decoration .mr-ornaments').count(),1);
+  assert.equal(requests.filter(path=>path==='/api/tracker/overview/month').length,1);
+  await mkdir('.tmp/month-review',{recursive:true});
+  await page.locator('.trk-month-banner').screenshot({path:'.tmp/month-review/christmas-banner.png'});
+});
+
+test("Monthly banner dismissal persists per user and tracker until a newer report is ready",async t=>{
+  const app = await fixture(t,"flat-dark",{touch:false}), {page,requests} = app;
+  await page.locator('[data-trk-month-dismiss]').click();
+  assert.equal(await page.locator('.trk-month-banner').count(),0);
+  assert.equal(requests.includes('/api/tracker/overview/month'),false);
+  await page.locator('.trk-others summary').click();
+  await page.locator('[data-trk-month-open]').click();
+  await page.locator('.mr-empty').waitFor();
+  await page.locator('.mr-nav [data-mr="back"]').click();
+  assert.equal(await page.locator('.trk-month-banner').count(),0);
+  const refresh = async()=>{
+    await page.locator('.trk-tabs [data-trk-view="history"]').click();
+    await page.locator('[data-trk-view="overview"]').click();
+    await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
+  };
+  await refresh();
+  assert.equal(await page.locator('.trk-month-banner').count(),0);
+  await choose(page,'#trk-instance','other');
+  await page.locator('[data-trk-month]').waitFor();
+  await choose(page,'#trk-instance','default');
+  await page.waitForFunction(()=>!document.querySelector('.trk-month-banner'));
+  await page.evaluate(()=>{window.CW.AuthState.read=()=>({user:{id:"ann"},profileId:"ann",role:"user",isAdmin:false,permissions:{write:true}});});
+  await refresh();
+  await page.locator('[data-trk-month]').waitFor();
+  await page.locator('[data-trk-month-dismiss]').click();
+  await refresh();
+  assert.equal(await page.locator('.trk-month-banner').count(),0);
+  app.reviewMonth("");
+  await refresh();
+  assert.equal(await page.locator('.trk-month-banner').count(),0);
+  app.reviewMonth("2026-11");
+  await page.evaluate(()=>document.dispatchEvent(new Event("visibilitychange")));
+  await page.locator('[data-trk-month="2026-11"]').waitFor();
+  await page.setViewportSize({width:390,height:844});
+  await page.locator('[data-trk-month-dismiss]').click();
+  await choose(page,'#trk-mobile-view','month-review');
+  await page.locator('.mr-empty').waitFor();
+});
 
 for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overview layout and actions across devices`,async t => {
   const app = await fixture(t,theme), {page,writes} = app;
@@ -162,7 +260,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   await page.setViewportSize({width:390,height:844});
   await choose(page,"#trk-mobile-view","cleanup");
   await page.locator(".trk-toolbar-cleanup").waitFor();
-  assert.equal(await page.locator('#trk-mobile-view optgroup[label="Others"] option').textContent(),"Others · Clean up (2)");
+  assert.equal(await page.locator('#trk-mobile-view optgroup[label="Others"] option[value="cleanup"]').textContent(),"Others · Clean up (2)");
   await choose(page,"#trk-mobile-view","overview");
   await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
   await page.setViewportSize({width:1440,height:900});
