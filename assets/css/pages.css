@@ -1928,7 +1928,7 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 @media(prefers-reduced-motion:reduce){#page-tracker .trk-overview-actions,#page-tracker .trk-overview-peek{transition:none}}
 #page-tracker .trk-calendar-actions{display:flex;align-items:center;gap:6px}
 #page-tracker .trk-calendar-actions .cw-btn{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;padding:0 10px;cursor:pointer}
-#page-tracker .trk-calendar{display:flex;gap:10px;min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain;border-radius:14px}
+#page-tracker .trk-calendar{container-type:inline-size;display:flex;gap:10px;min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain;border-radius:14px}
 #page-tracker .trk-calendar::-webkit-scrollbar{display:none}
 #page-tracker .trk-calendar-day{position:relative;display:flex;flex:0 0 52px;flex-direction:column;align-items:center;min-width:0;height:210px;border-radius:14px;box-sizing:border-box}
 #page-tracker .trk-calendar-day>time{display:grid;gap:4px;padding-top:14px;text-align:center}
@@ -1936,7 +1936,7 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-calendar-day time strong{font-size:22px;line-height:1.1}
 #page-tracker .trk-calendar-today{position:absolute;bottom:14px;writing-mode:vertical-rl;transform:rotate(180deg);font-size:12px;font-weight:600}
 #page-tracker .trk-calendar-day.has-releases{flex:0 0 auto;flex-direction:row;gap:10px}
-#page-tracker .trk-calendar-release{position:relative;isolation:isolate;display:block;flex:0 0 auto;width:clamp(240px,26vw,440px);height:100%;padding:16px;border:0;border-radius:14px;overflow:hidden;text-align:left;font:inherit;cursor:pointer}
+#page-tracker .trk-calendar-release{position:relative;isolation:isolate;display:block;flex:0 0 auto;width:clamp(240px,calc((100cqw - var(--calendar-empty-days,13)*62px + 10px)/var(--calendar-releases,1) - 10px),960px);height:100%;padding:16px;border:0;border-radius:14px;overflow:hidden;text-align:left;font:inherit;cursor:pointer}
 #page-tracker .trk-calendar-release img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
 #page-tracker .trk-calendar-release img[hidden]{display:none}
 #page-tracker .trk-calendar-release::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none}

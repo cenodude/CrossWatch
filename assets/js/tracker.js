@@ -493,10 +493,18 @@
       if (!byDay.has(row.air_date)) byDay.set(row.air_date, []);
       byDay.get(row.air_date).push({row, index});
     });
-    const days = Array.from({length:30}, (_, offset) => {
+    const dates = Array.from({length:30}, (_, offset) => {
       const date = new Date(`${today()}T12:00:00`);
       date.setDate(date.getDate() + offset);
       const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      return {date, iso};
+    });
+    const densities = new Map([0, 14, 16].map(start => {
+      const counts = dates.slice(start, start + 14).map(({iso}) => byDay.get(iso)?.length || 0);
+      return [start, {releases:Math.max(1, counts.reduce((sum, count) => sum + count, 0)), empty:counts.filter(count => !count).length}];
+    }));
+    const days = dates.map(({date, iso}, offset) => {
+      const density = densities.get(Math.min(16, Math.floor(offset / 14) * 14));
       const weekday = date.toLocaleDateString(undefined, {weekday:"short"});
       const releases = (byDay.get(iso) || []).sort((a, b) => cardTitle(a.row).localeCompare(cardTitle(b.row)) || a.row.season - b.row.season || a.row.episode - b.row.episode);
       const day = `<time datetime="${iso}"><span>${esc(weekday)}</span><strong>${date.getDate()}</strong></time>`;
@@ -506,7 +514,7 @@
         const label = offset === 0 ? "Today" : row.episode === 1 ? "Season premiere" : offset === 1 ? "Tomorrow" : `In ${offset} days`;
         return `<button type="button" class="trk-calendar-release" data-trk-overview-open="airing:${index}" aria-label="${esc(`${dayText(iso)}: ${title}, ${episodeLabel(row)}`)}">${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-calendar-date">${day}<small>${esc(label)}</small></span><span class="trk-overview-peek" aria-hidden="true">${icon("info")}</span><span class="trk-calendar-copy"><strong>${esc(title)}</strong><span>${esc([episodeLabel(row), row.episode_title].filter(Boolean).join(" · "))}</span></span></button>`;
       }).join("");
-      return `<div class="trk-calendar-day${releases.length ? " has-releases" : ""}${offset === 0 ? " is-today" : ""}" data-calendar-date="${iso}">${cards || `${day}${offset === 0 ? '<span class="trk-calendar-today">Today</span>' : ""}`}</div>`;
+      return `<div class="trk-calendar-day${releases.length ? " has-releases" : ""}${offset === 0 ? " is-today" : ""}" data-calendar-date="${iso}"${releases.length ? ` style="--calendar-releases:${density.releases};--calendar-empty-days:${density.empty}"` : ""}>${cards || `${day}${offset === 0 ? '<span class="trk-calendar-today">Today</span>' : ""}`}</div>`;
     }).join("");
     const notice = !data.metadata_available || !rows.length ? message : data.checking ? `Checking your shows${data.total ? ` · ${num(data.checked)} of ${num(data.total)}` : ""}…` : "";
     const problem = data.calendar_error ? "Some shows couldn't be checked. Refresh to try again." : data.unavailable ? `Episode dates are unavailable for ${plural(data.unavailable, "show", "shows")}.` : "";
@@ -545,6 +553,10 @@
         const dates = new Map([...timeline.children].map(day => [day.dataset.calendarDate, day]));
         for (const day of next.querySelector(".trk-calendar").children) {
           const old = dates.get(day.dataset.calendarDate);
+          if (old && old.getAttribute("style") !== day.getAttribute("style")) {
+            if (day.hasAttribute("style")) old.setAttribute("style", day.getAttribute("style"));
+            else old.removeAttribute("style");
+          }
           if (old && !old.isEqualNode(day)) old.replaceWith(day.cloneNode(true));
         }
         current.querySelectorAll(":scope > .trk-overview-notice").forEach(el => el.remove());

@@ -12,7 +12,7 @@ const assets = new Map();
 const rows = Array.from({length:20},(_,index) => ({key:`movie:${index}`,ref:{feature:"progress",key:`movie:${index}`},type:"movie",title:index === 1 ? 'A title with <script>window.injected=true</script>' : `Movie ${index + 1}`,year:2026,art:{kind:"movie",tmdb:String(index + 1)},ids:{tmdb:String(index + 1)},date:"2026-11-09T12:00:00Z",progress_percent:40,remaining_minutes:22}));
 const episodes = Array.from({length:12},(_,index) => ({key:`episode:${index}`,ref:{show:`tmdb:${index + 100}`},type:"episode",title:`Show ${index + 1}`,art:{kind:"tv",tmdb:String(index + 100)},show_ids:{tmdb:String(index + 100)},season:2,episode:index ? 3 : 1,episode_title:"The next chapter",air_date:new Date(Date.UTC(2026,10,10 + [1,5,5,10,12,14,16,18,20,22,25,29][index])).toISOString().slice(0,10),date:"2026-11-08T12:00:00Z"}));
 
-async function fixture(t, theme, {realMedia = false, touch = true, width = 1440} = {}) {
+async function fixture(t, theme, {realMedia = false, touch = true, width = 1440, airing = episodes} = {}) {
   const browser = await ({chromium,webkit})[process.env.CW_AUDIT_BROWSER || "chromium"].launch({headless:true});
   t.after(() => browser.close());
   const page = await browser.newPage({viewport:{width,height:900},hasTouch:touch,reducedMotion:"reduce"});
@@ -58,7 +58,7 @@ async function fixture(t, theme, {realMedia = false, touch = true, width = 1440}
       const pending = hold;
       if (pending && instance === "default") await pending;
       if (fail) return route.fulfill({status:503,json:{error:"unavailable"}});
-      json = {continue:empty ? [] : episodes.slice(0,2),airing:empty ? [] : episodes.map(row=>({...row,title:instance === "other" ? "Other tracker show" : row.title})),total:4,checked:4,done:true,unavailable:0,metadata_available:metadata};
+      json = {continue:empty ? [] : episodes.slice(0,2),airing:empty ? [] : airing.map(row=>({...row,title:instance === "other" ? "Other tracker show" : row.title})),total:4,checked:4,done:true,unavailable:0,metadata_available:metadata};
       return route.fulfill({contentType:"application/x-ndjson",body:JSON.stringify(json)+"\n"});
     }
     if (path === "/api/tracker/title") {
@@ -83,7 +83,7 @@ async function fixture(t, theme, {realMedia = false, touch = true, width = 1440}
   await page.evaluate(() => TrackerPage.mount(document.querySelector("#page-tracker")));
   await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
   await page.evaluate(() => document.fonts.ready);
-  return {page,writes,requests,drops,empty:value=>{empty=value;},fail:value=>{fail=value;},metadata:value=>{metadata=value;},hold:()=>{hold=new Promise(resolve=>{release=resolve;});},release:()=>{hold=null;release?.();}};
+  return {page,writes,requests,drops,airing:value=>{airing=value;},empty:value=>{empty=value;},fail:value=>{fail=value;},metadata:value=>{metadata=value;},hold:()=>{hold=new Promise(resolve=>{release=resolve;});},release:()=>{hold=null;release?.();}};
 }
 
 async function choose(page, selector, value) {
@@ -245,6 +245,40 @@ test("touch covers expose accessible quick actions and open the real media card"
   await page.locator('#cw-media-modal').waitFor();
   assert.equal(await page.locator('#cw-mm-title').getAttribute('aria-label'),"Movie 1");
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth+1),false);
+});
+
+test("airing cards share available width according to release density", async t => {
+  const app = await fixture(t,"flat-dark",{width:1900,touch:false,airing:episodes.slice(1,2)});
+  const {page,requests} = app;
+  const card = page.locator('.trk-calendar-release').first();
+  const width = () => card.evaluate(el => el.getBoundingClientRect().width);
+  const single = await width();
+  assert.ok(single > 800 && single <= 960);
+  assert.equal(await page.locator('.trk-calendar-day:not(.has-releases)').first().evaluate(el => el.getBoundingClientRect().width),52);
+  const requestCount = requests.length;
+  await page.setViewportSize({width:1440,height:900});
+  assert.ok(await width() < single);
+  assert.equal(requests.length,requestCount);
+  await page.setViewportSize({width:1900,height:900});
+  app.airing(episodes.slice(1,3));
+  await page.locator('[data-trk-action="refresh"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.trk-calendar-release').length === 2);
+  const paired = await card.evaluate(el => ({width:el.getBoundingClientRect().width,next:el.nextElementSibling.getBoundingClientRect().width}));
+  assert.ok(paired.width < single && paired.width >= 240);
+  assert.equal(paired.width,paired.next);
+  app.airing(episodes);
+  await page.locator('[data-trk-action="refresh"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.trk-calendar-release').length === 12);
+  assert.ok(await width() < paired.width);
+  await page.setViewportSize({width:390,height:844});
+  assert.ok(await width() <= 300);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1),false);
+  assert.equal(await page.locator('.trk-calendar').evaluate(el => el.scrollWidth > el.clientWidth),true);
+  await page.setViewportSize({width:1900,height:900});
+  app.empty(true);
+  await page.locator('[data-trk-action="refresh"]').click();
+  await page.waitForFunction(() => !document.querySelector('.trk-calendar-release'));
+  assert.equal(await page.locator('.trk-calendar-day').count(),30);
 });
 
 test("streaming overview preserves existing cards, batches rendering and aborts on navigation", async t => {
