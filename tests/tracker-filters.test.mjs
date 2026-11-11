@@ -15,7 +15,7 @@ function setup(view) {
   const state = {view,instance:"CW-P01",noteStatus:"dropped",noteTag:"Sci-fi",q:"Show",media:"show",sort:"recent",pageSize:50,offset:0,request:0,filtersOpen:false,month:"",hideDropped:false,notes:{total:3,statuses:{dropped:2},tags:[{tag:"Sci-fi",count:2}]}};
   const requests = [];
   const context = vm.createContext({state,URLSearchParams,inst:()=>"provider_instance=CW-P01",getJSON:async path=>{requests.push(new URL(path,"https://tracker.test"));return {total:0,items:[],shows:[],notes:[],months:[]};},loadProgress:()=>{},renderSlots:()=>{},renderMonths:()=>{},errorText:String,listFeature:()=>view === "cleanup" ? "history" : view,timelineOn:()=>view === "history",TIMELINE_PAGE:200,esc:String,num:String,STATUSES:[{id:"dropped",label:"Dropped"}],MEDIA:[],symbol:()=>"",chip:()=>"",FEATURES:[{id:"history",label:"History"}],HEALTH:[],healthOf:()=>({})});
-  vm.runInContext(`let monthsRequest=0; ${renders} ${main} ${months}`,context);
+  vm.runInContext(`let monthsRequest=0; let overviewController=null; ${source.slice(source.indexOf("  function stopOverview("), source.indexOf("  async function loadOverviewShows("))} ${renders} ${main} ${months}`,context);
   return {state,requests,run:code=>vm.runInContext(code,context)};
 }
 

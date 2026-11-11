@@ -22,6 +22,7 @@ async function fixture(t,theme,width) {
   t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width,height:900},isMobile:width<800,hasTouch:width<800,reducedMotion:'reduce'});
   page.setDefaultTimeout(6000);
+  await page.addInitScript(() => { if (!localStorage.getItem("cw.tracker.view.v3")) localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"history"})); });
   const errors=[];
   page.on('pageerror',error=>errors.push(error.message));
   t.after(()=>assert.deepEqual(errors,[]));
@@ -63,12 +64,66 @@ async function fixture(t,theme,width) {
   const select=async index=>{
     await page.locator('.trk-play').nth(index).click();
     if(width<800) {
-      await page.locator('.trk-sheet').waitFor();
-      await page.locator('.trk-sheet [data-trk-sheet="close"]').first().click();
+      await page.locator('[data-trk-detail="back"]').waitFor();
+      await page.locator('[data-trk-detail="back"]').click();
     }
   };
   return {page,select,release,logoRequested};
 }
+
+test('Tracker media card controls and watch history', async t => {
+  const {page, release} = await fixture(t, 'flat-dark', 1440);
+  release();
+  await page.evaluate(async () => {
+    window.mediaActions = [];
+    CW.Trailer = {has: () => true};
+    CW.ProfileDateTime.format = (date, options) => new Intl.DateTimeFormat('en-GB', {...options, timeZone:'UTC', hourCycle:'h23'}).format(date);
+    window.mediaData = {title:{art:{tmdb:3}}, note_key:'show:3', note:{status:'dropped'}, plays:Array.from({length:7}, (_, i) => ({key:`play:${i}`, season:2, episode:i+1, date:`2026-11-0${i+1}T20:29:00Z`}))};
+    await CW.ProfileMediaModal.open({type:'show', ids:{tmdb:3}}, {tracker:{label:'Default', data:mediaData, onAction:async(action, key) => {
+      mediaActions.push([action,key]);
+      if (action === 'status') {mediaData.note.status = key; CW.ProfileMediaModal.updateTracker(mediaData);}
+    }}});
+  });
+  const modal = page.locator('#cw-media-modal');
+  assert.equal(await modal.locator('[data-mm-trailer]').getAttribute('class'), 'cw-mm-btn');
+  assert.equal(await modal.locator('.cw-mm-chips [data-status]').count(), 0);
+  assert.equal(await modal.locator('[data-mm-providers]').evaluate(el=>el.open), false);
+  await modal.locator('[data-mm-providers] summary').click();
+  await page.waitForFunction(()=>document.querySelector('[data-mm-providers]').open);
+  await page.evaluate(()=>CW.ProfileMediaModal.updateTracker(mediaData));
+  assert.equal(await modal.locator('[data-mm-providers]').evaluate(el=>el.open), true);
+  await modal.locator('[data-mm-providers] summary').click();
+  assert.equal(await modal.locator('.cw-mm-trk-play').count(), 5);
+  assert.equal(await modal.locator('.cw-mm-trk-play b').first().textContent(), 'S2 E7');
+  assert.match(await modal.locator('.cw-mm-trk-play').first().textContent(), /7 Nov 2026.*20:29/);
+  assert.equal(await modal.locator('[data-mm-trk-delete]').count(), 0);
+  await modal.locator('[data-mm-history-more]').click();
+  assert.equal(await modal.locator('.cw-mm-trk-play').count(), 7);
+  await modal.locator('[data-mm-history-more]').click();
+  await modal.locator('[data-mm-trk-edit]').first().click();
+  assert.deepEqual(await page.evaluate(()=>mediaActions[0]), ['edit','play:6']);
+  await modal.locator('[data-mm-status-picker] summary').click();
+  assert.equal(await modal.locator('[data-mm-trk-status]:visible').count(), 6);
+  await page.keyboard.press('Escape');
+  assert.equal(await modal.isVisible(), true);
+  assert.equal(await modal.locator('[data-mm-status-picker]').evaluate(el=>el.open), false);
+  await modal.locator('[data-mm-status-picker] summary').click();
+  await modal.locator('[data-mm-trk-status="watching"]').click();
+  await page.waitForFunction(()=>document.querySelector('.cw-mm-trk .trk-status-btn')?.dataset.status === 'watching');
+  assert.deepEqual(await page.evaluate(()=>mediaActions[1]), ['status','watching']);
+  await modal.locator('[data-mm-status-picker] summary').click();
+  await modal.locator('[data-mm-trk-status=""]').click();
+  await page.waitForFunction(()=>document.querySelector('.cw-mm-trk .trk-status-btn')?.dataset.status === '');
+  assert.equal(await modal.locator('.cw-mm-body').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
+  await mkdir('.tmp/media-card', {recursive:true});
+  await modal.screenshot({path:'.tmp/media-card/updated.png'});
+  await page.evaluate(()=>{mediaData.note_key=null;CW.ProfileMediaModal.updateTracker(mediaData);});
+  await modal.locator('[data-mm-status-picker] summary').click();
+  assert.equal(await modal.locator('[data-mm-trk-status]:disabled').count(),6);
+  await page.evaluate(()=>CW.ProfileMediaModal.open({type:'movie',ids:{tmdb:1}}));
+  assert.equal(await modal.locator('[data-mm-providers]').count(),0);
+  assert.equal(await modal.locator('section.cw-mm-lives').count(),1);
+});
 
 for(const theme of ['original','flat-dark','flat-light']) for(const width of [320,390,1440]) {
   test(`${theme}: header logos and fallback at ${width}px`,async t=>{
@@ -150,6 +205,20 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
     assert.equal(await page.locator('.trk-grid-status').count(),2);
     const infoButton=page.locator('.trk-grid-card [data-trk-row-info]').nth(2);
     assert.equal(await infoButton.getAttribute('aria-label'),'Open details for House of the Dragon');
+    assert.equal(await infoButton.evaluate(el=>!!el.closest('.trk-grid-art')),true);
+    assert.equal(await page.locator('.trk-grid-copy [data-trk-row-info]').count(),0);
+    if (width >= 800) {
+      await page.mouse.move(0,0);
+      assert.equal(await infoButton.evaluate(el=>getComputedStyle(el).opacity),'0');
+      await page.keyboard.press('Tab');
+      await infoButton.focus();
+      assert.equal(await infoButton.evaluate(el=>getComputedStyle(el).opacity),'1');
+      await infoButton.evaluate(el=>el.blur());
+      await page.locator('.trk-grid-art').nth(2).hover();
+    }
+    assert.equal(await infoButton.evaluate(el=>getComputedStyle(el).opacity),'1');
+    const infoBounds=await infoButton.boundingBox();
+    assert.ok(infoBounds.width>=44&&infoBounds.height>=44);
     if(process.env.CW_LOGO_SCREENSHOTS) await page.locator('.trk-grid-card').first().screenshot({path:`${process.env.CW_LOGO_SCREENSHOTS}/${theme}-${width}-grid.png`});
     await infoButton.click();
     const modal=page.locator('#cw-media-modal');
@@ -157,7 +226,7 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
     assert.equal(await page.locator('.trk-sheet:visible').count(),0);
     assert.equal(await modal.locator('.cw-mm-title-text').isVisible(),false);
     assert.equal(await modal.locator('#cw-mm-title').getAttribute('aria-label'),'House of the Dragon');
-    assert.equal(await modal.locator('.cw-mm-chips [data-status="watching"]').textContent(),'Watching');
+    assert.equal(await modal.locator('.cw-mm-trk .trk-status-btn').getAttribute('data-status'),'watching');
     const modalLogo=await modal.locator('.cw-mm-title-logo').boundingBox();
     assert.ok(modalLogo.x>=0&&modalLogo.x+modalLogo.width<=width&&modalLogo.height<=(width<=720?64:90));
     if(process.env.CW_LOGO_SCREENSHOTS) await modal.screenshot({path:`${process.env.CW_LOGO_SCREENSHOTS}/${theme}-${width}-card.png`});
@@ -166,7 +235,7 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
       data.note.status='on_hold';
       CW.ProfileMediaModal.updateTracker(data);
     });
-    assert.equal(await modal.locator('.cw-mm-chips [data-status="on_hold"]').textContent(),'On hold');
+    assert.equal(await modal.locator('.cw-mm-trk .trk-status-btn').getAttribute('data-status'),'on_hold');
     await page.evaluate(()=>CW.ProfileMediaModal.open({type:'movie',title:'Missing logo',ids:{tmdb:'2'}}));
     await page.waitForFunction(()=>{const image=document.querySelector('.cw-mm-title-logo');return image?.complete&&!image.naturalWidth;});
     assert.equal(await modal.locator('.cw-mm-title-text').isVisible(),true);

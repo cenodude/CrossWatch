@@ -9,7 +9,7 @@ import {mappingAppliesToRow, candidateConflict, changeSummary, correctedItem, co
 
 test("status conflicts show actual labels and default to leaving both sides unchanged", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
-  const render = source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
+  const render = source.slice(source.indexOf("  function closeButtonHTML()"), source.indexOf("  function reportHTML()")) + source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
   const value = source.slice(source.indexOf("  function value("), source.indexOf("  const duration ="));
   const row = {id:"status-1",result:"conflict",feature:"history",key:"private-scope-json",source:"AniList",target:"SIMKL",winner:"",
     left:{title:"Example",watch_status:"on_hold",_cw_status_mapping:true},right:{title:"Example",watch_status:"dropped",_cw_status_mapping:true}};
@@ -421,7 +421,7 @@ test("failed plans identify partial progress proposals and expose failure detail
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
   const fn = source.slice(source.indexOf("  const noticeSubject"), source.indexOf("  function aiQuestion()"))
     + source.slice(source.indexOf("  function statusMappingHTML("), source.indexOf("  const duration ="))
-    + source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
+    + source.slice(source.indexOf("  function closeButtonHTML()"), source.indexOf("  function reportHTML()")) + source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
   const rows = [1,2].map(id => ({id:String(id), key:`movie:${id}`, item:{type:"movie",title:`Movie ${id}`},
     feature:"progress", operation:"add", result:"add", provider:"FLOPPY", instance:"default", selectable:true}));
   const context = {host:{contains:()=>false,innerHTML:""},document:{activeElement:null},window:{},
@@ -513,12 +513,12 @@ test("notices stay visible and the status mapping count links to them", () => {
 test("completion report distinguishes cloud outcomes and escapes titles", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
   const fn = source.slice(source.indexOf("  function statusMappingHTML("), source.indexOf("  const duration ="))
-    + source.slice(source.indexOf("  function reportHTML()"), source.indexOf("  function render()"));
+    + source.slice(source.indexOf("  function closeButtonHTML()"), source.indexOf("  function render()"));
   const report = {outcome:"success", totals:{added:1,updated:0,removed:0}, features:[], cloud_results:
     ["dated","present","cached","plex_discover_date_pending"].map(outcome => ({title:"<Example>",key:"movie:1",provider:"PLEX",instance:"own",outcome}))};
   const context = {session:{report}, esc:value=>String(value ?? "").replaceAll("<","&lt;").replaceAll(">","&gt;"),
     number:value=>Number(value || 0), duration:()=>"", requestBreakdown:()=>"", endpoint:(p,i)=>`${p} (${i})`,
-    reportIssuesHTML:()=>"", origin:()=>["main","Main"]};
+    reportIssuesHTML:()=>"", pending:()=>false, origin:()=>["main","Main"]};
   vm.createContext(context);
   vm.runInContext(fn + "globalThis.html = reportHTML();", context);
   assert.match(context.html, /watched and original date restored/);
@@ -551,7 +551,7 @@ test("completion report distinguishes cloud outcomes and escapes titles", () => 
 
 test("Tracker import reviews use the shared selection controls without permanent mapping edits", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
-  const fn = source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
+  const fn = source.slice(source.indexOf("  function closeButtonHTML()"), source.indexOf("  function reportHTML()")) + source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
   const context = {host:{contains:()=>false,innerHTML:""},document:{activeElement:null},window:{},
     session:{tracker_import:true,status:"review",pair:{source:"TRAKT",target:"CROSSWATCH"},counts:{changes:1,selected:1},features:["history"]},
     pageData:{total:1,items:[{id:"one",key:"tmdb:949",item:{type:"movie",title:"Heat"},feature:"history",operation:"add",result:"add",provider:"CROSSWATCH",selectable:true,selected:true}]},
@@ -574,7 +574,7 @@ test("Tracker import reviews use the shared selection controls without permanent
 
 test("Review footer explains the one-time dry run confirmation", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
-  const fn = source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
+  const fn = source.slice(source.indexOf("  function closeButtonHTML()"), source.indexOf("  function reportHTML()")) + source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
   const context = {host:{contains:()=>false,innerHTML:""},document:{activeElement:null},window:{},
     session:{dry_run:true,status:"review",pair:{source:"WETRAKR",target:"FLOPPY"},counts:{changes:1,selected:1},features:["history"]},
     pageData:{total:1,items:[{id:"one",key:"tmdb:949",item:{type:"movie",title:"Heat"},feature:"history",operation:"add",result:"add",provider:"FLOPPY",selectable:true,selected:true}]},

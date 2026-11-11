@@ -52,7 +52,7 @@ test("cleanup attention filter requests and retains unverified episodes", async 
   let requested;
   const app = vm.createContext({
     state, URLSearchParams, listFeature: () => "history", timelineOn: () => false,
-    renderSlots: () => {}, renderMonths: () => {}, errorText: String,
+    renderSlots: () => {}, renderMonths: () => {}, errorText: String, stopOverview: () => {},
     getJSON: async url => {requested = new URL(url, "https://tracker.test"); return {items: [record], total: 1};},
   });
   vm.runInContext(source.slice(source.indexOf("  async function loadMain("), source.indexOf("  let progressQueue")), app);

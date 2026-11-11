@@ -143,6 +143,40 @@ test("flat-dark surfaces, secondary text and disabled sync actions remain distin
 });
 
 
+for (const theme of ["original", "flat-dark", "flat-light"]) for (const state of ["review", "complete", "report"]) {
+  test(`${theme}: ${state} footer can close the session across devices`, async t => {
+    const page = await open(t, "interactive_sync", true, theme);
+    const report = {outcome: "success", requested: 0, totals: {added: 0, updated: 0, removed: 0, skipped: 0}, features: [], issue_count: 0};
+    const session = {id: "review", revision: 1, status: state === "report" ? "complete" : state, pair, counts: {changes: 1, selected: 1}, ...(state === "report" ? {report} : {})};
+    let closed = 0;
+    await page.route(url => url.pathname === "/api/interactive-sync/review", route => {
+      if (route.request().method() === "DELETE") { closed++; return route.fulfill({json: {ok: true}}); }
+      return route.fulfill({json: session});
+    });
+    await page.route(url => url.pathname === "/api/interactive-sync/review/rows", route => route.fulfill({json: {items: [], total: 0, counts: session.counts, selection_version: 1}}));
+    await page.evaluate(() => InteractiveSync.refresh());
+    const footer = page.locator(".is-footer");
+    const close = footer.getByRole("button", {name: state === "report" ? "Close report" : "Close review", exact: true});
+    await close.waitFor();
+    assert.equal(await close.isEnabled(), true);
+    if (state === "review") assert.equal(await footer.getByRole("button", {name: "Apply selected (1)", exact: true}).isEnabled(), true);
+    else assert.equal(await footer.getByRole("link", {name: "Back to Synchronization", exact: true}).count(), 1);
+    for (const [width, height] of viewports) {
+      await page.setViewportSize({width, height});
+      await footer.scrollIntoViewIfNeeded();
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
+      const clipped = await footer.locator("button,a").evaluateAll(controls => controls.filter(el => {
+        const r = el.getBoundingClientRect();
+        return r.left < 0 || r.right > innerWidth + 1 || r.top < 0 || r.bottom > innerHeight + 1;
+      }).map(el => el.textContent.trim()));
+      assert.deepEqual(clipped, [], `${state} ${width}x${height}`);
+    }
+    await close.click();
+    await page.waitForURL("**/#settings/sync");
+    assert.equal(closed, 1);
+  });
+}
+
 test("sign-in and verification controls remain reachable in portrait and landscape", async t => {
   const html = execFileSync("python", ["-c", "from api.appAuthAPI import _login_html; print(_login_html(plex_sso_available=True, oidc_available=True, oidc_label='Sign in with your connected account'))"], {encoding: "utf8", maxBuffer: 1024 * 1024});
   const browser = await engines[process.env.CW_AUDIT_BROWSER || "chromium"].launch({headless: true});

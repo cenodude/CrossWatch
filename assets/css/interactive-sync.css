@@ -120,6 +120,7 @@
 .is-pagination label { display: flex; align-items: center; gap: 6px; }
 .is-page .is-pagination input { width: 76px; padding: 6px; }
 .is-footer { position: sticky; bottom: 16px; z-index: 4; display: flex; align-items: center; justify-content: space-between; gap: 20px; background: var(--is-surface); border: 1px solid var(--is-line); box-shadow: 0 8px 30px #0003; border-radius: 13px; padding: 18px 22px; margin-top: 8px; }
+.is-footer-actions { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; flex-shrink: 0; }
 .is-footer strong { font-size: 13px; }
 .is-footer small { display: block; color: var(--is-muted); font-size: 11px; margin-top: 4px; }
 .is-notices { padding: 14px 18px; border: 1px solid var(--is-line); border-radius: 10px; margin-bottom: 20px; font-size: 12px; color: var(--is-muted); }
@@ -257,7 +258,7 @@ html:has(dialog.is-mapping-dialog[open]) { overflow: hidden; }
 .is-report-checks strong { font-size: 23px; }
 .is-report-checks .needs-attention strong, .is-report p.is-report-warning { color: var(--is-warning); }
 .is-report p.is-report-accounting { font-size: 12px; margin: 24px 0; }
-.is-report-footer { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 24px 0; border-top: 1px solid var(--is-line); }
+.is-report-footer { gap: 24px; }
 .is-report-footer strong { font-size: 14px; }
 .is-report-footer small { display: block; margin-top: 7px; color: var(--is-muted); font-size: 12px; }
 @media (max-width: 800px) { .is-report-facts, .is-report-checks { grid-template-columns: repeat(2, minmax(0, 1fr)); } .is-report-outcome { flex-wrap: wrap; padding: 20px; } .is-report-duration { margin-left: 56px; } .is-report-footer { align-items: flex-start; flex-direction: column; } }
@@ -265,7 +266,7 @@ html:has(dialog.is-mapping-dialog[open]) { overflow: hidden; }
 .is-page .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 @media (prefers-reduced-motion: reduce) { .is-working > span { animation: none; } }
 @media (max-width: 800px) { .is-header { align-items: flex-start; flex-direction: column; gap: 16px; } .is-toolbar { flex-wrap: wrap; } .is-search { flex-basis: 100%; } .is-toolbar label:not(.is-search) { flex: 1; } .is-metrics > div { padding: 16px; } .is-footer { bottom: 8px; padding: 15px; } .is-footer small { max-width: 220px; } .is-table { min-width: 740px; } }
-@media (max-width: 480px) { .is-footer { align-items: stretch; flex-direction: column; gap: 12px; } .is-footer small { max-width: none; } .is-route { padding: 14px; gap: 10px; } .is-route-mode { display: none; } .is-page { padding: 12px 0 24px; } }
+@media (max-width: 480px) { .is-footer-actions { width: 100%; } .is-footer-actions > .is-btn { flex: 1; padding-inline: 10px; font-size: 12px; } .is-footer { align-items: stretch; flex-direction: column; gap: 12px; } .is-footer small { max-width: none; } .is-route { padding: 14px; gap: 10px; } .is-route-mode { display: none; } .is-page { padding: 12px 0 24px; } }
 
 .is-map-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .is-page .is-map-action { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 5px 9px; border-radius: 6px; font-size: 12px; font-weight: 400; white-space: nowrap; }

@@ -65,6 +65,16 @@ async function checkCards(page) {
 for (const theme of ["original", "flat-dark", "flat-light"]) {
   test(`${theme}: Setup, Connections, Synchronization and Maintenance settings fit across devices`, async t => {
     const page = await open(t, theme);
+    const menu = page.locator(".cw-settings-nav-btn");
+    const checkMenuBorders = async () => assert.deepEqual(await menu.evaluateAll(buttons => buttons.filter(el => {
+      const style = getComputedStyle(el);
+      return [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth].some(width => width !== "0px");
+    }).map(el => el.textContent.trim())), []);
+    await checkMenuBorders();
+    await menu.nth(1).hover();
+    await checkMenuBorders();
+    await menu.nth(1).focus();
+    await checkMenuBorders();
     for (const [width, height] of [[320,740],[390,844],[740,360],[844,390],[932,430],[768,1024],[1024,768],[1194,834],[1366,1024],[1920,1080]]) {
       await page.setViewportSize({width, height});
       for (const pane of ["overview", "providers", "sync", "maintenance"]) {
