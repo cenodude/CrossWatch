@@ -71,6 +71,22 @@ def test_admin_still_sees_every_tracker(cfg):
     assert api.get("/api/tracker/import/sources").json()["can_create"] is True
 
 
+def test_month_review_uses_only_the_managed_users_assigned_tracker(cfg, monkeypatch):
+    roots = []
+
+    def report(store, config, month):
+        roots.append(store.root)
+        return {"ok": True, "month": month}
+
+    monkeypatch.setattr(trackerAPI, "month_report", report)
+    api = _client({**ANN, "permissions": {"write": False}})
+    assert api.get("/api/tracker/overview/month?provider_instance=CW-P01&month=2026-10").status_code == 200
+    assert roots == [trackerAPI.tracker_context(cfg, trackerAPI.CONFIG, "CW-P01")[1]]
+    for instance in ("CW-P02", "default"):
+        assert api.get(f"/api/tracker/overview/month?provider_instance={instance}&month=2026-10").status_code == 403
+    assert len(roots) == 1
+
+
 def test_bulk_title_changes_enforce_instance_access_and_write_permission(cfg):
     own = TrackerStore(trackerAPI.tracker_context(cfg, trackerAPI.CONFIG, "CW-P01")[1])
     other = TrackerStore(trackerAPI.tracker_context(cfg, trackerAPI.CONFIG, "CW-P02")[1])
@@ -166,7 +182,9 @@ def test_history_bulk_status_respects_tracker_access_and_write_permission(cfg):
     assert not crosswatch._non_admin_permission_allowed(readonly, "/api/tracker/titles/status", "POST")
     payload["provider_instance"] = "CW-P01"
     assert _client(ANN).post("/api/tracker/titles/status", json=payload).status_code == 200
-    assert TrackerStore(trackerAPI.tracker_context(cfg, trackerAPI.CONFIG, "CW-P01")[1]).note("movie:tmdb:949")["status"] == "completed"
+    note = TrackerStore(trackerAPI.tracker_context(cfg, trackerAPI.CONFIG, "CW-P01")[1]).note("movie:tmdb:949")
+    assert note is not None
+    assert note["status"] == "completed"
     assert TrackerStore(trackerAPI.tracker_context(cfg, trackerAPI.CONFIG, "CW-P02")[1]).note("movie:tmdb:949") is None
 
 

@@ -465,8 +465,8 @@
   function renderNavigation() {
     const options = VIEWS.filter(v => v.id !== "cleanup").map(v => `<option value="${v.id}"${v.id === state.view ? " selected" : ""}>${esc(v.label)}${viewCount(v.id) ? ` (${num(viewCount(v.id))})` : ""}</option>`).join("");
     const attention = attentionTotal();
-    return `<label class="cw-page-mobile-view" for="trk-mobile-view"><span>View</span><select id="trk-mobile-view" data-trk-input="view">${options}<optgroup label="Others"><option value="cleanup"${state.view === "cleanup" ? " selected" : ""}>Others · Clean up${attention ? ` (${num(attention)})` : ""}</option></optgroup></select></label>
-      <div class="trk-navigation"><nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav><details class="trk-others${state.view === "cleanup" ? " is-active" : ""}"><summary class="trk-tab${state.view === "cleanup" ? " active" : ""}">${symbol("more_horiz")}<span>Others</span>${attention ? `<small aria-label="${esc(plural(attention, "record needs", "records need"))} attention">${esc(num(attention))}</small>` : ""}${symbol("expand_more")}</summary><div class="trk-others-menu cw-page-panel"><button type="button" class="cw-btn" data-trk-view="cleanup"${state.view === "cleanup" ? ' aria-current="page"' : ""}>${symbol("health_and_safety")}<span>Clean up</span>${attention ? `<small>${esc(num(attention))}</small>` : ""}</button></div></details></div>`;
+    return `<label class="cw-page-mobile-view" for="trk-mobile-view"><span>View</span><select id="trk-mobile-view" data-trk-input="view">${options}<optgroup label="Others"><option value="month-review">Month in review</option><option value="cleanup"${state.view === "cleanup" ? " selected" : ""}>Others · Clean up${attention ? ` (${num(attention)})` : ""}</option></optgroup></select></label>
+      <div class="trk-navigation"><nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav><details class="trk-others${state.view === "cleanup" ? " is-active" : ""}"><summary class="trk-tab${state.view === "cleanup" ? " active" : ""}">${symbol("more_horiz")}<span>Others</span>${attention ? `<small aria-label="${esc(plural(attention, "record needs", "records need"))} attention">${esc(num(attention))}</small>` : ""}${symbol("expand_more")}</summary><div class="trk-others-menu cw-page-panel"><button type="button" class="cw-btn" data-trk-month-open>${symbol("auto_awesome")}<span>Month in review</span></button><button type="button" class="cw-btn" data-trk-view="cleanup"${state.view === "cleanup" ? ' aria-current="page"' : ""}>${symbol("health_and_safety")}<span>Clean up</span>${attention ? `<small>${esc(num(attention))}</small>` : ""}</button></div></details></div>`;
   }
 
   function overviewRows(kind) {
@@ -526,7 +526,10 @@
     if (!data) return `<div class="cw-empty" role="status">${esc(state.loading ? "Loading your overview…" : "Your overview is unavailable. Refresh to try again.")}</div>`;
     const playback = data.continue.length > 0;
     const sections = [["continue", "Continue watching", playback ? "progress" : "shows", playback ? "Playback progress" : "View shows"], ["airing", "Airing soon", "", ""], ["recent", "Recently watched", "history", "View history"]];
-    return `<div class="trk-overview">${sections.filter(([kind]) => kinds.includes(kind)).map(([kind, title, view, link]) => {
+    const reviewMonth = data.review_month || "";
+    const reviewName = /^\d{4}-\d{2}$/.test(reviewMonth) ? monthName(reviewMonth) : "";
+    const review = kinds.includes("recent") && reviewName && reviewMonth > dismissedReview() ? `<div class="trk-month-banner"><button type="button" class="trk-month-entry" data-trk-month="${esc(reviewMonth)}"><span class="trk-month-decoration" aria-hidden="true"></span><span class="trk-month-entry-art" aria-hidden="true">${(data.recent || []).filter(row => artUrl(row)).slice(0, 3).map(row => `<img src="${esc(artUrl(row))}" alt="" loading="lazy" decoding="async">`).join("")}</span><span class="trk-month-entry-copy"><small>MONTH IN REVIEW</small><strong>${esc(reviewName)}</strong><span>Explore your month${icon("arrow_forward")}</span></span>${symbol("auto_awesome", "trk-month-entry-spark")}</button><button type="button" class="trk-month-dismiss" data-trk-month-dismiss="${esc(reviewMonth)}" title="Dismiss this month's banner" aria-label="Dismiss this month's banner">${icon("close")}</button></div>` : "";
+    return `<div class="trk-overview">${review}${sections.filter(([kind]) => kinds.includes(kind)).map(([kind, title, view, link]) => {
       const rows = overviewRows(kind), step = kind === "recent" ? state.overviewRecentStep : 4, limit = state.overviewLimits[kind] * step;
       const message = kind === "airing" ? !data.metadata_available ? "Add a TMDB API key in Settings to see upcoming episodes." : data.checking ? "Looking for upcoming episodes…" : data.unavailable ? "No upcoming episodes found in the available metadata." : "No episodes scheduled in the next 30 days." : kind === "continue" ? data.checking ? "Finding your next episodes…" : "You're all caught up. Start a movie or show to see it here." : "Your recent watches will appear here once you log or sync them.";
       if (kind === "airing") return renderAiringTimeline(rows, data, message);
@@ -571,6 +574,31 @@
 
   let overviewController = null;
   const overviewCache = new Map();
+  const reviewDismissals = new Map();
+  let monthThemeModule;
+  function paintMonthlyBanner() {
+    const banner = state.root?.querySelector(".trk-month-banner"), entry = banner?.querySelector("[data-trk-month]");
+    if (!entry) return;
+    const instance = state.instance;
+    monthThemeModule ||= import("/assets/js/tracker-month-themes.js").catch(() => {monthThemeModule = null; return null;});
+    monthThemeModule.then(module => {if (module && banner.isConnected && instance === state.instance) module.paintTheme(banner,entry.dataset.trkMonth,instance,true);});
+  }
+  const reviewDismissKey = () => {
+    const auth = window.CW?.AuthState?.read?.(), view = window.CW?.OverviewProfile;
+    return `cw-month-dismissed:${JSON.stringify([auth?.user?.id || auth?.user?.username || auth?.role || "local",auth?.profileId || "",auth?.isAdmin ? view?.id || "" : "",state.instance])}`;
+  };
+  function dismissedReview() {
+    const key = reviewDismissKey();
+    try {return localStorage.getItem(key) || reviewDismissals.get(key) || "";} catch {return reviewDismissals.get(key) || "";}
+  }
+  function openMonthlyReview(button, month = "") {
+    button.disabled = true;
+    state.root.querySelector(".trk-others")?.removeAttribute("open");
+    import(`/assets/js/tracker-month.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`).then(({openMonthReview}) => {
+      openMonthReview({root:state.root, instance:state.instance, label:instanceLabel(), month,
+        returnLabel:VIEWS.find(view => view.id === state.view)?.label || "Overview", openMedia:row => selectRef(row.ref, {openMedia:true})});
+    }).catch(() => toast.show("Could not open the monthly review. Try again.", {tone:"bad"})).finally(() => {button.disabled = false;});
+  }
   const overviewCacheKey = () => {
     const auth = window.CW?.AuthState?.read?.();
     return JSON.stringify([auth?.user?.id || auth?.user?.username, auth?.profileId, auth?.role, auth?.permissions, state.instance]);
@@ -1644,6 +1672,7 @@
     const slot = state.root?.querySelector(`[data-trk-slot="${name}"]`);
     if (!slot) return;
     if (slot.innerHTML !== html) slot.innerHTML = html;
+    if (name === "main") paintMonthlyBanner();
     if (name === "source" || name === "health") slot.hidden = !html;
   }
 
@@ -4125,6 +4154,17 @@
     });
     root.addEventListener("click", (event) => {
       if (sheet.el?.contains(event.target)) return;
+      const monthDismiss = event.target.closest("[data-trk-month-dismiss]");
+      if (monthDismiss) {
+        const key = reviewDismissKey(), month = monthDismiss.dataset.trkMonthDismiss;
+        reviewDismissals.set(key,month);
+        try {localStorage.setItem(key,month);} catch {}
+        monthDismiss.closest(".trk-month-banner")?.remove();
+        root.querySelector('.trk-tabs [aria-selected="true"]')?.focus({preventScroll:true});
+        return;
+      }
+      const monthEntry = event.target.closest("[data-trk-month],[data-trk-month-open]");
+      if (monthEntry) {openMonthlyReview(monthEntry,monthEntry.dataset.trkMonth || ""); return;}
       if (event.target.closest("[data-trk-pick]")) return;
       if (handlePanelClick(event)) return;
       const calendarAction = event.target.closest("[data-trk-calendar]");
@@ -4364,6 +4404,7 @@
       }
       const input = event.target.dataset?.trkInput;
       if (input === "view") {
+        if (event.target.value === "month-review") {event.target.value = state.view; openMonthlyReview(event.target); return;}
         if (!VIEWS.some(view => view.id === event.target.value) || state.view === event.target.value) return;
         state.view = event.target.value;
         state.filtersOpen = false;
@@ -4450,8 +4491,15 @@
       try {
         const info = await getJSON(`/api/tracker/overview/revision?${inst()}`);
         if (state.view === "overview" && instance === state.instance && (info.revision !== state.overview?.revision || state.overview?.day !== today())) await refresh();
+        else if (state.view === "overview" && instance === state.instance && (info.review_month || "") !== (state.overview?.review_month || "")) {
+          state.overview.review_month = info.review_month || "";
+          rememberOverview();
+          renderOverviewSlot();
+        }
       } catch {} finally { overviewChecking = false; }
     };
+    window.addEventListener("cw:month-theme-changed",paintMonthlyBanner);
+    window.addEventListener("storage",paintMonthlyBanner);
     setInterval(checkOverview, 60000);
     document.addEventListener("visibilitychange", checkOverview);
     window.addEventListener("cw:tracker-migrated", () => {
@@ -4473,9 +4521,11 @@
       state.offset = 0;
       state.fromLink = true;
     }
+    const month = query.get("month");
     try {
       window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}#tracker`);
     } catch {}
+    return /^\d{4}-(0[1-9]|1[0-2])$/.test(month || "") ? month : "";
   }
 
   async function mount(root) {
@@ -4486,12 +4536,13 @@
       sheet.el = null;
       loadView();
     }
-    readLink();
+    const reviewMonth = readLink();
     wire(root);
     try {
       await window.__cwAuthBootstrapPromise;
     } catch {}
     await refresh();
+    if (reviewMonth) openMonthlyReview({},reviewMonth);
   }
 
   window.TrackerPage = { mount };
