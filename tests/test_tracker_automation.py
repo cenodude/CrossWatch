@@ -431,3 +431,69 @@ def test_failed_synced_drop_does_not_discard_pending_history(tmp_path):
     with pytest.raises(KeyError):
         store.change_notes([SHOW, "show:tmdb:123456"], status="dropped", origin="sync", defaults={SHOW: {"type": "show"}})
     assert store.pending_statuses() == pending and store.note(SHOW) is None
+
+
+def test_apply_preview_saves_only_requested_changes_and_supports_undo(api, base, monkeypatch):
+    from api import trackerAPI
+    monkeypatch.setattr(trackerAPI, "_sync_running", lambda: False)
+    store = TrackerStore(base)
+    preview = api.post("/api/tracker/automatic-status", json={"action": "preview"}).json()
+    item = next(row for row in preview["items"] if row["key"] == FILM)
+    result = api.post("/api/tracker/automatic-status", json={"action": "apply", "items": [item]})
+    assert result.status_code == 200, result.text
+    data = result.json()
+    assert data["updated"] == 1
+    assert store.note(FILM)["status"] == "completed"
+    assert store.note("movie:tmdb:1") is None
+    assert store.note(SHOW) is None
+    again = api.post("/api/tracker/automatic-status", json={"action": "apply", "items": [item]}).json()
+    assert again["updated"] == 0 and again["items"][0]["skipped"] == "changed"
+    store.undo(data["items"][0]["batch"])
+    assert store.note(FILM) is None
+
+
+def test_apply_preview_keeps_manual_and_unknown_statuses_and_checks_stale_data(api, base, monkeypatch):
+    from api import trackerAPI
+    monkeypatch.setattr(trackerAPI, "_sync_running", lambda: False)
+    monkeypatch.setattr(worker, "cached_metadata", lambda _key: {**DETAIL, "status": "Returning Series"})
+    store = TrackerStore(base)
+    store.save_note(FILM, {"type": "movie", "status": "watching"}, origin="manual")
+    store.save_note("movie:tmdb:1", {"type": "movie", "status": "watching"})
+    suggestions = [{"key": key, "before": "watching", "after": "completed"} for key in (FILM, "movie:tmdb:1")]
+    suggestions.append({"key": SHOW, "before": None, "after": "completed"})
+    data = api.post("/api/tracker/automatic-status", json={"action": "apply", "items": suggestions}).json()
+    assert data["updated"] == 0
+    assert [row["skipped"] for row in data["items"]] == ["protected", "protected", "changed"]
+    assert data["items"][0]["reason"] == "Manual status kept"
+    assert "Existing status kept" in data["items"][1]["reason"]
+    assert store.note(FILM)["status"] == store.note("movie:tmdb:1")["status"] == "watching"
+    assert store.note(SHOW) is None
+
+
+def test_apply_preview_can_explicitly_update_a_synced_status(api, base, monkeypatch):
+    from api import trackerAPI
+    monkeypatch.setattr(trackerAPI, "_sync_running", lambda: False)
+    store = TrackerStore(base)
+    store.save_note(FILM, {"type": "movie", "status": "watching"}, origin="sync")
+    result = api.post("/api/tracker/automatic-status", json={"action": "apply", "items": [{"key": FILM, "before": "watching", "after": "completed"}]}).json()
+    assert result["updated"] == 1
+    assert store.status_control(FILM)["manual"] is False
+    assert store.note(FILM)["status"] == "completed"
+
+
+@pytest.mark.parametrize("items", [[], [{}], [{"key": FILM, "before": [], "after": "completed"}], [{"key": FILM, "before": None, "after": "invalid"}], [{"key": FILM, "before": None, "after": "completed"}] * 101])
+def test_apply_preview_rejects_invalid_or_unbounded_batches(api, monkeypatch, items):
+    from api import trackerAPI
+    monkeypatch.setattr(trackerAPI, "_sync_running", lambda: False)
+    response = api.post("/api/tracker/automatic-status", json={"action": "apply", "items": items})
+    assert response.status_code == 400
+
+
+def test_preview_explains_fully_watched_ongoing_and_inconsistent_shows(tmp_path):
+    store = seeded(tmp_path)
+    ongoing = store.evaluate_status(SHOW, {**DETAIL, "status": "Returning Series"}, preview=True)
+    assert ongoing["after"] == "watching"
+    assert "not marked ended" in ongoing["reason"]
+    missing = store.evaluate_status(SHOW, {**DETAIL, "number_of_episodes": 3}, preview=True)
+    assert missing["reason"] == "Completion metadata is missing or inconsistent"
+    assert missing["deferred"] is True

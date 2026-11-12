@@ -398,3 +398,134 @@ def test_explicit_small_imports_request_fast_catchup(tmp_path, monkeypatch):
     monkeypatch.setattr(worker, "wake", lambda: wakes.append(1))
     remember_source(store, "TRAKT", "default", {"features": {"history": {"added": 1}}})
     assert wakes == [1] and store.status_catchup()
+
+
+@pytest.mark.parametrize("origin,status", [("sync", "watching"), ("automatic", "watching"), ("manual", "watching"), (None, "watching"), ("sync", "dropped"), ("sync", "on_hold"), ("sync", "completed")])
+@pytest.mark.parametrize("trigger", ["metadata", "review"])
+def test_ended_eight_episode_show_completes_without_overriding_protected_statuses(tmp_path, monkeypatch, origin, status, trigger):
+    key = "show:tmdb:95396"
+    store = TrackerStore(tmp_path)
+    store.configure_automation(False)
+    store.write_state("history", {str(n): {**EPISODE, "episode": n} for n in range(1, 9)})
+    store.save_note(key, {"type": "show", "status": status}, origin=origin)
+    store.configure_automation(True)
+    attach(monkeypatch, store)
+    monkeypatch.setattr(worker, "_METADATA_PENDING", {})
+    reads = []
+    def metadata(title):
+        reads.append(title)
+        return {"status": "Ended", "number_of_episodes": 8, "number_of_seasons": 1, "seasons": [{"season_number": 1, "episode_count": 8}]}
+    monkeypatch.setattr(worker, "cached_metadata", metadata)
+    if trigger == "metadata":
+        for _ in range(10):
+            worker.metadata_changed("95396")
+        assert len(worker._METADATA_PENDING) == 1
+    else:
+        store.start_review()
+    worker.run_once({}, tmp_path)
+    if trigger == "review":
+        worker.run_once({}, tmp_path)
+        assert store.review_status()["state"] == "complete"
+    eligible = origin in {"sync", "automatic"} and status == "watching"
+    assert store.note(key)["status"] == ("completed" if eligible else status)
+    assert reads == ([key] if eligible else [])
+    assert not store.pending_statuses()
+    assert not store.status_catchup()
+
+
+def test_metadata_work_is_bounded_pauses_for_sync_and_respects_disabled_instances(tmp_path, monkeypatch):
+    store = historical(tmp_path, 0)
+    attach(monkeypatch, store)
+    monkeypatch.setattr(worker, "_METADATA_PENDING", {})
+    for n in range(30):
+        worker.metadata_changed(n + 1)
+    monkeypatch.setattr(worker, "busy", lambda: True)
+    worker.run_once({}, tmp_path)
+    assert len(worker._METADATA_PENDING) == 30
+    monkeypatch.setattr(worker, "busy", lambda: False)
+    worker.run_once({}, tmp_path)
+    assert len(worker._METADATA_PENDING) == 5
+    assert not store.pending_statuses()
+    worker.run_once({"crosswatch": {"automatic_status": False}}, tmp_path)
+    assert not worker._METADATA_PENDING
+
+
+def test_metadata_queue_keeps_live_history_priority_and_retries_failed_delivery(tmp_path, monkeypatch):
+    store = historical(tmp_path, 0)
+    attach(monkeypatch, store)
+    monkeypatch.setattr(worker, "_METADATA_PENDING", {})
+    key = "show:tmdb:95396"
+    store.save_note(key, {"type": "show", "status": "watching"}, origin="sync")
+    store.queue_statuses([key])
+    version = dict(store.pending_statuses())[key]
+    store.queue_metadata_statuses([key])
+    with sqlite3.connect(store.db_path) as conn:
+        assert conn.execute("SELECT due FROM status_pending WHERE title_key=?", (key,)).fetchone()[0] == 0
+    assert dict(store.pending_statuses())[key] != version
+    store.configure_automation(False)
+    store.queue_metadata_statuses([key])
+    assert not store.pending_statuses()
+    worker.metadata_changed("95396")
+    with monkeypatch.context() as patch:
+        patch.setattr(TrackerStore, "queue_metadata_statuses", lambda *args: (_ for _ in ()).throw(RuntimeError("locked")))
+        with pytest.raises(RuntimeError, match="locked"):
+            worker._queue_metadata([(store, False, False)])
+    assert key in worker._METADATA_PENDING
+
+
+@pytest.mark.parametrize("origin,status", [("manual", "watching"), ("sync", "on_hold"), ("sync", "dropped")])
+def test_status_changed_after_metadata_queue_stays_protected(tmp_path, origin, status):
+    store = historical(tmp_path, 0)
+    key = "show:tmdb:95396"
+    store.save_note(key, {"type": "show", "status": "watching"}, origin="sync")
+    store.queue_metadata_statuses([key])
+    version = dict(store.pending_statuses())[key]
+    store.save_note(key, {"type": "show", "status": status}, origin=origin)
+    store.evaluate_status(key, lambda: pytest.fail("Protected statuses need no metadata"), version=version)
+    assert store.note(key)["status"] == status
+
+
+def test_metadata_notifications_wait_for_migrating_instances(tmp_path, monkeypatch):
+    from services import tracker_migration
+    first, second = historical(tmp_path / "first", 0), historical(tmp_path / "second", 0)
+    attach(monkeypatch, first)
+    monkeypatch.setattr(worker, "tracker_roots", lambda *args: [("default", first.root), ("second", second.root)])
+    monkeypatch.setattr(worker, "_METADATA_PENDING", {})
+    monkeypatch.setattr(tracker_migration, "migrating", lambda root: root == second.root)
+    worker.metadata_changed("95396")
+    worker.run_once({}, tmp_path)
+    assert "show:tmdb:95396" in worker._METADATA_PENDING
+    monkeypatch.setattr(tracker_migration, "migrating", lambda root: False)
+    worker.run_once({}, tmp_path)
+    assert not worker._METADATA_PENDING
+
+
+@pytest.mark.parametrize("trigger", ["metadata", "review", "history"])
+@pytest.mark.parametrize("unusable", [None, {"status": "Ended", "number_of_episodes": 9, "seasons": [{"season_number": 1, "episode_count": 8}]}])
+def test_synced_watching_waits_for_metadata_without_daily_retries(tmp_path, monkeypatch, trigger, unusable):
+    store = TrackerStore(tmp_path)
+    key = "show:tmdb:95396"
+    store.configure_automation(False)
+    store.write_state("history", {str(n): {**EPISODE, "episode": n} for n in range(1, 9)})
+    store.save_note(key, {"type": "show", "status": "watching"}, origin="sync")
+    store.configure_automation(True)
+    attach(monkeypatch, store)
+    monkeypatch.setattr(worker, "_METADATA_PENDING", {})
+    monkeypatch.setattr(worker, "cached_metadata", lambda key: unusable)
+    if trigger == "review":
+        store.start_review()
+    elif trigger == "history":
+        store.queue_statuses([key])
+    else:
+        worker.metadata_changed("95396")
+    worker.run_once({}, tmp_path)
+    assert store.note(key)["status"] == "watching"
+    assert store.status_control(key)["origin"] == "sync"
+    with sqlite3.connect(store.db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM status_pending").fetchone()[0] == 0
+    monkeypatch.setattr(worker, "cached_metadata", lambda key: pytest.fail("Settled titles must not be checked again"))
+    worker.run_once({}, tmp_path)
+    monkeypatch.setattr(worker, "cached_metadata", lambda key: {"status": "Ended", "number_of_episodes": 8, "seasons": [{"season_number": 1, "episode_count": 8}]})
+    worker.metadata_changed("95396")
+    worker.run_once({}, tmp_path)
+    assert store.note(key)["status"] == "completed"

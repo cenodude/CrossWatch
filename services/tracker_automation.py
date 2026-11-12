@@ -6,6 +6,7 @@ from __future__ import annotations
 import logging
 import threading
 import uuid
+from itertools import islice
 
 from cw_platform.tracker_automation import instance_options
 from cw_platform.tracker_store import TrackerStore, tracker_roots
@@ -15,6 +16,32 @@ _WAKE = threading.Event()
 _THREAD = None
 _NEXT_ROOT = 0
 _LOG = logging.getLogger(__name__)
+_METADATA_LOCK = threading.Lock()
+_METADATA_PENDING: dict[str, None] = {}
+
+
+def metadata_changed(tmdb_id):
+    key = "show:tmdb:" + str(tmdb_id)
+    with _METADATA_LOCK:
+        _METADATA_PENDING[key] = None
+
+
+def _queue_metadata(stores):
+    with _METADATA_LOCK:
+        keys = list(islice(_METADATA_PENDING, 25))
+        for key in keys:
+            del _METADATA_PENDING[key]
+    if not keys:
+        return
+    try:
+        for store, _, _ in stores:
+            with store.session():
+                store.queue_metadata_statuses(keys)
+    except Exception:
+        with _METADATA_LOCK:
+            for key in keys:
+                _METADATA_PENDING[key] = None
+        raise
 
 
 def cached_metadata(key):
@@ -39,21 +66,32 @@ def run_once(cfg, config_dir):
     from services.tracker_migration import migrating
     seen = set()
     stores = []
+    metadata_enabled = False
+    metadata_paused = False
     for instance, root in tracker_roots(cfg, config_dir):
         if _STOP.is_set():
             return
         identity = str(root.resolve())
-        if identity in seen or not (root / "tracker.db").is_file() or migrating(root):
+        if identity in seen or not (root / "tracker.db").is_file():
             continue
         seen.add(identity)
-        store = TrackerStore(root)
         enabled = instance_options(cfg, instance)["automatic_status"]
+        metadata_enabled = metadata_enabled or enabled
+        if migrating(root):
+            metadata_paused = metadata_paused or enabled
+            continue
+        store = TrackerStore(root)
         with store.session():
             store.configure_automation(enabled)
             if enabled:
                 stores.append((store, store.status_catchup(), store.review_status().get("state") in {"scanning", "processing"}))
+    if not metadata_enabled:
+        with _METADATA_LOCK:
+            _METADATA_PENDING.clear()
     if not stores or busy():
         return
+    if not metadata_paused:
+        _queue_metadata(stores)
     start = _NEXT_ROOT % len(stores)
     _NEXT_ROOT = start + 1
     budget = 25

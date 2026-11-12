@@ -343,3 +343,65 @@ def test_strict_lookup_can_reuse_a_season_fetched_without_a_language(providers, 
     monkeypatch.setattr(tmdb.requests, "get", lambda *a, **k: pytest.fail("Unexpected network request"))
     result = providers().lookup("show", 7, season=1, locale=None)
     assert (result.source, result.data) == ("cache", body)
+
+
+def test_show_metadata_only_notifies_tracker_for_relevant_fetched_changes(providers, monkeypatch):
+    from services import tracker_automation as worker
+    changes = []
+    monkeypatch.setattr(worker, "metadata_changed", changes.append)
+    provider = providers()
+    detail = {"id": 7, "name": "Example", "status": "Returning Series", "seasons": [{"season_number": 1, "episode_count": 8}]}
+    monkeypatch.setattr(tmdb.requests, "get", lambda *a, **k: response(dict(detail)))
+    url = "https://api.themoviedb.org/3/tv/7"
+    provider.get_response(url, {"language": "en-US"})
+    assert changes == ["7"]
+    detail["name"] = "New title"
+    providers().get_response(url, {"language": "en-US"}, fresh=True)
+    assert changes == ["7"]
+    detail["status"] = "Ended"
+    provider.get_response(url, {"language": "en-US", "append_to_response": "credits"}, fresh=True)
+    assert changes == ["7"]
+    assert provider.peek_show("7").data["status"] == "Returning Series"
+    provider.get_response(url, {"language": "en-US"}, fresh=True)
+    assert changes == ["7", "7"]
+    provider.get_response(url, {"language": "en-US"})
+    provider.get_response(url, {"language": "nl-NL"}, fresh=True)
+    provider.get_response(url + "/season/1", {"language": "en-US"}, fresh=True)
+    provider.get_response(url.replace('/tv/', '/movie/'), {"language": "en-US"}, fresh=True)
+    assert changes == ["7", "7"]
+
+
+def test_fetched_ended_metadata_completes_synced_show_through_worker(providers, monkeypatch, tmp_path):
+    from api import trackerAPI
+    from cw_platform.tracker_store import TrackerStore
+    from services import tracker_automation as worker
+    from test_tracker_notes import EPISODE
+
+    store = TrackerStore(tmp_path / "tracker")
+    store.configure_automation(False)
+    store.write_state("history", {str(n): {**EPISODE, "show_ids": {"tmdb": "7"}, "episode": n} for n in range(1, 9)})
+    key = "show:tmdb:7"
+    store.save_note(key, {"type": "show", "status": "watching"}, origin="sync")
+    store.configure_automation(True)
+    monkeypatch.setattr(worker, "_METADATA_PENDING", {})
+    monkeypatch.setattr(worker, "tracker_roots", lambda *args: [("default", store.root)])
+    monkeypatch.setattr(worker, "busy", lambda: False)
+    provider = providers()
+    monkeypatch.setattr(trackerAPI, "_tmdb_provider", lambda: provider)
+    detail = {"id": 7, "status": "Returning Series", "number_of_episodes": 8, "number_of_seasons": 1, "seasons": [{"season_number": 1, "episode_count": 8}]}
+    calls = []
+    def fetch(*args, **kwargs):
+        calls.append(1)
+        return response(dict(detail))
+    monkeypatch.setattr(tmdb.requests, "get", fetch)
+    url = "https://api.themoviedb.org/3/tv/7"
+    provider.get_response(url, {"language": "en-US"})
+    worker.run_once({}, tmp_path)
+    assert store.note(key)["status"] == "watching"
+    assert not store.pending_statuses()
+    detail["status"] = "Ended"
+    provider.get_response(url, {"language": "en-US"}, fresh=True)
+    worker.run_once({}, tmp_path)
+    assert store.note(key)["status"] == "completed"
+    assert len(calls) == 2
+    assert not store.pending_statuses() and not worker._METADATA_PENDING

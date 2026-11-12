@@ -133,9 +133,12 @@
       nav.querySelectorAll('a').forEach(node => node.remove());
       $('cw-mobile-more').insertAdjacentHTML('beforebegin', items.map(item => link(item)).join(''));
       extra.innerHTML = choices.filter(item => !$(`tab-${item[0]}`) && !shortcuts.includes(item[0])).map(item => link(item, 'class="tab"')).join('');
-      for (const route of ['main', 'snapshots', 'playlists', 'editor']) {
+      for (const route of ['main', 'tracker', 'snapshots', 'playlists', 'editor']) {
         $(`tab-${route}`)?.classList.toggle('cw-mobile-pinned', items.some(item => item[0] === route));
       }
+      document.querySelectorAll('#cw-mobile-navigation [data-settings-pane]').forEach(item => {
+        item.classList.toggle('cw-mobile-pinned', shortcuts.includes(`settings/${item.dataset.settingsPane}`));
+      });
       update();
     };
     const installShortcuts = () => {

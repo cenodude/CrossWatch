@@ -43,6 +43,16 @@ for (const [theme, [attributes, sheet]] of Object.entries(themes)) {
       const chip = page.locator("#chip-sched");
       await page.waitForFunction(() => document.querySelector("#chip-sched")?.dataset.tip?.includes("12 minutes ago"));
       assert.match(await chip.getAttribute("aria-label"), /Last sync: 12 minutes ago\nNov 7, 2026, 06:08 PM GMT\+1/);
+      if (width <= 760) {
+        for (const viewport of [320, 760, 761, 1280, 390]) {
+          await page.setViewportSize({width:viewport,height:700});
+          assert.equal(await page.locator('.cw-status-dock').isVisible(),viewport>760);
+          for (const id of ['chip-sched','chip-watch','chip-pairs','chip-health']) {
+            if (viewport<=760) assert.equal(await page.locator(`#${id}`).isVisible(),false);
+          }
+        }
+        return;
+      }
       if (width < 800) await chip.tap();
       else await chip.focus();
       const tip = page.locator(width < 800 ? "#cw-touch-help" : "#chip-sched .cw-hub-tip");

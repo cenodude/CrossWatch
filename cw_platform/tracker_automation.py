@@ -148,6 +148,21 @@ class TrackerAutomation:
                 return []
             return conn.execute("SELECT title_key,version FROM status_pending WHERE due<=? ORDER BY due,title_key LIMIT ?", (time.time(), limit)).fetchall()
 
+    def queue_metadata_statuses(self, keys):
+        with self.mutation(), self._db() as conn:
+            if conn is None:
+                return
+            eligible = []
+            for key in keys:
+                note, control = self._note_get(conn, key), self._control_get(conn, key)
+                if (note or {}).get("status") == "watching" and control and not control.get("manual"):
+                    eligible.append((key,))
+            if eligible:
+                with self._write(conn):
+                    if conn.execute("SELECT value FROM meta WHERE key='automatic_status'").fetchone() == ("0",):
+                        return
+                    conn.executemany("INSERT INTO status_pending VALUES(?,hex(randomblob(16)),1) ON CONFLICT(title_key) DO UPDATE SET version=excluded.version,due=min(status_pending.due,excluded.due)", eligible)
+
     def status_catchup(self):
         with self.mutation(), self._db() as conn:
             if conn is None or not conn.execute("SELECT 1 FROM meta WHERE key='status_catchup'").fetchone():
@@ -181,7 +196,7 @@ class TrackerAutomation:
         note, control = self._note_get(conn, key), self._control_get(conn, key)
         if (control and control.get("manual")) or (not control and (note or {}).get("status")):
             return None, "protected", note, False
-        if retry and (control or {}).get("origin") == "sync":
+        if retry and (control or {}).get("origin") == "sync" and not (key.startswith("show:") and (note or {}).get("status") == "watching"):
             return (note or {}).get("status"), "Synced status retained until new watch activity", note, False
         where, args = self._status_where(key)
         sql = "FROM items WHERE scope='' AND feature='history' AND " + where + " AND coalesce(when_at,'')!=''"
@@ -207,9 +222,21 @@ class TrackerAutomation:
         matched = {(s, e) for s, e in seen if s in counts and e <= counts[s]}
         consistent = metadata.get("number_of_episodes", expected) == expected and metadata.get("number_of_seasons", len(counts)) == len(counts)
         complete = expected > 0 and consistent and len(matched) == expected and matched == seen and metadata.get("status") in {"Ended", "Canceled"} and not metadata.get("next_episode_to_air")
-        return ("completed" if complete else "watching"), (f"All {expected} regular episodes watched; series ended" if complete else "Regular episode history present"), base, not (expected > 0 and consistent)
+        if complete:
+            reason = f"All {expected} regular episodes watched; series ended"
+        elif not expected or not consistent:
+            reason = "Completion metadata is missing or inconsistent"
+        elif matched != seen:
+            reason = "Watched episode numbers do not match the cached episode list"
+        elif len(matched) < expected:
+            reason = f"{len(matched)} of {expected} regular episodes watched"
+        elif metadata.get("next_episode_to_air"):
+            reason = "All known episodes watched; another episode is announced"
+        else:
+            reason = "All known episodes watched; series is not marked ended or canceled"
+        return ("completed" if complete else "watching"), reason, base, not (expected > 0 and consistent)
 
-    def evaluate_status(self, key, metadata: Mapping[str, Any] | Callable[[], Mapping[str, Any] | None] | None = None, *, version=None, preview=False, prune=True, group=None, review=False):
+    def evaluate_status(self, key, metadata: Mapping[str, Any] | Callable[[], Mapping[str, Any] | None] | None = None, *, version=None, preview=False, prune=True, group=None, review=False, expected=None):
         from .tracker_store import _note_norm
         with self.mutation(), self._db(create=True) as conn:
             assert conn is not None
@@ -229,9 +256,17 @@ class TrackerAutomation:
                     retry = pending[1] > 0
                 desired, reason, note, deferred = self._status_decision(conn, key, metadata, retry=retry)
                 before = self._note_get(conn, key)
+                if deferred and (before or {}).get("status") == desired and (self._control_get(conn, key) or {}).get("origin") == "sync":
+                    deferred = False
                 result = {"key": key, "title": (note or {}).get("title") or key, "before": (before or {}).get("status"), "after": desired, "reason": reason, "deferred": deferred}
                 if reason == "protected":
                     result.update(after=result["before"], skipped="protected")
+                    if preview or expected is not None:
+                        control = self._control_get(conn, key) or {}
+                        result["reason"] = "Manual status kept" if control.get("manual") else "Existing status kept; enable automatic updates for this title to change it"
+                if expected is not None and reason != "protected" and (result["before"] != expected.get("before") or result["after"] != expected.get("after")):
+                    result.update(skipped="changed", reason="Status or watch data changed since preview; refresh to check again")
+                    return result
                 if preview:
                     return result
                 if reason != "protected" and result["before"] != desired:
