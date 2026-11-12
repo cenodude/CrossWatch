@@ -1041,6 +1041,16 @@ function cwAnimeMappingRenderStatus(st = {}) {
   _cwSetStat("anime_mapping_identity_version", st.identity_installed ? `${st.identity_release_tag || "v3"} · ${sourceDate(st.identity_generated_on)}` : "Not installed");
   const identityVersion = document.getElementById("anime_mapping_identity_version");
   if (identityVersion && st.identity_revision) identityVersion.title = `Installed animeApi revision: ${st.identity_revision}`;
+  const cwApplied = Array.isArray(st.cw_applied) ? st.cw_applied.length : 0;
+  const cwRedundant = Array.isArray(st.cw_redundant) ? st.cw_redundant.length : 0;
+  _cwSetStat("anime_mapping_cw_version", st.cw_revision ? `${st.cw_revision} · ${cwApplied.toLocaleString()} applied` : (installed ? "Not loaded" : "Not installed"));
+  const cwVersion = document.getElementById("anime_mapping_cw_version");
+  if (cwVersion && st.cw_revision) {
+    const origin = st.cw_source === "downloaded"
+      ? `Downloaded from GitHub${st.cw_download_generated_on ? ` (${sourceDate(st.cw_download_generated_on)})` : ""}`
+      : "Included with this CrossWatch version";
+    cwVersion.title = [origin, cwRedundant ? `${cwRedundant.toLocaleString()} fixed upstream and no longer needed` : "", st.cw_error || ""].filter(Boolean).join("\n");
+  }
   _cwSetText("anime_mapping_meta_status", err ? "Error" : (installed && ready ? "Up to date" : (installed ? "Needs index" : "Missing")));
   const statusPill = document.getElementById("anime_mapping_meta_status");
   if (statusPill) {
@@ -1140,7 +1150,7 @@ async function cwAnimeMappingRun(action) {
     if (!r.ok || data.ok === false) throw new Error(data.message || data.error || `${update ? "Update" : "Rebuild"} failed (${r.status})`);
     cwAnimeMappingRenderStatus(data.status || data || {});
     const message = !update ? "Anime mapping index rebuilt"
-      : data.updated ? (data.identity_updated && !data.mappings_updated ? "Anime identity data updated" : "Anime mapping updated")
+      : data.updated ? (data.cw_mappings_updated && !data.identity_updated && !data.mappings_updated ? "CW Anime DB updated" : (data.identity_updated && !data.mappings_updated ? "Anime identity data updated" : "Anime mapping updated"))
       : data.rebuilt ? "Anime mapping index rebuilt" : "Anime mapping already up to date";
     try { window.CW?.DOM?.showToast?.(message, true); } catch {}
   } catch (e) {
@@ -1253,8 +1263,12 @@ function cwBuildAnimeMappingPanel() {
               <dt>Identity</dt>
               <dd><a href="https://github.com/nattadasu/animeApi" target="_blank" rel="noopener noreferrer">nattadasu/animeApi<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a><span class="am-dataset-version" id="anime_mapping_identity_version">-</span></dd>
             </div>
+            <div>
+              <dt>Corrections</dt>
+              <dd><a href="https://github.com/cenodude/CrossWatch/blob/main/cw_platform/anime_mapping/cw_mappings.json" target="_blank" rel="noopener noreferrer">CW Anime DB<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a><span class="am-dataset-version" id="anime_mapping_cw_version">-</span></dd>
+            </div>
           </dl>
-          <p class="am-details-copy">AniBridge handles episode numbering across AniDB, MyAnimeList, AniList, TMDB and TVDB. animeApi adds SIMKL and Kitsu identity.</p>
+          <p class="am-details-copy">AniBridge handles episode numbering across AniDB, MyAnimeList, AniList, TMDB and TVDB. animeApi adds SIMKL and Kitsu identity. The CW Anime DB fixes verified mistakes in that data. Your own custom mappings always come first.</p>
           <div class="auth-card-notes" id="anime_mapping_error"></div>
         </section>
 

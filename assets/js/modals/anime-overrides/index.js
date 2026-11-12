@@ -95,7 +95,7 @@ export default {
             <div class="ao-head-icon"><span class="material-symbols-rounded" aria-hidden="true">rule_settings</span></div>
             <div>
               <div class="ao-title">Custom anime mappings</div>
-              <div class="ao-sub">Your rules always win over the downloaded AniBridge dataset.</div>
+              <div class="ao-sub">Your rules always win over the AniBridge dataset and the CW Anime DB.</div>
             </div>
           </div>
           <button type="button" class="ao-close" id="ao-close" title="Close" aria-label="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>

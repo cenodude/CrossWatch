@@ -449,6 +449,7 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         "watch_status",
         "_cw_watched_state",
         "_simkl_episode_number",
+        "_cw_episode_order",
         "_floppy_consumption_id",
         "consumption_id",
         "_history_id",

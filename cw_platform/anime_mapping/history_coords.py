@@ -7,13 +7,15 @@ import re
 import threading
 import time
 from collections.abc import Mapping
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 from .episodes import resolve_absolute, resolve_axis_coordinate_map, resolve_axis_coordinates
 from .overrides import overrides_path
 from .storage import index_ready, normalize_release_tag, paths
 
 NATIVE_ANIME_ID_KEYS = ("mal", "anilist", "anidb", "kitsu")
+AIRED_ORDERS = ("tvdb", "tmdb")
+DECLARED_ORDER_FEATURES = ("history", "ratings", "progress", "collection")
 ABSOLUTE_ID_KEYS = ("tmdb", "imdb", "mal", "anilist", "anidb", "kitsu", "simkl")
 ABSOLUTE_FRAGMENT = "#abs:"
 _MIN_ABSOLUTE_RUN = 2
@@ -146,6 +148,16 @@ def _is_episode(item: Mapping[str, Any]) -> bool:
     return str(item.get("type") or "").strip().lower() == "episode"
 
 
+def declared_episode_order(item: Mapping[str, Any]) -> str:
+    order = str(item.get("_cw_episode_order") or "").strip().lower()
+    return order if order in AIRED_ORDERS else ""
+
+
+def limited_fragment_ids(aliases: Any, item: Mapping[str, Any], show_ids: Mapping[str, Any] | None) -> dict[str, Any]:
+    limit = getattr(aliases, "fragment_show_ids", None)
+    return cast(dict[str, Any], limit(item, show_ids)) if callable(limit) else dict(show_ids or {})
+
+
 def show_ids_of(item: Mapping[str, Any]) -> dict[str, str]:
     raw = item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else item.get("ids")
     out: dict[str, str] = {}
@@ -237,11 +249,14 @@ class HistoryCoordinateAliases:
         *indexes: Mapping[str, Any] | None,
         release_tag: str = "v3",
         enabled: bool = True,
+        declared_only: bool = False,
     ) -> None:
         self.enabled = bool(enabled)
+        self.declared_only = bool(declared_only)
         self.release_tag = normalize_release_tag(release_tag)
-        self._absolute_runs: dict[str, tuple[set[int], set[int]]] = absolute_numbered_runs(*indexes) if self.enabled else {}
+        self._absolute_runs: dict[str, tuple[set[int], set[int]]] = absolute_numbered_runs(*indexes) if self.enabled and not self.declared_only else {}
         self._coord_cache: dict[tuple[str, int], frozenset[tuple[int, int]]] = {}
+        self._declared_cache: dict[tuple[str, str, int, int], tuple[str, bool]] = {}
         self._ready: bool | None = None
 
     @classmethod
@@ -268,16 +283,73 @@ class HistoryCoordinateAliases:
             self._coord_cache[key] = cached
         return cached
 
+    def _declared(self, item: Mapping[str, Any], order: str) -> tuple[str, bool]:
+        show = show_ids_of(item).get(order, "")
+        typ = str(item.get("type") or "").strip().lower()
+        if typ == "episode":
+            coord = _episode_coordinate(item)
+        elif typ == "season":
+            season = _as_int(item.get("season") if item.get("season") is not None else item.get("season_number"))
+            coord = (season, 0) if season is not None and season >= 0 else None
+        else:
+            coord = None
+        if coord is None or not show:
+            return "", False
+        key = (order, show, coord[0], coord[1])
+        cached = self._declared_cache.get(key)
+        if cached is None:
+            from .resolver import resolve_episode, resolve_season
+
+            other = "tmdb" if order == "tvdb" else "tvdb"
+            try:
+                if typ == "episode":
+                    out = resolve_episode(item, source=order, target=other, release_tag=self.release_tag)
+                else:
+                    out = resolve_season(item, source=order, target=other, release_tag=self.release_tag)
+            except Exception:
+                out = None
+            c = out.coordinate if out is not None and out.ok else None
+            if c is None or c.season is None:
+                cached = ("", False)
+            elif typ == "episode":
+                cached = (f"{other}:{c.show.lower()}#s{c.season:02d}e{c.episode:02d}", (c.season, c.episode) != coord)
+            else:
+                cached = (f"{other}:{c.show.lower()}#season:{c.season}", c.season != coord[0])
+            self._declared_cache[key] = cached
+        return cached
+
+    def _declared_token(self, item: Mapping[str, Any], order: str) -> str:
+        return self._declared(item, order)[0]
+
+    def fragment_show_ids(self, item: Mapping[str, Any], show_ids: Mapping[str, Any] | None) -> dict[str, Any]:
+        ids = dict(show_ids or {})
+        order = declared_episode_order(item) if isinstance(item, Mapping) else ""
+        typ = str(item.get("type") or "").strip().lower() if isinstance(item, Mapping) else ""
+        if not order or not self.enabled or typ not in ("episode", "season") or not self._mapping_ready():
+            return ids
+        token, differs = self._declared(item, order)
+        if not token or not differs:
+            return ids
+        return {k: v for k, v in ids.items() if str(k).strip().lower() == order}
+
     def stats(self) -> dict[str, int]:
-        return {"absolute_shows": len(self._absolute_runs), "coord_cache": len(self._coord_cache)}
+        return {"absolute_shows": len(self._absolute_runs), "coord_cache": len(self._coord_cache), "declared_cache": len(self._declared_cache)}
 
     def tokens(self, item: Mapping[str, Any]) -> set[str]:
-        if not self.enabled or not isinstance(item, Mapping) or not _is_episode(item):
+        if not self.enabled or not isinstance(item, Mapping) or str(item.get("type") or "").strip().lower() not in ("episode", "season"):
             return set()
 
         tokens: set[str] = coordinate_tokens(item)
         prefixes = show_tokens(item)
         if not prefixes:
+            return tokens
+
+        order = declared_episode_order(item)
+        if order and self._mapping_ready():
+            declared = self._declared_token(item, order)
+            if declared:
+                tokens.add(declared)
+        if self.declared_only:
             return tokens
 
         absolute = native_anime_absolute(item)
@@ -304,7 +376,8 @@ def build_history_coordinate_aliases(
     feature: Any,
     indexes: Iterable[Mapping[str, Any] | None] = (),
 ) -> HistoryCoordinateAliases:
-    if str(feature or "").strip().lower() != "history":
+    name = str(feature or "").strip().lower()
+    if name not in DECLARED_ORDER_FEATURES:
         return HistoryCoordinateAliases.disabled()
     block = cfg.get("anime_mapping") if isinstance(cfg, Mapping) else {}
     block = block if isinstance(block, Mapping) else {}
@@ -314,4 +387,5 @@ def build_history_coordinate_aliases(
         *list(indexes),
         release_tag=str(block.get("release_tag") or "v3"),
         enabled=True,
+        declared_only=name != "history",
     )

@@ -16,9 +16,10 @@ from typing import Any
 
 from cw_platform.config_base import CONFIG_BASE
 
+from . import cw_mappings
 from .descriptors import Descriptor, parse_descriptor
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 _RELEASE_TAG_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 _PROVIDER = "anibridge"
 _EDGE_FANOUT_LIMIT = 5000
@@ -83,6 +84,7 @@ def _build_paths(release_tag: str) -> dict[str, Path]:
         "identity": _safe_child(root, "animeapi.tsv"),
         "db": _safe_child(root, "anime_mapping.sqlite"),
         "state": _safe_child(root, "state.json"),
+        "cw_mappings": _safe_child(root, cw_mappings.FILE_NAME),
     }
 
 
@@ -177,7 +179,8 @@ def _init_schema(con: sqlite3.Connection) -> None:
           target_kind TEXT NOT NULL DEFAULT '',
           source_range TEXT NOT NULL DEFAULT '',
           target_range TEXT NOT NULL DEFAULT '',
-          reverse INTEGER NOT NULL DEFAULT 0
+          reverse INTEGER NOT NULL DEFAULT 0,
+          origin TEXT NOT NULL DEFAULT 'anibridge'
         );
         CREATE INDEX IF NOT EXISTS idx_mapping_source
           ON mapping_edges(source_provider, source_id);
@@ -246,13 +249,14 @@ def _unambiguous_pairs(
 
 
 def _insert_edge(
-    rows: list[tuple[str, str, str, str, str, str, str, str, str, str, int]],
+    rows: list[tuple[str, str, str, str, str, str, str, str, str, str, int, str]],
     src: Descriptor,
     dst: Descriptor,
     source_range: Any = "",
     target_range: Any = "",
     *,
     reverse: bool = False,
+    origin: str = _PROVIDER,
 ) -> None:
     rows.append(
         (
@@ -267,6 +271,7 @@ def _insert_edge(
             str(source_range or ""),
             str(target_range or ""),
             1 if reverse else 0,
+            origin,
         )
     )
 
@@ -329,6 +334,24 @@ def _load_identity_rows(root: Path, identity_path: Path | None) -> list[tuple[st
         return []
 
 
+def _cw_state(patch: cw_mappings.ActivePatch, cw_plan: cw_mappings.PatchPlan, cw_edge_count: int) -> dict[str, Any]:
+    return {
+        "cw_source": patch.source,
+        "cw_revision": patch.revision,
+        "cw_sha256": patch.sha256,
+        "cw_error": patch.error,
+        "cw_entry_count": len(patch.entries),
+        "cw_applied": cw_plan.applied,
+        "cw_redundant": cw_plan.redundant,
+        "cw_edge_count": cw_edge_count,
+    }
+
+
+def cw_mappings_current(release_tag: str = "v3") -> bool:
+    active = cw_mappings.load_active(paths(release_tag)["root"])
+    return str(read_state(release_tag).get("cw_sha256") or "") == active.sha256
+
+
 def rebuild_sqlite_from_mappings(
     *,
     release_tag: str = "v3",
@@ -352,8 +375,11 @@ def rebuild_sqlite_from_mappings(
     fd, tmp_name = tempfile.mkstemp(prefix=f".{db_path.name}.", suffix=".tmp", dir=str(db_dir))
     os.close(fd)
     tmp = _safe_existing_path(Path(tmp_name), base=db_dir)
-    rows: list[tuple[str, str, str, str, str, str, str, str, str, str, int]] = []
+    rows: list[tuple[str, str, str, str, str, str, str, str, str, str, int, str]] = []
     edge_count = 0
+    cw_edge_count = 0
+    patch = cw_mappings.load_active(root)
+    cw_plan = cw_mappings.plan(data, patch)
     source_count = 0
     tv_to_tm: dict[str, set[str]] = {}
     tm_to_tv: dict[str, set[str]] = {}
@@ -368,6 +394,8 @@ def rebuild_sqlite_from_mappings(
                 dst = parse_descriptor(raw_dst)
                 if dst is None:
                     continue
+                if (str(raw_src).strip(), str(raw_dst).strip()) in cw_plan.removed:
+                    continue
                 _collect_show_pair(src, dst, tv_to_tm, tm_to_tv)
                 if isinstance(ranges, Mapping) and ranges:
                     for source_range, target_range in ranges.items():
@@ -379,6 +407,18 @@ def rebuild_sqlite_from_mappings(
                     _insert_edge(rows, dst, src, reverse=True)
                     edge_count += 2
 
+        for raw_src, raw_dst, ranges, _entry_id in cw_plan.added:
+            src = parse_descriptor(raw_src)
+            dst = parse_descriptor(raw_dst)
+            if src is None or dst is None:
+                continue
+            _collect_show_pair(src, dst, tv_to_tm, tm_to_tv)
+            for source_range, target_range in ranges.items():
+                _insert_edge(rows, src, dst, source_range, target_range, origin=cw_mappings.ORIGIN)
+                _insert_edge(rows, dst, src, target_range, source_range, reverse=True, origin=cw_mappings.ORIGIN)
+                cw_edge_count += 2
+        edge_count += cw_edge_count
+
         pairs = _unambiguous_pairs(tv_to_tm, tm_to_tv)
         identity_rows = _load_identity_rows(root, identity_path or pp["identity"])
         con = _connect(tmp)
@@ -389,8 +429,8 @@ def rebuild_sqlite_from_mappings(
                 INSERT INTO mapping_edges (
                   source_provider, source_id, source_scope, source_kind,
                   target_provider, target_id, target_scope, target_kind,
-                  source_range, target_range, reverse
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  source_range, target_range, reverse, origin
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -405,6 +445,8 @@ def rebuild_sqlite_from_mappings(
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("built_at", str(int(time.time()))))
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("source_count", str(source_count)))
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("edge_count", str(edge_count)))
+            con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("cw_revision", patch.revision))
+            con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("cw_edge_count", str(cw_edge_count)))
             con.commit()
         finally:
             con.close()
@@ -428,6 +470,7 @@ def rebuild_sqlite_from_mappings(
             "edge_count": edge_count,
             "pair_count": len(pairs),
             "identity_count": len(identity_rows),
+            **_cw_state(patch, cw_plan, cw_edge_count),
         },
     )
     return {
@@ -436,6 +479,7 @@ def rebuild_sqlite_from_mappings(
         "edge_count": edge_count,
         "pair_count": len(pairs),
         "identity_count": len(identity_rows),
+        **_cw_state(patch, cw_plan, cw_edge_count),
         "db_path": str(db_path),
     }
 
@@ -466,7 +510,7 @@ def query_edges(release_tag: str, provider: str, ident: str, *, scope: str | Non
     sql = """
         SELECT source_provider, source_id, source_scope, source_kind,
                target_provider, target_id, target_scope, target_kind,
-               source_range, target_range, reverse
+               source_range, target_range, reverse, origin
         FROM mapping_edges
         WHERE source_provider = ? AND source_id = ?
     """

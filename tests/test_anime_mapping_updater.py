@@ -5,6 +5,8 @@ import pytest
 
 from cw_platform.anime_mapping import storage, updater
 
+pytestmark = pytest.mark.real_cw_mappings
+
 
 GENERATED = "2026-09-06T06:44:44Z"
 MAPPINGS = {"mal:1": {"anilist:1": {"1-12": "1-12"}}}
@@ -26,7 +28,9 @@ class Response:
 
     def raise_for_status(self):
         if self.status_code >= 400:
-            raise RuntimeError("Download failed")
+            err = RuntimeError("Download failed")
+            err.response = self
+            raise err
 
     def json(self):
         return json.loads(self.body)
@@ -51,11 +55,16 @@ def installed(config_base, monkeypatch):
     remote = SimpleNamespace(generated=GENERATED, stats_error=False,
                              release=Response(b"[]"),
                              identity=Response(identity(100), headers={"ETag": '"old"'}),
-                             mappings=Response(json.dumps(MAPPINGS).encode()), calls=[], logs=[])
+                             mappings=Response(json.dumps(MAPPINGS).encode()), calls=[], logs=[],
+                             cw_release=Response(b"[]"), cw_file=Response(status=404))
     def get(url, **kwargs):
         remote.calls.append((url, kwargs.get("headers", {})))
         if url == updater.IDENTITY_COMMITS_URL:
             return remote.release
+        if url == updater.CW_MAPPINGS_COMMITS_URL:
+            return remote.cw_release
+        if url.endswith(updater.cw_mappings.REPO_PATH):
+            return remote.cw_file
         if url.endswith("stats.json"):
             if remote.stats_error:
                 raise RuntimeError("Stats unavailable")
@@ -257,3 +266,72 @@ def test_failed_identity_download_preserves_installed_revision(installed):
     assert not result["ok"]
     assert result["identity_generated_on"] == GENERATED
     assert result["identity_revision"] == "a" * 40
+
+
+CW_SHA = "c" * 40
+CW_DATE = "2026-11-09T10:00:00Z"
+
+
+def cw_file(revision="2099-01-01.1", entry_id="remote-fix"):
+    return json.dumps({"schema_version": 1, "revision": revision, "entries": [
+        {"id": entry_id, "remove": [{"source": "mal:1", "target": "anilist:1"}]}]}).encode()
+
+
+def cw_published(remote, body, headers=None):
+    remote.cw_release = Response(json.dumps([{"sha": CW_SHA, "commit": {"committer": {"date": CW_DATE}}}]).encode())
+    remote.cw_file = Response(body, headers=headers or {"ETag": '"cw1"'})
+
+
+def test_unpublished_cw_mappings_keep_the_bundled_copy(installed):
+    pp, remote = installed
+    result = updater.update()
+    assert result["ok"] and not result["cw_download_error"]
+    assert not any(url.endswith(updater.cw_mappings.REPO_PATH) for url, _ in remote.calls)
+    assert not updater.cw_mappings.downloaded_path(pp["root"]).exists()
+    assert result["cw_source"] == "bundled"
+
+
+def test_published_cw_mappings_are_pinned_validated_and_indexed(installed):
+    pp, remote = installed
+    cw_published(remote, cw_file())
+    result = updater.update()
+    assert result["ok"] and result["rebuilt"] and result["cw_mappings_updated"]
+    raw_calls = [url for url, _ in remote.calls if url.endswith(updater.cw_mappings.REPO_PATH)]
+    assert raw_calls == [updater.CW_MAPPINGS_RAW_URL.format(ref=CW_SHA)]
+    assert result["cw_source"] == "downloaded" and result["cw_revision"] == "2099-01-01.1"
+    assert result["cw_download_revision"] == CW_SHA and result["cw_download_generated_on"] == CW_DATE
+    assert result["cw_applied"] == ["remote-fix"]
+    assert storage.read_state("v3")["cw_etag"] == '"cw1"'
+
+    remote.cw_file = Response(status=304)
+    again = updater.update()
+    assert again["ok"] and not again["rebuilt"]
+    assert [h for url, h in remote.calls if url.endswith(updater.cw_mappings.REPO_PATH)][-1]["If-None-Match"] == '"cw1"'
+
+
+def test_invalid_cw_mappings_download_is_rejected(installed):
+    pp, remote = installed
+    cw_published(remote, json.dumps({"schema_version": 1, "revision": "nope", "entries": []}).encode())
+    result = updater.update()
+    assert not result["ok"]
+    assert "CW Anime DB update failed" in result["error"]
+    assert not updater.cw_mappings.downloaded_path(pp["root"]).exists()
+    assert result["cw_source"] == "bundled"
+
+
+def test_older_cw_mappings_on_main_never_replace_a_newer_bundled_copy(installed):
+    pp, remote = installed
+    cw_published(remote, cw_file(revision="2000-01-01.1"))
+    result = updater.update()
+    assert result["ok"]
+    assert updater.cw_mappings.downloaded_path(pp["root"]).exists()
+    assert result["cw_source"] == "bundled"
+
+
+def test_cw_mappings_fall_back_to_main_when_github_api_is_unavailable(installed):
+    _, remote = installed
+    remote.cw_release = Response(status=403)
+    result = updater.update()
+    assert result["ok"] and not result["cw_download_error"]
+    raw_calls = [url for url, _ in remote.calls if url.endswith(updater.cw_mappings.REPO_PATH)]
+    assert raw_calls == [updater.CW_MAPPINGS_RAW_URL.format(ref=updater.CW_MAPPINGS_BRANCH)]

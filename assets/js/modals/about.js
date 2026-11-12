@@ -229,7 +229,7 @@ function view(info, mods, logo) {
                 <summary><span class="material-symbols-rounded about-fold-icon" aria-hidden="true">info</span><span>Disclaimer &amp; credits</span><span class="material-symbols-rounded about-fold-chevron" aria-hidden="true">expand_more</span></summary>
                 <div class="discBody">
                   <div>CrossWatch is an independent community project. It is not affiliated with, endorsed by, or sponsored by Plex, Jellyfin, Emby, Silo, Tofa, SIMKL, Floppy, FlickList, Trakt, AniList, TMDb, MDBList, PublicMetaDB, PunchPlay, BingeBase, Scrob, Tautulli, Tracearr, Kodi, Nuvio, Stremio, CW local tracker, or their owners.</div>
-                  <div>CrossWatch uses the AniBridge mappings dataset and the animeApi dataset for anime identifier and episode translation.</div>
+                  <div>CrossWatch uses the AniBridge mappings dataset and the animeApi dataset for anime identifier and episode translation, with the CW Anime DB on top to fix verified mistakes.</div>
                   <ul>
                     <li>Names, logos, trademarks, and brands belong to their respective owners and are used for identification only.</li>
                     <li>Third-party APIs and services have their own terms, rate limits, and account policies. Use CrossWatch responsibly and within those rules.</li>

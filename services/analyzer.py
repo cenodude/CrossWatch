@@ -32,6 +32,7 @@ from cw_platform.orchestrator._scope import scope_safe as endpoint_scope
 from cw_platform.anime_mapping.history_coords import (
     HistoryCoordinateAliases,
     build_history_coordinate_aliases,
+    limited_fragment_ids,
     native_anime_absolute,
 )
 from cw_platform.anime_mapping.storage import index_ready as anime_index_ready
@@ -2512,7 +2513,7 @@ def _alias_peer_present(ctx: "_AnalysisContext", dst_tok: str, dest_key: str, it
     return True
 
 
-def _history_coord_peer_tokens(item: Mapping[str, Any]) -> set[str]:
+def _history_coord_peer_tokens(item: Mapping[str, Any], aliases: Any = None) -> set[str]:
     typ = str(item.get("type") or "").strip().lower()
     if typ not in {"episode", "season"}:
         return set()
@@ -2532,7 +2533,8 @@ def _history_coord_peer_tokens(item: Mapping[str, Any]) -> set[str]:
         frag = f"#season:{season}"
 
     out: set[str] = set()
-    for source in (item.get("show_ids"), item.get("ids")):
+    show_ids = item.get("show_ids")
+    for source in (limited_fragment_ids(aliases, item, show_ids) if isinstance(show_ids, Mapping) else None, item.get("ids")):
         if not isinstance(source, Mapping):
             continue
         for key, value in source.items():
@@ -2568,7 +2570,7 @@ class _AnimeHistoryCoords:
         for value in dst_items.values():
             if not isinstance(value, Mapping):
                 continue
-            tokens = set(aliases.tokens(value)) | _history_coord_peer_tokens(value)
+            tokens = set(aliases.tokens(value)) | _history_coord_peer_tokens(value, aliases)
             if not tokens:
                 continue
             minute = _minute_epoch(value.get("watched_at"))
@@ -2753,7 +2755,7 @@ def _history_peer_matches(ctx: _AnalysisContext, src: str, dst: str) -> dict[str
             alias = _alias_peer_key(ctx, src, dst, key, item) if source else None
             tokens = _history_event_tokens(item)
             if coords:
-                tokens |= set(coords.aliases.tokens(item)) | _history_coord_peer_tokens(item)
+                tokens |= set(coords.aliases.tokens(item)) | _history_coord_peer_tokens(item, coords.aliases)
             if alias:
                 tokens = {f"pair_alias:{alias}"}
             elif not source:
