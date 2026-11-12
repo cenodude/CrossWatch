@@ -686,6 +686,8 @@ class TmdbProvider:
                     "w": p.get("width"),
                     "h": p.get("height"),
                     "lang": p.get("iso_639_1"),
+                    "vote_average": p.get("vote_average"),
+                    "vote_count": p.get("vote_count"),
                 }
                 for p in backs
                 if p.get("file_path")

@@ -90,7 +90,7 @@
         <div class="pc-actions" hidden><div class="pc-sources"></div><div class="pc-links"></div><button class="pc-trailer" type="button">Watch trailer</button></div>
       </div>
     </div>
-    <div class="pc-route-menu" role="dialog" aria-label="Routes for this stream" hidden><div class="pc-route-menu-head"><span>Routes for this stream</span><button class="pc-route-menu-close" type="button" aria-label="Close routes"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div><div class="pc-route-options"></div></div>
+    <div class="pc-route-menu" role="dialog" aria-label="Active playback routes" hidden><div class="pc-route-menu-head"><span>Active playback routes</span><button class="pc-route-menu-close" type="button" aria-label="Close routes"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div><div class="pc-route-options"></div></div>
   `;
 
 
@@ -265,7 +265,7 @@
       if (focus) routeToggle.focus();
     };
     const routeNode = (route, choice = false) => {
-      const node = document.createElement(choice ? "button" : "div");
+      const node = document.createElement("button");
       node.className = "pc-route";
       node.dataset.kind = route.kind;
       node.classList.toggle("is-selected", route.id === selectedRoute);
@@ -289,16 +289,22 @@
       account.textContent = route.destination ? `${route.sourceLabel} → ${route.destinationLabel}` : `${route.sourceLabel} · Destination unavailable`;
       node.title = `${label}: ${endpoints.textContent}\n${account.textContent}`;
       copy.append(title, account);
-      node.append(symbol, copy);
-      if (choice) {
-        node.type = "button";
-        node.setAttribute("aria-pressed", String(route.id === selectedRoute));
-        node.addEventListener("click", () => {
-          selectedRoute = route.id;
-          drawRoutes();
-          closeRoutes(true);
-        });
+      if (choice && route.mediaLabel) {
+        const media = document.createElement("span");
+        media.className = "pc-route-account";
+        media.textContent = route.mediaLabel;
+        copy.append(media);
       }
+      node.append(symbol, copy);
+      node.type = "button";
+      node.setAttribute("aria-pressed", String(route.id === selectedRoute));
+      node.addEventListener("click", () => {
+        selectedRoute = route.id;
+        drawRoutes();
+        closeRoutes(choice);
+        options.onRouteSelect?.(route);
+        if (!choice) q(".pc-route-list .is-selected")?.focus();
+      });
       return node;
     };
     const drawRoutes = () => {
@@ -314,19 +320,20 @@
         return span;
       };
       routeToggle.replaceChildren(count(1, "pc-route-count-mobile"), count(2, "pc-route-count-desktop"));
-      routeToggle.setAttribute("aria-label", `Show all ${routeItems.length} routes for this stream`);
+      routeToggle.setAttribute("aria-label", `Show all ${routeItems.length} active playback routes`);
       routeToggle.hidden = routeItems.length <= 1;
       el.classList.toggle("pc-many-routes", routeItems.length > 2);
     };
-    const setRoutes = (routes, key) => {
+    const setRoutes = (routes, key, selectedId) => {
       if (!cinematic) return;
       const changedStream = streamKey !== key;
       const signature = JSON.stringify(routes || []);
-      if (signature === routeSignature && !changedStream) return;
+      if (signature === routeSignature && !changedStream && (!selectedId || selectedId === selectedRoute)) return;
       streamKey = key;
       routeSignature = signature;
       routeItems = Array.isArray(routes) ? routes : [];
-      if (changedStream || !routeItems.some(route => route.id === selectedRoute)) selectedRoute = routeItems[0]?.id || "";
+      if (selectedId && routeItems.some(route => route.id === selectedId)) selectedRoute = selectedId;
+      else if (changedStream || !routeItems.some(route => route.id === selectedRoute)) selectedRoute = routeItems[0]?.id || "";
       closeRoutes();
       drawRoutes();
     };
@@ -550,7 +557,7 @@
       if (cinematic) {
         q(".pc-mobile-title").textContent = model.title || "Now Playing";
         q(".pc-heading").textContent = model.heading || "";
-        setRoutes(model.routes, model.key || model.title);
+        setRoutes(model.routes, model.key || model.title, model.selectedRouteId);
       }
       setChips(model.chips);
       setOverview(model.overview || "");

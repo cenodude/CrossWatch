@@ -414,7 +414,7 @@ def _write_json(path: Path, data: dict[str, Any]) -> None:
         return
 
 
-def _pick_best_image(imgs: list[dict[str, Any]], locale: str | None) -> dict[str, Any] | None:
+def _pick_best_image(imgs: list[dict[str, Any]], locale: str | None, *, kind: str = "poster") -> dict[str, Any] | None:
     if not imgs:
         return None
     pref = _lang_from_locale(locale)
@@ -423,6 +423,14 @@ def _pick_best_image(imgs: list[dict[str, Any]], locale: str | None) -> dict[str
     for i, img in enumerate(imgs):
         if not isinstance(img, dict) or not img.get("url"):
             continue
+        if kind == "backdrop":
+            try:
+                width = float(img.get("w") or img.get("width") or 0)
+                height = float(img.get("h") or img.get("height") or 0)
+            except (TypeError, ValueError):
+                width = height = 0
+            if width > 0 and height > 0 and width <= height:
+                continue
         lang = _img_lang(img)
         score = 0
         if lang:
@@ -433,6 +441,8 @@ def _pick_best_image(imgs: list[dict[str, Any]], locale: str | None) -> dict[str
             score += 50
         if lang in {"en", "en-us", "en-gb"}:
             score += 30
+        if kind == "backdrop" and not lang:
+            score = 100
         vscore = 0.0
         for k in ("score", "vote_average", "vote", "rating"):
             raw = img.get(k)
@@ -913,7 +923,7 @@ def get_art_file(
     loc_tag = _safe_cache_part(_locale_tag(eff_locale), default="any")
     safe_typ = _safe_cache_part(typ, default="media")
     safe_tmdb_id = _safe_cache_part(tmdb_id)
-    safe_kind = _safe_cache_part(art_kind, default="poster")
+    safe_kind = _safe_cache_part("backdrop-v2" if art_kind == "backdrop" else art_kind, default="poster")
     safe_size = _safe_cache_part(_sanitize_tmdb_size(size), default="w342")
     cache_stem = _safe_cache_digest_stem("tmdb_art", safe_typ, safe_tmdb_id, safe_kind, loc_tag, safe_size)
     base = _cache_base_path(cache_root, cache_stem)
@@ -961,7 +971,7 @@ def get_art_file(
         if posters2:
             art = posters2
 
-    best = _pick_best_image(art, eff_locale)
+    best = _pick_best_image(art, eff_locale, kind=art_kind)
     if not best:
         if art_kind == "logo" and "logo" in (meta.get("images") or {}):
             _write_json(meta_path, {"missing": True, "ts": int(time.time())})
@@ -1220,6 +1230,8 @@ def api_tmdb_art(
         safe_path = _safe_tmdb_art_response_path(base, local_path)
         if art_kind == "logo" and _is_placeholder_art(safe_path):
             return PlainTextResponse("Logo not available", status_code=404, headers={"Cache-Control": "public, max-age=3600"})
+        if art_kind == "backdrop" and _is_placeholder_art(safe_path):
+            return PlainTextResponse("Backdrop not available", status_code=404, headers={"Cache-Control": "no-store"})
         return FileResponse(
             safe_path,
             media_type=mime,
