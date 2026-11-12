@@ -92,6 +92,7 @@ html[data-cw-theme="flat-light"]{--cw-artwork-placeholder-bg:#e8edf5;--cw-artwor
 
 :root {
   --cw-playing-art-bg: #080d10;
+  --cw-playing-backdrop-opacity: .12;
   --cw-playing-art-text: #f2f4f8;
   --cw-playing-art-muted: #bac4d2;
   --cw-playing-art-border: #ffffff24;
@@ -101,3 +102,4 @@ html[data-cw-theme="flat-light"]{--cw-artwork-placeholder-bg:#e8edf5;--cw-artwor
   --cw-playing-art-shade: linear-gradient(180deg,#05080a18,transparent 25%,#05080a66 55%,#05080af5 100%);
   --cw-playing-mobile-shade: linear-gradient(90deg,#090d11 0%,#090d1bf0 24%,#090d1190 57%,#090d1144),linear-gradient(0deg,#090d11f5,transparent 65%);
 }
+html[data-cw-theme="flat-light"]{--cw-playing-backdrop-opacity:.08}

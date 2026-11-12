@@ -63,7 +63,7 @@
     <div class="pc-inner">
       <a class="pc-poster-link" target="_blank" rel="noopener noreferrer">
         <img class="pc-poster" src="${PLACEHOLDER_POSTER}" alt="">
-        <div class="pc-art-copy"><div class="pc-title">Now Playing</div><div class="pc-art-genres"></div></div>
+        <div class="pc-title">Now Playing</div>
       </a>
       <div class="pc-body">
         <div class="pc-head">
@@ -86,7 +86,6 @@
           <div class="pc-info-block pc-rating-block"><div class="pc-info-label">TMDB rating</div><div class="pc-info-value"><span class="material-symbols-rounded pc-info-icon" aria-hidden="true">star</span><span class="pc-rating">--</span><span class="pc-rating-scale">/ 10</span></div><div class="pc-rating-votes pc-info-note"></div></div>
           <div class="pc-info-block pc-information-block"><div class="pc-information-rows"></div></div>
         </div>
-        <div class="pc-upcoming"></div>
         <div class="pc-transport"><div class="pc-status-ring"><span class="material-symbols-rounded pc-status-icon" aria-hidden="true">play_arrow</span></div><div class="pc-progress-wrap"><div class="pc-progress-labels"><span class="pc-progress-pct"></span><span class="pc-progress-time"></span></div><div class="pc-progress-bg" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100"><div class="pc-progress"></div></div></div></div>
         <div class="pc-actions" hidden><div class="pc-sources"></div><div class="pc-links"></div><button class="pc-trailer" type="button">Watch trailer</button></div>
       </div>
@@ -238,6 +237,21 @@
     };
 
     const cinematic = variant === "scrobble";
+    let openMedia = null;
+    if (cinematic) {
+      el.addEventListener("click", (event) => {
+        if (!openMedia || event.target.closest("button,input,select,textarea,a[href],.pc-routes,.pc-route-menu")) return;
+        event.preventDefault();
+        openMedia();
+      });
+      for (const target of [els.posterLink, q(".pc-mobile-title")]) {
+        target.addEventListener("keydown", (event) => {
+          if (!openMedia || !["Enter", " "].includes(event.key)) return;
+          event.preventDefault();
+          openMedia();
+        });
+      }
+    }
     let routeSignature = "";
     let routeItems = [];
     let selectedRoute = "";
@@ -431,6 +445,19 @@
     };
 
     const setPosterLink = (href, title = "") => {
+      if (cinematic) {
+        els.posterLink.removeAttribute("href");
+        els.posterLink.removeAttribute("target");
+        els.posterLink.removeAttribute("rel");
+        for (const target of [els.posterLink, q(".pc-mobile-title")]) {
+          target.setAttribute("role", "button");
+          target.tabIndex = openMedia ? 0 : -1;
+          target.setAttribute("aria-disabled", String(!openMedia));
+          target.setAttribute("aria-label", `Open media card for ${title || "title"}`);
+          target.title = `Open media card for ${title || "title"}`;
+        }
+        return;
+      }
       if (!href) {
         els.posterLink.removeAttribute("href");
         els.posterLink.removeAttribute("aria-label");
@@ -450,10 +477,6 @@
         const items = Array.isArray(rows) ? rows : [];
         const genres = items.find(row => row.icon === "sell")?.main || "";
         q(".pc-genres").textContent = genres;
-        q(".pc-art-genres").textContent = genres;
-        const next = items.find(row => row.icon === "arrow_forward");
-        q(".pc-upcoming").replaceChildren(...(next ? [informationRow(next.icon, next.main, next.sub || "")] : []));
-        q(".pc-upcoming").hidden = !next;
         els.informationRows.replaceChildren(...items.filter(row => row.icon !== "sell" && row.icon !== "arrow_forward").map(row => informationRow(row.icon, row.main, row.sub || "")));
         return;
       }
@@ -522,6 +545,7 @@
 
     function render(model) {
       if (!model) return;
+      openMedia = typeof model.onOpen === "function" ? model.onOpen : null;
       els.title.textContent = !cinematic && model.year ? `${model.title} ${model.year}` : (model.title || "");
       if (cinematic) {
         q(".pc-mobile-title").textContent = model.title || "Now Playing";
