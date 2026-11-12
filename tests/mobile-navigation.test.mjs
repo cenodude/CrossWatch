@@ -13,6 +13,7 @@ function fixture(compact = false) {
     constructor() { super(); this.attrs = new Map(); this.classes = new Set(); this.children = []; this.classList = {
       add: value => this.classes.add(value), remove: value => this.classes.delete(value),
       contains: value => this.classes.has(value),
+      toggle: (value, on) => on ? this.classes.add(value) : this.classes.delete(value),
     }; }
     setAttribute(key, value) { this.attrs.set(key, value); }
     getAttribute(key) { return this.attrs.get(key); }

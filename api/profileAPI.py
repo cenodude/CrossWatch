@@ -938,13 +938,17 @@ def build_profile_title_payload(
 ) -> dict[str, Any]:
     media = "movie" if str(media or "").strip().lower() == "movie" else "show"
     out: dict[str, Any] = {"ok": True, "type": media, "tmdb": str(tmdb)}
+    history_indices: list[dict[str, Any]] = []
     sources = ["synced", "scrobble", "ratings"] + (["watchlist"] if watchlist else [])
     for source in sources:
         try:
             index, _version = _profile_history_index(cfg, profile_id, source)
             out[source] = profile_history.title_presence(index, media, tmdb)
+            if source in {"synced", "scrobble"}:
+                history_indices.append(index)
         except Exception:
             out[source] = None
+    out["plays"] = profile_history.title_watch_history(history_indices, media, tmdb) if history_indices else None
     try:
         lookup = _collection_lookup(cfg, profile_id, collection_cache_fingerprint())
         out["collection"] = _collection_presence(lookup.get(f"{media}:{str(tmdb).strip()}") or [])

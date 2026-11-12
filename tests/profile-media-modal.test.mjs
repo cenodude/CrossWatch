@@ -24,6 +24,37 @@ function modal(presence = null, type = "movie", ItemActions = undefined) {
 const epoch = Date.parse("2026-01-02T12:00:00Z") / 1000;
 const entry = (count, last_epoch = epoch, episodes = []) => ({ count, last_epoch, episodes, present: [{ provider: "TRAKT" }], missing: [] });
 
+test("shared media cards show recent watch history without tracker edit controls", () => {
+  const plays = Array.from({length:7}, (_, i) => ({epoch:epoch + i * 86400, season:1, episode:i + 1}));
+  const api = modal({plays}, "show");
+  let html = api.overviewTab();
+  assert.match(html, /Watch history/);
+  assert.ok(html.indexOf("Watch history") < html.indexOf("Details"));
+  assert.equal((html.match(/class="cw-mm-trk-play"/g) || []).length, 5);
+  assert.ok(html.indexOf("S1 E7") < html.indexOf("S1 E6"));
+  assert.match(html, /Show 2 older plays/);
+  assert.doesNotMatch(html, /data-mm-trk-edit|data-mm-trk=|data-mm-status-picker/);
+  assert.match(html, /cw-mm-trk-plays is-readonly/);
+  api.state.historyExpanded = true;
+  html = api.overviewTab();
+  assert.equal((html.match(/class="cw-mm-trk-play"/g) || []).length, 7);
+  assert.match(html, /aria-expanded="true"/);
+  assert.match(modal({plays:[{epoch}]}).overviewTab(), /cw-mm-trk-plays is-movie is-readonly/);
+});
+
+test("shared media history distinguishes loading, unavailable and empty history", () => {
+  const api = modal();
+  api.state.presenceLoading = true;
+  assert.match(api.overviewTab(), /Loading watch history/);
+  api.state.presenceLoading = false;
+  assert.match(api.overviewTab(), /Watch history unavailable/);
+  api.state.presence = {plays:[]};
+  assert.match(api.overviewTab(), /No watch history yet/);
+  api.state.item.type = "show";
+  api.state.presence.plays = [{epoch, season:'<img src=x>', episode:1}];
+  assert.doesNotMatch(api.overviewTab(), /<img src=x>/);
+});
+
 test("media details distinguish equivalent ratings from exact agreement and conflicts", () => {
   const api = modal({ratings:{rating:7.5,agree:true,rating_adjusted:true}});
   assert.match(api.actions(),/Equivalent scores/);
@@ -162,7 +193,7 @@ function deferred() {
 
 function loadingModal() {
   const metas = [], requests = [], body = {innerHTML:"",scrollTop:0,querySelector:()=>null}, panel = {innerHTML:""};
-  const root = {hidden:true,classList:{toggle(){}},addEventListener(){},querySelector:selector => selector === ".cw-mm-body" ? body : selector === ".cw-mm-panel" ? panel : {style:{},focus(){}},querySelectorAll:()=>[]};
+  const root = {hidden:true,classList:{toggle(){}},addEventListener(){},querySelector:selector => selector === ".cw-mm-body" ? body : selector === ".cw-mm-panel" ? panel : selector === "[data-mm-status-picker][open]" ? null : {style:{},focus(){}},querySelectorAll:()=>[]};
   const context = {
     window:{addEventListener(){},CW:{Meta:{get:() => {const d=deferred();metas.push(d);return d.promise;}},ProfileDateTime:{format:date=>date.toISOString()}}},
     navigator:{language:"en-US"},
@@ -346,7 +377,7 @@ test("opened from the tracker the card shows that instance's plays and hands act
   const data={title:{art:{tmdb:"1"}},plays,ratings:[{rating:8}],watchlist:[],collection:[]};
   const opening=f.api.open({type:"movie",tmdb:"1",title:"Example"},{tracker:{label:"Desk",data,onAction:(action,key)=>actions.push([action,key])}});
   await tick();
-  assert.match(f.body.innerHTML,/In your tracker <small>Desk<\/small>/);
+  assert.match(f.body.innerHTML,/<small class="cw-mm-muted">Desk<\/small>/);
   assert.match(f.body.innerHTML,/Watched 2 times/);
   assert.doesNotMatch(f.body.innerHTML,/Checking watch status/);
   assert.match(f.body.innerHTML,/8\/10/);

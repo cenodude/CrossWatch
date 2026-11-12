@@ -78,7 +78,8 @@ for (const theme of ['original','flat-dark','flat-light']) {
         });
         assert.equal(dangerStyle.background, 'rgba(0, 0, 0, 0)');
         assert.equal(dangerStyle.fill, dangerStyle.color);
-        for (const item of await menu.getByRole('menuitem').all()) assert.ok((await item.boundingBox()).height >= 44);
+        for (const item of await menu.getByRole('menuitem').all()) assert.ok((await item.boundingBox()).height >= (width <= 1024 ? 44 : 34));
+        if (width === 1440) assert.ok(bounds.width <= 240 && bounds.height <= 450, JSON.stringify(bounds));
         const expectedCurrent = shell === 'profile' ? 'profile' : null;
         assert.equal(await menu.locator('[aria-current]').count(), expectedCurrent ? 1 : 0);
         if (expectedCurrent) assert.equal(await menu.locator('[aria-current]').getAttribute('data-cw-profile-menu-action'), expectedCurrent);
@@ -113,7 +114,53 @@ for (const theme of ['original','flat-dark','flat-light']) {
   }
 }
 
+for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: profile Settings cannot cover the account menu`, async t => {
+  const {page} = await fixture(t, {shell:'profile',theme,width:1440,height:900});
+  await page.evaluate(() => {
+    document.querySelectorAll('.cw-profile-panel').forEach(panel=>panel.classList.toggle('active',panel.id==='profile-panel-account'));
+    document.querySelectorAll('[data-profile-tab]').forEach(tab=>tab.classList.toggle('active',tab.dataset.profileTab==='account'));
+    document.querySelector('#settings-profile').scrollIntoView();
+    window.scrollBy(0,-160);
+  });
+  await page.locator('#cw-nav-profile-link').click();
+  const menu = page.locator('#cw-profile-menu');
+  const covered = await menu.getByRole('menuitem').evaluateAll(items=>items.filter(item=>{
+    const rect=item.getBoundingClientRect();
+    return !item.contains(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2));
+  }).map(item=>item.textContent));
+  assert.deepEqual(covered, []);
+  if (process.env.CW_MENU_SCREENSHOTS) await page.screenshot({path:`${process.env.CW_MENU_SCREENSHOTS}/${theme}-profile-settings.png`});
+});
+
 for (const shell of ['main','profile']) {
+  test(`${shell}: More destinations use mobile tile styles and restore desktop tabs`, async t => {
+    const {page} = await fixture(t,{shell,width:390,height:844});
+    await page.locator('#cw-mobile-more').click();
+    const menu=page.locator('#cw-mobile-navigation');
+    assert.equal(await menu.getByRole('button',{name:'Tracker',exact:true}).isVisible(),true);
+    for (const selector of ['#tab-settings','#tab-about','.tab:has-text("Editor")']) {
+      const style=await menu.locator(selector).evaluate(node=>{
+        const s=getComputedStyle(node);
+        return {border:s.borderTopWidth,radius:s.borderTopLeftRadius,color:s.color,fill:s.webkitTextFillColor};
+      });
+      assert.equal(style.border,'1px');
+      assert.equal(style.radius,'12px');
+      assert.equal(style.color,style.fill);
+    }
+    await page.setViewportSize({width:1440,height:900});
+    assert.equal(await page.locator('#tab-settings').evaluate(node=>getComputedStyle(node).borderTopWidth),'0px');
+    await page.setViewportSize({width:390,height:844});
+    await page.locator('#cw-mobile-more').click();
+    assert.equal(await page.locator('#tab-settings').evaluate(node=>getComputedStyle(node).borderTopWidth),'1px');
+    if(shell==='profile') {
+      await menu.getByRole('button',{name:'Tracker',exact:true}).focus();
+      await page.keyboard.press('Enter');
+      await page.waitForURL('https://account-menu.test/#tracker');
+    } else {
+      assert.equal(await menu.locator('#tab-tracker').getAttribute('onclick'),"showTab('tracker')");
+    }
+  });
+
   test(`${shell}: existing media destinations, profile settings, tracker and logout`, async t => {
     const {page,writes} = await fixture(t, {shell});
     const start = `https://account-menu.test/${shell === 'profile' ? 'profile' : ''}`;

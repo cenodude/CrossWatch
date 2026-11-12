@@ -48,6 +48,45 @@ async function openSettings(page) {
   await page.locator('#cw-mobile-widgets > summary').click();
 }
 
+for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: More tiles have visible boundaries, labels and keyboard focus`, async t => {
+  const {page} = await fixture(t,theme);
+  await page.locator('#cw-mobile-more').click();
+  const menu = page.locator('#cw-mobile-navigation');
+  const tile = menu.locator('[data-mobile-route="profile/overview"]');
+  for (const width of [320,390,760]) {
+    await page.setViewportSize({width,height:844});
+    assert.equal(await menu.locator('#tab-tracker').isVisible(),true);
+    const style = await tile.evaluate(node=>{
+      const s=getComputedStyle(node);
+      const rgb=value=>value.match(/[\d.]+/g).slice(0,3).map(Number);
+      const luminance=value=>rgb(value).map(c=>c/255).map(c=>c<=.04045?c/12.92:((c+.055)/1.055)**2.4).reduce((sum,c,i)=>sum+c*[.2126,.7152,.0722][i],0);
+      const contrast=(a,b)=>(Math.max(luminance(a),luminance(b))+.05)/(Math.min(luminance(a),luminance(b))+.05);
+      return {border:s.borderTopWidth,radius:s.borderTopLeftRadius,textContrast:contrast(s.webkitTextFillColor,s.backgroundColor),borderContrast:contrast(s.borderTopColor,s.backgroundColor)};
+    });
+    assert.equal(style.border,'1px');
+    assert.equal(style.radius,'12px');
+    assert.ok(style.textContrast>=7,JSON.stringify(style));
+    if(theme==='flat-dark') assert.ok(style.borderContrast>=3,JSON.stringify(style));
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await page.keyboard.press('Tab');
+    await tile.focus();
+    assert.equal(await tile.evaluate(node=>getComputedStyle(node).outlineWidth),'2px');
+    await page.locator('#cw-mobile-more').focus();
+    await mkdir('.tmp/mobile-preferences',{recursive:true});
+    const bounds=await menu.boundingBox();
+    await page.screenshot({path:`.tmp/mobile-preferences/${theme}-tracker-more-${width}.png`,clip:{x:0,y:bounds.y,width,height:844-bounds.y}});
+  }
+  await tile.click();
+  await page.waitForURL('**/profile#overview');
+  await page.locator('#cw-mobile-more').click();
+  await page.waitForFunction(()=>document.querySelector('#cw-mobile-navigation [data-mobile-route="profile/overview"]').getAttribute('aria-current')==='page');
+  const selected=await tile.evaluate(node=>getComputedStyle(node).backgroundColor);
+  assert.notEqual(selected,await menu.locator('#tab-editor').evaluate(node=>getComputedStyle(node).backgroundColor));
+  await page.setViewportSize({width:1200,height:900});
+  assert.equal(await menu.evaluate(node=>node.classList.contains('cw-page-mobile-navigation')),false);
+  assert.equal(await page.locator('#tab-editor').evaluate(node=>getComputedStyle(node).borderTopWidth),'0px');
+});
+
 for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: shortcuts persist and mobile playing-card visibility stays separate`, async t => {
   const {page,empty} = await fixture(t,theme);
   const routes = () => page.locator('#cw-mobile-bottom-nav a').evaluateAll(nodes=>nodes.map(node=>node.dataset.mobileRoute));
@@ -55,7 +94,7 @@ for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: short
   await page.waitForFunction(()=>document.querySelector('#playing-detail').classList.contains('show'));
   await openSettings(page);
   assert.equal(await page.locator('#tab-main').isVisible(),false);
-  assert.equal(await page.locator('#tab-tracker').isVisible(),false);
+  assert.equal(await page.locator('#tab-tracker').isVisible(),true);
   assert.equal(await page.locator('#cw-mobile-navigation [data-mobile-route="settings/scrobbler"]').isVisible(),true);
   await page.locator('#cw-mobile-shortcut-0').selectOption('settings/scrobbler');
   assert.deepEqual(await routes(),['main','tracker','settings/scrobbler','settings/sync']);
@@ -106,6 +145,7 @@ test('restricted accounts discard inaccessible shortcuts and cannot quick add', 
   assert.equal(await page.locator('.cw-qa-fab').isVisible(),false);
   await openSettings(page);
   assert.equal(await page.locator('.cw-mobile-shortcuts').count(),0);
+  assert.equal(await page.locator('#cw-mobile-navigation #tab-tracker').count(),0);
 });
 
 test('invalid saved shortcuts recover to defaults', async t => {

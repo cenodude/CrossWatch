@@ -540,6 +540,27 @@ def title_presence(index: dict[str, Any], media: str, tmdb: Any) -> dict[str, An
     return out
 
 
+def title_watch_history(indices: list[dict[str, Any]], media: str, tmdb: Any) -> list[dict[str, Any]]:
+    watches: dict[tuple[int | None, int | None], list[int]] = {}
+    for index in indices:
+        for row in rows_for_tmdb(index, media, tmdb):
+            season = dw._as_int(row.get("season")) if media != "movie" else None
+            episode = dw._as_int(row.get("episode")) if media != "movie" else None
+            if media != "movie" and (season is None or episode is None):
+                continue
+            epochs = row.get("watch_epochs") or [row.get("sort_epoch")]
+            for value in epochs:
+                epoch = dw._as_int(value) or 0
+                if epoch > 0:
+                    watches.setdefault((season, episode), []).append(epoch)
+    plays = [
+        {"epoch": epoch, **({"season": season, "episode": episode} if season is not None else {})}
+        for (season, episode), epochs in watches.items()
+        for epoch in dw._distinct_watches(epochs)
+    ]
+    return sorted(plays, key=lambda play: play["epoch"], reverse=True)
+
+
 TITLE_PLAYS_MAX = 50
 
 
