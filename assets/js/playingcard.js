@@ -149,7 +149,7 @@
     if (!id) return "";
     const resolved = meta?.resolved_type || meta?.type || window.CW?.Meta?.peek(p)?.resolved_type;
     const type = String(resolved || p?.media_type || p?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
-    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?fallback=2&kind=backdrop&size=w1280${artEvidenceOf(p)}`;
+    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?kind=backdrop&size=w1280&v=2${artEvidenceOf(p)}`;
   };
 
   const SHARED_WATCH_KEY = "__CW_CURRENT_WATCHING_SHARED__";
@@ -236,6 +236,7 @@
 
   const CARD = {
     selectedKey: "",
+    selectedRouteId: "",
     streams: [],
     dismissed: false,
     poll: null,
@@ -259,6 +260,7 @@
     },
     onPrev: () => applySelectionOffset(-1),
     onNext: () => applySelectionOffset(1),
+    onRouteSelect: (route) => selectStream(route.streamKey, route.id),
   });
 
   const stopStatusPoll = () => {
@@ -329,6 +331,13 @@
     return { pct, remaining };
   };
 
+  const activeRoutes = () => CARD.streams.flatMap(p => routesFor(p).map(route => ({
+    ...route,
+    id: JSON.stringify([keyOf(p), route.id]),
+    streamKey: keyOf(p),
+    mediaLabel: [p.title, p.media_type === "episode" && p.episode ? `S${String(p.season ?? 0).padStart(2, "0")} E${String(p.episode).padStart(2, "0")}` : "", p.account].filter(Boolean).join(" · "),
+  })));
+
   const statusModel = (p, st) => {
     const updatedSec = Number(p.updated) || 0;
     const startedSec = Number(p.started) || 0;
@@ -360,7 +369,13 @@
     if (total <= 1) return;
     const current = selectedIndex();
     const next = (current + delta + total) % total;
-    CARD.selectedKey = keyOf(CARD.streams[next]);
+    selectStream(keyOf(CARD.streams[next]));
+  }
+
+  function selectStream(key, routeId = "") {
+    if (!CARD.streams.some(item => keyOf(item) === key)) return;
+    CARD.selectedKey = key;
+    CARD.selectedRouteId = routeId;
     CARD.dismissed = false;
     renderSelectedStream().catch(() => {});
   }
@@ -415,10 +430,15 @@
 
     const overview = p?.overview || (meta ? (meta.overview || det.overview || det.tagline || "") : "");
     const mediaItem = { ...p, tmdb: tmdbIdOf(p) || meta?.ids?.tmdb || meta?.ids?.id || "" };
+    const routes = activeRoutes();
+    if (!routes.some(route => route.id === CARD.selectedRouteId && route.streamKey === keyOf(p))) {
+      CARD.selectedRouteId = routes.find(route => route.streamKey === keyOf(p))?.id || "";
+    }
 
     return {
       key: keyOf(p),
-      routes: routesFor(p),
+      routes,
+      selectedRouteId: CARD.selectedRouteId,
       heading: !isMovie && p.season !== null && p.season !== undefined && p.episode
         ? `S${String(p.season).padStart(2, "0")} E${String(p.episode).padStart(2, "0")}` : mediaTypeLabel(p),
       title: p.title || "Now Playing",

@@ -45,6 +45,7 @@ for(const theme of ['original','flat-dark','flat-light'])for(const width of [320
   assert.equal(await card.locator('.pc-poster').isVisible(),width>760);
   const backdrop=card.locator(width<=760?'.pc-poster-link':'.pc-body');
   assert.match(await backdrop.evaluate(el=>getComputedStyle(el,'::before').backgroundImage),/kind=backdrop/);
+  assert.match(await backdrop.evaluate(el=>getComputedStyle(el,'::before').backgroundImage),/v=2/);
   if(width<=760)assert.ok(box.height<300,`Mobile height ${box.height}`);
   else {
     assert.ok(box.width<=720,`Desktop width ${box.width}`);
@@ -75,11 +76,61 @@ for(const theme of ['original','flat-dark','flat-light'])for(const width of [320
   assert.equal(await card.locator('.pc-title').textContent(),'Arrival');
   assert.equal(await card.locator('.pc-status').textContent(),'Paused');
   assert.match(await card.locator('.pc-route-list').textContent(),/Destination unavailable/);
-  assert.equal(await card.locator('.pc-route-toggle').isVisible(),false);
+  assert.equal(await card.locator('.pc-route-toggle').isVisible(),true);
   await card.locator('.pc-nav .pc-next').click();
   assert.equal(await card.locator('.pc-title').textContent(),'The Institute');
   await card.locator('.pc-close').click();
   assert.equal(await card.isVisible(),false);
+});
+
+for(const width of [390,1440])test(`route selection switches playback and artwork at ${width}px`,async t=>{
+  const page=await fixture(t,'flat-dark',width);
+  const card=page.locator('.cw-pc-scrobble');
+  await page.evaluate(()=>{
+    CW.Meta.get=async item=>({overview:`${item.title} synopsis`,vote_average:8,runtime_minutes:100});
+    window.openedMedia=[];
+    CW.ProfileMediaModal={canOpen:()=>true,open:item=>openedMedia.push(item)};
+  });
+  await card.locator('.pc-route-toggle').click();
+  assert.equal(await card.locator('.pc-route-options button').count(),4);
+  await card.locator('.pc-route-options button').filter({hasText:'Another stream'}).click();
+  assert.equal(await card.locator('.pc-title').textContent(),'Another stream');
+  assert.equal(await card.locator('.pc-nav-count').textContent(),'2 / 3');
+  assert.equal(await card.locator('.pc-progress-pct').textContent(),'5% watched');
+  assert.equal(await card.evaluate(el=>el.style.getPropertyValue('--pc-backdrop')),'none');
+  await card.locator('.pc-route-toggle').click();
+  assert.equal(await card.locator('.pc-route-options [aria-pressed="true"]').count(),1);
+  assert.match(await card.locator('.pc-route-options [aria-pressed="true"]').textContent(),/Another stream/);
+  await card.locator('.pc-route-options button').filter({hasText:'Arrival'}).click();
+  await card.locator('.pc-overview').filter({hasText:'Arrival synopsis'}).waitFor({state:'attached'});
+  assert.equal(await card.locator('.pc-title').textContent(),'Arrival');
+  assert.equal(await card.locator('.pc-status').textContent(),'Paused');
+  assert.equal(await card.locator('.pc-progress-pct').textContent(),'50% watched');
+  assert.match(await card.locator('.pc-poster').getAttribute('src'),/\/movie\/329865\?/);
+  const backdrop=await card.evaluate(el=>el.style.getPropertyValue('--pc-backdrop'));
+  assert.match(backdrop,/\/movie\/329865\?kind=backdrop/);
+  assert.notEqual(backdrop,`url("${await card.locator('.pc-poster').getAttribute('src')}")`);
+  await card.locator(width<=760?'.pc-mobile-title':'.pc-poster-link').click();
+  assert.deepEqual(await page.evaluate(()=>openedMedia.map(item=>item.title)),['Arrival']);
+  const refreshed=page.waitForResponse('**/api/watch/currently_watching');
+  await page.evaluate(()=>window.dispatchEvent(new Event('cw:auth-state-changed')));
+  await refreshed;
+  await card.locator('.pc-overview').filter({hasText:'Arrival synopsis'}).waitFor({state:'attached'});
+  assert.equal(await card.locator('.pc-title').textContent(),'Arrival');
+  if(width>760){
+    await card.locator('.pc-route-list button').filter({hasText:'Trakt'}).click();
+    assert.equal(await card.locator('.pc-title').textContent(),'The Institute');
+    assert.match(await card.locator('.pc-poster').getAttribute('src'),/\/tv\/253372\?/);
+  }
+  await page.route('**/api/watch/currently_watching',route=>route.fulfill({json:{streams:[{_key:'remaining',source:'plex',title:'Remaining playback',media_type:'movie',state:'playing',progress:10,routes:[routes[0]],updated:Math.floor(Date.now()/1000)}]}}));
+  await page.evaluate(()=>window.dispatchEvent(new Event('cw:auth-state-changed')));
+  await card.locator('.pc-title').filter({hasText:'Remaining playback'}).waitFor({state:'attached'});
+  assert.equal(await card.locator('.pc-route-options button').count(),1);
+  assert.equal(await card.locator('.pc-route-toggle').isVisible(),false);
+  assert.equal(await card.evaluate(el=>el.style.getPropertyValue('--pc-backdrop')),'none');
+  await page.route('**/api/watch/currently_watching',route=>route.fulfill({json:{streams:[]}}));
+  await page.evaluate(()=>window.dispatchEvent(new Event('cw:auth-state-changed')));
+  await card.waitFor({state:'hidden'});
 });
 
 test('desktop card stays compact on a shorter viewport with display scaling',async t=>{
