@@ -25,7 +25,7 @@
   min-width: 0;
 }
 
-#page-settings .cw-auth-oidc-field #app_auth_oidc_scopes {
+#page-settings .cw-auth-oidc-field .cw-page-settings-field:has(>#app_auth_oidc_scopes) {
   grid-column: 1 / -1;
 }
 
@@ -80,7 +80,7 @@
 }
 
 #page-settings #app_auth_fields :is(.cw-auth-totp-field, .cw-auth-plex-field) > .sub {
-  min-height: 3.1rem;
+  min-height: 0;
 }
 
 #page-settings #app_auth_fields .cw-auth-totp-field > .btn {
@@ -139,7 +139,7 @@
     grid-template-columns: 1fr;
   }
 
-  #page-settings .cw-auth-oidc-field #app_auth_oidc_scopes {
+  #page-settings .cw-auth-oidc-field .cw-page-settings-field:has(>#app_auth_oidc_scopes) {
     grid-column: auto;
   }
 }

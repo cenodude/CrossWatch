@@ -22,12 +22,15 @@ async function open(t, theme) {
   }, source);
   await page.route("https://settings.test/**", async route => {
     const path = new URL(route.request().url()).pathname;
+    if (path === "/api/app-auth/status") return route.fulfill({json: {enabled: true, configured: true, is_admin: true}});
+    if (path === "/api/user-profiles") return route.fulfill({json: {items: [{id: "viewer", label: "Household"}]}});
+    if (path === "/api/app-auth/users") return route.fulfill({json: {items: []}});
     if (path.startsWith("/assets/")) {
       try { return route.fulfill({body: await readFile(new URL(".." + path, import.meta.url)), contentType: path.endsWith(".css") ? "text/css" : path.endsWith(".woff2") ? "font/woff2" : path.endsWith(".js") ? "text/javascript" : "image/svg+xml"}); }
       catch { return route.fulfill({status: 404, body: ""}); }
     }
     const attrs = theme === "original" ? 'class="cw-theme-original"' : `data-cw-theme="${theme}" class="cw-theme-${theme === "flat-light" ? "light" : "dark"}"`;
-    return route.fulfill({contentType: "text/html", body: `<!doctype html><html ${attrs} data-tab="settings"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${markup.styles.map(path => `<link rel="stylesheet" href="${path}">`).join("")}</head><body><main id="layout" class="full">${markup.settings}</main><script src="/assets/helpers/icon-select.js"></script></body></html>`});
+    return route.fulfill({contentType: "text/html", body: `<!doctype html><html ${attrs} data-tab="settings"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${markup.styles.map(path => `<link rel="stylesheet" href="${path}">`).join("")}</head><body><main id="layout" class="full">${markup.settings}</main><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/settings-ui.js"></script><script src="/assets/js/app-users.js"></script></body></html>`});
   });
   await page.goto("https://settings.test/");
   await page.evaluate(() => document.fonts.ready);
@@ -37,7 +40,7 @@ async function open(t, theme) {
 async function select(page, pane, tab = "ui") {
   await page.evaluate(({pane, tab}) => {
     document.querySelectorAll(".cw-settings-pane").forEach(el => el.classList.toggle("active", el.dataset.pane === pane));
-    document.querySelectorAll("#ui_settings_panels>.cw-settings-panel").forEach(el => el.classList.toggle("active", el.dataset.tab === tab));
+    window.cwUiSettingsSelect(tab, {persist: false});
     document.querySelector("#app_auth_totp_setup").classList.remove("hidden");
     document.querySelector("#app_auth_totp_secret").value = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
     document.querySelector("#btn-app-auth-totp-verify").classList.remove("hidden");
@@ -86,6 +89,87 @@ for (const theme of ["original", "flat-dark", "flat-light"]) {
   });
   test(`${theme}: UI and Security adapt to iPad landscape, portrait, phone and desktop`, async t => {
     const page = await open(t, theme);
+    await select(page, "app", "ui");
+    const switches = page.getByRole("switch");
+    assert.equal(await switches.count(), 10);
+    assert.equal(await page.locator('.cw-app-ui-layout input:checked').count(), 8);
+    const watchlist = page.getByRole("switch", {name: "Watchlist widget", exact: true});
+    await page.evaluate(() => {
+      window.switchChanges = 0;
+      document.getElementById("ui_show_watchlist_preview").addEventListener("change", () => window.switchChanges++);
+    });
+    await page.locator('label[for="ui_show_watchlist_preview"]').click();
+    assert.equal(await watchlist.isChecked(), false);
+    await watchlist.focus();
+    await page.keyboard.press("Space");
+    assert.equal(await watchlist.isChecked(), true);
+    assert.equal(await page.evaluate(() => window.switchChanges), 2);
+    await watchlist.evaluate(el => el.disabled = true);
+    await page.keyboard.press("Space");
+    assert.equal(await watchlist.isChecked(), true);
+    assert.equal(await page.evaluate(() => window.switchChanges), 2);
+    await watchlist.evaluate(el => el.disabled = false);
+    const header = await page.locator(".cw-app-hero-copy").innerText();
+    await page.evaluate(() => window.cwAppUsersRefresh());
+    assert.match(await page.locator("#app_users_list").innerText(), /Nobody else can sign in/);
+    await page.route("https://settings.test/api/app-auth/users", route => route.fulfill({json: {items: [
+      {id: "administrator", username: "admin", protected: true},
+      {id: "viewer", username: "Household viewer", profile_id: "viewer", enabled: false, permissions: {write: false}}
+    ]}}));
+    await page.evaluate(() => window.cwAppUsersRefresh());
+    assert.equal(await page.locator(".cw-app-user-row").count(), 2);
+    await select(page, "app", "security");
+    assert.equal(await page.locator(".cw-app-hero-copy").innerText(), header);
+    for (const id of ["app_auth_password_details", "app_auth_oidc_details", "app_auth_network_details", "ai_section"]) {
+      assert.equal(await page.locator(`#${id}`).getAttribute("open"), null, id);
+    }
+    assert.equal(await page.locator("#app_auth_oidc_issuer").isVisible(), false);
+    assert.equal(await page.locator("#assistant_model").isVisible(), false);
+    for (const [action, inactive] of [["btn-app-auth-plex-unlink", "btn-app-auth-plex-link"], ["btn-app-auth-totp-disable", "btn-app-auth-totp-setup"]]) {
+      assert.equal(await page.locator(`#${action}`).isVisible(), false);
+      await page.locator(`#${action}`).evaluate(el => el.disabled = false);
+      assert.equal(await page.locator(`#${action}`).isVisible(), true);
+      assert.equal(await page.locator(`#${inactive}`).isVisible(), false);
+      await page.locator(`#${action}`).evaluate(el => el.disabled = true);
+    }
+    if (process.env.CW_SETTINGS_SCREENSHOTS) {
+      await mkdir(process.env.CW_SETTINGS_SCREENSHOTS, {recursive: true});
+      await page.evaluate(() => {
+        document.getElementById("app_auth_totp_setup").classList.add("hidden");
+        document.getElementById("btn-app-auth-totp-verify").classList.add("hidden");
+        document.getElementById("app_auth_username").value = "admin";
+        document.getElementById("app_auth_state").textContent = "Signed in - This browser";
+      });
+      for (const width of [390, 1920]) {
+        await page.setViewportSize({width, height: 1080});
+        await checkCards(page);
+        await page.locator(".cw-app-settings-pane").screenshot({path: `${process.env.CW_SETTINGS_SCREENSHOTS}/${theme}-${width}-security-default.png`});
+      }
+    }
+    for (const id of ["app_auth_password_details", "app_auth_network_details", "ai_section"]) {
+      await page.locator(`#${id}>summary`).focus();
+      await page.keyboard.press("Enter");
+      assert.notEqual(await page.locator(`#${id}`).getAttribute("open"), null);
+    }
+    await page.locator("#app_auth_password").fill("example-password");
+    await page.locator("#app_auth_password_details>summary").click();
+    await page.locator("#app_auth_password_details>summary").click();
+    assert.equal(await page.locator("#app_auth_password").inputValue(), "example-password");
+    await page.locator("#assistant_model").fill("example-model");
+    await page.locator("#ai_section>summary").click();
+    await page.locator("#ai_section>summary").click();
+    assert.equal(await page.locator("#assistant_model").inputValue(), "example-model");
+    const disclosure = page.locator("#app_auth_oidc_details");
+    assert.equal(await disclosure.getAttribute("open"), null);
+    await checkCards(page);
+    await disclosure.locator("summary").focus();
+    await page.keyboard.press("Enter");
+    assert.notEqual(await disclosure.getAttribute("open"), null);
+    assert.deepEqual(await disclosure.locator("input, select").evaluateAll(fields => fields.filter(el => !el.labels?.length).map(el => el.id)), []);
+    await page.locator("#app_auth_oidc_issuer").fill("https://accounts.example.com");
+    await disclosure.locator("summary").click();
+    await disclosure.locator("summary").click();
+    assert.equal(await page.locator("#app_auth_oidc_issuer").inputValue(), "https://accounts.example.com");
     for (const [width, height] of [[740, 360], [844, 390], [932, 430], [1194, 834], [1366, 1024], [1180, 820], [1024, 768], [820, 1180], [390, 844], [320, 740], [1920, 1080]]) {
       await page.setViewportSize({width, height});
       for (const tab of ["ui", "security"]) {
@@ -93,7 +177,7 @@ for (const theme of ["original", "flat-dark", "flat-light"]) {
         await checkCards(page);
         if (process.env.CW_SETTINGS_SCREENSHOTS) {
           await mkdir(process.env.CW_SETTINGS_SCREENSHOTS, {recursive: true});
-          const target = tab === "security" ? page.locator("#app_auth_fields") : page.locator(".cw-app-panel.active");
+          const target = page.locator(".cw-app-settings-pane");
           await target.screenshot({path: `${process.env.CW_SETTINGS_SCREENSHOTS}/${theme}-${width}-${tab}.png`});
         }
       }

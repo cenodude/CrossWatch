@@ -1748,6 +1748,11 @@ async function loadConfig() {
     return el;
   };
 
+  const _setChecked = (id, checked) => {
+    const el = document.getElementById(id);
+    if (el) el.checked = checked;
+  };
+
   try { bindSyncVisibilityObservers?.(); } catch {}
   try {
     if (typeof scheduleApplySyncVisibility === "function") scheduleApplySyncVisibility();
@@ -1776,56 +1781,56 @@ async function loadConfig() {
       const on = (typeof ui.show_watchlist_preview === "boolean")
         ? !!ui.show_watchlist_preview
         : true;
-      _setSelectValue("ui_show_watchlist_preview", on ? "true" : "false");
+      _setChecked("ui_show_watchlist_preview", on);
     }
 
     {
       const on = (typeof ui.show_playingcard === "boolean")
         ? !!ui.show_playingcard
         : true;
-      _setSelectValue("ui_show_playingcard", on ? "true" : "false");
+      _setChecked("ui_show_playingcard", on);
     }
 
     {
       const on = (typeof ui.show_recent_activity === "boolean")
         ? !!ui.show_recent_activity
         : true;
-      _setSelectValue("ui_show_recent_activity", on ? "true" : "false");
+      _setChecked("ui_show_recent_activity", on);
     }
 
     {
       const on = (typeof ui.show_recent_history_widget === "boolean")
         ? !!ui.show_recent_history_widget
         : true;
-      _setSelectValue("ui_show_recent_history_widget", on ? "true" : "false");
+      _setChecked("ui_show_recent_history_widget", on);
     }
 
     {
       const on = (typeof ui.show_latest_ratings_widget === "boolean")
         ? !!ui.show_latest_ratings_widget
         : true;
-      _setSelectValue("ui_show_latest_ratings_widget", on ? "true" : "false");
+      _setChecked("ui_show_latest_ratings_widget", on);
     }
 
     {
       const on = (typeof ui.show_recent_scrobble_widget === "boolean")
         ? !!ui.show_recent_scrobble_widget
         : true;
-      _setSelectValue("ui_show_recent_scrobble_widget", on ? "true" : "false");
+      _setChecked("ui_show_recent_scrobble_widget", on);
     }
 
     {
       const on = (typeof ui.show_recent_progress_widget === "boolean")
         ? !!ui.show_recent_progress_widget
         : false;
-      _setSelectValue("ui_show_recent_progress_widget", on ? "true" : "false");
+      _setChecked("ui_show_recent_progress_widget", on);
     }
 
     {
       const on = (typeof ui.show_recent_playlists_widget === "boolean")
         ? !!ui.show_recent_playlists_widget
         : false;
-      _setSelectValue("ui_show_recent_playlists_widget", on ? "true" : "false");
+      _setChecked("ui_show_recent_playlists_widget", on);
     }
 
     const normalizeDisplay = (value, fallbackLimit) => {
@@ -1857,14 +1862,14 @@ async function loadConfig() {
       const on = (typeof ui.show_quick_add_desktop === "boolean")
         ? !!ui.show_quick_add_desktop
         : true;
-      _setSelectValue("ui_show_quick_add_desktop", on ? "true" : "false");
+      _setChecked("ui_show_quick_add_desktop", on);
     }
 
     {
       const on = (typeof ui.show_quick_add_mobile === "boolean")
         ? !!ui.show_quick_add_mobile
         : true;
-      _setSelectValue("ui_show_quick_add_mobile", on ? "true" : "false");
+      _setChecked("ui_show_quick_add_mobile", on);
     }
 
     {

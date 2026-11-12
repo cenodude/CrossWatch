@@ -68,6 +68,48 @@ async function snapshot(page,name) {
   await page.locator('.cw-profile-panel.active').screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/${name}.png`});
 }
 
+for (const width of [390,1440]) test(`Account menu opens profile Settings and preserves media tabs at ${width}px`, async t => {
+  const {page} = await fixture(t,'flat-dark',width);
+  await page.locator('#cw-nav-profile-link').click();
+  await page.locator('[data-cw-profile-menu-action="account"]').click();
+  await page.locator('#profile-panel-account.active').waitFor();
+  assert.equal(new URL(page.url()).hash, '#account');
+  await page.locator('#cw-nav-profile-link').click();
+  assert.equal(await page.locator('[data-cw-profile-menu-action="account"]').getAttribute('aria-current'), 'page');
+  await page.locator('[data-cw-profile-menu-action="ratings"]').click();
+  await page.locator('#profile-panel-ratings.active').waitFor();
+  if (width <= 760) await page.locator('.cw-profile-mobile-view select').selectOption('history');
+  else await page.locator('[data-profile-tab="history"]').click();
+  await page.locator('#cw-nav-profile-link').click();
+  assert.equal(await page.locator('[data-cw-profile-menu-action="history"]').getAttribute('aria-current'), 'page');
+  await page.locator('[data-cw-profile-menu-action="profile"]').click();
+  await page.locator('#profile-panel-overview.active').waitFor();
+  assert.equal(new URL(page.url()).hash, '');
+});
+
+test('My Media Hub shortcut returns to Overview when the profile tab changed without a hash change', async t => {
+  const {page} = await fixture(t,'flat-dark',390);
+  await page.evaluate(()=>{
+    localStorage.setItem('cw.mobile.shortcuts.v1',JSON.stringify(['profile/overview','settings/sync']));
+    history.replaceState(null,'','/profile#overview');
+  });
+  await page.reload();
+  const hub = page.locator('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]');
+  await page.locator('#profile-panel-overview.active').waitFor();
+  assert.equal(await hub.getAttribute('aria-current'), 'page');
+  await page.locator('.cw-profile-mobile-view select').selectOption('history');
+  await page.locator('#profile-panel-history.active').waitFor();
+  assert.equal(new URL(page.url()).hash, '#overview');
+  await page.waitForFunction(()=>!document.querySelector('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]').hasAttribute('aria-current'));
+  await hub.focus();
+  await page.keyboard.press('Enter');
+  await page.locator('#profile-panel-overview.active').waitFor();
+  await page.waitForFunction(()=>document.querySelector('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]').getAttribute('aria-current')==='page');
+  await page.reload();
+  await page.locator('#profile-panel-overview.active').waitFor();
+  assert.equal(await hub.getAttribute('aria-current'), 'page');
+});
+
 for(const theme of ['original','flat-dark','flat-light']) {
   for(const [width, height] of [[320,740],[390,844],[740,360],[844,390],[932,430],[768,1024],[1024,768],[1194,834],[1366,1024],[1440,900]]) {
     test(`${theme}: profile covers and controls at ${width}x${height}`,async t=>{
