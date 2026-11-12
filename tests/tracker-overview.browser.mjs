@@ -132,6 +132,40 @@ for (const width of [390,1440]) test(`Tracker restores History and Month in revi
   assert.equal(await page.locator('.mr-page').count(),0);
 });
 
+for (const width of [390,1440]) test(`Account Overview link resets the remembered tracker view at ${width}px`, async t => {
+  const {page} = await fixture(t,"flat-dark",{width});
+  if (width < 760) await choose(page,'#trk-mobile-view','history');
+  else await page.locator('.trk-tabs [data-trk-view="history"]').click();
+  const openOverview = () => page.evaluate(async () => {
+    window.location.hash = '#tracker?view=overview';
+    await TrackerPage.mount(document.querySelector('#page-tracker'));
+  });
+  await openOverview();
+  assert.equal(await page.locator('#trk-mobile-view').inputValue(), 'overview');
+  assert.equal(new URL(page.url()).hash, '#tracker');
+  if (width < 760) await choose(page,'#trk-mobile-view','month-review');
+  else {
+    await page.locator('.trk-others summary').click();
+    await page.locator('[data-trk-month-open]').click();
+  }
+  await page.locator('.mr-page').waitFor();
+  await openOverview();
+  assert.equal(await page.locator('.mr-page').count(), 0);
+  assert.equal(await page.locator('#trk-mobile-view').inputValue(), 'overview');
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('cw.tracker.view.v3')));
+  assert.equal(saved.view, 'overview');
+  assert.equal(saved.monthlyReview, false);
+  await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem('cw.tracker.view.v3'));
+    localStorage.setItem('cw.tracker.view.v3', JSON.stringify({...saved, view:'history', monthlyReview:true}));
+  });
+  await page.reload();
+  await page.addScriptTag({url:'/assets/js/tracker.js'});
+  await openOverview();
+  assert.equal(await page.locator('#trk-mobile-view').inputValue(), 'overview');
+  assert.equal(await page.locator('.mr-page').count(), 0);
+});
+
 for (const width of [390,1440]) test(`Tracker navigation expires the selected view after one hour at ${width}px`,async t => {
   const {page}=await fixture(t,'flat-dark',{width});
   await page.addScriptTag({url:'/assets/helpers/core.js'});

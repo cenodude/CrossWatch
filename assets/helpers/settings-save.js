@@ -473,6 +473,14 @@ async function _cwValidateScrobSecret(inst, payload) {
 }
 
 async function _cwSaveAppAuth(serverCfg) {
+  const focusField = (id) => {
+    try {
+      const field = _cwEl(id);
+      const details = field?.closest?.("details");
+      if (details) details.open = true;
+      field?.focus?.();
+    } catch {}
+  };
   const MIN_PASSWORD_LENGTH = 8;
   const wantEnabled = true;
   const wantUser = _getVal("app_auth_username");
@@ -511,13 +519,13 @@ async function _cwSaveAppAuth(serverCfg) {
   if (wantsPwd && pass1 !== pass2) {
     _cwSetAuthError("Passwords do not match");
     _cwShowToast("Password mismatch", false);
-    try { _cwEl("app_auth_password2")?.focus?.(); } catch {}
+    focusField("app_auth_password2");
     _cwAbortSave("Password mismatch");
   }
   if (wantsPwd && pass1.length < MIN_PASSWORD_LENGTH) {
     _cwSetAuthError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
     _cwShowToast(`Password must be at least ${MIN_PASSWORD_LENGTH} characters`, false);
-    try { _cwEl("app_auth_password")?.focus?.(); } catch {}
+    focusField("app_auth_password");
     _cwAbortSave("Password too short");
   }
   if (wantEnabled && !wantUser) {
@@ -528,6 +536,7 @@ async function _cwSaveAppAuth(serverCfg) {
   if (wantEnabled && (!status?.configured || status?.reset_required) && !_cwNorm(pass1)) {
     _cwSetAuthError("Password required to save sign-in");
     _cwShowToast("Set a password to save sign-in", false);
+    focusField("app_auth_password");
     _cwAbortSave("Password required");
   }
   if (rememberEnabled && (!rememberDaysValid || !rememberDaysRaw)) {
@@ -729,7 +738,7 @@ async function saveSettings() {
     [["ui_show_watchlist_preview", "show_watchlist_preview"], ["ui_show_playingcard", "show_playingcard"], ["ui_show_recent_activity", "show_recent_activity"], ["ui_show_recent_history_widget", "show_recent_history_widget"], ["ui_show_latest_ratings_widget", "show_latest_ratings_widget"], ["ui_show_recent_scrobble_widget", "show_recent_scrobble_widget"], ["ui_show_recent_progress_widget", "show_recent_progress_widget"], ["ui_show_recent_playlists_widget", "show_recent_playlists_widget"], ["ui_show_quick_add_desktop", "show_quick_add_desktop"], ["ui_show_quick_add_mobile", "show_quick_add_mobile"]].forEach(([id, key]) => {
       const el = _cwEl(id);
       if (!el) return;
-      const next = el.value !== "false";
+      const next = el.checked;
       if (next === prevUi[key]) return;
       ensureObj(cfg, "ui")[key] = next;
       mark();

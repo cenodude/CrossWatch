@@ -1209,7 +1209,24 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 #page-settings #ui_settings_panels :is(.sub,.cw-field-label-row){overflow-wrap:anywhere}
 #page-settings #ui_settings_panels :is(input,select,textarea,.btn){box-sizing:border-box;max-width:100%;min-width:0}
 #page-settings .cw-auth-totp-setup{display:grid;grid-template-columns:minmax(0,1fr);gap:8px;margin-top:10px}
-@container app-settings (min-width:1041px){#page-settings .cw-app-security-layout{grid-template-rows:auto 1fr}#page-settings .cw-app-security-layout>#app_auth_fields{grid-row:span 2}}
+#page-settings :is(.cw-app-ui-layout,.cw-app-security-layout){width:100%;max-width:1440px;margin-inline:auto;align-items:start}
+#page-settings .cw-app-card-theme>.cw-settings-2col{grid-template-columns:repeat(3,minmax(0,1fr))}
+#page-settings .cw-page-settings-field{display:grid;gap:8px;min-width:0}
+#page-settings .cw-app-ui-layout{grid-template-columns:minmax(0,1fr)}
+#page-settings .cw-page-settings-columns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0}
+#page-settings .cw-page-settings-column{min-width:0;padding-inline:16px 28px}
+#page-settings .cw-page-settings-column+.cw-page-settings-column{padding-inline:28px 16px}
+#page-settings .cw-page-settings-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:16px;min-height:52px;padding-block:4px}
+#page-settings .cw-page-settings-row:has(select){grid-template-columns:minmax(0,1fr) minmax(140px,48%);min-height:64px}
+#page-settings .cw-page-settings-row .cw-field-label-row{margin:0}
+#page-settings .cw-page-settings-preferences .cw-app-card-head{align-items:center;padding-bottom:16px}
+#page-settings .cw-page-settings-title{margin:0 0 4px}
+#page-settings .cw-page-settings-switch{position:relative;display:inline-grid;place-items:center;width:44px;height:44px}
+#page-settings .cw-page-settings-switch>input{position:absolute;inset:0;width:100%;height:100%;margin:0;z-index:1;cursor:pointer}
+#page-settings .cw-page-settings-switch>span{position:relative;display:block;width:44px;height:24px;pointer-events:none}
+#page-settings .cw-page-settings-switch>span::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px}
+@container app-settings (max-width:760px){#page-settings .cw-app-card-theme>.cw-settings-2col,#page-settings .cw-page-settings-columns{grid-template-columns:minmax(0,1fr)}#page-settings .cw-page-settings-column,#page-settings .cw-page-settings-column+.cw-page-settings-column{padding-inline:0}}
+@container app-settings-card (max-width:360px){#page-settings .cw-page-settings-row:has(select){grid-template-columns:minmax(0,1fr);gap:8px;padding-block:12px}}
 @container app-settings (max-width:1040px){#page-settings :is(.cw-app-ui-layout,.cw-app-security-layout,.cw-app-tracker-layout){grid-template-columns:minmax(0,1fr)}}
 @container app-settings-card (max-width:560px){
 #page-settings #ui_settings_panels :is(.cw-settings-2col,.cw-auth-session-row,.cw-settings-split){grid-template-columns:minmax(0,1fr)}
@@ -2556,3 +2573,77 @@ html body img:is([src*="/assets/img/placeholder_poster.svg"],[src*="/art/tmdb/"]
 @keyframes mr-decor-drift{from{transform:translateY(-3px) rotate(-2deg)}to{transform:translateY(6px) rotate(3deg)}}
 @keyframes mr-decor-glow{from{opacity:.25}to{opacity:.8}}
 @media(prefers-reduced-motion:reduce){.mr-poster.is-onscreen .mr-decor-float,.mr-poster.is-onscreen .mr-decor-spark,.trk-month-banner:hover .mr-decor-float,.trk-month-banner:focus-within .mr-decor-float{animation:none}}
+
+#page-settings .cw-page-security-column{display:grid;gap:16px;min-width:0;margin:0;align-content:start}
+#page-settings .cw-page-security-card>.cw-app-card-head{align-items:center;padding-bottom:16px;margin-bottom:0}
+#page-settings .cw-page-security-row{display:grid;grid-template-columns:32px minmax(0,1fr);align-items:start;gap:14px;padding:18px 0}
+#page-settings .cw-page-security-row:last-child{padding-bottom:0}
+#page-settings .cw-page-security-icon{font-size:25px;line-height:32px;flex:none}
+#page-settings .cw-page-security-row input{margin-top:8px}
+#page-settings .cw-page-security-method{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:6px 12px;min-width:0}
+#page-settings .cw-page-security-method>.cw-field-label-row{margin:0}
+#page-settings .cw-page-security-method>.sub{grid-column:1;margin:0;overflow-wrap:anywhere}
+#page-settings .cw-page-security-actions{grid-column:2;grid-row:1/span 2;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+#page-settings .cw-page-security-method>.cw-auth-totp-setup{grid-column:1/-1}
+#page-settings .cw-page-security-actions .btn{width:auto;min-width:110px;padding-inline:16px}
+#page-settings .cw-page-security-card :is(#btn-app-auth-totp-disable,#btn-app-auth-plex-unlink):disabled{display:none}
+#page-settings .cw-auth-totp-field:has(#btn-app-auth-totp-disable:not(:disabled)) #btn-app-auth-totp-setup{display:none}
+#page-settings .cw-auth-plex-field:has(#btn-app-auth-plex-unlink:not(:disabled)) #btn-app-auth-plex-link{display:none}
+#page-settings :is(.cw-page-security-disclosure,.cw-page-ai-disclosure)>summary{display:flex;align-items:center;gap:14px;min-height:44px;padding:18px 0;cursor:pointer;list-style:none}
+#page-settings :is(.cw-page-security-disclosure,.cw-page-ai-disclosure)>summary::-webkit-details-marker{display:none}
+#page-settings .cw-page-security-copy{display:grid;gap:4px;flex:1;min-width:0}
+#page-settings .cw-page-security-copy .sub{margin:0;overflow-wrap:anywhere}
+#page-settings .cw-page-security-action{flex:none;padding:10px 16px}
+#page-settings .cw-page-security-chevron{font-size:22px;flex:none}
+#page-settings .cw-page-security-expanded{padding:0 0 18px;min-width:0}
+#page-settings .cw-page-session-list{display:grid;gap:0}
+#page-settings .cw-page-session-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 0}
+#page-settings .cw-page-session-copy{min-width:0}
+#page-settings .cw-page-session-row>.btn{flex:none;min-width:120px}
+#page-settings .cw-page-session-list>.cw-page-security-expanded{padding:18px 0}
+#page-settings .cw-page-session-card .cw-auth-session-row{gap:12px}
+#page-settings .cw-page-ai-disclosure>summary{padding:0}
+#page-settings .cw-page-ai-disclosure[open]>.cw-ai-grid{margin-top:20px}
+#page-settings .cw-page-security-card .cw-app-user-list{margin-top:18px}
+@container app-settings-card (max-width:560px){#page-settings .cw-page-security-action{display:none}#page-settings .cw-page-security-method{grid-template-columns:minmax(0,1fr)}#page-settings .cw-page-security-actions{grid-column:1;grid-row:auto;justify-content:flex-start;margin-top:6px}}
+@container app-settings-card (max-width:360px){#page-settings .cw-page-session-row{align-items:stretch;flex-direction:column}#page-settings .cw-page-security-row{grid-template-columns:minmax(0,1fr)}#page-settings .cw-page-security-row>.cw-page-security-icon{display:none}#page-settings .cw-page-security-actions .btn{flex:1;min-width:0}}
+
+#cw-profile-menu.cw-page-account-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 326px;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 100px);
+  padding: 12px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  z-index: 2200;
+}
+#cw-profile-menu.cw-page-account-menu .cw-menu-item {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  text-align: left;
+  line-height: 1.35;
+  cursor: pointer;
+}
+#cw-profile-menu.cw-page-account-menu .cw-account-group-toggle {
+  grid-template-columns: 24px minmax(0, 1fr) 20px;
+}
+#cw-profile-menu .cw-account-group .cw-menu-item { padding-left: 32px; }
+#cw-profile-menu .cw-account-group[hidden] { display: none; }
+#cw-profile-menu .cw-menu-icon { display: grid; place-items: center; font-size: 24px; line-height: 1; }
+#cw-profile-menu .cw-account-chevron { font-size: 20px; }
+#cw-profile-menu .cw-account-group-toggle[aria-expanded="false"] .cw-account-chevron { transform: rotate(-90deg); }
+#cw-profile-menu .cw-menu-sep { flex: 0 0 1px; margin: 12px 0; }

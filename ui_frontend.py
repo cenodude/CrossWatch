@@ -583,7 +583,7 @@ def _profile_avatar_inner(user: dict | None = None) -> str:
 
 
 _PROFILE_MENU_ITEMS = (
-    ("profile", "person", "Profile", ""),
+    ("profile", "home", "Overview", ""),
     ("watchlist", "bookmark", "Watchlist", "watchlist"),
     ("history", "history", "History", ""),
     ("ratings", "star", "Ratings", ""),
@@ -593,13 +593,27 @@ _PROFILE_MENU_ITEMS = (
 
 
 def _profile_menu_items(user: dict | None = None) -> str:
-    is_admin = not isinstance(user, dict) or bool(user.get("is_admin"))
+    is_admin = bool(isinstance(user, dict) and user.get("is_admin"))
     perms = _managed_user_permissions(user)
-    return "\n".join(
+    media = "\n".join(
         f'        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="{action}"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">{icon}</span><span>{label}</span></button>'
         for action, icon, label, permission in _PROFILE_MENU_ITEMS
         if not permission or is_admin or perms.get(permission)
     )
+    tracker = ""
+    if is_admin or _managed_tracker_allowed(user):
+        tracker = """
+        <div class="cw-menu-sep" role="separator"></div>
+        <button class="cw-menu-item cw-account-group-toggle" type="button" role="menuitem" aria-expanded="true" aria-controls="cw-account-tracker"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">menu_book</span><span>CW Tracker</span><span class="material-symbols-rounded cw-account-chevron" aria-hidden="true">expand_more</span></button>
+        <div id="cw-account-tracker" class="cw-account-group" role="group" aria-label="CW Tracker">
+          <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="tracker"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">home</span><span>Overview</span></button>
+        </div>"""
+    return f"""        <button class="cw-menu-item cw-account-group-toggle" type="button" role="menuitem" aria-expanded="true" aria-controls="cw-account-media"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">bar_chart</span><span>My Media Hub</span><span class="material-symbols-rounded cw-account-chevron" aria-hidden="true">expand_more</span></button>
+        <div id="cw-account-media" class="cw-account-group" role="group" aria-label="My Media Hub">
+{media}
+        </div>{tracker}
+        <div class="cw-menu-sep" role="separator"></div>
+        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="account"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">person</span><span>My Profile</span></button>"""
 
 
 def _nav_profile_link(user: dict | None = None) -> str:
@@ -608,7 +622,7 @@ def _nav_profile_link(user: dict | None = None) -> str:
         __CW_NAV_PROFILE_AVATAR__
         <span class="tab-caret" aria-hidden="true"></span>
       </button>
-      <div class="cw-menu cw-profile-menu hidden" id="cw-profile-menu" role="menu" aria-labelledby="cw-nav-profile-link">
+      <div class="cw-menu cw-profile-menu cw-page-account-menu hidden" id="cw-profile-menu" role="menu" aria-labelledby="cw-nav-profile-link">
 __CW_NAV_PROFILE_ITEMS__
         <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
         <button class="cw-menu-item danger" type="button" role="menuitem" data-cw-profile-menu-action="logout"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Logout</span></button>
@@ -1038,22 +1052,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
         <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('assistant')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">auto_awesome</span><span>Ask CrossWatch</span></button>
       </div>
     </div>
-    <div class="cw-nav-profile-menu" id="cw-nav-profile-menu">
-      <button id="cw-nav-profile-link" class="cw-nav-profile-link" type="button" title="Open profile menu" aria-label="Open profile menu" aria-haspopup="menu" aria-expanded="false">
-        <span id="cw-nav-profile-avatar" class="cw-nav-profile-avatar material-symbols-rounded" aria-hidden="true">person</span>
-        <span class="tab-caret" aria-hidden="true"></span>
-      </button>
-      <div class="cw-menu cw-profile-menu hidden" id="cw-profile-menu" role="menu" aria-labelledby="cw-nav-profile-link">
-        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="profile"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">person</span><span>Profile</span></button>
-        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="watchlist"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">bookmark</span><span>Watchlist</span></button>
-        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="history"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">history</span><span>History</span></button>
-        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="ratings"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">star</span><span>Ratings</span></button>
-        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="collections"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">video_library</span><span>Collections</span></button>
-        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="playback"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">resume</span><span>Progress</span></button>
-        <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
-        <button class="cw-menu-item danger" type="button" role="menuitem" data-cw-profile-menu-action="logout"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Logout</span></button>
-      </div>
-    </div>
+__CW_NAV_PROFILE_MENU__
   </nav>
 
   <div class="cw-ui-toggle" aria-label="UI mode">
@@ -1595,24 +1594,17 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
         <section class="cw-settings-pane cw-app-settings-pane" data-pane="app">
           <div class="cw-settings-pane-head cw-app-hero">
             <div class="cw-app-hero-copy">
-              <div class="cw-app-hero-panel active" data-app-hero="ui">
-                <div class="cw-settings-pane-kicker">UI and Security</div>
-                <h3>Interface and authentication</h3>
-                <p>Shape the experience and lock things down.</p>
-              </div>
-              <div class="cw-app-hero-panel" data-app-hero="security">
-                <div class="cw-settings-pane-kicker">Security</div>
-                <h3>Authentication and access controls</h3>
-                <p>Manage sign-in, sessions, remembered browsers and trusted proxy access.</p>
-              </div>
+              <div class="cw-settings-pane-kicker">UI and Security</div>
+              <h3>Interface and security</h3>
+              <p>Customize your experience and manage access to CrossWatch.</p>
             </div>
             <div class="cw-conn-hero-summary" aria-label="UI settings sections">
-              <button type="button" class="cw-conn-seg active" data-target="ui" onclick="cwUiSettingsJump?.('ui')">User Interface</button>
+              <button type="button" class="cw-conn-seg active" aria-current="page" data-target="ui" onclick="cwUiSettingsJump?.('ui')">User Interface</button>
               <button type="button" class="cw-conn-seg" data-target="security" onclick="cwUiSettingsJump?.('security')">Security</button>
               <button type="button" id="cw-app-refresh" class="cw-conn-refresh" title="Refresh settings and users" aria-label="Refresh settings and users"><span class="material-symbol" aria-hidden="true">refresh</span></button>
             </div>
-            <span class="material-symbols-rounded cw-app-hero-shape active" data-app-hero-shape="ui" aria-hidden="true">desktop_windows</span>
-            <span class="material-symbols-rounded cw-app-hero-shape" data-app-hero-shape="security" aria-hidden="true">shield</span>
+            <span class="material-symbols-rounded cw-app-hero-shape active" data-app-hero-shape="ui" aria-hidden="true">settings</span>
+            <span class="material-symbols-rounded cw-app-hero-shape" data-app-hero-shape="security" aria-hidden="true">settings</span>
           </div>
           <div class="section open cw-settings-section cw-app-section" id="sec-ui" data-accordion="off">
             <div class="head" style="display:flex;align-items:center">
@@ -1626,180 +1618,148 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                 <!-- Panel: User Interface -->
                 <div class="cw-settings-panel cw-settings-shell cw-app-panel active" data-tab="ui">
                   <div class="cw-settings-layout cw-app-ui-layout">
-                    <div class="cw-settings-block cw-app-card cw-app-card-widgets">
+                    <div class="cw-settings-block cw-app-card cw-page-settings-preferences cw-app-card-widgets">
                       <div class="cw-app-card-head">
                         <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">dashboard_customize</span>
                         <div>
-                          <div class="cw-settings-block-title">Dashboard widgets</div>
+                          <h4 class="cw-page-settings-title">Dashboard widgets</h4>
                           <div class="sub">Control which widgets appear on the dashboard.</div>
                         </div>
                       </div>
-                      <div class="cw-settings-2col">
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_show_watchlist_preview">Watchlist widget</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Watchlist widget: Shows or hides the dashboard Watchlist card on the Main screen." aria-label="Watchlist widget setting help">help</button>
+                      <div class="cw-page-settings-columns">
+                        <div class="cw-page-settings-column">
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_show_watchlist_preview">Watchlist widget</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Watchlist widget: Shows or hides the dashboard Watchlist card on the Main screen." aria-label="Watchlist widget setting help">help</button>
+                            </div>
+                            <span class="cw-page-settings-switch"><input id="ui_show_watchlist_preview" name="ui_show_watchlist_preview" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
-                          <select id="ui_show_watchlist_preview" name="ui_show_watchlist_preview">
-                            <option value="true">Show</option>
-                            <option value="false">Hide</option>
-                          </select>
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_show_latest_ratings_widget">Latest ratings widget</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Latest ratings widget: Shows or hides the Main screen latest ratings poster widget below Watchlist." aria-label="Latest ratings widget setting help">help</button>
+                            </div>
+                            <span class="cw-page-settings-switch"><input id="ui_show_latest_ratings_widget" name="ui_show_latest_ratings_widget" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
+                          </div>
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_show_recent_progress_widget">Recent progress widget</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Progress widget: Shows or hides the Main screen recent progress sync activity widget." aria-label="Recent Progress widget setting help">help</button>
+                            </div>
+                            <span class="cw-page-settings-switch"><input id="ui_show_recent_progress_widget" name="ui_show_recent_progress_widget" type="checkbox" role="switch"><span aria-hidden="true"></span></span>
+                          </div>
                         </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_show_recent_history_widget">Recent history widget</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent history widget: Shows or hides the Main screen media history widget below Watchlist." aria-label="Recent history widget setting help">help</button>
+                        <div class="cw-page-settings-column">
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_show_recent_history_widget">Recent history widget</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent history widget: Shows or hides the Main screen media history widget below Watchlist." aria-label="Recent history widget setting help">help</button>
+                            </div>
+                            <span class="cw-page-settings-switch"><input id="ui_show_recent_history_widget" name="ui_show_recent_history_widget" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
-                          <select id="ui_show_recent_history_widget" name="ui_show_recent_history_widget">
-                            <option value="true">Show</option>
-                            <option value="false">Hide</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_show_latest_ratings_widget">Latest ratings widget</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Latest ratings widget: Shows or hides the Main screen latest ratings poster widget below Watchlist." aria-label="Latest ratings widget setting help">help</button>
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_show_recent_scrobble_widget">Recent scrobble widget</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble widget: Shows or hides the Main screen recent scrobble widget below Watchlist." aria-label="Recent Scrobble widget setting help">help</button>
+                            </div>
+                            <span class="cw-page-settings-switch"><input id="ui_show_recent_scrobble_widget" name="ui_show_recent_scrobble_widget" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
-                          <select id="ui_show_latest_ratings_widget" name="ui_show_latest_ratings_widget">
-                            <option value="true">Show</option>
-                            <option value="false">Hide</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_show_recent_scrobble_widget">Recent Scrobble widget</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble widget: Shows or hides the Main screen recent scrobble widget below Watchlist." aria-label="Recent Scrobble widget setting help">help</button>
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_show_recent_playlists_widget">Recent playlists widget</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Playlists widget: Shows or hides the Main screen recent playlist sync activity widget." aria-label="Recent Playlists widget setting help">help</button>
+                            </div>
+                            <span class="cw-page-settings-switch"><input id="ui_show_recent_playlists_widget" name="ui_show_recent_playlists_widget" type="checkbox" role="switch"><span aria-hidden="true"></span></span>
                           </div>
-                          <select id="ui_show_recent_scrobble_widget" name="ui_show_recent_scrobble_widget">
-                            <option value="true">Show</option>
-                            <option value="false">Hide</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_show_recent_progress_widget">Recent Progress widget</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Progress widget: Shows or hides the Main screen recent progress sync activity widget." aria-label="Recent Progress widget setting help">help</button>
-                          </div>
-                          <select id="ui_show_recent_progress_widget" name="ui_show_recent_progress_widget">
-                            <option value="true">Show</option>
-                            <option value="false">Hide</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_show_recent_playlists_widget">Recent Playlists widget</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Playlists widget: Shows or hides the Main screen recent playlist sync activity widget." aria-label="Recent Playlists widget setting help">help</button>
-                          </div>
-                          <select id="ui_show_recent_playlists_widget" name="ui_show_recent_playlists_widget">
-                            <option value="true">Show</option>
-                            <option value="false">Hide</option>
-                          </select>
                         </div>
                       </div>
                     </div>
 
-                    <div class="cw-settings-block cw-app-card cw-app-card-visibility">
+                    <div class="cw-settings-block cw-app-card cw-page-settings-preferences cw-app-card-visibility">
                       <div class="cw-app-card-head">
                         <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">visibility</span>
                         <div>
-                          <div class="cw-settings-block-title">Visibility</div>
+                          <h4 class="cw-page-settings-title">Visibility</h4>
                           <div class="sub">Manage what information is displayed in the UI.</div>
                         </div>
                       </div>
-                      <div class="cw-settings-2col">
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_show_playingcard">Playing card</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Playing card: Shows or hides the currently playing card on the Main screen." aria-label="Playing card setting help">help</button>
+                      <div class="cw-page-settings-columns">
+                        <div class="cw-page-settings-column">
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_show_playingcard">Playing card</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Playing card: Shows or hides the currently playing card on the Main screen." aria-label="Playing card setting help">help</button>
+                            </div>
+                            <span class="cw-page-settings-switch"><input id="ui_show_playingcard" name="ui_show_playingcard" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
                           </div>
-                          <select id="ui_show_playingcard" name="ui_show_playingcard">
-                            <option value="true">Show</option>
-                            <option value="false">Hide</option>
-                          </select>
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_show_recent_activity">Recent scrobble list</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble list: Shows or hides the Main screen text list of locally recorded scrobbled movies and episodes." aria-label="Recent Scrobble list setting help">help</button>
+                            </div>
+                            <span class="cw-page-settings-switch"><input id="ui_show_recent_activity" name="ui_show_recent_activity" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
+                          </div>
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_show_quick_add_desktop">Desktop quick add</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Desktop quick add: Shows or hides the quick-add control on larger screens." aria-label="Desktop quick add setting help">help</button>
+                            </div>
+                            <span class="cw-page-settings-switch"><input id="ui_show_quick_add_desktop" name="ui_show_quick_add_desktop" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
+                          </div>
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_show_quick_add_mobile">Mobile quick add</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Mobile quick add: Shows or hides the compact quick-add control on mobile layouts." aria-label="Mobile quick add setting help">help</button>
+                            </div>
+                            <span class="cw-page-settings-switch"><input id="ui_show_quick_add_mobile" name="ui_show_quick_add_mobile" type="checkbox" role="switch" checked><span aria-hidden="true"></span></span>
+                          </div>
                         </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_show_recent_activity">Recent Scrobble list</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble list: Shows or hides the Main screen text list of locally recorded scrobbled movies and episodes." aria-label="Recent Scrobble list setting help">help</button>
+                        <div class="cw-page-settings-column">
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_recent_activity_display">Recent scrobble display</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble display: Choose a fixed number of rows, or show items from the last 24, 48, or 72 hours with a maximum of 5 rows." aria-label="Recent Scrobble display setting help">help</button>
+                            </div>
+                            <select id="ui_recent_activity_display" name="ui_recent_activity_display">
+                              <option value="count:3">Last 3 items</option>
+                              <option value="count:4">Last 4 items</option>
+                              <option value="count:5">Last 5 items</option>
+                              <option value="hours:24">Last 24 hours, max 5</option>
+                              <option value="hours:48">Last 48 hours, max 5</option>
+                              <option value="hours:72">Last 72 hours, max 5</option>
+                            </select>
                           </div>
-                          <select id="ui_show_recent_activity" name="ui_show_recent_activity">
-                            <option value="true">Show</option>
-                            <option value="false">Hide</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_recent_activity_display">Recent Scrobble display</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent Scrobble display: Choose a fixed number of rows, or show items from the last 24, 48, or 72 hours with a maximum of 5 rows." aria-label="Recent Scrobble display setting help">help</button>
+                          <div class="cw-page-settings-row">
+                            <div class="cw-field-label-row">
+                              <label class="cw-page-settings-label" for="ui_recent_syncs_display">Recent syncs display</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Recent syncs display: Choose a fixed number of rows, or show runs from the last 24, 48, or 72 hours with a maximum of 5 rows." aria-label="Recent syncs display setting help">help</button>
+                            </div>
+                            <select id="ui_recent_syncs_display" name="ui_recent_syncs_display">
+                              <option value="count:3">Last 3 items</option>
+                              <option value="count:4">Last 4 items</option>
+                              <option value="count:5">Last 5 items</option>
+                              <option value="hours:24">Last 24 hours, max 5</option>
+                              <option value="hours:48">Last 48 hours, max 5</option>
+                              <option value="hours:72">Last 72 hours, max 5</option>
+                            </select>
                           </div>
-                          <select id="ui_recent_activity_display" name="ui_recent_activity_display">
-                            <option value="count:3">Last 3 items</option>
-                            <option value="count:4">Last 4 items</option>
-                            <option value="count:5">Last 5 items</option>
-                            <option value="hours:24">Last 24 hours, max 5</option>
-                            <option value="hours:48">Last 48 hours, max 5</option>
-                            <option value="hours:72">Last 72 hours, max 5</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_recent_syncs_display">Recent syncs display</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Recent syncs display: Choose a fixed number of rows, or show runs from the last 24, 48, or 72 hours with a maximum of 5 rows." aria-label="Recent syncs display setting help">help</button>
-                          </div>
-                          <select id="ui_recent_syncs_display" name="ui_recent_syncs_display">
-                            <option value="count:3">Last 3 items</option>
-                            <option value="count:4">Last 4 items</option>
-                            <option value="count:5">Last 5 items</option>
-                            <option value="hours:24">Last 24 hours, max 5</option>
-                            <option value="hours:48">Last 48 hours, max 5</option>
-                            <option value="hours:72">Last 72 hours, max 5</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_show_quick_add_desktop">Desktop quick add</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Desktop quick add: Shows or hides the quick-add control on larger screens." aria-label="Desktop quick add setting help">help</button>
-                          </div>
-                          <select id="ui_show_quick_add_desktop" name="ui_show_quick_add_desktop">
-                            <option value="true">Show</option>
-                            <option value="false">Hide</option>
-                          </select>
-                        </div>
-
-                        <div>
-                          <div class="cw-field-label-row">
-                            <label for="ui_show_quick_add_mobile">Mobile quick add</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Mobile quick add: Shows or hides the compact quick-add control on mobile layouts." aria-label="Mobile quick add setting help">help</button>
-                          </div>
-                          <select id="ui_show_quick_add_mobile" name="ui_show_quick_add_mobile">
-                            <option value="true">Show</option>
-                            <option value="false">Hide</option>
-                          </select>
                         </div>
                       </div>
                     </div>
 
-                    <div class="cw-settings-block cw-app-card cw-app-card-theme">
+                    <div class="cw-settings-block cw-app-card cw-page-settings-preferences cw-app-card-theme">
                       <div class="cw-app-card-head">
                         <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">palette</span>
                         <div>
-                          <div class="cw-settings-block-title">Theme</div>
-                          <div class="sub">Customize the look, feel and browser protocol for CrossWatch.</div>
+                          <h4 class="cw-page-settings-title">Appearance and connection</h4>
+                          <div class="sub">Choose your appearance, media details and browser connection.</div>
                         </div>
                       </div>
                       <div class="cw-settings-2col">
                         <div>
                           <div class="cw-field-label-row">
-                            <label for="ui_theme">Theme</label>
+                            <label class="cw-page-settings-label" for="ui_theme">Theme</label>
                             <button type="button" class="cw-field-help material-symbols-rounded" title="Theme: Choose Flat dark, Flat light, or Original to use the classic CrossWatch styling." aria-label="Theme setting help">help</button>
                           </div>
                           <select id="ui_theme" name="ui_theme">
@@ -1809,7 +1769,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                           </select>
                         </div>
                         <div>
-                          <div class="cw-field-label-row"><label for="ui_media_card">Media details</label></div>
+                          <div class="cw-field-label-row"><label class="cw-page-settings-label" for="ui_media_card">Media details</label></div>
                           <select id="ui_media_card" data-cw-media-card>
                             <option value="full">Full media card</option>
                             <option value="compact">Compact media card</option>
@@ -1818,7 +1778,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                         </div>
                         <div>
                           <div class="cw-field-label-row">
-                            <label for="ui_protocol">UI protocol</label>
+                            <label class="cw-page-settings-label" for="ui_protocol">UI protocol</label>
                             <button type="button" class="cw-field-help material-symbols-rounded" title="UI protocol: HTTP is simplest. HTTPS serves CrossWatch with a self-signed certificate for encrypted browser traffic." aria-label="UI protocol setting help">help</button>
                           </div>
                           <div class="cw-settings-inline-action">
@@ -1834,218 +1794,322 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                         </div>
                       </div>
                     </div>
+
                   </div>
                 </div>
 
                 <!-- Panel: Security -->
                 <div class="cw-settings-panel cw-settings-shell cw-app-panel" data-tab="security">
                   <div class="cw-settings-layout cw-app-security-layout">
-                    <form class="cw-settings-block cw-app-card cw-password-form-scope" id="app_auth_fields" autocomplete="off" onsubmit="return false">
-                      <div class="cw-app-card-head">
-                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">lock</span>
-                        <div>
-                          <div class="cw-settings-block-title">Authentication</div>
-                          <div class="sub">Choose how CrossWatch is accessed and how long sessions stay valid.</div>
-                        </div>
-                      </div>
-                      <div class="cw-settings-2col">
-                        <div class="cw-auth-username-field">
-                          <div class="cw-field-label-row">
-                            <label for="app_auth_username">Username</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Username: The local CrossWatch username used on the login screen." aria-label="Username setting help">help</button>
+                    <form class="cw-page-security-column cw-password-form-scope" id="app_auth_fields" autocomplete="off" onsubmit="return false">
+                      <section class="cw-settings-block cw-app-card cw-page-security-card">
+                        <div class="cw-app-card-head">
+                          <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">lock</span>
+                          <div>
+                            <h4 class="cw-page-settings-title">Account security</h4>
+                            <div class="sub">Manage your account, password and two-factor authentication.</div>
                           </div>
-                          <input id="app_auth_username" name="app_auth_username" type="text" autocomplete="username" placeholder="admin">
                         </div>
-                        <div class="cw-auth-password-field">
-                          <div class="cw-field-label-row">
-                            <label for="app_auth_password">New password</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="New password: Enter a new local CrossWatch password. Leave it blank to keep the current password." aria-label="New password setting help">help</button>
-                          </div>
-                          <input id="app_auth_password" name="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
-                          <div class="sub" style="margin-top:0.35rem">Leave blank to keep the current password.</div>
-                        </div>
-                        <div class="cw-auth-confirm-field">
-                          <div class="cw-field-label-row">
-                            <label for="app_auth_password2">Confirm password</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Confirm password: Repeat the new password exactly so CrossWatch can verify it before saving." aria-label="Confirm password setting help">help</button>
-                          </div>
-                          <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
-                          <div class="sub" style="margin-top:0.35rem">Repeat the new password exactly before saving.</div>
-                        </div>
-                        <div class="cw-auth-session-row">
-                          <div id="app_auth_session_fields">
+                        <div class="cw-page-security-row">
+                          <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">person</span>
+                          <div class="cw-auth-username-field">
                             <div class="cw-field-label-row">
-                              <label for="app_auth_remember_enabled">Session caching</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Session caching: Keeps you signed in across browser restarts. Browser session only signs out when the browser session ends." aria-label="Session caching setting help">help</button>
+                              <label class="cw-page-settings-label" for="app_auth_username">Username</label>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="Username: The local CrossWatch username used on the login screen." aria-label="Username setting help">help</button>
                             </div>
-                            <select id="app_auth_remember_enabled" name="app_auth_remember_enabled">
-                              <option value="true">Enabled</option>
-                              <option value="false">Browser session only</option>
-                            </select>
-                            <div class="sub" style="margin-top:0.35rem">Browser session only means sign-in is required again after closing the browser.</div>
-                          </div>
-                          <div id="app_auth_remember_days_wrap">
-                            <div class="cw-field-label-row">
-                              <label for="app_auth_remember_days">Session timeout</label>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Session timeout: Number of days a remembered login remains valid when session caching is enabled." aria-label="Session timeout setting help">help</button>
-                            </div>
-                            <input id="app_auth_remember_days" name="app_auth_remember_days" type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" autocomplete="off" placeholder="30">
-                            <div id="app_auth_remember_days_error" class="cw-field-inline-error hidden" role="alert"></div>
-                            <div class="sub" style="margin-top:0.35rem">Used only when session caching is enabled. Maximum 365 days.</div>
+                            <div class="sub">The administrator username used to sign in.</div>
+                            <input id="app_auth_username" name="app_auth_username" type="text" autocomplete="username" placeholder="admin">
                           </div>
                         </div>
-                        <div class="cw-auth-totp-field">
-                          <div class="cw-field-label-row">
-                            <strong>Two-factor authentication</strong>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Two-factor authentication: Require a six digit authenticator app code after the password." aria-label="Two-factor authentication help">help</button>
+                        <details class="cw-page-security-disclosure" id="app_auth_password_details">
+                          <summary>
+                            <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">key</span>
+                            <span class="cw-page-security-copy">
+                              <strong>Password</strong>
+                              <span class="sub">Update your account password.</span>
+                            </span>
+                            <span class="cw-page-security-action">Change password</span>
+                            <span class="material-symbols-rounded cw-page-security-chevron" aria-hidden="true">expand_more</span>
+                          </summary>
+                          <div class="cw-settings-2col cw-page-security-expanded">
+                            <div class="cw-auth-password-field">
+                              <div class="cw-field-label-row">
+                                <label class="cw-page-settings-label" for="app_auth_password">New password</label>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="New password: Enter a new local CrossWatch password. Leave it blank to keep the current password." aria-label="New password setting help">help</button>
+                              </div>
+                              <input id="app_auth_password" name="app_auth_password" type="password" autocomplete="new-password" placeholder="(leave blank to keep)">
+                              <div class="sub" style="margin-top:0.35rem">Leave blank to keep the current password.</div>
+                            </div>
+                            <div class="cw-auth-confirm-field">
+                              <div class="cw-field-label-row">
+                                <label class="cw-page-settings-label" for="app_auth_password2">Confirm password</label>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="Confirm password: Repeat the new password exactly so CrossWatch can verify it before saving." aria-label="Confirm password setting help">help</button>
+                              </div>
+                              <input id="app_auth_password2" name="app_auth_password2" type="password" autocomplete="new-password" placeholder="(repeat)">
+                              <div class="sub" style="margin-top:0.35rem">Repeat the new password exactly before saving.</div>
+                            </div>
                           </div>
-                          <div class="sub" id="app_auth_totp_state">2FA: off</div>
-                          <div class="cw-auth-totp-setup hidden" id="app_auth_totp_setup">
-                            <div class="sub">Add this secret to your authenticator app, then enter the current code.</div>
-                            <input id="app_auth_totp_secret" type="text" readonly autocomplete="off" aria-label="Two-factor setup secret">
-                            <input id="app_auth_totp_code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="123456">
-                          </div>
-                          <div class="cw-settings-inline-action" style="margin-top:0.75rem">
-                            <button class="btn primary" type="button" id="btn-app-auth-totp-setup" onclick="cwAppAuthTotpSetup?.()">Set up 2FA</button>
-                            <button class="btn primary hidden" type="button" id="btn-app-auth-totp-verify" onclick="cwAppAuthTotpVerify?.()">Verify code</button>
-                            <button class="btn danger" type="button" id="btn-app-auth-totp-disable" onclick="cwAppAuthTotpDisable?.()">Disable 2FA</button>
+                        </details>
+                        <div class="cw-page-security-row">
+                          <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">verified_user</span>
+                          <div class="cw-auth-totp-field">
+                            <div class="cw-page-security-method">
+                              <div class="cw-field-label-row">
+                                <strong>Two-factor authentication</strong>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="Two-factor authentication: Require a six digit authenticator app code after the password." aria-label="Two-factor authentication help">help</button>
+                              </div>
+                              <div class="sub" id="app_auth_totp_state">2FA: off</div>
+                              <div class="cw-auth-totp-setup hidden" id="app_auth_totp_setup">
+                                <div class="sub">Add this secret to your authenticator app, then enter the current code.</div>
+                                <input id="app_auth_totp_secret" type="text" readonly autocomplete="off" aria-label="Two-factor setup secret">
+                                <input id="app_auth_totp_code" aria-label="Authenticator code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="one-time-code" placeholder="123456">
+                              </div>
+                              <div class="cw-page-security-actions">
+                                <button class="btn primary" type="button" id="btn-app-auth-totp-setup" onclick="cwAppAuthTotpSetup?.()">Set up 2FA</button>
+                                <button class="btn primary hidden" type="button" id="btn-app-auth-totp-verify" onclick="cwAppAuthTotpVerify?.()">Verify code</button>
+                                <button class="btn danger" type="button" id="btn-app-auth-totp-disable" disabled onclick="cwAppAuthTotpDisable?.()">Disable 2FA</button>
+                              </div>
+                            </div>
                           </div>
                         </div>
-                        <div class="cw-auth-plex-field">
-                          <div class="cw-field-label-row">
-                            <strong>Linked Plex account</strong>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Linked Plex account: Adds optional Sign in with Plex on the login screen while keeping the local password as fallback." aria-label="Linked Plex account help">help</button>
+                      </section>
+                      <section class="cw-settings-block cw-app-card cw-page-security-card">
+                        <div class="cw-app-card-head">
+                          <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">login</span>
+                          <div>
+                            <h4 class="cw-page-settings-title">Sign-in methods</h4>
+                            <div class="sub">Configure how you can sign in to CrossWatch.</div>
                           </div>
-                          <div class="sub" id="app_auth_plex_state">Not linked</div>
-                          <div class="cw-settings-inline-action" style="margin-top:0.75rem">
-                            <button class="btn primary" type="button" id="btn-app-auth-plex-link" onclick="cwAppAuthPlexLink?.()">Link Plex account</button>
-                            <button class="btn" type="button" id="btn-app-auth-plex-unlink" onclick="cwAppAuthPlexUnlink?.()">Unlink</button>
+                        </div>
+                        <div class="cw-page-security-row">
+                          <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">play_arrow</span>
+                          <div class="cw-auth-plex-field">
+                            <div class="cw-page-security-method">
+                              <div class="cw-field-label-row">
+                                <strong>Linked Plex account</strong>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="Linked Plex account: Adds optional Sign in with Plex on the login screen while keeping the local password as fallback." aria-label="Linked Plex account help">help</button>
+                              </div>
+                              <div class="sub" id="app_auth_plex_state">Not linked</div>
+                              <div class="cw-page-security-actions">
+                                <button class="btn primary" type="button" id="btn-app-auth-plex-link" onclick="cwAppAuthPlexLink?.()">Link Plex account</button>
+                                <button class="btn" type="button" id="btn-app-auth-plex-unlink" disabled onclick="cwAppAuthPlexUnlink?.()">Unlink</button>
+                              </div>
+                            </div>
                           </div>
                         </div>
                         <div class="cw-auth-oidc-field">
-                          <div class="cw-field-label-row">
-                            <strong>OIDC sign-in</strong>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="OIDC sign-in: Configure an external OpenID Connect provider such as Authentik, Authelia or Keycloak. Link it to this administrator account here, and to profile logins in the Profile wizard." aria-label="OIDC sign-in help">help</button>
-                          </div>
-                          <div class="sub" id="app_auth_oidc_state">Not configured</div>
-                          <div class="cw-app-oidc-grid">
-                            <select id="app_auth_oidc_enabled" aria-label="OIDC enabled" title="Turns the OIDC sign-in button on the login page on or off.">
-                              <option value="false">Disabled</option>
-                              <option value="true">Enabled</option>
-                            </select>
-                            <input id="app_auth_oidc_issuer" type="url" autocomplete="off" placeholder="Issuer URL" aria-label="Issuer URL" title="Required. The issuer URL of your provider, for example https://auth.example.com/application/o/crosswatch/ for Authentik. CrossWatch reads the provider settings from it.">
-                            <input id="app_auth_oidc_client_id" type="text" autocomplete="off" placeholder="Client ID" aria-label="Client ID" title="Required. The client ID of the CrossWatch application at your provider. Set its redirect URI to https://your-crosswatch/api/app-auth/oidc/callback.">
-                            <input id="app_auth_oidc_client_secret" type="password" autocomplete="new-password" placeholder="Client secret" aria-label="Client secret" title="The client secret from your provider. Leave empty for a public client. Once saved it is never shown again; leave the field blank to keep it.">
-                            <input id="app_auth_oidc_scopes" type="text" autocomplete="off" placeholder="openid profile email" aria-label="Scopes" title="Optional. Scopes to request, separated by spaces. Default: openid profile email. openid is always added.">
-                            <input id="app_auth_oidc_button_label" type="text" maxlength="40" autocomplete="off" placeholder="Button label (OIDC)" aria-label="Sign-in button label" title="Optional. Text on the login page button, for example Sign in with Authentik. Empty shows OIDC.">
-                            <select id="app_auth_oidc_button_icon" aria-label="Sign-in button icon" title="Optional. Icon shown before the text on the login page button.">
-                              <option value="">No button icon</option>
-                              <option value="authentik">Authentik</option>
-                              <option value="authelia">Authelia</option>
-                              <option value="keycloak">Keycloak</option>
-                              <option value="google">Google</option>
-                              <option value="microsoft">Microsoft</option>
-                              <option value="okta">Okta</option>
-                              <option value="auth0">Auth0</option>
-                            </select>
-                          </div>
-                          <div class="cw-field-label-row" style="margin-top:0.75rem">
-                            <strong>New logins from OIDC</strong>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="New logins from OIDC: Members of an allowed group get a login and a profile on their first OIDC sign-in. You assign their accounts and pairs afterwards, unless identity matching finds them. Removing them from the group at your identity provider blocks their OIDC sign-in." aria-label="New logins from OIDC help">help</button>
-                          </div>
-                          <div class="cw-app-oidc-grid">
-                            <select id="app_auth_oidc_provision" aria-label="Create logins from OIDC" title="Off by default. When on, members of an allowed group get a login and an empty profile on their first OIDC sign-in. Needs at least one allowed group.">
-                              <option value="false">Do not create logins</option>
-                              <option value="true">Create logins on first sign-in</option>
-                            </select>
-                          </div>
-                          <div id="app_auth_oidc_provision_fields" hidden>
+                          <details class="cw-page-security-disclosure" id="app_auth_oidc_details">
+                            <summary>
+                              <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">tune</span>
+                              <span class="cw-page-security-copy">
+                                <strong>OIDC sign-in</strong>
+                                <span class="sub" id="app_auth_oidc_state">Not configured</span>
+                              </span>
+                              <span class="cw-page-security-action">Configure OIDC</span>
+                              <span class="material-symbols-rounded cw-page-security-chevron" aria-hidden="true">expand_more</span>
+                            </summary>
                             <div class="cw-app-oidc-grid">
-                              <select id="app_auth_oidc_provision_access" aria-label="Access for new logins" title="Access for logins created from OIDC. Full access can change their own data, Read-only can only look. Never administrator. You can change it per login later.">
-                                <option value="full">New logins: Full access</option>
-                                <option value="readonly">New logins: Read-only</option>
-                              </select>
-                              <input id="app_auth_oidc_allowed_groups" type="text" autocomplete="off" placeholder="Allowed groups, comma separated" aria-label="Allowed groups" title="Required when creating logins. Group names exactly as your provider sends them, separated by commas. Logins created from OIDC are checked against these groups on every sign-in.">
-                              <input id="app_auth_oidc_groups_claim" type="text" autocomplete="off" placeholder="Groups claim (groups)" aria-label="Groups claim" title="Optional. The claim that holds the group names. Empty uses groups, which Authentik sends by default.">
-                              <select id="app_auth_oidc_match_identities" aria-label="Match identities for new logins" title="Off by default. When on, a new login gets the identities with the same name on your connections. If a name is not unique, or belongs to another profile, nothing is assigned. Use it only if names on your media servers belong to the same people.">
-                                <option value="false">Do not match identities</option>
-                                <option value="true">Match identities by name</option>
-                              </select>
-                              <input id="app_auth_oidc_identity_claim" type="text" maxlength="64" autocomplete="off" placeholder="Identity name claim (preferred_username)" aria-label="Identity name claim" title="Optional. The claim that holds the media server username, for people whose names differ. Falls back to preferred_username. Users must not be able to edit this claim at your provider.">
+                              <label class="cw-page-settings-field" for="app_auth_oidc_enabled">
+                                <span>OIDC enabled</span>
+                                <select id="app_auth_oidc_enabled" aria-label="OIDC enabled" title="Turns the OIDC sign-in button on the login page on or off.">
+                                  <option value="false">Disabled</option>
+                                  <option value="true">Enabled</option>
+                                </select>
+                              </label>
+                              <label class="cw-page-settings-field" for="app_auth_oidc_issuer">
+                                <span>Issuer URL</span>
+                                <input id="app_auth_oidc_issuer" type="url" autocomplete="off" placeholder="Issuer URL" aria-label="Issuer URL" title="Required. The issuer URL of your provider, for example https://auth.example.com/application/o/crosswatch/ for Authentik. CrossWatch reads the provider settings from it.">
+                              </label>
+                              <label class="cw-page-settings-field" for="app_auth_oidc_client_id">
+                                <span>Client ID</span>
+                                <input id="app_auth_oidc_client_id" type="text" autocomplete="off" placeholder="Client ID" aria-label="Client ID" title="Required. The client ID of the CrossWatch application at your provider. Set its redirect URI to https://your-crosswatch/api/app-auth/oidc/callback.">
+                              </label>
+                              <label class="cw-page-settings-field" for="app_auth_oidc_client_secret">
+                                <span>Client secret</span>
+                                <input id="app_auth_oidc_client_secret" type="password" autocomplete="new-password" placeholder="Client secret" aria-label="Client secret" title="The client secret from your provider. Leave empty for a public client. Once saved it is never shown again; leave the field blank to keep it.">
+                              </label>
+                              <label class="cw-page-settings-field" for="app_auth_oidc_scopes">
+                                <span>Scopes</span>
+                                <input id="app_auth_oidc_scopes" type="text" autocomplete="off" placeholder="openid profile email" aria-label="Scopes" title="Optional. Scopes to request, separated by spaces. Default: openid profile email. openid is always added.">
+                              </label>
+                              <label class="cw-page-settings-field" for="app_auth_oidc_button_label">
+                                <span>Sign-in button label</span>
+                                <input id="app_auth_oidc_button_label" type="text" maxlength="40" autocomplete="off" placeholder="Button label (OIDC)" aria-label="Sign-in button label" title="Optional. Text on the login page button, for example Sign in with Authentik. Empty shows OIDC.">
+                              </label>
+                              <label class="cw-page-settings-field" for="app_auth_oidc_button_icon">
+                                <span>Sign-in button icon</span>
+                                <select id="app_auth_oidc_button_icon" aria-label="Sign-in button icon" title="Optional. Icon shown before the text on the login page button.">
+                                  <option value="">No button icon</option>
+                                  <option value="authentik">Authentik</option>
+                                  <option value="authelia">Authelia</option>
+                                  <option value="keycloak">Keycloak</option>
+                                  <option value="google">Google</option>
+                                  <option value="microsoft">Microsoft</option>
+                                  <option value="okta">Okta</option>
+                                  <option value="auth0">Auth0</option>
+                                </select>
+                              </label>
                             </div>
-                          </div>
-                          <div class="cw-app-oidc-actions">
-                            <button class="btn primary" type="button" id="btn-app-auth-oidc-link" onclick="cwAppAuthOidcLink?.()" title="Saves the OIDC settings, then opens your provider to link your own OIDC account to this administrator login.">Link OIDC account</button>
-                            <button class="btn" type="button" id="btn-app-auth-oidc-unlink" onclick="cwAppAuthOidcUnlink?.()" title="Removes the OIDC account from this administrator login. Password sign-in keeps working.">Unlink</button>
-                          </div>
+                            <div class="cw-field-label-row" style="margin-top:0.75rem">
+                              <strong>New logins from OIDC</strong>
+                              <button type="button" class="cw-field-help material-symbols-rounded" title="New logins from OIDC: Members of an allowed group get a login and a profile on their first OIDC sign-in. You assign their accounts and pairs afterwards, unless identity matching finds them. Removing them from the group at your identity provider blocks their OIDC sign-in." aria-label="New logins from OIDC help">help</button>
+                            </div>
+                            <div class="cw-app-oidc-grid">
+                              <label class="cw-page-settings-field" for="app_auth_oidc_provision">
+                                <span>Create logins from OIDC</span>
+                                <select id="app_auth_oidc_provision" aria-label="Create logins from OIDC" title="Off by default. When on, members of an allowed group get a login and an empty profile on their first OIDC sign-in. Needs at least one allowed group.">
+                                  <option value="false">Do not create logins</option>
+                                  <option value="true">Create logins on first sign-in</option>
+                                </select>
+                              </label>
+                            </div>
+                            <div id="app_auth_oidc_provision_fields" hidden>
+                              <div class="cw-app-oidc-grid">
+                                <label class="cw-page-settings-field" for="app_auth_oidc_provision_access">
+                                  <span>Access for new logins</span>
+                                  <select id="app_auth_oidc_provision_access" aria-label="Access for new logins" title="Access for logins created from OIDC. Full access can change their own data, Read-only can only look. Never administrator. You can change it per login later.">
+                                    <option value="full">New logins: Full access</option>
+                                    <option value="readonly">New logins: Read-only</option>
+                                  </select>
+                                </label>
+                                <label class="cw-page-settings-field" for="app_auth_oidc_allowed_groups">
+                                  <span>Allowed groups</span>
+                                  <input id="app_auth_oidc_allowed_groups" type="text" autocomplete="off" placeholder="Allowed groups, comma separated" aria-label="Allowed groups" title="Required when creating logins. Group names exactly as your provider sends them, separated by commas. Logins created from OIDC are checked against these groups on every sign-in.">
+                                </label>
+                                <label class="cw-page-settings-field" for="app_auth_oidc_groups_claim">
+                                  <span>Groups claim</span>
+                                  <input id="app_auth_oidc_groups_claim" type="text" autocomplete="off" placeholder="Groups claim (groups)" aria-label="Groups claim" title="Optional. The claim that holds the group names. Empty uses groups, which Authentik sends by default.">
+                                </label>
+                                <label class="cw-page-settings-field" for="app_auth_oidc_match_identities">
+                                  <span>Match identities for new logins</span>
+                                  <select id="app_auth_oidc_match_identities" aria-label="Match identities for new logins" title="Off by default. When on, a new login gets the identities with the same name on your connections. If a name is not unique, or belongs to another profile, nothing is assigned. Use it only if names on your media servers belong to the same people.">
+                                    <option value="false">Do not match identities</option>
+                                    <option value="true">Match identities by name</option>
+                                  </select>
+                                </label>
+                                <label class="cw-page-settings-field" for="app_auth_oidc_identity_claim">
+                                  <span>Identity name claim</span>
+                                  <input id="app_auth_oidc_identity_claim" type="text" maxlength="64" autocomplete="off" placeholder="Identity name claim (preferred_username)" aria-label="Identity name claim" title="Optional. The claim that holds the media server username, for people whose names differ. Falls back to preferred_username. Users must not be able to edit this claim at your provider.">
+                                </label>
+                              </div>
+                            </div>
+                            <div class="cw-app-oidc-actions">
+                              <button class="btn primary" type="button" id="btn-app-auth-oidc-link" onclick="cwAppAuthOidcLink?.()" title="Saves the OIDC settings, then opens your provider to link your own OIDC account to this administrator login.">Link OIDC account</button>
+                              <button class="btn" type="button" id="btn-app-auth-oidc-unlink" onclick="cwAppAuthOidcUnlink?.()" title="Removes the OIDC account from this administrator login. Password sign-in keeps working.">Unlink</button>
+                            </div>
+                          </details>
                         </div>
-                      </div>
+                      </section>
                     </form>
-
-                    <div class="cw-settings-block cw-app-card cw-app-user-card" id="app_user_manager">
-                      <div class="cw-app-card-head">
-                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">group</span>
-                        <div>
-                          <div class="cw-settings-block-title">User logins</div>
-                          <div class="sub">People who can sign in. Logins are created and changed on their profile.</div>
+                    <div class="cw-page-security-column">
+                      <div class="cw-settings-block cw-app-card cw-app-user-card cw-page-security-card" id="app_user_manager">
+                        <div class="cw-app-card-head">
+                          <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">group</span>
+                          <div>
+                            <h4 class="cw-page-settings-title">User logins</h4>
+                            <div class="sub">People who can sign in. Logins are created and changed on their profile.</div>
+                          </div>
+                          <button class="btn primary cw-app-user-add" type="button" id="btn-app-user-profile-create">
+                            <span class="material-symbols-rounded" aria-hidden="true">person_add</span>
+                            <span>Add profile</span>
+                          </button>
                         </div>
-                        <button class="btn primary cw-app-user-add" type="button" id="btn-app-user-profile-create"><span class="material-symbols-rounded" aria-hidden="true">person_add</span><span>Add profile</span></button>
-                      </div>
-                      <div class="cw-app-user-list" id="app_users_list"></div>
-                    </div>
-
-                    <div class="cw-settings-block cw-app-card">
-                      <div class="cw-app-card-head">
-                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">admin_panel_settings</span>
-                        <div>
-                          <div class="cw-settings-block-title">Access and Permissions</div>
-                          <div class="sub">Review active sessions and reverse proxy trust settings.</div>
+                        <div class="cw-app-user-list" id="app_users_list">
                         </div>
                       </div>
-                      <div class="cw-settings-2col">
-                        <div class="cw-settings-statusrow">
-                          <div class="cw-settings-status">
-                            <div class="cw-field-label-row">
-                              <strong>Current session</strong>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Current session: Shows the browser session you are using now and lets you log it out." aria-label="Current session help">help</button>
+                      <div class="cw-settings-block cw-app-card cw-page-security-card cw-page-session-card">
+                        <div class="cw-app-card-head">
+                          <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">admin_panel_settings</span>
+                          <div>
+                            <h4 class="cw-page-settings-title">Sessions &amp; network</h4>
+                            <div class="sub">Review active sessions and reverse proxy trust settings.</div>
+                          </div>
+                        </div>
+                        <div class="cw-page-session-list">
+                          <div class="cw-page-session-row">
+                            <div class="cw-page-session-copy">
+                              <div class="cw-field-label-row">
+                                <strong>Current session</strong>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="Current session: Shows the browser session you are using now and lets you log it out." aria-label="Current session help">help</button>
+                              </div>
+                              <div class="sub" id="app_auth_state">&mdash;</div>
                             </div>
-                            <div class="sub" id="app_auth_state">&mdash;</div>
+                            <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
                           </div>
-                          <button class="btn" id="btn-auth-logout" onclick="cwAppLogout?.()">Log out</button>
-                        </div>
-                        <div class="cw-settings-statusrow">
-                          <div class="cw-settings-status">
-                            <div class="cw-field-label-row">
-                              <strong>Other browser sessions</strong>
-                              <button type="button" class="cw-field-help material-symbols-rounded" title="Other browser sessions: Shows remembered logins from other browsers or devices and lets you revoke them." aria-label="Other browser sessions help">help</button>
+                          <div class="cw-page-session-row">
+                            <div class="cw-page-session-copy">
+                              <div class="cw-field-label-row">
+                                <strong>Other browser sessions</strong>
+                                <button type="button" class="cw-field-help material-symbols-rounded" title="Other browser sessions: Shows remembered logins from other browsers or devices and lets you revoke them." aria-label="Other browser sessions help">help</button>
+                              </div>
+                              <div class="sub" id="app_auth_other_sessions_state">Logged in from: 0 browser sessions</div>
+                              <div class="sub" id="app_auth_other_sessions_detail">
+                              </div>
                             </div>
-                            <div class="sub" id="app_auth_other_sessions_state">Logged in from: 0 browser sessions</div>
-                            <div class="sub" id="app_auth_other_sessions_detail"></div>
+                            <button class="btn" id="btn-auth-logout-others" onclick="cwAppLogoutOthers?.()">Log out other sessions</button>
                           </div>
-                          <button class="btn" id="btn-auth-logout-others" onclick="cwAppLogoutOthers?.()">Log out other sessions</button>
-                        </div>
-                        <div class="cw-auth-proxy-field">
-                          <div class="cw-field-label-row">
-                            <label for="trusted_proxies">Trusted reverse proxies (optional)</label>
-                            <button type="button" class="cw-field-help material-symbols-rounded" title="Trusted reverse proxies: Enter proxy IPs or CIDR ranges so CrossWatch can read the real client IP for login rate limiting." aria-label="Trusted reverse proxies setting help">help</button>
+                          <div class="cw-page-security-expanded">
+                            <div class="cw-auth-session-row">
+                              <div id="app_auth_session_fields">
+                                <div class="cw-field-label-row">
+                                  <label class="cw-page-settings-label" for="app_auth_remember_enabled">Stay signed in</label>
+                                  <button type="button" class="cw-field-help material-symbols-rounded" title="Session caching: Keeps you signed in across browser restarts. Browser session only signs out when the browser session ends." aria-label="Session caching setting help">help</button>
+                                </div>
+                                <select id="app_auth_remember_enabled" name="app_auth_remember_enabled">
+                                  <option value="true">Enabled</option>
+                                  <option value="false">Browser session only</option>
+                                </select>
+                                <div class="sub" style="margin-top:0.35rem">Browser session only means sign-in is required again after closing the browser.</div>
+                              </div>
+                              <div id="app_auth_remember_days_wrap">
+                                <div class="cw-field-label-row">
+                                  <label class="cw-page-settings-label" for="app_auth_remember_days">Remember for (days)</label>
+                                  <button type="button" class="cw-field-help material-symbols-rounded" title="Session timeout: Number of days a remembered login remains valid when session caching is enabled." aria-label="Session timeout setting help">help</button>
+                                </div>
+                                <input id="app_auth_remember_days" name="app_auth_remember_days" type="text" inputmode="numeric" pattern="[0-9]{1,3}" maxlength="3" autocomplete="off" placeholder="30">
+                                <div id="app_auth_remember_days_error" class="cw-field-inline-error hidden" role="alert">
+                                </div>
+                                <div class="sub" style="margin-top:0.35rem">Used only when session caching is enabled. Maximum 365 days.</div>
+                              </div>
+                            </div>
                           </div>
-                          <input id="trusted_proxies" name="trusted_proxies" type="text" placeholder="127.0.0.1;192.168.2.1;192.168.2.0/16">
-                          <div class="sub" style="margin-top:0.35rem">
-                            Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
-                            Enter proxy IPs or CIDR ranges separated by <code>;</code>
-                          </div>
+                          <details class="cw-page-security-disclosure" id="app_auth_network_details">
+                            <summary>
+                              <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">lan</span>
+                              <span class="cw-page-security-copy">
+                                <strong>Advanced network settings</strong>
+                                <span class="sub">Trusted reverse proxies</span>
+                              </span>
+
+                              <span class="material-symbols-rounded cw-page-security-chevron" aria-hidden="true">expand_more</span>
+                            </summary>
+                            <div class="cw-page-security-expanded">
+                              <div class="cw-auth-proxy-field">
+                                <div class="cw-field-label-row">
+                                  <label class="cw-page-settings-label" for="trusted_proxies">Trusted reverse proxies (optional)</label>
+                                  <button type="button" class="cw-field-help material-symbols-rounded" title="Trusted reverse proxies: Enter proxy IPs or CIDR ranges so CrossWatch can read the real client IP for login rate limiting." aria-label="Trusted reverse proxies setting help">help</button>
+                                </div>
+                                <input id="trusted_proxies" name="trusted_proxies" type="text" placeholder="127.0.0.1;192.168.2.1;192.168.2.0/16">
+                                <div class="sub" style="margin-top:0.35rem">
+                                  Only needed when behind a reverse proxy and you want accurate IP-based login rate limiting.
+                                  Enter proxy IPs or CIDR ranges separated by <code>;</code>
+                                </div>
+                              </div>
+                            </div>
+                          </details>
                         </div>
                       </div>
                     </div>
+                    <details class="cw-settings-block cw-app-card cw-ai-card cw-page-security-card cw-page-ai-disclosure" id="ai_section">
+                      <summary>
+                        <span class="material-symbols-rounded cw-page-security-icon" aria-hidden="true">auto_awesome</span>
+                        <span class="cw-page-security-copy">
+                          <strong>AI help</strong>
+                          <span class="sub">Read-only help with syncs, scrobbling, logs and settings.</span>
+                        </span>
 
-                    <div class="cw-settings-block cw-app-card cw-ai-card" id="ai_section">
-                      <div class="cw-app-card-head">
-                        <span class="material-symbols-rounded cw-app-card-icon" aria-hidden="true">auto_awesome</span>
-                        <div>
-                          <div class="cw-settings-block-title">AI help</div>
-                          <div class="sub">Let AI look at your syncs, scrobbling, logs and settings and explain what went wrong. It can only read, it never changes anything.</div>
-                        </div>
-                      </div>
+                        <span class="material-symbols-rounded cw-page-security-chevron" aria-hidden="true">expand_more</span>
+                      </summary>
                       <div class="cw-ai-grid">
                         <form class="cw-ai-panel" id="assistant_settings" autocomplete="off" onsubmit="return false">
                           <div class="cw-ai-panel-head">
@@ -2057,35 +2121,57 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                           </div>
                           <div class="cw-ai-caption" id="assistant_presets_label">AI provider</div>
                           <div class="cw-ai-choices" id="assistant_presets" role="radiogroup" aria-labelledby="assistant_presets_label">
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="openai"><strong>OpenAI</strong><small>Cloud, paid key</small></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="gemini"><strong>Google Gemini</strong><small>Cloud, free tier</small></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="openrouter"><strong>OpenRouter</strong><small>Cloud, many models</small></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="ollama"><strong>Ollama</strong><small>Local, free</small></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="lmstudio"><strong>LM Studio</strong><small>Local, free</small></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="custom"><strong>Other</strong><small>Any OpenAI style API</small></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="openai">
+                              <strong>OpenAI</strong>
+                              <small>Cloud, paid key</small>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="gemini">
+                              <strong>Google Gemini</strong>
+                              <small>Cloud, free tier</small>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="openrouter">
+                              <strong>OpenRouter</strong>
+                              <small>Cloud, many models</small>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="ollama">
+                              <strong>Ollama</strong>
+                              <small>Local, free</small>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="lmstudio">
+                              <strong>LM Studio</strong>
+                              <small>Local, free</small>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="custom">
+                              <strong>Other</strong>
+                              <small>Any OpenAI style API</small>
+                            </button>
                           </div>
                           <div class="cw-ai-fields">
                             <div class="cw-ai-field" id="assistant_url_field">
-                              <label for="assistant_base_url">Address</label>
+                              <label class="cw-page-settings-label" for="assistant_base_url">Address</label>
                               <input id="assistant_base_url" type="url" autocomplete="off" spellcheck="false" placeholder="http://192.168.1.10:11434/v1">
                               <small>Where the model answers, as seen from CrossWatch. For a model on another computer use its network address, not localhost.</small>
                             </div>
                             <div class="cw-ai-field" id="assistant_key_field">
-                              <label for="assistant_api_key">API key</label>
+                              <label class="cw-page-settings-label" for="assistant_api_key">API key</label>
                               <input id="assistant_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Paste your key">
                               <small>From the provider's developer page. A ChatGPT or Claude subscription does not include one.</small>
                             </div>
                             <div class="cw-ai-field">
-                              <label for="assistant_model">Model</label>
+                              <label class="cw-page-settings-label" for="assistant_model">Model</label>
                               <div class="cw-ai-inline">
                                 <input id="assistant_model" type="text" list="assistant_models" autocomplete="off" spellcheck="false" placeholder="Search or type a model name">
-                                <datalist id="assistant_models"></datalist>
-                                <button type="button" class="btn" id="btn-assistant-models"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Load models</span></button>
+                                <datalist id="assistant_models">
+                                </datalist>
+                                <button type="button" class="btn" id="btn-assistant-models">
+                                  <span class="material-symbols-rounded" aria-hidden="true">refresh</span>
+                                  <span>Load models</span>
+                                </button>
                               </div>
                               <details>
                                 <summary>Model options</summary>
                                 <div class="cw-ai-field">
-                                  <label for="assistant_models_all">Model list</label>
+                                  <label class="cw-page-settings-label" for="assistant_models_all">Model list</label>
                                   <select id="assistant_models_all">
                                     <option value="chat">Chat models</option>
                                     <option value="all">All models</option>
@@ -2099,22 +2185,28 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                               </details>
                             </div>
                             <div class="cw-ai-field">
-                              <label for="assistant_wiki_help">Without an AI provider</label>
+                              <label class="cw-page-settings-label" for="assistant_wiki_help">Without an AI provider</label>
                               <select id="assistant_wiki_help">
                                 <option value="on">Answer from the CrossWatch wiki</option>
                                 <option value="off">Turn Ask CrossWatch off</option>
                               </select>
                             </div>
                           </div>
-                          <div class="cw-ai-status" id="assistant_state" role="status"></div>
+                          <div class="cw-ai-status" id="assistant_state" role="status">
+                          </div>
                           <div class="cw-ai-actions">
                             <button type="button" class="btn primary" id="btn-assistant-save">Save and turn on</button>
-                            <button type="button" class="btn" id="btn-assistant-open" disabled><span class="material-symbols-rounded" aria-hidden="true">forum</span><span>Ask a question</span></button>
+                            <button type="button" class="btn" id="btn-assistant-open" disabled>
+                              <span class="material-symbols-rounded" aria-hidden="true">forum</span>
+                              <span>Ask a question</span>
+                            </button>
                             <button type="button" class="btn cw-ai-quiet hidden" id="btn-assistant-off">Turn off</button>
                           </div>
-                          <p class="cw-ai-note"><span class="material-symbols-rounded" aria-hidden="true">shield</span><span>With a cloud provider, your questions and the log lines and settings needed to answer them go to that provider. Secrets are removed first. A local model keeps everything at home.</span></p>
+                          <p class="cw-ai-note">
+                            <span class="material-symbols-rounded" aria-hidden="true">shield</span>
+                            <span>With a cloud provider, your questions and the log lines and settings needed to answer them go to that provider. Secrets are removed first. A local model keeps everything at home.</span>
+                          </p>
                         </form>
-
                         <div class="cw-ai-panel" id="mcp_access">
                           <div class="cw-ai-panel-head">
                             <div>
@@ -2122,36 +2214,68 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
                               <p>Connect an AI app on your computer, such as Claude, Codex or Cursor, to this CrossWatch.</p>
                             </div>
                           </div>
-                          <div class="cw-ai-label"><span class="cw-ai-step">1</span>Choose your app</div>
+                          <div class="cw-ai-label">
+                            <span class="cw-ai-step">1</span>Choose your app</div>
                           <div class="cw-ai-choices cw-ai-choices-compact" id="mcp_clients" role="radiogroup" aria-label="AI app">
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="claude-code"><strong>Claude Code</strong></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="claude-desktop"><strong>Claude Desktop</strong></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="codex"><strong>Codex CLI</strong></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="cursor"><strong>Cursor</strong></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="gemini-cli"><strong>Gemini CLI</strong></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="lm-studio"><strong>LM Studio</strong></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="vscode"><strong>VS Code</strong></button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="other"><strong>Other</strong></button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="claude-code">
+                              <strong>Claude Code</strong>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="claude-desktop">
+                              <strong>Claude Desktop</strong>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="codex">
+                              <strong>Codex CLI</strong>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="cursor">
+                              <strong>Cursor</strong>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="gemini-cli">
+                              <strong>Gemini CLI</strong>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="lm-studio">
+                              <strong>LM Studio</strong>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="vscode">
+                              <strong>VS Code</strong>
+                            </button>
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-mcp-client="other">
+                              <strong>Other</strong>
+                            </button>
                           </div>
                           <div class="cw-ai-where hidden" id="mcp_desktop_where" role="radiogroup" aria-label="Where CrossWatch runs">
                             <span>CrossWatch runs on</span>
                             <button type="button" class="cw-ai-toggle" role="radio" aria-checked="true" data-mcp-where="remote">a NAS or other computer</button>
                             <button type="button" class="cw-ai-toggle" role="radio" aria-checked="false" data-mcp-where="local">this computer, in Docker</button>
                           </div>
-                          <div class="cw-ai-label"><span class="cw-ai-step">2</span>Create a read-only token</div>
-                          <div class="cw-ai-tokens" id="mcp_tokens"></div>
-                          <div class="cw-ai-status" id="mcp_token_state" role="status"></div>
-                          <div class="cw-ai-actions">
-                            <button type="button" class="btn primary" id="btn-mcp-token-create" disabled><span class="material-symbols-rounded" aria-hidden="true">key</span><span>Create token</span></button>
+                          <div class="cw-ai-label">
+                            <span class="cw-ai-step">2</span>Create a read-only token</div>
+                          <div class="cw-ai-tokens" id="mcp_tokens">
                           </div>
-                          <div class="cw-ai-label"><span class="cw-ai-step">3</span><span id="mcp_client_note">Paste this into your app</span></div>
+                          <div class="cw-ai-status" id="mcp_token_state" role="status">
+                          </div>
+                          <div class="cw-ai-actions">
+                            <button type="button" class="btn primary" id="btn-mcp-token-create" disabled>
+                              <span class="material-symbols-rounded" aria-hidden="true">key</span>
+                              <span>Create token</span>
+                            </button>
+                          </div>
+                          <div class="cw-ai-label">
+                            <span class="cw-ai-step">3</span>
+                            <span id="mcp_client_note">Paste this into your app</span>
+                          </div>
                           <div class="cw-ai-code">
-                            <pre><code id="mcp_snippet"></code></pre>
-                            <button type="button" class="cw-ai-copy" id="btn-mcp-copy"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span><span>Copy</span></button>
+                            <pre>
+                              <code id="mcp_snippet">
+                              </code>
+                            </pre>
+                            <button type="button" class="cw-ai-copy" id="btn-mcp-copy">
+                              <span class="material-symbols-rounded" aria-hidden="true">content_copy</span>
+                              <span>Copy</span>
+                            </button>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    </details>
                   </div>
                 </div>
 
@@ -2471,6 +2595,7 @@ def _seed_media_card_style(html: str, user: dict | None = None) -> str:
 
 def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:
     html = _get_index_html_static().replace("__CW_ASSET_BLOCK__", _asset_block(include_admin=include_admin, user=user))
+    html = html.replace("__CW_NAV_PROFILE_MENU__", _nav_profile_link(user if user is not None else {"is_admin": include_admin}))
     html = html.replace('<html lang="en"', f'<html lang="en" data-cw-reconnect="{" ".join(reconnect_connection_keys())}"', 1)
     if not include_admin:
         perms = _managed_user_permissions(user)

@@ -4570,6 +4570,12 @@
     const hash = window.location.hash || "";
     if (!hash.startsWith("#tracker?")) return;
     const query = new URLSearchParams(hash.slice(hash.indexOf("?") + 1));
+    if (query.get("view") === "overview") {
+      state.viewSelectedAt = 0;
+      expireView();
+      monthlyReviewPage?.close(false);
+      rememberView();
+    }
     if (query.get("instance")) {
       state.instance = query.get("instance");
       state.ref = null; state.title = null; state.offset = 0; state.scrollTop = 0;
