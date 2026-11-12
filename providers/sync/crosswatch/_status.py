@@ -93,4 +93,4 @@ class StatusAdapter(NativeStatusAdapter):
         note = record.raw["note"]
         updated = dict(note or {"type": record.item["type"], "title": record.item.get("title") or "", "tmdb": (record.item.get("ids") or {}).get("tmdb") or ""})
         updated["status"] = desired.value
-        self.store().save_note(record.native_id, updated, expected=note)
+        self.store().save_note(record.native_id, updated, expected=note, origin="sync")

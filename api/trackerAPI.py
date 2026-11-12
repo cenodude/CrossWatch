@@ -20,6 +20,7 @@ from cw_platform.config_base import CONFIG, load_config
 from cw_platform.history_events import history_epoch_from_item
 from cw_platform.id_map import ID_KEYS, canonical_key, minimal as id_minimal
 from cw_platform.provider_instances import get_provider_block, list_instance_ids, normalize_instance_id, sanitize_instance_label
+from cw_platform.tracker_automation import instance_options
 from cw_platform.tracker_history_identity import TYPE_ORIGINS, event_identities
 from cw_platform.tracker_store import (
     ATTENTION_CODES,
@@ -572,6 +573,7 @@ def _change(batch: ChangeBatch) -> dict[str, Any]:
         })
     return {
         "batch": batch.batch,
+        "automatic_group": batch.automatic_group,
         "feature": batch.feature,
         "action": batch.action,
         "count": batch.count,
@@ -615,6 +617,7 @@ def tracker_summary(request: Request, provider_instance: str | None = Query("def
         "import": imported,
         "tmdb_key": bool(_tmdb_key(cfg)),
         "delete_effects": effects,
+        "tracker_options": instance_options(cfg, inst),
     }
 
 
@@ -936,6 +939,69 @@ def tracker_edit_title(request: Request, payload: dict[str, Any] = Body(...)) ->
     }
 
 
+@router.post("/titles/remove", dependencies=_READY)
+def tracker_titles_remove(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
+    blocked = _write_guard()
+    if blocked is not None:
+        return blocked
+    keys = payload.get("keys")
+    if not isinstance(keys, list) or not keys or any(not isinstance(k, str) or not _NOTE_KEY.fullmatch(k) for k in keys):
+        return _error("invalid_ids", 400)
+    if payload.get("scope") not in {"history", "all"}:
+        return _error("unknown_feature", 400)
+    _, inst, store = _store(payload.get("provider_instance"), request)
+    try:
+        result = store.title_removal(keys, payload["scope"] == "all", expected=payload.get("token"))
+        return {"ok": True, "provider_instance": inst, **result}
+    except TrackerConflict as exc:
+        return _error(exc.code, 409)
+    except KeyError:
+        return _error("not_found", 404)
+
+
+@router.get("/automatic-status/review", dependencies=_READY)
+def tracker_automatic_review(request: Request, provider_instance: str | None = Query("default")) -> Any:
+    _, inst, store = _store(provider_instance, request)
+    return {"ok": True, "provider_instance": inst, "review": store.review_status()}
+
+
+@router.post("/automatic-status", dependencies=_READY)
+def tracker_automatic_status(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
+    if payload.get("action") == "review-cancel":
+        _, _, store = _store(payload.get("provider_instance"), request)
+        return {"ok": True, "review": store.cancel_review()}
+    blocked = _write_guard()
+    if blocked is not None:
+        return blocked
+    cfg, inst, store = _store(payload.get("provider_instance"), request)
+    if not instance_options(cfg, inst)["automatic_status"]:
+        return _error("automatic_status_disabled", 409)
+    action = payload.get("action")
+    if action == "review-start":
+        try:
+            review = store.start_review()
+            from services.tracker_automation import wake
+            wake()
+            return {"ok": True, "review": review}
+        except ValueError as exc:
+            return _error(str(exc), 409)
+    if action == "enable-title":
+        key = payload.get("key")
+        if not isinstance(key, str) or not _NOTE_KEY.fullmatch(key):
+            return _error("invalid_note_key", 400)
+        return {"ok": True, "batch": store.enable_title_automation(key)}
+    if action in {"preview", "recalculate"}:
+        from services.tracker_automation import cached_metadata
+        after = str(payload.get("after") or "")[:1024]
+        with store.session():
+            keys = store.automation_candidates(after, 100)
+            results = [store.evaluate_status(key, lambda: cached_metadata(key), preview=True) for key in keys]
+            if action == "recalculate":
+                store.queue_statuses([r["key"] for r in results if not r.get("skipped")])
+        return {"ok": True, "items": results, "next": keys[-1] if len(keys) == 100 else ""}
+    return _error("unknown_action", 400)
+
+
 @router.post("/delete", dependencies=_READY)
 def tracker_delete(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
     feature = str(payload.get("feature") or "")
@@ -963,7 +1029,8 @@ def tracker_undo(request: Request, payload: dict[str, Any] = Body(...)) -> Any:
         return _error("not_found", 404)
     _, inst, store = _store(payload.get("provider_instance"), request)
     blocked = _error("pair_scoped", 409) if _pair_scoped() else None
-    if blocked is None and store.batch_features(batch) != {NOTES}:
+    features = store.batch_features(batch)
+    if blocked is None and (not features or not features <= {NOTES, "status_control"}):
         blocked = _write_guard()
     if blocked is not None:
         return blocked
@@ -1291,6 +1358,7 @@ def tracker_title(
         "attention": attention,
         "seasons": [{"season": s, "episodes": [{"episode": e, "watched_at": w} for e, w in sorted(eps.items())]} for s, eps in sorted(seasons.items())],
         "note_key": note_key,
+        "status_control": store.status_control(note_key),
         "note": _note_out(note_key, saved),
     }
 
@@ -1482,7 +1550,8 @@ def tracker_note_save(request: Request, payload: dict[str, Any] = Body(...)) -> 
             **clean,
         }
         expected = payload.get("expected", ...)
-        batch = store.save_note(key, note, expected=expected if expected is None or isinstance(expected, Mapping) else ...)
+        manual = payload.get("status_manual") is True or (current or {}).get("status") != (note or {}).get("status")
+        batch = store.save_note(key, note, expected=expected if expected is None or isinstance(expected, Mapping) else ..., origin="manual" if manual else None)
     except ValueError as exc:
         return _error(str(exc), 400)
     except TrackerUnreadable:
@@ -1509,7 +1578,7 @@ def tracker_notes_bulk(request: Request, payload: dict[str, Any] = Body(...)) ->
         return _error("invalid_status", 400)
     _, inst, store = _store(payload.get("provider_instance"), request)
     try:
-        batch, count = store.change_notes(raw, status=status, remove=action == "remove")
+        batch, count = store.change_notes(raw, status=status, remove=action == "remove", origin="manual")
     except TrackerUnreadable:
         return _unreadable()
     except KeyError as exc:
@@ -1550,7 +1619,7 @@ def tracker_titles_status(request: Request, payload: dict[str, Any] = Body(...))
                 note_key = _title_key(ident)
                 defaults[note_key] = {"type": "show" if ident["show"] else "movie", "title": item.get("series_title") if item.get("type") in ("episode", "season") else item.get("title"),
                                       "year": item.get("series_year") if item.get("type") in ("episode", "season") else item.get("year"), "tmdb": ident["tmdb"] or None}
-            batch, count = store.change_notes(defaults, status=status, defaults=defaults)
+            batch, count = store.change_notes(defaults, status=status, defaults=defaults, origin="manual")
     except TrackerUnreadable:
         return _unreadable()
     return {"ok": True, "provider_instance": inst, "batch": batch, "count": count}

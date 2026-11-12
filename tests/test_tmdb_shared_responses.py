@@ -50,6 +50,18 @@ def test_existing_disk_record_keeps_original_fetch_time(providers, monkeypatch, 
     assert json.loads(path.read_text("utf-8"))["ts"] == 123
 
 
+def test_status_metadata_peek_never_fetches_and_rejects_stale_data(providers, monkeypatch):
+    provider = providers()
+    assert provider.peek_show("7") is None
+    assert provider.peek_show("invalid") is None
+    detail = {"id": 7, "name": "Example", "status": "Ended", "seasons": [{"season_number": 1, "episode_count": 2}]}
+    provider.get_response("https://api.themoviedb.org/3/tv/7", {"language": "en-US"}, request=lambda *a, **k: response(detail))
+    assert provider.peek_show("7").data == detail
+    assert providers().peek_show("7").data == detail
+    monkeypatch.setattr(tmdb.time, "time", lambda: 99999999999)
+    assert provider.peek_show("7") is None
+
+
 def test_refresh_updates_other_live_instances_without_touching_other_scopes(providers, monkeypatch, tmp_path):
     first, second = providers(), providers()
     other = providers(tmp_path / "other")

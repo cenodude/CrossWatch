@@ -37,6 +37,7 @@ async function fixture(t,theme,width=1440,height=1000,{motion=false}={}) {
       requests++;
       if(mode==="denied") return route.fulfill({status:403,json:{detail:"profile_scope_denied"}});
       if(mode==="error") return route.fulfill({status:500,json:{error:"failed"}});
+      if(mode==="disabled") return route.fulfill({json:{ok:true,disabled:true,report:null,pending:false,stale:false,error:null}});
       const month=url.searchParams.get("month")||"2026-10";
       const data = mode==="empty"?{...report,month,plays:0,titles:[],genres:[]}: {...report,month};
       return route.fulfill({json:{ok:true,report:mode==="pending"?null:data,month,current_month:"2026-12",generated:1,pending:mode.startsWith("pending"),stale:mode.startsWith("pending")}});
@@ -285,6 +286,20 @@ test("Monthly notification polling is bounded and resumes when the bell opens",a
   await page.evaluate(()=>window.dispatchEvent(new Event('cw:notifications-refresh')));
   await page.waitForFunction(()=>window.notices.length===1);
   assert.equal(requests(),33);
+});
+
+test("Disabled reports clear cached content and stop polling",async t=>{
+  const {page,setMode,requests}=await fixture(t,"flat-dark");
+  setMode("disabled");
+  await page.evaluate(()=>{const schedule=window.setTimeout; window.setTimeout=(fn,delay,...args)=>schedule(fn,delay>=1500&&delay<=10000?1:delay,...args); window.openReview({month:"2026-10"});});
+  await page.getByText("Month in review is off",{exact:true}).waitFor();
+  assert.equal(await page.locator('.mr-poster').count(),0);
+  const count=requests();
+  await page.waitForTimeout(150);
+  assert.equal(requests(),count);
+  await page.keyboard.press('Escape');
+  await page.locator('[data-mr="back"]').click();
+  assert.equal(await page.locator('.mr-page').count(),0);
 });
 
 test("Saved reviews stop bounded polling with a retry and recover when ready",async t=>{

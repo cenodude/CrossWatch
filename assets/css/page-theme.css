@@ -1008,6 +1008,13 @@ input.cw-timestamp-input::-webkit-datetime-edit-second-field{font-family:Arial,s
 #page-tracker .trk-chip-count{background:var(--cw-theme-surface-strong);color:var(--cw-theme-muted)}
 #page-tracker .trk-tabs{border-bottom:1px solid var(--cw-theme-border)}
 #page-tracker .trk-change-day{color:var(--cw-theme-muted)}
+#page-tracker .trk-auto-changes,#page-tracker .trk-review{border:1px solid var(--cw-theme-border);border-radius:var(--cw-page-control-radius);background:var(--cw-theme-surface);color:var(--cw-theme-text)}
+#page-tracker .trk-auto-changes summary:hover{background:var(--cw-page-hover-bg)}
+#page-tracker .trk-auto-changes summary:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:2px}
+#page-tracker .trk-review progress{appearance:none;border:0;border-radius:999px;overflow:hidden;background:var(--cw-theme-surface-strong);accent-color:var(--cw-theme-accent)}
+#page-tracker .trk-review progress::-webkit-progress-bar{background:var(--cw-theme-surface-strong)}
+#page-tracker .trk-review progress::-webkit-progress-value{background:var(--cw-theme-accent)}
+#page-tracker .trk-review progress::-moz-progress-bar{background:var(--cw-theme-accent)}
 #page-tracker .trk-tab{color:var(--cw-theme-muted);transition:color .15s,border-color .15s}
 #page-tracker .trk-tab:hover{color:var(--cw-theme-text)}
 #page-tracker .trk-tab.active{border-bottom-color:var(--cw-theme-accent);color:var(--cw-theme-text);font-weight:600}
@@ -1159,6 +1166,12 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-months{--hist-tone-rgb:70,86
 .cw-mm-notes-action:focus-visible{outline:2px solid rgb(var(--mm-accent));outline-offset:2px}
 #page-tracker .trk-note-suggest{border:1px solid color-mix(in srgb,var(--cw-theme-good) 45%,var(--cw-theme-border));background:color-mix(in srgb,var(--cw-theme-good) 9%,transparent);color:var(--cw-theme-text)}
 #page-tracker .trk-note-suggest .material-symbol{color:var(--cw-theme-good)}
+.cw-tracker-option small{color:var(--cw-theme-muted)}
+.cw-tracker-switch{border:1px solid var(--cw-theme-border);border-radius:20px;background:var(--cw-theme-muted)}
+.cw-tracker-switch::before{border-radius:50%;background:#fff}
+.cw-tracker-switch:has(:checked){background:var(--cw-theme-accent)}
+.cw-tracker-switch:has(:focus-visible){outline:2px solid var(--cw-theme-accent);outline-offset:3px}
+.cw-tracker-option:has(:disabled){opacity:var(--cw-disabled-opacity,.5);cursor:default}
 #page-tracker .trk-note-empty:hover{color:var(--cw-theme-accent)}
 #page-tracker .trk-note-suggest:hover{background:var(--cw-page-hover-bg);color:var(--cw-theme-text)}
 #page-tracker .trk-note-fields dt{color:var(--cw-theme-muted)}
