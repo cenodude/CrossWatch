@@ -60,10 +60,10 @@ def test_manual_same_value_clear_sync_and_restart_remain_protected(tmp_path):
     assert store.evaluate_status(SHOW, DETAIL)["after"] == "completed"
 
 
-def test_legacy_status_is_unknown_and_sync_is_not_manual(tmp_path):
+def test_legacy_retained_status_and_sync_are_not_manual(tmp_path):
     store = seeded(tmp_path)
     store.save_note(SHOW, {"type": "show", "status": "on_hold"})
-    assert store.evaluate_status(SHOW, DETAIL)["skipped"] == "protected"
+    assert store.evaluate_status(SHOW, DETAIL)["after"] == "on_hold"
     store.save_note(FILM, {"type": "movie", "status": "watching"}, origin="sync")
     assert store.status_control(FILM) == {"origin": "sync", "manual": False}
     assert store.evaluate_status(FILM)["after"] == "completed"
@@ -454,7 +454,7 @@ def test_apply_preview_saves_only_requested_changes_and_supports_undo(api, base,
     assert store.note(FILM) is None
 
 
-def test_apply_preview_keeps_manual_and_unknown_statuses_and_checks_stale_data(api, base, monkeypatch):
+def test_apply_preview_includes_legacy_watching_keeps_manual_and_checks_stale_data(api, base, monkeypatch):
     from api import trackerAPI
     monkeypatch.setattr(trackerAPI, "_sync_running", lambda: False)
     monkeypatch.setattr(worker, "cached_metadata", lambda _key: {**DETAIL, "status": "Returning Series"})
@@ -464,11 +464,15 @@ def test_apply_preview_keeps_manual_and_unknown_statuses_and_checks_stale_data(a
     suggestions = [{"key": key, "before": "watching", "after": "completed"} for key in (FILM, "movie:tmdb:1")]
     suggestions.append({"key": SHOW, "before": None, "after": "completed"})
     data = api.post("/api/tracker/automatic-status", json={"action": "apply", "items": suggestions}).json()
-    assert data["updated"] == 0
-    assert [row["skipped"] for row in data["items"]] == ["protected", "protected", "changed"]
+    assert data["updated"] == 1
+    assert data["items"][0]["skipped"] == "protected"
+    assert data["items"][1]["after"] == "completed"
+    assert data["items"][1]["batch"]
+    assert data["items"][2]["skipped"] == "changed"
     assert data["items"][0]["reason"] == "Manual status kept"
-    assert "Existing status kept" in data["items"][1]["reason"]
-    assert store.note(FILM)["status"] == store.note("movie:tmdb:1")["status"] == "watching"
+    assert "watch data changed" in data["items"][2]["reason"]
+    assert store.note(FILM)["status"] == "watching"
+    assert store.note("movie:tmdb:1")["status"] == "completed"
     assert store.note(SHOW) is None
 
 
@@ -499,3 +503,38 @@ def test_preview_explains_fully_watched_ongoing_and_inconsistent_shows(tmp_path)
     missing = store.evaluate_status(SHOW, {**DETAIL, "number_of_episodes": 3}, preview=True)
     assert missing["reason"] == "Completion metadata is missing or inconsistent"
     assert missing["deferred"] is True
+
+
+@pytest.mark.parametrize("status", ["dropped", "on_hold", "planned", "completed"])
+def test_legacy_retained_statuses_need_no_metadata_or_retry(tmp_path, status):
+    store = seeded(tmp_path)
+    store.save_note(SHOW, {"type": "show", "status": status})
+    version = dict(store.pending_statuses())[SHOW]
+    result = store.evaluate_status(SHOW, lambda: pytest.fail("Retained statuses need no metadata"), version=version)
+    assert result["after"] == status
+    assert "batch" not in result
+    assert SHOW not in dict(store.pending_statuses())
+
+
+def test_legacy_watching_completes_from_fresh_history_and_undo_restores_origin(tmp_path):
+    store = seeded(tmp_path)
+    store.save_note(SHOW, {"type": "show", "status": "watching"})
+    version = dict(store.pending_statuses())[SHOW]
+    result = store.evaluate_status(SHOW, DETAIL, version=version)
+    assert result["after"] == "completed"
+    assert store.status_control(SHOW)["origin"] == "automatic"
+    store.undo(result["batch"])
+    assert store.note(SHOW)["status"] == "watching"
+    assert store.status_control(SHOW) == {"origin": "existing", "manual": False}
+
+
+def test_legacy_watching_waits_for_metadata_without_daily_retries(tmp_path):
+    store = seeded(tmp_path)
+    store.save_note(SHOW, {"type": "show", "status": "watching"})
+    result = store.evaluate_status(SHOW, None, version=dict(store.pending_statuses())[SHOW])
+    assert result["after"] == "watching"
+    assert not result["deferred"]
+    assert SHOW not in dict(store.pending_statuses())
+    store.queue_metadata_statuses([SHOW])
+    result = store.evaluate_status(SHOW, DETAIL, version=dict(store.pending_statuses())[SHOW])
+    assert result["after"] == "completed"

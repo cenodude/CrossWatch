@@ -155,7 +155,7 @@ class TrackerAutomation:
             eligible = []
             for key in keys:
                 note, control = self._note_get(conn, key), self._control_get(conn, key)
-                if (note or {}).get("status") == "watching" and control and not control.get("manual"):
+                if (note or {}).get("status") == "watching" and not (control or {}).get("manual"):
                     eligible.append((key,))
             if eligible:
                 with self._write(conn):
@@ -194,8 +194,10 @@ class TrackerAutomation:
 
     def _status_decision(self, conn, key, metadata: Mapping[str, Any] | Callable[[], Mapping[str, Any] | None] | None, *, retry=False):
         note, control = self._note_get(conn, key), self._control_get(conn, key)
-        if (control and control.get("manual")) or (not control and (note or {}).get("status")):
+        if control and control.get("manual"):
             return None, "protected", note, False
+        if note is not None and (not control or control.get("origin") == "existing") and note.get("status") not in {None, "", "watching"}:
+            return note["status"], "Existing status retained", note, False
         if retry and (control or {}).get("origin") == "sync" and not (key.startswith("show:") and (note or {}).get("status") == "watching"):
             return (note or {}).get("status"), "Synced status retained until new watch activity", note, False
         where, args = self._status_where(key)
@@ -256,14 +258,15 @@ class TrackerAutomation:
                     retry = pending[1] > 0
                 desired, reason, note, deferred = self._status_decision(conn, key, metadata, retry=retry)
                 before = self._note_get(conn, key)
-                if deferred and (before or {}).get("status") == desired and (self._control_get(conn, key) or {}).get("origin") == "sync":
-                    deferred = False
+                if deferred and (before or {}).get("status") == desired:
+                    control = self._control_get(conn, key)
+                    if not control or control.get("origin") in {"sync", "existing"}:
+                        deferred = False
                 result = {"key": key, "title": (note or {}).get("title") or key, "before": (before or {}).get("status"), "after": desired, "reason": reason, "deferred": deferred}
                 if reason == "protected":
                     result.update(after=result["before"], skipped="protected")
                     if preview or expected is not None:
-                        control = self._control_get(conn, key) or {}
-                        result["reason"] = "Manual status kept" if control.get("manual") else "Existing status kept; enable automatic updates for this title to change it"
+                        result["reason"] = "Manual status kept"
                 if expected is not None and reason != "protected" and (result["before"] != expected.get("before") or result["after"] != expected.get("after")):
                     result.update(skipped="changed", reason="Status or watch data changed since preview; refresh to check again")
                     return result

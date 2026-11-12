@@ -6,13 +6,21 @@ import {monthNotifications} from "./tracker-month-notifications.js";
 
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const number = value => Number(value || 0).toLocaleString();
+const plays = value => `${number(value)} ${Number(value) === 1 ? "play" : "plays"}`;
 const hours = value => `${number(Math.round(Number(value || 0) / 60))}h`;
 const monthName = value => new Date(`${value}-02T12:00:00`).toLocaleDateString(undefined,{month:"short"});
 const chapters = ["The premiere", "Your year in motion", "The movies", "Your leading series", "The streak", "Your signature", "Encore & credits", "The keepsake"];
 const imageURL = url => /^https:\/\/image\.tmdb\.org\/t\/p\//.test(url || "") ? url : "";
+const emptyArt = '<span class="wr-art-empty" aria-hidden="true">CrossWatch</span>';
 const art = (row, backdrop = false) => {
-  const url = imageURL(row?.[backdrop ? "backdrop" : "poster"] || row?.poster || row?.backdrop);
-  return url ? `<img src="${esc(url.replace(/\/t\/p\/[^/]+\//, `/t/p/${backdrop ? "w1280" : "w342"}/`))}" alt="" loading="lazy" decoding="async">` : '<span class="wr-art-empty" aria-hidden="true">CrossWatch</span>';
+  const size = backdrop ? "w1280" : "w342", identifier = String(row?.ids?.tmdb || "");
+  const cached = [row?.[backdrop ? "backdrop" : "poster"],row?.poster,row?.backdrop].map(imageURL).find(Boolean);
+  const query = new URLSearchParams({kind:backdrop ? "backdrop" : "poster",size});
+  if (row?.title) query.set("title",row.title);
+  if (/^\d{4}$/.test(String(row?.year || ""))) query.set("year",row.year);
+  const fallback = /^\d+$/.test(identifier) && ["movie","show"].includes(row?.type) ? `/art/tmdb/${row.type === "movie" ? "movie" : "tv"}/${identifier}?${query}` : "";
+  const url = cached ? cached.replace(/\/t\/p\/[^/]+\//, `/t/p/${size}/`) : fallback;
+  return url ? `<img src="${esc(url)}"${cached && fallback ? ` data-wr-art-fallback="${esc(fallback)}"` : ""} alt="" loading="lazy" decoding="async">` : emptyArt;
 };
 function profile() {
   const auth = window.CW?.AuthState?.read?.() || {}, view = window.CW?.OverviewProfile;
@@ -68,26 +76,26 @@ export function openWrapped({root, instance, label, year = "", openMedia, onClos
     return `<p class="wr-kicker">${kicker}</p><h1 tabindex="-1">${title}</h1>${detail ? `<p class="wr-intro">${detail}</p>` : ""}`;
   }
   function cards(rows, limit = 5, offset = 0) {
-    return `<div class="wr-cards">${rows.slice(0,limit).map((row,i)=>`<button type="button" data-wr-title="${esc(row.key)}" class="wr-card" style="--rank:${i}"><span class="wr-cover">${art(row)}<b>${String(i+offset+1).padStart(2,"0")}</b></span><strong>${esc(row.title)}</strong><small>${number(row.plays)} plays${row.type === "show" ? ` · ${number(row.episodes)} distinct episodes` : ""}</small></button>`).join("")}</div>`;
+    return `<div class="wr-cards">${rows.slice(0,limit).map((row,i)=>`<button type="button" data-wr-title="${esc(row.key)}" class="wr-card" style="--rank:${i}"><span class="wr-cover">${art(row)}<b>${String(i+offset+1).padStart(2,"0")}</b></span><strong>${esc(row.title)}</strong><small>${plays(row.plays)}${row.type === "show" ? ` · ${number(row.episodes)} distinct episodes` : ""}</small></button>`).join("")}</div>`;
   }
   function stats() {
-    return `<div class="wr-stats">${[[number(report.plays),"plays"],[hours(report.minutes),"estimated watch time"],[number(report.active_days),"active days"]].map(([value,title])=>`<div><strong>${value}</strong><span>${title}</span></div>`).join("")}</div>`;
+    return `<div class="wr-stats">${[[number(report.plays),Number(report.plays) === 1 ? "play" : "plays"],[hours(report.minutes),"estimated watch time"],[number(report.active_days),"active days"]].map(([value,title])=>`<div><strong>${value}</strong><span>${title}</span></div>`).join("")}</div>`;
   }
   function content() {
     const movies = report.titles.filter(t=>t.type === "movie"), shows = report.titles.filter(t=>t.type === "show");
     if (chapter === 0) return `${fireworks()}<div class="wr-premiere">${heading("CROSSWATCH PRESENTS", `${esc(year)}<span>What a year<br>to press play.</span>`, `${esc(identity.name || label)}, this is ${report.current ? "your year so far" : "your watch story"}.`)}<div class="wr-reel">${report.titles.slice(0,7).map((row,i)=>`<div style="--rank:${i}">${art(row)}</div>`).join("")}</div><button type="button" class="wr-primary" data-wr="next">Unwrap ${esc(year)} <span aria-hidden="true">↗</span></button></div>`;
     if (chapter === 1) {
       const max = Math.max(1,...report.months.map(m=>m.plays));
-      return `${heading("TWELVE MONTHS. YOUR STORY.", "A year in motion.", "Every little square is a day you made time for a story.")}${stats()}<div class="wr-months" aria-label="Plays by month">${report.months.map(m=>`<div title="${esc(monthName(m.month))}: ${m.plays} plays"><strong>${number(m.plays)}</strong><span style="--height:${m.plays/max*100}%"></span><small>${esc(monthName(m.month))}</small></div>`).join("")}</div><div class="wr-calendar" aria-label="Daily watch activity">${report.days.map(day=>`<i class="${day.movies+day.episodes ? "is-active" : ""}" title="${day.date}: ${day.movies+day.episodes} plays" style="--activity:${Math.min(1,(day.movies+day.episodes)/8)}"></i>`).join("")}</div>`;
+      return `${heading("TWELVE MONTHS. YOUR STORY.", "A year in motion.", "Every little square is a day you made time for a story.")}${stats()}<div class="wr-months" aria-label="Plays by month">${report.months.map(m=>`<div title="${esc(monthName(m.month))}: ${plays(m.plays)}"><strong>${number(m.plays)}</strong><span style="--height:${m.plays/max*100}%"></span><small>${esc(monthName(m.month))}</small></div>`).join("")}</div><div class="wr-calendar" aria-label="Daily watch activity">${report.days.map(day=>`<i class="${day.movies+day.episodes ? "is-active" : ""}" title="${day.date}: ${plays(day.movies+day.episodes)}" style="--activity:${Math.min(1,(day.movies+day.episodes)/8)}"></i>`).join("")}</div>`;
     }
     if (chapter === 2) return `${heading("THE BIG SCREEN ENERGY", movies.length ? `${number(movies.length)} movies.<br>So many worlds.` : "A different kind of year.", movies.length ? "Your most-played movies take the spotlight." : "No movies recorded. Your series have the stage this year.")}${cards(movies)}${movies.length > 5 ? `<details class="wr-gallery"><summary>See all ${number(movies.length)} movies</summary>${cards(movies.slice(5),movies.length,5)}</details>` : ""}`;
     if (chapter === 3) {
       const lead = shows[0];
-      return lead ? `${heading("YOUR LEADING SERIES", esc(lead.title), "The series you returned to most, ranked by plays.")}<button type="button" class="wr-feature" data-wr-title="${esc(lead.key)}">${art(lead,true)}<span><strong>${number(lead.plays)} plays</strong><small>${number(lead.episodes)} distinct episodes · ${hours(lead.minutes)} estimated</small><b>Open media card ↗</b></span></button>${cards(shows.slice(1),4,1)}` : heading("YOUR LEADING SERIES", "This year went to the movies.", "No episodes recorded for this year.");
+      return lead ? `${heading("YOUR LEADING SERIES", esc(lead.title), "The series you returned to most, ranked by plays.")}<button type="button" class="wr-feature" data-wr-title="${esc(lead.key)}">${art(lead,true)}<span><strong>${plays(lead.plays)}</strong><small>${number(lead.episodes)} distinct episodes · ${hours(lead.minutes)} estimated</small><b>Open media card ↗</b></span></button>${cards(shows.slice(1),4,1)}` : heading("YOUR LEADING SERIES", "This year went to the movies.", "No episodes recorded for this year.");
     }
     if (chapter === 4) {
       const busiest = report.months.reduce((a,b)=>b.plays>a.plays?b:a), date = value => value ? new Date(`${value}T12:00:00`).toLocaleDateString(undefined,{month:"short",day:"numeric"}) : "";
-      return `${heading("YOU KEPT THE STORIES GOING", "One more day.")}<div class="wr-streak-art" aria-hidden="true"><svg viewBox="0 0 400 400"><circle cx="200" cy="200" r="170"/><circle cx="200" cy="200" r="130"/><circle cx="200" cy="200" r="85"/><path d="M200 30a170 170 0 1 1-162 222"/>${Array.from({length:12},(_,i)=>`<circle class="wr-streak-star" cx="${200+170*Math.cos(i*Math.PI/6)}" cy="${200+170*Math.sin(i*Math.PI/6)}" r="${i%3===0?6:3}"/>`).join("")}<path class="wr-streak-flash" d="m218 110-70 105h48l-14 75 70-110h-48Z"/></svg></div><div class="wr-streak"><strong>${number(report.streak)}</strong><span>consecutive active days</span></div><p class="wr-intro">${esc(date(report.streak_start))} — ${esc(date(report.streak_end))}</p><div class="wr-callout"><span>Your busiest month</span><strong>${esc(monthName(busiest.month))}</strong><span>${number(busiest.plays)} plays · ${hours(busiest.minutes)} estimated</span></div>`;
+      return `${heading("YOU KEPT THE STORIES GOING", "One more day.")}<div class="wr-streak-art" aria-hidden="true"><svg viewBox="0 0 400 400"><circle cx="200" cy="200" r="170"/><circle cx="200" cy="200" r="130"/><circle cx="200" cy="200" r="85"/><path d="M200 30a170 170 0 1 1-162 222"/>${Array.from({length:12},(_,i)=>`<circle class="wr-streak-star" cx="${200+170*Math.cos(i*Math.PI/6)}" cy="${200+170*Math.sin(i*Math.PI/6)}" r="${i%3===0?6:3}"/>`).join("")}<path class="wr-streak-flash" d="m218 110-70 105h48l-14 75 70-110h-48Z"/></svg></div><div class="wr-streak"><strong>${number(report.streak)}</strong><span>consecutive active days</span></div><p class="wr-intro">${esc(date(report.streak_start))} — ${esc(date(report.streak_end))}</p><div class="wr-callout"><span>Your busiest month</span><strong>${esc(monthName(busiest.month))}</strong><span>${plays(busiest.plays)} · ${hours(busiest.minutes)} estimated</span></div>`;
     }
     if (chapter === 5) {
       const blocks = [report.hours.slice(5,12).reduce((a,b)=>a+b,0),report.hours.slice(12,18).reduce((a,b)=>a+b,0),report.hours.slice(18,22).reduce((a,b)=>a+b,0),[...report.hours.slice(22),...report.hours.slice(0,5)].reduce((a,b)=>a+b,0)];
@@ -115,11 +123,25 @@ export function openWrapped({root, instance, label, year = "", openMedia, onClos
     for (const name of ["--wr-light-x","--wr-light-y","--wr-drift-x","--wr-drift-y"]) stage?.style.removeProperty(name);
   }
   function render(focus = false) {
+    const active = document.activeElement, ownedFocus = host.contains(active), scrollTop = window.scrollY;
+    const attribute = ["data-wr", "data-wr-title", "data-wr-chapter", "data-wr-year", "data-wr-personal"].find(name => active?.hasAttribute(name));
+    const selector = attribute ? `[${attribute}="${CSS.escape(active.getAttribute(attribute))}"]` : active?.matches(".wr-gallery>summary") ? ".wr-gallery>summary" : "h1";
+    const focusIndex = [...host.querySelectorAll(selector)].indexOf(active);
+    const expanded = host.querySelector(".wr-gallery")?.open, inputValue = active?.value;
     resetMotion();
     host.dataset.chapter = String(chapter);
     const pending = response?.pending || response?.stale, playable = report?.plays && !response?.disabled;
     host.innerHTML = `<nav class="wr-toolbar" aria-label="CrossWatch Wrapped controls"><button type="button" data-wr="close">← Tracker</button><span class="wr-wordmark">CrossWatch <b>WRAPPED</b></span><label>Year <input type="number" min="1900" max="${esc(response?.current_year || new Date().getFullYear())}" value="${esc(year)}" aria-label="Wrapped year" data-wr-year></label></nav><div class="wr-stage${playable ? " wr-story" : ""}"><div class="wr-content">${response?.disabled ? heading("CROSSWATCH WRAPPED", "Wrapped is turned off.", "Enable CrossWatch Wrapped in this tracker's options to prepare your yearly story. Saved reports are kept.") : report ? report.plays ? content() : heading("A BLANK REEL", `Your ${esc(year)} awaits.`, "No watches recorded for this year. Choose another year to explore your history.") : `${heading("CROSSWATCH WRAPPED", response?.error ? "A brief intermission." : "Preparing your premiere.", response?.error ? "Your history is safe. Try again when you're ready." : "Your story is being prepared in the background. You can leave; the bell will let you know when it's ready.")}<span class="wr-loader" aria-hidden="true"></span>`}</div>${playable ? navigation() : ""}</div><div class="wr-status" role="status">${response?.error ? '<span>The latest update could not finish.</span> <button type="button" data-wr="retry">Try again</button>' : pending && report ? 'Updating your story in the background…' : ""}</div>${playable ? `<p class="wr-fine">${report.current ? "Year so far. " : ""}Watch time is estimated from known runtimes (${number(report.timed)} of ${number(report.plays)} plays). Built from your CrossWatch history.</p>` : ""}`;
-    if (focus) host.querySelector("h1")?.focus({preventScroll:true});
+    if (!focus) {
+      const gallery = host.querySelector(".wr-gallery");
+      if (gallery && expanded) gallery.open = true;
+      if (ownedFocus) {
+        const target = host.querySelectorAll(selector)[focusIndex] || host.querySelector("h1");
+        if (attribute === "data-wr-year" && target?.matches("input")) target.value = inputValue;
+        target?.focus({preventScroll:true});
+      }
+      window.scrollTo({top:scrollTop,behavior:"instant"});
+    } else host.querySelector("h1")?.focus({preventScroll:true});
   }
   function move(next) {
     if (!report?.plays || response?.disabled) return;
@@ -144,7 +166,7 @@ export function openWrapped({root, instance, label, year = "", openMedia, onClos
       if (data.disabled) report=null;
       else if (data.report) report=data.report;
       notices.viewing(instance,year);
-      if (!prior || prior.generated!==data.generated || prior.pending!==data.pending || prior.error!==data.error || prior.disabled!==data.disabled || initial) render(!prior);
+      if (!prior || prior.generated!==data.generated || prior.pending!==data.pending || prior.stale!==data.stale || prior.error!==data.error || prior.disabled!==data.disabled || initial) render(!prior);
       if ((data.pending || data.stale) && !data.error && ++attempts<30) timer=setTimeout(()=>{if (!document.hidden) load();},Math.min(10000,1500+attempts*500));
       else if (!data.disabled && (data.pending || data.stale || !report) && !data.error) {response={...data,pending:false,error:"review_timeout"};render();}
     } catch {
@@ -209,7 +231,13 @@ export function openWrapped({root, instance, label, year = "", openMedia, onClos
   host.addEventListener("pointerleave",resetMotion);
   host.addEventListener("touchstart",event=>{touch=event.target.closest("button,input,select,summary")?null:event.touches[0];},{passive:true});
   host.addEventListener("touchend",event=>{const end=event.changedTouches[0];if(touch && Math.abs(end.clientX-touch.clientX)>70 && Math.abs(end.clientY-touch.clientY)<50)move(chapter+(end.clientX<touch.clientX?1:-1));touch=null;},{passive:true});
-  host.addEventListener("error",event=>{if(event.target instanceof HTMLImageElement)event.target.hidden=true;},true);
+  host.addEventListener("error",event=>{
+    const img=event.target;
+    if (!(img instanceof HTMLImageElement)) return;
+    const fallback=img.dataset.wrArtFallback;
+    if (fallback) {delete img.dataset.wrArtFallback;img.src=fallback;}
+    else img.outerHTML=emptyArt;
+  },true);
   render();load();
   return api;
 }

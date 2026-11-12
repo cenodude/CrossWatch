@@ -86,6 +86,11 @@ def _cache(store: TrackerStore) -> sqlite3.Connection:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("CREATE TABLE IF NOT EXISTS reviews(month TEXT, zone TEXT, version INTEGER, revision TEXT, generated REAL, data TEXT, PRIMARY KEY(month, zone))")
         conn.execute("CREATE TABLE IF NOT EXISTS review_state(month TEXT, zone TEXT, revision TEXT, PRIMARY KEY(month, zone))")
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='wrapped_previews'").fetchone():
+            with conn:
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute("CREATE TABLE IF NOT EXISTS wrapped_previews(month TEXT, zone TEXT, version INTEGER, current INTEGER, plays INTEGER, posters TEXT, PRIMARY KEY(month, zone))")
+                conn.execute("INSERT OR IGNORE INTO wrapped_previews SELECT month,zone,version,json_extract(data,'$.current'),json_extract(data,'$.plays'),json_array(json_extract(data,'$.titles[0].poster'),json_extract(data,'$.titles[1].poster'),json_extract(data,'$.titles[2].poster')) FROM reviews WHERE length(month)=4 AND json_valid(data)")
         return conn
     except sqlite3.DatabaseError as exc:
         conn.close()
@@ -333,11 +338,17 @@ def _busy() -> bool:
 
 
 def _publish(conn: sqlite3.Connection, month: str, tz: Any, state: str, generated: float, data: str | None) -> None:
+    preview = None
+    if len(month) == 4 and data is not None:
+        report = json.loads(data)
+        preview = (month, str(tz), _VERSION, bool(report.get("current")), report.get("plays", 0), json.dumps([row.get("poster") for row in report.get("titles", [])[:3]]))
     with _PUBLICATION:
         _checkpoint()
         with conn:
             if data is not None:
                 conn.execute("INSERT OR REPLACE INTO reviews VALUES(?,?,?,?,?,?)", (month, str(tz), _VERSION, state, generated, data))
+                if preview is not None:
+                    conn.execute("INSERT OR REPLACE INTO wrapped_previews VALUES(?,?,?,?,?,?)", preview)
             conn.execute("INSERT OR REPLACE INTO review_state VALUES(?,?,?)", (month, str(tz), state))
             _checkpoint()
 
@@ -481,10 +492,10 @@ def available_wrapped(store: TrackerStore, cfg: Mapping[str, Any]) -> dict[str, 
     year = str(now.year - 1)
     try:
         with closing(_readonly(store.root / "month-reviews.db")) as conn:
-            row = conn.execute("SELECT json_extract(data,'$.titles[0].poster'), json_extract(data,'$.titles[1].poster'), json_extract(data,'$.titles[2].poster') FROM reviews WHERE month=? AND zone=? AND version=? AND json_extract(data,'$.current')=0 AND json_extract(data,'$.plays')>0",
+            row = conn.execute("SELECT posters FROM wrapped_previews WHERE month=? AND zone=? AND version=? AND current=0 AND plays>0",
                                (year, str(tz), _VERSION)).fetchone()
-        return {"year": year, "posters": [value for value in row if value]} if row else {}
-    except (sqlite3.Error, OSError):
+        return {"year": year, "posters": [value for value in json.loads(row[0]) if value]} if row else {}
+    except (sqlite3.Error, OSError, ValueError, TypeError):
         return {}
 
 

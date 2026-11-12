@@ -45,7 +45,7 @@
     { id: "choice", label: "Pick from a list" },
   ];
   const NOTE_LABELS = { status: "status", status_control: "automatic status preference", started: "start date", finished: "finish date", notes: "notes", tags: "tags", fields: "your fields", title: "title", year: "year", tmdb: "match" };
-  const NOTES_VIEW = { label: "My titles", icon: "bookmarks" };
+  const NOTES_VIEW = { label: "Title details", icon: "edit_note" };
   const MAX_TAGS = 30;
   const MAX_FIELDS = 20;
   const PAGE_SIZES = [50, 100, 150, 200];
@@ -913,7 +913,7 @@
   function renderExtraFilters() {
     const labels = `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="status-labels"${state.showStatusLabels !== false ? " checked" : ""}>Show status labels on cards</label>`;
     const sort = ["shows", "cleanup", "titles"].includes(state.view) ? "" : `<label class="trk-status-filter"><span>Sort</span><select class="cw-select" data-trk-input="sort" aria-label="Sort results">${[["recent","Newest first"],["oldest","Oldest first"],["title","Title A-Z"]].map(([value,label]) => `<option value="${value}"${state.sort === value ? " selected" : ""}>${label}</option>`).join("")}</select></label>`;
-    return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Filters">${state.view !== "titles" ? `<div class="trk-filter-options">${renderFilters()}</div>` : ""}${renderNoteFilters()}${sort}${state.view === "history" ? `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="duplicates"${state.duplicates ? " checked" : ""}>Possible duplicates</label>` : ""}${labels}<button type="button" class="cw-btn" data-trk-action="filters-clear">Clear filters</button><small>${state.view === "history" && state.duplicates ? "Same title, episode and watch time. Compare the entries before deleting; watches at different times are kept." : "Status and tags use your local My titles details."}</small></div>`;
+    return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Filters">${state.view !== "titles" ? `<div class="trk-filter-options">${renderFilters()}</div>` : ""}${renderNoteFilters()}${sort}${state.view === "history" ? `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="duplicates"${state.duplicates ? " checked" : ""}>Possible duplicates</label>` : ""}${labels}<button type="button" class="cw-btn" data-trk-action="filters-clear">Clear filters</button><small>${state.view === "history" && state.duplicates ? "Same title, episode and watch time. Compare the entries before deleting; watches at different times are kept." : "Status and tags use your local title details."}</small></div>`;
   }
 
   function renderControls() {
@@ -1154,7 +1154,7 @@
       const filtered = state.q || state.noteStatus || state.noteTag;
       const text = state.loading ? "Loading..." : filtered
         ? "No titles match these filters."
-        : "Nothing here yet. Open any title and add a status, dates, tags or notes. They stay in CrossWatch and never sync.";
+        : "Your notes, tags and custom fields appear here. Open a title and add your own details to find it here quickly.";
       return emptyState(text, state.loading ? "hourglass_empty" : "bookmarks");
     }
     const allPicked = state.noteRows.every((n) => state.picked.has(n.key));
@@ -3193,7 +3193,7 @@
     const d = sheet.draft;
     const head = state.title?.title || { title: d.title };
     const busy = sheet.busy ? " disabled" : "";
-    const automatic = !d.status_manual && !state.title?.status_control?.manual && state.title?.status_control?.origin === "automatic";
+    const automatic = !d.status_manual && !state.title?.status_control?.manual;
     const chips = [{ id: "", label: "No status", icon: "remove" }, ...STATUSES]
       .map((s) => `<button type="button" class="cw-filter-chip${d.status === s.id ? " active" : ""}" data-trk-note-status="${s.id}" aria-pressed="${d.status === s.id}"${busy}>${symbol(s.icon, "cw-type-icon")}<span>${esc(s.label)}</span></button>`)
       .join("");
@@ -3205,7 +3205,7 @@
       <form class="trk-form" data-trk-form="notes" novalidate>
         <div class="trk-group-label">Status</div>
         <div class="trk-note-statuses" role="group" aria-label="Status">${chips}</div>
-        <p class="trk-note">${state.title?.status_control?.reason ? esc(state.title.status_control.reason) : state.title?.status_control?.manual ? "Manual status: excluded from automatic updates." : state.title?.status_control?.origin === "existing" ? "Older status: enable automatic updates to include this title." : state.title?.status_control?.origin === "sync" ? "Status received through sync; eligible for automatic updates." : "Automatic status updates may manage this title."}</p>
+        <p class="trk-note">${state.title?.status_control?.reason ? esc(state.title.status_control.reason) : state.title?.status_control?.manual ? "Manual status: excluded from automatic updates." : state.title?.status_control?.origin === "sync" ? "Status received through sync; eligible for automatic updates." : "Automatic status updates are enabled for this title."}</p>
         ${state.trackerOptions?.automatic_status !== false ? `<button type="button" class="cw-btn" data-trk-sheet="enable-auto"${automatic || sheet.busy ? " disabled" : ""}>${sheet.busy ? "Saving..." : automatic ? "Automatic status is on" : "Use automatic status"}</button>` : ""}
         ${sheet.automationEnabled ? '<p class="trk-note" role="status">Saved. CrossWatch now manages this title\'s status automatically. No extra Save is needed.</p>' : ""}
         <div class="trk-fields">
@@ -3606,7 +3606,7 @@
     const loading = !sheet.autoReview && !sheet.reviewError;
     const retry = !sheet.autoReview && !!sheet.reviewError;
     const heading = active ? "Updating your library" : job.state === "complete" ? "Library check complete" : "Update from watch history";
-    return `<h3>${heading}</h3><p class="trk-note">${active ? "You can close this window. Updates continue in the background and pause during sync." : "Fill missing statuses and refresh automatic ones. Fully watched, ended shows can move from synced Watching to Completed. Statuses you set yourself are kept."}</p>
+    return `<h3>${heading}</h3><p class="trk-note">${active ? "You can close this window. Updates continue in the background and pause during sync." : "Fill missing statuses and refresh automatic ones. Fully watched, ended shows can move from Watching to Completed. Statuses you set yourself are kept."}</p>
       ${job.state !== "idle" ? `<p role="status">${esc(message)}</p>` : ""}
       ${job.titles && ["processing","complete"].includes(job.state) ? `<progress aria-label="Titles reviewed" max="${Number(job.titles)}" value="${Number(job.processed || 0)}"></progress>` : ""}
       <button type="button" class="cw-btn${active ? "" : " primary"}" data-trk-sheet="${retry ? "review-refresh" : active ? "review-cancel" : "review-start"}"${sheet.reviewBusy || loading ? " disabled" : ""}>${loading ? "Checking..." : retry ? "Try again" : active ? "Stop update" : job.state === "complete" ? "Update again" : "Update statuses"}</button>
@@ -4957,7 +4957,14 @@
       }
       renderProfilePicker();
     });
-    window.addEventListener("storage",paintMonthlyBanner);
+    window.addEventListener("storage",event => {
+      if (event.storageArea === localStorage && (event.key === null || [reviewDismissKey(),reviewDismissKey(true)].includes(event.key))) {
+        if (event.key === null) reviewDismissals.clear();
+        else reviewDismissals.delete(event.key);
+        renderOverviewSlot();
+      }
+      paintMonthlyBanner();
+    });
     setInterval(checkOverview, 60000);
     document.addEventListener("visibilitychange", checkOverview);
     window.addEventListener("cw:tracker-migrated", () => {
@@ -5003,7 +5010,10 @@
       sheet.el = null;
       loadView();
     }
-    if (expireView()) monthlyReviewPage?.close(false);
+    if (expireView()) {
+      monthlyReviewPage?.close(false);
+      wrappedPage?.close(false);
+    }
     const {month:reviewMonth, year:reviewYear} = readLink() || {};
     wire(root);
     try {

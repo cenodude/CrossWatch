@@ -92,7 +92,7 @@ def test_notes_never_reach_the_synced_state(api, base):
 def test_my_titles_list_filters_by_status_tag_and_text(api):
     _save(api, "movie:tmdb:949", title="Heat", status="completed", tags=["Crime"])
     _save(api, "show:tmdb:95396", title="Severance", status="watching", tags=["Apple", "crime"])
-    _save(api, "movie:tmdb:5", title="Gone Movie", status="planned")
+    _save(api, "movie:tmdb:5", title="Gone Movie", status="planned", notes="Watch with friends")
 
     every = api.get("/api/tracker/notes").json()
     assert every["total"] == 3 and every["summary"]["statuses"] == {"completed": 1, "watching": 1, "planned": 1}
@@ -203,3 +203,46 @@ def test_notes_survive_tracker_export_and_import(api, base, tmp_path):
     assert stats["notes"] == 1
     assert other.note("movie:tmdb:949")["tags"] == ["Crime"]
     assert other.note_fields()[0]["name"] == "Mood"
+
+
+def test_my_titles_excludes_status_and_dates_but_keeps_all_status_data(api, base):
+    store = TrackerStore(base)
+    store.save_note("movie:tmdb:949", {"type": "movie", "title": "Heat", "status": "completed"}, origin="automatic")
+    _save(api, "show:tmdb:95396", title="Severance", status="watching", started="2026-01-01", finished="2026-02-01")
+    _save(api, "movie:tmdb:1", title="Arrival", status="planned", notes="   ")
+    result = api.get("/api/tracker/notes").json()
+    assert result["notes"] == [] and result["total"] == 0
+    assert result["summary"] == {"total": 0, "statuses": {}, "tags": []}
+    assert api.get("/api/tracker/summary").json()["notes"]["total"] == 0
+    assert store.notes()[0] == 3
+    assert store.notes(status="watching")[0] == 1
+    assert store.note("movie:tmdb:949")["status"] == "completed"
+    assert store.status_control("movie:tmdb:949")["origin"] == "automatic"
+    assert api.get("/api/tracker/shows").json()["shows"][0]["status"] == "watching"
+    assert api.get("/api/tracker/title?feature=history&key=tmdb:949").json()["note"]["status"] == "completed"
+
+
+def test_my_titles_personal_content_counts_filters_paging_and_undo(api, base):
+    definitions = api.post("/api/tracker/note-fields", json={"fields": [
+        {"name": "Rewatch", "type": "bool"}, {"name": "Score", "type": "number"}
+    ]}).json()["fields"]
+    field_ids = {field["name"]: field["id"] for field in definitions}
+    _save(api, "movie:tmdb:949", title="Heat", status="completed", notes="A personal note")
+    _save(api, "show:tmdb:95396", title="Severance", status="watching", tags=["Favorite"])
+    _save(api, "movie:tmdb:1", title="Arrival", fields={field_ids["Rewatch"]: False, field_ids["Score"]: 0})
+    _save(api, "movie:tmdb:5", title="Status only", status="watching")
+    result = api.get("/api/tracker/notes?limit=2").json()
+    assert result["total"] == 3 and len(result["notes"]) == 2
+    rest = api.get("/api/tracker/notes?offset=2&limit=2").json()
+    assert len(rest["notes"]) == 1
+    assert {row["key"] for row in result["notes"] + rest["notes"]} == {"movie:tmdb:949", "show:tmdb:95396", "movie:tmdb:1"}
+    assert result["summary"] == {"total": 3, "statuses": {"completed": 1, "watching": 1}, "tags": [{"tag": "Favorite", "count": 1}]}
+    assert api.get("/api/tracker/summary").json()["notes"] == result["summary"]
+    for query, key in [("status=watching", "show:tmdb:95396"), ("tag=favorite", "show:tmdb:95396"), ("status=none", "movie:tmdb:1"), ("q=Heat", "movie:tmdb:949")]:
+        filtered = api.get("/api/tracker/notes?" + query).json()
+        assert filtered["total"] == 1 and filtered["notes"][0]["key"] == key
+    removed = _save(api, "movie:tmdb:949", title="Heat", status="completed", notes="").json()
+    assert api.get("/api/tracker/notes").json()["total"] == 2
+    assert TrackerStore(base).note("movie:tmdb:949")["status"] == "completed"
+    assert api.post("/api/tracker/undo", json={"batch": removed["batch"]}).status_code == 200
+    assert api.get("/api/tracker/notes").json()["total"] == 3
