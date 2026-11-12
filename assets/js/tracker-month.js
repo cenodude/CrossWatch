@@ -146,6 +146,11 @@ export function openMonthReview({root, instance, label, openMedia, onClose, mont
   }
 
   function render(keepFocus = false) {
+    if (response?.disabled) {
+      observer.disconnect();
+      host.innerHTML = '<div class="mr-empty mr-section"><h1 tabindex="-1">Month in review is off</h1><p>Enable Month in review reports in this tracker instance’s settings.</p><button type="button" data-mr="back">Back to tracker</button></div>';
+      return;
+    }
     const optionsOpen = host.querySelector(".mr-options")?.open, holidaysOpen = host.querySelector(".mr-holiday-options")?.open;
     const focused = keepFocus ? document.activeElement : null;
     const focusKey = focused?.dataset.mrFilter ? `[data-mr-filter="${focused.dataset.mrFilter}"]` : null;
@@ -169,6 +174,11 @@ export function openMonthReview({root, instance, label, openMedia, onClose, mont
       if (!res.ok) {if ([401,403,404].includes(res.status)) {cache.clear(); report = null;} throw new Error("review_unavailable");}
       const data = await res.json(); if (id !== request) return;
       const prior = report, previousGeneration = response?.generated, previousPending = response?.pending, previousError = response?.error;
+      if (data.disabled) {
+        report = null; response = {...data,month}; cache.clear(); notifications.viewing(instance,month);
+        render();
+        return;
+      }
       response = data; month = data.month;
       notifications.viewing(instance,month);
       if (data.report) {report = data.report; cache.set(cacheKey(month),data); while (cache.size > 6) cache.delete(cache.keys().next().value);}
@@ -209,7 +219,7 @@ export function openMonthReview({root, instance, label, openMedia, onClose, mont
     if (target.matches("[data-mr-holiday]")) {const enabled=prefs.enabled.filter(id=>id!==target.dataset.mrHoliday); if (target.checked) enabled.unshift(target.dataset.mrHoliday); savePreferences(instance,{enabled});}
   });
   host.addEventListener("keydown",event=>{
-    if (event.key === "Escape") {const options = host.querySelector(".mr-options"); if (options.open) {options.open = false; options.querySelector("summary").focus();}}
+    if (event.key === "Escape") {const options = host.querySelector(".mr-options"); if (options?.open) {options.open = false; options.querySelector("summary").focus();}}
     const day = event.target.closest("[data-mr-day]");
     if (day && ["ArrowLeft","ArrowRight","Home","End"].includes(event.key)) {event.preventDefault(); const index = event.key === "Home" ? 1 : event.key === "End" ? report.days.length : Math.max(1,Math.min(report.days.length,Number(day.dataset.mrDay)+(event.key === "ArrowRight" ? 1 : -1))); host.querySelector(`[data-mr-day="${index}"]`)?.focus();}
   });

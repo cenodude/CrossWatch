@@ -1866,6 +1866,16 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-sheet-foot{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
 #page-tracker .trk-sheet-foot .cw-btn{display:inline-flex;align-items:center;gap:6px;padding:0 14px;cursor:pointer}
 #page-tracker .trk-changes{display:grid;margin:0;padding:0;list-style:none}
+#page-tracker .trk-auto-changes{min-width:0;margin:6px 0}
+#page-tracker .trk-auto-changes summary{display:flex;align-items:center;gap:10px;min-height:44px;padding:10px;list-style:none;cursor:pointer}
+#page-tracker .trk-auto-changes summary::-webkit-details-marker{display:none}
+#page-tracker .trk-auto-changes summary span:not(.material-symbols-rounded){flex:1;min-width:0;overflow-wrap:anywhere}
+#page-tracker .trk-auto-changes details[open]>summary>.material-symbols-rounded:last-child{transform:rotate(180deg)}
+#page-tracker .trk-auto-changes .trk-changes{padding:0 10px}
+#page-tracker .trk-review{display:grid;gap:12px;padding:14px;min-width:0}
+#page-tracker .trk-review h3,#page-tracker .trk-review p{margin:0}
+#page-tracker .trk-review progress{width:100%;height:8px}
+#page-tracker .trk-review .cw-btn{justify-self:start;max-width:100%;min-height:44px;white-space:normal}
 #page-tracker .trk-change-filters{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:6px}
 #page-tracker .trk-change-filters .cw-input{flex:1 1 200px;min-width:0}
 #page-tracker .trk-change-count{margin:4px 0 0}
@@ -2143,7 +2153,15 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker :is(.trk-note-empty,.trk-note-suggest){display:flex;align-items:center;gap:8px;font:inherit;font-size:13px;text-align:left;cursor:pointer}
 #page-tracker .trk-note-suggest{width:100%;padding:10px 12px;border-radius:10px}
 #page-tracker .trk-note-empty{width:fit-content;min-height:40px;padding:0 2px}
-#page-tracker .trk-note-suggest{margin-bottom:10px}
+#page-tracker .trk-note-suggest{margin:12px 0 10px}
+.cw-tracker-option{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:12px 0;cursor:pointer}
+.cw-tracker-option>span{display:grid;gap:6px;min-width:0}
+.cw-tracker-option small{display:block;line-height:1.5;font-weight:400}
+.cw-tracker-option>.cw-tracker-switch{position:relative;display:block;flex:0 0 42px;width:42px;height:24px;box-sizing:border-box}
+.cw-tracker-switch input[role=switch]{position:absolute;inset:0;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+.cw-tracker-switch::before{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;pointer-events:none;transition:transform .15s}
+.cw-tracker-switch:has(:checked)::before{transform:translateX(18px)}
+@media(max-width:600px){#sec-crosswatch .cw-tracker-grid{grid-template-columns:minmax(0,1fr)}}
 #page-tracker .trk-note-statuses{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
 #page-tracker .trk-form>.trk-field-wide{margin-top:12px}
 #page-tracker .trk-note-tags .trk-tags{margin:0}

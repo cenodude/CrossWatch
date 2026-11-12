@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from cw_platform.tracker_store import TrackerStore, tracker_roots
+from cw_platform.tracker_automation import root_options, instance_options
 
 _VERSION = 3
 _LOG = logging.getLogger("crosswatch.tracker_month")
@@ -30,6 +31,8 @@ _RECENT_SIZE = 0
 _POOL: ThreadPoolExecutor | None = None
 _LIFECYCLE = threading.Lock()
 _STOP = threading.Event()
+_WORK = threading.local()
+_LOAD_CONFIG = None
 _THREAD: threading.Thread | None = None
 
 
@@ -123,6 +126,11 @@ def _revision(store: TrackerStore, month: str, tz: Any) -> str:
 def _checkpoint() -> None:
     if _STOP.is_set() or _busy():
         raise InterruptedError("monthly_review_paused")
+    root = getattr(_WORK, "root", None)
+    if root is not None and _LOAD_CONFIG is not None and time.monotonic() >= getattr(_WORK, "checked", 0):
+        _WORK.checked = time.monotonic() + 1
+        if not root_options(_LOAD_CONFIG() or {}, root)["month_review"]:
+            raise InterruptedError("monthly_review_disabled")
 
 
 def _rows(store: TrackerStore, month: str, tz: Any):
@@ -298,6 +306,7 @@ def _publish(conn: sqlite3.Connection, month: str, tz: Any, state: str, generate
 
 
 def _generate(store: TrackerStore, month: str, tz: Any, locale: str, key: tuple[str, str, str]) -> None:
+    _WORK.root, _WORK.checked = store.root, 0
     conn = None
     try:
         while _busy():
@@ -342,6 +351,7 @@ def _generate(store: TrackerStore, month: str, tz: Any, locale: str, key: tuple[
                 if len(_FAILURES) > 64:
                     _FAILURES.pop(next(iter(_FAILURES)))
     finally:
+        _WORK.root = None
         if conn is not None:
             conn.close()
         with _LOCK:
@@ -367,6 +377,8 @@ def _needs_validation(saved: Any, report: Any, state: dict[str, Any], revision: 
 
 def get_report(store: TrackerStore, cfg: Mapping[str, Any], month: str = "") -> dict[str, Any]:
     global _POOL
+    if not root_options(cfg, store.root)["month_review"]:
+        return {"ok": True, "disabled": True, "report": None, "pending": False, "stale": False, "error": None}
     tz = review_timezone(cfg)
     now = datetime.now(tz)
     month = month or previous_month(now)
@@ -404,6 +416,8 @@ def get_report(store: TrackerStore, cfg: Mapping[str, Any], month: str = "") -> 
 
 
 def available_month(store: TrackerStore, cfg: Mapping[str, Any]) -> str:
+    if not root_options(cfg, store.root)["month_review"]:
+        return ""
     if not (store.root / "month-reviews.db").is_file():
         return ""
     tz = review_timezone(cfg)
@@ -423,7 +437,9 @@ def run_daily(cfg: Mapping[str, Any], config_dir: Path | str) -> bool:
     now = datetime.now(tz)
     seen: set[str] = set()
     complete = True
-    for _, root in tracker_roots(cfg, config_dir):
+    for instance, root in tracker_roots(cfg, config_dir):
+        if not instance_options(cfg, instance)["month_review"]:
+            continue
         if _STOP.is_set():
             return False
         store = TrackerStore(root)
@@ -474,6 +490,8 @@ def _maintenance_tick(cfg: Mapping[str, Any], config_dir: Path | str, *, now: da
 
 
 def start(load_config: Callable, config_dir: Path | str) -> None:
+    global _LOAD_CONFIG
+    _LOAD_CONFIG = load_config
     global _THREAD
 
     def run() -> None:

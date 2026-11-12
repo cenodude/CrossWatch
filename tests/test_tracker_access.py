@@ -71,6 +71,24 @@ def test_admin_still_sees_every_tracker(cfg):
     assert api.get("/api/tracker/import/sources").json()["can_create"] is True
 
 
+@pytest.mark.parametrize("path,payload", [
+    ("/api/tracker/titles/remove", {"keys": ["movie:tmdb:949"], "scope": "all"}),
+    ("/api/tracker/automatic-status", {"action": "enable-title", "key": "movie:tmdb:949"}),
+    ("/api/tracker/automatic-status", {"action": "review-start"}),
+    ("/api/tracker/automatic-status", {"action": "review-cancel"}),
+])
+def test_automation_and_title_removal_enforce_scope_and_write_permission(cfg, path, payload):
+    assert _client(ANN).post(path, json={**payload, "provider_instance": "CW-P02"}).status_code == 403
+    assert not crosswatch._non_admin_permission_allowed({**ANN, "permissions": {"write": False}}, path, "POST")
+    assert _client(ANN).post(path, json={**payload, "provider_instance": "CW-P01"}).status_code == 200
+
+
+def test_automatic_review_status_is_scoped_to_assigned_tracker(cfg):
+    api = _client({**ANN, "permissions": {"write": False}})
+    assert api.get("/api/tracker/automatic-status/review?provider_instance=CW-P01").status_code == 200
+    assert api.get("/api/tracker/automatic-status/review?provider_instance=CW-P02").status_code == 403
+
+
 def test_month_review_uses_only_the_managed_users_assigned_tracker(cfg, monkeypatch):
     roots = []
 

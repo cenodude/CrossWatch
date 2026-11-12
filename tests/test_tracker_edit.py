@@ -124,11 +124,14 @@ def test_edit_invalid_status_does_not_change_record(client, base, status):
     assert TrackerStore(base).item("history", "tmdb:949") == MOVIE
 
 
-def test_edit_status_noop_does_not_create_undo_batch(client, base):
+def test_edit_empty_status_excludes_automation_and_can_undo(client, base):
     response = client.post("/api/tracker/edit", json={"feature": "history", "key": "tmdb:949", "changes": {"status": ""}})
     assert response.status_code == 200, response.text
-    assert response.json()["batch"] is None
-    assert TrackerStore(base).change_count() == 0
+    assert response.json()["batch"]
+    store = TrackerStore(base)
+    assert store.status_control("movie:tmdb:949")["manual"] is True
+    assert client.post("/api/tracker/undo", json={"batch": response.json()["batch"]}).status_code == 200
+    assert store.status_control("movie:tmdb:949")["manual"] is False
 
 
 def test_edit_clearing_status_removes_empty_note_and_can_undo(client, base):

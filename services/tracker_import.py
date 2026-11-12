@@ -265,6 +265,10 @@ def remember_source(store: TrackerStore, source: str, instance: str, run: Mappin
         rows = [r for r in rows if r is not previous]
         rows.append({"source": source, "instance": instance, "features": sorted(set(previous.get("features") or []) | set(features)), "last_import": time.time()})
         store.save_job("import_sources", {"sources": rows[-64:]})
+        if "history" in features:
+            from .tracker_automation import wake
+            store.request_status_catchup()
+            wake()
 
 
 def origin_sources(cfg: Mapping[str, Any], instance: str, feature: str) -> list[dict[str, Any]]:

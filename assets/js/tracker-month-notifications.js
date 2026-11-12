@@ -28,6 +28,7 @@ export function monthNotifications(scope) {
           if ([401,403,404].includes(response.status)) {waiting.delete(id); continue;}
           if (!response.ok) continue;
           const data = await response.json();
+          if (data.disabled) {waiting.delete(id); ready.delete(id); render(); continue;}
           if (request.signal.aborted || waiting.get(id) !== item || item.scope !== scope()) continue;
           if (!data.report || data.pending || data.stale || data.error) continue;
           waiting.delete(id);
@@ -67,6 +68,7 @@ export function monthNotifications(scope) {
   });
   for (const event of ["focus","cw:notifications-refresh"]) window.addEventListener(event, resume);
   document.addEventListener("visibilitychange", resume);
+  document.addEventListener("config-saved", reset);
   return {
     leave(instance, month, label, owner) {
       reconcile();

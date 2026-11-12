@@ -295,6 +295,23 @@ class TmdbProvider:
             self._publish(key, (fetched_at, data), scope)
         return TmdbResponse(data, fetched_at, "network")
 
+    def peek_show(self, tmdb_id: str, *, max_age: float = 7 * 86400) -> TmdbResponse | None:
+        identifier = str(tmdb_id)
+        if not identifier.isascii() or not identifier.isdecimal() or int(identifier) <= 0:
+            return None
+        params = {"api_key": self._apikey(), "language": "en-US"}
+        key = f"https://api.themoviedb.org/3/tv/{int(identifier)}?" + "&".join(sorted(f"{k}={v}" for k, v in params.items()))
+        digest = hashlib.sha1(key.encode("utf-8")).hexdigest()
+        with _PROVIDERS_LOCK:
+            hit = self._cache.get(digest)
+        hit = hit or self._disk_read(digest)
+        if not hit or time.time() - hit[0] > max_age:
+            return None
+        data = hit[1]
+        if not isinstance(data, dict) or data.get("id") != int(identifier) or not isinstance(data.get("seasons"), list):
+            return None
+        return TmdbResponse(deepcopy(data), hit[0], "cache")
+
     def lookup(
         self, entity: str, tmdb_id: str | int, *, season: int | None = None,
         episode: int | None = None, locale: str | None = "en-US", fresh: bool = False,

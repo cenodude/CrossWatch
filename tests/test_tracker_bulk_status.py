@@ -45,11 +45,12 @@ def test_missing_record_does_not_partially_create_notes(api, base):
     assert store.change_count() == before
 
 
-def test_clearing_status_without_notes_is_a_noop(api, base):
+def test_clearing_status_without_notes_excludes_automatic_updates(api, base):
     response = api.post("/api/tracker/titles/status", json={"keys": ["tmdb:949"], "status": ""})
     assert response.status_code == 200, response.text
-    assert response.json()["count"] == 0
+    assert response.json()["count"] == 1
     assert TrackerStore(base).note("movie:tmdb:949") is None
+    assert TrackerStore(base).status_control("movie:tmdb:949")["manual"] is True
 
 
 @pytest.mark.parametrize("extra", [{"status": None}, {"status": "none"}, {"keys": []}, {"keys": [{}]}, {"view": "shows", "feature": "ratings"}])

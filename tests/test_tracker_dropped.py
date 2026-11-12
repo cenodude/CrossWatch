@@ -99,6 +99,36 @@ def test_service_to_tracker_tag_mode_marks_the_show_dropped(monkeypatch, root):
     assert TrackerStore(root).note("show:tmdb:2") is None
 
 
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_synced_drop_survives_automation_and_downstream_ignore(monkeypatch, root, mode):
+    from services import tracker_automation as worker
+
+    src = DroppedOps(provider="SRC", index=_index(_episode("95396", 1, 1), _episode("95396", 1, 2), _episode("2", 1, 1)), dropped={"tmdb:95396"})
+    dst = TrackerOps(provider="DST", index=_index(_episode("95396", 1, 1)), root=root)
+    original_add = dst.add
+    def add(cfg, items, **kwargs):
+        batch = list(items)
+        result = OPS.add(_cfg(root), batch, **kwargs)
+        assert result.get("ok") is not False
+        return original_add(cfg, batch, **kwargs)
+    monkeypatch.setattr(dst, "add", add)
+    _run(monkeypatch, src, dst, mode=mode, providers={"src": {"history_dropped_mode": "tag"}})
+    assert ("95396", 1, 2) in _sent(dst)
+    store = TrackerStore(root)
+    assert any(row.get("episode") == 2 and str(row.get("show_ids", {}).get("tmdb")) == "95396" for row in store.read_current("history")["items"].values())
+    assert store.note("show:tmdb:95396")["status"] == "dropped"
+    reads = []
+    monkeypatch.setattr(worker, "busy", lambda: False)
+    monkeypatch.setattr(worker, "cached_metadata", lambda key: reads.append(key) or {"status": "Returning Series", "seasons": [{"season_number": 1, "episode_count": 10}]})
+    worker.run_once(_cfg(root), root)
+    assert "show:tmdb:95396" not in reads
+    assert store.note("show:tmdb:95396")["status"] == "dropped"
+    assert store.status_control("show:tmdb:95396") == {"origin": "sync", "manual": False}
+    ignored = DroppedOps(provider="DST", index={})
+    _run(monkeypatch, TrackerOps(provider="SRC", index=src.index, root=root), ignored, providers={"src": {"history_dropped_mode": "ignore"}})
+    assert _sent(ignored) == {("2", 1, 1)}
+
+
 def test_tracker_to_service_tags_or_ignores_shows_dropped_in_the_tracker(monkeypatch, root):
     TrackerStore(root).save_note("show:tmdb:95396", {"type": "show", "title": "Severance", "status": "dropped"})
     plays = _index(_episode("95396", 1, 1), _episode("2", 1, 1))

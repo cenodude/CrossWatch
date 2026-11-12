@@ -15,7 +15,7 @@ import uuid
 import zipfile
 import zlib
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -23,12 +23,13 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 from .history_events import history_event_key
+from .tracker_automation import TrackerAutomation
 from .id_map import canonical_key
 from .provider_instances import _safe_profile_dir_name, normalize_instance_id
 
 FEATURES: tuple[str, ...] = ("watchlist", "history", "ratings", "progress", "collection")
 DB_NAME = "tracker.db"
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 9
 NOTES = "notes"
 NOTE_STATUSES: tuple[str, ...] = ("watching", "planned", "completed", "on_hold", "dropped")
 _NOTES_FILE = "notes.json"
@@ -82,6 +83,10 @@ _ITEM_NOTE_KEY = (
 )
 
 _SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS automatic_batches(batch TEXT PRIMARY KEY, group_id TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS status_review(title_key TEXT PRIMARY KEY, done INTEGER NOT NULL DEFAULT 0)",
+    "CREATE TABLE IF NOT EXISTS status_control(title_key TEXT PRIMARY KEY, data TEXT NOT NULL)",
+    "CREATE TABLE IF NOT EXISTS status_pending(title_key TEXT PRIMARY KEY, version TEXT NOT NULL, due REAL NOT NULL DEFAULT 0)",
     "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS history_revisions(day TEXT PRIMARY KEY, revision TEXT NOT NULL)",
     "CREATE TABLE IF NOT EXISTS states(scope TEXT NOT NULL, feature TEXT NOT NULL, ts INTEGER NOT NULL,"
@@ -106,6 +111,8 @@ _SCHEMA = (
     " PRIMARY KEY(title_key, tag)) WITHOUT ROWID",
 )
 _INDEXES = (
+    "CREATE INDEX IF NOT EXISTS status_review_pending ON status_review(title_key) WHERE done=0",
+    "CREATE INDEX IF NOT EXISTS status_pending_due ON status_pending(due,title_key)",
     "CREATE INDEX IF NOT EXISTS items_when ON items(scope, feature, when_at, item_key, kind, find)",
     "CREATE INDEX IF NOT EXISTS items_show ON items(scope, feature, show_key, kind, season, episode, when_at, sort_title)"
     " WHERE show_key IS NOT NULL",
@@ -164,6 +171,7 @@ class ChangeBatch:
     undo_of: str | None
     count: int
     rows: list[tuple[str, str | None, Any, Any]]
+    automatic_group: str = ""
 
 
 @dataclass(frozen=True)
@@ -462,7 +470,7 @@ class TrackerBackupPending(RuntimeError):
     pass
 
 
-class TrackerStore:
+class TrackerStore(TrackerAutomation):
     def __init__(
         self,
         root: Path | str,
@@ -548,7 +556,20 @@ class TrackerStore:
             conn.executemany("UPDATE changes SET find=? WHERE id=?", [(_change_find(b, a), i) for i, b, a in rows])
         for statement in _INDEXES:
             conn.execute(statement)
+        conn.execute("INSERT OR IGNORE INTO automatic_batches SELECT batch,batch FROM changes WHERE feature='status_control' AND action='note' AND json_extract(after,'$.origin')='automatic' AND json_extract(after,'$.reason') IS NOT NULL")
         conn.execute("INSERT OR IGNORE INTO history_revisions VALUES('', hex(randomblob(16)))")
+        for event, refs in (("INSERT", ("NEW",)), ("DELETE", ("OLD",)), ("UPDATE", ("OLD", "NEW"))):
+            statements = []
+            for ref in refs:
+                key = (f"CASE WHEN {ref}.kind IN ('episode','season') AND {ref}.show_key LIKE 'tmdb:%' THEN 'show:' || {ref}.show_key "
+                       f"WHEN {ref}.kind IN ('show','anime') THEN 'show:tmdb:' || nullif({ref}.tmdb,'') "
+                       f"WHEN {ref}.kind='movie' THEN CASE WHEN coalesce({ref}.tmdb,'')!='' THEN 'movie:tmdb:' || {ref}.tmdb "
+                       f"ELSE 'movie:imdb:' || nullif({ref}.imdb,'') END END")
+                statements.append(f"INSERT INTO status_pending(title_key,version,due) SELECT {key},hex(randomblob(16)),0 WHERE {ref}.scope='' AND {ref}.feature='history' AND ({key}) IS NOT NULL ON CONFLICT(title_key) DO UPDATE SET version=excluded.version,due=0;")
+            scope = " OR ".join(f"({ref}.scope='' AND {ref}.feature='history')" for ref in refs)
+            changed = " AND (OLD.data IS NOT NEW.data OR OLD.item_key IS NOT NEW.item_key OR OLD.scope IS NOT NEW.scope OR OLD.feature IS NOT NEW.feature)" if event == "UPDATE" else ""
+            conn.execute(f"DROP TRIGGER IF EXISTS status_queue_{event.lower()}")
+            conn.execute(f"CREATE TRIGGER status_queue_{event.lower()} AFTER {event} ON items WHEN ({scope}){changed} AND coalesce((SELECT value FROM meta WHERE key='automatic_status'),'1')='1' AND NOT EXISTS(SELECT 1 FROM meta WHERE key='status_bulk') BEGIN {' '.join(statements)} END")
         for table in ("items", "checks"):
             for event, refs in (("INSERT", ("NEW",)), ("DELETE", ("OLD",)), ("UPDATE", ("OLD", "NEW"))):
                 condition = ""
@@ -897,8 +918,27 @@ class TrackerStore:
         stored = dict(conn.execute("SELECT item_key, data FROM items WHERE scope=? AND feature=?", (scope, feature)).fetchall())
         gone = [(scope, feature, key) for key in stored.keys() - fresh.keys()]
         put = [(scope, feature, key, text, *_columns(key, value)) for key, (text, value) in fresh.items() if stored.get(key) != text]
-        conn.executemany("DELETE FROM items WHERE scope=? AND feature=? AND item_key=?", gone)
-        conn.executemany(_UPSERT_ITEM, put)
+        bulk = scope == "" and feature == "history" and len(gone) + len(put) >= 100
+        keys: set[str | None] = set()
+        if bulk:
+            enabled = conn.execute("SELECT value FROM meta WHERE key='automatic_status'").fetchone()
+            bulk = enabled is None or enabled[0] == "1"
+        if bulk:
+            keys = {TrackerStore._automatic_key(row[4], row[6], row[11], row[12]) for row in put}
+            for key in {row[2] for row in gone} | {row[2] for row in put if row[2] in stored}:
+                columns = _columns(key, _loads(stored[key]))
+                keys.add(TrackerStore._automatic_key(columns[0], columns[2], columns[7], columns[8]))
+            conn.execute("INSERT INTO meta VALUES('status_bulk','1')")
+        try:
+            conn.executemany("DELETE FROM items WHERE scope=? AND feature=? AND item_key=?", gone)
+            conn.executemany(_UPSERT_ITEM, put)
+            if bulk:
+                conn.executemany("INSERT INTO status_pending VALUES(?,hex(randomblob(16)),0) ON CONFLICT(title_key) DO UPDATE SET version=excluded.version,due=0", [(key,) for key in keys if key])
+                if put:
+                    conn.execute("INSERT OR REPLACE INTO meta VALUES('status_catchup','1')")
+        finally:
+            if bulk:
+                conn.execute("DELETE FROM meta WHERE key='status_bulk'")
         if gone or put:
             TrackerStore._bump(conn)
         conn.execute(
@@ -1542,10 +1582,17 @@ class TrackerStore:
     @staticmethod
     def _prune_changes(conn: sqlite3.Connection, now_ns: int) -> None:
         conn.execute("DELETE FROM changes WHERE created_ns < ?", (now_ns - CHANGE_RETENTION_DAYS * 86_400 * 1_000_000_000,))
-        conn.execute(
-            "DELETE FROM changes WHERE batch IN (SELECT batch FROM changes GROUP BY batch HAVING max(id) <= (SELECT max(id) FROM changes) - ?)",
-            (CHANGE_LIMIT,),
-        )
+        if conn.execute("SELECT count(*) FROM changes").fetchone()[0] > CHANGE_LIMIT:
+            target = max(1, CHANGE_LIMIT * 9 // 10)
+            batches = conn.execute("SELECT c.batch,count(*),max(c.id),a.batch IS NOT NULL FROM changes c LEFT JOIN automatic_batches a ON a.batch=c.batch GROUP BY c.batch ORDER BY a.batch IS NOT NULL,max(c.id) DESC").fetchall()
+            kept, remove = 0, []
+            for batch, count, _, automatic in batches:
+                if kept and kept + count > target:
+                    remove.append((batch,))
+                else:
+                    kept += count
+            conn.executemany("DELETE FROM changes WHERE batch=?", remove)
+        conn.execute("DELETE FROM automatic_batches WHERE NOT EXISTS(SELECT 1 FROM changes WHERE changes.batch=automatic_batches.batch)")
 
     def change_items(
         self,
@@ -1569,9 +1616,12 @@ class TrackerStore:
         expected: Mapping[Any, Any] | None = None,
         follow: Mapping[str, Any] | None = None,
         note_status: Mapping[str, Any] | None = None,
+        note_changes: Mapping[str, Any] | None = None,
+        control_changes: Mapping[str, Any] | None = None,
+        _conn: sqlite3.Connection | None = None,
     ) -> str | None:
         rows = list(changes)
-        if not rows:
+        if not rows and not note_changes and not control_changes:
             raise ValueError("no_changes")
         if any(feature not in FEATURES for feature, *_ in rows):
             raise ValueError("Unsupported kind")
@@ -1580,9 +1630,9 @@ class TrackerStore:
         batch = uuid.uuid4().hex
         now = time.time_ns()
         changed_features: set[str] = set()
-        with self.mutation(), self._db(create=True) as conn:
+        with self.mutation(), (nullcontext(_conn) if _conn is not None else self._db(create=True)) as conn:
             assert conn is not None
-            with self._write(conn):
+            with nullcontext() if _conn is not None else self._write(conn):
                 for feature, key, new_key, data in rows:
                     before = self._item_text(conn, feature, key) if key else None
                     if key and before is None:
@@ -1613,6 +1663,7 @@ class TrackerStore:
                     self._follow_note(conn, follow, batch, now)
                 if note_status is not None:
                     note_key = str(note_status["key"])
+                    self._status_origin(conn, batch, note_key, "manual", now)
                     before_note = self._note_get(conn, note_key)
                     after_note = _note_norm({**note_status, **(before_note or {}), "status": note_status["status"]})
                     if not any(after_note.get(field) for field in ("status", "started", "finished", "notes", "tags", "fields")):
@@ -1620,11 +1671,20 @@ class TrackerStore:
                     if before_note != after_note:
                         self._note_put(conn, note_key, after_note, now)
                         self._note_change(conn, batch, note_key, note_key if after_note is not None else None, before_note, after_note, now)
+                for note_key, note_value in (note_changes or {}).items():
+                    old_note = self._note_get(conn, note_key)
+                    if old_note != note_value:
+                        self._note_put(conn, note_key, note_value, now)
+                        self._note_change(conn, batch, note_key, note_key if note_value else None, old_note, note_value, now)
+                for note_key, value in (control_changes or {}).items():
+                    self._control_change(conn, batch, note_key, value, now)
+                    if value is None:
+                        conn.execute("DELETE FROM status_pending WHERE title_key=?", (note_key,))
                 if not conn.execute("SELECT 1 FROM changes WHERE batch=? LIMIT 1", (batch,)).fetchone():
                     return None
                 self._touch(conn, changed_features, now)
                 self._prune_changes(conn, now)
-        self._log(rows[0][0], "info", "tracker_items_changed", action=action, count=len(rows), batch=batch)
+        self._log(rows[0][0] if rows else NOTES, "info", "tracker_items_changed", action=action, count=len(rows), batch=batch)
         return batch
 
     def history_event_mode(self) -> bool:
@@ -1882,7 +1942,7 @@ class TrackerStore:
                         out[str(key)] = note
         return out
 
-    def save_note(self, key: str, note: Mapping[str, Any] | None, *, expected: Any = ...) -> str | None:
+    def save_note(self, key: str, note: Mapping[str, Any] | None, *, expected: Any = ..., origin: str | None = None) -> str | None:
         after = _note_norm(note) if note is not None else None
         now = time.time_ns()
         batch = uuid.uuid4().hex
@@ -1892,15 +1952,19 @@ class TrackerStore:
                 before = self._note_get(conn, key)
                 if expected is not ... and before != (_note_norm(expected) if expected is not None else None):
                     raise TrackerConflict("changed_since", key)
-                if before == after:
+                if origin == "sync" and (after or {}).get("status") == "dropped":
+                    conn.execute("DELETE FROM status_pending WHERE title_key=?", (key,))
+                control_changed = self._status_origin(conn, batch, key, origin, now) if origin else False
+                if before == after and not control_changed:
                     return None
-                self._note_put(conn, key, after, now)
-                self._note_change(conn, batch, key, key if after is not None else None, before, after, now)
+                if before != after:
+                    self._note_put(conn, key, after, now)
+                    self._note_change(conn, batch, key, key if after is not None else None, before, after, now)
                 self._bump(conn)
                 self._prune_changes(conn, now)
         return batch
 
-    def change_notes(self, keys: Iterable[str], *, status: str = "", remove: bool = False, defaults: Mapping[str, Mapping[str, Any]] | None = None) -> tuple[str | None, int]:
+    def change_notes(self, keys: Iterable[str], *, status: str = "", remove: bool = False, defaults: Mapping[str, Mapping[str, Any]] | None = None, origin: str | None = None) -> tuple[str | None, int]:
         if not remove and status not in ("", *NOTE_STATUSES):
             raise ValueError("invalid_status")
         now = time.time_ns()
@@ -1917,10 +1981,14 @@ class TrackerStore:
                     after = None if remove else _note_norm({**current, "status": status})
                     if after is not None and not any(after.get(field) for field in ("status", "started", "finished", "notes", "tags", "fields")):
                         after = None
-                    if before == after:
+                    if origin == "sync" and (after or {}).get("status") == "dropped":
+                        conn.execute("DELETE FROM status_pending WHERE title_key=?", (key,))
+                    control_changed = self._status_origin(conn, batch, key, origin, now) if origin else False
+                    if before == after and not control_changed:
                         continue
-                    self._note_put(conn, key, after, now)
-                    self._note_change(conn, batch, key, key if after is not None else None, before, after, now)
+                    if before != after:
+                        self._note_put(conn, key, after, now)
+                        self._note_change(conn, batch, key, key if after is not None else None, before, after, now)
                     count += 1
                 if count:
                     self._bump(conn)
@@ -1932,9 +2000,15 @@ class TrackerStore:
         if not old or not new or old == new:
             return
         before = self._note_get(conn, old)
-        if before is None or self._note_get(conn, new) is not None:
+        control = self._control_get(conn, old)
+        if (before is None and control is None) or self._note_get(conn, new) is not None or self._control_get(conn, new) is not None:
             return
         if self._related_rows(conn, self._related_queries(**dict(follow.get("ident") or {})), 1):
+            return
+        if control is not None:
+            self._control_change(conn, batch, old, None, now)
+            self._control_change(conn, batch, new, control, now)
+        if before is None:
             return
         meta = {k: v for k, v in dict(follow.get("meta") or {}).items() if k in ("type", "title", "year", "tmdb")}
         after = _note_norm({**before, **meta})
@@ -2033,11 +2107,14 @@ class TrackerStore:
                         base["title"] = head.get("series_title" if child else "title") or ""
                         base["year"] = base.get("year") or head.get("series_year" if child else "year")
                     after = _note_norm({**base, "status": status})
+                    if status == "dropped":
+                        conn.execute("DELETE FROM status_pending WHERE title_key=?", (key,))
                     if after == before:
                         same += 1
                         continue
                     self._note_put(conn, key, after, now)
                     self._note_change(conn, batch, key, key, before, after, now)
+                    self._status_origin(conn, batch, key, "sync", now)
                     changed += 1
                 if changed:
                     self._bump(conn)
@@ -2084,6 +2161,12 @@ class TrackerStore:
                 if any(row[6] is not None for row in rows):
                     raise TrackerConflict("already_undone")
                 for feature, old_key, new_key, before, after in (row[:1] + row[2:6] for row in rows):
+                    if feature == "status_control":
+                        if self._control_get(conn, old_key) != _safe_loads(after):
+                            raise TrackerConflict("changed_since", old_key)
+                        self._control_change(conn, undo_batch, old_key, _safe_loads(before), now)
+                        conn.execute("UPDATE changes SET action='undo',undo_of=? WHERE batch=? AND feature='status_control'", (batch, undo_batch))
+                        continue
                     if feature == NOTES:
                         self._undo_note(conn, old_key, new_key, _safe_loads(before), _safe_loads(after), now)
                         conn.execute(
@@ -2154,9 +2237,10 @@ class TrackerStore:
             ))
             total = len(order)
             page = list(order[max(0, int(offset)):max(0, int(offset)) + max(1, min(int(limit), 200))])
+            automatic_groups = dict(conn.execute(f"SELECT batch,group_id FROM automatic_batches WHERE batch IN ({', '.join('?' for _ in page)})", page)) if page else {}
             found = {
                 str(row[0]): row[1:] for row in conn.execute(
-                    "SELECT batch, min(created_ns), max(undone_ns), max(undo_of), COUNT(*), COUNT(*) FILTER (WHERE feature<>?)"
+                    "SELECT batch, min(created_ns), max(undone_ns), max(undo_of), coalesce(nullif(COUNT(*) FILTER (WHERE feature<>'status_control'),0),COUNT(*)), COUNT(*) FILTER (WHERE feature<>? AND feature<>'status_control')"
                     f" FROM changes WHERE scope='' AND batch IN ({', '.join('?' for _ in page)}) GROUP BY batch",
                     (NOTES, *page),
                 ).fetchall()
@@ -2166,10 +2250,13 @@ class TrackerStore:
             for batch, created_ns, undone_ns, undo_of, count, records in heads:
                 rows = conn.execute(
                     "SELECT feature, action, old_key, new_key, before, after FROM changes WHERE batch=?"
-                    " ORDER BY feature=?, id LIMIT ?",
+                    " ORDER BY feature='status_control', feature=?, id LIMIT ?",
                     (batch, NOTES, max(1, int(preview))),
                 ).fetchall()
                 feature, action = str(rows[0][0]), str(rows[0][1])
+                if feature == "status_control":
+                    feature = NOTES
+                    rows = [(NOTES, r[1], r[2], r[3], _dumps({"title": r[2], "status_control": _safe_loads(r[4])}), _dumps({"title": r[2], "status_control": _safe_loads(r[5])})) for r in rows]
                 count = records or count
                 rows = [r for r in rows if (r[0] == NOTES) == (feature == NOTES)]
                 try:
@@ -2179,7 +2266,7 @@ class TrackerStore:
                 out.append(ChangeBatch(
                     str(batch), str(feature), str(action), int(created_ns),
                     None if undone_ns is None else int(undone_ns), None if undo_of is None else str(undo_of),
-                    int(count), parsed,
+                    int(count), parsed, automatic_groups.get(batch, ""),
                 ))
         return total, out
 
@@ -2238,6 +2325,10 @@ class TrackerStore:
                     conn.execute("DELETE FROM restore_points")
                 if state:
                     conn.execute("DELETE FROM changes")
+                    conn.execute("DELETE FROM automatic_batches")
+                    conn.execute("DELETE FROM status_review")
+                    conn.execute("DELETE FROM meta WHERE key='automatic_review'")
+                    conn.execute("DELETE FROM meta WHERE key='status_catchup'")
                     conn.execute("DELETE FROM checks")
                     self._bump(conn)
             conn.execute("VACUUM")
@@ -2256,8 +2347,10 @@ class TrackerStore:
                     zf.writestr("/".join(["snapshots", *([str(scope)] if scope else []), str(name)]), _snapshot_text(data))
                 keys = [str(k) for (k,) in conn.execute("SELECT title_key FROM notes ORDER BY title_key").fetchall()]
                 fields = conn.execute("SELECT value FROM meta WHERE key='note_fields'").fetchone()
-                if keys or fields:
+                controls = {k: json.loads(data) for k, data in conn.execute("SELECT title_key,data FROM status_control")}
+                if keys or fields or controls:
                     zf.writestr(_NOTES_FILE, _dumps({
+                        "status_control": controls,
                         "fields": _safe_loads(fields[0]) if fields else [],
                         "notes": {key: self._note_get(conn, key) for key in keys},
                     }))
@@ -2274,6 +2367,10 @@ class TrackerStore:
         for key, note in _map_of(raw.get("notes")).items():
             if isinstance(note, Mapping):
                 self._note_put(conn, str(key), _note_norm(note), now)
+                self._control_put(conn, str(key), None)
+        for key, value in _map_of(raw.get("status_control")).items():
+            if isinstance(value, Mapping) and value.get("origin") in {"manual", "sync", "automatic"}:
+                self._control_put(conn, str(key), {"origin": value["origin"], "manual": value.get("manual") is True})
         self._bump(conn)
 
     def import_zip(self, fp: Any) -> dict[str, Any]:
@@ -2315,6 +2412,8 @@ class TrackerStore:
                             ts, items = _state_payload(raw, key)
                             existed = self._state_row(conn, scope, key)
                             self._put_state(conn, scope, key, items, ts=ts)
+                            if not scope and key == "history":
+                                self._request_status_catchup(conn)
                             if not scope and key != "collection":
                                 stats["states"] += 1
                         else:
@@ -2370,6 +2469,8 @@ class TrackerStore:
                 if target == "state":
                     existed = self._state_row(conn, "", kind) is not None
                     self._put_state(conn, "", kind, items, ts=ts)
+                    if kind == "history":
+                        self._request_status_catchup(conn)
                 else:
                     existed = conn.execute(
                         "SELECT 1 FROM restore_points WHERE scope='' AND feature=? AND name=?", (kind, dest)
