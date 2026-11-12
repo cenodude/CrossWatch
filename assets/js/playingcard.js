@@ -106,9 +106,10 @@
     const s = String(src || "").toLowerCase();
     if (!s) return "";
     if (PM?.label) {
-      const base = s.replace(/trakt$/, "");
+      const webhook = ["plextrakt", "embytrakt", "jellyfintrakt"].includes(s);
+      const base = webhook ? s.slice(0, -5) : s;
       const label = PM.label(base);
-      if (label && label !== "?") return s.endsWith("trakt") ? `${label} webhook` : label;
+      if (label && label !== "?") return webhook ? `${label} webhook` : label;
     }
     if (s === "plex") return "PLEX";
     if (s === "emby") return "EMBY";
@@ -117,14 +118,6 @@
     if (s === "embytrakt") return "EMBY webhook";
     if (s === "jellyfintrakt") return "Jellyfin webhook";
     return String(src || "");
-  };
-
-  const sourceChipClass = (src) => {
-    const raw = String(src || "").toLowerCase();
-    if (raw.includes("plex")) return "pc-chip-source-plex";
-    if (raw.includes("emby")) return "pc-chip-source-emby";
-    if (raw.includes("jellyfin")) return "pc-chip-source-jellyfin";
-    return "";
   };
 
   const instanceLabel = (value, friendly = "") => {
@@ -139,8 +132,6 @@
     const mediaType = String(p?.media_type || p?.type || "").toLowerCase();
     return mediaType === "movie" ? "Movie" : mediaType === "episode" ? "Episode" : mediaType ? mediaType.toUpperCase() : "TV";
   };
-
-  const streamCount = (p, counts) => Number(p?._streams_count ?? counts.get(keyOf(p)) ?? 0) || 0;
 
   const statusText = (state, since = "") => {
     const st = String(state || "").toLowerCase();
@@ -293,13 +284,8 @@
 
   const baseChips = (p, releaseLabel = "") => {
     const chips = [];
-    chips.push({ text: sourceLabel(p?.source), cls: sourceChipClass(p?.source) });
-    if (p?.provider_instance) chips.push({ text: instanceLabel(p.provider_instance, p.provider_instance_label) });
-    chips.push({ text: mediaTypeLabel(p) });
-    const sc = streamCount(p, countByKey);
-    if (sc > 1) chips.push({ text: `${sc} streams`, cls: "pc-chip-streams" });
     if (String(p?.media_type || p?.type || "").toLowerCase() === "episode" && p?.season !== null && p?.season !== undefined && p?.season !== "" && p?.episode) {
-      chips.push({ text: `S${String(p.season).padStart(2, "0")}E${String(p.episode).padStart(2, "0")}` });
+      if (p.year) chips.push({ text: String(p.year) });
       return chips;
     }
     const yearLabel = p?.year ? String(p.year) : "";
@@ -310,6 +296,27 @@
     chips.push({ text: yearLabel });
     if (releaseLabel && releaseLabel !== yearLabel) chips.push({ text: releaseLabel });
     return chips;
+  };
+
+  const routesFor = (p) => {
+    const rawSource = String(p.source || "").toLowerCase();
+    const webhook = ["plextrakt", "embytrakt", "jellyfintrakt"].includes(rawSource);
+    const provider = webhook ? rawSource.slice(0, -5) : rawSource;
+    const routes = Array.isArray(p.routes) ? p.routes.filter(route => route && route.source && route.destination) : [];
+    if (!routes.length) return [{
+      id: `source:${rawSource}:${p.provider_instance || "default"}`,
+      kind: webhook ? "webhook" : "watcher",
+      source: sourceLabel(provider) || "Unknown source",
+      sourceLabel: instanceLabel(p.provider_instance, p.provider_instance_label),
+    }];
+    return routes.map(route => ({
+      id: String(route.id || `${route.kind}:${route.source}:${route.source_instance}:${route.destination}:${route.destination_instance}`),
+      kind: route.kind === "webhook" ? "webhook" : "watcher",
+      source: sourceLabel(route.source),
+      destination: sourceLabel(route.destination),
+      sourceLabel: instanceLabel(route.source_instance, route.source_label),
+      destinationLabel: instanceLabel(route.destination_instance, route.destination_label),
+    }));
   };
 
   const progressModel = (p) => {
@@ -420,6 +427,10 @@
       : buildTmdbUrl(p);
 
     return {
+      key: keyOf(p),
+      routes: routesFor(p),
+      heading: !isMovie && p.season !== null && p.season !== undefined && p.episode
+        ? `S${String(p.season).padStart(2, "0")} E${String(p.episode).padStart(2, "0")}` : mediaTypeLabel(p),
       title: p.title || "Now Playing",
       year: p.year || "",
       isMovie,

@@ -59,6 +59,41 @@
     </div>
 `;
 
+  const SCROBBLE_TEMPLATE = `
+    <div class="pc-inner">
+      <a class="pc-poster-link" target="_blank" rel="noopener noreferrer">
+        <img class="pc-poster" src="${PLACEHOLDER_POSTER}" alt="">
+        <div class="pc-art-copy"><div class="pc-title">Now Playing</div><div class="pc-art-genres"></div></div>
+      </a>
+      <div class="pc-body">
+        <div class="pc-head">
+          <div class="pc-status"></div>
+          <div class="pc-title-actions">
+            <div class="pc-nav" hidden>
+              <button class="pc-nav-btn pc-prev" type="button" aria-label="Previous stream"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
+              <span class="pc-nav-count">1 / 1</span><span class="pc-nav-label">streams</span>
+              <button class="pc-nav-btn pc-next" type="button" aria-label="Next stream"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
+            </div>
+            <button class="pc-close" type="button" aria-label="Minimize card"><span class="material-symbols-rounded" aria-hidden="true">remove</span></button>
+          </div>
+        </div>
+        <div class="pc-routes"><div class="pc-route-list"></div><button class="pc-route-toggle" type="button" aria-expanded="false" aria-haspopup="dialog"></button></div>
+        <div class="pc-mobile-title"></div>
+        <div class="pc-summary"><div class="pc-heading"></div><div class="pc-meta"></div><div class="pc-mobile-rating"><span class="material-symbols-rounded" aria-hidden="true">star</span><span class="pc-mobile-score"></span></div></div>
+        <div class="pc-genres"></div>
+        <div class="pc-overview-wrap"><div class="pc-overview"></div><button class="pc-overview-more" type="button" aria-expanded="false" hidden>More</button></div>
+        <div class="pc-stats-bottom">
+          <div class="pc-info-block pc-rating-block"><div class="pc-info-label">TMDB rating</div><div class="pc-info-value"><span class="material-symbols-rounded pc-info-icon" aria-hidden="true">star</span><span class="pc-rating">--</span><span class="pc-rating-scale">/ 10</span></div><div class="pc-rating-votes pc-info-note"></div></div>
+          <div class="pc-info-block pc-information-block"><div class="pc-information-rows"></div></div>
+        </div>
+        <div class="pc-upcoming"></div>
+        <div class="pc-transport"><div class="pc-status-ring"><span class="material-symbols-rounded pc-status-icon" aria-hidden="true">play_arrow</span></div><div class="pc-progress-wrap"><div class="pc-progress-labels"><span class="pc-progress-pct"></span><span class="pc-progress-time"></span></div><div class="pc-progress-bg" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100"><div class="pc-progress"></div></div></div></div>
+        <div class="pc-actions" hidden><div class="pc-sources"></div><div class="pc-links"></div><button class="pc-trailer" type="button">Watch trailer</button></div>
+      </div>
+    </div>
+    <div class="pc-route-menu" role="dialog" aria-label="Routes for this stream" hidden><div class="pc-route-menu-head"><span>Routes for this stream</span><button class="pc-route-menu-close" type="button" aria-label="Close routes"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></div><div class="pc-route-options"></div></div>
+  `;
+
 
   const runtimeLabel = (mins) => {
     const m = Number(mins) || 0;
@@ -166,12 +201,12 @@
     const variant = options.variant === "watchlist" ? "watchlist" : "scrobble";
     const el = document.createElement("div");
     if (options.id) el.id = options.id;
-    el.className = `cw-pc cw-pc-${variant}`;
+    el.className = `cw-pc cw-pc-${variant}${variant === "scrobble" ? " cw-page-playing" : ""}`;
     el.setAttribute("aria-live", "polite");
     if (options.label) el.setAttribute("aria-label", options.label);
     if (options.tabScope) el.dataset.tabScope = options.tabScope;
     if (options.width) el.style.setProperty("--pc-width", options.width);
-    el.innerHTML = TEMPLATE;
+    el.innerHTML = variant === "scrobble" ? SCROBBLE_TEMPLATE : TEMPLATE;
     document.body.appendChild(el);
 
     const q = (sel) => el.querySelector(sel);
@@ -201,6 +236,104 @@
       sources: q(".pc-sources"),
       links: q(".pc-links"),
     };
+
+    const cinematic = variant === "scrobble";
+    let routeSignature = "";
+    let routeItems = [];
+    let selectedRoute = "";
+    let streamKey = "";
+    const menu = q(".pc-route-menu");
+    const routeToggle = q(".pc-route-toggle");
+    const closeRoutes = (focus = false) => {
+      if (!menu) return;
+      menu.hidden = true;
+      routeToggle.setAttribute("aria-expanded", "false");
+      if (focus) routeToggle.focus();
+    };
+    const routeNode = (route, choice = false) => {
+      const node = document.createElement(choice ? "button" : "div");
+      node.className = "pc-route";
+      node.dataset.kind = route.kind;
+      node.classList.toggle("is-selected", route.id === selectedRoute);
+      const label = route.kind === "webhook" ? "Webhook" : "Watcher";
+      const symbol = document.createElement("span");
+      symbol.className = "material-symbols-rounded pc-route-symbol";
+      symbol.setAttribute("aria-hidden", "true");
+      symbol.textContent = route.kind === "webhook" ? "webhook" : "sensors";
+      const copy = document.createElement("span");
+      copy.className = "pc-route-copy";
+      const title = document.createElement("span");
+      title.className = "pc-route-title";
+      const kind = document.createElement("span");
+      kind.className = "pc-route-kind";
+      kind.textContent = label;
+      const endpoints = document.createElement("span");
+      endpoints.textContent = route.destination ? `${route.source} → ${route.destination}` : route.source;
+      title.append(kind, endpoints);
+      const account = document.createElement("span");
+      account.className = "pc-route-account";
+      account.textContent = route.destination ? `${route.sourceLabel} → ${route.destinationLabel}` : `${route.sourceLabel} · Destination unavailable`;
+      node.title = `${label}: ${endpoints.textContent}\n${account.textContent}`;
+      copy.append(title, account);
+      node.append(symbol, copy);
+      if (choice) {
+        node.type = "button";
+        node.setAttribute("aria-pressed", String(route.id === selectedRoute));
+        node.addEventListener("click", () => {
+          selectedRoute = route.id;
+          drawRoutes();
+          closeRoutes(true);
+        });
+      }
+      return node;
+    };
+    const drawRoutes = () => {
+      if (!cinematic) return;
+      const ordered = [...routeItems].sort((a, b) => Number(b.id === selectedRoute) - Number(a.id === selectedRoute));
+      q(".pc-route-list").replaceChildren(...ordered.slice(0, 2).map(route => routeNode(route)));
+      q(".pc-route-options").replaceChildren(...routeItems.map(route => routeNode(route, true)));
+      const count = (visible, cls) => {
+        const span = document.createElement("span");
+        const extra = Math.max(0, routeItems.length - visible);
+        span.className = cls;
+        span.textContent = `+${extra} ${extra === 1 ? "route" : "routes"}`;
+        return span;
+      };
+      routeToggle.replaceChildren(count(1, "pc-route-count-mobile"), count(2, "pc-route-count-desktop"));
+      routeToggle.setAttribute("aria-label", `Show all ${routeItems.length} routes for this stream`);
+      routeToggle.hidden = routeItems.length <= 1;
+      el.classList.toggle("pc-many-routes", routeItems.length > 2);
+    };
+    const setRoutes = (routes, key) => {
+      if (!cinematic) return;
+      const changedStream = streamKey !== key;
+      const signature = JSON.stringify(routes || []);
+      if (signature === routeSignature && !changedStream) return;
+      streamKey = key;
+      routeSignature = signature;
+      routeItems = Array.isArray(routes) ? routes : [];
+      if (changedStream || !routeItems.some(route => route.id === selectedRoute)) selectedRoute = routeItems[0]?.id || "";
+      closeRoutes();
+      drawRoutes();
+    };
+    routeToggle?.addEventListener("click", () => {
+      menu.hidden = !menu.hidden;
+      routeToggle.setAttribute("aria-expanded", String(!menu.hidden));
+      if (!menu.hidden) menu.querySelector(".pc-route.is-selected")?.focus();
+    });
+    q(".pc-route-menu-close")?.addEventListener("click", () => closeRoutes(true));
+    el.addEventListener("keydown", event => {
+      if (!menu || menu.hidden) return;
+      if (event.key === "Escape") { event.stopPropagation(); closeRoutes(true); }
+      if (event.key === "Tab") {
+        const buttons = [...menu.querySelectorAll("button")];
+        const first = buttons[0], last = buttons.at(-1);
+        if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    });
+    const outsideRoutes = event => { if (menu && !menu.hidden && !menu.contains(event.target) && !routeToggle.contains(event.target)) closeRoutes(); };
+    if (cinematic) document.addEventListener("pointerdown", outsideRoutes);
 
     const failedPosterSrcs = new Set();
     let currentPosterSrc = PLACEHOLDER_POSTER;
@@ -285,6 +418,10 @@
       els.ratingBlock.classList.toggle("rating-mid", available && rating >= 5 && rating < 7);
       els.ratingBlock.classList.toggle("rating-high", available && rating >= 7);
       els.rating.textContent = available ? rating.toFixed(1) : "--";
+      if (cinematic) {
+        q(".pc-mobile-score").textContent = els.rating.textContent;
+        q(".pc-mobile-rating").setAttribute("aria-label", available ? `TMDB rating ${rating.toFixed(1)} out of 10` : "TMDB rating unavailable");
+      }
       const votes = Number(rawVotes);
       els.ratingVotes.textContent = !available
         ? "Rating unavailable"
@@ -309,6 +446,17 @@
 
     const setInformation = (rows, isMovie) => {
       els.informationBlock.classList.toggle("is-series", isMovie === false);
+      if (cinematic) {
+        const items = Array.isArray(rows) ? rows : [];
+        const genres = items.find(row => row.icon === "sell")?.main || "";
+        q(".pc-genres").textContent = genres;
+        q(".pc-art-genres").textContent = genres;
+        const next = items.find(row => row.icon === "arrow_forward");
+        q(".pc-upcoming").replaceChildren(...(next ? [informationRow(next.icon, next.main, next.sub || "")] : []));
+        q(".pc-upcoming").hidden = !next;
+        els.informationRows.replaceChildren(...items.filter(row => row.icon !== "sell" && row.icon !== "arrow_forward").map(row => informationRow(row.icon, row.main, row.sub || "")));
+        return;
+      }
       if (rows === "loading") {
         els.informationRows.replaceChildren(informationRow("hourglass_empty", "Loading information..."));
         return;
@@ -356,6 +504,10 @@
     const setProgress = (progress) => {
       const pct = Math.max(0, Math.min(100, Number(progress?.pct) || 0));
       els.progress.style.width = `${pct}%`;
+      if (cinematic) {
+        el.style.setProperty("--pc-progress", `${pct}%`);
+        q(".pc-progress-bg").setAttribute("aria-valuenow", String(Math.round(pct)));
+      }
       els.progressPct.textContent = progress ? `${Math.round(pct)}% watched` : "";
       els.progressTime.textContent = progress?.remaining || "";
     };
@@ -370,7 +522,12 @@
 
     function render(model) {
       if (!model) return;
-      els.title.textContent = model.year ? `${model.title} ${model.year}` : (model.title || "");
+      els.title.textContent = !cinematic && model.year ? `${model.title} ${model.year}` : (model.title || "");
+      if (cinematic) {
+        q(".pc-mobile-title").textContent = model.title || "Now Playing";
+        q(".pc-heading").textContent = model.heading || "";
+        setRoutes(model.routes, model.key || model.title);
+      }
       setChips(model.chips);
       setOverview(model.overview || "");
       setPosterSrc(model.poster || PLACEHOLDER_POSTER);
@@ -384,9 +541,13 @@
       setSources(model.sources);
       setLinks(model.links);
       if (model.status) {
-        els.status.textContent = model.status.text || "";
+        els.status.textContent = cinematic ? String(model.status.text || "").split("\n")[0] : model.status.text || "";
         els.statusIcon.textContent = model.status.icon || "play_arrow";
         els.status.title = model.status.title || "";
+        if (cinematic) {
+          q(".pc-status-ring").setAttribute("aria-label", els.status.textContent);
+          el.dataset.playbackState = model.status.icon === "pause" ? "paused" : "playing";
+        }
       }
       if (els.trailer) els.trailer.textContent = model.trailerLabel || "Watch trailer";
     }
@@ -396,9 +557,9 @@
       render,
       renderProgress: setProgress,
       show: () => el.classList.add("show"),
-      hide: () => el.classList.remove("show"),
+      hide: () => { closeRoutes(); el.classList.remove("show"); },
       isVisible: () => el.classList.contains("show"),
-      destroy: () => el.remove(),
+      destroy: () => { document.removeEventListener("pointerdown", outsideRoutes); el.remove(); },
     };
   }
 

@@ -355,6 +355,7 @@ def update_from_payload(
     ids: dict[str, Any] | None = None,
     session_key: str | None = None,
     provider_instance: str | None = None,
+    account: str | None = None,
 ) -> None:
     try:
         mt = (media_type or "").lower()
@@ -382,6 +383,7 @@ def update_from_payload(
             "state": st_val,
             "updated": int(time.time()),
             "session_key": session_key,
+            "account": account,
         }
         if isinstance(ids, dict) and ids:
             payload["ids"] = dict(ids)

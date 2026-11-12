@@ -1325,6 +1325,8 @@ def process_webhook(
                             state=cw_state,
                             ids=cw_ids,
                             provider_instance=provider_instance,
+                            session_key=sess,
+                            account=acc_title,
                         )
                     except Exception:
                         pass
@@ -1493,6 +1495,8 @@ def process_webhook(
                 state=cw_state,
                 ids=cw_ids,
                 provider_instance=provider_instance,
+                session_key=sess,
+                account=acc_title,
             )
 
         except Exception:

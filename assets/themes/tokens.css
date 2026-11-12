@@ -89,3 +89,15 @@ html[data-cw-theme="flat-light"]{--cw-page-overlay-shadow:0 12px 32px rgba(16,24
 :root{--cw-artwork-placeholder-bg:linear-gradient(145deg,#151c2b,#282344);--cw-artwork-color-scheme:dark}
 html[data-cw-theme="flat-dark"]{--cw-artwork-placeholder-bg:#20242c}
 html[data-cw-theme="flat-light"]{--cw-artwork-placeholder-bg:#e8edf5;--cw-artwork-color-scheme:light}
+
+:root {
+  --cw-playing-art-bg: #080d10;
+  --cw-playing-art-text: #f2f4f8;
+  --cw-playing-art-muted: #bac4d2;
+  --cw-playing-art-border: #ffffff24;
+  --cw-playing-art-control: #0c121be8;
+  --cw-playing-art-accent: #a18bff;
+  --cw-playing-art-good: #80c9a5;
+  --cw-playing-art-shade: linear-gradient(180deg,#05080a18,transparent 25%,#05080a66 55%,#05080af5 100%);
+  --cw-playing-mobile-shade: linear-gradient(90deg,#090d11 0%,#090d1bf0 24%,#090d1190 57%,#090d1144),linear-gradient(0deg,#090d11f5,transparent 65%);
+}

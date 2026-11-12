@@ -100,6 +100,8 @@ def _record(ev: Any, cfg: dict[str, Any], *, delivery: str | None, reason: str |
                 history = history[:1] + history[-TIMELINE_LIMIT:]
                 detail["omitted"] = int(detail.get("omitted") or 0) + removed
             detail.update(playback=history, state=state, progress=progress)
+            if watch.get("route_id"):
+                detail["route_id"] = str(watch["route_id"])
             if ev.account:
                 detail["account"] = str(ev.account)
             if raw.get("_cw_manual_mark"):
