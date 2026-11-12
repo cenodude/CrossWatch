@@ -998,7 +998,7 @@ button.cw-mm-provider[data-ia-chip]:hover,button.cw-mm-provider[data-mm-episode]
 #page-tracker .trk-tag.is-ok .cw-tag-dot{background:var(--cw-theme-good)}
 #page-tracker .trk-tag.is-bad .cw-tag-dot{background:var(--cw-theme-danger)}
 #page-tracker .trk-sheet .cw-ia-sheet-title h2,#page-tracker .trk-review h3{font-family:inherit;font-weight:500}
-#page-tracker :is(.trk-automation,.trk-change-form){--trk-button-weight:400}
+#page-tracker :is(.trk-automation,.trk-change-form,.trk-others-menu){--trk-button-weight:400}
 #page-tracker .trk-sheet .trk-sheet-icon{border-radius:12px;background:var(--cw-theme-surface);color:var(--cw-theme-muted)}
 #page-tracker .trk-identity{border:1px solid var(--cw-theme-border);border-radius:12px;background:var(--cw-theme-surface)}
 #page-tracker .trk-identity summary{color:var(--cw-theme-text)}

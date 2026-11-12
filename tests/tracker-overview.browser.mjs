@@ -16,7 +16,8 @@ const episodes = Array.from({length:12},(_,index) => ({key:`episode:${index}`,re
 async function fixture(t, theme, {realMedia = false, touch = true, width = 1440, motion = "reduce", profiles = null, managed = false, airing = episodes, continuing = rows, next = episodes.slice(0,2), wrapped = {}, trackerOptions = {}} = {}) {
   const browser = await ({chromium,webkit})[process.env.CW_AUDIT_BROWSER || "chromium"].launch({headless:true});
   t.after(() => browser.close());
-  const page = await browser.newPage({viewport:{width,height:900},hasTouch:touch,reducedMotion:motion});
+  const context = await browser.newContext({viewport:{width,height:900},hasTouch:touch,reducedMotion:motion});
+  const page = await context.newPage();
   await page.clock.setFixedTime(new Date("2026-11-10T12:00:00Z"));
   page.setDefaultTimeout(7000);
   const errors = [], writes = [], requests = [], drops = [], scopedReads = [];
@@ -984,4 +985,36 @@ test('Wrapped bell links open the correct year and tracker through the real rout
   await page.getByText('Your 2024 awaits.',{exact:true}).waitFor();
   assert.equal(await page.locator('[data-wr-year]').inputValue(),'2024');
   assert.equal(await page.locator('.mr-page').count(),0);
+});
+
+test('Wrapped closes when the remembered tracker view expires',async t=>{
+  const {page}=await fixture(t,'flat-dark',{touch:false,wrapped:{year:'2025'}});
+  await page.locator('[data-trk-wrapped="2025"]').click();
+  await page.getByText('Your 2025 awaits.',{exact:true}).waitFor();
+  const chosenAt=await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.tracker.view.v3')).viewSelectedAt);
+  await page.clock.setFixedTime(new Date(chosenAt+3600000));
+  await page.evaluate(()=>TrackerPage.mount(document.querySelector('#page-tracker')));
+  assert.equal(await page.locator('.wr-page').count(),0);
+  assert.equal(await page.locator('#page-tracker>.cw-root').isVisible(),true);
+  assert.equal(await page.locator('#trk-mobile-view').inputValue(),'overview');
+});
+
+test('Wrapped dismissal storage events update only the matching profile and tracker',async t=>{
+  const {page,requests}=await fixture(t,'flat-dark',{touch:false,wrapped:{year:'2025'}});
+  const other=await page.context().newPage();
+  await other.route('https://overview.test/**',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><title>Other tracker tab</title>'}));
+  await other.goto('https://overview.test/other');
+  const before=requests.length;
+  await other.evaluate(()=>localStorage.setItem('cw-wrapped-dismissed:["other","","","default"]','2025'));
+  assert.equal(await page.locator('[data-trk-wrapped="2025"]').count(),1);
+  await other.evaluate(()=>localStorage.setItem('cw-wrapped-dismissed:["local","","","default"]','2025'));
+  await page.locator('[data-trk-month]').waitFor();
+  assert.equal(await page.locator('[data-trk-wrapped]').count(),0);
+  await other.evaluate(()=>localStorage.removeItem('cw-wrapped-dismissed:["local","","","default"]'));
+  await page.locator('[data-trk-wrapped="2025"]').waitFor();
+  await page.locator('[data-trk-wrapped-dismiss]').click();
+  await page.locator('[data-trk-month]').waitFor();
+  await other.evaluate(()=>localStorage.clear());
+  await page.locator('[data-trk-wrapped="2025"]').waitFor();
+  assert.equal(requests.length,before);
 });

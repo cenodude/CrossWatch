@@ -593,7 +593,7 @@ def tracker_summary(request: Request, provider_instance: str | None = Query("def
             counts = store.counts()
             attention = store.attention_counts()
             health = store.health_counts()
-            notes = store.note_summary()
+            notes = store.note_summary(personal_only=True)
             fields = store.note_fields()
         except TrackerUnreadable:
             return _unreadable()
@@ -1543,8 +1543,8 @@ def tracker_notes(
     _, inst, store = _store(provider_instance, request)
     try:
         with store.session():
-            total, rows = store.notes(status=status, tag=tag, text=q, offset=offset, limit=limit)
-            summary = store.note_summary()
+            total, rows = store.notes(status=status, tag=tag, text=q, offset=offset, limit=limit, personal_only=True)
+            summary = store.note_summary(personal_only=True)
     except TrackerUnreadable:
         return _unreadable()
     return {

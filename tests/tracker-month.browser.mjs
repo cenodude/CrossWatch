@@ -16,7 +16,7 @@ async function fixture(t,theme,width=1440,height=1000,{motion=false}={}) {
   t.after(()=>browser.close());
   const page = await browser.newPage({viewport:{width,height},hasTouch:width<1400,reducedMotion:motion?"no-preference":"reduce"});
   page.setDefaultTimeout(8000);
-  let requests=0, mode="ready";
+  let requests=0, mode="ready", savedReport=report;
   const errors=[];
   page.on("pageerror",e=>errors.push(e.message));
   t.after(()=>assert.deepEqual(errors,[]));
@@ -39,7 +39,7 @@ async function fixture(t,theme,width=1440,height=1000,{motion=false}={}) {
       if(mode==="error") return route.fulfill({status:500,json:{error:"failed"}});
       if(mode==="disabled") return route.fulfill({json:{ok:true,disabled:true,report:null,pending:false,stale:false,error:null}});
       const month=url.searchParams.get("month")||"2026-10";
-      const data = mode==="empty"?{...report,month,plays:0,titles:[],genres:[]}: {...report,month};
+      const data = mode==="empty"?{...savedReport,month,plays:0,titles:[],genres:[]}: {...savedReport,month};
       return route.fulfill({json:{ok:true,report:mode==="pending"?null:data,month,current_month:"2026-12",generated:1,pending:mode.startsWith("pending"),stale:mode.startsWith("pending")}});
     }
     const css=["fonts/material-symbols-rounded","themes/tokens","css/base","crosswatch","css/layout","css/components","css/pages","css/page-theme","ui-shell",theme==="original"?"themes/original-coverage":"themes/flat"];
@@ -49,7 +49,7 @@ async function fixture(t,theme,width=1440,height=1000,{motion=false}={}) {
   await page.locator("#entry").click();
   await page.locator(".mr-poster h1").waitFor();
   await page.evaluate(()=>document.fonts.ready);
-  return {page,requests:()=>requests,setMode:value=>{mode=value;}};
+  return {page,requests:()=>requests,setMode:value=>{mode=value;},setReport:value=>{savedReport=value;}};
 }
 
 async function noOverflow(page,label) {
@@ -57,6 +57,40 @@ async function noOverflow(page,label) {
   assert.ok(result.width<=result.viewport+1,`${label}: ${JSON.stringify(result)}`);
   assert.deepEqual(result.nested,[],label);
 }
+
+test('Monthly missing and failed artwork uses the shared cache endpoint without regenerating reports',async t=>{
+  const {page,setReport,requests}=await fixture(t,'flat-dark');
+  const artwork=[];
+  await page.route('https://month.test/art/tmdb/**',route=>{
+    const url=new URL(route.request().url());
+    artwork.push(url);
+    if (url.pathname.endsWith('/4')) return route.fulfill({status:404,body:''});
+    return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="200" height="300"><rect width="200" height="300" fill="#684d85"/></svg>'});
+  });
+  await page.route('https://image.tmdb.org/**/missing.jpg',route=>route.fulfill({status:404,body:''}));
+  const uncached=titles.map((row,i)=>({...row,poster:i>=5?row.poster:i===2?'https://image.tmdb.org/t/p/w342/missing.jpg':'',backdrop:i>=5?row.backdrop:'',ids:i===4?{tmdb:'../unsafe'}:row.ids}));
+  uncached.push({...uncached[5],key:'extra',ids:{tmdb:'999'},title:'Extra movie',poster:'',backdrop:''});
+  setReport({...report,titles:uncached,movies:4});
+  await page.locator('.mr-nav [data-mr="next"]').click();
+  await page.locator('.mr-poster h1').filter({hasText:'November'}).waitFor();
+  for (const key of ['title:0','title:2']) await page.waitForFunction(key=>{
+    const img=document.querySelector(`.mr-cover[data-mr-title="${key}"] img`);
+    return img?.complete && img.naturalWidth>0;
+  },key);
+  assert.match(await page.locator('.mr-cover[data-mr-title="title:0"] img').getAttribute('src'),/^\/art\/tmdb\/tv\/1\?/);
+  assert.match(await page.locator('.mr-cover[data-mr-title="title:2"] img').getAttribute('src'),/^\/art\/tmdb\/tv\/3\?/);
+  await page.locator('.mr-cover[data-mr-title="title:3"] .mr-art-fallback').waitFor();
+  assert.equal(await page.locator('.mr-cover[data-mr-title="title:4"] img').count(),0);
+  assert.equal(artwork.some(url=>url.pathname.endsWith('/6') || url.pathname.endsWith('/999')),false);
+  await page.locator('.mr-ranked').first().scrollIntoViewIfNeeded();
+  await page.waitForFunction(()=>{const img=document.querySelector('.mr-rank-card[data-mr-title="title:0"] .mr-rank-backdrop img');return img?.complete && img.naturalWidth>0;});
+  assert.equal(artwork.some(url=>url.pathname==='/art/tmdb/tv/1' && url.searchParams.get('kind')==='backdrop' && url.searchParams.get('size')==='w1280'),true);
+  await page.locator('.mr-ranked[aria-label="Movies watched"] [data-mr="more-titles"]').click();
+  await page.locator('.mr-rank-card[data-mr-title="extra"]').scrollIntoViewIfNeeded();
+  await page.waitForFunction(()=>{const img=document.querySelector('.mr-rank-card[data-mr-title="extra"] .mr-rank-poster img');return img?.complete && img.naturalWidth>0;});
+  assert.equal(artwork.some(url=>url.pathname==='/art/tmdb/movie/999' && url.searchParams.get('kind')==='poster' && url.searchParams.get('size')==='w342'),true);
+  assert.equal(requests(),2);
+});
 
 for(const theme of ["flat-dark","flat-light","original"]) test(`${theme}: monthly review adapts across phones, tablets and desktops`,async t=>{
   const {page,setMode}=await fixture(t,theme);

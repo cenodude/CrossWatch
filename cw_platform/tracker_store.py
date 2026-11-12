@@ -41,6 +41,7 @@ CHANGE_KINDS: dict[str, str] = {
     "undone": "undone_ns IS NOT NULL",
 }
 _NOTE_FIELDS: tuple[str, ...] = ("type", "title", "year", "tmdb", "status", "started", "finished", "notes", "tags", "fields")
+_PERSONAL_NOTE_WHERE = "(trim(coalesce(body, '')) != '' OR coalesce(fields, '{}') NOT IN ('{}', '', 'null') OR EXISTS (SELECT 1 FROM note_tags WHERE note_tags.title_key=notes.title_key))"
 CHANGE_RETENTION_DAYS = 90
 CHANGE_LIMIT = 50_000
 _SIDECAR_MARKERS = frozenset({
@@ -2016,8 +2017,8 @@ class TrackerStore(TrackerAutomation):
         self._note_put(conn, new, after, now)
         self._note_change(conn, batch, old, new, before, after, now)
 
-    def notes(self, *, status: str = "", tag: str = "", text: str = "", offset: int = 0, limit: int = 50) -> tuple[int, list[tuple[str, dict[str, Any], int]]]:
-        where: list[str] = []
+    def notes(self, *, status: str = "", tag: str = "", text: str = "", offset: int = 0, limit: int = 50, personal_only: bool = False) -> tuple[int, list[tuple[str, dict[str, Any], int]]]:
+        where: list[str] = [_PERSONAL_NOTE_WHERE] if personal_only else []
         args: list[Any] = []
         if status == "none":
             where.append("coalesce(status, '') = ''")
@@ -2047,11 +2048,12 @@ class TrackerStore(TrackerAutomation):
                     rows.append((str(key), note, int(updated)))
         return total, rows
 
-    def note_summary(self) -> dict[str, Any]:
+    def note_summary(self, *, personal_only: bool = False) -> dict[str, Any]:
+        clause = f" WHERE {_PERSONAL_NOTE_WHERE}" if personal_only else ""
         with self._db() as conn:
             if conn is None:
                 return {"total": 0, "statuses": {}, "tags": []}
-            statuses = {str(s or ""): int(n) for s, n in conn.execute("SELECT status, COUNT(*) FROM notes GROUP BY status").fetchall()}
+            statuses = {str(s or ""): int(n) for s, n in conn.execute(f"SELECT status, COUNT(*) FROM notes{clause} GROUP BY status").fetchall()}
             tags = [
                 {"tag": str(t), "count": int(n)}
                 for t, n in conn.execute("SELECT tag, COUNT(*) FROM note_tags GROUP BY tag ORDER BY COUNT(*) DESC, tag LIMIT 500").fetchall()

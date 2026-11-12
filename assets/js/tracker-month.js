@@ -26,11 +26,18 @@ function profileContext() {
     scope:JSON.stringify([auth.user?.id || auth.user?.username,auth.profileId,auth.role,auth.permissions,viewed ? view.id : ""])};
 }
 
+const emptyArt = type => `<span class="mr-art-fallback" aria-hidden="true">${icon(type)}</span>`;
 function art(row, type = "backdrop", eager = false) {
-  const url = row?.[type] || row?.[type === "poster" ? "backdrop" : "poster"];
-  if (!url || !/^https:\/\/image\.tmdb\.org\/t\/p\//.test(url)) return `<span class="mr-art-fallback" aria-hidden="true">${icon(row?.type === "movie" ? "movie" : "tv")}</span>`;
-  const sized = url.replace(/\/t\/p\/[^/]+\//, `/t/p/${type === "poster" ? "w342" : "w1280"}/`);
-  return `<img src="${esc(sized)}" alt="" loading="${eager ? "eager" : "lazy"}" decoding="async"${eager ? ' fetchpriority="high"' : ""}>`;
+  const size = type === "poster" ? "w342" : "w1280", identifier = String(row?.ids?.tmdb || "");
+  const cached = [row?.[type],row?.[type === "poster" ? "backdrop" : "poster"]].find(url => /^https:\/\/image\.tmdb\.org\/t\/p\//.test(url || ""));
+  const query = new URLSearchParams({kind:type,size});
+  if (row?.title) query.set("title",row.title);
+  if (/^\d{4}$/.test(String(row?.year || ""))) query.set("year",row.year);
+  const mediaType = row?.type === "movie" ? "movie" : "tv";
+  const fallback = /^\d+$/.test(identifier) && ["movie","show"].includes(row?.type) ? `/art/tmdb/${mediaType}/${identifier}?${query}` : "";
+  const url = cached ? cached.replace(/\/t\/p\/[^/]+\//, `/t/p/${size}/`) : fallback;
+  if (!url) return emptyArt(mediaType);
+  return `<img src="${esc(url)}" data-mr-art-type="${mediaType}"${cached && fallback ? ` data-mr-art-fallback="${esc(fallback)}"` : ""} alt="" loading="${eager ? "eager" : "lazy"}" decoding="async"${eager ? ' fetchpriority="high"' : ""}>`;
 }
 
 export function openMonthReview({root, instance, label, openMedia, onClose, month = "", returnLabel = "Overview"}) {
@@ -223,7 +230,15 @@ export function openMonthReview({root, instance, label, openMedia, onClose, mont
     const day = event.target.closest("[data-mr-day]");
     if (day && ["ArrowLeft","ArrowRight","Home","End"].includes(event.key)) {event.preventDefault(); const index = event.key === "Home" ? 1 : event.key === "End" ? report.days.length : Math.max(1,Math.min(report.days.length,Number(day.dataset.mrDay)+(event.key === "ArrowRight" ? 1 : -1))); host.querySelector(`[data-mr-day="${index}"]`)?.focus();}
   });
-  host.addEventListener("error",event=>{if (event.target instanceof HTMLImageElement) {event.target.hidden = true; event.target.parentElement.classList.add("mr-no-art");}},true);
+  host.addEventListener("error",event=>{
+    const img=event.target;
+    if (!(img instanceof HTMLImageElement)) return;
+    const fallback=img.dataset.mrArtFallback;
+    if (fallback) {delete img.dataset.mrArtFallback;img.src=fallback;return;}
+    img.parentElement.classList.add("mr-no-art");
+    if (img.dataset.mrArtType) img.outerHTML=emptyArt(img.dataset.mrArtType);
+    else img.hidden=true;
+  },true);
   host.addEventListener("pointermove",event=>{
     if (!effects || event.pointerType !== "mouse" || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const card = event.target.closest(".mr-rank-card,.mr-cover"); if (!card) return;

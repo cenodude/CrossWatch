@@ -400,7 +400,7 @@ def test_explicit_small_imports_request_fast_catchup(tmp_path, monkeypatch):
     assert wakes == [1] and store.status_catchup()
 
 
-@pytest.mark.parametrize("origin,status", [("sync", "watching"), ("automatic", "watching"), ("manual", "watching"), (None, "watching"), ("sync", "dropped"), ("sync", "on_hold"), ("sync", "completed")])
+@pytest.mark.parametrize("origin,status", [("sync", "watching"), ("automatic", "watching"), ("manual", "watching"), (None, "watching"), (None, "dropped"), (None, "on_hold"), (None, "completed"), (None, "planned"), ("sync", "dropped"), ("sync", "on_hold"), ("sync", "completed")])
 @pytest.mark.parametrize("trigger", ["metadata", "review"])
 def test_ended_eight_episode_show_completes_without_overriding_protected_statuses(tmp_path, monkeypatch, origin, status, trigger):
     key = "show:tmdb:95396"
@@ -426,7 +426,7 @@ def test_ended_eight_episode_show_completes_without_overriding_protected_statuse
     if trigger == "review":
         worker.run_once({}, tmp_path)
         assert store.review_status()["state"] == "complete"
-    eligible = origin in {"sync", "automatic"} and status == "watching"
+    eligible = origin in {None, "sync", "automatic"} and status == "watching"
     assert store.note(key)["status"] == ("completed" if eligible else status)
     assert reads == ([key] if eligible else [])
     assert not store.pending_statuses()
@@ -529,3 +529,16 @@ def test_synced_watching_waits_for_metadata_without_daily_retries(tmp_path, monk
     worker.metadata_changed("95396")
     worker.run_once({}, tmp_path)
     assert store.note(key)["status"] == "completed"
+
+
+def test_one_review_includes_all_legacy_watching_movies_without_enabling_titles(tmp_path, monkeypatch):
+    store = historical(tmp_path, 40)
+    for n in range(1, 41):
+        store.save_note(f"movie:tmdb:{n}", {"type": "movie", "status": "watching"})
+    attach(monkeypatch, store)
+    store.start_review()
+    worker.run_once({}, tmp_path)
+    assert store.review_status()["state"] == "complete"
+    assert store.review_status()["processed"] == 40
+    assert all(store.note(f"movie:tmdb:{n}")["status"] == "completed" for n in range(1, 41))
+    assert not store.pending_statuses()

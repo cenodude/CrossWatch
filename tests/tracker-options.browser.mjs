@@ -269,7 +269,7 @@ test("Completion suggestion applies directly from title editing and survives reo
 
 test("Enabling automatic status keeps notes open and confirms the saved setting", async t => {
   const {page,errors} = await fixture(t,"flat-dark",1440);
-  let control = {origin:"existing",manual:false};
+  let control = {origin:"manual",manual:true};
   let status = "watching", attempts = 0;
   const title = {title:"Example show",year:2026,ids:{tmdb:"3"},art:{kind:"tv",tmdb:"3"}};
   await page.route('**/api/tracker/title?*', route => route.fulfill({json:{title,show:true,show_key:"tmdb:3",note_key:"show:tmdb:3",note:{type:"show",title:"Example show",status},status_control:control,plays:[],ratings:[],watchlist:[],collection:[],progress:[],attention:[],seasons:[]}}));
@@ -300,5 +300,25 @@ test("Enabling automatic status keeps notes open and confirms the saved setting"
   await page.locator('[data-trk-detail="notes"]').click();
   assert.equal(await page.getByRole('button',{name:'Automatic status is on',exact:true}).isDisabled(),true);
   assert.equal(attempts,2);
+  assert.deepEqual(errors,[]);
+});
+
+
+test("Older titles use automatic status by default and can still be set manually", async t => {
+  const {page,errors,automaticActions} = await fixture(t,"flat-dark",1440);
+  const title = {title:"Example show",year:2026,ids:{tmdb:"3"},art:{kind:"tv",tmdb:"3"}};
+  await page.route('**/api/tracker/title?*', route => route.fulfill({json:{title,show:true,show_key:"tmdb:3",note_key:"show:tmdb:3",note:{type:"show",title:"Example show",status:"watching"},status_control:{origin:"existing",manual:false},plays:[],ratings:[],watchlist:[],collection:[],progress:[],attention:[],seasons:[]}}));
+  await page.locator('.trk-play').first().click();
+  await page.locator('[data-trk-detail="notes"]').click();
+  assert.equal(await page.getByRole('button',{name:'Automatic status is on',exact:true}).isDisabled(),true);
+  assert.equal(await page.getByText('Older status: enable automatic updates to include this title.',{exact:true}).count(),0);
+  assert.deepEqual(automaticActions,[]);
+  await page.locator('[data-trk-note-status="watching"]').click();
+  assert.equal(await page.getByRole('button',{name:'Use automatic status',exact:true}).isEnabled(),true);
+  const saved = page.waitForRequest(request=>request.url().endsWith('/api/tracker/note'));
+  await page.getByRole('button',{name:'Save',exact:true}).click();
+  const request = await saved;
+  assert.equal(request.postDataJSON().status_manual,true);
+  assert.equal(request.postDataJSON().status,'watching');
   assert.deepEqual(errors,[]);
 });

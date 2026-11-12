@@ -2006,7 +2006,8 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-others>summary::-webkit-details-marker{display:none}
 #page-tracker .trk-others>summary .material-symbol{font-size:19px}
 #page-tracker .trk-others-menu{position:absolute;right:0;top:100%;z-index:8;min-width:180px;padding:6px}
-#page-tracker .trk-others-menu .cw-btn{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;padding:8px 12px;cursor:pointer}
+#page-tracker .trk-others-menu .cw-btn{display:flex;align-items:center;justify-content:flex-start;text-align:left;gap:8px;width:100%;min-height:44px;padding:8px 12px;cursor:pointer}
+#page-tracker .trk-others-menu .cw-btn>.material-symbol{flex:0 0 24px;width:24px;text-align:center}
 #page-tracker .trk-others-menu small{margin-left:auto}
 #page-tracker .trk-overflow{margin-bottom:6px;padding-bottom:6px}
 #page-tracker .trk-source-row{display:flex;align-items:center;min-width:0;width:100%}

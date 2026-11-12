@@ -199,20 +199,81 @@ def test_banner_is_january_only_completed_nonempty_and_scoped(tmp_path, monkeypa
     assert worker.available_wrapped(store, cfg) == {}
     with closing(worker._cache(store)) as conn, conn:
         for period, current, plays in (("2024", True, 3), ("2024-12", False, 2)):
-            conn.execute("INSERT INTO reviews VALUES(?,?,?,?,?,?)", (period, "UTC", worker._VERSION, "{}", 1, json.dumps({"current": current, "plays": plays, "titles": [{"poster": "poster.jpg"}]})))
+            worker._publish(conn, period, "UTC", "{}", 1, json.dumps({"current": current, "plays": plays, "titles": [{"poster": "poster.jpg"}]}))
     assert worker.available_wrapped(store, cfg) == {}
     with closing(worker._cache(store)) as conn, conn:
-        conn.execute("UPDATE reviews SET data=json_set(data,'$.current',json('false')) WHERE month='2024'")
+        worker._publish(conn, "2024", "UTC", "{}", 2, json.dumps({"current": False, "plays": 3, "titles": [{"poster": "poster.jpg"}]}))
     assert worker.available_wrapped(store, cfg) == {"year": "2024", "posters": ["poster.jpg"]}
     assert worker.available_month(store, cfg) == "2024-12"
     assert worker.available_wrapped(TrackerStore(tmp_path / "bob"), cfg) == {}
     with closing(worker._cache(store)) as conn, conn:
-        conn.execute("UPDATE reviews SET data=json_set(data,'$.plays',0) WHERE month='2024'")
+        worker._publish(conn, "2024", "UTC", "{}", 3, json.dumps({"current": False, "plays": 0, "titles": []}))
     assert worker.available_wrapped(store, cfg) == {}
     with closing(worker._cache(store)) as conn, conn:
-        conn.execute("UPDATE reviews SET data=json_set(data,'$.plays',5) WHERE month='2024'")
+        worker._publish(conn, "2024", "UTC", "{}", 4, json.dumps({"current": False, "plays": 5, "titles": []}))
     monkeypatch.setattr(Clock, "now", classmethod(lambda cls, tz=None: cls(2025, 2, 1, tzinfo=timezone.utc).astimezone(tz)))
     assert worker.available_wrapped(store, cfg) == {}
+
+
+def test_banner_preview_migrates_once_and_polling_never_reads_reports(tmp_path, monkeypatch):
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2025, 1, 10, tzinfo=timezone.utc).astimezone(tz)
+
+    monkeypatch.setattr(worker, "datetime", Clock)
+    store = TrackerStore(tmp_path)
+    cfg = {"scheduling": {"timezone": "UTC"}}
+    report = {"current": False, "plays": 10, "titles": [{"poster": "one.jpg"}, {"poster": ""}, {"poster": "three.jpg"}], "padding": "x" * 2_000_000}
+    with closing(worker._cache(store)) as conn, conn:
+        conn.execute("DROP TABLE wrapped_previews")
+        conn.execute("INSERT INTO reviews VALUES(?,?,?,?,?,?)", ("2024", "UTC", worker._VERSION, "{}", 1, json.dumps(report)))
+    with closing(worker._cache(store)) as conn:
+        assert conn.execute("SELECT length(posters) FROM wrapped_previews").fetchone()[0] < 100
+        saved = conn.execute("SELECT data,generated FROM reviews").fetchone()
+    with closing(worker._cache(store)) as conn:
+        assert conn.total_changes == 0
+        assert conn.execute("SELECT data,generated FROM reviews").fetchone() == saved
+    original = worker._readonly
+    denied = []
+
+    def readonly(path):
+        conn = original(path)
+
+        def authorize(action, table, column, *_):
+            if action == sqlite3.SQLITE_READ and table == "reviews":
+                denied.append(column)
+                return sqlite3.SQLITE_DENY
+            return sqlite3.SQLITE_OK
+
+        conn.set_authorizer(authorize)
+        return conn
+
+    monkeypatch.setattr(worker, "_readonly", readonly)
+    for _ in range(10):
+        assert worker.available_wrapped(store, cfg) == {"year": "2024", "posters": ["one.jpg", "three.jpg"]}
+    assert denied == []
+
+
+def test_banner_preview_and_report_publish_atomically(tmp_path, monkeypatch):
+    store = TrackerStore(tmp_path)
+    old = json.dumps({"current": False, "plays": 1, "titles": [{"poster": "old.jpg"}]})
+    new = json.dumps({"current": False, "plays": 2, "titles": [{"poster": "new.jpg"}]})
+    with closing(worker._cache(store)) as conn:
+        worker._publish(conn, "2024", "UTC", "{}", 1, old)
+        checkpoints = 0
+
+        def interrupt():
+            nonlocal checkpoints
+            checkpoints += 1
+            if checkpoints == 2:
+                raise InterruptedError()
+
+        monkeypatch.setattr(worker, "_checkpoint", interrupt)
+        with pytest.raises(InterruptedError):
+            worker._publish(conn, "2024", "UTC", "{}", 2, new)
+        assert conn.execute("SELECT data FROM reviews").fetchone()[0] == old
+        assert json.loads(conn.execute("SELECT posters FROM wrapped_previews").fetchone()[0]) == ["old.jpg"]
 
 
 def test_daily_scheduler_respects_independent_options_and_configuration_changes(tmp_path, monkeypatch):
