@@ -3,6 +3,8 @@
 (function () {
   const PAGE_SIZE_OPTIONS = [50, 100, 150, 200];
   const DEFAULT_PAGE_SIZE = 50;
+  const MOBILE_PAGE_SIZE_OPTIONS = [10, 20, 50];
+  const mobilePaging = window.matchMedia("(max-width:760px)");
   const COLUMN_KEYS = ["key", "type", "title", "year", "id", "imdb", "tvdb", "trakt", "simkl", "anilist", "extra", "status"];
   const COLUMN_LAYOUT_VERSION = 4;
   const DEFAULT_COLUMN_ORDER = COLUMN_KEYS.slice();
@@ -70,7 +72,10 @@
     importFeatures: { watchlist: true, history: true, ratings: true, progress: true, collection: true },
     hasChanges: false,
     page: 0,
-    pageSize: DEFAULT_PAGE_SIZE,
+    desktopPageSize: DEFAULT_PAGE_SIZE,
+    mobilePageSize: 20,
+    get pageSize() { return mobilePaging.matches ? this.mobilePageSize : this.desktopPageSize; },
+    set pageSize(value) { if (mobilePaging.matches) this.mobilePageSize = value; else this.desktopPageSize = value; },
     blockedOnly: false,
     typeFilter: { movie: true, show: true, anime: true, season: true, episode: true },
     columnVisibility: { ...DEFAULT_COLUMN_VISIBILITY },
@@ -159,7 +164,8 @@
       if (typeof saved.instance === "string" && saved.instance.trim()) state.instance = saved.instance;
 
       if (typeof saved.filter === "string") state.filter = saved.filter;
-      if (PAGE_SIZE_OPTIONS.includes(Number(saved.pageSize))) state.pageSize = Number(saved.pageSize);
+      if (PAGE_SIZE_OPTIONS.includes(Number(saved.pageSize))) state.desktopPageSize = Number(saved.pageSize);
+      if (MOBILE_PAGE_SIZE_OPTIONS.includes(Number(saved.mobilePageSize))) state.mobilePageSize = Number(saved.mobilePageSize);
       if (typeof saved.wideView === "boolean") state.wideView = saved.wideView;
       if (typeof saved.advanced === "boolean") state.advanced = saved.advanced;
 
@@ -1088,9 +1094,11 @@
   }
 
   function syncPageSizeUI() {
-    const value = PAGE_SIZE_OPTIONS.includes(Number(state.pageSize)) ? Number(state.pageSize) : DEFAULT_PAGE_SIZE;
-    state.pageSize = value;
-    if (pageSizeSel) pageSizeSel.value = String(value);
+    const options = mobilePaging.matches ? MOBILE_PAGE_SIZE_OPTIONS : PAGE_SIZE_OPTIONS;
+    if (pageSizeSel) {
+      pageSizeSel.innerHTML = options.map(value => `<option value="${value}">${value}</option>`).join("");
+      pageSizeSel.value = String(state.pageSize);
+    }
   }
 
   function syncColumnVisibilityUI() {
@@ -1213,7 +1221,8 @@
         snapshot: state.snapshot,
         instance: state.instance,
         filter: state.filter,
-        pageSize: state.pageSize,
+        pageSize: state.desktopPageSize,
+        mobilePageSize: state.mobilePageSize,
         wideView: state.wideView,
         advanced: state.advanced,
         typeFilter: state.typeFilter,
@@ -2222,10 +2231,17 @@ function bindFileImport(btn, input, url, done) {
 
   on(pageSizeSel, "change", () => {
     const next = Number(pageSizeSel.value);
-    state.pageSize = PAGE_SIZE_OPTIONS.includes(next) ? next : DEFAULT_PAGE_SIZE;
+    const options = mobilePaging.matches ? MOBILE_PAGE_SIZE_OPTIONS : PAGE_SIZE_OPTIONS;
+    state.pageSize = options.includes(next) ? next : mobilePaging.matches ? 20 : DEFAULT_PAGE_SIZE;
     state.page = 0;
     syncPageSizeUI();
     persistUIState();
+    renderRows();
+  });
+
+  mobilePaging.addEventListener("change", () => {
+    state.page = 0;
+    syncPageSizeUI();
     renderRows();
   });
 

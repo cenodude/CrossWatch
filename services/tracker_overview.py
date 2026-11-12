@@ -165,6 +165,7 @@ def show_overview(show: dict[str, Any], watched: set[tuple[int, int]], provider:
         if ongoing and latest_season > 0 and row.get("season_number") == latest_season and str(row.get("air_date") or "") <= end.isoformat():
             wanted.add(int(row["season_number"]))
             airing.add(int(row["season_number"]))
+    aired_left: dict[int, int] = {}
     for season in sorted(wanted):
         if cancelled is not None and cancelled.is_set():
             return result
@@ -178,14 +179,20 @@ def show_overview(show: dict[str, Any], watched: set[tuple[int, int]], provider:
         except Exception:
             result["unavailable"] = 1
             continue
-        for episode in data.get("episodes", []):
+        episodes = data.get("episodes", [])
+        numbers = {ep.get("episode_number") for ep in episodes if type(ep.get("episode_number")) is int and 1 <= ep["episode_number"] <= seasons.get(season, 0)}
+        if seasons.get(season, 0) > 0 and len(numbers) == seasons[season] and len(episodes) == len(numbers):
+            aired_left[season] = 0
+        for episode in episodes:
             number = episode.get("episode_number")
             try:
                 aired = date.fromisoformat(str(episode.get("air_date") or ""))
             except ValueError:
                 continue
-            if not isinstance(number, int) or number < 1:
+            if type(number) is not int or number < 1:
                 continue
+            if season in aired_left and aired <= today and (season, number) not in watched:
+                aired_left[season] += 1
             row = {
                 "key": f"{show['key']}:{season}:{number}", "ref": {"show": show["key"]},
                 "type": "episode", "title": show.get("title") or detail.get("name") or "Untitled show",
@@ -198,4 +205,10 @@ def show_overview(show: dict[str, Any], watched: set[tuple[int, int]], provider:
                 result["continue"].append(row)
             if today <= aired <= end and (season, number) not in watched:
                 result["airing"].append(row)
+    needed = {season for season, count in seasons.items() if any((season, number) not in watched for number in range(1, count + 1))}
+    if seasons and all(count > 0 for count in seasons.values()) and needed <= aired_left.keys():
+        remaining = sum(aired_left[season] for season in needed)
+        for row in result["continue"]:
+            if remaining > 0:
+                row["aired_episodes_left"] = remaining
     return result

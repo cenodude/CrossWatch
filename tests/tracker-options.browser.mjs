@@ -18,7 +18,7 @@ async function fixture(t, theme, width, settings = false) {
   t.after(() => browser.close());
   const page = await browser.newPage({viewport:{width,height:900},reducedMotion:"reduce"});
   page.setDefaultTimeout(6000);
-  const errors = [], writes = [];
+  const errors = [], writes = [], automaticActions = [];
   const cfg = {app_auth:{enabled:true,username:"admin"},crosswatch:{connected:true,automatic_status:false,month_review:false,instances:{other:{connected:true,label:"Other"}}}};
   page.on("pageerror", e => errors.push(e.message));
   await page.addInitScript(() => {
@@ -48,6 +48,7 @@ async function fixture(t, theme, width, settings = false) {
       if (path === "/api/tracker/automatic-status/review") {reviewRequests.push(path); json = {review};}
       if (path === "/api/tracker/automatic-status") {
         const action = route.request().postDataJSON().action;
+        automaticActions.push(action);
         if (action === "review-start") Object.assign(review,{state:"scanning",scanned:0,titles:0,processed:0});
         if (action === "review-cancel") review.state = "cancelled";
         json = action.startsWith("review-") ? {review} : {items:[{title:"Example show",before:"watching",after:"completed",reason:"All regular episodes watched; series ended"}],next:""};
@@ -67,7 +68,7 @@ async function fixture(t, theme, width, settings = false) {
     return route.fulfill({contentType:"text/html",body:`<!doctype html><html ${attrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${[...css,theme === "original" ? "themes/original-coverage" : "themes/flat"].map(f=>`<link rel="stylesheet" href="/assets/${f}.css">`).join("")}</head><body><main id="layout" class="full">${settings ? settingsBody : trackerBody}</main></body></html>`});
   });
   await page.goto("https://tracker-options.test/");
-  return {page,cfg,errors,writes,review,reviewRequests,undos,changes};
+  return {page,cfg,errors,writes,review,reviewRequests,undos,changes,automaticActions};
 }
 
 async function screenshot(page, name) {
@@ -84,9 +85,10 @@ for (const theme of ["original","flat-dark","flat-light"]) for (const width of [
     const open = async () => {
       if (await page.locator('#trk-mobile-view').isVisible()) await page.locator('#trk-mobile-view').selectOption('automation');
       else {await page.locator('.trk-others summary').click(); await page.locator('[data-trk-action="automation"]').click();}
-      await page.getByText('All regular episodes watched; series ended', {exact:true}).waitFor();
+      await page.locator('[data-trk-review] button:not(:disabled)').waitFor();
     };
     await open();
+    assert.equal(await page.locator('#trk-sheet-title').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
     const start = page.locator('[data-trk-sheet="review-start"]');
     await start.focus();
     await page.keyboard.press('Enter');
@@ -184,9 +186,49 @@ for (const theme of ["original","flat-dark","flat-light"]) for (const width of [
     assert.deepEqual(writes.at(-1),{provider_instance:"default",keys:["show:tmdb:3"],scope:"all",token:"preview-all"});
     if (await page.locator('#trk-mobile-view').isVisible()) await page.locator('#trk-mobile-view').selectOption('automation');
     else {await page.locator('.trk-others summary').click(); await page.locator('[data-trk-action="automation"]').click();}
+    await page.locator('[data-trk-auto-details="preview"] summary').click();
     await page.getByText('All regular episodes watched; series ended', {exact:true}).waitFor();
     await page.keyboard.press('Escape');
     await page.locator('.trk-sheet-wrap').waitFor({state:'hidden'});
     assert.deepEqual(errors, []);
   });
 }
+
+
+test("Automatic statuses starts simply and loads a paged preview only on request", async t => {
+  const {page,automaticActions,errors} = await fixture(t,'flat-dark',1440);
+  await page.locator('.trk-play').first().waitFor();
+  await page.locator('.trk-others summary').click();
+  await page.locator('[data-trk-action="automation"]').click();
+  await page.getByRole('button',{name:'Update statuses',exact:true}).waitFor();
+  const preview = page.locator('[data-trk-auto-details="preview"]');
+  assert.equal(await preview.getAttribute('open'),null);
+  assert.equal(await page.locator('[data-trk-auto-details="help"]').getAttribute('open'),null);
+  assert.deepEqual(automaticActions,[]);
+  await screenshot(page,'automation-simple');
+  const previews = [];
+  await page.route('**/api/tracker/automatic-status', route => {
+    const data = route.request().postDataJSON();
+    if (data.action !== 'preview') return route.fallback();
+    previews.push(data.after);
+    return route.fulfill({json:{items:[{title:data.after ? 'Second title' : 'First title',before:'watching',after:'completed',reason:'All episodes watched',skipped:false}],next:data.after ? '' : 'next-page'}});
+  });
+  await preview.locator('summary').focus();
+  await page.keyboard.press('Enter');
+  await page.getByText('First title',{exact:true}).waitFor();
+  assert.equal(await page.locator('.trk-auto-summary').textContent(),'1 title \u00b7 1 suggested change');
+  assert.deepEqual(previews,['']);
+  await page.locator('[data-trk-sheet="auto-next"]').click();
+  await page.getByText('Second title',{exact:true}).waitFor();
+  await page.locator('[data-trk-sheet="auto-prev"]').click();
+  await page.getByText('First title',{exact:true}).waitFor();
+  assert.deepEqual(previews,['','next-page','']);
+  await preview.locator('summary').click();
+  await preview.locator('summary').click();
+  assert.deepEqual(previews,['','next-page','']);
+  await screenshot(page,'automation-preview');
+  await page.getByRole('button',{name:'Update this batch',exact:true}).click();
+  await page.locator('.trk-sheet-wrap').waitFor({state:'hidden'});
+  assert.deepEqual(automaticActions,['recalculate']);
+  assert.deepEqual(errors,[]);
+});

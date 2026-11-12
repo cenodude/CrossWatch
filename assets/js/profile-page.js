@@ -4,6 +4,45 @@
 (function () {
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[m]));
+  const mobilePaging = window.matchMedia("(max-width:760px)");
+  const MOBILE_PAGE_SIZES = [10, 20, 50];
+
+  function setupResponsivePaging(state, prefs) {
+    state.desktopPageSize = state.pageSize;
+    state.mobilePageSize = MOBILE_PAGE_SIZES.includes(Number(prefs.mobilePageSize)) ? Number(prefs.mobilePageSize) : 20;
+    Object.defineProperty(state, "pageSize", {
+      get() { return mobilePaging.matches ? this.mobilePageSize : this.desktopPageSize; },
+      set(value) { if (mobilePaging.matches) this.mobilePageSize = value; else this.desktopPageSize = value; },
+    });
+  }
+
+  function wireResponsivePaging(select, state, desktopSizes, save, reload) {
+    if (!select) return;
+    const sizes = () => mobilePaging.matches ? MOBILE_PAGE_SIZES : desktopSizes;
+    const sync = () => {
+      select.innerHTML = sizes().map(value => `<option value="${value}">${value}</option>`).join("");
+      select.value = String(state.pageSize);
+    };
+    sync();
+    select.addEventListener("change", () => {
+      const next = Number(select.value);
+      if (!sizes().includes(next) || next === state.pageSize) return;
+      state.pageSize = next;
+      state.page = 1;
+      save();
+      reload();
+    });
+    mobilePaging.addEventListener("change", () => {
+      sync();
+      state.page = 1;
+      state.loaded = false;
+      if (Number.isInteger(state.seq)) state.seq += 1;
+      state.busy = false;
+      clearTimeout(state.loadingTimer);
+      if (select.closest(".cw-profile-panel")?.classList.contains("active")) reload();
+    });
+  }
+
   const API_TIMEOUT_MS = 60 * 1000;
   const profileDateTime = window.CW.ProfileDateTime;
   const DISPLAY_TIME_PATHS = new Set(["/api/profile/collection", "/api/profile/history", "/api/profile/ratings", "/api/profile/watchlist", "/api/playback_progress/items"]);
@@ -513,7 +552,7 @@
     if (!host) return;
     if (!preserve || !host.children.length) host.innerHTML = skeleton("activity", 4);
     await waitForOverviewProfile();
-    const params = new URLSearchParams({ limit: String(ACTIVITY_LIMIT), visibility: "all" });
+    const params = new URLSearchParams({ limit: String(mobilePaging.matches ? 3 : ACTIVITY_LIMIT), visibility: "all" });
     const userProfile = String(window.CW?.OverviewProfile?.id || "").trim();
     if (userProfile) params.set("user_profile", userProfile);
 
@@ -526,7 +565,7 @@
     const schedulerRow = schedulerRes.status === "fulfilled" ? schedulerActivityRow(schedulerRes.value) : null;
     if (schedulerRow && !rows.some((row) => String(row?.kind || "") === "scheduler")) rows.push(schedulerRow);
     rows.sort((a, b) => Number(b?.created_at || 0) - Number(a?.created_at || 0));
-    host.innerHTML = rows.length ? rows.slice(0, ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty("No recent activity yet.");
+    host.innerHTML = rows.length ? rows.slice(0, mobilePaging.matches ? 3 : ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty("No recent activity yet.");
   }
 
   function wireProfileActivity() {
@@ -1153,10 +1192,14 @@
   }
 
   function renderProgressItems(progressItems) {
-    $("#profile-progress").innerHTML = progressItems.length ? progressItems.slice(0, 9).map(progressCard).join("") : empty("No recent progress yet.");
+    $("#profile-progress").innerHTML = progressItems.length ? progressItems.slice(0, mobilePaging.matches ? 3 : 9).map(progressCard).join("") : empty("No recent progress yet.");
   }
 
+  let overviewPayload = null;
+  let overviewPagingDirty = false;
+
   function renderOverview(payload = {}) {
+    overviewPayload = payload;
     prunePosterItems();
     const widgets = payload.widgets || {};
     const wall = payload.wall || { items: [] };
@@ -1182,22 +1225,22 @@
   }
 
   async function loadOverview() {
-    const cacheKey = profileCacheKey("overview");
+    const cacheKey = profileCacheKey(mobilePaging.matches ? "overview.mobile" : "overview");
     const cached = readCache(cacheKey) || readAnyCache(cacheKey);
     if (cached) renderOverview(cached);
     else paintOverviewSkeletons();
     const widgetParams = new URLSearchParams({
       include: "history,ratings,scrobble,progress",
-      history_limit: "8",
-      ratings_limit: "9",
-      scrobble_limit: "8",
-      progress_limit: "8",
+      history_limit: mobilePaging.matches ? "3" : "8",
+      ratings_limit: mobilePaging.matches ? "3" : "9",
+      scrobble_limit: mobilePaging.matches ? "3" : "8",
+      progress_limit: mobilePaging.matches ? "3" : "8",
     });
     if (cached?.widgets?.version) widgetParams.set("known_version", cached.widgets.version);
 
     const [widgetsRes, wallRes, insightsRes, statusRes, collectionRes] = await Promise.allSettled([
       api(`/api/dashboard/widgets?${widgetParams.toString()}`),
-      api("/api/state/wall?limit=8"),
+      api(`/api/state/wall?limit=${mobilePaging.matches ? 3 : 8}`),
       api("/api/insights?limit_samples=0&history=0&runtime=0&include_events=0"),
       api("/api/status"),
       api("/api/profile/collection?page=1&page_size=1"),
@@ -1226,8 +1269,9 @@
       return;
     }
 
-    api("/api/playback_progress/items?page=1&page_size=8").then((progress) => {
+    api(`/api/playback_progress/items?page=1&page_size=${mobilePaging.matches ? 3 : 8}`).then((progress) => {
       const fresh = { ...next, progress: progress || { items: [] } };
+      overviewPayload = fresh;
       const progressItems = fresh.progress?.items?.length ? fresh.progress.items : (fresh.widgets?.recent_progress?.items || []);
       renderProgressItems(progressItems);
       renderQuickStats({ wall: fresh.wall, widgets: fresh.widgets, progressItems, insights: fresh.insights, collection: fresh.collection });
@@ -1235,6 +1279,16 @@
     }).catch(() => {});
     refreshNowPlaying();
   }
+
+  mobilePaging.addEventListener("change", () => {
+    overviewPagingDirty = true;
+    if (overviewPayload) renderOverview(overviewPayload);
+    if ($("#profile-panel-overview")?.classList.contains("active")) {
+      overviewPagingDirty = false;
+      void loadOverview().catch(() => {});
+      void loadProfileActivity({preserve:true}).catch(() => {});
+    }
+  });
 
   const COLLECTION_PREFS_KEY = "cw.profile.collection";
   const COLLECTION_PAGE_SIZES = [24, 48, 72, 96];
@@ -1270,9 +1324,11 @@
     cols: (collectionPrefs.cols && typeof collectionPrefs.cols === "object") ? { ...collectionPrefs.cols } : {},
   };
 
+  setupResponsivePaging(collectionState, collectionPrefs);
+
   function saveCollectionPrefs() {
     try {
-      window.localStorage?.setItem(COLLECTION_PREFS_KEY, JSON.stringify({ view: collectionState.view, pageSize: collectionState.pageSize, cols: collectionState.cols, timeline: collectionState.timeline, zoom: collectionState.zoom }));
+      window.localStorage?.setItem(COLLECTION_PREFS_KEY, JSON.stringify({ view: collectionState.view, pageSize: collectionState.desktopPageSize, mobilePageSize: collectionState.mobilePageSize, cols: collectionState.cols, timeline: collectionState.timeline, zoom: collectionState.zoom }));
     } catch {}
   }
 
@@ -1944,6 +2000,7 @@
     if (month) params.set("month", month);
     try {
       const data = await api(`/api/profile/collection?${params.toString()}`);
+      if (Number(params.get("page_size")) !== collectionState.pageSize) return;
       collectionState.items = Array.isArray(data.items) ? data.items : [];
       collectionState.loaded = true;
       renderCollection(data);
@@ -1960,6 +2017,10 @@
       toast(e.message || "Collections could not be loaded", true);
     } finally {
       collectionState.loading = false;
+      if (Number(params.get("page_size")) !== collectionState.pageSize) {
+        collectionState.loaded = false;
+        if ($("#profile-panel-collection")?.classList.contains("active")) void loadCollection({reset:true});
+      }
     }
   }
 
@@ -2077,17 +2138,7 @@
       if (!btn || btn.disabled) return;
       goToCollectionPage(Number(btn.dataset.collectionPage));
     });
-    const pageSizeSelect = $("#profile-collection-page-size");
-    if (pageSizeSelect) {
-      pageSizeSelect.value = String(collectionState.pageSize);
-      pageSizeSelect.addEventListener("change", (event) => {
-        const next = Number(event.target?.value) || 24;
-        if (next === collectionState.pageSize) return;
-        collectionState.pageSize = next;
-        saveCollectionPrefs();
-        void loadCollection({ reset: true });
-      });
-    }
+    wireResponsivePaging($("#profile-collection-page-size"), collectionState, COLLECTION_PAGE_SIZES, saveCollectionPrefs, () => void loadCollection({reset:true}));
     syncCollectionViewButtons();
   }
 
@@ -2787,6 +2838,7 @@
       total: 0,
       selected: new Map(),
     };
+    setupResponsivePaging(state, prefs);
     let scoresSignature = "";
     const meta = () => cfg.sources[state.source];
     const count = (value) => numberFmt.format(Number(value) || 0);
@@ -2797,7 +2849,7 @@
 
     function savePrefs() {
       try {
-        window.localStorage?.setItem(cfg.prefsKey, JSON.stringify({ source: state.source, view: state.view, pageSize: state.pageSize, zoom: state.zoom, timeline: state.timeline }));
+        window.localStorage?.setItem(cfg.prefsKey, JSON.stringify({ source: state.source, view: state.view, pageSize: state.desktopPageSize, mobilePageSize: state.mobilePageSize, zoom: state.zoom, timeline: state.timeline }));
       } catch {}
     }
 
@@ -3421,17 +3473,7 @@
         clearTimeout(searchTimer);
         searchTimer = setTimeout(() => load({ reset: true }), 220);
       });
-      const pageSizeSelect = q("page-size");
-      if (pageSizeSelect) {
-        pageSizeSelect.value = String(state.pageSize);
-        pageSizeSelect.addEventListener("change", (event) => {
-          const next = Number(event.target?.value) || 48;
-          if (next === state.pageSize) return;
-          state.pageSize = next;
-          savePrefs();
-          void load({ reset: true });
-        });
-      }
+      wireResponsivePaging(q("page-size"), state, TIMELINE_PAGE_SIZES, savePrefs, () => void load({reset:true}));
     }
 
     return { open, wire, invalidate: () => { state.loaded = false; } };
@@ -3599,12 +3641,13 @@
       syncedAt: 0,
       failed: false,
     };
+    setupResponsivePaging(state, prefs);
     const count = (value) => numberFmt.format(Number(value) || 0);
     const selects = () => ({ provider: q("provider"), progress: q("progress"), age: q("age"), sort: q("sort") });
 
     function savePrefs() {
       try {
-        window.localStorage?.setItem("cw.profile.playback", JSON.stringify({ view: state.view, pageSize: state.pageSize, timeline: state.timeline, zoom: state.zoom }));
+        window.localStorage?.setItem("cw.profile.playback", JSON.stringify({ view: state.view, pageSize: state.desktopPageSize, mobilePageSize: state.mobilePageSize, timeline: state.timeline, zoom: state.zoom }));
       } catch {}
     }
 
@@ -4580,18 +4623,7 @@
           void load();
         }, 220);
       });
-      const pageSizeSelect = q("page-size");
-      if (pageSizeSelect) {
-        pageSizeSelect.value = String(state.pageSize);
-        pageSizeSelect.addEventListener("change", (event) => {
-          const next = Number(event.target?.value) || 48;
-          if (next === state.pageSize) return;
-          state.pageSize = next;
-          state.page = 1;
-          savePrefs();
-          void load();
-        });
-      }
+      wireResponsivePaging(q("page-size"), state, PAGE_SIZES, savePrefs, () => void load());
       q("providers")?.querySelector("form")?.addEventListener("submit", (event) => {
         event.preventDefault();
         void saveSettings();
@@ -4652,6 +4684,11 @@
       document.querySelectorAll("[data-profile-tab]").forEach((tab) => tab.classList.toggle("active", tab === btn));
       document.querySelectorAll(".cw-profile-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `profile-panel-${key}`));
       syncMobileView();
+      if (key === "overview" && overviewPagingDirty) {
+        overviewPagingDirty = false;
+        void loadOverview().catch(() => {});
+        void loadProfileActivity({preserve:true}).catch(() => {});
+      }
       if (key === "collection" && !collectionState.loaded) void loadCollection({ reset: true });
       if (key === "history") historyPanel.open(opts);
       if (key === "ratings") ratingsPanel.open(opts);

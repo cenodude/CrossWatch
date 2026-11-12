@@ -1466,7 +1466,7 @@ def tracker_overview(request: Request, provider_instance: str | None = Query("de
                 ident = identities[key]
                 group = _title_key(ident)
                 percent = item.get("progress_percent")
-                if not isinstance(percent, (int, float)) or not 0 < percent < 100 or group in seen:
+                if type(percent) not in (int, float) or not 0 < percent < 100 or group in seen:
                     continue
                 if (notes.get(group) or {}).get("status") in {"dropped", "completed"}:
                     continue
@@ -1476,7 +1476,7 @@ def tracker_overview(request: Request, provider_instance: str | None = Query("de
                 seen.add(group)
                 row = {**_row(key, item, "progress"), "ref": {"feature": "progress", "key": key}}
                 duration, position = item.get("duration_ms"), item.get("progress_ms")
-                if isinstance(duration, (int, float)) and isinstance(position, (int, float)) and duration > position >= 0:
+                if all(type(value) in (int, float) and math.isfinite(value) for value in (duration, position)) and duration > position >= 0 and abs(position / duration * 100 - percent) <= 1:
                     row["remaining_minutes"] = math.ceil((duration - position) / 60000)
                 continuing.append(row)
     except TrackerUnreadable:

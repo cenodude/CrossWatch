@@ -6,18 +6,19 @@ import {readFile, readdir, mkdir} from "node:fs/promises";
 import test from "node:test";
 import {chromium} from "playwright";
 
-async function fixture(t, theme, editable = false) {
+async function fixture(t, theme, editable = false, {width = 1500, count = 0} = {}) {
   const browser = await chromium.launch({headless:true});
   t.after(()=>browser.close());
-  const page = await browser.newPage({viewport:{width:1500,height:1000}});
+  const page = await browser.newPage({viewport:{width,height:1000}});
   page.setDefaultTimeout(7000);
   const errors=[], reads=[];
   page.on("pageerror",error=>errors.push(error.message));
   t.after(()=>assert.deepEqual(errors,[]));
   const data = {empty:false, fail:false, status:"on_hold"};
-  const items = {"show:1":{type:"show",title:"A show",ids:{tmdb:"1"}},"episode:2":{type:"episode",title:"An episode",ids:{tmdb:"2"},show_ids:{tmdb:"1"},season:1,episode:2}};
+  let items = {"show:1":{type:"show",title:"A show",ids:{tmdb:"1"}},"episode:2":{type:"episode",title:"An episode",ids:{tmdb:"2"},show_ids:{tmdb:"1"},season:1,episode:2}};
+  if (count) items = Object.fromEntries(Array.from({length:count},(_,index) => [`movie:${index}`,{type:"movie",title:`Movie ${String(index+1).padStart(2,'0')}`,ids:{tmdb:String(index+1)}}]));
   const modules=(await readdir(new URL("../assets/js/editor/",import.meta.url))).filter(name=>name.endsWith(".js")&&!['episode-groups.js','episode-alignment.js','mapping.js','origin.js','saved-mappings.js'].includes(name));
-  await page.addInitScript(()=>localStorage.setItem("cw-editor-ui",JSON.stringify({advanced:true,columnLayoutVersion:4,columnWidths:{title:340},columnVisibility:{year:false,status:false}})));
+  await page.addInitScript(()=>!localStorage.getItem("cw-editor-ui") && localStorage.setItem("cw-editor-ui",JSON.stringify({advanced:true,columnLayoutVersion:4,columnWidths:{title:340},columnVisibility:{year:false,status:false}})));
   await page.route("**/*",async route=>{
     const url=new URL(route.request().url()), path=url.pathname;
     if(path.startsWith("/assets/")) {
@@ -125,4 +126,26 @@ for(const theme of ["original","flat-dark","flat-light"]) test(`${theme}: keyboa
   await input.fill("");
   assert.equal(await page.locator("#cw-tbody .cw-col-status").first().textContent(),"Unknown");
   assert.equal(reads.length,requestCount);
+});
+
+
+test("Editor keeps separate mobile page limits and desktop preferences", async t => {
+  const {page} = await fixture(t,'flat-dark',false,{width:390,count:55});
+  assert.equal(await page.locator('#cw-page-size').inputValue(),'20');
+  assert.equal(await page.locator('#cw-tbody tr').count(),20);
+  await page.locator('#cw-next').click();
+  assert.match(await page.locator('#cw-tbody tr').first().textContent(),/Movie 21/);
+  await page.locator('#cw-page-size').selectOption('10');
+  assert.equal(await page.locator('#cw-tbody tr').count(),10);
+  assert.match(await page.locator('#cw-tbody tr').first().textContent(),/Movie 01/);
+  await page.reload();
+  await page.locator('#cw-tbody tr').first().waitFor();
+  assert.equal(await page.locator('#cw-page-size').inputValue(),'10');
+  assert.equal(await page.locator('#cw-tbody tr').count(),10);
+  await page.setViewportSize({width:1500,height:1000});
+  await page.waitForFunction(()=>document.querySelector('#cw-page-size').value==='50');
+  assert.equal(await page.locator('#cw-tbody tr').count(),50);
+  const saved = await page.evaluate(()=>JSON.parse(localStorage.getItem('cw-editor-ui')));
+  assert.equal(saved.pageSize,50);
+  assert.equal(saved.mobilePageSize,10);
 });

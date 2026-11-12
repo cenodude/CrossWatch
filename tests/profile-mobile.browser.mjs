@@ -10,7 +10,7 @@ import {chromium, webkit} from "playwright";
 const template = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_profile_html({'is_admin':True,'username':'mobile','display_name':'Mobile preview'}))"], {encoding:"utf8",maxBuffer:1024*1024});
 const items = ["The Grand Budapest Hotel", "A long episode title with plenty of words", "Arrival"].map((title,index)=>({key:`movie:tmdb:${index+1}`,type:"movie",title,year:2014,ids:{tmdb:String(index+1)},tmdb:String(index+1),sort_epoch:1793989800,watched_at:"2026-11-06T18:30:00Z",last_collected_at:1793989800,rating:8.5,watch_count:3,watch_epochs:[1793989800],providers:["PLEX","TRAKT"],sources_by_provider:{PLEX:["default"],TRAKT:["default"]},progress:45,can_update_progress:true,can_mark_watched:true,can_remove_progress:true,provider:"PLEX",provider_instance:"default",duration:120,remaining_minutes:66,media:{resolution:"4k",hdr:"dolby_vision",audio:"truehd"}}));
 
-async function fixture(t,theme,width) {
+async function fixture(t,theme,width,{count=0}={}) {
   const browser=await (process.env.CW_PROFILE_BROWSER === "webkit" ? webkit : chromium).launch({headless:true});
   t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width,height:844},hasTouch:width<=760,isMobile:width<=760,reducedMotion:'reduce'});
@@ -18,7 +18,8 @@ async function fixture(t,theme,width) {
   const errors=[];
   page.on('pageerror',error=>errors.push(error.message));
   t.after(()=>assert.deepEqual(errors,[]));
-  const state={empty:false};
+  const state={empty:false,queries:[]};
+  const fixtureItems = count ? Array.from({length:count},(_,index)=>({...items[index % items.length],key:`movie:tmdb:${index+1}`,title:`Movie ${index+1}`,tmdb:String(index+1),ids:{tmdb:String(index+1)}})) : items;
   const html=await page.evaluate(({source,theme})=>{
     const doc=new DOMParser().parseFromString(source,'text/html');
     doc.querySelectorAll('script').forEach(script=>script.remove());
@@ -43,7 +44,8 @@ async function fixture(t,theme,width) {
     }
     if(path.startsWith('/art/')) return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600"><rect width="400" height="600" fill="#243c57"/><circle cx="200" cy="200" r="100" fill="#447a89"/><path d="M0 600L200 250L400 600" fill="#c89162"/></svg>'});
     if(path.startsWith('/api/')) {
-      const list=state.empty?[]:items;
+      const list=state.empty?[]:fixtureItems;
+      state.queries.push({path,params:Object.fromEntries(url.searchParams)});
       let json={ok:true};
       if(path==='/api/profile') json={user:{is_admin:true,username:'mobile',display_name:'Mobile preview',permissions:{write:true},preferences:{},sessions:[]}};
       if(['/api/profile/collection','/api/profile/history','/api/profile/ratings','/api/profile/watchlist'].includes(path)) json={items:list,total:list.length,page:1,page_size:24,pages:1,counts:{total:list.length,movies:list.length},providers:['PLEX','TRAKT'],months:[]};
@@ -52,6 +54,10 @@ async function fixture(t,theme,width) {
       if(path==='/api/state/wall') json={items:list};
       if(path==='/api/profile/title') json={item:items[0],title:items[0].title};
       if(path==='/api/profile/preferences') json={preferences:{}};
+      if (count && ['/api/profile/collection','/api/profile/history','/api/profile/ratings','/api/profile/watchlist','/api/playback_progress/items'].includes(path)) {
+        const page = Number(url.searchParams.get('page') || 1), size = Number(url.searchParams.get('page_size') || 48);
+        Object.assign(json,{items:list.slice((page-1)*size,page*size),page,page_size:size,pages:Math.ceil(list.length/size)});
+      }
       return route.fulfill({json});
     }
     return route.fulfill({contentType:'text/html',body:html});
@@ -175,3 +181,35 @@ for(const theme of ['original','flat-dark','flat-light']) {
     });
   }
 }
+
+
+test("Media Hub uses compact mobile previews and independent paged lists", async t => {
+  const {page,state} = await fixture(t,'flat-dark',390,{count:55});
+  await page.waitForFunction(()=>document.querySelectorAll('#profile-progress .cw-cw-card').length===3);
+  assert.equal(await page.locator('#profile-progress').evaluate(el=>el.scrollWidth>el.clientWidth),true);
+  const sections = [['history','/api/profile/history',48],['ratings','/api/profile/ratings',48],['watchlist','/api/profile/watchlist',48],['collection','/api/profile/collection',24],['playback','/api/playback_progress/items',48]];
+  for (const [section,path,desktopSize] of sections) {
+    const requested = page.waitForResponse(response=>new URL(response.url()).pathname===path && new URL(response.url()).searchParams.get('page_size')==='20');
+    await page.locator('.cw-profile-mobile-view select').selectOption(section);
+    await requested;
+    const selector = page.locator(`#profile-${section}-page-size`);
+    assert.equal(await selector.inputValue(),'20');
+    const changed = page.waitForResponse(response=>new URL(response.url()).pathname===path && new URL(response.url()).searchParams.get('page_size')==='10');
+    await selector.selectOption('10',{force:true});
+    await changed;
+    const saved = await page.evaluate(key=>JSON.parse(localStorage.getItem(key)),`cw.profile.${section}`);
+    assert.equal(saved.mobilePageSize,10);
+    assert.equal(saved.pageSize,desktopSize);
+  }
+  const unrelatedReads = state.queries.filter(query=>sections.slice(0,4).some(([,path])=>path===query.path)).length;
+  const desktop = page.waitForResponse(response=>new URL(response.url()).pathname==='/api/playback_progress/items' && new URL(response.url()).searchParams.get('page_size')==='48');
+  await page.setViewportSize({width:1440,height:900});
+  await desktop;
+  assert.equal(await page.locator('#profile-playback-page-size').inputValue(),'48');
+  assert.equal(state.queries.filter(query=>sections.slice(0,4).some(([,path])=>path===query.path)).length,unrelatedReads);
+  await page.setViewportSize({width:390,height:844});
+  await page.reload();
+  await page.locator('.cw-profile-mobile-view select').selectOption('playback');
+  await page.locator('#profile-panel-playback.active').waitFor();
+  assert.equal(await page.locator('#profile-playback-page-size').inputValue(),'10');
+});

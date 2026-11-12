@@ -8,17 +8,18 @@ import {chromium, webkit} from "playwright";
 
 const sizes = [[320,740],[390,844],[430,932],[740,360],[844,390],[768,1024],[820,1180],[1024,768],[1194,834],[1366,1024],[1366,768],[1440,900],[1920,1080]];
 const source = await readFile(new URL("../ui_frontend.py", import.meta.url),"utf8");
+const profileMenu = source.match(/def _nav_profile_link\([^]*?return """([^]*?)"""/)[1].replaceAll("__CW_NAV_PROFILE_AVATAR__", "").replaceAll("__CW_NAV_PROFILE_ITEMS__", "");
 const assets = new Map();
 const rows = Array.from({length:20},(_,index) => ({key:`movie:${index}`,ref:{feature:"progress",key:`movie:${index}`},type:"movie",title:index === 1 ? 'A title with <script>window.injected=true</script>' : `Movie ${index + 1}`,year:2026,art:{kind:"movie",tmdb:String(index + 1)},ids:{tmdb:String(index + 1)},date:"2026-11-09T12:00:00Z",progress_percent:40,remaining_minutes:22}));
 const episodes = Array.from({length:12},(_,index) => ({key:`episode:${index}`,ref:{show:`tmdb:${index + 100}`},type:"episode",title:`Show ${index + 1}`,art:{kind:"tv",tmdb:String(index + 100)},show_ids:{tmdb:String(index + 100)},season:2,episode:index ? 3 : 1,episode_title:"The next chapter",air_date:new Date(Date.UTC(2026,10,10 + [1,5,5,10,12,14,16,18,20,22,25,29][index])).toISOString().slice(0,10),date:"2026-11-08T12:00:00Z"}));
 
-async function fixture(t, theme, {realMedia = false, touch = true, width = 1440, airing = episodes} = {}) {
+async function fixture(t, theme, {realMedia = false, touch = true, width = 1440, motion = "reduce", profiles = null, managed = false, airing = episodes, continuing = rows, next = episodes.slice(0,2)} = {}) {
   const browser = await ({chromium,webkit})[process.env.CW_AUDIT_BROWSER || "chromium"].launch({headless:true});
   t.after(() => browser.close());
-  const page = await browser.newPage({viewport:{width,height:900},hasTouch:touch,reducedMotion:"reduce"});
+  const page = await browser.newPage({viewport:{width,height:900},hasTouch:touch,reducedMotion:motion});
   await page.clock.setFixedTime(new Date("2026-11-10T12:00:00Z"));
   page.setDefaultTimeout(7000);
-  const errors = [], writes = [], requests = [], drops = [];
+  const errors = [], writes = [], requests = [], drops = [], scopedReads = [];
   let empty = false, fail = false, metadata = true, release, reviewMonth = "2026-10";
   let hold = null;
   page.on("pageerror", error => errors.push(error.message));
@@ -34,7 +35,7 @@ async function fixture(t, theme, {realMedia = false, touch = true, width = 1440,
     doc.querySelector("#layout").classList.add("full");
     for (const el of doc.querySelector("#layout").children) el.classList.toggle("hidden",el.id !== "page-tracker");
     return "<!doctype html>" + doc.documentElement.outerHTML.replaceAll("__CW_ASSET_BLOCK__","").replaceAll("__CW_CURRENT_VERSION__","Preview");
-  },{source,theme});
+  },{source:source.replaceAll("__CW_NAV_PROFILE_MENU__",profileMenu),theme});
   await page.route("https://overview.test/**",async route => {
     const url = new URL(route.request().url()), path = url.pathname;
     if (path.startsWith('/api/')) requests.push(path);
@@ -50,17 +51,22 @@ async function fixture(t, theme, {realMedia = false, touch = true, width = 1440,
     }
     if (!path.startsWith("/api/")) return route.fulfill({contentType:"text/html",body:html});
     const instance = url.searchParams.get("provider_instance") || "default";
+    const viewAs = route.request().headers()['x-cw-view-as'] || '';
+    if (path.startsWith('/api/tracker/')) scopedReads.push({path,viewAs,instance});
     let json = {ok:true};
+    if (path === '/api/app-auth/status') json = {is_admin:!managed,user:{is_admin:!managed,profile_id:managed ? 'ann' : '',permissions:{write:true}}};
+    if (path === '/api/user-profiles') json = {items:profiles || []};
     if (path === "/api/tracker/summary") json = {provider_instance:instance,instances:[{id:"default",label:"Default"},{id:"other",label:"Second tracker"}],counts:{history:24},health:{history:{attention:2}},notes:{total:0,statuses:{},tags:[]}};
+    if (path === '/api/tracker/summary' && (viewAs || managed)) json.instances = json.instances.filter(row => row.id === profiles?.find(profile => profile.id === (viewAs || 'ann'))?.instances?.CROSSWATCH?.[0]);
     if (path === "/api/tracker/stats") json = {week:4,month:15,year:244,total:244};
     if (path === "/api/tracker/overview/revision") json = {revision:"fixture",review_month:reviewMonth};
     if (path === "/api/tracker/overview/month") json = {ok:true,month:"2026-10",current_month:"2026-11",generated:1,pending:false,stale:false,report:{month:"2026-10",plays:0,titles:[],genres:[]}};
-    if (path === "/api/tracker/overview") json = {revision:"fixture",review_month:reviewMonth,metadata_available:metadata,continue:empty ? [] : rows,recent:empty ? [] : rows.map(row=>({...row,progress_percent:null,ref:{feature:"history",key:row.key},plays:2}))};
+    if (path === "/api/tracker/overview") json = {revision:"fixture",review_month:reviewMonth,metadata_available:metadata,continue:empty ? [] : continuing,recent:empty ? [] : rows.map(row=>({...row,progress_percent:null,ref:{feature:"history",key:row.key},plays:2}))};
     if (path === "/api/tracker/overview/shows") {
       const pending = hold;
       if (pending && instance === "default") await pending;
       if (fail) return route.fulfill({status:503,json:{error:"unavailable"}});
-      json = {continue:empty ? [] : episodes.slice(0,2),airing:empty ? [] : airing.map(row=>({...row,title:instance === "other" ? "Other tracker show" : row.title})),total:4,checked:4,done:true,unavailable:0,metadata_available:metadata};
+      json = {continue:empty ? [] : next,airing:empty ? [] : airing.map(row=>({...row,title:instance === "other" ? "Other tracker show" : row.title})),total:4,checked:4,done:true,unavailable:0,metadata_available:metadata};
       return route.fulfill({contentType:"application/x-ndjson",body:JSON.stringify(json)+"\n"});
     }
     if (path === "/api/tracker/title") {
@@ -73,19 +79,23 @@ async function fixture(t, theme, {realMedia = false, touch = true, width = 1440,
     return route.fulfill({json});
   });
   await page.goto("https://overview.test/#tracker");
-  await page.evaluate(() => { window.CW = {AuthState:{read:()=>({isAdmin:true,permissions:{write:true}})},ProfileMediaModal:{canOpen:item=>!!item.ids?.tmdb,open:(item,options)=>{window.openedTitle={item,options};}}}; });
-  if (realMedia) {
-    await page.evaluate(() => {
-      const meta = item => ({title:item.title,year:2026,genres:[],detail:{},overview:"Media card overview"});
-      window.CW.Meta = {peek:meta,get:async item => meta(item)};
-    });
-    await page.addScriptTag({url:'/assets/js/profile-media-modal.js'});
-  }
-  for (const file of ["helpers/account-menu","helpers/icon-select","helpers/selection-bar","js/tracker"]) await page.addScriptTag({url:`/assets/${file}.js`});
-  await page.evaluate(() => TrackerPage.mount(document.querySelector("#page-tracker")));
-  await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
-  await page.evaluate(() => document.fonts.ready);
-  return {page,writes,requests,drops,reviewMonth:value=>{reviewMonth=value;},airing:value=>{airing=value;},empty:value=>{empty=value;},fail:value=>{fail=value;},metadata:value=>{metadata=value;},hold:()=>{hold=new Promise(resolve=>{release=resolve;});},release:()=>{hold=null;release?.();}};
+  const boot = async () => {
+    await page.evaluate(managed => { document.documentElement.dataset.cwRole = managed ? "user" : "admin"; window.CW = {AuthState:{read:()=>({isAdmin:!managed,permissions:{write:true}})},ProfileMediaModal:{canOpen:item=>!!item.ids?.tmdb,open:(item,options)=>{window.openedTitle={item,options};}}}; },managed);
+    if (realMedia) {
+      await page.evaluate(() => {
+        const meta = item => ({title:item.title,year:2026,genres:[],detail:{},overview:"Media card overview"});
+        window.CW.Meta = {peek:meta,get:async item => meta(item)};
+      });
+      await page.addScriptTag({url:'/assets/js/profile-media-modal.js'});
+    }
+    for (const file of ["helpers/account-menu","helpers/icon-select","helpers/selection-bar","js/tracker"]) await page.addScriptTag({url:`/assets/${file}.js`});
+    if (profiles !== null) for (const file of ['helpers/api','helpers/profile-select','js/overview-profile']) await page.addScriptTag({url:`/assets/${file}.js`});
+    await page.evaluate(() => TrackerPage.mount(document.querySelector("#page-tracker")));
+    await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
+    await page.evaluate(() => document.fonts.ready);
+  };
+  await boot();
+  return {page,boot,scopedReads,writes,requests,drops,reviewMonth:value=>{reviewMonth=value;},airing:value=>{airing=value;},empty:value=>{empty=value;},fail:value=>{fail=value;},metadata:value=>{metadata=value;},hold:()=>{hold=new Promise(resolve=>{release=resolve;});},release:()=>{hold=null;release?.();}};
 }
 
 async function choose(page, selector, value) {
@@ -93,6 +103,38 @@ async function choose(page, selector, value) {
   await button.click();
   await page.locator(`.cw-icon-select-menu:not(.hidden) [data-value="${value}"]`).click();
 }
+
+for (const theme of ["original","flat-dark","flat-light"]) for (const width of [320,768,1440]) test(`${theme}: Continue watching overlays and honest badges at ${width}px`, async t => {
+  const left = width === 320 ? 1 : 3;
+  const {page,requests} = await fixture(t,theme,{width,continuing:[rows[0],{...rows[1],remaining_minutes:null,progress_percent:14}],next:[{...episodes[0],aired_episodes_left:left},{...episodes[1],remaining_minutes:42}]});
+  const cards = page.locator('[data-trk-overview-open^="continue:"]');
+  while (await cards.count() < 4) await page.locator('[data-trk-overview-more="continue"]').click();
+  assert.deepEqual(await cards.locator('.trk-overview-badge').allTextContents(),['22 min left','14% watched',`${left} aired episode${left === 1 ? '' : 's'} left`,'Up next']);
+  assert.equal(await cards.locator('.trk-overview-progress').count(),2);
+  assert.equal(await cards.nth(1).locator('.trk-overview-progress i').evaluate(el=>el.style.width),'14%');
+  assert.equal(await page.evaluate(()=>window.injected),undefined);
+  const layout = await cards.evaluateAll(elements => elements.map(el => {
+    const rect = selector => el.querySelector(selector).getBoundingClientRect();
+    const art = rect('.trk-overview-art'), copy = rect('.trk-overview-copy'), badge = rect('.trk-overview-badge'), arrow = rect('.trk-overview-arrow');
+    const actions = el.parentElement.querySelector('.trk-overview-actions').getBoundingClientRect();
+    return {inside:copy.left>=art.left && copy.right<=art.right && copy.bottom<=art.bottom,clear:badge.bottom<=copy.top && actions.right<=badge.left && copy.right<=arrow.left,overflow:el.scrollWidth>el.clientWidth+1};
+  }));
+  assert.ok(layout.every(row=>row.inside && row.clear && !row.overflow),JSON.stringify(layout));
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+  const reads = requests.length;
+  await cards.first().hover();
+  assert.equal(requests.length,reads);
+  await cards.first().focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(()=>window.openedTitle?.options.tracker);
+  assert.equal(await cards.first().getAttribute('aria-label'),'Open Movie 1, 40% watched, 22 min left');
+  assert.equal(await cards.first().locator('.trk-overview-arrow').getAttribute('aria-hidden'),'true');
+  await page.mouse.move(0,0);
+  if (process.env.CW_OVERVIEW_SCREENSHOTS) {
+    await mkdir(process.env.CW_OVERVIEW_SCREENSHOTS,{recursive:true});
+    await (width === 320 ? cards.first() : page.locator('[aria-labelledby="trk-overview-continue"]')).screenshot({path:`${process.env.CW_OVERVIEW_SCREENSHOTS}/continue-${theme}-${width}.png`});
+  }
+});
 
 for (const width of [390,1440]) test(`Tracker restores History and Month in review within one hour at ${width}px`,async t => {
   const {page}=await fixture(t,"flat-dark",{width});
@@ -292,7 +334,7 @@ test("Monthly banner dismissal persists per user and tracker until a newer repor
   assert.equal(await page.locator('.trk-month-banner').count(),0);
   const refresh = async()=>{
     await page.locator('.trk-tabs [data-trk-view="history"]').click();
-    await page.locator('[data-trk-view="overview"]').click();
+    await page.locator('.trk-tabs [data-trk-view="overview"]').click();
     await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
   };
   await refresh();
@@ -371,7 +413,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   const summary = page.locator(".trk-others summary");
   await summary.focus();
   await page.keyboard.press("ArrowDown");
-  assert.equal(await page.locator('.trk-others [data-trk-month-open]').evaluate(el=>el===document.activeElement),true);
+  assert.equal(await page.locator('.trk-others button:visible').first().evaluate(el=>el===document.activeElement),true);
   await page.keyboard.press("Escape");
   assert.equal(await page.locator(".trk-others").getAttribute("open"),null);
   await summary.click();
@@ -389,7 +431,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   await page.setViewportSize({width:390,height:844});
   await choose(page,"#trk-mobile-view","cleanup");
   await page.locator(".trk-toolbar-cleanup").waitFor();
-  assert.equal(await page.locator('#trk-mobile-view optgroup[label="Others"] option[value="cleanup"]').textContent(),"Others · Clean up (2)");
+  assert.equal(await page.locator('#trk-mobile-view optgroup[label="More"] option[value="cleanup"]').textContent(),"Clean up (2)");
   await choose(page,"#trk-mobile-view","overview");
   await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
   await page.setViewportSize({width:1440,height:900});
@@ -426,8 +468,8 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: cover
     await mkdir(process.env.CW_OVERVIEW_SCREENSHOTS,{recursive:true});
     await page.locator('.trk-overview-card').first().screenshot({path:`${process.env.CW_OVERVIEW_SCREENSHOTS}/${theme}-hover.png`});
   }
-  await page.locator('[data-trk-overview-open="continue:0"]>strong').hover();
-  assert.equal(await actions.evaluate(el => getComputedStyle(el).opacity),"0");
+  await page.locator('[data-trk-overview-open="continue:0"] .trk-overview-copy>strong').hover();
+  assert.equal(await actions.evaluate(el => getComputedStyle(el).opacity),"1");
   await page.locator('[data-trk-overview-open="continue:0"]').focus();
   await page.keyboard.press('Tab');
   assert.equal(await page.locator('[data-trk-overview-watch="0"]').evaluate(el => el === document.activeElement),true);
@@ -679,4 +721,153 @@ test("Recently watched fills two responsive rows and expands in full rows", asyn
     await more.click();
     assert.equal(await cards.count(),count);
   }
+});
+
+
+test("Tracker navigation moves whole tabs into More and keeps the selected view visible", async t => {
+  const {page} = await fixture(t,"flat-dark",{width:1920,touch:false});
+  const tabs = page.locator('.trk-tabs');
+  const more = page.locator('.trk-others summary');
+  await page.locator('.trk-tabs [data-trk-view="history"]').click();
+  await page.waitForFunction(() => document.querySelectorAll('.trk-tabs [role="tab"]:not([hidden])').length === 8);
+  await page.evaluate(() => document.querySelector('[data-trk-slot="controls"]').style.maxWidth = '600px');
+  await page.waitForFunction(() => document.querySelector('.trk-tabs [data-trk-view="collection"]').hidden);
+  assert.deepEqual(await tabs.locator('[role="tab"]:visible').evaluateAll(items => items.slice(0,3).map(el => el.dataset.trkView)),['overview','history','shows']);
+  assert.equal(await tabs.locator('[aria-selected="false"] .trk-tab-count').count(),0);
+  const fits = () => tabs.evaluate(list => [...list.querySelectorAll('[role="tab"]:not([hidden])')].every(tab => tab.getBoundingClientRect().right <= list.getBoundingClientRect().right + 1));
+  assert.equal(await fits(),true);
+  await more.focus();
+  await page.keyboard.press('ArrowDown');
+  assert.equal(await page.locator('.trk-overflow button:visible').first().evaluate(el => el === document.activeElement),true);
+  const collection = page.locator('.trk-overflow [data-trk-view="collection"]');
+  await collection.focus();
+  await page.keyboard.press('Enter');
+  await page.locator('.trk-tabs [data-trk-view="collection"][aria-selected="true"]').waitFor();
+  await page.waitForFunction(() => document.activeElement?.matches('.trk-tabs [data-trk-view="collection"]'));
+  assert.equal(await fits(),true);
+  assert.equal(await page.locator('.trk-overflow [data-trk-view="collection"]').isVisible(),false);
+  await page.keyboard.press('Home');
+  await page.locator('.trk-tabs [data-trk-view="overview"][aria-selected="true"]').waitFor();
+  await more.focus();
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await page.locator('.trk-others [data-trk-view="cleanup"]').evaluate(el => el === document.activeElement),true);
+  await page.keyboard.press('Escape');
+  assert.equal(await more.evaluate(el => el === document.activeElement),true);
+  await page.evaluate(() => document.querySelector('[data-trk-slot="controls"]').style.maxWidth = '');
+  await page.waitForFunction(() => document.querySelectorAll('.trk-tabs [role="tab"]:not([hidden])').length === 8);
+  assert.equal(await page.locator('.trk-overflow').isHidden(),true);
+});
+
+
+test("Mobile tracker uses short previews, deliberate paging and one-time card motion", async t => {
+  const {page} = await fixture(t,"flat-dark",{width:390,motion:"no-preference"});
+  const cards = page.locator('.trk-overview-card');
+  const more = page.locator('[data-trk-overview-more="continue"]');
+  assert.equal(await cards.count(),3);
+  assert.equal(await cards.evaluateAll(items => new Set(items.map(el => el.offsetTop)).size),1);
+  assert.equal(await page.locator('.trk-overview-grid').evaluate(el => el.scrollWidth > el.clientWidth),true);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
+  await page.evaluate(() => {
+    window.cardEntrances = [];
+    document.addEventListener('animationstart', event => {
+      if (event.animationName === 'trk-card-reveal') window.cardEntrances.push(event.target.dataset.trkMotionKey);
+    });
+  });
+  await more.click();
+  assert.equal(await cards.count(),6);
+  const key = await cards.nth(3).getAttribute('data-trk-motion-key');
+  await cards.nth(3).scrollIntoViewIfNeeded();
+  await page.waitForFunction(key => window.cardEntrances.includes(key),key);
+  await more.click();
+  await cards.nth(3).scrollIntoViewIfNeeded();
+  assert.equal(await page.evaluate(key => window.cardEntrances.filter(value => value === key).length,key),1);
+  await page.emulateMedia({reducedMotion:'reduce'});
+  await more.click();
+  await cards.nth(9).scrollIntoViewIfNeeded();
+  assert.equal(await cards.nth(9).evaluate(el => getComputedStyle(el).animationName),'none');
+  assert.equal(await cards.nth(9).locator('img').evaluate(el => getComputedStyle(el).transitionDuration),'0s');
+  const queries = [];
+  await page.route('**/api/tracker/items?**', route => {
+    const params = new URL(route.request().url()).searchParams;
+    const offset = Number(params.get('offset')), limit = Number(params.get('limit'));
+    queries.push({offset,limit});
+    return route.fulfill({json:{total:55,items:Array.from({length:Math.min(limit,55-offset)},(_,index) => ({...rows[index % rows.length],key:`movie:${offset+index}`}))}});
+  });
+  await choose(page,'#trk-mobile-view','history');
+  await page.waitForFunction(() => document.querySelector('[data-trk-action="next"]'));
+  assert.deepEqual(queries.at(-1),{offset:0,limit:20});
+  await page.locator('[data-trk-action="next"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-trk-ref-key="movie:20"]'));
+  assert.deepEqual(queries.at(-1),{offset:20,limit:20});
+  await page.locator('[data-trk-input="size"]').selectOption('10',{force:true});
+  await page.waitForFunction(() => document.querySelector('[data-trk-ref-key="movie:0"]'));
+  assert.deepEqual(queries.at(-1),{offset:0,limit:10});
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('cw.tracker.view.v3')));
+  assert.equal(saved.mobilePageSize,10);
+  assert.equal(saved.pageSize,50);
+  await page.locator('[data-trk-action="by-day"]').click();
+  await page.waitForFunction(() => document.querySelector('[data-trk-action="more"]'));
+  assert.deepEqual(queries.at(-1),{offset:0,limit:10});
+});
+
+const pickerProfiles = [{id:"ann",label:"Ann and family",instances:{CROSSWATCH:["other"]}},{id:"bob",label:"Bob",instances:{CROSSWATCH:["default"]}}];
+for (const theme of ["original","flat-dark","flat-light"]) for (const width of [320,768,1440]) test(`${theme}: Tracker profile picker at ${width}px`, async t => {
+  const {page,boot,scopedReads} = await fixture(t,theme,{width,profiles:pickerProfiles});
+  const button = page.locator('#trk-profile + .cw-icon-select button');
+  await button.waitFor();
+  assert.match(await button.textContent(),/All profiles/);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+  await button.focus();
+  await page.keyboard.press('Enter');
+  const menu = page.locator('.cw-icon-select-menu:not(.hidden)');
+  await menu.waitFor();
+  const bounds = await menu.boundingBox();
+  assert.ok(bounds.x>=0 && bounds.x+bounds.width<=width+1);
+  if (process.env.CW_PROFILE_PICKER_SCREENSHOTS) {
+    await mkdir(process.env.CW_PROFILE_PICKER_SCREENSHOTS,{recursive:true});
+    await page.screenshot({path:`${process.env.CW_PROFILE_PICKER_SCREENSHOTS}/${theme}-${width}.png`});
+  }
+  await page.keyboard.press('Escape');
+  assert.equal(await button.evaluate(el=>el===document.activeElement),true);
+  await Promise.all([page.waitForEvent('load'),choose(page,'#trk-profile','ann')]);
+  await boot();
+  assert.equal(await page.locator('#trk-profile').inputValue(),'ann');
+  assert.equal(await page.locator('#trk-instance').inputValue(),'other');
+  assert.equal(await page.locator('#trk-instance option').count(),1);
+  assert.equal(scopedReads.filter(row=>row.path==='/api/tracker/summary').at(-1).viewAs,'ann');
+  assert.match(await page.locator('[data-trk-overview-open="airing:0"]').textContent(),/Other tracker show/);
+  await page.reload();
+  await boot();
+  assert.equal(await page.locator('#trk-profile').inputValue(),'ann');
+  await Promise.all([page.waitForEvent('load'),choose(page,'#trk-profile','')]);
+  await boot();
+  assert.equal(await page.locator('#trk-profile').inputValue(),'');
+  assert.equal(await page.locator('#trk-instance option').count(),2);
+  assert.equal(scopedReads.filter(row=>row.path==='/api/tracker/summary').at(-1).viewAs,'');
+});
+
+test('Tracker profile picker respects managed users and an empty profile list', async t => {
+  const managed = await fixture(t,'flat-dark',{width:390,profiles:pickerProfiles,managed:true});
+  assert.equal(await managed.page.locator('.trk-profile-picker').isVisible(),false);
+  assert.equal(await managed.page.locator('#trk-instance').inputValue(),'other');
+  assert.equal(await managed.page.evaluate(()=>CW.OverviewProfile.setActive('bob')),false);
+  const empty = await fixture(t,'flat-light',{width:390,profiles:[]});
+  assert.equal(await empty.page.locator('#trk-profile').isDisabled(),true);
+  assert.match(await empty.page.locator('.trk-profile-picker').textContent(),/No profiles/);
+});
+
+test('Tracker reloads the selected profile when returning from another page', async t => {
+  const {page,boot,scopedReads} = await fixture(t,'flat-dark',{profiles:pickerProfiles});
+  await page.evaluate(()=>{
+    document.querySelector('#page-tracker').classList.add('hidden');
+    CW.OverviewProfile.setActive('ann');
+  });
+  assert.equal(await page.locator('#trk-profile').inputValue(),'ann');
+  await Promise.all([page.waitForEvent('load'),page.evaluate(()=>{
+    document.querySelector('#page-tracker').classList.remove('hidden');
+    TrackerPage.resume();
+  })]);
+  await boot();
+  assert.equal(await page.locator('#trk-instance').inputValue(),'other');
+  assert.equal(scopedReads.filter(row=>row.path==='/api/tracker/summary').at(-1).viewAs,'ann');
 });
