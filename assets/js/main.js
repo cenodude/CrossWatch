@@ -975,7 +975,6 @@
       </div>
       <button type="button" class="cw-qa-shell cw-qa-fab" aria-label="Quick Add item" title="Click to Quick Add, drag to move">
         <span class="cw-qa-plus material-symbols-rounded" aria-hidden="true">add</span>
-        <span>Quick add</span>
       </button>
     `;
     document.body.appendChild(root);

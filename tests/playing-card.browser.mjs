@@ -47,8 +47,8 @@ for(const theme of ['original','flat-dark','flat-light'])for(const width of [320
   assert.match(await backdrop.evaluate(el=>getComputedStyle(el,'::before').backgroundImage),/kind=backdrop/);
   if(width<=760)assert.ok(box.height<300,`Mobile height ${box.height}`);
   else {
-    assert.ok(box.width<=860,`Desktop width ${box.width}`);
-    assert.ok(box.height<400,`Desktop height ${box.height}`);
+    assert.ok(box.width<=720,`Desktop width ${box.width}`);
+    assert.ok(box.height<280,`Desktop height ${box.height}`);
   }
   assert.match(await card.locator('.pc-route-list').textContent(),/Plex → Trakt/);
   if(process.env.CW_PLAYING_SCREENSHOTS){
@@ -91,8 +91,8 @@ test('desktop card stays compact on a shorter viewport with display scaling',asy
   });
   const card=page.locator('.cw-pc-scrobble');
   const box=await card.boundingBox();
-  assert.ok(box.width<=860);
-  assert.ok(box.height<400);
+  assert.ok(box.width<=720);
+  assert.ok(box.height<280);
   assert.ok(box.y>400,`Card top ${box.y}`);
   await card.locator('.pc-overview-more').click();
   assert.equal(await card.locator('.pc-overview-more').getAttribute('aria-expanded'),'true');
