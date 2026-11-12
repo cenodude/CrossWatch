@@ -1926,7 +1926,7 @@
     syncControlIcons();
     updateLayoutToolbar();
     card.classList.toggle("has-only-hidden-widgets", anyEnabled && !anyVisible);
-    card.classList.toggle("hidden", !anyEnabled);
+    card.classList.toggle("hidden", !anyEnabled || !isOnMain());
     scheduleMasonry();
   }
 

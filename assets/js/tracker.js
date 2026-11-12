@@ -1387,16 +1387,17 @@
     const meta = data?.heroMeta || (item ? window.CW?.Meta?.peek?.(item) : null);
     const seasons = Number(meta?.detail?.number_of_seasons) || 0;
     const runtime = Number(meta?.runtime_minutes) || 0;
-    const detail = [meta?.year || head.year, show ? "TV Series" : "Movie", show && record ? episodeLabel(record) : "",
+    const summary = [meta?.year || head.year, show ? "TV Series" : "Movie"].filter(Boolean).join(" · ");
+    const detail = [show && record ? episodeLabel(record) : "",
       show ? seasons ? plural(seasons, "season", "seasons") : "" : runtime ? `${runtime} min` : "",
       show ? meta?.detail?.status : "", ...(Array.isArray(meta?.genres) ? meta.genres.slice(0, 2) : [])].filter(Boolean).join(" · ");
     const status = statusPill(data?.note ? data.note.status : head.status);
     const episode = record?.type === "episode" && record.title && record.title !== title && !/^S\d+\s*[·-]?\s*E\d+$/i.test(record.title) ? record.title : "";
     const art = head?.art;
     const logoUrl = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?kind=logo&size=w500` : "";
-    const signature = JSON.stringify([title, detail, episode, logoUrl, status]);
+    const signature = JSON.stringify([title, summary, detail, episode, logoUrl, status]);
     if (selection?.dataset.logoSelection === signature) return;
-    setSlot("selection", `<div class="trk-hero-selection"><div class="trk-hero-title-line"><span class="trk-hero-heading"><strong title="${esc(title)}">${esc(title)}</strong>${logoUrl ? `<img class="trk-hero-logo" alt="${esc(title)}" hidden>` : ""}</span><div class="trk-hero-details"><span class="trk-hero-meta">${esc(detail)}</span>${episode ? `<small title="${esc(episode)}">${esc(episode)}</small>` : ""}${status}</div></div></div>`);
+    setSlot("selection", `<div class="trk-hero-selection"><div class="trk-hero-title-line"><span class="trk-hero-heading"><strong title="${esc(title)}">${esc(title)}</strong>${logoUrl ? `<img class="trk-hero-logo" alt="${esc(title)}" hidden>` : ""}</span><div class="trk-hero-details"><span class="trk-hero-meta">${esc(summary)}${detail ? `<span class="trk-hero-meta-extra"> · ${esc(detail)}</span>` : ""}</span>${episode ? `<small title="${esc(episode)}">${esc(episode)}</small>` : ""}${status}</div></div></div>`);
     if (selection) selection.dataset.logoSelection = signature;
     const logo = selection?.querySelector(".trk-hero-logo");
     const label = selection?.querySelector(".trk-hero-heading strong");
@@ -2363,8 +2364,7 @@
     el.addEventListener("toggle", event => {
       const detail = event.target;
       if (sheet.mode !== "automation" || !detail.isConnected || !detail.dataset.trkAutoDetails) return;
-      if (detail.dataset.trkAutoDetails === "help") sheet.autoHelpOpen = detail.open;
-      else {
+      if (detail.dataset.trkAutoDetails === "preview") {
         sheet.autoPreviewOpen = detail.open;
         if (detail.open && !sheet.autoLoaded && !sheet.busy) void loadAutomation("");
       }
@@ -3538,15 +3538,20 @@
     } catch (err) {sheet.busy = false; sheet.removal = null; sheet.error = writeError(err); renderSheet();}
   }
 
+  const automaticChanges = () => (sheet.autoRows || []).filter(row => !row.skipped && (row.before || null) !== (row.after || null));
+
   function renderAutomationPreview() {
-    const rows = sheet.autoRows || [];
-    const changes = rows.filter(row => !row.skipped && row.after && row.before !== row.after).length;
+    const rows = sheet.autoRows || [], changes = automaticChanges();
+    const unchanged = rows.filter(row => !changes.includes(row));
     const status = value => statusPill(value) || '<span class="trk-note">No status</span>';
-    return `<p class="trk-note">Inspect up to 100 titles at a time. Updating this batch queues only these titles.</p>
-      <p class="trk-auto-summary" role="status">${sheet.busy ? "Loading preview..." : sheet.autoLoaded ? `${plural(rows.length, "title", "titles")} &middot; ${plural(changes, "suggested change", "suggested changes")}` : "Open to load a preview."}</p>
-      ${rows.length ? `<ul class="trk-auto-preview-list" aria-label="Status suggestions" tabindex="0">${rows.map(row => `<li><strong>${esc(row.title)}</strong><span class="trk-auto-transition">${status(row.before)}${icon("arrow_forward")}${status(row.after)}</span><small>${esc(row.reason)}</small></li>`).join("")}</ul>` : sheet.autoLoaded && !sheet.busy ? '<p class="trk-note">No titles to preview.</p>' : ""}${sheetError()}
-      ${sheet.autoNext || sheet.autoPage > 0 ? `<div class="trk-auto-paging"><button type="button" class="cw-btn" data-trk-sheet="auto-prev"${sheet.busy || !sheet.autoPage ? " disabled" : ""}>Previous</button><span>Batch ${num((sheet.autoPage || 0) + 1)}</span><button type="button" class="cw-btn" data-trk-sheet="auto-next"${sheet.busy || !sheet.autoNext ? " disabled" : ""}>Next</button></div>` : ""}
-      <div class="trk-sheet-foot">${sheet.error ? '<button type="button" class="cw-btn" data-trk-sheet="auto-retry">Retry preview</button>' : ""}<button type="button" class="cw-btn" data-trk-sheet="auto-apply"${sheet.busy || !rows.some(row => !row.skipped) ? " disabled" : ""}>Update this batch</button></div>`;
+    const list = (items, changing) => `<ul class="trk-auto-preview-list" aria-label="${changing ? 'Suggested changes' : 'Unchanged and skipped titles'}" tabindex="0">${items.map(row => `<li><strong>${esc(row.title)}</strong><span class="trk-auto-transition">${status(row.before)}${changing ? `${icon("arrow_forward")}${status(row.after)}` : '<small>Kept</small>'}</span><small>${esc(row.reason)}</small></li>`).join("")}</ul>`;
+    return `<p class="trk-note">Check up to 100 titles per batch. Apply changes saves the suggestions below, including changes to synced statuses. Protected statuses are kept.</p>
+      <p class="trk-auto-summary" role="status">${sheet.busy ? "Checking statuses..." : sheet.autoLoaded ? `${plural(rows.length, "title", "titles")} &middot; ${plural(changes.length, "change", "changes")} to apply` : "Open to load a preview."}</p>
+      ${sheet.autoMessage ? `<p role="status">${esc(sheet.autoMessage)}</p>` : ""}
+      ${changes.length ? list(changes, true) : sheet.autoLoaded && !sheet.busy ? `<p class="trk-note">${rows.length ? `No changes to apply in this batch.${sheet.autoNext ? ' Check the next batch for more titles.' : ''}` : 'No titles to preview.'}</p>` : ""}
+      ${unchanged.length ? `<details class="trk-auto-details"><summary><span>Unchanged or skipped (${num(unchanged.length)})</span>${icon("expand_more")}</summary>${list(unchanged, false)}</details>` : ""}${sheetError()}
+      ${sheet.autoNext || sheet.autoPage > 0 ? `<div class="trk-auto-paging"><button type="button" class="cw-btn" data-trk-sheet="auto-prev"${sheet.busy || !sheet.autoPage ? " disabled" : ""}>Previous batch</button><span>Batch ${num((sheet.autoPage || 0) + 1)}</span><button type="button" class="cw-btn" data-trk-sheet="auto-next"${sheet.busy || !sheet.autoNext ? " disabled" : ""}>Next batch</button></div>` : ""}
+      <div class="trk-sheet-foot"><button type="button" class="cw-btn" data-trk-sheet="auto-retry"${sheet.busy ? " disabled" : ""}>${sheet.error ? 'Retry preview' : 'Refresh preview'}</button><button type="button" class="cw-btn primary" data-trk-sheet="auto-apply"${sheet.busy || sheet.error || !changes.length ? " disabled" : ""}>${changes.length ? `Apply ${plural(changes.length, "change", "changes")}` : 'No changes to apply'}</button></div>`;
   }
 
   function updateAutomationPreview() {
@@ -3562,13 +3567,12 @@
 
   function renderAutomation() {
     return `${sheetHead("autorenew", "Automatic statuses", "Local tracker")}<div class="trk-form trk-automation"><section class="trk-review" data-trk-review>${renderReview()}</section>
-      <details class="trk-auto-details" data-trk-auto-details="preview"${sheet.autoPreviewOpen ? " open" : ""}><summary>${icon("list_alt")}<span>Preview titles<small>Inspect suggestions and update a batch</small></span>${icon("expand_more")}</summary><div class="trk-auto-body" data-trk-auto-body>${renderAutomationPreview()}</div></details>
-      <details class="trk-auto-details" data-trk-auto-details="help"${sheet.autoHelpOpen ? " open" : ""}><summary>${icon("info")}<span>How it works</span>${icon("expand_more")}</summary><div class="trk-auto-body"><ul class="trk-auto-help"><li>Uses saved watch history and cached metadata to work out statuses.</li><li>The library update keeps manual, synced and older statuses with unknown origin. The batch preview explains why each title changes or stays as it is.</li><li>A full update temporarily uses more resources. It pauses during sync, resumes after a restart, and can be stopped at any time.</li><li>Updates start only when you choose. Upgrades and re-enabling automation do not start a library update.</li><li>Automatic changes appear in Changes, where you can undo them.</li></ul></div></details>
+      <details class="trk-auto-details" data-trk-auto-details="preview"${sheet.autoPreviewOpen ? " open" : ""}><summary>${icon("list_alt")}<span>Preview titles<small>Review and apply suggested changes</small></span>${icon("expand_more")}</summary><div class="trk-auto-body" data-trk-auto-body>${renderAutomationPreview()}</div></details>
       <footer class="trk-sheet-foot"><button type="button" class="cw-btn" data-trk-sheet="close">Done</button></footer></div>`;
   }
 
   function openAutomation() {
-    openSheet("automation", {autoRows:[],autoAfter:"",autoNext:"",autoPage:0,autoPages:[""],autoLoaded:false,autoPreviewOpen:false,autoHelpOpen:false,autoReview:null,reviewBusy:false,reviewError:""});
+    openSheet("automation", {autoRows:[],autoAfter:"",autoNext:"",autoPage:0,autoPages:[""],autoLoaded:false,autoMessage:"",autoPreviewOpen:false,autoReview:null,reviewBusy:false,reviewError:""});
     void loadReview();
   }
 
@@ -3583,11 +3587,12 @@
       : job.state === "cancelled" ? `Review stopped · ${num(job.processed || 0)} titles reviewed` : "Starts only when you choose. Upgrades and re-enabling automation do not start a review.";
     const loading = !sheet.autoReview && !sheet.reviewError;
     const retry = !sheet.autoReview && !!sheet.reviewError;
-    const heading = active ? "Updating your library" : job.state === "complete" ? "Your update is complete" : "Update from watch history";
-    return `<h3>${heading}</h3><p class="trk-note">${active ? "You can close this window. Updates continue in the background." : "Fill missing statuses and refresh automatic ones. Statuses you set yourself are kept."}</p>
+    const heading = active ? "Updating your library" : job.state === "complete" ? "Library check complete" : "Update from watch history";
+    return `<h3>${heading}</h3><p class="trk-note">${active ? "You can close this window. Updates continue in the background and pause during sync." : "Fill missing statuses and refresh automatic ones. Fully watched, ended shows can move from synced Watching to Completed. Statuses you set yourself are kept."}</p>
       ${job.state !== "idle" ? `<p role="status">${esc(message)}</p>` : ""}
       ${job.titles && ["processing","complete"].includes(job.state) ? `<progress aria-label="Titles reviewed" max="${Number(job.titles)}" value="${Number(job.processed || 0)}"></progress>` : ""}
-      <button type="button" class="cw-btn${active ? "" : " primary"}" data-trk-sheet="${retry ? "review-refresh" : active ? "review-cancel" : "review-start"}"${sheet.reviewBusy || loading ? " disabled" : ""}>${loading ? "Checking?" : retry ? "Try again" : active ? "Stop update" : job.state === "complete" ? "Update again" : "Update statuses"}</button>
+      <button type="button" class="cw-btn${active ? "" : " primary"}" data-trk-sheet="${retry ? "review-refresh" : active ? "review-cancel" : "review-start"}"${sheet.reviewBusy || loading ? " disabled" : ""}>${loading ? "Checking..." : retry ? "Try again" : active ? "Stop update" : job.state === "complete" ? "Update again" : "Update statuses"}</button>
+      ${job.state === "complete" ? '<p class="trk-note">Eligible changes were saved automatically. Reviewed titles may be unchanged or protected. Use Preview titles to inspect the results and remaining suggestions.</p><button type="button" class="cw-btn" data-trk-sheet="auto-changes">View changes</button>' : ""}
       ${sheet.reviewError ? `<p class="trk-error" role="alert">${esc(sheet.reviewError)}</p>` : ""}`;
   }
 
@@ -3607,9 +3612,15 @@
     try {
       const data = await getJSON(`/api/tracker/automatic-status/review?provider_instance=${encodeURIComponent(state.instance)}`);
       if (token !== sheet.token || sheet.mode !== "automation" || sheet.el?.hidden) return;
+      const finished = ['scanning','processing'].includes(sheet.autoReview?.state) && data.review?.state === 'complete';
       sheet.autoReview = data.review;
       sheet.reviewError = "";
       updateReview();
+      if (finished) {
+        state.progress = {};
+        void refresh();
+        if (sheet.autoLoaded) void loadAutomation(sheet.autoAfter, sheet.autoPage);
+      }
       if (["scanning","processing"].includes(data.review?.state)) reviewTimer = setTimeout(loadReview,5000);
     } catch (err) {
       if (token === sheet.token && sheet.mode === "automation") {sheet.reviewError = writeError(err); updateReview();}
@@ -3635,7 +3646,7 @@
 
   async function loadAutomation(after, page = 0) {
     if (sheet.busy) return;
-    sheet.busy = true; sheet.error = ""; updateAutomationPreview();
+    sheet.busy = true; sheet.error = ""; sheet.autoMessage = ""; updateAutomationPreview();
     const token = sheet.token;
     try {
       const data = await getJSON("/api/tracker/automatic-status", {provider_instance:state.instance,action:"preview",after});
@@ -3648,12 +3659,25 @@
   }
 
   async function applyAutomation() {
-    if (sheet.busy) return;
-    sheet.busy = true; renderSheet();
+    const items = automaticChanges().map(row => ({key:row.key,before:row.before || null,after:row.after || null}));
+    if (sheet.busy || !items.length) return;
+    const token = sheet.token, instance = state.instance;
+    sheet.busy = true; sheet.error = ""; sheet.autoMessage = ""; updateAutomationPreview();
     try {
-      await getJSON("/api/tracker/automatic-status", {provider_instance:state.instance,action:"recalculate",after:sheet.autoAfter});
-      closeSheet(); toast.show("Queued automatic status updates");
-    } catch (err) {sheet.busy = false; sheet.error = writeError(err); renderSheet();}
+      const data = await getJSON("/api/tracker/automatic-status", {provider_instance:instance,action:"apply",items});
+      if (sheet.token !== token) return;
+      const results = new Map((data.items || []).map(row => [row.key,row]));
+      sheet.autoRows = (sheet.autoRows || []).map(row => {
+        const result = results.get(row.key);
+        return result ? {...result,before:result.batch ? result.after : result.before} : row;
+      });
+      sheet.autoMessage = `${plural(data.updated || 0, "change", "changes")} applied.${(data.items || []).some(row => row.skipped) ? ' Some titles were kept; expand Unchanged or skipped for details.' : ''}`;
+      sheet.busy = false; updateAutomationPreview();
+      state.progress = {};
+      await refresh();
+    } catch (err) {
+      if (sheet.token === token) {sheet.busy = false; sheet.error = writeError(err); updateAutomationPreview();}
+    }
   }
 
   async function enableTitleAutomation() {
@@ -4327,6 +4351,10 @@
     else if (action === "auto-retry") loadAutomation(sheet.autoAfter, sheet.autoPage);
     else if (action === "review-refresh") loadReview();
     else if (action === "auto-apply") applyAutomation();
+    else if (action === "auto-changes") {
+      openSheet("changes", {changes:[],changesTotal:0,changesAll:0,changeKind:"",changeQ:""});
+      loadChanges(false);
+    }
     else if (action === "review-start" || action === "review-cancel") reviewAction(action);
     else if (action === "enable-auto") enableTitleAutomation();
     else if (action === "delete") deleteKeys(sheet.keys, sheet.feature);

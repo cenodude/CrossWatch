@@ -199,6 +199,7 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
     assert.ok(yearBounds.y>=bounds.y+bounds.height);
     assert.ok(Math.abs(yearBounds.x-bounds.x)<1);
     assert.match(await page.locator('.trk-hero-meta').textContent(),/2016.*Movie.*116 min.*Science Fiction/);
+    if(width<=760) assert.equal(await page.locator('.trk-hero-meta').innerText(),'2016 · Movie');
     assert.equal(await page.locator('.trk-hero-details .trk-status').getAttribute('data-status'),'completed');
     assert.match(await page.locator('.trk-play').first().textContent(),/Arrival/);
     if(process.env.CW_LOGO_SCREENSHOTS) {
@@ -228,7 +229,10 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
     const episodeTitle=await page.locator('.trk-hero-selection small').boundingBox();
     assert.ok(episodeMeta.y>=episodeLogo.y+episodeLogo.height);
     assert.ok(Math.abs(episodeMeta.x-episodeLogo.x)<1);
-    assert.ok(episodeTitle.y>=episodeMeta.y-2);
+    if(width<=760) {
+      assert.equal(episodeTitle,null);
+      assert.equal(await page.locator('.trk-hero-meta').innerText(),'2022 · TV Series');
+    } else assert.ok(episodeTitle.y>=episodeMeta.y-2);
     assert.match(await page.locator('.trk-hero-meta').textContent(),/2022.*TV Series.*2 seasons.*Returning Series.*Drama/);
     assert.equal(await page.locator('.trk-hero-meta').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
     assert.equal(await page.locator('.trk-hero-details .trk-status').getAttribute('data-status'),'watching');

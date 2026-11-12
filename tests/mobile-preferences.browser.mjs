@@ -30,7 +30,7 @@ async function fixture(t, theme = 'flat-dark', restricted = false, saved = null,
     if (path.startsWith('/api/')) return route.fulfill({json:{}});
     const attrs = theme === 'original' ? 'class="cw-theme-original"' : `data-cw-theme="${theme}" class="cw-theme-${theme === 'flat-light' ? 'light' : 'dark'}"`;
     return route.fulfill({contentType:'text/html',body:`<!doctype html><html ${attrs} data-tab="main" data-cw-role="${restricted || managedWrite ? 'user' : 'admin'}"><head><meta name="viewport" content="width=device-width,initial-scale=1">${[...styles,theme==='original'?'themes/original-coverage':'themes/flat'].map(path=>`<link rel="stylesheet" href="/assets/${path}.css">`).join('')}</head><body>
-      <header><nav class="tabs"><button id="tab-main" class="tab">Home</button>${restricted?'':'<button id="tab-tracker" class="tab">Tracker</button><button id="tab-snapshots" class="tab">Captures</button><button id="tab-playlists" class="tab">Playlists</button><button id="tab-editor" class="tab">Editor</button><button id="tab-settings" class="tab">Settings</button>'}<button id="tab-about" class="tab">About</button></nav></header>
+      <header><nav class="tabs"><button id="tab-main" class="tab">Home</button>${restricted?'':'<button id="tab-tracker" class="tab">Tracker</button><button id="tab-snapshots" class="tab">Captures</button><button id="tab-playlists" class="tab">Playlists</button><button id="tab-editor" class="tab">Editor</button><div class="cw-tabmenu" id="tab-settings-menu"><button id="tab-settings" class="tab" aria-haspopup="menu" aria-expanded="false" onclick="document.getElementById(&quot;cw-settings-menu&quot;).classList.toggle(&quot;hidden&quot;)">Settings</button><div id="cw-settings-menu" class="cw-menu hidden"><button class="cw-menu-item" data-settings-pane="providers">Connections</button><button class="cw-menu-item" data-settings-pane="sync">Sync pairs</button><button class="cw-menu-item" data-settings-pane="scrobbler">Scrobbler</button><button class="cw-menu-item" data-settings-pane="app">UI and Security</button></div></div>'}<div class="cw-tabmenu" id="tab-about-menu"><button id="tab-about" class="tab">About</button></div></nav></header>
       <main id="layout"><section id="dashboard-widgets-card"></section><h1>Home</h1></main>
       ${profileAvailable ? '<a href="/profile" data-cw-profile-menu-action="profile">Profile</a>' : ''}
       <script>window.auth={isManaged:${restricted},permissions:{write:${!restricted}},preferences:{}};window._cfgCache={tmdb_configured:true,ui:{}};window.CW={AuthState:{read:()=>auth}};window.openManualWatchedModal=()=>{window.quickAddOpened=true};window.addEventListener('hashchange',()=>{document.documentElement.dataset.tab=location.hash.slice(1).split('/')[0]||'main';document.dispatchEvent(new Event('tab-changed'));});</script>
@@ -48,30 +48,31 @@ async function openSettings(page) {
   await page.locator('#cw-mobile-widgets > summary').click();
 }
 
-for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: More tiles have visible boundaries, labels and keyboard focus`, async t => {
+for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: More menu has quiet surfaces, readable labels and keyboard focus`, async t => {
   const {page} = await fixture(t,theme);
   await page.locator('#cw-mobile-more').click();
   const menu = page.locator('#cw-mobile-navigation');
   const tile = menu.locator('[data-mobile-route="profile/overview"]');
   for (const width of [320,390,760]) {
     await page.setViewportSize({width,height:844});
-    assert.equal(await menu.locator('#tab-tracker').isVisible(),true);
+    assert.equal(await menu.locator('#tab-tracker').isVisible(),false);
+    assert.equal(await menu.locator('#tab-about').isVisible(),false);
     const style = await tile.evaluate(node=>{
       const s=getComputedStyle(node);
-      const rgb=value=>value.match(/[\d.]+/g).slice(0,3).map(Number);
+      const context=document.createElement('canvas').getContext('2d');
+      const rgb=value=>{context.fillStyle=value;context.fillRect(0,0,1,1);return [...context.getImageData(0,0,1,1).data].slice(0,3);};
       const luminance=value=>rgb(value).map(c=>c/255).map(c=>c<=.04045?c/12.92:((c+.055)/1.055)**2.4).reduce((sum,c,i)=>sum+c*[.2126,.7152,.0722][i],0);
       const contrast=(a,b)=>(Math.max(luminance(a),luminance(b))+.05)/(Math.min(luminance(a),luminance(b))+.05);
-      return {border:s.borderTopWidth,radius:s.borderTopLeftRadius,textContrast:contrast(s.webkitTextFillColor,s.backgroundColor),borderContrast:contrast(s.borderTopColor,s.backgroundColor)};
+      return {border:s.borderTopWidth,radius:s.borderTopLeftRadius,textContrast:contrast(s.webkitTextFillColor,s.backgroundColor)};
     });
-    assert.equal(style.border,'1px');
-    assert.equal(style.radius,'12px');
+    assert.equal(style.border,'0px');
+    assert.equal(style.radius,'10px');
     assert.ok(style.textContrast>=7,JSON.stringify(style));
-    if(theme==='flat-dark') assert.ok(style.borderContrast>=3,JSON.stringify(style));
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     await page.keyboard.press('Tab');
     await tile.focus();
     assert.equal(await tile.evaluate(node=>getComputedStyle(node).outlineWidth),'2px');
-    await page.locator('#cw-mobile-more').focus();
+    await tile.evaluate(node=>node.blur());
     await mkdir('.tmp/mobile-preferences',{recursive:true});
     const bounds=await menu.boundingBox();
     await page.screenshot({path:`.tmp/mobile-preferences/${theme}-tracker-more-${width}.png`,clip:{x:0,y:bounds.y,width,height:844-bounds.y}});
@@ -94,7 +95,7 @@ for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: short
   await page.waitForFunction(()=>document.querySelector('#playing-detail').classList.contains('show'));
   await openSettings(page);
   assert.equal(await page.locator('#tab-main').isVisible(),false);
-  assert.equal(await page.locator('#tab-tracker').isVisible(),true);
+  assert.equal(await page.locator('#tab-tracker').isVisible(),false);
   assert.equal(await page.locator('#cw-mobile-navigation [data-mobile-route="settings/scrobbler"]').isVisible(),true);
   await page.locator('#cw-mobile-shortcut-0').selectOption('settings/scrobbler');
   assert.deepEqual(await routes(),['main','tracker','settings/scrobbler','settings/sync']);
@@ -151,6 +152,27 @@ test('restricted accounts discard inaccessible shortcuts and cannot quick add', 
 test('invalid saved shortcuts recover to defaults', async t => {
   const {page}=await fixture(t,'flat-dark',false,'{broken');
   assert.deepEqual(await page.locator('#cw-mobile-bottom-nav a').evaluateAll(nodes=>nodes.map(node=>node.dataset.mobileRoute)),['main','tracker','settings/providers','settings/sync']);
+});
+
+test('More excludes fixed and pinned destinations, including settings submenu entries', async t => {
+  const {page} = await fixture(t,'flat-dark');
+  await openSettings(page);
+  await page.locator('#tab-settings').click();
+  for (const pane of ['providers','sync']) assert.equal(await page.locator(`#cw-settings-menu [data-settings-pane="${pane}"]`).isVisible(),false);
+  assert.equal(await page.locator('#cw-settings-menu [data-settings-pane="scrobbler"]').isVisible(),true);
+  await page.locator('#cw-mobile-shortcut-0').selectOption('snapshots');
+  assert.equal(await page.locator('#tab-snapshots').isVisible(),false);
+  assert.equal(await page.locator('#cw-settings-menu [data-settings-pane="providers"]').isVisible(),true);
+  await page.locator('#cw-mobile-shortcut-1').selectOption('settings/scrobbler');
+  assert.equal(await page.locator('#cw-settings-menu [data-settings-pane="scrobbler"]').isVisible(),false);
+  assert.equal(await page.locator('#cw-mobile-navigation [data-mobile-route="settings/scrobbler"]').count(),0);
+  assert.equal(await page.locator('#cw-settings-menu [data-settings-pane="sync"]').isVisible(),true);
+  assert.equal(await page.locator('#tab-about-menu').isVisible(),false);
+  await page.reload();
+  await page.locator('#cw-mobile-more').click();
+  for (const id of ['tab-main','tab-tracker','tab-snapshots','tab-about-menu']) assert.equal(await page.locator(`#${id}`).isVisible(),false);
+  await page.setViewportSize({width:1200,height:900});
+  for (const id of ['tab-main','tab-tracker','tab-snapshots','tab-about-menu']) assert.equal(await page.locator(`#${id}`).isVisible(),true);
 });
 
 for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: My Media Hub pins Overview without adding slots`, async t => {

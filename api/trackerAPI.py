@@ -990,6 +990,26 @@ def tracker_automatic_status(request: Request, payload: dict[str, Any] = Body(..
         if not isinstance(key, str) or not _NOTE_KEY.fullmatch(key):
             return _error("invalid_note_key", 400)
         return {"ok": True, "batch": store.enable_title_automation(key)}
+    if action == "apply":
+        from services.tracker_automation import cached_metadata
+        suggestions = payload.get("items")
+        if not isinstance(suggestions, list) or not 1 <= len(suggestions) <= 100:
+            return _error("invalid_suggestions", 400)
+        for item in suggestions:
+            if (not isinstance(item, dict) or not isinstance(item.get("key"), str)
+                    or not _NOTE_KEY.fullmatch(item["key"])
+                    or any(field not in item or item[field] is not None and (not isinstance(item[field], str) or item[field] not in NOTE_STATUSES) for field in ("before", "after"))):
+                return _error("invalid_suggestions", 400)
+        results, group = [], uuid.uuid4().hex
+        with store.session():
+            try:
+                for item in suggestions:
+                    key = item["key"]
+                    results.append(store.evaluate_status(key, lambda: cached_metadata(key), expected=item, prune=False, group=group))
+            finally:
+                if any(row.get("batch") for row in results):
+                    store.prune_status_changes()
+        return {"ok": True, "items": results, "updated": sum(bool(row.get("batch")) for row in results)}
     if action in {"preview", "recalculate"}:
         from services.tracker_automation import cached_metadata
         after = str(payload.get("after") or "")[:1024]

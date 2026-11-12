@@ -55,21 +55,13 @@ async function open(t, theme, width = 390) {
 }
 
 for (const theme of Object.keys(themes)) {
-  test(`${theme}: phone status exposes the next run and tap details`, async t => {
+  test(`${theme}: phone hides status dock and keeps setting help accessible`, async t => {
     const page = await open(t, theme, 320);
-    assert.equal(await page.locator("#sched-meta").isVisible(), true);
+    assert.equal(await page.locator(".cw-status-dock").isVisible(), false);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-    await page.locator("#chip-sched").tap();
-    assert.equal(await page.locator("#cw-touch-help").isVisible(), true);
-    assert.match(await page.locator("#cw-touch-help").textContent(), /Scheduler scheduled/);
-    const box = await page.locator("#cw-touch-help").boundingBox();
-    assert.ok(box.x >= 0 && box.x + box.width <= 320);
-    await page.getByRole("button", {name: "Open scheduler settings", exact: true}).tap();
-    await page.waitForFunction(() => window.__cwSettingsPane === "scheduling");
     await page.evaluate(() => { window.schedStatus.running = true; document.dispatchEvent(new Event("scheduling-status-refresh")); });
     await page.waitForFunction(() => document.querySelector("#sched-value").textContent === "running");
-    assert.equal(await page.locator("#sched-meta").isVisible(), true);
-    assert.equal(await page.locator("#sched-value").evaluate(el => el.scrollWidth <= el.clientWidth), true);
+    assert.equal(await page.locator("#sched-meta").isVisible(), false);
     await page.locator("label .cx-help").tap();
     assert.equal(await page.locator("#verify").isChecked(), false);
     assert.match(await page.locator("#cw-touch-help").textContent(), /re-check the destination/);

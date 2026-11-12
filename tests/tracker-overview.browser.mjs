@@ -265,6 +265,41 @@ test("Overview navigation and tracker selector have matching panel heights",asyn
   }
 });
 
+test('Resizing Tracker keeps Main widgets hidden and restores their layout on Main', async t => {
+  const {page,requests} = await fixture(t,'flat-dark',{touch:false});
+  await page.addScriptTag({url:'/assets/helpers/core.js'});
+  await page.evaluate(()=>window.showTab('tracker'));
+  await page.addScriptTag({url:'/assets/js/dashboard-widgets.js'});
+  const dashboard = page.locator('#dashboard-widgets-card');
+  const resize = async width => {
+    await page.setViewportSize({width,height:900});
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  };
+  const widgetRequests = () => requests.filter(path=>path.includes('/dashboard/widgets')).length;
+  const before = widgetRequests();
+  for (const width of [390,1440,760,761]) {
+    await resize(width);
+    assert.equal(await dashboard.isVisible(),false,`Main widgets leaked into Tracker at ${width}px`);
+    assert.equal(await page.locator('#page-tracker').isVisible(),true);
+  }
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('cw:watchlist-widget-state',{detail:{empty:true}})));
+  assert.equal(await dashboard.isVisible(),false);
+  assert.equal(widgetRequests(),before);
+  await page.evaluate(()=>window.showTab('main'));
+  await dashboard.waitFor({state:'visible'});
+  for (const width of [390,1440]) {
+    await resize(width);
+    assert.equal(await dashboard.isVisible(),true);
+    assert.equal(await page.locator('#recent-history-widget').isVisible(),true);
+    assert.equal(await page.locator('#recent-progress-widget').isVisible(),false);
+  }
+  await page.evaluate(()=>window.showTab('tracker'));
+  for (const width of [390,1440]) {
+    await resize(width);
+    assert.equal(await dashboard.isVisible(),false);
+  }
+});
+
 test("Monthly notification links open the requested tracker and month",async t => {
   const {page}=await fixture(t,"flat-dark",{touch:false});
   await page.addScriptTag({url:'/assets/helpers/core.js'});

@@ -75,6 +75,7 @@ def test_admin_still_sees_every_tracker(cfg):
     ("/api/tracker/titles/remove", {"keys": ["movie:tmdb:949"], "scope": "all"}),
     ("/api/tracker/automatic-status", {"action": "enable-title", "key": "movie:tmdb:949"}),
     ("/api/tracker/automatic-status", {"action": "review-start"}),
+    ("/api/tracker/automatic-status", {"action": "apply", "items": [{"key": "movie:tmdb:949", "before": None, "after": "completed"}]}),
     ("/api/tracker/automatic-status", {"action": "review-cancel"}),
 ])
 def test_automation_and_title_removal_enforce_scope_and_write_permission(cfg, path, payload):
