@@ -1225,6 +1225,9 @@ def api_currently_watching(request: Request = cast(Request, None), user_profile:
     if not streams_count:
         streams_count = len(streams) if streams else (1 if isinstance(data, dict) and data.get("title") else 0)
 
+    from providers.scrobble.playing_routes import attach_playing_routes
+
+    attach_playing_routes(streams or ([data] if isinstance(data, dict) else []), cfg, user_filter)
     payload: dict[str, Any] = {"ok": True, "currently_watching": data, "streams_count": streams_count, "ts": int(time.time())}
     if streams:
         payload["streams"] = streams

@@ -1520,6 +1520,8 @@ def process_webhook(
                 clear_on_stop=True,
                 ids=cw_ids,
                 provider_instance=provider_instance,
+                session_key=sess,
+                account=acc_title,
             )
         except Exception:
             pass
