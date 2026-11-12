@@ -37,7 +37,7 @@ from cw_platform.tracker_store import (
 from cw_platform.value_coercion import coerce_bool
 from services import tracker_check, tracker_import, tracker_migration, tracker_storage_maintenance
 from services.tracker_overview import cached_overview, overview_events
-from services.tracker_month import available_month, get_report as month_report
+from services.tracker_month import available_month, available_wrapped, get_report as month_report
 
 router = APIRouter(prefix="/api/tracker", tags=["tracker"])
 
@@ -1444,7 +1444,7 @@ def _overview_hero(store: TrackerStore, recent: list[dict[str, Any]], continuing
 @router.get("/overview/revision", dependencies=_READY)
 def tracker_overview_revision(request: Request, provider_instance: str | None = Query("default")) -> Any:
     cfg, inst, store = _store(provider_instance, request)
-    return {"ok": True, "provider_instance": inst, "revision": store.revision(), "review_month": available_month(store, cfg)}
+    return {"ok": True, "provider_instance": inst, "revision": store.revision(), "review_month": available_month(store, cfg), "wrapped": available_wrapped(store, cfg)}
 
 
 @router.get("/overview/month", dependencies=_READY)
@@ -1454,6 +1454,15 @@ def tracker_month_review(request: Request, provider_instance: str | None = Query
         return {**month_report(store, cfg, month), "provider_instance": inst}
     except ValueError:
         return _error("invalid_month", 400)
+
+
+@router.get("/overview/wrapped", dependencies=_READY)
+def tracker_wrapped(request: Request, provider_instance: str | None = Query("default"), year: str = Query("", max_length=4)) -> Any:
+    cfg, inst, store = _store(provider_instance, request)
+    try:
+        return {**month_report(store, cfg, year, yearly=True), "provider_instance": inst}
+    except ValueError:
+        return _error("invalid_year", 400)
 
 
 @router.get("/overview", dependencies=_READY)
@@ -1503,7 +1512,7 @@ def tracker_overview(request: Request, provider_instance: str | None = Query("de
         return _unreadable()
     cached = cached_overview(store, today) if _tmdb_key(cfg) else None
     return {"ok": True, "provider_instance": inst, "revision": store.revision(), "hero": _overview_hero(store, recent, continuing, inst), "shows": cached, "recent": recent, "continue": continuing,
-            "history_more": history_total > 200, "progress_more": progress_total > 200, "metadata_available": bool(_tmdb_key(cfg)), "review_month": available_month(store, cfg)}
+            "history_more": history_total > 200, "progress_more": progress_total > 200, "metadata_available": bool(_tmdb_key(cfg)), "review_month": available_month(store, cfg), "wrapped": available_wrapped(store, cfg)}
 
 
 @router.get("/overview/shows", dependencies=_READY)

@@ -13,7 +13,7 @@ const assets = new Map();
 const rows = Array.from({length:20},(_,index) => ({key:`movie:${index}`,ref:{feature:"progress",key:`movie:${index}`},type:"movie",title:index === 1 ? 'A title with <script>window.injected=true</script>' : `Movie ${index + 1}`,year:2026,art:{kind:"movie",tmdb:String(index + 1)},ids:{tmdb:String(index + 1)},date:"2026-11-09T12:00:00Z",progress_percent:40,remaining_minutes:22}));
 const episodes = Array.from({length:12},(_,index) => ({key:`episode:${index}`,ref:{show:`tmdb:${index + 100}`},type:"episode",title:`Show ${index + 1}`,art:{kind:"tv",tmdb:String(index + 100)},show_ids:{tmdb:String(index + 100)},season:2,episode:index ? 3 : 1,episode_title:"The next chapter",air_date:new Date(Date.UTC(2026,10,10 + [1,5,5,10,12,14,16,18,20,22,25,29][index])).toISOString().slice(0,10),date:"2026-11-08T12:00:00Z"}));
 
-async function fixture(t, theme, {realMedia = false, touch = true, width = 1440, motion = "reduce", profiles = null, managed = false, airing = episodes, continuing = rows, next = episodes.slice(0,2)} = {}) {
+async function fixture(t, theme, {realMedia = false, touch = true, width = 1440, motion = "reduce", profiles = null, managed = false, airing = episodes, continuing = rows, next = episodes.slice(0,2), wrapped = {}, trackerOptions = {}} = {}) {
   const browser = await ({chromium,webkit})[process.env.CW_AUDIT_BROWSER || "chromium"].launch({headless:true});
   t.after(() => browser.close());
   const page = await browser.newPage({viewport:{width,height:900},hasTouch:touch,reducedMotion:motion});
@@ -56,12 +56,13 @@ async function fixture(t, theme, {realMedia = false, touch = true, width = 1440,
     let json = {ok:true};
     if (path === '/api/app-auth/status') json = {is_admin:!managed,user:{is_admin:!managed,profile_id:managed ? 'ann' : '',permissions:{write:true}}};
     if (path === '/api/user-profiles') json = {items:profiles || []};
-    if (path === "/api/tracker/summary") json = {provider_instance:instance,instances:[{id:"default",label:"Default"},{id:"other",label:"Second tracker"}],counts:{history:24},health:{history:{attention:2}},notes:{total:0,statuses:{},tags:[]}};
+    if (path === "/api/tracker/summary") json = {provider_instance:instance,tracker_options:trackerOptions,instances:[{id:"default",label:"Default"},{id:"other",label:"Second tracker"}],counts:{history:24},health:{history:{attention:2}},notes:{total:0,statuses:{},tags:[]}};
     if (path === '/api/tracker/summary' && (viewAs || managed)) json.instances = json.instances.filter(row => row.id === profiles?.find(profile => profile.id === (viewAs || 'ann'))?.instances?.CROSSWATCH?.[0]);
     if (path === "/api/tracker/stats") json = {week:4,month:15,year:244,total:244};
-    if (path === "/api/tracker/overview/revision") json = {revision:"fixture",review_month:reviewMonth};
+    if (path === "/api/tracker/overview/revision") json = {revision:"fixture",review_month:reviewMonth,wrapped};
+    if (path === "/api/tracker/overview/wrapped") json = {ok:true,year:url.searchParams.get("year") || "2025",current_year:"2026",generated:1,pending:false,stale:false,report:{year:"2025",plays:0,titles:[],genres:[]}};
     if (path === "/api/tracker/overview/month") json = {ok:true,month:"2026-10",current_month:"2026-11",generated:1,pending:false,stale:false,report:{month:"2026-10",plays:0,titles:[],genres:[]}};
-    if (path === "/api/tracker/overview") json = {revision:"fixture",review_month:reviewMonth,metadata_available:metadata,continue:empty ? [] : continuing,recent:empty ? [] : rows.map(row=>({...row,progress_percent:null,ref:{feature:"history",key:row.key},plays:2}))};
+    if (path === "/api/tracker/overview") json = {revision:"fixture",review_month:reviewMonth,wrapped,metadata_available:metadata,continue:empty ? [] : continuing,recent:empty ? [] : rows.map(row=>({...row,progress_percent:null,ref:{feature:"history",key:row.key},plays:2}))};
     if (path === "/api/tracker/overview/shows") {
       const pending = hold;
       if (pending && instance === "default") await pending;
@@ -95,7 +96,7 @@ async function fixture(t, theme, {realMedia = false, touch = true, width = 1440,
     await page.evaluate(() => document.fonts.ready);
   };
   await boot();
-  return {page,boot,scopedReads,writes,requests,drops,reviewMonth:value=>{reviewMonth=value;},airing:value=>{airing=value;},empty:value=>{empty=value;},fail:value=>{fail=value;},metadata:value=>{metadata=value;},hold:()=>{hold=new Promise(resolve=>{release=resolve;});},release:()=>{hold=null;release?.();}};
+  return {page,boot,scopedReads,writes,requests,drops,wrapped:value=>{wrapped=value;},reviewMonth:value=>{reviewMonth=value;},airing:value=>{airing=value;},empty:value=>{empty=value;},fail:value=>{fail=value;},metadata:value=>{metadata=value;},hold:()=>{hold=new Promise(resolve=>{release=resolve;});},release:()=>{hold=null;release?.();}};
 }
 
 async function choose(page, selector, value) {
@@ -905,4 +906,82 @@ test('Tracker reloads the selected profile when returning from another page', as
   await boot();
   assert.equal(await page.locator('#trk-instance').inputValue(),'other');
   assert.equal(scopedReads.filter(row=>row.path==='/api/tracker/summary').at(-1).viewAs,'ann');
+});
+
+
+for(const theme of ['original','flat-dark','flat-light']) test(`${theme}: Wrapped uses one banner slot, restores monthly and stays available in More`,async t=>{
+  const {page,requests}=await fixture(t,theme,{touch:false,wrapped:{year:'2025',posters:[]}});
+  await page.locator('[data-trk-wrapped="2025"]').waitFor();
+  assert.equal(await page.locator('.trk-month-banner').count(),0);
+  assert.equal(requests.includes('/api/tracker/overview/wrapped'),false);
+  for(const width of [1440,320]) {
+    await page.setViewportSize({width,height:900});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
+    await mkdir('.tmp/wrapped-audit',{recursive:true});
+    await page.locator('.trk-wrapped-banner').screenshot({path:`.tmp/wrapped-audit/banner-${theme}-${width}.png`});
+  }
+  await page.locator('[data-trk-wrapped-dismiss]').click();
+  await page.locator('[data-trk-month]').waitFor();
+  assert.equal(await page.locator('.trk-wrapped-banner').count(),0);
+  await choose(page,'#trk-mobile-view','wrapped');
+  await page.getByText('Your 2025 awaits.',{exact:true}).waitFor();
+  assert.equal(await page.locator('#page-tracker>.cw-root').isVisible(),false);
+  await page.locator('[data-wr="close"]').click();
+  await page.locator('[data-trk-month]').waitFor();
+  await page.setViewportSize({width:1440,height:900});
+  await page.locator('.trk-others summary').click();await page.locator('[data-trk-wrapped-open]').click();
+  await page.locator('.wr-page').waitFor();
+  await page.evaluate(async()=>{location.hash='#tracker?view=overview';await TrackerPage.mount(document.querySelector('#page-tracker'));});
+  assert.equal(await page.locator('.wr-page').count(),0);
+  await page.locator('[data-trk-month]').waitFor();
+});
+
+test('Wrapped dismissal is per tracker, profile and year; options hide only the disabled review',async t=>{
+  const options={month_review:true,wrapped:true};
+  const app=await fixture(t,'flat-dark',{touch:false,wrapped:{year:'2025'},trackerOptions:options});
+  const {page}=app;
+  await page.locator('[data-trk-wrapped-dismiss]').click();
+  await choose(page,'#trk-instance','other');await page.locator('[data-trk-wrapped]').waitFor();
+  await choose(page,'#trk-instance','default');await page.locator('[data-trk-month]').waitFor();
+  assert.equal(await page.locator('.trk-wrapped-banner').count(),0);
+  await page.evaluate(()=>{CW.AuthState.read=()=>({user:{id:'ann'},profileId:'ann',role:'user',permissions:{write:true}});});
+  await page.locator('.trk-tabs [data-trk-view="history"]').click();await page.locator('.trk-tabs [data-trk-view="overview"]').click();
+  await page.locator('[data-trk-wrapped-dismiss]').click();
+  app.wrapped({year:'2026'});
+  await page.evaluate(()=>document.dispatchEvent(new Event('visibilitychange')));
+  await page.locator('[data-trk-wrapped="2026"]').waitFor();
+  options.wrapped=false;
+  await page.evaluate(()=>TrackerPage.mount(document.querySelector('#page-tracker')));
+  await page.locator('[data-trk-month]').waitFor();
+  assert.equal(await page.locator('[data-trk-wrapped-open],option[value="wrapped"]').count(),0);
+  options.wrapped=true;options.month_review=false;
+  await page.evaluate(()=>TrackerPage.mount(document.querySelector('#page-tracker')));
+  await page.locator('[data-trk-wrapped="2026"]').waitFor();
+  assert.equal(await page.locator('[data-trk-month-open],option[value="month-review"]').count(),0);
+});
+
+test('Wrapped bell links open the correct year and tracker through the real router',async t=>{
+  const {page}=await fixture(t,'flat-dark',{touch:false});
+  await page.addScriptTag({url:'/assets/helpers/core.js'});
+  await page.evaluate(()=>window.showTab('tracker'));
+  await page.addScriptTag({url:'/assets/helpers/notifications.js'});
+  let pending=true;
+  await page.route('https://overview.test/api/tracker/overview/wrapped**',route=>{
+    const url=new URL(route.request().url());
+    return route.fulfill({json:{year:url.searchParams.get('year')||'2025',current_year:'2026',pending,stale:pending,report:pending?null:{plays:0,titles:[],genres:[]}}});
+  });
+  await choose(page,'#trk-instance','other');
+  await page.locator('.trk-others summary').click();await page.locator('[data-trk-wrapped-open]').click();
+  await page.getByText('Preparing your premiere.',{exact:true}).waitFor();
+  await page.locator('[data-wr-year]').fill('2024');await page.locator('[data-wr-year]').press('Tab');
+  await page.waitForFunction(()=>document.querySelector('[data-wr-year]').value==='2024');
+  await page.locator('[data-wr="close"]').click();pending=false;
+  await page.locator('#cw-notifications-button').click();
+  const link=page.locator('.cw-notification[href="#tracker?instance=other&year=2024"]');
+  await link.waitFor();
+  const request=page.waitForRequest(req=>req.url().includes('/overview/wrapped?')&&req.url().includes('year=2024'));
+  await link.click();assert.equal(new URL((await request).url()).searchParams.get('provider_instance'),'other');
+  await page.getByText('Your 2024 awaits.',{exact:true}).waitFor();
+  assert.equal(await page.locator('[data-wr-year]').inputValue(),'2024');
+  assert.equal(await page.locator('.mr-page').count(),0);
 });

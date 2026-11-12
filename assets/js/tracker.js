@@ -529,8 +529,8 @@
     const overflow = VIEWS.filter(v => v.id !== "cleanup").map(v => `<button type="button" class="cw-btn" data-trk-view="${v.id}" hidden>${symbol(v.icon)}<span>${esc(v.label)}</span>${viewCount(v.id) ? `<small>${esc(num(viewCount(v.id)))}</small>` : ""}</button>`).join("");
     const options = VIEWS.filter(v => v.id !== "cleanup").map(v => `<option value="${v.id}"${v.id === state.view ? " selected" : ""}>${esc(v.label)}${viewCount(v.id) ? ` (${num(viewCount(v.id))})` : ""}</option>`).join("");
     const attention = attentionTotal();
-    return `<label class="cw-page-mobile-view" for="trk-mobile-view"><span>View</span><select id="trk-mobile-view" data-trk-input="view">${options}<optgroup label="More">${state.trackerOptions?.month_review !== false ? '<option value="month-review">Month in review</option>' : ""}${state.trackerOptions?.automatic_status !== false ? '<option value="automation">Automatic statuses</option>' : ""}<option value="cleanup"${state.view === "cleanup" ? " selected" : ""}>Clean up${attention ? ` (${num(attention)})` : ""}</option></optgroup></select></label>
-      <div class="trk-navigation"><nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav><details class="trk-others${state.view === "cleanup" ? " is-active" : ""}"><summary class="trk-tab${state.view === "cleanup" ? " active" : ""}">${symbol("more_horiz")}<span>More</span>${attention ? `<small aria-label="${esc(plural(attention, "record needs", "records need"))} attention">${esc(num(attention))}</small>` : ""}${symbol("expand_more")}</summary><div class="trk-others-menu cw-page-panel"><div class="trk-overflow" hidden>${overflow}</div>${state.trackerOptions?.month_review !== false ? `<button type="button" class="cw-btn" data-trk-month-open>${symbol("auto_awesome")}<span>Month in review</span></button>` : ""}${state.trackerOptions?.automatic_status !== false ? `<button type="button" class="cw-btn" data-trk-action="automation">${symbol("autorenew")}<span>Automatic statuses</span></button>` : ""}<button type="button" class="cw-btn" data-trk-view="cleanup"${state.view === "cleanup" ? ' aria-current="page"' : ""}>${symbol("health_and_safety")}<span>Clean up</span>${attention ? `<small>${esc(num(attention))}</small>` : ""}</button></div></details></div>`;
+    return `<label class="cw-page-mobile-view" for="trk-mobile-view"><span>View</span><select id="trk-mobile-view" data-trk-input="view">${options}<optgroup label="More">${state.trackerOptions?.month_review !== false ? '<option value="month-review">Month in review</option>' : ""}${state.trackerOptions?.wrapped !== false ? '<option value="wrapped">CrossWatch Wrapped</option>' : ""}${state.trackerOptions?.automatic_status !== false ? '<option value="automation">Automatic statuses</option>' : ""}<option value="cleanup"${state.view === "cleanup" ? " selected" : ""}>Clean up${attention ? ` (${num(attention)})` : ""}</option></optgroup></select></label>
+      <div class="trk-navigation"><nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav><details class="trk-others${state.view === "cleanup" ? " is-active" : ""}"><summary class="trk-tab${state.view === "cleanup" ? " active" : ""}">${symbol("more_horiz")}<span>More</span>${attention ? `<small aria-label="${esc(plural(attention, "record needs", "records need"))} attention">${esc(num(attention))}</small>` : ""}${symbol("expand_more")}</summary><div class="trk-others-menu cw-page-panel"><div class="trk-overflow" hidden>${overflow}</div>${state.trackerOptions?.month_review !== false ? `<button type="button" class="cw-btn" data-trk-month-open>${symbol("auto_awesome")}<span>Month in review</span></button>` : ""}${state.trackerOptions?.wrapped !== false ? `<button type="button" class="cw-btn" data-trk-wrapped-open>${symbol("celebration")}<span>CrossWatch Wrapped</span></button>` : ""}${state.trackerOptions?.automatic_status !== false ? `<button type="button" class="cw-btn" data-trk-action="automation">${symbol("autorenew")}<span>Automatic statuses</span></button>` : ""}<button type="button" class="cw-btn" data-trk-view="cleanup"${state.view === "cleanup" ? ' aria-current="page"' : ""}>${symbol("health_and_safety")}<span>Clean up</span>${attention ? `<small>${esc(num(attention))}</small>` : ""}</button></div></details></div>`;
   }
 
   function fitNavigation() {
@@ -624,8 +624,10 @@
     const sections = [["continue", "Continue watching", playback ? "progress" : "shows", playback ? "Playback progress" : "View shows"], ["airing", "Airing soon", "", ""], ["recent", "Recently watched", "history", "View history"]];
     const reviewMonth = data.review_month || "";
     const reviewName = /^\d{4}-\d{2}$/.test(reviewMonth) ? monthName(reviewMonth) : "";
-    const review = kinds.includes("recent") && reviewName && reviewMonth > dismissedReview() ? `<div class="trk-month-banner"><button type="button" class="trk-month-entry" data-trk-month="${esc(reviewMonth)}"><span class="trk-month-decoration" aria-hidden="true"></span><span class="trk-month-entry-art" aria-hidden="true">${(data.recent || []).filter(row => artUrl(row)).slice(0, 3).map(row => `<img src="${esc(artUrl(row))}" alt="" loading="lazy" decoding="async">`).join("")}</span><span class="trk-month-entry-copy"><small>MONTH IN REVIEW</small><strong>${esc(reviewName)}</strong><span>Explore your month${icon("arrow_forward")}</span></span>${symbol("auto_awesome", "trk-month-entry-spark")}</button><button type="button" class="trk-month-dismiss" data-trk-month-dismiss="${esc(reviewMonth)}" title="Dismiss this month's banner" aria-label="Dismiss this month's banner">${icon("close")}</button></div>` : "";
-    return `<div class="trk-overview">${review}${sections.filter(([kind]) => kinds.includes(kind)).map(([kind, title, view, link]) => {
+    const review = kinds.includes("recent") && state.trackerOptions?.month_review !== false && reviewName && reviewMonth > dismissedReview() ? `<div class="trk-month-banner"><button type="button" class="trk-month-entry" data-trk-month="${esc(reviewMonth)}"><span class="trk-month-decoration" aria-hidden="true"></span><span class="trk-month-entry-art" aria-hidden="true">${(data.recent || []).filter(row => artUrl(row)).slice(0, 3).map(row => `<img src="${esc(artUrl(row))}" alt="" loading="lazy" decoding="async">`).join("")}</span><span class="trk-month-entry-copy"><small>MONTH IN REVIEW</small><strong>${esc(reviewName)}</strong><span>Explore your month${icon("arrow_forward")}</span></span>${symbol("auto_awesome", "trk-month-entry-spark")}</button><button type="button" class="trk-month-dismiss" data-trk-month-dismiss="${esc(reviewMonth)}" title="Dismiss this month's banner" aria-label="Dismiss this month's banner">${icon("close")}</button></div>` : "";
+    const wrappedYear = data.wrapped?.year || "";
+    const wrapped = kinds.includes("recent") && state.trackerOptions?.wrapped !== false && /^\d{4}$/.test(wrappedYear) && wrappedYear > dismissedReview(true) ? `<div class="trk-wrapped-banner"><button type="button" class="trk-wrapped-entry" data-trk-wrapped="${esc(wrappedYear)}"><span class="trk-wrapped-art" aria-hidden="true">${(data.wrapped.posters || []).filter(url=>/^https:\/\/image\.tmdb\.org\/t\/p\//.test(url)).slice(0,3).map(url=>`<img src="${esc(url)}" alt="" loading="lazy" decoding="async">`).join("")}</span><span class="trk-wrapped-copy"><small>CROSSWATCH PRESENTS</small><strong>Your ${esc(wrappedYear)}, <em>wrapped.</em></strong><span>Unwrap your year ${icon("arrow_forward")}</span></span>${symbol("celebration", "trk-wrapped-spark")}</button><button type="button" class="trk-month-dismiss" data-trk-wrapped-dismiss="${esc(wrappedYear)}" aria-label="Dismiss this year's Wrapped banner">${icon("close")}</button></div>` : "";
+    return `<div class="trk-overview">${wrapped || review}${sections.filter(([kind]) => kinds.includes(kind)).map(([kind, title, view, link]) => {
       const rows = overviewRows(kind), step = overviewStep(kind), limit = state.overviewLimits[kind] * step;
       const message = kind === "airing" ? !data.metadata_available ? "Add a TMDB API key in Settings to see upcoming episodes." : data.checking ? "Looking for upcoming episodes…" : data.unavailable ? "No upcoming episodes found in the available metadata." : "No episodes scheduled in the next 30 days." : kind === "continue" ? data.checking ? "Finding your next episodes…" : "You're all caught up. Start a movie or show to see it here." : "Your recent watches will appear here once you log or sync them.";
       if (kind === "airing") return renderAiringTimeline(rows, data, message);
@@ -710,20 +712,35 @@
     monthThemeModule ||= import("/assets/js/tracker-month-themes.js").catch(() => {monthThemeModule = null; return null;});
     monthThemeModule.then(module => {if (module && banner.isConnected && instance === state.instance) module.paintTheme(banner,entry.dataset.trkMonth,instance,true);});
   }
-  const reviewDismissKey = () => {
+  const reviewDismissKey = (yearly = false) => {
     const auth = window.CW?.AuthState?.read?.(), view = window.CW?.OverviewProfile;
-    return `cw-month-dismissed:${JSON.stringify([auth?.user?.id || auth?.user?.username || auth?.role || "local",auth?.profileId || "",auth?.isAdmin ? view?.id || "" : "",state.instance])}`;
+    return `cw-${yearly ? "wrapped" : "month"}-dismissed:${JSON.stringify([auth?.user?.id || auth?.user?.username || auth?.role || "local",auth?.profileId || "",auth?.isAdmin ? view?.id || "" : "",state.instance])}`;
   };
-  function dismissedReview() {
-    const key = reviewDismissKey();
+  function dismissedReview(yearly = false) {
+    const key = reviewDismissKey(yearly);
     try {return localStorage.getItem(key) || reviewDismissals.get(key) || "";} catch {return reviewDismissals.get(key) || "";}
   }
-  let monthlyReviewPage = null;
+  let monthlyReviewPage = null, wrappedPage = null, reviewOpening = 0;
+  function openYearlyReview(button, year = "") {
+    button.disabled = true;
+    const opening = ++reviewOpening, scope = overviewCacheKey() + currentProfileScope();
+    state.root.querySelector(".trk-others")?.removeAttribute("open");
+    import(`/assets/js/tracker-wrapped.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`).then(({openWrapped}) => {
+      if (opening !== reviewOpening || scope !== overviewCacheKey() + currentProfileScope() || state.root.hidden || state.root.classList.contains("hidden")) return;
+      monthlyReviewPage?.close(false);
+      wrappedPage = openWrapped({root:state.root, instance:state.instance, label:instanceLabel(), year,
+        onClose: () => {wrappedPage = null;}, openMedia:row => selectRef(row.ref,{openMedia:true})});
+      state.monthlyReview = false;
+      rememberView();
+    }).catch(() => toast.show("Could not open CrossWatch Wrapped. Try again.",{tone:"bad"})).finally(() => {button.disabled = false;});
+  }
   function openMonthlyReview(button, month = "", remember = true) {
     button.disabled = true;
+    const opening = ++reviewOpening, scope = overviewCacheKey() + currentProfileScope();
     state.root.querySelector(".trk-others")?.removeAttribute("open");
     import(`/assets/js/tracker-month.js?v=${encodeURIComponent(window.APP_VERSION || "1")}`).then(({openMonthReview}) => {
-      if (state.root.hidden || state.root.classList.contains('hidden')) return;
+      if (opening !== reviewOpening || scope !== overviewCacheKey() + currentProfileScope() || state.root.hidden || state.root.classList.contains('hidden')) return;
+      wrappedPage?.close(false);
       monthlyReviewPage = openMonthReview({root:state.root, instance:state.instance, label:instanceLabel(), month,
         onClose: restore => { monthlyReviewPage = null; if (restore) { state.monthlyReview = false; rememberView(); } },
         returnLabel:VIEWS.find(view => view.id === state.view)?.label || "Overview", openMedia:row => selectRef(row.ref, {openMedia:true})});
@@ -1721,7 +1738,7 @@
         ${data.note_key ? `<button type="button" class="cw-btn danger" data-trk-detail="remove" title="Remove title or watch history" aria-label="Remove title or watch history">${icon("delete")}</button>` : ""}
       </div>
       ${episodePreviews(data)}
-      ${data.show && data.note_key && state.progress[data.title?.art?.tmdb]?.completed && !["completed", "dropped"].includes(data.note?.status) ? `<button type="button" class="trk-note-suggest" data-trk-detail="complete">${symbol("task_alt")}<span>Every episode is watched. Mark it as completed?</span></button>` : ""}
+      ${completionSuggestion(data)}
       ${data.show ? seasonBlock(data) : ""}
       ${plays ? `<div class="trk-section"><div class="trk-section-title">${esc(data.show ? "Recent plays" : "Plays")}</div><ul class="trk-play-list">${plays}</ul>${morePlays}</div>` : ""}
       ${listBlock(data)}
@@ -2361,14 +2378,6 @@
     el.addEventListener("keydown", onSheetKey);
     el.addEventListener("input", onSheetInput);
     el.addEventListener("change", onSheetChange);
-    el.addEventListener("toggle", event => {
-      const detail = event.target;
-      if (sheet.mode !== "automation" || !detail.isConnected || !detail.dataset.trkAutoDetails) return;
-      if (detail.dataset.trkAutoDetails === "preview") {
-        sheet.autoPreviewOpen = detail.open;
-        if (detail.open && !sheet.autoLoaded && !sheet.busy) void loadAutomation("");
-      }
-    }, true);
     sheet.el = el;
     return el;
   }
@@ -2431,6 +2440,11 @@
       </form>`;
   }
 
+  function completionSuggestion(data, inSheet = false) {
+    if (!data?.show || !data.note_key || !state.progress[data.title?.art?.tmdb]?.completed || ["completed", "dropped"].includes(data.note?.status)) return "";
+    return `<button type="button" class="trk-note-suggest" ${inSheet ? 'data-trk-sheet="complete"' : 'data-trk-detail="complete"'}>${symbol("task_alt")}<span>All episodes watched. Apply Completed</span></button>`;
+  }
+
   function renderTitleEdit() {
     const data = state.title;
     if (!data) return `${sheetHead("edit", "Edit title", "")}<div class="trk-form">${emptyState("Loading...", "hourglass_empty")}</div>`;
@@ -2439,6 +2453,7 @@
     return `
       ${sheetHead(head, `Edit ${head.title || "title"}`, data.show ? "The show on every episode and list entry" : "Every play and list entry of this title")}
       <form class="trk-form" data-trk-form="title-edit" novalidate>
+        ${completionSuggestion(data, true)}
         <div class="trk-fields">
           <label class="trk-field trk-field-wide"><span>${data.show ? "Show title" : "Title"}</span><input type="text" class="cw-input" data-trk-te="title" value="${esc(head.title ?? "")}" maxlength="300"></label>
           <label class="trk-field"><span>Year</span><input type="number" class="cw-input" data-trk-te="year" min="1870" max="2100" value="${esc(head.year ?? "")}"></label>
@@ -2447,19 +2462,19 @@
           <summary>${icon("fingerprint")}<span>${data.show ? "Show IDs" : "IDs"}</span><small>Or use Fix match to pick the right title</small></summary>
           <div class="trk-identity-body"><div class="trk-fields">${idInputs("ids", head.ids, idList(head.ids))}</div></div>
         </details>
-        <p class="trk-effect">${icon("info")}<span>Changes ${esc(plural(n, "record", "records"))} in this tracker at once. Episode numbers, dates and ratings stay as they are. You can undo it from Changes.</span></p>
+        <p class="trk-effect">${icon("info")}<span>Title, year and ID edits apply to ${esc(plural(n, "record", "records"))}. Watch status is separate.</span></p>
         ${sheetError()}
         <footer class="trk-sheet-foot">
           <button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button>
-          <button type="submit" class="cw-btn primary"${sheet.busy ? " disabled" : ""}>${icon("save")}<span>Save for all ${esc(num(n))}</span></button>
+          <button type="submit" class="cw-btn primary" disabled>${icon("save")}<span>Save changes</span></button>
         </footer>
       </form>`;
   }
 
-  async function saveTitleEdit() {
+  function titleEditChanges() {
     const data = state.title;
     const form = sheet.el.querySelector('[data-trk-form="title-edit"]');
-    if (!data || !form) return;
+    if (!data || !form) return {};
     const head = data.title || {};
     const changes = {};
     const title = (form.querySelector('[data-trk-te="title"]')?.value ?? "").trim();
@@ -2473,6 +2488,15 @@
       if (now !== String(head.ids?.[name] ?? "")) ids[name] = now;
     });
     if (Object.keys(ids).length) changes.ids = ids;
+    return changes;
+  }
+
+  async function saveTitleEdit() {
+    if (sheet.busy) return;
+    const data = state.title;
+    const head = data?.title || {};
+    const changes = titleEditChanges();
+    const title = changes.title || head.title;
     if (!Object.keys(changes).length) {
       closeSheet();
       return;
@@ -2877,11 +2901,23 @@
     const name = first?.row ? `${cardTitle(first.row)}${sub ? ` (${sub})` : ""}` : "a record";
     const others = change.count > 1 ? ` and ${plural(change.count - 1, "other", "others")}` : "";
     if (change.action === "note") {
-      if (!first?.before) return `Added your notes for ${name}`;
-      if (!first.after) return `Removed your notes for ${name}`;
-      if (first.old_key !== first.key) return `Moved your notes to ${name}`;
+      if (change.feature === "status_control") return `Changed automatic status preference for ${name}${others}`;
+      if (!first?.before || !first.after) {
+        const note = first?.after || first?.before || {};
+        const fields = ["status", "started", "finished", "notes", "tags", "fields"].filter(field => {
+          const value = note[field];
+          return value && (typeof value !== "object" || Object.keys(value).length);
+        });
+        if (first?.after && fields.length === 1 && fields[0] === "status") return `Set status to ${statusOf(note.status)?.label || note.status} for ${name}${others}`;
+        const label = fields.map(field => NOTE_LABELS[field]).join(", ") || "title details";
+        return `${first?.after ? "Added" : "Removed"} ${label} for ${name}${others}`;
+      }
+      if (first.old_key !== first.key) return `Moved title details to ${name}${others}`;
+      if (first.fields?.length === 1 && first.fields[0] === "status") return first.after.status
+        ? `Set status to ${statusOf(first.after.status)?.label || first.after.status} for ${name}${others}`
+        : `Cleared status for ${name}${others}`;
       const fields = Array.from(new Set((first.fields || []).map((f) => NOTE_LABELS[f]).filter(Boolean)));
-      return `Changed ${fields.length ? fields.join(", ") : "your notes"} for ${name}`;
+      return `Changed ${fields.length ? fields.join(", ") : "title details"} for ${name}${others}`;
     }
     if (change.action === "add") return `Logged ${name}${others}`;
     if (change.action === "delete") return `Deleted ${name}${others}`;
@@ -2904,7 +2940,7 @@
     const mark = c.action === "delete" ? "delete" : c.action === "undo" ? "undo" : c.action === "add" ? "add_circle" : c.action === "note" ? "edit_note" : "edit";
     const status = c.undone ? `<span class="trk-change-tag">${icon("undo")}Undone</span>` : "";
     const undo = c.undoable ? `<button type="button" class="cw-btn" data-trk-undo="${esc(c.batch)}"${sheet.busy ? " disabled" : ""}>${icon("undo")}<span>Undo</span></button>` : "";
-    return `<li class="trk-change${c.undone ? " is-undone" : ""}"><span class="trk-change-icon">${icon(mark)}</span><span class="trk-change-copy"><b>${esc(changeText(c))}</b><small>${icon(f.icon)}${esc(f.label)} · ${esc(timeText(c.at))}</small></span>${status}${undo}</li>`;
+    return `<li class="trk-change${c.undone ? " is-undone" : ""}"><span class="trk-change-icon">${icon(mark)}</span><span class="trk-change-copy"><span class="trk-change-text">${esc(changeText(c))}</span><small>${icon(f.icon)}${esc(f.label)} · ${esc(timeText(c.at))}</small></span>${status}${undo}</li>`;
   }
 
   function renderChanges() {
@@ -3157,8 +3193,9 @@
     const d = sheet.draft;
     const head = state.title?.title || { title: d.title };
     const busy = sheet.busy ? " disabled" : "";
+    const automatic = !d.status_manual && !state.title?.status_control?.manual && state.title?.status_control?.origin === "automatic";
     const chips = [{ id: "", label: "No status", icon: "remove" }, ...STATUSES]
-      .map((s) => `<button type="button" class="cw-filter-chip${d.status === s.id ? " active" : ""}" data-trk-note-status="${s.id}" aria-pressed="${d.status === s.id}">${symbol(s.icon, "cw-type-icon")}<span>${esc(s.label)}</span></button>`)
+      .map((s) => `<button type="button" class="cw-filter-chip${d.status === s.id ? " active" : ""}" data-trk-note-status="${s.id}" aria-pressed="${d.status === s.id}"${busy}>${symbol(s.icon, "cw-type-icon")}<span>${esc(s.label)}</span></button>`)
       .join("");
     const known = (state.notes.tags || []).map((t) => t.tag).filter((t) => !d.tags.some((x) => x.toLowerCase() === t.toLowerCase()));
     const tags = d.tags.map((t, i) => `<span class="trk-label">${esc(t)}<button type="button" data-trk-note-untag="${i}" aria-label="Remove tag ${esc(t)}">${icon("close")}</button></span>`).join("");
@@ -3169,7 +3206,8 @@
         <div class="trk-group-label">Status</div>
         <div class="trk-note-statuses" role="group" aria-label="Status">${chips}</div>
         <p class="trk-note">${state.title?.status_control?.reason ? esc(state.title.status_control.reason) : state.title?.status_control?.manual ? "Manual status: excluded from automatic updates." : state.title?.status_control?.origin === "existing" ? "Older status: enable automatic updates to include this title." : state.title?.status_control?.origin === "sync" ? "Status received through sync; eligible for automatic updates." : "Automatic status updates may manage this title."}</p>
-        ${state.trackerOptions?.automatic_status !== false ? '<button type="button" class="cw-btn" data-trk-sheet="enable-auto">Use automatic status</button>' : ""}
+        ${state.trackerOptions?.automatic_status !== false ? `<button type="button" class="cw-btn" data-trk-sheet="enable-auto"${automatic || sheet.busy ? " disabled" : ""}>${sheet.busy ? "Saving..." : automatic ? "Automatic status is on" : "Use automatic status"}</button>` : ""}
+        ${sheet.automationEnabled ? '<p class="trk-note" role="status">Saved. CrossWatch now manages this title\'s status automatically. No extra Save is needed.</p>' : ""}
         <div class="trk-fields">
           <label class="trk-field"><span>Started</span><input type="date" class="cw-input" data-trk-note="started" value="${esc(d.started)}"></label>
           <label class="trk-field"><span>Finished</span><input type="date" class="cw-input" data-trk-note="finished" value="${esc(d.finished)}"></label>
@@ -3215,7 +3253,7 @@
   }
 
   function openNotes() {
-    if (state.title?.note_key) openSheet("notes", { draft: noteDraft(state.title) });
+    if (state.title?.note_key) openSheet("notes", { draft: noteDraft(state.title), automationEnabled: false });
   }
 
   function openFields() {
@@ -3262,8 +3300,13 @@
     }
   }
 
+  let completingNote = false;
+
   async function completeNote() {
-    if (!state.title?.note_key) return;
+    if (completingNote || !state.title?.note_key) return;
+    completingNote = true;
+    const buttons = document.querySelectorAll('[data-trk-detail="complete"], [data-trk-sheet="complete"]');
+    buttons.forEach(button => {button.disabled = true; button.setAttribute("aria-busy", "true");});
     const draft = noteDraft(state.title);
     draft.status_manual = true;
     draft.status = "completed";
@@ -3272,6 +3315,9 @@
       await postNote(draft, `Marked ${draft.title} as completed`);
     } catch (err) {
       toast.show(writeError(err), { tone: "bad" });
+    } finally {
+      completingNote = false;
+      buttons.forEach(button => {button.disabled = false; button.removeAttribute("aria-busy");});
     }
   }
 
@@ -3538,41 +3584,13 @@
     } catch (err) {sheet.busy = false; sheet.removal = null; sheet.error = writeError(err); renderSheet();}
   }
 
-  const automaticChanges = () => (sheet.autoRows || []).filter(row => !row.skipped && (row.before || null) !== (row.after || null));
-
-  function renderAutomationPreview() {
-    const rows = sheet.autoRows || [], changes = automaticChanges();
-    const unchanged = rows.filter(row => !changes.includes(row));
-    const status = value => statusPill(value) || '<span class="trk-note">No status</span>';
-    const list = (items, changing) => `<ul class="trk-auto-preview-list" aria-label="${changing ? 'Suggested changes' : 'Unchanged and skipped titles'}" tabindex="0">${items.map(row => `<li><strong>${esc(row.title)}</strong><span class="trk-auto-transition">${status(row.before)}${changing ? `${icon("arrow_forward")}${status(row.after)}` : '<small>Kept</small>'}</span><small>${esc(row.reason)}</small></li>`).join("")}</ul>`;
-    return `<p class="trk-note">Check up to 100 titles per batch. Apply changes saves the suggestions below, including changes to synced statuses. Protected statuses are kept.</p>
-      <p class="trk-auto-summary" role="status">${sheet.busy ? "Checking statuses..." : sheet.autoLoaded ? `${plural(rows.length, "title", "titles")} &middot; ${plural(changes.length, "change", "changes")} to apply` : "Open to load a preview."}</p>
-      ${sheet.autoMessage ? `<p role="status">${esc(sheet.autoMessage)}</p>` : ""}
-      ${changes.length ? list(changes, true) : sheet.autoLoaded && !sheet.busy ? `<p class="trk-note">${rows.length ? `No changes to apply in this batch.${sheet.autoNext ? ' Check the next batch for more titles.' : ''}` : 'No titles to preview.'}</p>` : ""}
-      ${unchanged.length ? `<details class="trk-auto-details"><summary><span>Unchanged or skipped (${num(unchanged.length)})</span>${icon("expand_more")}</summary>${list(unchanged, false)}</details>` : ""}${sheetError()}
-      ${sheet.autoNext || sheet.autoPage > 0 ? `<div class="trk-auto-paging"><button type="button" class="cw-btn" data-trk-sheet="auto-prev"${sheet.busy || !sheet.autoPage ? " disabled" : ""}>Previous batch</button><span>Batch ${num((sheet.autoPage || 0) + 1)}</span><button type="button" class="cw-btn" data-trk-sheet="auto-next"${sheet.busy || !sheet.autoNext ? " disabled" : ""}>Next batch</button></div>` : ""}
-      <div class="trk-sheet-foot"><button type="button" class="cw-btn" data-trk-sheet="auto-retry"${sheet.busy ? " disabled" : ""}>${sheet.error ? 'Retry preview' : 'Refresh preview'}</button><button type="button" class="cw-btn primary" data-trk-sheet="auto-apply"${sheet.busy || sheet.error || !changes.length ? " disabled" : ""}>${changes.length ? `Apply ${plural(changes.length, "change", "changes")}` : 'No changes to apply'}</button></div>`;
-  }
-
-  function updateAutomationPreview() {
-    const body = sheet.el?.querySelector("[data-trk-auto-body]");
-    if (!body) return;
-    const focused = body.contains(document.activeElement) ? document.activeElement.dataset.trkSheet : "";
-    body.innerHTML = renderAutomationPreview();
-    if (focused) {
-      const button = body.querySelector(`[data-trk-sheet="${focused}"]`);
-      (button && !button.disabled ? button : body.closest("details").querySelector("summary")).focus({preventScroll:true});
-    }
-  }
-
   function renderAutomation() {
     return `${sheetHead("autorenew", "Automatic statuses", "Local tracker")}<div class="trk-form trk-automation"><section class="trk-review" data-trk-review>${renderReview()}</section>
-      <details class="trk-auto-details" data-trk-auto-details="preview"${sheet.autoPreviewOpen ? " open" : ""}><summary>${icon("list_alt")}<span>Preview titles<small>Review and apply suggested changes</small></span>${icon("expand_more")}</summary><div class="trk-auto-body" data-trk-auto-body>${renderAutomationPreview()}</div></details>
       <footer class="trk-sheet-foot"><button type="button" class="cw-btn" data-trk-sheet="close">Done</button></footer></div>`;
   }
 
   function openAutomation() {
-    openSheet("automation", {autoRows:[],autoAfter:"",autoNext:"",autoPage:0,autoPages:[""],autoLoaded:false,autoMessage:"",autoPreviewOpen:false,autoReview:null,reviewBusy:false,reviewError:""});
+    openSheet("automation", {autoReview:null,reviewBusy:false,reviewError:""});
     void loadReview();
   }
 
@@ -3592,7 +3610,7 @@
       ${job.state !== "idle" ? `<p role="status">${esc(message)}</p>` : ""}
       ${job.titles && ["processing","complete"].includes(job.state) ? `<progress aria-label="Titles reviewed" max="${Number(job.titles)}" value="${Number(job.processed || 0)}"></progress>` : ""}
       <button type="button" class="cw-btn${active ? "" : " primary"}" data-trk-sheet="${retry ? "review-refresh" : active ? "review-cancel" : "review-start"}"${sheet.reviewBusy || loading ? " disabled" : ""}>${loading ? "Checking..." : retry ? "Try again" : active ? "Stop update" : job.state === "complete" ? "Update again" : "Update statuses"}</button>
-      ${job.state === "complete" ? '<p class="trk-note">Eligible changes were saved automatically. Reviewed titles may be unchanged or protected. Use Preview titles to inspect the results and remaining suggestions.</p><button type="button" class="cw-btn" data-trk-sheet="auto-changes">View changes</button>' : ""}
+      ${job.state === "complete" ? '<p class="trk-note">Eligible changes were saved. You can undo them in Changes.</p>' : ""}
       ${sheet.reviewError ? `<p class="trk-error" role="alert">${esc(sheet.reviewError)}</p>` : ""}`;
   }
 
@@ -3619,7 +3637,6 @@
       if (finished) {
         state.progress = {};
         void refresh();
-        if (sheet.autoLoaded) void loadAutomation(sheet.autoAfter, sheet.autoPage);
       }
       if (["scanning","processing"].includes(data.review?.state)) reviewTimer = setTimeout(loadReview,5000);
     } catch (err) {
@@ -3644,49 +3661,30 @@
     }
   }
 
-  async function loadAutomation(after, page = 0) {
-    if (sheet.busy) return;
-    sheet.busy = true; sheet.error = ""; sheet.autoMessage = ""; updateAutomationPreview();
-    const token = sheet.token;
-    try {
-      const data = await getJSON("/api/tracker/automatic-status", {provider_instance:state.instance,action:"preview",after});
-      if (sheet.token !== token) return;
-      sheet.autoRows = data.items || []; sheet.autoNext = data.next;
-      sheet.autoAfter = after; sheet.autoPage = page; sheet.autoLoaded = true;
-      sheet.autoPages[page] = after;
-    } catch (err) {if (sheet.token === token) sheet.error = writeError(err);}
-    if (sheet.token === token) {sheet.busy = false; updateAutomationPreview();}
-  }
-
-  async function applyAutomation() {
-    const items = automaticChanges().map(row => ({key:row.key,before:row.before || null,after:row.after || null}));
-    if (sheet.busy || !items.length) return;
-    const token = sheet.token, instance = state.instance;
-    sheet.busy = true; sheet.error = ""; sheet.autoMessage = ""; updateAutomationPreview();
-    try {
-      const data = await getJSON("/api/tracker/automatic-status", {provider_instance:instance,action:"apply",items});
-      if (sheet.token !== token) return;
-      const results = new Map((data.items || []).map(row => [row.key,row]));
-      sheet.autoRows = (sheet.autoRows || []).map(row => {
-        const result = results.get(row.key);
-        return result ? {...result,before:result.batch ? result.after : result.before} : row;
-      });
-      sheet.autoMessage = `${plural(data.updated || 0, "change", "changes")} applied.${(data.items || []).some(row => row.skipped) ? ' Some titles were kept; expand Unchanged or skipped for details.' : ''}`;
-      sheet.busy = false; updateAutomationPreview();
-      state.progress = {};
-      await refresh();
-    } catch (err) {
-      if (sheet.token === token) {sheet.busy = false; sheet.error = writeError(err); updateAutomationPreview();}
-    }
-  }
-
   async function enableTitleAutomation() {
     if (sheet.busy) return;
-    sheet.busy = true; renderSheet();
+    const token = sheet.token, instance = state.instance, key = sheet.draft.key;
+    sheet.busy = true; sheet.error = ""; renderSheet();
     try {
-      const data = await getJSON("/api/tracker/automatic-status", {provider_instance:state.instance,action:"enable-title",key:sheet.draft.key});
-      await afterWrite(data, "Automatic status enabled for this title");
-    } catch (err) {sheet.busy = false; sheet.error = writeError(err); renderSheet();}
+      await getJSON("/api/tracker/automatic-status", {provider_instance:instance,action:"enable-title",key});
+      if (sheet.token !== token || state.instance !== instance) return;
+      sheet.draft.status_manual = false;
+      sheet.automationEnabled = true;
+      if (state.title?.note_key === key) state.title.status_control = {origin:"automatic",manual:false};
+      await loadTitle();
+      if (sheet.token !== token || state.instance !== instance) return;
+      if (state.title?.note_key === key) {
+        sheet.draft.expected = state.title.note || null;
+        sheet.draft.status = state.title.note?.status || "";
+      }
+      sheet.busy = false;
+      renderSheet();
+      sheet.el.querySelector('[data-trk-sheet="close"]')?.focus();
+    } catch (err) {
+      if (sheet.token === token && state.instance === instance) {
+        sheet.busy = false; sheet.error = writeError(err); renderSheet();
+      }
+    }
   }
 
   async function deleteKeys(keys, feature) {
@@ -4346,17 +4344,10 @@
     else if (action === "remove-history") loadTitleRemoval("history");
     else if (action === "remove-all") loadTitleRemoval("all");
     else if (action === "remove-confirm") confirmTitleRemoval();
-    else if (action === "auto-next" && sheet.autoNext) loadAutomation(sheet.autoNext, sheet.autoPage + 1);
-    else if (action === "auto-prev" && sheet.autoPage > 0) loadAutomation(sheet.autoPages[sheet.autoPage - 1], sheet.autoPage - 1);
-    else if (action === "auto-retry") loadAutomation(sheet.autoAfter, sheet.autoPage);
     else if (action === "review-refresh") loadReview();
-    else if (action === "auto-apply") applyAutomation();
-    else if (action === "auto-changes") {
-      openSheet("changes", {changes:[],changesTotal:0,changesAll:0,changeKind:"",changeQ:""});
-      loadChanges(false);
-    }
     else if (action === "review-start" || action === "review-cancel") reviewAction(action);
     else if (action === "enable-auto") enableTitleAutomation();
+    else if (action === "complete") completeNote();
     else if (action === "delete") deleteKeys(sheet.keys, sheet.feature);
     else if (action === "unrate") unrate();
     else if (action === "more-changes") loadChanges(true);
@@ -4397,6 +4388,10 @@
   }
 
   function onSheetInput(event) {
+    if (sheet.mode === "title-edit") {
+      const save = sheet.el.querySelector('[data-trk-form="title-edit"] button[type="submit"]');
+      if (save) save.disabled = sheet.busy || !Object.keys(titleEditChanges()).length;
+    }
     if (sheet.mode === "changes" && event.target.matches("[data-trk-change-q]")) {
       sheet.changeQ = event.target.value;
       clearTimeout(changeSearchTimer);
@@ -4585,6 +4580,17 @@
     });
     root.addEventListener("click", (event) => {
       if (sheet.el?.contains(event.target)) return;
+      const wrappedDismiss = event.target.closest("[data-trk-wrapped-dismiss]");
+      if (wrappedDismiss) {
+        const key = reviewDismissKey(true), year = wrappedDismiss.dataset.trkWrappedDismiss;
+        reviewDismissals.set(key,year);
+        try {localStorage.setItem(key,year);} catch {}
+        renderOverviewSlot();
+        root.querySelector('.trk-tabs [aria-selected="true"]')?.focus({preventScroll:true});
+        return;
+      }
+      const wrappedEntry = event.target.closest("[data-trk-wrapped],[data-trk-wrapped-open]");
+      if (wrappedEntry) {openYearlyReview(wrappedEntry,wrappedEntry.dataset.trkWrapped || ""); return;}
       const monthDismiss = event.target.closest("[data-trk-month-dismiss]");
       if (monthDismiss) {
         const key = reviewDismissKey(), month = monthDismiss.dataset.trkMonthDismiss;
@@ -4844,6 +4850,7 @@
       const input = event.target.dataset?.trkInput;
       if (input === "view") {
         if (event.target.value === "automation") {event.target.value = state.view; openAutomation(); return;}
+        if (event.target.value === "wrapped") {event.target.value = state.view; openYearlyReview(event.target); return;}
         if (event.target.value === "month-review") {event.target.value = state.view; openMonthlyReview(event.target); return;}
         if (!VIEWS.some(view => view.id === event.target.value) || state.view === event.target.value) return;
         state.view = event.target.value;
@@ -4934,8 +4941,9 @@
       try {
         const info = await getJSON(`/api/tracker/overview/revision?${inst()}`);
         if (state.view === "overview" && instance === state.instance && (info.revision !== state.overview?.revision || state.overview?.day !== today())) await refresh();
-        else if (state.view === "overview" && instance === state.instance && (info.review_month || "") !== (state.overview?.review_month || "")) {
+        else if (state.view === "overview" && instance === state.instance && ((info.review_month || "") !== (state.overview?.review_month || "") || JSON.stringify(info.wrapped || {}) !== JSON.stringify(state.overview?.wrapped || {}))) {
           state.overview.review_month = info.review_month || "";
+          state.overview.wrapped = info.wrapped || {};
           rememberOverview();
           renderOverviewSlot();
         }
@@ -4965,6 +4973,7 @@
       state.viewSelectedAt = 0;
       expireView();
       monthlyReviewPage?.close(false);
+      wrappedPage?.close(false);
       rememberView();
     }
     if (query.get("instance")) {
@@ -4979,11 +4988,11 @@
       state.offset = 0;
       state.fromLink = true;
     }
-    const month = query.get("month");
+    const month = query.get("month"), year = query.get("year");
     try {
       window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}#tracker`);
     } catch {}
-    return /^\d{4}-(0[1-9]|1[0-2])$/.test(month || "") ? month : "";
+    return {month:/^\d{4}-(0[1-9]|1[0-2])$/.test(month || "") ? month : "",year:/^\d{4}$/.test(year || "") ? year : ""};
   }
 
   async function mount(root) {
@@ -4995,7 +5004,7 @@
       loadView();
     }
     if (expireView()) monthlyReviewPage?.close(false);
-    const reviewMonth = readLink();
+    const {month:reviewMonth, year:reviewYear} = readLink() || {};
     wire(root);
     try {
       await window.__cwAuthBootstrapPromise;
@@ -5014,7 +5023,8 @@
       state.scrollTop = 0;
     }
     await refresh();
-    if (reviewMonth || state.monthlyReview) openMonthlyReview({},reviewMonth || '',!!reviewMonth);
+    if (reviewYear) openYearlyReview({},reviewYear);
+    else if (reviewMonth || state.monthlyReview) openMonthlyReview({},reviewMonth || '',!!reviewMonth);
   }
 
   window.TrackerPage = { mount, resume: () => { if (profileScope !== currentProfileScope() || expireView()) return mount(state.root); } };

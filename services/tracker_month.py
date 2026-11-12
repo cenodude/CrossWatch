@@ -1,9 +1,8 @@
 # services/tracker_month.py
-# CrossWatch - Persistent monthly watch reviews and idle background generation
+# CrossWatch - Persistent monthly and yearly watch reviews with idle background generation
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import calendar
 import hashlib
 import json
 import logging
@@ -52,6 +51,26 @@ def month_bounds(month: str, tz: Any) -> tuple[datetime, datetime]:
 
 def previous_month(now: datetime) -> str:
     return (now.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+
+
+def period_bounds(period: str, tz: Any) -> tuple[datetime, datetime]:
+    if len(period) != 4:
+        return month_bounds(period, tz)
+    if not period.isascii() or not period.isdecimal() or not 1900 <= int(period) < 9999:
+        raise ValueError("invalid_year")
+    return datetime(int(period), 1, 1, tzinfo=tz), datetime(int(period) + 1, 1, 1, tzinfo=tz)
+
+
+def _option(period: str) -> str:
+    return "wrapped" if len(period) == 4 else "month_review"
+
+
+def _current(period: str, now: datetime) -> str:
+    return now.strftime("%Y" if len(period) == 4 else "%Y-%m")
+
+
+def _recent(period: str, now: datetime) -> bool:
+    return period >= (str(now.year) if len(period) == 4 else previous_month(now))
 
 
 def _scheduled_at(now: datetime) -> datetime:
@@ -116,7 +135,7 @@ def _revision(store: TrackerStore, month: str, tz: Any) -> str:
     if not store.db_path.is_file():
         return ""
     with closing(_readonly(store.db_path)) as conn:
-        start, end = month_bounds(month, tz)
+        start, end = period_bounds(month, tz)
         first = (start.astimezone(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
         last = (end.astimezone(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
         rows = conn.execute("SELECT day,revision FROM history_revisions WHERE day='' OR (day>=? AND day<?) ORDER BY day", (first, last)).fetchall()
@@ -129,12 +148,12 @@ def _checkpoint() -> None:
     root = getattr(_WORK, "root", None)
     if root is not None and _LOAD_CONFIG is not None and time.monotonic() >= getattr(_WORK, "checked", 0):
         _WORK.checked = time.monotonic() + 1
-        if not root_options(_LOAD_CONFIG() or {}, root)["month_review"]:
+        if not root_options(_LOAD_CONFIG() or {}, root)[getattr(_WORK, "option", "month_review")]:
             raise InterruptedError("monthly_review_disabled")
 
 
 def _rows(store: TrackerStore, month: str, tz: Any):
-    start, end = month_bounds(month, tz)
+    start, end = period_bounds(month, tz)
     min_date = (start.astimezone(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
     max_date = (end.astimezone(timezone.utc) + timedelta(days=1)).strftime("%Y-%m-%d")
     if not store.db_path.is_file():
@@ -157,7 +176,7 @@ def _dependencies(store: TrackerStore, month: str, tz: Any, locale: str) -> str:
 
     digest = hashlib.sha256(locale.encode())
     identifiers = set()
-    start, end = month_bounds(month, tz)
+    start, end = period_bounds(month, tz)
     for key, raw, stamp, kind, _, runtime in _rows(store, month, tz):
         try:
             moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
@@ -203,9 +222,12 @@ def _image(meta: Mapping[str, Any], kind: str) -> str:
 
 def build_report(store: TrackerStore, month: str, tz: Any, *, metadata: Callable | None = None, now: datetime | None = None, locale: str = "en-US") -> dict[str, Any]:
     metadata = metadata or (lambda kind, identifier: _metadata(kind, identifier, locale))
-    start, end = month_bounds(month, tz)
+    start, end = period_bounds(month, tz)
     now = (now or datetime.now(timezone.utc)).astimezone(tz)
-    days = [{"day": day, "movies": 0, "episodes": 0, "minutes": 0, "movie_minutes": 0, "show_minutes": 0, "titles": []} for day in range(1, calendar.monthrange(start.year, start.month)[1] + 1)]
+    yearly = len(month) == 4
+    days = [{"day": day + 1, "date": (start + timedelta(days=day)).strftime("%Y-%m-%d"), "movies": 0, "episodes": 0, "minutes": 0, "movie_minutes": 0, "show_minutes": 0, "titles": []} for day in range((end.date() - start.date()).days)]
+    months = [{"month": f"{start.year}-{number:02d}", "plays": 0, "minutes": 0} for number in range(1, 13)]
+    hours, weekdays = [0] * 24, [0] * 7
     titles: dict[str, dict[str, Any]] = {}
     genres: dict[str, set[str]] = {}
     first = last = None
@@ -235,7 +257,7 @@ def build_report(store: TrackerStore, month: str, tz: Any, *, metadata: Callable
                 "key": identity, "type": "movie" if movie else "show", "title": name or meta.get("title") or "Untitled",
                 "year": item.get("year") if movie else item.get("series_year"), "ids": ids,
                 "ref": {"feature": "history", "key": key}, "plays": 0, "minutes": 0, "timed": 0,
-                "poster": _image(meta, "poster"), "backdrop": _image(meta, "backdrop"), "logo": _image(meta, "logo"),
+                "poster": _image(meta, "poster"), "backdrop": _image(meta, "backdrop"), "logo": _image(meta, "logo"), "replays": 0,
                 "genres": labels, "runtime": meta.get("runtime_minutes"), "days": [], "episodes": set(),
             }
             for genre in labels:
@@ -246,7 +268,12 @@ def build_report(store: TrackerStore, month: str, tz: Any, *, metadata: Callable
         except (TypeError, ValueError):
             duration = 0
         duration = duration if 0 < duration < 1440 else 0
-        day = days[moment.day - 1]
+        day_index = (moment.date() - start.date()).days
+        day = days[day_index]
+        months[moment.month - 1]["plays"] += 1
+        months[moment.month - 1]["minutes"] += duration
+        hours[moment.hour] += 1
+        weekdays[moment.weekday()] += 1
         day["movies" if movie else "episodes"] += 1
         day["movie_minutes" if movie else "show_minutes"] += duration
         day["minutes"] += duration
@@ -255,10 +282,13 @@ def build_report(store: TrackerStore, month: str, tz: Any, *, metadata: Callable
         title["plays"] += 1
         title["minutes"] += duration
         title["timed"] += bool(duration)
-        if moment.day not in title["days"]:
-            title["days"].append(moment.day)
+        if day_index + 1 not in title["days"]:
+            title["days"].append(day_index + 1)
         if not movie:
-            title["episodes"].add((item.get("season"), item.get("episode")))
+            episode = (item.get("season"), item.get("episode"))
+            title["replays"] += None not in episode and episode in title["episodes"]
+            if not yearly or None not in episode:
+                title["episodes"].add(episode)
         event = {"title_key": identity, "date": moment.isoformat(), "season": item.get("season"), "episode": item.get("episode")}
         if first is None or moment < datetime.fromisoformat(first["date"]):
             first = event
@@ -268,21 +298,28 @@ def build_report(store: TrackerStore, month: str, tz: Any, *, metadata: Callable
         timed += bool(duration)
     ordered = sorted(titles.values(), key=lambda row: (-row["plays"], -row["minutes"], str(row["title"]).casefold()))
     for row in ordered:
+        if row["type"] == "movie":
+            row["replays"] = max(0, row["plays"] - 1)
         row["episodes"] = len(row["episodes"])
         row.pop("runtime", None)
     streak = longest = 0
+    streak_end = None
     for day in days:
         streak = streak + 1 if day["movies"] + day["episodes"] else 0
-        longest = max(longest, streak)
+        if streak > longest:
+            longest, streak_end = streak, day["date"]
     best = max(days, key=lambda d: d["movies"] + d["episodes"])
     return {
         "month": month, "timezone": str(tz), "current": start <= now < end, "fingerprint": digest.hexdigest(),
         "plays": plays, "timed": timed, "minutes": sum(d["minutes"] for d in days),
         "movies": sum(t["type"] == "movie" for t in ordered), "shows": sum(t["type"] == "show" for t in ordered),
         "active_days": sum(bool(d["movies"] + d["episodes"]) for d in days), "streak": longest,
-        "elapsed_days": min(len(days), now.day) if start <= now < end else len(days),
+        "elapsed_days": (now.date() - start.date()).days + 1 if start <= now < end else len(days),
         "busiest": best["day"] if plays else None, "first": first, "last": last, "days": days, "titles": ordered,
         "genres": [{"name": name, "titles": sorted(keys), "count": len(keys)} for name, keys in sorted(genres.items(), key=lambda p: (-len(p[1]), p[0]))],
+        **({"year": month, "months": months, "hours": hours, "weekdays": weekdays, "streak_end": streak_end,
+            "streak_start": (datetime.fromisoformat(streak_end) - timedelta(days=longest - 1)).date().isoformat() if streak_end else None,
+            "replays": sum(t["replays"] for t in ordered)} if yearly else {}),
     }
 
 
@@ -307,6 +344,7 @@ def _publish(conn: sqlite3.Connection, month: str, tz: Any, state: str, generate
 
 def _generate(store: TrackerStore, month: str, tz: Any, locale: str, key: tuple[str, str, str]) -> None:
     _WORK.root, _WORK.checked = store.root, 0
+    _WORK.option = _option(month)
     conn = None
     try:
         while _busy():
@@ -324,8 +362,8 @@ def _generate(store: TrackerStore, month: str, tz: Any, locale: str, key: tuple[
         if not _needs_validation(saved, report, state, revision, locale, month, now):
             return
         dependencies = _dependencies(store, month, tz, locale)
-        daily = month >= previous_month(now) and (not saved or saved[2] < _scheduled_at(now).timestamp())
-        changed = not report or state.get("dependencies") != dependencies or daily or bool(report.get("current") and month != now.strftime("%Y-%m"))
+        daily = _recent(month, now) and (not saved or saved[2] < _scheduled_at(now).timestamp())
+        changed = not report or state.get("dependencies") != dependencies or daily or bool(report.get("current") and month != _current(month, now))
         if changed:
             report = build_report(store, month, tz, locale=locale)
         _checkpoint()
@@ -371,20 +409,22 @@ def _decode(saved: Any) -> tuple[Any, dict[str, Any]]:
 
 def _needs_validation(saved: Any, report: Any, state: dict[str, Any], revision: str | None, locale: str, month: str, now: datetime) -> bool:
     scheduled = _scheduled_at(now).timestamp()
-    daily = bool(saved and month >= previous_month(now) and saved[2] < scheduled)
-    return not report or state.get("history") != revision or state.get("locale") != locale or daily or state.get("checked", 0) < scheduled or bool(report.get("current") and month != now.strftime("%Y-%m"))
+    daily = bool(saved and _recent(month, now) and saved[2] < scheduled)
+    return not report or state.get("history") != revision or state.get("locale") != locale or daily or state.get("checked", 0) < scheduled or bool(report.get("current") and month != _current(month, now))
 
 
-def get_report(store: TrackerStore, cfg: Mapping[str, Any], month: str = "") -> dict[str, Any]:
+def get_report(store: TrackerStore, cfg: Mapping[str, Any], month: str = "", *, yearly: bool = False) -> dict[str, Any]:
     global _POOL
-    if not root_options(cfg, store.root)["month_review"]:
+    if not root_options(cfg, store.root)["wrapped" if yearly else "month_review"]:
         return {"ok": True, "disabled": True, "report": None, "pending": False, "stale": False, "error": None}
     tz = review_timezone(cfg)
     now = datetime.now(tz)
-    month = month or previous_month(now)
-    if month > now.strftime("%Y-%m"):
+    month = month or (str(now.year - 1) if yearly else previous_month(now))
+    if yearly and len(month) != 4 or not yearly and len(month) != 7:
+        raise ValueError("invalid_period")
+    if month > _current(month, now):
         raise ValueError("future_month")
-    month_bounds(month, tz)
+    period_bounds(month, tz)
     locale = str((cfg.get("metadata") or {}).get("locale") or (cfg.get("ui") or {}).get("locale") or "en-US").strip() or "en-US"
     key = (str(store.root.resolve()), month, str(tz))
     saved, revision, unavailable, recovering = None, None, False, False
@@ -412,7 +452,8 @@ def get_report(store: TrackerStore, cfg: Mapping[str, Any], month: str = "") -> 
         pending = key in _PENDING or recovering
     return {"ok": True, "month": month, "current_month": now.strftime("%Y-%m"), "timezone": str(tz), "report": report,
             "pending": pending, "stale": bool(stale), "error": "review_failed" if failed else "review_busy" if unavailable and not pending else None,
-            "generated": saved[2] if report and saved is not None else None}
+            "generated": saved[2] if report and saved is not None else None,
+            **({"year": month, "current_year": str(now.year)} if yearly else {})}
 
 
 def available_month(store: TrackerStore, cfg: Mapping[str, Any]) -> str:
@@ -423,11 +464,28 @@ def available_month(store: TrackerStore, cfg: Mapping[str, Any]) -> str:
     tz = review_timezone(cfg)
     try:
         with closing(_readonly(store.root / "month-reviews.db")) as conn:
-            row = conn.execute("SELECT month FROM reviews WHERE zone=? AND version=? AND month<? AND json_extract(data,'$.current')=0 AND json_extract(data,'$.plays')>0 ORDER BY month DESC LIMIT 1",
+            row = conn.execute("SELECT month FROM reviews WHERE length(month)=7 AND zone=? AND version=? AND month<? AND json_extract(data,'$.current')=0 AND json_extract(data,'$.plays')>0 ORDER BY month DESC LIMIT 1",
                                (str(tz), _VERSION, datetime.now(tz).strftime("%Y-%m"))).fetchone()
         return row[0] if row else ""
     except (sqlite3.Error, OSError):
         return ""
+
+
+def available_wrapped(store: TrackerStore, cfg: Mapping[str, Any]) -> dict[str, Any]:
+    if not root_options(cfg, store.root)["wrapped"] or not (store.root / "month-reviews.db").is_file():
+        return {}
+    tz = review_timezone(cfg)
+    now = datetime.now(tz)
+    if now.month != 1:
+        return {}
+    year = str(now.year - 1)
+    try:
+        with closing(_readonly(store.root / "month-reviews.db")) as conn:
+            row = conn.execute("SELECT json_extract(data,'$.titles[0].poster'), json_extract(data,'$.titles[1].poster'), json_extract(data,'$.titles[2].poster') FROM reviews WHERE month=? AND zone=? AND version=? AND json_extract(data,'$.current')=0 AND json_extract(data,'$.plays')>0",
+                               (year, str(tz), _VERSION)).fetchone()
+        return {"year": year, "posters": [value for value in row if value]} if row else {}
+    except (sqlite3.Error, OSError):
+        return {}
 
 
 def run_daily(cfg: Mapping[str, Any], config_dir: Path | str) -> bool:
@@ -438,7 +496,8 @@ def run_daily(cfg: Mapping[str, Any], config_dir: Path | str) -> bool:
     seen: set[str] = set()
     complete = True
     for instance, root in tracker_roots(cfg, config_dir):
-        if not instance_options(cfg, instance)["month_review"]:
+        options = instance_options(cfg, instance)
+        if not options["month_review"] and not options["wrapped"]:
             continue
         if _STOP.is_set():
             return False
@@ -450,7 +509,9 @@ def run_daily(cfg: Mapping[str, Any], config_dir: Path | str) -> bool:
         if tracker_migration.migrating(root):
             complete = False
             continue
-        months = {now.strftime("%Y-%m"), previous_month(now)}
+        months = {now.strftime("%Y-%m"), previous_month(now)} if options["month_review"] else set()
+        if options["wrapped"]:
+            months.add(str(now.year - 1))
         try:
             if (store.root / "month-reviews.db").is_file():
                 with closing(_readonly(store.root / "month-reviews.db")) as conn:
@@ -459,10 +520,12 @@ def run_daily(cfg: Mapping[str, Any], config_dir: Path | str) -> bool:
             complete = False
             _LOG.warning("Could not read monthly review cache for %s", identity)
         for month in sorted(months, reverse=True):
+            if not options[_option(month)]:
+                continue
             if _STOP.is_set():
                 return False
             try:
-                result = get_report(store, cfg, month)
+                result = get_report(store, cfg, month, yearly=True) if len(month) == 4 else get_report(store, cfg, month)
                 if result["pending"] or result["stale"] or result["error"]:
                     complete = False
             except Exception:
@@ -475,9 +538,10 @@ def _maintenance_tick(cfg: Mapping[str, Any], config_dir: Path | str, *, now: da
     tz = review_timezone(cfg)
     scheduled = _scheduled_at((now or datetime.now(tz)).astimezone(tz))
     marker = Path(config_dir) / "month-review-maintenance.json"
+    configuration = hashlib.sha256(json.dumps([(instance, str(root.resolve()), instance_options(cfg, instance)) for instance, root in tracker_roots(cfg, config_dir)], sort_keys=True).encode()).hexdigest()
     try:
         saved = json.loads(marker.read_text(encoding="utf-8"))
-        if isinstance(saved, dict) and saved.get("zone") == str(tz) and float(saved.get("scheduled", 0)) >= scheduled.timestamp():
+        if isinstance(saved, dict) and saved.get("zone") == str(tz) and saved.get("configuration") == configuration and float(saved.get("scheduled", 0)) >= scheduled.timestamp():
             return
     except (OSError, ValueError, TypeError):
         pass
@@ -485,7 +549,7 @@ def _maintenance_tick(cfg: Mapping[str, Any], config_dir: Path | str, *, now: da
         return
     marker.parent.mkdir(parents=True, exist_ok=True)
     temporary = marker.with_suffix(".tmp")
-    temporary.write_text(json.dumps({"zone": str(tz), "scheduled": scheduled.timestamp()}), encoding="utf-8")
+    temporary.write_text(json.dumps({"zone": str(tz), "scheduled": scheduled.timestamp(), "configuration": configuration}), encoding="utf-8")
     temporary.replace(marker)
 
 

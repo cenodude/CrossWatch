@@ -16,7 +16,7 @@ const _cwTouchedIds = [
   "floppy_server", "floppy_verify_ssl",
   "scrob_server", "scrob_username", "scrob_verify_ssl", "scrob_totp",
   "cw_tracker_label", "cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots",
-  "cw_tracker_automatic_status", "cw_tracker_month_review",
+  "cw_tracker_automatic_status", "cw_tracker_month_review", "cw_tracker_wrapped",
   "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress", "cw_tracker_restore_collection"
 ];
 
@@ -790,7 +790,7 @@ async function saveSettings() {
       const trackerLabelEl = _cwEl("cw_tracker_label");
       const trackerFieldIds = [
         "cw_tracker_label", "cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots",
-        "cw_tracker_automatic_status", "cw_tracker_month_review",
+        "cw_tracker_automatic_status", "cw_tracker_month_review", "cw_tracker_wrapped",
         "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress", "cw_tracker_restore_collection"
       ];
       const trackerTouched = trackerFieldIds.some((id) => _cwTouched(id));
@@ -818,7 +818,7 @@ async function saveSettings() {
         if (_cwTouched("cw_tracker_label")) set("label", _cwNorm(labelEl?.value).slice(0, 12), _cwNorm(prevBlock?.label).slice(0, 12));
         if (_cwTouched("cw_tracker_retention_days")) set("retention_days", intOr("cw_tracker_retention_days", Number(prevBlock?.retention_days), 30), Number.isFinite(prevBlock?.retention_days) ? Number(prevBlock.retention_days) : 30);
         if (_cwTouched("cw_tracker_auto_snapshot")) set("auto_snapshot", _cwTruthy(_cwEl("cw_tracker_auto_snapshot")?.value), prevBlock?.auto_snapshot !== false);
-        for (const key of ["automatic_status", "month_review"]) {
+        for (const key of ["automatic_status", "month_review", "wrapped"]) {
           if (_cwTouched(`cw_tracker_${key}`)) set(key, !!_cwEl(`cw_tracker_${key}`)?.checked, prevBlock?.[key] !== false);
         }
         if (_cwTouched("cw_tracker_max_snapshots")) set("max_snapshots", intOr("cw_tracker_max_snapshots", Number(prevBlock?.max_snapshots), 14), Number.isFinite(prevBlock?.max_snapshots) ? Number(prevBlock.max_snapshots) : 14);
