@@ -12,6 +12,7 @@ for (const [name, result, expected, success] of [
   ["unchanged datasets", {ok:true, updated:false}, "Anime mapping already up to date", true],
   ["identity update", {ok:true, updated:true, identity_updated:true, mappings_updated:false}, "Anime identity data updated", true],
   ["both datasets", {ok:true, updated:true, identity_updated:true, mappings_updated:true}, "Anime mapping updated", true],
+  ["corrections only", {ok:true, updated:true, cw_mappings_updated:true, identity_updated:false, mappings_updated:false}, "CW Anime DB updated", true],
   ["index repair", {ok:true, updated:false, rebuilt:true}, "Anime mapping index rebuilt", true],
   ["identity failure", {ok:false, updated:false, error:"animeApi update failed (RuntimeError)"}, "animeApi update failed (RuntimeError)", false],
 ]) {
@@ -59,4 +60,30 @@ test("Updated date reflects the local identity update, not the aniBridge publica
   assert.equal(elements.get("anime_mapping_identity_version").textContent, "v3 · Date unavailable");
   context.cwAnimeMappingRenderStatus({});
   assert.equal(elements.get("anime_mapping_identity_version").textContent, "Not installed");
+});
+
+test("CW Anime DB shows its revision, how many apply and where they came from", () => {
+  const elements = new Map();
+  const context = vm.createContext({window:{}, animeMappingBusy:false,
+    document:{getElementById(id) {
+      if (!elements.has(id)) elements.set(id, {classList:{toggle() {}}, setAttribute() {}, removeAttribute() {}});
+      return elements.get(id);
+    }},
+  });
+  const from = source.indexOf("function _cwSetText(id, value)");
+  const to = source.indexOf("async function cwAnimeMappingRefreshStatus()", from);
+  vm.runInContext(source.slice(from, to), context);
+  const base = {installed:true, index_ready:true, cw_revision:"2026-11-08.5", cw_applied:["a", "b", "c"], cw_redundant:["d"]};
+  context.cwAnimeMappingRenderStatus({...base, cw_source:"bundled"});
+  const cell = elements.get("anime_mapping_cw_version");
+  assert.equal(cell.textContent, "2026-11-08.5 · 3 applied");
+  assert.match(cell.title, /Included with this CrossWatch version/);
+  assert.match(cell.title, /1 fixed upstream/);
+  context.cwAnimeMappingRenderStatus({...base, cw_redundant:[], cw_source:"downloaded", cw_download_generated_on:"2026-11-09T10:00:00Z"});
+  assert.match(cell.title, /Downloaded from GitHub \(2026-11-09\)/);
+  assert.doesNotMatch(cell.title, /fixed upstream/);
+  context.cwAnimeMappingRenderStatus({installed:true, index_ready:true});
+  assert.equal(cell.textContent, "Not loaded");
+  context.cwAnimeMappingRenderStatus({});
+  assert.equal(cell.textContent, "Not installed");
 });

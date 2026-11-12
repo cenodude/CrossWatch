@@ -1,0 +1,1346 @@
+{
+  "schema_version": 1,
+  "revision": "2026-11-08.6",
+  "entries": [
+    {
+      "id": "dbz-kai-final-chapters-tmdb-seasons",
+      "title": "Dragon Ball Z Kai: The Final Chapters on TMDB",
+      "reason": "AniBridge maps anidb 10452 (The Final Chapters) to TMDB 61709 season 2. TMDB season 2 is the original Kai run (episodes 27-52); The Final Chapters are TMDB seasons 5 and 6, as anilist 20635 and mal 22777 already map it. anidb 6399 (Dragon Ball Kai) only covered TMDB season 1.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "floppy", "simkl"], "tmdb": {"show": "61709", "seasons": {"1": 26, "2": 26, "3": 25, "4": 20, "5": 35, "6": 26}}},
+      "remove": [
+        {"source": "anidb:10452:R", "target": "tmdb_show:61709:s2"}
+      ],
+      "add": [
+        {"source": "anidb:10452:R", "target": "tmdb_show:61709:s5", "ranges": {"1-35": "1-35"}},
+        {"source": "anidb:10452:R", "target": "tmdb_show:61709:s6", "ranges": {"36-61": "1-26"}},
+        {"source": "anidb:6399:R", "target": "tmdb_show:61709:s2", "ranges": {"27-52": "1-26"}},
+        {"source": "anidb:6399:R", "target": "tmdb_show:61709:s3", "ranges": {"53-77": "1-25"}},
+        {"source": "anidb:6399:R", "target": "tmdb_show:61709:s4", "ranges": {"78-97": "1-20"}}
+      ]
+    },
+    {
+      "id": "hells-paradise-tmdb-season-one",
+      "title": "Hell's Paradise season 2 on TMDB",
+      "reason": "TMDB 117465 keeps both seasons in season 1 (25 episodes); season 2 is TMDB S1E14-25. AniBridge only has a TMDB season 2 link (Anime-Lists copies the TVDB season), so TMDB S1E14-25 was not mapped. Checked live 2026-11-08 by air date on Trakt, Floppy and SIMKL 2200134.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "floppy", "simkl"], "tmdb": {"show": "117465", "seasons": {"1": 25}}},
+      "remove": [
+        {"source": "tmdb_show:117465:s2", "target": "anidb:18090:R"},
+        {"source": "tmdb_show:117465:s2", "target": "anilist:166613"},
+        {"source": "tmdb_show:117465:s2", "target": "mal:55825"},
+        {"source": "tmdb_show:117465:s2", "target": "tvdb_show:402474:s2"}
+      ],
+      "add": [
+        {"source": "anidb:18090:R", "target": "tmdb_show:117465:s1", "ranges": {"1-12": "14-25"}},
+        {"source": "anilist:166613", "target": "tmdb_show:117465:s1", "ranges": {"1-12": "14-25"}},
+        {"source": "mal:55825", "target": "tmdb_show:117465:s1", "ranges": {"1-12": "14-25"}},
+        {"source": "tvdb_show:402474:s2", "target": "tmdb_show:117465:s1", "ranges": {"1-12": "14-25"}}
+      ]
+    },
+    {
+      "id": "dan-da-dan-tmdb-season-two",
+      "title": "Dan Da Dan has no TMDB season 2",
+      "reason": "TMDB 240411 keeps both seasons in season 1 (24 episodes). AniBridge also links season 2 to a TMDB season 2 that does not exist (Anime-Lists copies the TVDB season), which gives every season 2 episode two TMDB coordinates. anidb 19060 had no season 1 link. Checked live 2026-11-08 on Trakt, Floppy and SIMKL 2665178.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "floppy", "simkl"], "tmdb": {"show": "240411", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:240411:s2", "target": "anidb:19060:R"},
+        {"source": "tmdb_show:240411:s2", "target": "anilist:185660"},
+        {"source": "tmdb_show:240411:s2", "target": "mal:60543"},
+        {"source": "tmdb_show:240411:s2", "target": "tvdb_show:432832:s2"}
+      ],
+      "add": [
+        {"source": "anidb:19060:R", "target": "tmdb_show:240411:s1", "ranges": {"1-12": "13-24"}}
+      ]
+    },
+    {
+      "id": "jujutsu-kaisen-tmdb-season-two",
+      "title": "Jujutsu Kaisen has no TMDB season 2",
+      "reason": "TMDB 95479 keeps all seasons in season 1 (59 episodes). AniBridge also links season 2 to a TMDB season 2 that does not exist (Anime-Lists copies the TVDB season). The season 1 links for episodes 25-47 are correct. Checked live 2026-11-08 on Trakt, Floppy and SIMKL 1847578.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "floppy", "simkl"], "tmdb": {"show": "95479", "seasons": {"1": 59}}},
+      "remove": [
+        {"source": "tmdb_show:95479:s2", "target": "anidb:17196:R"},
+        {"source": "tmdb_show:95479:s2", "target": "anilist:145064"},
+        {"source": "tmdb_show:95479:s2", "target": "mal:51009"},
+        {"source": "tmdb_show:95479:s2", "target": "tvdb_show:377543:s2"}
+      ]
+    },
+    {
+      "id": "mashle-tmdb-season-two",
+      "title": "MASHLE has no TMDB season 2",
+      "reason": "TMDB 204832 keeps both seasons in season 1 (24 episodes). AniBridge also links season 2 to a TMDB season 2 that does not exist (Anime-Lists copies the TVDB season). anidb 18088 had no season 1 link. Season 3 is not aired yet and is left unchanged. Checked live 2026-11-08 on Trakt, Floppy and SIMKL 2199482.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "floppy", "simkl"], "tmdb": {"show": "204832", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:204832:s2", "target": "anidb:18088:R"},
+        {"source": "tmdb_show:204832:s2", "target": "anilist:166610"},
+        {"source": "tmdb_show:204832:s2", "target": "mal:55813"},
+        {"source": "tmdb_show:204832:s2", "target": "tvdb_show:421737:s2"}
+      ],
+      "add": [
+        {"source": "anidb:18088:R", "target": "tmdb_show:204832:s1", "ranges": {"1-12": "13-24"}}
+      ]
+    },
+    {
+      "id": "spy-classroom-tmdb-season-two",
+      "title": "Spy Classroom has no TMDB season 2",
+      "reason": "TMDB 194986 keeps both seasons in season 1 (24 episodes). AniBridge also links season 2 to a TMDB season 2 that does not exist (Anime-Lists copies the TVDB season). The season 1 links for episodes 13-24 are correct. Checked live 2026-11-08 on Trakt, Floppy and SIMKL 2136698.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "floppy", "simkl"], "tmdb": {"show": "194986", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:194986:s2", "target": "anidb:17979:R"},
+        {"source": "tmdb_show:194986:s2", "target": "anilist:163542"},
+        {"source": "tmdb_show:194986:s2", "target": "mal:54947"},
+        {"source": "tmdb_show:194986:s2", "target": "tvdb_show:415821:s2"}
+      ]
+    },
+    {
+      "id": "dbz-tmdb-seasons-two-to-nine",
+      "title": "Dragon Ball Z seasons 2-9 on TMDB",
+      "reason": "AniBridge only links TMDB 12971 season 1 (episodes 1-39); seasons 2-9 had no TMDB link, so those episodes could not be mapped to TMDB providers. TMDB uses the same season split as TVDB (39/35/33/32/26/29/25/34/38). Every added episode is checked against Trakt number_abs; SIMKL 41487 confirms episode 40 = S2E1 and 291 = S9E38.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "12971", "seasons": {"1": 39, "2": 35, "3": 33, "4": 32, "5": 26, "6": 29, "7": 25, "8": 34, "9": 38}}},
+      "add": [
+        {"source": "mal:813", "target": "tmdb_show:12971:s2", "ranges": {"40-74": "1-35"}},
+        {"source": "mal:813", "target": "tmdb_show:12971:s3", "ranges": {"75-107": "1-33"}},
+        {"source": "mal:813", "target": "tmdb_show:12971:s4", "ranges": {"108-139": "1-32"}},
+        {"source": "mal:813", "target": "tmdb_show:12971:s5", "ranges": {"140-165": "1-26"}},
+        {"source": "mal:813", "target": "tmdb_show:12971:s6", "ranges": {"166-194": "1-29"}},
+        {"source": "mal:813", "target": "tmdb_show:12971:s7", "ranges": {"195-219": "1-25"}},
+        {"source": "mal:813", "target": "tmdb_show:12971:s8", "ranges": {"220-253": "1-34"}},
+        {"source": "mal:813", "target": "tmdb_show:12971:s9", "ranges": {"254-291": "1-38"}},
+        {"source": "anilist:813", "target": "tmdb_show:12971:s2", "ranges": {"40-74": "1-35"}},
+        {"source": "anilist:813", "target": "tmdb_show:12971:s3", "ranges": {"75-107": "1-33"}},
+        {"source": "anilist:813", "target": "tmdb_show:12971:s4", "ranges": {"108-139": "1-32"}},
+        {"source": "anilist:813", "target": "tmdb_show:12971:s5", "ranges": {"140-165": "1-26"}},
+        {"source": "anilist:813", "target": "tmdb_show:12971:s6", "ranges": {"166-194": "1-29"}},
+        {"source": "anilist:813", "target": "tmdb_show:12971:s7", "ranges": {"195-219": "1-25"}},
+        {"source": "anilist:813", "target": "tmdb_show:12971:s8", "ranges": {"220-253": "1-34"}},
+        {"source": "anilist:813", "target": "tmdb_show:12971:s9", "ranges": {"254-291": "1-38"}},
+        {"source": "anidb:1530:R", "target": "tmdb_show:12971:s2", "ranges": {"40-74": "1-35"}},
+        {"source": "anidb:1530:R", "target": "tmdb_show:12971:s3", "ranges": {"75-107": "1-33"}},
+        {"source": "anidb:1530:R", "target": "tmdb_show:12971:s4", "ranges": {"108-139": "1-32"}},
+        {"source": "anidb:1530:R", "target": "tmdb_show:12971:s5", "ranges": {"140-165": "1-26"}},
+        {"source": "anidb:1530:R", "target": "tmdb_show:12971:s6", "ranges": {"166-194": "1-29"}},
+        {"source": "anidb:1530:R", "target": "tmdb_show:12971:s7", "ranges": {"195-219": "1-25"}},
+        {"source": "anidb:1530:R", "target": "tmdb_show:12971:s8", "ranges": {"220-253": "1-34"}},
+        {"source": "anidb:1530:R", "target": "tmdb_show:12971:s9", "ranges": {"254-291": "1-38"}}
+      ]
+    },
+    {
+      "id": "one-piece-tmdb-absolute-episodes",
+      "title": "One Piece TMDB episodes use absolute numbers",
+      "reason": "TMDB 37854 numbers One Piece episodes absolutely inside each arc season (S2 = 62-77, S21 = 892-1088), as Trakt and Floppy show. AniBridge links anidb 69 and TVDB to TMDB seasons with numbers starting at 1, which contradicts mal 21 and anilist 21. Each link is shifted to the real TMDB numbers and kept only when anidb (absolute) or the SIMKL TVDB coordinates confirm it; links that cannot be confirmed are removed.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "floppy", "simkl"], "tmdb": {"show": "37854", "seasons": {"1": 61, "2": 16, "3": 14, "4": 39, "5": 13, "6": 52, "7": 33, "8": 35, "9": 73, "10": 45, "11": 26, "12": 14, "13": 101, "14": 58, "15": 62, "16": 50, "17": 56, "18": 55, "19": 74, "20": 14, "21": 197, "22": 67}}},
+      "remove": [
+        {"source": "tmdb_show:37854:s22", "target": "tvdb_show:81797:s1"}
+      ],
+      "add": [
+        {"source": "tmdb_show:37854:s10", "target": "anidb:69:R", "ranges": {"337-381": "337-381"}},
+        {"source": "tmdb_show:37854:s10", "target": "tvdb_show:81797:s12", "ranges": {"337-381": "12-56"}},
+        {"source": "tmdb_show:37854:s11", "target": "anidb:69:R", "ranges": {"382-407": "382-407"}},
+        {"source": "tmdb_show:37854:s11", "target": "tvdb_show:81797:s13", "ranges": {"382-407": "1-26"}},
+        {"source": "tmdb_show:37854:s12", "target": "anidb:69:R", "ranges": {"408-421": "408-421"}},
+        {"source": "tmdb_show:37854:s12", "target": "tvdb_show:81797:s13", "ranges": {"408-421": "27-40"}},
+        {"source": "tmdb_show:37854:s13", "target": "anidb:69:R", "ranges": {"422-522": "422-522"}},
+        {"source": "tmdb_show:37854:s13", "target": "tvdb_show:81797:s13", "ranges": {"422-481": "41-100"}},
+        {"source": "tmdb_show:37854:s13", "target": "tvdb_show:81797:s14", "ranges": {"482-516": "1-35"}},
+        {"source": "tmdb_show:37854:s13", "target": "tvdb_show:81797:s15", "ranges": {"517-522": "1-6"}},
+        {"source": "tmdb_show:37854:s14", "target": "anidb:69:R", "ranges": {"523-580": "523-580"}},
+        {"source": "tmdb_show:37854:s14", "target": "tvdb_show:81797:s15", "ranges": {"523-578": "7-62"}},
+        {"source": "tmdb_show:37854:s14", "target": "tvdb_show:81797:s16", "ranges": {"579-580": "1-2"}},
+        {"source": "tmdb_show:37854:s15", "target": "anidb:69:R", "ranges": {"581-642": "581-642"}},
+        {"source": "tmdb_show:37854:s15", "target": "tvdb_show:81797:s16", "ranges": {"581-627": "3-49"}},
+        {"source": "tmdb_show:37854:s15", "target": "tvdb_show:81797:s17", "ranges": {"629-642": "1-14"}},
+        {"source": "tmdb_show:37854:s16", "target": "anidb:69:R", "ranges": {"643-692": "643-692"}},
+        {"source": "tmdb_show:37854:s16", "target": "tvdb_show:81797:s17", "ranges": {"643-692": "15-64"}},
+        {"source": "tmdb_show:37854:s17", "target": "anidb:69:R", "ranges": {"693-748": "693-748"}},
+        {"source": "tmdb_show:37854:s17", "target": "tvdb_show:81797:s17", "ranges": {"693-746": "65-118"}},
+        {"source": "tmdb_show:37854:s17", "target": "tvdb_show:81797:s18", "ranges": {"747-748": "1-2"}},
+        {"source": "tmdb_show:37854:s18", "target": "anidb:69:R", "ranges": {"749-803": "749-803"}},
+        {"source": "tmdb_show:37854:s18", "target": "tvdb_show:81797:s18", "ranges": {"749-779": "3-33"}},
+        {"source": "tmdb_show:37854:s18", "target": "tvdb_show:81797:s19", "ranges": {"780-803": "1-24"}},
+        {"source": "tmdb_show:37854:s19", "target": "anidb:69:R", "ranges": {"804-877": "804-877"}},
+        {"source": "tmdb_show:37854:s19", "target": "tvdb_show:81797:s19", "ranges": {"804-877": "25-98"}},
+        {"source": "tmdb_show:37854:s2", "target": "anidb:69:R", "ranges": {"62-77": "62-77"}},
+        {"source": "tmdb_show:37854:s2", "target": "tvdb_show:81797:s5", "ranges": {"62-69": "2-9"}},
+        {"source": "tmdb_show:37854:s2", "target": "tvdb_show:81797:s6", "ranges": {"70-77": "1-8"}},
+        {"source": "tmdb_show:37854:s20", "target": "anidb:69:R", "ranges": {"878-891": "878-891"}},
+        {"source": "tmdb_show:37854:s20", "target": "tvdb_show:81797:s20", "ranges": {"878-891": "1-14"}},
+        {"source": "tmdb_show:37854:s21", "target": "anidb:69:R", "ranges": {"892-1088": "892-1088"}},
+        {"source": "tmdb_show:37854:s21", "target": "tvdb_show:81797:s21", "ranges": {"892-1085": "1-194"}},
+        {"source": "tmdb_show:37854:s21", "target": "tvdb_show:81797:s22", "ranges": {"1086-1088": "1-3"}},
+        {"source": "tmdb_show:37854:s22", "target": "anidb:69:R", "ranges": {"1089-1155": "1089-1155"}},
+        {"source": "tmdb_show:37854:s22", "target": "tvdb_show:81797:s22", "ranges": {"1089-1155": "4-70"}},
+        {"source": "tmdb_show:37854:s3", "target": "anidb:69:R", "ranges": {"78-91": "78-91"}},
+        {"source": "tmdb_show:37854:s3", "target": "tvdb_show:81797:s6", "ranges": {"78-91": "9-22"}},
+        {"source": "tmdb_show:37854:s4", "target": "anidb:69:R", "ranges": {"92-130": "92-130"}},
+        {"source": "tmdb_show:37854:s4", "target": "tvdb_show:81797:s7", "ranges": {"92-130": "1-39"}},
+        {"source": "tmdb_show:37854:s5", "target": "anidb:69:R", "ranges": {"131-143": "131-143"}},
+        {"source": "tmdb_show:37854:s5", "target": "tvdb_show:81797:s8", "ranges": {"131-143": "1-13"}},
+        {"source": "tmdb_show:37854:s6", "target": "anidb:69:R", "ranges": {"144-195": "144-195"}},
+        {"source": "tmdb_show:37854:s6", "target": "tvdb_show:81797:s9", "ranges": {"144-195": "1-52"}},
+        {"source": "tmdb_show:37854:s7", "target": "anidb:69:R", "ranges": {"196-228": "196-228"}},
+        {"source": "tmdb_show:37854:s7", "target": "tvdb_show:81797:s10", "ranges": {"196-226": "1-31"}},
+        {"source": "tmdb_show:37854:s7", "target": "tvdb_show:81797:s11", "ranges": {"227-228": "1-2"}},
+        {"source": "tmdb_show:37854:s8", "target": "anidb:69:R", "ranges": {"229-263": "229-263"}},
+        {"source": "tmdb_show:37854:s8", "target": "tvdb_show:81797:s11", "ranges": {"229-263": "3-37"}},
+        {"source": "tmdb_show:37854:s9", "target": "anidb:69:R", "ranges": {"264-336": "264-336"}},
+        {"source": "tmdb_show:37854:s9", "target": "tvdb_show:81797:s11", "ranges": {"264-325": "38-99"}},
+        {"source": "tmdb_show:37854:s9", "target": "tvdb_show:81797:s12", "ranges": {"326-336": "1-11"}}
+      ]
+    },
+    {
+      "id": "swallowed-star-tmdb-101172",
+      "title": "Swallowed Star TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "101172", "seasons": {"1": 260}}},
+      "remove": [
+        {"source": "tmdb_show:101172:s2", "target": "anidb:17093:R"},
+        {"source": "tmdb_show:101172:s2", "target": "anilist:134283"},
+        {"source": "tmdb_show:101172:s2", "target": "mal:49571"},
+        {"source": "tmdb_show:101172:s2", "target": "tvdb_show:392226:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-26": "27-52"}, "source": "anidb:17093:R", "target": "tmdb_show:101172:s1"},
+        {"ranges": {"1-26": "27-52"}, "source": "anilist:134283", "target": "tmdb_show:101172:s1"},
+        {"ranges": {"1-26": "27-52"}, "source": "mal:49571", "target": "tmdb_show:101172:s1"}
+      ]
+    },
+    {
+      "id": "edens-zero-tmdb-104711",
+      "title": "EDENS ZERO TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "104711", "seasons": {"1": 50}}},
+      "remove": [
+        {"source": "tmdb_show:104711:s2", "target": "anidb:17183:R"},
+        {"source": "tmdb_show:104711:s2", "target": "anilist:144932"},
+        {"source": "tmdb_show:104711:s2", "target": "mal:50002"},
+        {"source": "tmdb_show:104711:s2", "target": "tvdb_show:388645:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-25": "26-50"}, "source": "anidb:17183:R", "target": "tmdb_show:104711:s1"}
+      ]
+    },
+    {
+      "id": "muv-luv-alternative-tmdb-112010",
+      "title": "Muv-Luv Alternative TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "112010", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:112010:s2", "target": "anidb:17073:R"},
+        {"source": "tmdb_show:112010:s2", "target": "anilist:142985"},
+        {"source": "tmdb_show:112010:s2", "target": "mal:50638"},
+        {"source": "tmdb_show:112010:s2", "target": "tvdb_show:402231:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:17073:R", "target": "tmdb_show:112010:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "anilist:142985", "target": "tmdb_show:112010:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "mal:50638", "target": "tmdb_show:112010:s1"}
+      ]
+    },
+    {
+      "id": "the-duke-of-death-and-his-maid-tmdb-117992",
+      "title": "The Duke of Death and His Maid TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (18/18 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "117992", "seasons": {"1": 36}}},
+      "remove": [
+        {"source": "tmdb_show:117992:s2", "target": "anidb:16755:R"},
+        {"source": "tmdb_show:117992:s2", "target": "anilist:139435"},
+        {"source": "tmdb_show:117992:s2", "target": "mal:49858"},
+        {"source": "tmdb_show:117992:s2", "target": "tvdb_show:398555:s2"},
+        {"source": "tmdb_show:117992:s3", "target": "anidb:18213:R"},
+        {"source": "tmdb_show:117992:s3", "target": "anilist:169584"},
+        {"source": "tmdb_show:117992:s3", "target": "mal:56738"},
+        {"source": "tmdb_show:117992:s3", "target": "tvdb_show:398555:s3"}
+      ]
+    },
+    {
+      "id": "tokyo-mew-mew-new-tmdb-118017",
+      "title": "Tokyo Mew Mew New TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "118017", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:118017:s2", "target": "anidb:17633:R"},
+        {"source": "tmdb_show:118017:s2", "target": "anilist:154876"},
+        {"source": "tmdb_show:118017:s2", "target": "mal:53097"},
+        {"source": "tmdb_show:118017:s2", "target": "tvdb_show:397280:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:17633:R", "target": "tmdb_show:118017:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "anilist:154876", "target": "tmdb_show:118017:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "mal:53097", "target": "tmdb_show:118017:s1"}
+      ]
+    },
+    {
+      "id": "my-dress-up-darling-tmdb-123249",
+      "title": "My Dress-Up Darling TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "123249", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:123249:s2", "target": "anidb:17630:R"},
+        {"source": "tmdb_show:123249:s2", "target": "anilist:154768"},
+        {"source": "tmdb_show:123249:s2", "target": "mal:53065"},
+        {"source": "tmdb_show:123249:s2", "target": "tvdb_show:401233:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:17630:R", "target": "tmdb_show:123249:s1"}
+      ]
+    },
+    {
+      "id": "solo-leveling-tmdb-127532",
+      "title": "Solo Leveling TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "127532", "seasons": {"1": 25}}},
+      "remove": [
+        {"source": "tmdb_show:127532:s2", "target": "anidb:18576:R"},
+        {"source": "tmdb_show:127532:s2", "target": "anilist:176496"},
+        {"source": "tmdb_show:127532:s2", "target": "mal:58567"},
+        {"source": "tmdb_show:127532:s2", "target": "tvdb_show:389597:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-13": "13-25"}, "source": "anidb:18576:R", "target": "tmdb_show:127532:s1"}
+      ]
+    },
+    {
+      "id": "megaton-musashi-tmdb-129553",
+      "title": "MEGATON MUSASHI TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "129553", "seasons": {"1": 28}}},
+      "remove": [
+        {"source": "tmdb_show:129553:s2", "target": "anidb:17027:R"},
+        {"source": "tmdb_show:129553:s2", "target": "anilist:142541"},
+        {"source": "tmdb_show:129553:s2", "target": "mal:50559"},
+        {"source": "tmdb_show:129553:s2", "target": "tvdb_show:402182:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-15": "14-28"}, "source": "anidb:17027:R", "target": "tmdb_show:129553:s1"},
+        {"ranges": {"1-15": "14-28"}, "source": "anilist:142541", "target": "tmdb_show:129553:s1"},
+        {"ranges": {"1-15": "14-28"}, "source": "mal:50559", "target": "tmdb_show:129553:s1"}
+      ]
+    },
+    {
+      "id": "blue-lock-tmdb-131041",
+      "title": "BLUE LOCK TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "131041", "seasons": {"1": 38}}},
+      "remove": [
+        {"source": "tmdb_show:131041:s2", "target": "anidb:17954:R"},
+        {"source": "tmdb_show:131041:s2", "target": "anilist:163146"},
+        {"source": "tmdb_show:131041:s2", "target": "mal:54865"},
+        {"source": "tmdb_show:131041:s2", "target": "tvdb_show:408629:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-14": "25-38"}, "source": "anidb:17954:R", "target": "tmdb_show:131041:s1"}
+      ]
+    },
+    {
+      "id": "birdie-wing-golf-girls-story-tmdb-137390",
+      "title": "BIRDIE WING -Golf Girls' Story- TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "137390", "seasons": {"1": 25}}},
+      "remove": [
+        {"source": "tmdb_show:137390:s2", "target": "anidb:17481:R"},
+        {"source": "tmdb_show:137390:s2", "target": "anilist:151606"},
+        {"source": "tmdb_show:137390:s2", "target": "mal:52229"},
+        {"source": "tmdb_show:137390:s2", "target": "tvdb_show:411914:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "14-25"}, "source": "anidb:17481:R", "target": "tmdb_show:137390:s1"}
+      ]
+    },
+    {
+      "id": "malevolent-spirits-mononogatari-tmdb-138948",
+      "title": "Malevolent Spirits: Mononogatari TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "138948", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:138948:s2", "target": "anidb:17958:R"},
+        {"source": "tmdb_show:138948:s2", "target": "anilist:163205"},
+        {"source": "tmdb_show:138948:s2", "target": "mal:54883"},
+        {"source": "tmdb_show:138948:s2", "target": "tvdb_show:412626:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:17958:R", "target": "tmdb_show:138948:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "anilist:163205", "target": "tmdb_show:138948:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "mal:54883", "target": "tmdb_show:138948:s1"}
+      ]
+    },
+    {
+      "id": "the-fire-hunter-tmdb-156688",
+      "title": "The Fire Hunter TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "156688", "seasons": {"1": 20}}},
+      "remove": [
+        {"source": "tmdb_show:156688:s2", "target": "anidb:17916:R"},
+        {"source": "tmdb_show:156688:s2", "target": "anilist:162842"},
+        {"source": "tmdb_show:156688:s2", "target": "mal:54754"},
+        {"source": "tmdb_show:156688:s2", "target": "tvdb_show:402607:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-10": "11-20"}, "source": "anidb:17916:R", "target": "tmdb_show:156688:s1"},
+        {"ranges": {"1-10": "11-20"}, "source": "anilist:162842", "target": "tmdb_show:156688:s1"},
+        {"ranges": {"1-10": "11-20"}, "source": "mal:54754", "target": "tmdb_show:156688:s1"}
+      ]
+    },
+    {
+      "id": "nights-with-a-cat-tmdb-199928",
+      "title": "Nights with a Cat TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (18/18 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "199928", "seasons": {"1": 100}}},
+      "remove": [
+        {"source": "tmdb_show:199928:s2", "target": "anidb:17814:R"},
+        {"source": "tmdb_show:199928:s2", "target": "anilist:160088"},
+        {"source": "tmdb_show:199928:s2", "target": "mal:54198"},
+        {"source": "tmdb_show:199928:s2", "target": "tvdb_show:419448:s2"},
+        {"source": "tmdb_show:199928:s3", "target": "anidb:18504:R"},
+        {"source": "tmdb_show:199928:s3", "target": "anilist:175137"},
+        {"source": "tmdb_show:199928:s3", "target": "mal:58199"},
+        {"source": "tmdb_show:199928:s3", "target": "tvdb_show:419448:s3"}
+      ]
+    },
+    {
+      "id": "the-dangers-in-my-heart-tmdb-207250",
+      "title": "The Dangers in My Heart TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "207250", "seasons": {"1": 25}}},
+      "remove": [
+        {"source": "tmdb_show:207250:s2", "target": "anidb:18066:R"},
+        {"source": "tmdb_show:207250:s2", "target": "anilist:166216"},
+        {"source": "tmdb_show:207250:s2", "target": "mal:55690"},
+        {"source": "tmdb_show:207250:s2", "target": "tvdb_show:422981:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-13": "13-25"}, "source": "anidb:18066:R", "target": "tmdb_show:207250:s1"}
+      ]
+    },
+    {
+      "id": "rurouni-kenshin-tmdb-210879",
+      "title": "Rurouni Kenshin TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "210879", "seasons": {"1": 47}}},
+      "remove": [
+        {"source": "tmdb_show:210879:s2", "target": "anidb:18323:R"},
+        {"source": "tmdb_show:210879:s2", "target": "anilist:171637"},
+        {"source": "tmdb_show:210879:s2", "target": "mal:57554"},
+        {"source": "tmdb_show:210879:s2", "target": "tvdb_show:413578:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-23": "25-47"}, "source": "anidb:18323:R", "target": "tmdb_show:210879:s1"}
+      ]
+    },
+    {
+      "id": "shy-tmdb-211709",
+      "title": "SHY TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "211709", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:211709:s2", "target": "anidb:18329:R"},
+        {"source": "tmdb_show:211709:s2", "target": "anilist:171748"},
+        {"source": "tmdb_show:211709:s2", "target": "mal:57567"},
+        {"source": "tmdb_show:211709:s2", "target": "tvdb_show:425474:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:18329:R", "target": "tmdb_show:211709:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "anilist:171748", "target": "tmdb_show:211709:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "mal:57567", "target": "tmdb_show:211709:s1"}
+      ]
+    },
+    {
+      "id": "bye-bye-earth-tmdb-214587",
+      "title": "Bye Bye, Earth TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "214587", "seasons": {"1": 20}}},
+      "remove": [
+        {"source": "tmdb_show:214587:s2", "target": "anidb:18862:R"},
+        {"source": "tmdb_show:214587:s2", "target": "anilist:181078"},
+        {"source": "tmdb_show:214587:s2", "target": "mal:59819"},
+        {"source": "tmdb_show:214587:s2", "target": "tvdb_show:427299:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-10": "11-20"}, "source": "anidb:18862:R", "target": "tmdb_show:214587:s1"},
+        {"ranges": {"1-10": "11-20"}, "source": "anilist:181078", "target": "tmdb_show:214587:s1"},
+        {"ranges": {"1-10": "11-20"}, "source": "mal:59819", "target": "tmdb_show:214587:s1"}
+      ]
+    },
+    {
+      "id": "go-go-loser-ranger-tmdb-215799",
+      "title": "Go! Go! Loser Ranger! TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "215799", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:215799:s2", "target": "anidb:18725:R"},
+        {"source": "tmdb_show:215799:s2", "target": "anilist:178781"},
+        {"source": "tmdb_show:215799:s2", "target": "mal:59189"},
+        {"source": "tmdb_show:215799:s2", "target": "tvdb_show:428030:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:18725:R", "target": "tmdb_show:215799:s1"}
+      ]
+    },
+    {
+      "id": "unnamed-memory-tmdb-216272",
+      "title": "Unnamed Memory TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "216272", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:216272:s2", "target": "anidb:18713:R"},
+        {"source": "tmdb_show:216272:s2", "target": "anilist:178550"},
+        {"source": "tmdb_show:216272:s2", "target": "mal:59142"},
+        {"source": "tmdb_show:216272:s2", "target": "tvdb_show:428352:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:18713:R", "target": "tmdb_show:216272:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "anilist:178550", "target": "tmdb_show:216272:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "mal:59142", "target": "tmdb_show:216272:s1"}
+      ]
+    },
+    {
+      "id": "ron-kamonohashi-s-forbidden-deductions-tmdb-216523",
+      "title": "Ron Kamonohashi's Forbidden Deductions TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "216523", "seasons": {"1": 26}}},
+      "remove": [
+        {"source": "tmdb_show:216523:s2", "target": "anidb:18350:R"},
+        {"source": "tmdb_show:216523:s2", "target": "anilist:172355"},
+        {"source": "tmdb_show:216523:s2", "target": "mal:57635"},
+        {"source": "tmdb_show:216523:s2", "target": "tvdb_show:427919:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-13": "14-26"}, "source": "anidb:18350:R", "target": "tmdb_show:216523:s1"},
+        {"ranges": {"1-13": "14-26"}, "source": "anilist:172355", "target": "tmdb_show:216523:s1"},
+        {"ranges": {"1-13": "14-26"}, "source": "mal:57635", "target": "tmdb_show:216523:s1"}
+      ]
+    },
+    {
+      "id": "tales-of-wedding-rings-tmdb-218493",
+      "title": "Tales of Wedding Rings TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "218493", "seasons": {"1": 25}}},
+      "remove": [
+        {"source": "tmdb_show:218493:s2", "target": "anidb:18559:R"},
+        {"source": "tmdb_show:218493:s2", "target": "anilist:176298"},
+        {"source": "tmdb_show:218493:s2", "target": "mal:58515"},
+        {"source": "tmdb_show:218493:s2", "target": "tvdb_show:429825:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-13": "13-25"}, "source": "anidb:18559:R", "target": "tmdb_show:218493:s1"},
+        {"ranges": {"1-13": "13-25"}, "source": "anilist:176298", "target": "tmdb_show:218493:s1"},
+        {"ranges": {"1-13": "13-25"}, "source": "mal:58515", "target": "tmdb_show:218493:s1"}
+      ]
+    },
+    {
+      "id": "the-seven-deadly-sins-four-knights-of-the-apocal-tmdb-218843",
+      "title": "The Seven Deadly Sins: Four Knights of the Apocalypse TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "218843", "seasons": {"1": 36}}},
+      "remove": [
+        {"source": "tmdb_show:218843:s2", "target": "anidb:18558:R"},
+        {"source": "tmdb_show:218843:s2", "target": "anilist:176292"},
+        {"source": "tmdb_show:218843:s2", "target": "mal:58511"},
+        {"source": "tmdb_show:218843:s2", "target": "tvdb_show:420018:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "25-36"}, "source": "anidb:18558:R", "target": "tmdb_show:218843:s1"},
+        {"ranges": {"1-12": "25-36"}, "source": "anilist:176292", "target": "tmdb_show:218843:s1"},
+        {"ranges": {"1-12": "25-36"}, "source": "mal:58511", "target": "tmdb_show:218843:s1"}
+      ]
+    },
+    {
+      "id": "kamierabi-god-app-tmdb-222798",
+      "title": "KamiErabi GOD.app TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "222798", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:222798:s2", "target": "anidb:18334:R"},
+        {"source": "tmdb_show:222798:s2", "target": "anilist:172199"},
+        {"source": "tmdb_show:222798:s2", "target": "mal:56967"},
+        {"source": "tmdb_show:222798:s2", "target": "tvdb_show:432749:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:18334:R", "target": "tmdb_show:222798:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "anilist:172199", "target": "tmdb_show:222798:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "mal:56967", "target": "tmdb_show:222798:s1"}
+      ]
+    },
+    {
+      "id": "tis-time-for-torture-princess-tmdb-229443",
+      "title": "Tis Time for \"Torture,\" Princess TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "229443", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:229443:s2", "target": "anidb:18566:R"},
+        {"source": "tmdb_show:229443:s2", "target": "anilist:176370"},
+        {"source": "tmdb_show:229443:s2", "target": "mal:58524"},
+        {"source": "tmdb_show:229443:s2", "target": "tvdb_show:436603:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:18566:R", "target": "tmdb_show:229443:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "anilist:176370", "target": "tmdb_show:229443:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "mal:58524", "target": "tmdb_show:229443:s1"}
+      ]
+    },
+    {
+      "id": "after-school-hanako-kun-tmdb-233408",
+      "title": "After-school Hanako-kun TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "233408", "seasons": {"1": 8}}},
+      "remove": [
+        {"source": "tmdb_show:233408:s2", "target": "anidb:18272:R"},
+        {"source": "tmdb_show:233408:s2", "target": "anilist:170893"},
+        {"source": "tmdb_show:233408:s2", "target": "mal:57102"},
+        {"source": "tmdb_show:233408:s2", "target": "tvdb_show:368364:s0"}
+      ],
+      "add": [
+        {"ranges": {"1-4": "5-8"}, "source": "anidb:18272:R", "target": "tmdb_show:233408:s1"}
+      ]
+    },
+    {
+      "id": "kinnikuman-perfect-origin-arc-tmdb-236000",
+      "title": "Kinnikuman Perfect Origin Arc TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "236000", "seasons": {"1": 22}}},
+      "remove": [
+        {"source": "tmdb_show:236000:s2", "target": "anidb:18875:R"},
+        {"source": "tmdb_show:236000:s2", "target": "anilist:181886"},
+        {"source": "tmdb_show:236000:s2", "target": "mal:59914"},
+        {"source": "tmdb_show:236000:s2", "target": "tvdb_show:432505:s2"}
+      ]
+    },
+    {
+      "id": "puniru-is-a-kawaii-slime-tmdb-241811",
+      "title": "Puniru Is a Kawaii Slime TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "241811", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:241811:s2", "target": "anidb:19072:R"},
+        {"source": "tmdb_show:241811:s2", "target": "anilist:185755"},
+        {"source": "tmdb_show:241811:s2", "target": "mal:60603"},
+        {"source": "tmdb_show:241811:s2", "target": "tvdb_show:443345:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:19072:R", "target": "tmdb_show:241811:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "anilist:185755", "target": "tmdb_show:241811:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "mal:60603", "target": "tmdb_show:241811:s1"}
+      ]
+    },
+    {
+      "id": "tonbo-tmdb-243140",
+      "title": "Tonbo! TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "243140", "seasons": {"1": 26}}},
+      "remove": [
+        {"source": "tmdb_show:243140:s2", "target": "anidb:18721:R"},
+        {"source": "tmdb_show:243140:s2", "target": "anilist:178729"},
+        {"source": "tmdb_show:243140:s2", "target": "mal:59175"},
+        {"source": "tmdb_show:243140:s2", "target": "tvdb_show:434358:s1"},
+        {"source": "tmdb_show:243140:s2", "target": "tvdb_show:434358:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-13": "14-26"}, "source": "anidb:18721:R", "target": "tmdb_show:243140:s1"}
+      ]
+    },
+    {
+      "id": "shoshimin-how-to-become-ordinary-tmdb-243501",
+      "title": "SHOSHIMIN: How to Become Ordinary TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "243501", "seasons": {"1": 22}}},
+      "remove": [
+        {"source": "tmdb_show:243501:s2", "target": "anidb:18864:R"},
+        {"source": "tmdb_show:243501:s2", "target": "anilist:181182"},
+        {"source": "tmdb_show:243501:s2", "target": "mal:59828"},
+        {"source": "tmdb_show:243501:s2", "target": "tvdb_show:444609:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "11-22"}, "source": "anidb:18864:R", "target": "tmdb_show:243501:s1"},
+        {"ranges": {"1-12": "11-22"}, "source": "anilist:181182", "target": "tmdb_show:243501:s1"},
+        {"ranges": {"1-12": "11-22"}, "source": "mal:59828", "target": "tmdb_show:243501:s1"}
+      ]
+    },
+    {
+      "id": "when-they-cry-higurashi-tmdb-25760",
+      "title": "When They Cry - Higurashi TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "25760", "seasons": {"1": 26, "2": 24}}},
+      "remove": [
+        {"source": "tmdb_show:25760:s3", "target": "anidb:5634:R"},
+        {"source": "tmdb_show:25760:s3", "target": "anilist:3652"},
+        {"source": "tmdb_show:25760:s3", "target": "mal:3652"},
+        {"source": "tmdb_show:25760:s3", "target": "tvdb_show:79682:s3"}
+      ],
+      "add": [
+        {"ranges": {"1-5": "2-6"}, "source": "anidb:5634:R", "target": "tmdb_show:25760:s0"}
+      ]
+    },
+    {
+      "id": "my-hero-academia-vigilantes-tmdb-280110",
+      "title": "My Hero Academia: Vigilantes TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "280110", "seasons": {"1": 26}}},
+      "remove": [
+        {"source": "tmdb_show:280110:s2", "target": "anidb:19423:R"},
+        {"source": "tmdb_show:280110:s2", "target": "anilist:195322"},
+        {"source": "tmdb_show:280110:s2", "target": "mal:61942"},
+        {"source": "tmdb_show:280110:s2", "target": "tvdb_show:458058:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-13": "14-26"}, "source": "anidb:19423:R", "target": "tmdb_show:280110:s1"},
+        {"ranges": {"1-13": "14-26"}, "source": "anilist:195322", "target": "tmdb_show:280110:s1"},
+        {"ranges": {"1-13": "14-26"}, "source": "mal:61942", "target": "tmdb_show:280110:s1"}
+      ]
+    },
+    {
+      "id": "the-ramparts-of-ice-tmdb-283428",
+      "title": "The Ramparts of Ice TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (6/6 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "283428", "seasons": {"1": 28}}},
+      "remove": [
+        {"source": "tmdb_show:283428:s2", "target": "anidb:20168:R"},
+        {"source": "tmdb_show:283428:s2", "target": "anilist:213805"},
+        {"source": "tmdb_show:283428:s2", "target": "mal:64534"},
+        {"source": "tmdb_show:283428:s2", "target": "tvdb_show:459627:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-": "15-"}, "source": "anidb:20168:R", "target": "tmdb_show:283428:s1"}
+      ]
+    },
+    {
+      "id": "the-hakkenden-legend-of-the-dog-warriors-tmdb-28954",
+      "title": "The Hakkenden: Legend of the Dog Warriors TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "28954", "seasons": {"1": 13}}},
+      "remove": [
+        {"source": "tmdb_show:28954:s2", "target": "anidb:3353:R"},
+        {"source": "tmdb_show:28954:s2", "target": "anilist:12715"},
+        {"source": "tmdb_show:28954:s2", "target": "mal:12715"},
+        {"source": "tmdb_show:28954:s2", "target": "tvdb_show:72848:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-7": "7-13"}, "source": "anidb:3353:R", "target": "tmdb_show:28954:s1"},
+        {"ranges": {"1-7": "7-13"}, "source": "anilist:12715", "target": "tmdb_show:28954:s1"},
+        {"ranges": {"1-7": "7-13"}, "source": "mal:12715", "target": "tmdb_show:28954:s1"}
+      ]
+    },
+    {
+      "id": "knight-hunters-tmdb-34165",
+      "title": "Knight Hunters TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "34165", "seasons": {"1": 25, "2": 13}}},
+      "remove": [
+        {"source": "tmdb_show:34165:s3", "target": "anidb:226:R"},
+        {"source": "tmdb_show:34165:s3", "target": "anilist:446"},
+        {"source": "tmdb_show:34165:s3", "target": "mal:446"},
+        {"source": "tmdb_show:34165:s3", "target": "tvdb_show:72922:s2"},
+        {"source": "tmdb_show:34165:s3", "target": "tvdb_show:72922:s3"}
+      ]
+    },
+    {
+      "id": "magical-project-s-tmdb-34689",
+      "title": "Magical Project S TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "34689", "seasons": {"1": 26}}},
+      "remove": [
+        {"source": "tmdb_show:34689:s2", "target": "anidb:741:R"},
+        {"source": "tmdb_show:34689:s2", "target": "anilist:1502"},
+        {"source": "tmdb_show:34689:s2", "target": "mal:1502"},
+        {"source": "tmdb_show:34689:s2", "target": "tvdb_show:71283:s1"},
+        {"source": "tmdb_show:34689:s2", "target": "tvdb_show:71283:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-26": "1-26"}, "source": "anidb:741:R", "target": "tmdb_show:34689:s1"}
+      ]
+    },
+    {
+      "id": "hetalia-axis-powers-tmdb-35138",
+      "title": "Hetalia - Axis Powers TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "35138", "seasons": {"1": 26, "2": 26, "3": 48, "4": 20, "5": 15}}},
+      "remove": [
+        {"source": "tmdb_show:35138:s6", "target": "anidb:10947:R"},
+        {"source": "tmdb_show:35138:s6", "target": "anilist:20962"},
+        {"source": "tmdb_show:35138:s6", "target": "mal:28607"},
+        {"source": "tmdb_show:35138:s6", "target": "tvdb_show:88161:s4"},
+        {"source": "tmdb_show:35138:s6", "target": "tvdb_show:88161:s6"}
+      ],
+      "add": [
+        {"ranges": {"1-15": "1-15"}, "source": "anidb:10947:R", "target": "tmdb_show:35138:s5"}
+      ]
+    },
+    {
+      "id": "inuyasha-tmdb-35610",
+      "title": "InuYasha TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "35610", "seasons": {"1": 167, "2": 26}}},
+      "remove": [
+        {"source": "tmdb_show:35610:s8", "target": "anidb:6716:R"},
+        {"source": "tmdb_show:35610:s8", "target": "anilist:6811"},
+        {"source": "tmdb_show:35610:s8", "target": "mal:6811"},
+        {"source": "tmdb_show:35610:s8", "target": "tvdb_show:71361:s7"},
+        {"source": "tmdb_show:35610:s8", "target": "tvdb_show:71361:s8"}
+      ]
+    },
+    {
+      "id": "haruka-nogizaka-s-secret-tmdb-36067",
+      "title": "Haruka Nogizaka's Secret TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "36067", "seasons": {"1": 12, "2": 12}}},
+      "remove": [
+        {"source": "tmdb_show:36067:s3", "target": "anidb:9155:R"},
+        {"source": "tmdb_show:36067:s3", "target": "anilist:10928"},
+        {"source": "tmdb_show:36067:s3", "target": "mal:10928"},
+        {"source": "tmdb_show:36067:s3", "target": "tvdb_show:82688:s3"}
+      ]
+    },
+    {
+      "id": "initial-d-tmdb-40424",
+      "title": "Initial D TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "40424", "seasons": {"1": 26, "2": 13, "3": 24, "4": 14, "5": 4}}},
+      "remove": [
+        {"source": "tmdb_show:40424:s6", "target": "anidb:10486:R"},
+        {"source": "tmdb_show:40424:s6", "target": "anilist:19613"},
+        {"source": "tmdb_show:40424:s6", "target": "mal:22507"},
+        {"source": "tmdb_show:40424:s6", "target": "tvdb_show:70900:s6"}
+      ],
+      "add": [
+        {"ranges": {"1-4": "1-4"}, "source": "anidb:10486:R", "target": "tmdb_show:40424:s5"}
+      ]
+    },
+    {
+      "id": "the-twelve-kingdoms-tmdb-42729",
+      "title": "The Twelve Kingdoms TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "42729", "seasons": {"1": 45}}},
+      "remove": [
+        {"source": "tmdb_show:42729:s2", "target": "anilist:153"},
+        {"source": "tmdb_show:42729:s3", "target": "anilist:153"},
+        {"source": "tmdb_show:42729:s4", "target": "anilist:153"}
+      ]
+    },
+    {
+      "id": "the-king-of-braves-gaogaigar-tmdb-45116",
+      "title": "The King of Braves GaoGaiGar TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "45116", "seasons": {"1": 49, "2": 12}}},
+      "remove": [
+        {"source": "tmdb_show:45116:s3", "target": "anidb:3152:R"},
+        {"source": "tmdb_show:45116:s3", "target": "anilist:4416"},
+        {"source": "tmdb_show:45116:s3", "target": "mal:4416"},
+        {"source": "tmdb_show:45116:s3", "target": "tvdb_show:93721:s3"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "1-12"}, "source": "anidb:3152:R", "target": "tmdb_show:45116:s2"}
+      ]
+    },
+    {
+      "id": "yu-gi-oh-zexal-tmdb-45854",
+      "title": "Yu-Gi-Oh! Zexal TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "45854", "seasons": {"1": 146}}},
+      "remove": [
+        {"source": "tmdb_show:45854:s2", "target": "anidb:9400:R"},
+        {"source": "tmdb_show:45854:s2", "target": "anilist:15489"},
+        {"source": "tmdb_show:45854:s2", "target": "mal:15489"}
+      ],
+      "add": [
+        {"ranges": {"1-73": "74-146"}, "source": "anidb:9400:R", "target": "tmdb_show:45854:s1"}
+      ]
+    },
+    {
+      "id": "akb0048-tmdb-45982",
+      "title": "AKB0048 TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (6/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "45982", "seasons": {"1": 26}}},
+      "remove": [
+        {"source": "tmdb_show:45982:s2", "target": "anidb:9330:R"},
+        {"source": "tmdb_show:45982:s2", "target": "anilist:14941"},
+        {"source": "tmdb_show:45982:s2", "target": "mal:14941"},
+        {"source": "tmdb_show:45982:s2", "target": "tvdb_show:257890:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-13": "14-26"}, "source": "anidb:9330:R", "target": "tmdb_show:45982:s1"},
+        {"ranges": {"1-13": "14-26"}, "source": "anilist:14941", "target": "tmdb_show:45982:s1"},
+        {"ranges": {"1-13": "14-26"}, "source": "mal:14941", "target": "tmdb_show:45982:s1"}
+      ]
+    },
+    {
+      "id": "monogatari-tmdb-46195",
+      "title": "Monogatari TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "46195", "seasons": {"1": 12, "2": 11, "3": 23, "4": 12, "5": 15}}},
+      "remove": [
+        {"source": "tmdb_show:46195:s6", "target": "anidb:18424:R"},
+        {"source": "tmdb_show:46195:s6", "target": "anilist:173533"},
+        {"source": "tmdb_show:46195:s6", "target": "mal:57864"},
+        {"source": "tmdb_show:46195:s6", "target": "tvdb_show:102261:s6"}
+      ],
+      "add": [
+        {"ranges": {"1-14": "1-14"}, "source": "anidb:18424:R", "target": "tmdb_show:46195:s5"}
+      ]
+    },
+    {
+      "id": "valvrave-the-liberator-tmdb-52896",
+      "title": "Valvrave the Liberator TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "52896", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:52896:s2", "target": "anidb:9949:R"},
+        {"source": "tmdb_show:52896:s2", "target": "anilist:18295"},
+        {"source": "tmdb_show:52896:s2", "target": "mal:18295"},
+        {"source": "tmdb_show:52896:s2", "target": "tvdb_show:268289:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:9949:R", "target": "tmdb_show:52896:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "anilist:18295", "target": "tmdb_show:52896:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "mal:18295", "target": "tmdb_show:52896:s1"}
+      ]
+    },
+    {
+      "id": "gj-club-tmdb-55016",
+      "title": "GJ Club TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (6/6 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "55016", "seasons": {"1": 12}}},
+      "remove": [
+        {"source": "tmdb_show:55016:s2", "target": "anidb:10016:R"},
+        {"source": "tmdb_show:55016:s2", "target": "anilist:20567"},
+        {"source": "tmdb_show:55016:s2", "target": "mal:21635"},
+        {"source": "tmdb_show:55016:s2", "target": "tvdb_show:264055:s0"},
+        {"source": "tmdb_show:55016:s2", "target": "tvdb_show:264055:s2"}
+      ]
+    },
+    {
+      "id": "ushio-and-tora-tmdb-63085",
+      "title": "Ushio and Tora TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "63085", "seasons": {"1": 39}}},
+      "remove": [
+        {"source": "tmdb_show:63085:s2", "target": "anidb:11318:R"},
+        {"source": "tmdb_show:63085:s2", "target": "anilist:21241"},
+        {"source": "tmdb_show:63085:s2", "target": "mal:31098"},
+        {"source": "tmdb_show:63085:s2", "target": "tvdb_show:294001:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-13": "27-39"}, "source": "anidb:11318:R", "target": "tmdb_show:63085:s1"},
+        {"ranges": {"1-13": "27-39"}, "source": "anilist:21241", "target": "tmdb_show:63085:s1"},
+        {"ranges": {"1-13": "27-39"}, "source": "mal:31098", "target": "tmdb_show:63085:s1"}
+      ]
+    },
+    {
+      "id": "mobile-suit-gundam-iron-blooded-orphans-tmdb-64375",
+      "title": "Mobile Suit Gundam: Iron-Blooded Orphans TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "64375", "seasons": {"1": 50}}},
+      "remove": [
+        {"source": "tmdb_show:64375:s2", "target": "anidb:12048:R"},
+        {"source": "tmdb_show:64375:s2", "target": "anilist:21749"},
+        {"source": "tmdb_show:64375:s2", "target": "mal:33051"},
+        {"source": "tmdb_show:64375:s2", "target": "tvdb_show:299497:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-25": "26-50"}, "source": "anidb:12048:R", "target": "tmdb_show:64375:s1"}
+      ]
+    },
+    {
+      "id": "mobile-suit-gundam-thunderbolt-tmdb-64809",
+      "title": "Mobile Suit Gundam Thunderbolt TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "64809", "seasons": {"1": 8}}},
+      "remove": [
+        {"source": "tmdb_show:64809:s2", "target": "anidb:12549:R"},
+        {"source": "tmdb_show:64809:s2", "target": "anilist:97853"},
+        {"source": "tmdb_show:64809:s2", "target": "mal:34391"},
+        {"source": "tmdb_show:64809:s2", "target": "tvdb_show:305171:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-4": "5-8"}, "source": "anidb:12549:R", "target": "tmdb_show:64809:s1"},
+        {"ranges": {"1-4": "5-8"}, "source": "anilist:97853", "target": "tmdb_show:64809:s1"},
+        {"ranges": {"1-4": "5-8"}, "source": "mal:34391", "target": "tmdb_show:64809:s1"}
+      ]
+    },
+    {
+      "id": "bbk-brnk-tmdb-65210",
+      "title": "BBK/BRNK TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "65210", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:65210:s2", "target": "anidb:12043:R"},
+        {"source": "tmdb_show:65210:s2", "target": "anilist:21740"},
+        {"source": "tmdb_show:65210:s2", "target": "mal:33041"},
+        {"source": "tmdb_show:65210:s2", "target": "tvdb_show:304106:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:12043:R", "target": "tmdb_show:65210:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "anilist:21740", "target": "tmdb_show:65210:s1"},
+        {"ranges": {"1-12": "13-24"}, "source": "mal:33041", "target": "tmdb_show:65210:s1"}
+      ]
+    },
+    {
+      "id": "bungo-stray-dogs-tmdb-65931",
+      "title": "Bungo Stray Dogs TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (27/27 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "65931", "seasons": {"1": 60}}},
+      "remove": [
+        {"source": "tmdb_show:65931:s2", "target": "anidb:14230:R"},
+        {"source": "tmdb_show:65931:s2", "target": "anilist:103223"},
+        {"source": "tmdb_show:65931:s2", "target": "mal:38003"},
+        {"source": "tmdb_show:65931:s2", "target": "tvdb_show:305075:s2"},
+        {"source": "tmdb_show:65931:s3", "target": "anidb:16965:R"},
+        {"source": "tmdb_show:65931:s3", "target": "anidb:17962:R"},
+        {"source": "tmdb_show:65931:s3", "target": "anilist:141249"},
+        {"source": "tmdb_show:65931:s3", "target": "anilist:163263"},
+        {"source": "tmdb_show:65931:s3", "target": "mal:50330"},
+        {"source": "tmdb_show:65931:s3", "target": "mal:54898"},
+        {"source": "tmdb_show:65931:s3", "target": "tvdb_show:305075:s3"}
+      ]
+    },
+    {
+      "id": "pripara-tmdb-67627",
+      "title": "PriPara TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "67627", "seasons": {"1": 140, "2": 51}}},
+      "remove": [
+        {"source": "tmdb_show:67627:s4", "target": "anidb:12737:R"},
+        {"source": "tmdb_show:67627:s4", "target": "anilist:98107"},
+        {"source": "tmdb_show:67627:s4", "target": "mal:34787"},
+        {"source": "tmdb_show:67627:s4", "target": "tvdb_show:282059:s4"}
+      ]
+    },
+    {
+      "id": "fox-spirit-matchmaker-tmdb-75787",
+      "title": "Fox Spirit Matchmaker TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (15/18 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "75787", "seasons": {"1": 183}}},
+      "remove": [
+        {"source": "tmdb_show:75787:s9", "target": "anidb:16616:R"},
+        {"source": "tmdb_show:75787:s9", "target": "anilist:122672"},
+        {"source": "tmdb_show:75787:s9", "target": "mal:44097"},
+        {"source": "tmdb_show:75787:s9", "target": "tvdb_show:310311:s9"},
+        {"source": "tmdb_show:75787:s10", "target": "anidb:16617:R"},
+        {"source": "tmdb_show:75787:s10", "target": "anilist:130323"},
+        {"source": "tmdb_show:75787:s10", "target": "mal:48694"},
+        {"source": "tmdb_show:75787:s10", "target": "tvdb_show:310311:s10"}
+      ]
+    },
+    {
+      "id": "etotama-tmdb-76494",
+      "title": "ETOTAMA TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (6/6 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "76494", "seasons": {"1": 12}}},
+      "remove": [
+        {"source": "tmdb_show:76494:s2", "target": "anidb:12241:R"},
+        {"source": "tmdb_show:76494:s2", "target": "anilist:101216"},
+        {"source": "tmdb_show:76494:s2", "target": "mal:37346"},
+        {"source": "tmdb_show:76494:s2", "target": "tvdb_show:291286:s0"},
+        {"source": "tmdb_show:76494:s2", "target": "tvdb_show:291286:s2"}
+      ]
+    },
+    {
+      "id": "million-arthur-tmdb-83451",
+      "title": "Million Arthur TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "83451", "seasons": {"1": 23}}},
+      "remove": [
+        {"source": "tmdb_show:83451:s2", "target": "anidb:14381:R"},
+        {"source": "tmdb_show:83451:s2", "target": "anilist:104071"},
+        {"source": "tmdb_show:83451:s2", "target": "mal:38268"},
+        {"source": "tmdb_show:83451:s2", "target": "tvdb_show:352569:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-13": "11-23"}, "source": "anidb:14381:R", "target": "tmdb_show:83451:s1"},
+        {"ranges": {"1-13": "11-23"}, "source": "anilist:104071", "target": "tmdb_show:83451:s1"},
+        {"ranges": {"1-13": "11-23"}, "source": "mal:38268", "target": "tmdb_show:83451:s1"}
+      ]
+    },
+    {
+      "id": "kyousougiga-tmdb-85065",
+      "title": "Kyousougiga TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "85065", "seasons": {"1": 10}}},
+      "remove": [
+        {"source": "tmdb_show:85065:s2", "target": "anidb:9992:R"},
+        {"source": "tmdb_show:85065:s2", "target": "anilist:19703"},
+        {"source": "tmdb_show:85065:s2", "target": "mal:19703"},
+        {"source": "tmdb_show:85065:s2", "target": "tvdb_show:254658:s1"},
+        {"source": "tmdb_show:85065:s2", "target": "tvdb_show:254658:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-10": "1-10"}, "source": "anidb:9992:R", "target": "tmdb_show:85065:s1"}
+      ]
+    },
+    {
+      "id": "7seeds-tmdb-85940",
+      "title": "7SEEDS TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "85940", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:85940:s2", "target": "anidb:15229:R"},
+        {"source": "tmdb_show:85940:s2", "target": "anilist:112686"},
+        {"source": "tmdb_show:85940:s2", "target": "mal:40602"},
+        {"source": "tmdb_show:85940:s2", "target": "tvdb_show:356032:s2"}
+      ]
+    },
+    {
+      "id": "wish-upon-the-pleiades-tmdb-86762",
+      "title": "Wish Upon the Pleiades TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "86762", "seasons": {"1": 12}}},
+      "remove": [
+        {"source": "tmdb_show:86762:s2", "target": "anidb:10958:R"},
+        {"source": "tmdb_show:86762:s2", "target": "anilist:17919"},
+        {"source": "tmdb_show:86762:s2", "target": "mal:17919"},
+        {"source": "tmdb_show:86762:s2", "target": "tvdb_show:227891:s1"},
+        {"source": "tmdb_show:86762:s2", "target": "tvdb_show:227891:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "1-12"}, "source": "anidb:10958:R", "target": "tmdb_show:86762:s1"}
+      ]
+    },
+    {
+      "id": "aquarian-age-sign-for-evolution-tmdb-9113",
+      "title": "Aquarian Age: Sign for Evolution TMDB seasons",
+      "reason": "AniBridge also links a cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season), which gave the same episode two TMDB coordinates. The correct links stay; the stray ones are removed. Verified by air date on Trakt and SIMKL (6/6 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "9113", "seasons": {"1": 13}}},
+      "remove": [
+        {"source": "tmdb_show:9113:s2", "target": "anidb:2456:R"},
+        {"source": "tmdb_show:9113:s2", "target": "anilist:1268"},
+        {"source": "tmdb_show:9113:s2", "target": "mal:1268"},
+        {"source": "tmdb_show:9113:s2", "target": "tvdb_show:83584:s0"},
+        {"source": "tmdb_show:9113:s2", "target": "tvdb_show:83584:s2"}
+      ]
+    },
+    {
+      "id": "in-spectre-tmdb-93653",
+      "title": "In/Spectre TMDB seasons",
+      "reason": "AniBridge also links a later cour to a TMDB season that does not exist (Anime-Lists copies the TVDB season). Some anime ids already had the correct TMDB link; the stray links are removed and the missing ones are added. Verified by air date on Trakt and SIMKL (9/9 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "93653", "seasons": {"1": 24}}},
+      "remove": [
+        {"source": "tmdb_show:93653:s2", "target": "anidb:15876:R"},
+        {"source": "tmdb_show:93653:s2", "target": "anilist:126529"},
+        {"source": "tmdb_show:93653:s2", "target": "mal:44204"},
+        {"source": "tmdb_show:93653:s2", "target": "tvdb_show:368565:s2"}
+      ],
+      "add": [
+        {"ranges": {"1-12": "13-24"}, "source": "anidb:15876:R", "target": "tmdb_show:93653:s1"}
+      ]
+    },
+    {
+      "id": "butt-detective-tmdb-96117",
+      "title": "Butt Detective TMDB seasons",
+      "reason": "AniBridge only links a later cour of this show to a TMDB season that does not exist (Anime-Lists copies the TVDB season), so those episodes could not be mapped to TMDB at all. TMDB keeps the cour inside S1; the episodes are mapped there. Verified by air date on Trakt and SIMKL (27/27 checkpoints) on 2026-11-08.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt", "simkl"], "tmdb": {"show": "96117", "seasons": {"1": 131}}},
+      "remove": [
+        {"source": "tmdb_show:96117:s3", "target": "anidb:15084:R"},
+        {"source": "tmdb_show:96117:s3", "target": "anilist:132695"},
+        {"source": "tmdb_show:96117:s3", "target": "mal:41777"},
+        {"source": "tmdb_show:96117:s3", "target": "tvdb_show:358138:s3"},
+        {"source": "tmdb_show:96117:s4", "target": "anidb:15429:R"},
+        {"source": "tmdb_show:96117:s4", "target": "anilist:132696"},
+        {"source": "tmdb_show:96117:s4", "target": "mal:41778"},
+        {"source": "tmdb_show:96117:s4", "target": "tvdb_show:358138:s4"},
+        {"source": "tmdb_show:96117:s5", "target": "anidb:16133:R"},
+        {"source": "tmdb_show:96117:s5", "target": "anilist:132697"},
+        {"source": "tmdb_show:96117:s5", "target": "mal:48486"},
+        {"source": "tmdb_show:96117:s5", "target": "tvdb_show:358138:s5"}
+      ],
+      "add": [
+        {"ranges": {"1-13": "27-39"}, "source": "anidb:15084:R", "target": "tmdb_show:96117:s1"},
+        {"ranges": {"1-13": "27-39"}, "source": "anilist:132695", "target": "tmdb_show:96117:s1"},
+        {"ranges": {"1-13": "27-39"}, "source": "mal:41777", "target": "tmdb_show:96117:s1"},
+        {"ranges": {"1-13": "40-52"}, "source": "anidb:15429:R", "target": "tmdb_show:96117:s1"},
+        {"ranges": {"1-13": "40-52"}, "source": "anilist:132696", "target": "tmdb_show:96117:s1"},
+        {"ranges": {"1-13": "40-52"}, "source": "mal:41778", "target": "tmdb_show:96117:s1"},
+        {"ranges": {"1-13": "53-65"}, "source": "anidb:16133:R", "target": "tmdb_show:96117:s1"},
+        {"ranges": {"1-13": "53-65"}, "source": "anilist:132697", "target": "tmdb_show:96117:s1"},
+        {"ranges": {"1-13": "53-65"}, "source": "mal:48486", "target": "tmdb_show:96117:s1"}
+      ]
+    },
+    {
+      "id": "devils-crest-tmdb-328010",
+      "title": "Devils' Crest on TMDB",
+      "reason": "New season anime. AniBridge links the anime entries to TVDB 471128 season 1 but has no TMDB link yet, so episodes could not be mapped to TMDB providers. TMDB 328010 season 1 is the same single season. Trakt confirms TMDB 328010 is this show with TVDB 471128. TMDB lists the first 3 episodes so far; the show is still airing. Reported through a user's custom mappings.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt"], "tmdb": {"show": "328010", "seasons": {"1": 3}}},
+      "add": [
+        {"source": "anidb:19751:R", "target": "tmdb_show:328010:s1", "ranges": {"1-12": "1-12"}},
+        {"source": "anilist:203275", "target": "tmdb_show:328010:s1", "ranges": {"1-12": "1-12"}},
+        {"source": "mal:63045", "target": "tmdb_show:328010:s1", "ranges": {"1-12": "1-12"}},
+        {"source": "tmdb_show:328010:s1", "target": "tvdb_show:471128:s1", "ranges": {"1-12": "1-12"}}
+      ]
+    },
+    {
+      "id": "tank-chair-tmdb-320377",
+      "title": "TANK CHAIR on TMDB",
+      "reason": "New season anime. AniBridge links the anime entries to TVDB 475617 season 1 but has no TMDB link yet, so episodes could not be mapped to TMDB providers. TMDB 320377 season 1 is the same single season. Trakt confirms TMDB 320377 is this show with TVDB 475617. Reported through a user's custom mappings.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt"], "tmdb": {"show": "320377", "seasons": {"1": 12}}},
+      "add": [
+        {"source": "anidb:19952:R", "target": "tmdb_show:320377:s1", "ranges": {"1-12": "1-12"}},
+        {"source": "anilist:209499", "target": "tmdb_show:320377:s1", "ranges": {"1-12": "1-12"}},
+        {"source": "mal:63751", "target": "tmdb_show:320377:s1", "ranges": {"1-12": "1-12"}},
+        {"source": "tmdb_show:320377:s1", "target": "tvdb_show:475617:s1", "ranges": {"1-12": "1-12"}}
+      ]
+    },
+    {
+      "id": "forsaken-saintess-foodie-road-trip-tmdb-325158",
+      "title": "The Forsaken Saintess and Her Foodie Road Trip in Another World on TMDB",
+      "reason": "New season anime. AniBridge links the anime entries to TVDB 475631 season 1 but has no TMDB link yet, so episodes could not be mapped to TMDB providers. TMDB 325158 season 1 is the same single season. Trakt confirms TMDB 325158 is this show with TVDB 475631. Reported through a user's custom mappings.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt"], "tmdb": {"show": "325158", "seasons": {"1": 12}}},
+      "add": [
+        {"source": "anidb:19954:R", "target": "tmdb_show:325158:s1", "ranges": {"1-12": "1-12"}},
+        {"source": "anilist:209504", "target": "tmdb_show:325158:s1", "ranges": {"1-12": "1-12"}},
+        {"source": "mal:63752", "target": "tmdb_show:325158:s1", "ranges": {"1-12": "1-12"}},
+        {"source": "tmdb_show:325158:s1", "target": "tvdb_show:475631:s1", "ranges": {"1-12": "1-12"}}
+      ]
+    },
+    {
+      "id": "welsh-and-shedar-tmdb-335788",
+      "title": "Welsh & Shedar on TMDB",
+      "reason": "New season anime. AniBridge links the anime entries to TVDB 465468 season 1 but has no TMDB link yet, so episodes could not be mapped to TMDB providers. TMDB 335788 season 1 is the same single season. Trakt confirms TMDB 335788 is this show with TVDB 465468. Reported through a user's custom mappings.",
+      "upstream": "",
+      "added": "2026-11-08",
+      "evidence": {"checked": "2026-11-08", "sources": ["trakt"], "tmdb": {"show": "335788", "seasons": {"1": 12}}},
+      "add": [
+        {"source": "anilist:216895", "target": "tmdb_show:335788:s1", "ranges": {"1-12": "1-12"}},
+        {"source": "mal:65009", "target": "tmdb_show:335788:s1", "ranges": {"1-12": "1-12"}},
+        {"source": "tmdb_show:335788:s1", "target": "tvdb_show:465468:s1", "ranges": {"1-12": "1-12"}}
+      ]
+    }
+  ]
+}

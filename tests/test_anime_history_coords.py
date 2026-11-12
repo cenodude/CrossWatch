@@ -318,10 +318,16 @@ def test_native_anime_id_without_an_absolute_is_ignored(anime_index: Path) -> No
     assert aliases.tokens(row) == set()
 
 
-def test_non_history_features_are_disabled(anime_index: Path) -> None:
-    for feature in ("watchlist", "ratings", "progress"):
+def test_watchlist_is_disabled(anime_index: Path) -> None:
+    aliases = build_history_coordinate_aliases(CFG, "watchlist", ())
+    assert not aliases.enabled
+    assert aliases.tokens(_episode(DRAGON_BALL_IDS, 2, 1, absolute=14)) == set()
+
+
+def test_other_episode_features_skip_native_absolute_aliases(anime_index: Path) -> None:
+    for feature in ("ratings", "progress", "collection"):
         aliases = build_history_coordinate_aliases(CFG, feature, ())
-        assert not aliases.enabled
+        assert aliases.enabled and aliases.declared_only
         assert aliases.tokens(_episode(DRAGON_BALL_IDS, 2, 1, absolute=14)) == set()
 
 

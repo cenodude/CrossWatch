@@ -20,8 +20,10 @@ import requests
 
 from _logging import log
 
+from . import cw_mappings
 from .storage import (
     SCHEMA_VERSION,
+    cw_mappings_current,
     index_ready,
     index_schema_ok,
     normalize_release_tag,
@@ -36,6 +38,9 @@ from .storage import (
 BASE_URL = "https://github.com/anibridge/anibridge-mappings/releases/download"
 IDENTITY_URL = "https://raw.githubusercontent.com/nattadasu/animeApi/v3/database/animeapi.tsv"
 IDENTITY_COMMITS_URL = "https://api.github.com/repos/nattadasu/animeApi/commits"
+CW_MAPPINGS_BRANCH = "main"
+CW_MAPPINGS_COMMITS_URL = "https://api.github.com/repos/cenodude/CrossWatch/commits"
+CW_MAPPINGS_RAW_URL = "https://raw.githubusercontent.com/cenodude/CrossWatch/{ref}/" + cw_mappings.REPO_PATH
 UA = http_user_agent("AnimeMapping")
 _UPDATE_LOCK = threading.Lock()
 
@@ -72,6 +77,33 @@ def _validate_identity_file(path: Path) -> None:
     rows = parse_identity_rows(path.read_text("utf-8"))
     if not rows:
         raise ValueError("animeApi payload produced no usable identity rows")
+
+
+def _validate_cw_mappings_file(path: Path) -> None:
+    cw_mappings.parse_payload(path.read_bytes())
+
+
+def _cw_mappings_release() -> dict[str, str] | None:
+    try:
+        response = requests.get(CW_MAPPINGS_COMMITS_URL, headers={"User-Agent": UA, "Accept": "application/vnd.github+json"},
+                                params={"sha": CW_MAPPINGS_BRANCH, "path": cw_mappings.REPO_PATH, "per_page": 1}, timeout=15)
+        response.raise_for_status()
+        commits = response.json()
+        if isinstance(commits, list) and not commits:
+            return None
+        commit = commits[0]
+        revision = str(commit["sha"])
+        published = datetime.fromisoformat(commit["commit"]["committer"]["date"].replace("Z", "+00:00"))
+        if not re.fullmatch(r"[0-9a-f]{40}", revision) or published.tzinfo is None:
+            raise ValueError("Invalid CW Anime DB revision")
+        return {"revision": revision, "generated_on": published.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")}
+    except Exception as exc:
+        log(f"cw_mappings_version_unavailable error_type={exc.__class__.__name__}", level="debug", module="ANIME_MAPPING")
+        return {}
+
+
+def _http_status(exc: BaseException) -> int | None:
+    return getattr(getattr(exc, "response", None), "status_code", None)
 
 
 def _file_sha256(path: Path) -> str:
@@ -205,6 +237,15 @@ def status(*, cfg: Mapping[str, Any] | None = None) -> dict[str, Any]:
         "identity_release_tag": "v3",
         "identity_revision": str(st.get("identity_revision") or ""),
         "identity_generated_on": str(st.get("identity_generated_on") or ""),
+        "cw_source": str(st.get("cw_source") or ""),
+        "cw_revision": str(st.get("cw_revision") or ""),
+        "cw_error": str(st.get("cw_error") or ""),
+        "cw_entry_count": int(st.get("cw_entry_count") or 0),
+        "cw_applied": list(st.get("cw_applied") or []),
+        "cw_redundant": list(st.get("cw_redundant") or []),
+        "cw_download_revision": str(st.get("cw_download_revision") or ""),
+        "cw_download_generated_on": str(st.get("cw_download_generated_on") or ""),
+        "cw_download_error": str(st.get("cw_download_error") or ""),
         "error": str(st.get("error") or ""),
         "mappings_size": int(mapping_size),
         "identity_size": int(identity_size),
@@ -247,12 +288,16 @@ def boot_check(*, cfg: Mapping[str, Any] | None = None, auto_repair: bool = True
         return _result("disabled", True, "Disabled")
     if not mappings_path.exists():
         return _result("missing", True, "Not installed - dataset will download on first update")
-    if index_ready(tag):
+    ready = index_ready(tag)
+    if ready and cw_mappings_current(tag):
         return _result("ready", True, f"Ready - anime schema v{SCHEMA_VERSION}")
     if not auto_repair:
         return _result("stale", False, f"Stale - expected anime schema v{SCHEMA_VERSION}")
 
-    reason = "schema_outdated" if not index_schema_ok(tag) else ("index_missing" if not db_path.exists() else "index_not_ready")
+    if ready:
+        reason = "cw_mappings_changed"
+    else:
+        reason = "schema_outdated" if not index_schema_ok(tag) else ("index_missing" if not db_path.exists() else "index_not_ready")
     log("boot_reindex_started", level="debug", module="ANIME_MAPPING", extra={"release_tag": tag, "reason": reason})
     try:
         rebuild = rebuild_sqlite_from_mappings(release_tag=tag)
@@ -279,7 +324,7 @@ def boot_check(*, cfg: Mapping[str, Any] | None = None, auto_repair: bool = True
             "identity_count": int(rebuild.get("identity_count") or 0),
         },
     )
-    note = "schema updated" if reason == "schema_outdated" else "index rebuilt"
+    note = {"schema_outdated": "schema updated", "cw_mappings_changed": "CW Anime DB updated"}.get(reason, "index rebuilt")
     return _result("reindexed", True, f"Reindexed - {note} - anime schema v{SCHEMA_VERSION}")
 
 
@@ -321,6 +366,27 @@ def _update_locked(*, release_tag: str = "v3", force: bool = False) -> dict[str,
         mapping_error = exc.__class__.__name__
         log(f"download_failed dataset=anibridge error_type={mapping_error}", level="warning", module="ANIME_MAPPING")
 
+    cw_path = _safe_existing_path(pp["cw_mappings"])
+    cwl: dict[str, Any] = {}
+    cw_download_error = ""
+    cw_release = _cw_mappings_release()
+    if cw_release is None:
+        log("cw_mappings_not_published", level="debug", module="ANIME_MAPPING")
+    else:
+        try:
+            cw_conditional = {}
+            if cw_path.exists() and not force and previous.get("cw_etag"):
+                cw_conditional["If-None-Match"] = str(previous["cw_etag"])
+            cw_url = CW_MAPPINGS_RAW_URL.format(ref=cw_release.get("revision") or CW_MAPPINGS_BRANCH)
+            cwl = _download_file_atomic(cw_url, cw_path, timeout=30.0, validate=_validate_cw_mappings_file,
+                                        conditional_headers=cw_conditional)
+        except Exception as exc:
+            if _http_status(exc) == 404:
+                log("cw_mappings_not_published", level="debug", module="ANIME_MAPPING")
+            else:
+                cw_download_error = exc.__class__.__name__
+                log(f"download_failed dataset=cw_mappings error_type={cw_download_error}", level="warning", module="ANIME_MAPPING")
+
     # animeApi has its own publication schedule. Always check it, including
     # when aniBridge is unchanged or its update check failed.
     identity_path = _safe_existing_path(pp["identity"])
@@ -349,13 +415,20 @@ def _update_locked(*, release_tag: str = "v3", force: bool = False) -> dict[str,
     mapping_hash = _file_sha256(mappings_path)
     identity_changed = bool(identity_hash) and identity_hash != previous.get("indexed_identity_sha256")
     pending_mappings = bool(mapping_hash) and mapping_hash != previous.get("indexed_mappings_sha256")
-    needs_rebuild = force or mappings_changed or identity_changed or pending_mappings or not db_path.exists() or not index_schema_ok(tag)
+    cw_changed = not cw_mappings_current(tag)
+    needs_rebuild = force or mappings_changed or identity_changed or pending_mappings or cw_changed or not db_path.exists() or not index_schema_ok(tag)
     errors = []
     if mapping_error:
         errors.append(f"aniBridge update failed ({mapping_error})")
     if identity_error:
         errors.append(f"animeApi update failed ({identity_error})")
-    patch: dict[str, Any] = {"last_checked_at": now, "identity_error": identity_error}
+    if cw_download_error:
+        errors.append(f"CW Anime DB update failed ({cw_download_error})")
+    patch: dict[str, Any] = {"last_checked_at": now, "identity_error": identity_error, "cw_download_error": cw_download_error}
+    if cwl:
+        patch.update(cw_etag=cwl["headers"].get("etag", previous.get("cw_etag", "") if not cwl.get("changed") else ""))
+        if cw_release:
+            patch.update(cw_download_revision=cw_release["revision"], cw_download_generated_on=cw_release["generated_on"])
     rebuild: dict[str, Any] = {}
     if mappings_path.exists() and needs_rebuild:
         log("index_rebuild_started", level="debug", module="ANIME_MAPPING", extra={"release_tag": tag})
@@ -387,11 +460,12 @@ def _update_locked(*, release_tag: str = "v3", force: bool = False) -> dict[str,
             patch.update(identity_revision="", identity_generated_on="")
     patch["error"] = "; ".join(errors)
     write_state(tag, patch)
-    updated = bool(rebuild and (mappings_changed or pending_mappings or identity_changed))
+    updated = bool(rebuild and (mappings_changed or pending_mappings or identity_changed or cw_changed))
     if not errors:
         message = "update_finished" if updated else ("index_schema_rebuild_finished" if rebuild else "update_skipped reason=datasets_current")
         log(message, level="debug", module="ANIME_MAPPING")
     return {**status(cfg={"anime_mapping": {"release_tag": tag, "enabled": True}}),
             "ok": not errors, "updated": updated, "rebuilt": bool(rebuild),
             "mappings_updated": bool(rebuild and (mappings_changed or pending_mappings)),
-            "identity_updated": bool(rebuild and identity_changed), "download": dl, "rebuild": rebuild}
+            "identity_updated": bool(rebuild and identity_changed),
+            "cw_mappings_updated": bool(rebuild and cw_changed), "download": dl, "rebuild": rebuild}

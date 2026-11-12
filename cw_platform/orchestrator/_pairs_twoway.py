@@ -100,6 +100,7 @@ from ..anime_mapping.service import (
     enrich_index_for_pair as _anime_enrich_index_for_pair,
 )
 from ..anime_mapping.history_coords import build_history_coordinate_aliases as _build_history_coordinate_aliases
+from ..anime_mapping.history_coords import limited_fragment_ids as _limited_fragment_ids
 from ._snapshots import (
     build_snapshots_for_feature,
     emit_cloud_history_read,
@@ -849,7 +850,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         ids_raw = it.get("ids") if isinstance(it.get("ids"), Mapping) else {}
         show_ids = dict(show_ids_raw or {})
         ids = dict(ids_raw or {})
-        coord_ids: Mapping[str, Any] = (show_ids or ids) if typ in ("episode", "season") else ids
+        coord_ids: Mapping[str, Any] = (_limited_fragment_ids(coord_aliases, it, show_ids) if show_ids else ids) if typ in ("episode", "season") else ids
         toks: set[str] = set(coord_aliases.tokens(it)) | path_aliases.tokens(it)
 
         if typ == "episode":

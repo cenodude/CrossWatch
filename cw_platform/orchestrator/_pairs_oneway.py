@@ -258,6 +258,7 @@ from ..anime_mapping.service import (
 from ..anime_mapping.history_coords import (
     HistoryCoordinateAliases as _HistoryCoordinateAliases,
     build_history_coordinate_aliases as _build_history_coordinate_aliases,
+    limited_fragment_ids as _limited_fragment_ids,
 )
 from ._snapshots import (
     build_snapshots_for_feature,
@@ -921,7 +922,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             if has_frag:
                 frag = f"#s{s:02d}e{e:02d}"
     
-                for src_ids in (show_ids, ids):
+                for src_ids in (_limited_fragment_ids(coord_aliases, it, show_ids), ids):
                     for k, v in src_ids.items():
                         if v is None or str(v) == "":
                             continue
@@ -941,7 +942,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 s = -1
             if s >= 0:
                 frag = f"#season:{s}"
-                for src_ids in (show_ids, ids):
+                for src_ids in (_limited_fragment_ids(coord_aliases, it, show_ids), ids):
                     for k, v in src_ids.items():
                         if v is None or str(v) == "":
                             continue
