@@ -370,7 +370,12 @@ for(const theme of ["original","flat-dark","flat-light"]) {
       if(kind==='tracker') {
         assert.equal(await page.locator('#trk-mobile-view').isVisible(),false);
         assert.equal(await page.locator('.trk-tabs').isVisible(),true);
-        await page.locator('[data-trk-view="collection"]').click();
+        const collection = page.locator('.trk-tabs [data-trk-view="collection"]');
+        if (await collection.isVisible()) await collection.click();
+        else {
+          await page.locator('.trk-others summary').click();
+          await page.locator('.trk-others [data-trk-view="collection"]').click();
+        }
         assert.equal(await page.locator('#trk-mobile-view').inputValue(),'collection');
       }
       if(kind==='analyzer') {

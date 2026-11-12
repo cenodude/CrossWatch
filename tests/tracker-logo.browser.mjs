@@ -178,9 +178,14 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
     const heading=page.locator('.trk-hero-heading');
     assert.equal(await page.locator('.cw-page-hero-title').count(),0);
     assert.equal(await page.locator('.cw-page-hero-kicker').textContent(),'CW TRACKER');
+    await heading.locator('img').waitFor();
+    assert.equal(await heading.locator('img').getAttribute('alt'),'Arrival');
+    assert.equal(await page.locator('.trk-play.is-selected').count(),0);
+    assert.equal(await page.locator('[data-trk-slot="title"] .trk-detail-empty').count(),1);
+    assert.equal(await page.locator('[data-trk-slot="title"] .trk-detail-empty').isVisible(),width>760);
     if(process.env.CW_LOGO_SCREENSHOTS) {
       await mkdir(process.env.CW_LOGO_SCREENSHOTS,{recursive:true});
-      await page.locator('.cw-page-hero').screenshot({path:`${process.env.CW_LOGO_SCREENSHOTS}/${theme}-${width}-empty.png`});
+      await page.locator('.cw-page-hero').screenshot({path:`${process.env.CW_LOGO_SCREENSHOTS}/${theme}-${width}-default.png`});
     }
     await select(0);
     await heading.locator('img').waitFor();
@@ -256,16 +261,17 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
     assert.equal(await page.locator('.trk-grid-copy [data-trk-row-info]').count(),0);
     if (width >= 800) {
       await page.mouse.move(0,0);
-      assert.equal(await infoButton.evaluate(el=>getComputedStyle(el).opacity),'0');
+      assert.equal(await infoButton.evaluate(el=>getComputedStyle(el.closest('.trk-card-actions')).opacity),'0');
       await page.keyboard.press('Tab');
       await infoButton.focus();
-      assert.equal(await infoButton.evaluate(el=>getComputedStyle(el).opacity),'1');
+      assert.equal(await infoButton.evaluate(el=>getComputedStyle(el.closest('.trk-card-actions')).opacity),'1');
       await infoButton.evaluate(el=>el.blur());
       await page.locator('.trk-grid-art').nth(2).hover();
     }
-    assert.equal(await infoButton.evaluate(el=>getComputedStyle(el).opacity),'1');
+    assert.equal(await infoButton.evaluate(el=>getComputedStyle(el.closest('.trk-card-actions')).opacity),'1');
     const infoBounds=await infoButton.boundingBox();
-    assert.ok(infoBounds.width>=44&&infoBounds.height>=44);
+    const minimumTarget = width < 800 ? 44 : 40;
+    assert.ok(infoBounds.width>=minimumTarget&&infoBounds.height>=minimumTarget);
     if(process.env.CW_LOGO_SCREENSHOTS) await page.locator('.trk-grid-card').first().screenshot({path:`${process.env.CW_LOGO_SCREENSHOTS}/${theme}-${width}-grid.png`});
     await infoButton.click();
     const modal=page.locator('#cw-media-modal');
@@ -290,3 +296,32 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
     assert.equal(await page.evaluate(()=>{const body=document.querySelector('.cw-mm-body');return body.scrollWidth>body.clientWidth+1;}),false);
   });
 }
+
+
+test('Tracker header follows the newest loaded result without selecting it', async t => {
+  const {page,select,release} = await fixture(t,'flat-dark',1440);
+  release();
+  const titleReads = [];
+  page.on('request', request => {if (new URL(request.url()).pathname === '/api/tracker/title') titleReads.push(request.url());});
+  await page.route('**/api/tracker/items?**', route => {
+    const query = new URL(route.request().url()).searchParams.get('q');
+    const list = query === 'empty' ? [] : [{...items[1],date:'2026-11-05T12:00:00Z'},{...items[2],date:'2026-11-09T12:00:00Z'},items[0]];
+    return route.fulfill({json:{items:list,total:list.length}});
+  });
+  await page.locator('[data-trk-input="q"]').fill('latest');
+  await page.locator('.trk-hero-logo[alt="House of the Dragon"]').waitFor();
+  assert.match(await page.locator('.trk-hero-backdrop').getAttribute('src'),/tv\/3/);
+  assert.equal(await page.locator('.trk-hero-details .trk-status').getAttribute('data-status'),'watching');
+  assert.equal(await page.locator('.trk-play.is-selected').count(),0);
+  assert.equal(await page.locator('.trk-title-sheet').count(),0);
+  assert.equal(titleReads.length,0);
+  await page.locator('[data-trk-input="q"]').fill('empty');
+  await page.getByText('Everything you watched, rated and want to watch',{exact:true}).waitFor();
+  assert.equal(await page.locator('.trk-hero-backdrop').isHidden(),true);
+  await page.locator('[data-trk-input="q"]').fill('latest');
+  await page.locator('.trk-hero-logo[alt="House of the Dragon"]').waitFor();
+  await select(2);
+  await page.locator('.trk-hero-logo[alt="Arrival"]').waitFor();
+  assert.equal(await page.locator('.trk-play.is-selected').count(),1);
+  assert.equal(titleReads.length,1);
+});

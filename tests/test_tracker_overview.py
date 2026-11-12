@@ -79,6 +79,49 @@ def test_continue_excludes_completed_dropped_finished_and_stale_progress(app):
     assert [row["key"] for row in client.get("/api/tracker/overview").json()["continue"]] == ["5"]
 
 
+@pytest.mark.parametrize("duration,position,remaining", [
+    (3600000, 1800000, 30), (3600000, 1810000, 30),
+    (None, 1800000, None), (3600000, None, None),
+    (3600000, -1, None), (0, 0, None), (3600000, 3600000, None),
+    (3600000, 100, None), (True, 0, None), (3600000, True, None),
+    (float("inf"), 1800000, None), (3600000, float("nan"), None),
+])
+def test_remaining_time_requires_consistent_finite_playback_data(app, duration, position, remaining):
+    client, store, _, meta = app
+    store.write_state("progress", {"resume": {"type": "episode", "series_title": "Example", "show_ids": {"tmdb": "8"}, "season": 1, "episode": 2, "progress_percent": 50, "duration_ms": duration, "progress_ms": position}})
+    row = client.get("/api/tracker/overview").json()["continue"][0]
+    assert row.get("remaining_minutes") == remaining
+    assert row["progress_percent"] == 50
+    assert not meta.calls
+
+
+def test_episode_badge_counts_only_known_aired_unwatched_episodes():
+    meta = Metadata()
+    show = {"key": "tmdb:1", "title": "Show", "last_watched": "2026-11-08"}
+    result = show_overview(show, {(1, 1)}, meta, DAY)
+    assert result["continue"][0]["aired_episodes_left"] == 2
+    assert not any("progress_percent" in row for row in result["continue"])
+    assert {call[1] for call in meta.calls} == {None, 1, 2}
+
+
+@pytest.mark.parametrize("missing", ["unloaded", "incomplete", "duplicate"])
+def test_episode_badge_does_not_guess_for_unloaded_or_incomplete_seasons(missing):
+    class PartialMetadata(Metadata):
+        def lookup(self, kind, tmdb, *, season=None, **kwargs):
+            response = super().lookup(kind, tmdb, season=season, **kwargs)
+            if season is None and missing == "unloaded":
+                response.data["seasons"].append({"season_number": 3, "episode_count": 5, "air_date": "2020-01-01"})
+                response.data["status"] = "Ended"
+            if season == 1 and missing == "incomplete":
+                response.data["episodes"] = response.data["episodes"][:2]
+            if season == 1 and missing == "duplicate":
+                response.data["episodes"].append(response.data["episodes"][0])
+            return response
+    result = show_overview({"key": "tmdb:1", "title": "Show"}, {(1, 1)}, PartialMetadata(), DAY)
+    assert result["continue"]
+    assert "aired_episodes_left" not in result["continue"][0]
+
+
 def test_episode_dates_cover_the_whole_window_and_new_seasons():
     meta = Metadata()
     show = {"key": "tmdb:1", "title": "Show", "last_watched": "2026-11-08"}
