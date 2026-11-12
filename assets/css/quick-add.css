@@ -47,7 +47,7 @@
 #cw-quick-add button:disabled { opacity:.5; cursor:wait; }
 #cw-quick-add .cw-qa-fab {
   position:fixed; right:16px; bottom:calc(var(--cw-qa-mobile-bottom,22px) + env(safe-area-inset-bottom,0px));
-  display:inline-flex; align-items:center; gap:10px; height:52px; padding:8px 16px 8px 8px;
+  display:inline-flex; align-items:center; justify-content:center; width:52px; height:52px; padding:8px;
   background:var(--qa-bg); border:1px solid var(--qa-line); border-radius:16px; font-size:14px; font-weight:700;
   touch-action:none; box-shadow:0 4px 16px #0002;
 }
