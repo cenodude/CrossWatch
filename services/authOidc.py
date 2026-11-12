@@ -25,7 +25,7 @@ EXPECT_VALUE_MAX = 256
 PROVISION_ACCESS = ("full", "readonly")
 GROUPS_MAX = 50
 PROVISIONED_KEY = "oidc_provisioned"
-BUTTON_ICONS = ("authentik", "authelia", "keycloak", "google", "microsoft", "okta", "auth0")
+BUTTON_ICONS = ("authentik", "authelia", "keycloak", "pocketid", "google", "microsoft", "okta", "auth0")
 
 _PENDING_FLOWS: dict[str, dict[str, Any]] = {}
 _DISCOVERY_CACHE: dict[str, tuple[int, dict[str, Any]]] = {}

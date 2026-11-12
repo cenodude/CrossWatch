@@ -1918,7 +1918,7 @@ __CW_NAV_PROFILE_MENU__
                               </label>
                               <label class="cw-page-settings-field" for="app_auth_oidc_issuer">
                                 <span>Issuer URL</span>
-                                <input id="app_auth_oidc_issuer" type="url" autocomplete="off" placeholder="Issuer URL" aria-label="Issuer URL" title="Required. The issuer URL of your provider, for example https://auth.example.com/application/o/crosswatch/ for Authentik. CrossWatch reads the provider settings from it.">
+                                <input id="app_auth_oidc_issuer" type="url" autocomplete="off" placeholder="Issuer URL" aria-label="Issuer URL" title="Required. The issuer URL of your provider, for example https://auth.example.com/application/o/crosswatch/ for Authentik or https://id.example.com for Pocket ID. CrossWatch reads the provider settings from it.">
                               </label>
                               <label class="cw-page-settings-field" for="app_auth_oidc_client_id">
                                 <span>Client ID</span>
@@ -1943,6 +1943,7 @@ __CW_NAV_PROFILE_MENU__
                                   <option value="authentik">Authentik</option>
                                   <option value="authelia">Authelia</option>
                                   <option value="keycloak">Keycloak</option>
+                                  <option value="pocketid">Pocket ID</option>
                                   <option value="google">Google</option>
                                   <option value="microsoft">Microsoft</option>
                                   <option value="okta">Okta</option>

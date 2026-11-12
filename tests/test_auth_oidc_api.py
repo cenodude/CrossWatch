@@ -973,6 +973,40 @@ def test_oidc_button_icon_is_rendered_from_fixed_list() -> None:
     assert '<svg class="cw-sso-icon"' not in _login_html(oidc_available=True)
 
 
+def test_oidc_pocket_id_config_and_login_icon(monkeypatch) -> None:
+    from api import appAuthAPI as auth
+    from api import authOidcAPI as oidc_api
+
+    cfg = _auth_cfg()
+    _bind_config(monkeypatch, oidc_api, cfg)
+    token = _login_admin(cfg)
+    req = _request("/api/app-auth/oidc/config", method="POST", headers={"cookie": f"{auth.COOKIE_NAME}={token}"})
+    payload = {
+        "enabled": True,
+        "issuer": "https://id.example.com/",
+        "client_id": "pocket-id-client",
+        "client_secret": "pocket-id-secret",
+        "button_label": "Sign in with Pocket ID",
+        "button_icon": "PocketID",
+    }
+
+    resp = oidc_api.api_oidc_save_config(req, payload)
+
+    assert resp.status_code == 200
+    body = _json_body(resp)
+    assert body["configured"] is True
+    assert body["issuer"] == "https://id.example.com"
+    assert body["button_icon"] == "pocketid"
+    assert "client_secret" not in body
+    assert cfg["app_auth"]["oidc"]["button_icon"] == "pocketid"
+    saved = _json_body(oidc_api.api_oidc_config(_request("/api/app-auth/oidc/config", headers={"cookie": f"{auth.COOKIE_NAME}={token}"})))
+    assert saved["button_icon"] == "pocketid"
+    html = auth._login_html(oidc_available=True, oidc_label=saved["button_label"], oidc_icon=saved["button_icon"])
+    assert 'cw-oidc-btn has-icon' in html
+    assert auth._OIDC_ICON_PATHS["pocketid"] in html
+    assert ">Sign in with Pocket ID</span>" in html
+
+
 def test_identity_from_claims_reads_custom_groups_claim() -> None:
     from services import authOidc
 

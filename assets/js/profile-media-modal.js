@@ -533,7 +533,7 @@
     const tmdb = tmdbOf(item);
     const imdb = meta?.ids?.imdb || item?.ids?.imdb || "";
     const out = [];
-    if (window.CW?.Trailer?.has?.(meta)) out.push(`<button class="cw-mm-btn${state.tracker ? "" : " is-primary"}" type="button" data-mm-trailer>${icon("play_arrow")}Watch trailer</button>`);
+    if (window.CW?.Trailer?.has?.(meta)) out.push(`<button class="cw-mm-btn" type="button" data-mm-trailer>${icon("play_arrow")}Watch trailer</button>`);
     out.push(`<a class="cw-mm-btn" href="https://www.themoviedb.org/${artType(item)}/${encodeURIComponent(tmdb)}" target="_blank" rel="noopener">TMDB</a>`);
     if (imdb) out.push(`<a class="cw-mm-btn" href="https://www.imdb.com/title/${encodeURIComponent(imdb)}/" target="_blank" rel="noopener">IMDb</a>`);
     if (removable()) out.push(`<button type="button" class="cw-mm-btn is-danger" data-mm-clear-all aria-haspopup="dialog" title="Remove from everything" aria-label="Remove from everything">${icon("delete")}Remove</button>`);
@@ -820,7 +820,7 @@
         <div class="cw-mm-progress"><i style="width:${pct}%"></i></div>
         ${unmatchedEpisodes().length ? `<p class="cw-mm-muted">${plural(unmatchedEpisodes().length, "watched episode")} could not be matched to TMDB season numbering and ${unmatchedEpisodes().length === 1 ? "is" : "are"} excluded from progress.</p>` : pair ? `<div class="cw-mm-episodes-pair">${pair}</div>` : empty("No episode information on TMDB.")}${seasonProgress()}${showResumePoints()}</div>`;
     }
-    return `<div class="cw-mm-grid-2">${main}<div class="cw-mm-stack">${trackerBox()}
+    return `<div class="cw-mm-grid-2">${main}<div class="cw-mm-stack">${trackerData() ? trackerBox() : `<div class="cw-mm-box">${watchHistory(state.presence?.plays)}</div>`}
       <div class="cw-mm-box"><h4>Details</h4>${detailTiles()}</div>
 
     </div></div>`;
@@ -842,7 +842,7 @@
     const data = trackerData();
     if (!data) return "";
     const show = !isMovie();
-    const plays = [...(data.plays || [])].sort((a, b) => playEpoch(b) - playEpoch(a));
+    const plays = data.plays || [];
     const rating = data.ratings?.[0]?.rating ?? null;
     const listed = (data.watchlist || []).length > 0;
     const hints = {
@@ -864,17 +864,24 @@
     const noteDates = [note?.started ? `Started ${note.started}` : "", note?.finished ? `Finished ${note.finished}` : ""].filter(Boolean).join(" · ");
     const hasNotes = !!(tags || note?.notes || noteDates || Object.keys(note?.fields || {}).length);
     const noteLine = data.note_key ? `<div class="cw-mm-trk-notes"><h4>My notes</h4>${noteDates ? `<p class="cw-mm-muted">${esc(noteDates)}</p>` : ""}${tags ? `<div class="cw-mm-trk-note">${tags}</div>` : ""}${note?.notes ? `<p class="cw-mm-trk-note-text">${esc(note.notes)}</p>` : ""}<button type="button" class="cw-mm-notes-action" data-mm-trk="notes">${icon(hasNotes ? "edit_note" : "add")}<span>${hasNotes ? "Edit notes" : "Add notes"}</span></button></div>` : "";
+    return `<div class="cw-mm-box cw-mm-trk"><div class="cw-mm-trk-header">${trackerStatus(data)}<small class="cw-mm-muted">${esc(state.tracker.label || "")}</small></div>
+      <div class="cw-mm-trk-actions">${actions}</div>${watchHistory(plays, true)}${noteLine}</div>`;
+  }
+
+  function watchHistory(plays, editable = false) {
+    const show = !isMovie();
+    const epochOf = play => editable ? playEpoch(play) : Number(play.epoch) || 0;
+    const sorted = [...(plays || [])].sort((a, b) => epochOf(b) - epochOf(a));
     const when = (play, time = false) => {
-      const epoch = playEpoch(play);
+      const epoch = epochOf(play);
       if (!epoch) return "";
       const date = new Date(epoch * 1000);
       return time ? window.CW.ProfileDateTime.format(date, { hour: "2-digit", minute: "2-digit" }) : dateFmt.format(date);
     };
-    const rows = (state.historyExpanded ? plays : plays.slice(0, 5)).map((play) => `<li class="cw-mm-trk-play">${show ? `<b>${play.season != null ? esc(`S${play.season} E${play.episode}`) : ""}</b>` : ""}<span>${esc(when(play))}</span><span>${esc(when(play, true))}</span><button type="button" class="cw-mm-trk-icon" data-mm-trk-edit="${esc(play.key)}" title="Edit play" aria-label="Edit play${show ? ` ${esc(episodeCode(play))}` : ""}">${icon("edit")}</button></li>`).join("");
-    const more = plays.length > 5 ? `<button type="button" class="cw-mm-btn cw-mm-history-more" data-mm-history-more aria-expanded="${!!state.historyExpanded}">${state.historyExpanded ? "Show less" : `Show ${esc(plural(plays.length - 5, "older play"))}`}</button>` : "";
-    return `<div class="cw-mm-box cw-mm-trk"><div class="cw-mm-trk-header">${trackerStatus(data)}<small class="cw-mm-muted">${esc(state.tracker.label || "")}</small></div>
-      <div class="cw-mm-trk-actions">${actions}</div>
-      <h4>Watch history</h4>${rows ? `<ul class="cw-mm-trk-plays${show ? "" : " is-movie"}">${rows}</ul>${more}` : `<p class="cw-mm-muted">No plays in this tracker yet.</p>`}${noteLine}</div>`;
+    const rows = (state.historyExpanded ? sorted : sorted.slice(0, 5)).map((play) => `<li class="cw-mm-trk-play">${show ? `<b>${play.season != null ? esc(`S${play.season} E${play.episode}`) : ""}</b>` : ""}<span>${esc(when(play))}</span><span>${esc(when(play, true))}</span>${editable ? `<button type="button" class="cw-mm-trk-icon" data-mm-trk-edit="${esc(play.key)}" title="Edit play" aria-label="Edit play${show ? ` ${esc(episodeCode(play))}` : ""}">${icon("edit")}</button>` : ""}</li>`).join("");
+    const more = sorted.length > 5 ? `<button type="button" class="cw-mm-btn cw-mm-history-more" data-mm-history-more aria-expanded="${!!state.historyExpanded}">${state.historyExpanded ? "Show less" : `Show ${esc(plural(sorted.length - 5, "older play"))}`}</button>` : "";
+    const message = editable ? "No plays in this tracker yet." : state.presenceLoading ? "Loading watch history..." : !Array.isArray(plays) ? "Watch history unavailable." : "No watch history yet.";
+    return `<h4>Watch history</h4>${rows ? `<ul class="cw-mm-trk-plays${show ? "" : " is-movie"}${editable ? "" : " is-readonly"}">${rows}</ul>${more}` : `<p class="cw-mm-muted">${message}</p>`}`;
   }
 
   const initialsOf = (name) => String(name || "?").split(/\s+/).map((part) => part[0] || "").join("").slice(0, 2).toUpperCase();

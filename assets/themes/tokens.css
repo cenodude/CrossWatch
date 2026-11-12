@@ -9,6 +9,24 @@ html[data-cw-theme=flat-light]{--cw-disabled-opacity:1;--cw-content-opacity:1;--
 
 /* Shared page components. Original keeps its depth; Flat uses solid surfaces. */
 :root {
+  --cw-mobile-nav-panel: var(--cw-theme-surface);
+  --cw-mobile-nav-tile: var(--cw-theme-surface-raised);
+  --cw-mobile-nav-border: var(--cw-theme-border-strong);
+  --cw-mobile-nav-text: var(--cw-theme-text);
+  --cw-mobile-nav-muted: var(--cw-theme-muted);
+  --cw-mobile-nav-selected: var(--cw-page-selected-bg);
+  --cw-mobile-nav-accent: var(--cw-theme-accent);
+}
+html[data-cw-theme="flat-dark"] {
+  --cw-mobile-nav-panel: #111720;
+  --cw-mobile-nav-tile: #1b222d;
+  --cw-mobile-nav-border: #66758a;
+  --cw-mobile-nav-text: #f1f3f5;
+  --cw-mobile-nav-muted: #bcc8da;
+  --cw-mobile-nav-selected: #30264c;
+  --cw-mobile-nav-accent: #ac98ff;
+}
+:root {
   --cw-page-header-bg: radial-gradient(820px 250px at 100% 0%, rgba(112,96,245,.1), transparent 68%), linear-gradient(100deg, #111821, #151d31 48%, #181a38);
   --cw-page-panel-bg: linear-gradient(180deg, rgba(255,255,255,.025), transparent), var(--cw-theme-surface);
   --cw-page-toolbar-bg: linear-gradient(180deg, rgba(255,255,255,.045), rgba(255,255,255,.015)), var(--cw-theme-surface-raised);

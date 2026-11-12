@@ -270,6 +270,51 @@ def test_title_presence_collects_episode_plays_for_a_show() -> None:
     assert profile_history.title_presence(index, "show", 55) is None
 
 
+def test_media_watch_history_merges_sources_but_keeps_rewatches_and_distinct_episodes() -> None:
+    def episode(number, epoch, **extra):
+        return {"_type": "episode", "ids": {"show_ids": {"tmdb": 1399}}, "season": 1, "episode": number, "sort_epoch": epoch, **extra}
+
+    synced = {"rows": [episode(1, 90000, watch_epochs=[90000, 1000]), episode(2, 90000)]}
+    scrobble = {"rows": [episode(1, 90010), episode(2, 90000), episode(3, 0)]}
+
+    assert profile_history.title_watch_history([synced, scrobble], "show", 1399) == [
+        {"epoch": 90010, "season": 1, "episode": 1},
+        {"epoch": 90000, "season": 1, "episode": 2},
+        {"epoch": 1000, "season": 1, "episode": 1},
+    ]
+    assert profile_history.title_watch_history([synced, scrobble], "show", 99) == []
+
+
+def test_media_watch_history_keeps_movie_rewatches_without_episode_columns() -> None:
+    index = {"rows": [{"_type": "movie", "ids": {"tmdb": 11}, "sort_epoch": 90000, "watch_epochs": [1000, 90000]}]}
+
+    assert profile_history.title_watch_history([index, index], "movie", 11) == [{"epoch": 90000}, {"epoch": 1000}]
+
+
+def test_media_watch_history_uses_only_the_requested_profiles_history_sources(monkeypatch) -> None:
+    calls = []
+
+    def history_index(_cfg, profile_id, source):
+        calls.append((profile_id, source))
+        epoch = {"synced": 1000, "scrobble": 90000, "ratings": 999999}[source]
+        return {"rows": [{"_type": "movie", "ids": {"tmdb": 11}, "sort_epoch": epoch}]}, ""
+
+    monkeypatch.setattr(profileAPI, "_profile_history_index", history_index)
+    monkeypatch.setattr(profileAPI, "_collection_lookup", lambda *_a, **_k: {})
+    payload = profileAPI.build_profile_title_payload({}, profile_id="ann", media="movie", tmdb=11, watchlist=False)
+
+    assert calls == [("ann", "synced"), ("ann", "scrobble"), ("ann", "ratings")]
+    assert payload["plays"] == [{"epoch": 90000}, {"epoch": 1000}]
+    monkeypatch.setattr(profileAPI, "_profile_history_index", lambda *_a: ({"rows": []}, ""))
+    assert profileAPI.build_profile_title_payload({}, media="movie", tmdb=11)["plays"] == []
+
+    def unavailable(*_args):
+        raise RuntimeError("Unavailable")
+
+    monkeypatch.setattr(profileAPI, "_profile_history_index", unavailable)
+    assert profileAPI.build_profile_title_payload({}, media="movie", tmdb=11)["plays"] is None
+
+
 def test_title_presence_reports_each_provider_rating() -> None:
     index: dict[str, Any] = {
         "source": "ratings",

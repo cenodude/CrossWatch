@@ -129,6 +129,49 @@ test('Tracker media card controls and watch history', async t => {
   assert.equal(await modal.locator('section.cw-mm-lives').count(),1);
 });
 
+for(const theme of ['original','flat-dark','flat-light']) for(const width of [320,768,1440]) {
+  test(`${theme}: shared media card history at ${width}px`, async t => {
+    const {page, release} = await fixture(t, theme, width);
+    release();
+    const plays = Array.from({length:7}, (_, i) => ({epoch:Date.parse(`2026-11-0${i+1}T20:29:00Z`)/1000, season:2, episode:i+1}));
+    await page.route('**/api/profile/title?**', route => route.fulfill({json:{ok:true, plays, synced:{count:7, episodes:plays, present:[], missing:[]}}}));
+    await page.evaluate(async () => {
+      CW.Trailer = {has:() => true, openFor:item => {window.trailerItem=item;}};
+      CW.ProfileDateTime.format = (date, options) => new Intl.DateTimeFormat('en-GB', {...options, timeZone:'UTC', hourCycle:'h23'}).format(date);
+      await CW.ProfileMediaModal.open({type:'show', ids:{tmdb:3}});
+    });
+    const modal = page.locator('#cw-media-modal');
+    const trailer = modal.locator('[data-mm-trailer]');
+    assert.equal(await trailer.getAttribute('class'), 'cw-mm-btn');
+    await trailer.click();
+    assert.equal(await page.evaluate(() => trailerItem.ids.tmdb), 3);
+    assert.equal(await modal.locator('.cw-mm-trk-play').count(), 5);
+    assert.equal(await modal.locator('.cw-mm-trk-play b').first().textContent(), 'S2 E7');
+    assert.match(await modal.locator('.cw-mm-trk-play').first().textContent(), /7 Nov 2026.*20:29/);
+    assert.equal(await modal.locator('[data-mm-trk-edit], [data-mm-trk], [data-mm-status-picker]').count(), 0);
+    assert.deepEqual(await modal.locator('.cw-mm-grid-2>.cw-mm-stack h4').allTextContents(), ['Watch history', 'Details']);
+    await modal.locator('[data-mm-history-more]').focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await modal.locator('.cw-mm-trk-play').count(), 7);
+    assert.equal(await modal.locator('[data-mm-history-more]').getAttribute('aria-expanded'), 'true');
+    await page.keyboard.press('Enter');
+    assert.equal(await modal.locator('.cw-mm-trk-play').count(), 5);
+    const overflow = await modal.evaluate(el => [...el.querySelectorAll('.cw-mm-body, .cw-mm-trk-play')].some(node => node.scrollWidth > node.clientWidth + 1));
+    assert.equal(overflow, false);
+    await mkdir('.tmp/media-card', {recursive:true});
+    await modal.locator('.cw-mm-body').evaluate(el => {el.scrollTop=0;});
+    await modal.screenshot({path:`.tmp/media-card/shared-${theme}-${width}.png`});
+    if(width===320) {
+      await modal.locator('.cw-mm-trk-plays').scrollIntoViewIfNeeded();
+      await modal.screenshot({path:`.tmp/media-card/shared-${theme}-${width}-history.png`});
+    }
+    await page.route('**/api/profile/title?**', route => route.fulfill({json:{ok:true, plays:[]}}));
+    await page.evaluate(() => CW.ProfileMediaModal.open({type:'movie', ids:{tmdb:1}}));
+    assert.match(await modal.locator('.cw-mm-grid-2>.cw-mm-stack').textContent(), /No watch history yet/);
+    assert.equal(await modal.locator('[data-mm-history-more]').count(), 0);
+  });
+}
+
 for(const theme of ['original','flat-dark','flat-light']) for(const width of [320,390,1440]) {
   test(`${theme}: header logos and fallback at ${width}px`,async t=>{
     const {page,select,release,logoRequested}=await fixture(t,theme,width);

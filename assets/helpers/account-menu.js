@@ -65,7 +65,13 @@
       }
     });
     window.addEventListener('hashchange', close);
-    window.matchMedia('(max-width: 760px)').addEventListener('change', close);
+    const mobileLayout = window.matchMedia('(max-width: 760px)');
+    const syncLayout = () => {
+      panel.classList.toggle('cw-page-mobile-navigation', mobileLayout.matches);
+      close();
+    };
+    mobileLayout.addEventListener('change', syncLayout);
+    syncLayout();
   }
 
   function mobileNavigationFeedback() {
@@ -127,7 +133,7 @@
       nav.querySelectorAll('a').forEach(node => node.remove());
       $('cw-mobile-more').insertAdjacentHTML('beforebegin', items.map(item => link(item)).join(''));
       extra.innerHTML = choices.filter(item => !$(`tab-${item[0]}`) && !shortcuts.includes(item[0])).map(item => link(item, 'class="tab"')).join('');
-      for (const route of ['main', 'tracker', 'snapshots', 'playlists', 'editor']) {
+      for (const route of ['main', 'snapshots', 'playlists', 'editor']) {
         $(`tab-${route}`)?.classList.toggle('cw-mobile-pinned', items.some(item => item[0] === route));
       }
       update();
