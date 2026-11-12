@@ -55,14 +55,6 @@
 
   const tmdbIdOf = (p) => window.CW?.Meta?.tmdbId(p) || "";
 
-  const buildTmdbUrl = (p) => {
-    const id = tmdbIdOf(p);
-    if (!id) return "";
-    const resolved = window.CW?.Meta?.peek(p)?.resolved_type;
-    const type = String(resolved || p?.media_type || p?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
-    return `https://www.themoviedb.org/${type}/${encodeURIComponent(String(id))}`;
-  };
-
   const artTypeOf = (p) => {
     const type = p?.media_type || p?.type || "";
     return String(type).toLowerCase() === "movie" ? "movie" : "tv";
@@ -422,9 +414,7 @@
     }
 
     const overview = p?.overview || (meta ? (meta.overview || det.overview || det.tagline || "") : "");
-    const tmdbUrl = meta
-      ? buildTmdbUrl(Object.assign({}, p, { tmdb: tmdbIdOf(p) || (meta.ids && (meta.ids.tmdb || meta.ids.id)) }))
-      : buildTmdbUrl(p);
+    const mediaItem = { ...p, tmdb: tmdbIdOf(p) || meta?.ids?.tmdb || meta?.ids?.id || "" };
 
     return {
       key: keyOf(p),
@@ -437,7 +427,15 @@
       chips,
       overview,
       poster: buildArtUrl(p),
-      posterHref: tmdbUrl,
+      onOpen: mediaItem.tmdb ? () => {
+        const modal = window.CW?.ProfileMediaModal;
+        if (modal?.canOpen?.(mediaItem)) {
+          void modal.open(mediaItem);
+        } else {
+          const open = window.CW?.WatchlistPreview?.openPreviewDrawer || window.openPreviewDrawer;
+          void open?.(mediaItem);
+        }
+      } : null,
       backdrop: buildBackdropUrl(p, meta),
       information: meta ? FMT.informationFor(meta, isMovie) : "loading",
       rating,

@@ -49,11 +49,19 @@ def attach_playing_routes(streams: list[dict[str, Any]], cfg: dict[str, Any], us
                     continue
                 if any(str(row[key] if row[key] is not None else "") != str(stream.get(key) if stream.get(key) is not None else "") for key in ("season", "episode")):
                     continue
-                item_key = _id_token(stream.get("ids") or {})
-                if item_key and row["item_key"]:
-                    if item_key != row["item_key"]:
+                ids = stream.get("ids") or {}
+                item_key = str(row["item_key"] or "")
+                namespace = item_key.partition(":")[0]
+                comparable = {
+                    token for key, value in ids.items()
+                    if (token := _id_token({key: value})) and token.partition(":")[0] == namespace
+                }
+                if item_key and comparable:
+                    if item_key not in comparable:
                         continue
                 elif str(row["title"] or "").casefold() != str(stream.get("title") or "").casefold():
+                    continue
+                elif row["year"] and stream.get("year") and str(row["year"]) != str(stream["year"]):
                     continue
                 account = str(stream.get("account") or "").strip().casefold()
                 observed_account = str(detail.get("account") or "").strip().casefold()

@@ -80,6 +80,21 @@ def test_stopped_routes_and_previous_session_runs_are_not_shown(archive):
     assert item["routes"] == []
 
 
+@pytest.mark.parametrize("ids", [{"imdb_show": "tt31422370", "tmdb_show": "253372"}, {"tvdb_show": "123"}])
+def test_route_identity_survives_different_available_id_namespaces(archive, ids):
+    playback_recorder.record_playback(event(), route())
+    item = stream(ids=ids)
+    playing_routes.attach_playing_routes([item], {}, {})
+    assert [r["destination"] for r in item["routes"]] == ["trakt"]
+
+
+def test_title_fallback_does_not_match_a_different_year(archive):
+    playback_recorder.record_playback(event(), route())
+    item = stream(ids={"tvdb_show": "123"}, year=2000)
+    playing_routes.attach_playing_routes([item], {}, {})
+    assert item["routes"] == []
+
+
 def test_webhook_sessions_remain_separate_in_currently_watching(tmp_path, monkeypatch):
     from cw_platform.local_db import close_conn
     from providers.scrobble import currently_watching
