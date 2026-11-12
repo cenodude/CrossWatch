@@ -108,6 +108,7 @@ def html() -> str:
                 </div>
                 <label class="cw-tracker-option cw-set-toggle"><span><strong>Automatic status updates</strong><small>Update Watching and Completed from watch history. Manual statuses stay protected. Turning this off stops automatic processing.</small></span><span class="cw-tracker-switch"><input id="cw_tracker_automatic_status" type="checkbox" role="switch" checked></span></label>
                 <label class="cw-tracker-option cw-set-toggle"><span><strong>Month in review reports</strong><small>Generate monthly watch summaries. Turning this off stops report generation and notifications; saved reports are kept.</small></span><span class="cw-tracker-switch"><input id="cw_tracker_month_review" type="checkbox" role="switch" checked></span></label>
+                <label class="cw-tracker-option cw-set-toggle"><span><strong>CrossWatch Wrapped</strong><small>Generate your yearly watch story. Turning this off stops report generation and notifications; saved reports are kept.</small></span><span class="cw-tracker-switch"><input id="cw_tracker_wrapped" type="checkbox" role="switch" checked></span></label>
               </section>
               <section class="cw-tracker-section" aria-labelledby="cw_tracker_storage_title">
                 <div class="cw-tracker-section-head">

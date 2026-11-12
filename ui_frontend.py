@@ -297,7 +297,9 @@ def _assert_admin_shell_stripped(html: str, *, settings_panes: set[str] | None =
 
 def _profile_nav_tab(label: str, href: str, active: bool = False) -> str:
     cls = "tab active" if active else "tab"
-    return f"<button class=\"{cls}\" type=\"button\" onclick=\"location.href='{href}'\">{label}</button>"
+    route = {"Main": "main", "Captures": "snapshots", "Playlists": "playlists", "Tracker": "tracker", "Editor": "editor"}.get(label)
+    tab_id = f' id="tab-{route}"' if route else ""
+    return f"<button{tab_id} class=\"{cls}\" type=\"button\" onclick=\"location.href='{href}'\">{label}</button>"
 
 
 def _profile_bulk_bar(bar_id: str, scope: str) -> str:

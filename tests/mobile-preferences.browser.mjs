@@ -21,7 +21,11 @@ async function fixture(t, theme = 'flat-dark', restricted = false, saved = null,
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
-  if (saved !== null) await page.addInitScript(value => localStorage.setItem('cw.mobile.shortcuts.v1', value), saved);
+  if (saved !== null) await page.addInitScript(value => {
+    if (sessionStorage.getItem('shortcuts-seeded')) return;
+    localStorage.setItem('cw.mobile.shortcuts.v1', value);
+    sessionStorage.setItem('shortcuts-seeded', '1');
+  }, saved);
   let empty = false;
   await page.route('https://mobile-preferences.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
@@ -48,8 +52,33 @@ async function openSettings(page) {
   await page.locator('#cw-mobile-widgets > summary').click();
 }
 
+test('default mobile bar has two replaceable shortcuts and destination icons', async t => {
+  const {page} = await fixture(t);
+  const routes = () => page.locator('#cw-mobile-bottom-nav a').evaluateAll(nodes=>nodes.map(node=>node.dataset.mobileRoute));
+  assert.deepEqual(await routes(), ['main','tracker','profile/overview']);
+  assert.equal(await page.locator('#cw-mobile-bottom-nav > *').count(), 4);
+  await openSettings(page);
+  assert.equal(await page.locator('#cw-mobile-shortcut-0').inputValue(), 'tracker');
+  assert.equal(await page.locator('#cw-mobile-shortcut-1').inputValue(), 'profile/overview');
+  for (const [route, icon] of Object.entries({main:'home',tracker:'inventory_2',snapshots:'photo_library',playlists:'queue_music',editor:'edit_note'})) {
+    assert.equal(await page.locator(`#tab-${route} .cw-mobile-destination-icon`).textContent(), icon);
+  }
+  await page.locator('#cw-mobile-shortcut-0').selectOption('snapshots');
+  await page.locator('#cw-mobile-shortcut-1').selectOption('editor');
+  assert.deepEqual(await routes(), ['main','snapshots','editor']);
+  assert.equal(await page.locator('#tab-tracker').isVisible(), true);
+  assert.equal(await page.locator('#cw-mobile-navigation [data-mobile-route="profile/overview"]').isVisible(), true);
+  await page.locator('#cw-mobile-shortcut-1').selectOption('tracker');
+  assert.equal(await page.locator('#tab-tracker').isVisible(), false);
+  await page.reload();
+  assert.deepEqual(await routes(), ['main','snapshots','tracker']);
+  await page.locator('#cw-mobile-bottom-nav [data-mobile-route="tracker"]').click();
+  await page.waitForURL('**/#tracker');
+  await page.waitForFunction(()=>document.querySelector('#cw-mobile-bottom-nav [data-mobile-route="tracker"]').getAttribute('aria-current')==='page');
+});
+
 for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: More menu has quiet surfaces, readable labels and keyboard focus`, async t => {
-  const {page} = await fixture(t,theme);
+  const {page} = await fixture(t,theme,false,'["tracker","settings/sync"]');
   await page.locator('#cw-mobile-more').click();
   const menu = page.locator('#cw-mobile-navigation');
   const tile = menu.locator('[data-mobile-route="profile/overview"]');
@@ -89,16 +118,16 @@ for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: More 
 });
 
 for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: shortcuts persist and mobile playing-card visibility stays separate`, async t => {
-  const {page,empty} = await fixture(t,theme);
+  const {page,empty} = await fixture(t,theme,false,'["settings/providers","tracker"]');
   const routes = () => page.locator('#cw-mobile-bottom-nav a').evaluateAll(nodes=>nodes.map(node=>node.dataset.mobileRoute));
-  assert.deepEqual(await routes(),['main','tracker','settings/providers','settings/sync']);
+  assert.deepEqual(await routes(),['main','settings/providers','tracker']);
   await page.waitForFunction(()=>document.querySelector('#playing-detail').classList.contains('show'));
   await openSettings(page);
   assert.equal(await page.locator('#tab-main').isVisible(),false);
   assert.equal(await page.locator('#tab-tracker').isVisible(),false);
   assert.equal(await page.locator('#cw-mobile-navigation [data-mobile-route="settings/scrobbler"]').isVisible(),true);
   await page.locator('#cw-mobile-shortcut-0').selectOption('settings/scrobbler');
-  assert.deepEqual(await routes(),['main','tracker','settings/scrobbler','settings/sync']);
+  assert.deepEqual(await routes(),['main','settings/scrobbler','tracker']);
   assert.equal(await page.locator('#cw-mobile-shortcut-1 option[value="settings/scrobbler"]').isDisabled(),true);
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('#cw-mobile-more').evaluate(node=>node===document.activeElement),true);
@@ -115,7 +144,7 @@ for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: short
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   }
   await page.reload();
-  assert.deepEqual(await routes(),['main','tracker','settings/scrobbler','settings/sync']);
+  assert.deepEqual(await routes(),['main','settings/scrobbler','tracker']);
   assert.equal(await page.locator('#playing-detail').evaluate(el=>el.classList.contains('show')),false);
   await page.setViewportSize({width:1200,height:900});
   await page.waitForFunction(()=>document.querySelector('#playing-detail').classList.contains('show'));
@@ -151,11 +180,11 @@ test('restricted accounts discard inaccessible shortcuts and cannot quick add', 
 
 test('invalid saved shortcuts recover to defaults', async t => {
   const {page}=await fixture(t,'flat-dark',false,'{broken');
-  assert.deepEqual(await page.locator('#cw-mobile-bottom-nav a').evaluateAll(nodes=>nodes.map(node=>node.dataset.mobileRoute)),['main','tracker','settings/providers','settings/sync']);
+  assert.deepEqual(await page.locator('#cw-mobile-bottom-nav a').evaluateAll(nodes=>nodes.map(node=>node.dataset.mobileRoute)),['main','tracker','profile/overview']);
 });
 
 test('More excludes fixed and pinned destinations, including settings submenu entries', async t => {
-  const {page} = await fixture(t,'flat-dark');
+  const {page} = await fixture(t,'flat-dark',false,'["settings/providers","settings/sync"]');
   await openSettings(page);
   await page.locator('#tab-settings').click();
   for (const pane of ['providers','sync']) assert.equal(await page.locator(`#cw-settings-menu [data-settings-pane="${pane}"]`).isVisible(),false);
@@ -170,13 +199,14 @@ test('More excludes fixed and pinned destinations, including settings submenu en
   assert.equal(await page.locator('#tab-about-menu').isVisible(),false);
   await page.reload();
   await page.locator('#cw-mobile-more').click();
-  for (const id of ['tab-main','tab-tracker','tab-snapshots','tab-about-menu']) assert.equal(await page.locator(`#${id}`).isVisible(),false);
+  for (const id of ['tab-main','tab-snapshots','tab-about-menu']) assert.equal(await page.locator(`#${id}`).isVisible(),false);
+  assert.equal(await page.locator('#tab-tracker').isVisible(),true);
   await page.setViewportSize({width:1200,height:900});
   for (const id of ['tab-main','tab-tracker','tab-snapshots','tab-about-menu']) assert.equal(await page.locator(`#${id}`).isVisible(),true);
 });
 
 for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: My Media Hub pins Overview without adding slots`, async t => {
-  const {page} = await fixture(t,theme);
+  const {page} = await fixture(t,theme,false,'["tracker","settings/sync"]');
   const pinned = page.locator('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]');
   const extra = page.locator('#cw-mobile-navigation [data-mobile-route="profile/overview"]');
   await openSettings(page);
@@ -188,7 +218,7 @@ for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: My Me
   assert.equal(await first.inputValue(), 'profile/overview');
   assert.equal(await pinned.count(), 1);
   assert.equal(await extra.count(), 0);
-  assert.equal(await page.locator('#cw-mobile-bottom-nav > *').count(), 5);
+  assert.equal(await page.locator('#cw-mobile-bottom-nav > *').count(), 4);
   const second = page.locator('#cw-mobile-shortcut-1');
   assert.equal(await second.locator('option[value="profile/overview"]').isDisabled(), true);
   await second.evaluate(select => {select.value='profile/overview';select.dispatchEvent(new Event('change',{bubbles:true}));});
@@ -233,18 +263,18 @@ for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: My Me
 
 for (const [saved, expected] of [
   ['["playlists","editor"]', ['playlists','editor']],
-  ['["profile/overview","profile/overview"]', ['profile/overview','settings/providers']],
-  ['["missing",null,17,{},"profile/overview"]', ['profile/overview','settings/providers']],
+  ['["profile/overview","profile/overview"]', ['profile/overview','tracker']],
+  ['["missing",null,17,{},"profile/overview"]', ['profile/overview','tracker']],
 ]) test(`saved shortcuts retain valid choices and remove duplicates: ${saved}`, async t => {
   const {page} = await fixture(t,'flat-dark',false,saved);
-  assert.deepEqual(await page.locator('#cw-mobile-bottom-nav a').evaluateAll(nodes=>nodes.map(node=>node.dataset.mobileRoute)), ['main','tracker',...expected]);
+  assert.deepEqual(await page.locator('#cw-mobile-bottom-nav a').evaluateAll(nodes=>nodes.map(node=>node.dataset.mobileRoute)), ['main',...expected]);
 });
 
 test('My Media Hub is unavailable when the profile destination is absent', async t => {
   const {page} = await fixture(t,'flat-dark',false,'["profile/overview","editor"]',{profileAvailable:false});
   await openSettings(page);
   assert.equal(await page.locator('option[value="profile/overview"], [data-mobile-route="profile/overview"]').count(), 0);
-  assert.deepEqual(await page.locator('#cw-mobile-bottom-nav a').evaluateAll(nodes=>nodes.map(node=>node.dataset.mobileRoute)), ['main','tracker','editor','settings/providers']);
+  assert.deepEqual(await page.locator('#cw-mobile-bottom-nav a').evaluateAll(nodes=>nodes.map(node=>node.dataset.mobileRoute)), ['main','editor','tracker']);
 });
 
 test('managed writers retain permitted shortcuts and routes from the media hub', async t => {
@@ -252,6 +282,6 @@ test('managed writers retain permitted shortcuts and routes from the media hub',
   await page.locator('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]').click();
   await page.waitForURL('**/profile#overview');
   await openSettings(page);
-  assert.deepEqual(await page.locator('#cw-mobile-shortcut-0 option').evaluateAll(nodes=>nodes.map(node=>node.value)), ['snapshots','playlists','editor','profile/overview']);
-  for (const route of ['main','tracker','snapshots']) assert.equal(await page.locator(`#cw-mobile-bottom-nav [data-mobile-route="${route}"]`).getAttribute('href'), `/?main=1&ui=full#${route}`);
+  assert.deepEqual(await page.locator('#cw-mobile-shortcut-0 option').evaluateAll(nodes=>nodes.map(node=>node.value)), ['tracker','snapshots','playlists','editor','profile/overview']);
+  for (const route of ['main','tracker']) assert.equal(await page.locator(`#cw-mobile-bottom-nav [data-mobile-route="${route}"]`).getAttribute('href'), `/?main=1&ui=full#${route}`);
 });

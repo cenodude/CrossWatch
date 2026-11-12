@@ -86,8 +86,8 @@
     nav.id = 'cw-mobile-bottom-nav';
     nav.setAttribute('aria-label', 'Mobile navigation');
     const fixed = [['main', 'home', 'Home']];
-    if ($('tab-tracker')) fixed.push(['tracker', 'inventory_2', 'Tracker']);
     const choices = [];
+    if ($('tab-tracker')) choices.push(['tracker', 'inventory_2', 'Tracker']);
     if ($('tab-settings') && document.documentElement.dataset.cwRole !== 'user') {
       choices.push(['settings/providers', 'device_hub', 'Connections'], ['settings/sync', 'sync_alt', 'Sync pairs'], ['settings/scrobbler', 'sensors', 'Scrobbler']);
     }
@@ -96,7 +96,7 @@
     }
     if (document.querySelector('[data-cw-profile-menu-action="profile"]')) choices.push(['profile/overview', 'bar_chart', 'My Media Hub']);
     const storageKey = 'cw.mobile.shortcuts.v1';
-    const defaults = choices.slice(0, 2).map(item => item[0]);
+    const defaults = [...new Set(['tracker', 'profile/overview', ...choices.map(item => item[0])])].filter(route => choices.some(item => item[0] === route)).slice(0, 2);
     const readShortcuts = () => {
       let saved;
       try { saved = JSON.parse(localStorage.getItem(storageKey)); } catch {}

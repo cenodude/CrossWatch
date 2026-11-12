@@ -1,6 +1,7 @@
 # tests/test_tracker_automation.py
 # CrossWatch - Local status ownership, inference, queues and title removal
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+from threading import Event
 import io
 import sqlite3
 import time
@@ -152,7 +153,7 @@ def test_title_removal_is_complete_atomic_conflict_checked_and_undoable(tmp_path
 def test_worker_disabled_and_busy_skip_metadata_and_instances_are_independent(tmp_path, monkeypatch):
     store = seeded(tmp_path / "tracker")
     cfg = {"crosswatch": {"automatic_status": False, "month_review": False, "instances": {"other": {}}}}
-    assert instance_options(cfg, "other") == {"automatic_status": True, "month_review": True}
+    assert instance_options(cfg, "other") == {"automatic_status": True, "month_review": True, "wrapped": True}
     monkeypatch.setattr(worker, "tracker_roots", lambda *args: [("default", store.root)])
     monkeypatch.setattr(worker, "cached_metadata", lambda *args: pytest.fail("metadata should not be read"))
     worker.run_once(cfg, tmp_path)
@@ -242,6 +243,7 @@ def test_manual_titles_never_read_metadata(tmp_path):
 
 
 def test_month_report_checkpoint_stops_after_disable(tmp_path, monkeypatch):
+    monkeypatch.setattr(tracker_month, "_STOP", Event())
     monkeypatch.setattr(tracker_month, "_busy", lambda: False)
     monkeypatch.setattr(tracker_month, "_LOAD_CONFIG", lambda: {"crosswatch": {"root_dir": str(tmp_path), "month_review": False}})
     monkeypatch.setattr(tracker_month._WORK, "root", tmp_path, raising=False)

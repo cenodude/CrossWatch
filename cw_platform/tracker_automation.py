@@ -18,7 +18,7 @@ def instance_options(cfg, instance="default"):
     root = cfg.get("crosswatch") or {}
     block = root if instance == "default" else (root.get("instances") or {}).get(instance, {})
     return {key: str(block.get(key, True)).lower() not in {"false", "0", "off"}
-            for key in ("automatic_status", "month_review")}
+            for key in ("automatic_status", "month_review", "wrapped")}
 
 
 def root_options(cfg, root):

@@ -175,7 +175,11 @@ def test_managed_shell_has_the_tracker_tab_only_with_an_assigned_instance(monkey
     assert "tracker-notifications.js" in with_tracker and "month-bar.js" in with_tracker
     assert with_tracker.index('id="tab-playlists"') < with_tracker.index('id="tab-tracker"') < with_tracker.index('id="tab-editor"')
     assert 'data-cw-profile-menu-action="tracker"' in with_tracker
-    assert 'data-cw-profile-menu-action="tracker"' in ui_frontend.get_profile_html(ANN)
+    profile = ui_frontend.get_profile_html(ANN)
+    assert 'data-cw-profile-menu-action="tracker"' in profile
+    for route in ("main", "snapshots", "playlists", "tracker", "editor"):
+        assert profile.count(f'id="tab-{route}"') == 1
+    assert "location.href='/?main=1#tracker'" in profile
 
     for user in ({**ANN, "profile_id": "bob"}, {**ANN, "permissions": {"write": False}}, None):
         html = ui_frontend.get_index_html(include_admin=False, user=user)
@@ -184,11 +188,15 @@ def test_managed_shell_has_the_tracker_tab_only_with_an_assigned_instance(monkey
         assert "tracker-notifications.js" not in html
         assert 'data-cw-profile-menu-action="tracker"' not in html
         assert 'data-cw-profile-menu-action="tracker"' not in ui_frontend.get_profile_html(user)
+        assert 'id="tab-tracker"' not in ui_frontend.get_profile_html(user)
 
 
 def test_profile_header_loads_authorized_assistant_and_tracker_feeds(monkeypatch):
     monkeypatch.setattr(ui_frontend, "_managed_tracker_allowed", lambda user: user.get("profile_id") == "allowed")
     admin = ui_frontend.get_profile_html({"is_admin": True, "username": "admin"})
+    for route in ("main", "snapshots", "playlists", "tracker", "editor"):
+        assert admin.count(f'id="tab-{route}"') == 1
+    assert "location.href='/#tracker'" in admin
     assert "assistant-settings.js" in admin
     assert "ai-settings.css" in admin
     assert "tracker-notifications.js" in admin

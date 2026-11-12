@@ -126,7 +126,7 @@
     const cfg = await fetch(`/api/config?ts=${Date.now()}`, { cache: "no-store" }).then((r) => r.json()).catch(() => ({}));
     const inst = selectedInstance();
     const { block, merged } = selectedBlock(cfg || {});
-    for (const key of ["automatic_status", "month_review"]) {
+    for (const key of ["automatic_status", "month_review", "wrapped"]) {
       const el = $(`cw_tracker_${key}`);
       if (el) { el.checked = truth(block[key], true); el.dataset.loaded = "1"; el.dataset.touched = ""; }
     }
@@ -147,7 +147,7 @@
   function wireFields() {
     [
       "cw_tracker_retention_days", "cw_tracker_auto_snapshot", "cw_tracker_max_snapshots", "cw_tracker_label",
-      "cw_tracker_automatic_status", "cw_tracker_month_review",
+      "cw_tracker_automatic_status", "cw_tracker_month_review", "cw_tracker_wrapped",
       "cw_tracker_restore_watchlist", "cw_tracker_restore_history", "cw_tracker_restore_ratings", "cw_tracker_restore_progress", "cw_tracker_restore_collection"
     ].forEach((id) => {
       const el = $(id);
