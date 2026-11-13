@@ -38,7 +38,17 @@
         } catch {}
       }
       const profile = viewAsProfile();
-      if (profile) {
+      if (profile && window.CW?.OverviewProfile?.isDefaultView && (method === "GET" || method === "HEAD")) {
+        try {
+          const raw = typeof resource === "string" ? resource : String(resource?.url || "");
+          const url = new URL(raw, location.origin);
+          if (url.origin === location.origin && url.pathname.startsWith("/api/events/") && !url.searchParams.has("user_profile")) {
+            url.searchParams.set("user_profile", profile);
+            resource = typeof resource === "string" ? url.href : new Request(url.href, resource);
+          }
+        } catch {}
+      }
+      if (profile && !window.CW?.OverviewProfile?.isDefaultView) {
         try {
           const raw = typeof resource === "string" ? resource : String(resource?.url || "");
           const url = new URL(raw, location.origin);

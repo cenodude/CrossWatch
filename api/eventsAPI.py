@@ -46,9 +46,9 @@ from cw_platform.event_archive import (
     purge as _purge_events,
 )
 from cw_platform.event_archive.groups import run_problem_items as _run_problem_items
-from cw_platform.access_policy import filter_pairs_for_user, pair_refs, request_is_monitor, request_user, user_can_access_instance
+from cw_platform.access_policy import filter_pairs_for_profile, filter_pairs_for_user, pair_refs, request_is_monitor, request_user, user_can_access_instance
 from cw_platform.config_base import load_config
-from cw_platform.provider_instances import instances_for_user_profile, normalize_instance_id, provider_display_key
+from cw_platform.provider_instances import DEFAULT_OVERVIEW_SCOPE, instances_for_user_profile, normalize_instance_id, normalize_overview_scope, provider_display_key
 from cw_platform.reason_labels import friendly_reason
 
 router = APIRouter(prefix="/api/events", tags=["events"])
@@ -134,8 +134,22 @@ def _audit_row(row: Any) -> bool:
     return isinstance(row, dict) and str(row.get("domain") or "").strip().lower() == "audit"
 
 
+def _default_overview_requested(request: Request | None) -> bool:
+    user = request_user(request)
+    if user and not user.get("is_admin"):
+        return False
+    return request is not None and normalize_overview_scope(request.query_params.get("user_profile")) == DEFAULT_OVERVIEW_SCOPE
+
+
 def _event_row_allowed(cfg: dict[str, Any], request: Request | None, row: dict[str, Any] | None, allow_group_children: bool = True) -> bool:
     user = request_user(request)
+    if _default_overview_requested(request):
+        if not isinstance(row, dict) or _audit_row(row):
+            return False
+        refs = _event_refs(row)
+        if refs:
+            return all(normalize_instance_id(instance) == "default" for _, instance in refs)
+        return bool(allow_group_children and "group_hash" in row and _group_has_allowed_event(cfg, request, row.get("id")))
     if not user or bool(user.get("is_admin")):
         return not (request_is_monitor(request) and _audit_row(row))
     if not isinstance(row, dict) or _audit_row(row):
@@ -154,7 +168,7 @@ def _event_row_allowed(cfg: dict[str, Any], request: Request | None, row: dict[s
 
 def _filter_event_payload(cfg: dict[str, Any], request: Request | None, payload: dict[str, Any]) -> dict[str, Any]:
     user = request_user(request)
-    if not user or bool(user.get("is_admin")):
+    if (not user or bool(user.get("is_admin"))) and not _default_overview_requested(request):
         if not request_is_monitor(request):
             return payload
         visible = dict(payload or {})
@@ -642,7 +656,7 @@ def events_statistics(
         span = _RANGE_SECONDS.get(str(range).lower(), _RANGE_SECONDS["30d"])
         s, u = now - span, now
     bs = _BUCKETS.get(str(bucket or "").lower()) if bucket else None
-    if _managed_request(request):
+    if _managed_request(request) or _default_overview_requested(request):
         return _ok(_scoped_statistics(load_config() or {}, request, s, u, bs))
     return _ok(_statistics(since=s, until=u, bucket=bs))
 
@@ -653,11 +667,13 @@ _CALENDAR_MAX_DAYS = 400
 
 def _calendar_scope(cfg: dict[str, Any], request: Request | None) -> CalendarScope:
     user = request_user(request)
-    if not user or bool(user.get("is_admin")):
+    defaults = _default_overview_requested(request)
+    if not defaults and (not user or bool(user.get("is_admin"))):
         return CALENDAR_ALL
     pair_ids: set[str] = set()
     scope_keys: set[str] = set()
-    for pair in filter_pairs_for_user(cfg, user, _configured_pairs(cfg)):
+    pairs = filter_pairs_for_profile(cfg, DEFAULT_OVERVIEW_SCOPE, _configured_pairs(cfg)) if defaults else filter_pairs_for_user(cfg, user, _configured_pairs(cfg))
+    for pair in pairs:
         pid = str(pair.get("id") or "").strip()
         if pid:
             pair_ids.add(pid)

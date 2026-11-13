@@ -53,6 +53,24 @@ test('the bar works from summaries alone when the log is hidden', () => {
   assert.equal(bar._dom.badge.textContent, 'Syncing');
 });
 
+test('a queued profile shows waiting without borrowing another pairs progress', () => {
+  const bar = createBar();
+  bar.fromSummary({run_id:'queued',running:true,run_busy:true,waiting:true,timeline:{start:true},_phase:{apply:{total:1,done:0,progress:0}}});
+  assert.equal(bar._dom.badge.textContent, 'Waiting');
+  assert.equal(bar.text(), 'Waiting for your sync pairs');
+  assert.equal(bar.width(), 0);
+  assert.equal(bar.isWaiting(), true);
+  bar.fromSummary({run_id:'queued',running:true,run_busy:true,waiting:false,timeline:{start:true,pre:true,post:true},_phase:{apply:{total:10,done:5,progress:0.5}}});
+  assert.equal(bar.isWaiting(), false);
+  assert.equal(bar._dom.badge.textContent, 'Syncing');
+  bar.fromSummary({run_id:'queued',running:false,run_busy:true,exit_code:0,timeline:{done:true}});
+  assert.equal(bar.isRunBusy(), true);
+  assert.equal(bar.isRunning(), false);
+  assert.equal(bar.isWaiting(), false);
+  bar.fromSummary({run_id:'queued',running:false,run_busy:false,exit_code:0,timeline:{done:true}});
+  assert.equal(bar.isRunBusy(), false);
+});
+
 test('a stale summary cannot move the bar backwards', () => {
   const bar = createBar();
   bar.applyStart({event: 'apply:add:start', dst: 'SCROB', feature: 'history', count: 100});

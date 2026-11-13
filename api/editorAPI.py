@@ -99,13 +99,13 @@ def api_saved_mappings(request: Request, q: str = Query(default="", max_length=2
                        offset: int = Query(default=0, ge=0), limit: int = Query(default=50, ge=1, le=100),
                        user_profile: str = Query(default="", max_length=64)):
     from cw_platform.access_policy import profile_instances_map, profile_allows_instance, user_can_access_pair
-    from cw_platform.provider_instances import normalize_user_profile_id
+    from cw_platform.provider_instances import normalize_overview_scope
     from services.saved_mappings import saved_corrections, saved_blocks
 
     cfg, user = load_config(), request_user(request)
     if user and not user.get("is_admin") and not (user.get("permissions") or {}).get("write"):
         raise HTTPException(403, "Write permission required")
-    profile = normalize_user_profile_id(user_profile)
+    profile = normalize_overview_scope(user_profile)
     if user_profile.strip() and not profile:
         raise HTTPException(400, "Invalid profile")
     scope = profile_instances_map(cfg, profile) if profile else {}

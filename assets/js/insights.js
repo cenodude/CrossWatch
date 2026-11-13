@@ -21,6 +21,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   const providerOnSyncSurface = v => typeof providerMeta.syncSurfaceProvider === "function" ? providerMeta.syncSurfaceProvider(v) : true;
   const overviewProfile = () => w.CW?.OverviewProfile || null;
   const overviewProfileId = () => String(overviewProfile()?.id || "").trim();
+  const tilesCacheKey = () => `${TILES_KEY}.${overviewProfileId() || "all"}`;
   const overviewFilter = () => overviewProfile()?.filter || {};
   const overviewInstancesFor = prov => {
     const filter = overviewFilter();
@@ -112,6 +113,8 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   const clampFeature = name => _visibleFeats.includes(String(name)) ? name : (_visibleFeats[0] || "watchlist");
   let _feature = clampFeature(localStorage.getItem("insights.feature"));
   let _lastStatsFetch = 0, _cwSnapModal = null, _lastInsightsData = null, _fullInsightsTimer = 0, _configuredProvidersCache = null, _tilesFeature = null, _tileShellFeature = null, _bootScheduled = false, _tilesPainted = false;
+  let _scopeRevision = 0;
+  const numberAnimations = new WeakMap();
 
   function syncPrefs(instancesByProvider = {}) {
     const next = normalizePrefs(_prefs, instancesByProvider), changed = JSON.stringify(next) !== JSON.stringify(_prefs);
@@ -239,7 +242,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   }
 
   function hydrateBlock(data) {
-    syncPrefs(data?.instances_by_provider || {});
+    if (!overviewHasScope()) syncPrefs(data?.instances_by_provider || {});
     const blk = pickBlock(data, _feature), filtered = filterProviderTotals(blk, data?.instances_by_provider || {});
     blk.providers = filtered.providers;
     blk.now = Number.isFinite(filtered.now) ? filtered.now : blk.now;
@@ -290,10 +293,14 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   }
   function animateNumber(el, to, duration = 650, animate = true) {
     if (!el) return;
+    const revision = _scopeRevision;
+    const animation = {};
+    numberAnimations.set(el, animation);
     const from = parseInt(el.dataset?.v || el.textContent || "0", 10) || 0, done = () => { el.textContent = String(to); el.dataset.v = String(to); fitProviderNumber(el); };
     if (!animate || from === to) return done();
     const start = performance.now(), dur = Math.max(180, duration);
     const step = now => {
+      if (revision !== _scopeRevision || numberAnimations.get(el) !== animation) return;
       const p = Math.min(1, (now - start) / dur);
       el.textContent = String(Math.round(from + (to - from) * ease(p)));
       p < 1 ? requestAnimationFrame(step) : done();
@@ -493,9 +500,9 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   function saveTilesCache(feature, keys, totals, active, mse) {
     if (!Array.isArray(keys) || !keys.length) return;
     try {
-      const all = readJSON(TILES_KEY, {});
+      const all = readJSON(tilesCacheKey(), {});
       all[feature] = { keys, totals: totals || {}, active: active || {}, mse: mse || {} };
-      localStorage.setItem(TILES_KEY, JSON.stringify(all));
+      localStorage.setItem(tilesCacheKey(), JSON.stringify(all));
     } catch {}
   }
 
@@ -503,7 +510,8 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     if (_tilesPainted) return false;
     if (!$("#stats-card")) return false;
     if (authSetupPending()) return false;
-    const cached = readJSON(TILES_KEY, {})[_feature];
+    if (!overviewProfile()?.isAdmin && !overviewProfile()?.id) return false;
+    const cached = readJSON(tilesCacheKey(), {})[_feature];
     if (!cached || !Array.isArray(cached.keys) || !cached.keys.length) return false;
     _tilesPainted = true;
     _tilesFeature = _feature;
@@ -622,6 +630,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   }
 
   async function renderFromData(data, statsOnly = false, forceConfigured = false) {
+    const revision = _scopeRevision, profile = overviewProfileId(), feature = _feature;
     _lastInsightsData = data || {};
     const blk = hydrateBlock(data);
     footWrap();
@@ -639,6 +648,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     renderCrossWatchSnapshotHint(data?.crosswatch_snapshots || null);
     getConfiguredProviders(forceConfigured)
       .then((configured) => {
+        if (revision !== _scopeRevision || profile !== overviewProfileId() || feature !== _feature) return;
         const painted = renderProviderStats(blk.providers, blk.active, configured, blk.raw?.providers_mse || null, data?.instances_by_provider || {}, animateTiles);
         renderCrossWatchSnapshotHint(data?.crosswatch_snapshots || null);
         _tilesPainted = true;
@@ -649,11 +659,14 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   async function refreshInsights(force = false) {
     if (authSetupPending()) return;
+    if (overviewProfile()?.ready) await overviewProfile().ready;
     clearTimeout(_fullInsightsTimer);
     _fullInsightsTimer = 0;
+    const revision = _scopeRevision, profile = overviewProfileId();
     try {
       const profileParam = overviewProfileId() ? `&user_profile=${encodeURIComponent(overviewProfileId())}` : "";
       const data = await fetchJSON(`/api/insights?limit_samples=60&history=60${profileParam}${force ? `&t=${Date.now()}` : ""}`);
+      if (revision !== _scopeRevision || profile !== overviewProfileId()) return;
       await renderFromData(data, false, force);
     }
     catch (e) {
@@ -664,12 +677,15 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   async function refreshStats(force = false) {
     if (authSetupPending()) return;
+    if (overviewProfile()?.ready) await overviewProfile().ready;
     const now = Date.now();
     if (now - _lastStatsFetch < (force ? 250 : 900)) return;
     _lastStatsFetch = now;
+    const revision = _scopeRevision, profile = overviewProfileId();
     try {
       const profileParam = overviewProfileId() ? `&user_profile=${encodeURIComponent(overviewProfileId())}` : "";
       const data = await fetchJSON(`/api/insights?limit_samples=0&history=0&include_events=0${profileParam}${force ? `&t=${Date.now()}` : ""}`);
+      if (revision !== _scopeRevision || profile !== overviewProfileId()) return;
       await renderFromData(data, true, force);
     }
     catch (e) {
@@ -688,14 +704,25 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     }, 180);
   }
 
-  function clearInsightsState() {
-    try { localStorage.removeItem(TILES_KEY); } catch {}
+  function clearInsightsState(clearAll = false) {
+    _scopeRevision++;
+    _lastStatsFetch = 0;
+    try { localStorage.removeItem(tilesCacheKey()); } catch {}
+    if (clearAll) {
+      try {
+        for (const key of Object.keys(localStorage)) if (key === TILES_KEY || key.startsWith(`${TILES_KEY}.`)) localStorage.removeItem(key);
+      } catch {}
+    }
     clearTimeout(_fullInsightsTimer);
     _fullInsightsTimer = 0;
     _lastInsightsData = {};
     _tilesPainted = false;
     _tilesFeature = "";
     _tileShellFeature = null;
+    for (const id of ["stat-now", "stat-week", "stat-month", "stat-added", "stat-removed"]) {
+      const el = d.getElementById(id);
+      if (el) { el.textContent = "0"; el.dataset.v = "0"; }
+    }
     renderTopStats({});
     renderHistoryTabs([]);
     const providers = $("#stat-providers");
@@ -706,8 +733,8 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   }
 
   w.addEventListener("insights:settings-changed", () => { _prefs = loadPrefs(); _visibleFeats = visibleFeatures(_prefs); _feature = clampFeature(_feature); localStorage.setItem("insights.feature", _feature); refreshInsightsFastThenFull(true); });
-  w.addEventListener("cw:overview-profile-changed", () => refreshInsightsFastThenFull(true));
-  w.addEventListener("cw:sync-state-cleared", clearInsightsState);
+  w.addEventListener("cw:overview-profile-changed", () => { clearInsightsState(); refreshInsightsFastThenFull(true); });
+  w.addEventListener("cw:sync-state-cleared", () => clearInsightsState(true));
 
   w.Insights = Object.assign(w.Insights || {}, {
     renderSparkline, refreshInsights, refreshStats, fetchJSON, animateNumber, animateChart, titleOf, subtitleOf,

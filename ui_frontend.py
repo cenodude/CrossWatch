@@ -2849,7 +2849,7 @@ def get_profile_html(user: dict | None = None) -> str:
       <div class="cw-media-hero-brand">
         <h1 class="cw-media-hero-kicker">My Media Hub</h1>
         <div class="cw-profile-identity cw-media-hero-identity">
-          <span id="profile-hero-avatar" class="cw-media-hero-avatar" aria-hidden="true">{profile_avatar_inner}</span>
+          <a id="profile-hero-avatar" class="cw-media-hero-avatar" href="/profile#account" aria-label="Open user settings" title="User settings">{profile_avatar_inner}</a>
           <div class="cw-profile-nameblock">
             <span id="profile-role" class="cw-profile-role" hidden>{role_label}</span>
             <div id="profile-display-name">{display_name}</div>

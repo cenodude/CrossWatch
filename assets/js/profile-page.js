@@ -326,7 +326,7 @@
   const skeleton = (kind, count) => Array.from({ length: count }, () => skelShapes[kind]).join("");
 
   function paintOverviewSkeletons() {
-    const hosts = [["#profile-progress", "progress", 3], ["#profile-watchlist", "watchlist", 4], ["#profile-activity", "activity", 4], ["#profile-quick-stats", "stats", 6]];
+    const hosts = [["#profile-progress", "progress", mobilePaging.matches ? 3 : 4], ["#profile-watchlist", "watchlist", 4], ["#profile-activity", "activity", 4], ["#profile-quick-stats", "stats", 6]];
     for (const [sel, kind, count] of hosts) {
       const host = $(sel);
       if (host) host.innerHTML = skeleton(kind, count);
@@ -364,6 +364,10 @@
       progress: String(row?.progress || match?.[4] || "").trim(),
     };
   };
+  const activityFeature = (row) => {
+    const feature = String(row?.feature || String(row?.summary || row?.meta || "").match(/\(([^)]+)\)\s*$/)?.[1] || "").trim();
+    return feature ? feature[0].toUpperCase() + feature.slice(1).toLowerCase() : "";
+  };
   const activityTitle = (row) => {
     const title = String(row?.title || row?.summary || "").trim();
     if (isScrobbleActivity(row)) {
@@ -371,11 +375,8 @@
       return parsed.title || title || `${activityLabel(row)} activity`;
     }
     if (String(row?.kind || "").toLowerCase() === "sync") {
-      const status = String(row?.status || "").toLowerCase();
-      if (status === "failed") return "Sync failed";
-      if (status === "warning") return "Sync completed with issues";
-      if (status === "running") return "Sync running";
-      if (/^sync run completed$/i.test(title)) return "Sync completed";
+      const feature = activityFeature(row);
+      return feature ? `${feature} sync` : "Sync";
     }
     return title || `${activityLabel(row)} activity`;
   };
@@ -394,9 +395,8 @@
     }).filter(Boolean);
   };
   const routeSegmentHtml = (segment) => {
-    const compact = segment.dests.length > 1;
     const arrow = `<span class="material-symbols-rounded cw-profile-activity-route-arrow" aria-hidden="true">${segment.both ? "sync_alt" : "chevron_right"}</span>`;
-    const dests = segment.dests.map((dest) => activityProviderChip(dest, compact) || esc(dest)).join("");
+    const dests = segment.dests.map((dest) => activityProviderChip(dest) || `<span>${esc(dest)}</span>`).join("");
     const more = segment.more ? `<span>+${segment.more}</span>` : "";
     return `${activityProviderChip(segment.src) || esc(segment.src)}${arrow}${dests}${more}`;
   };
@@ -406,13 +406,11 @@
     const summary = String(row?.summary || row?.meta || "").trim();
     const segments = summaryRouteSegments(summary);
     if (segments.length) {
-      const feature = summary.match(/\(([^)]+)\)\s*$/);
-      return [...segments.map((segment) => ({ html: routeSegmentHtml(segment) })), ...(feature?.[1] ? [feature[1]] : [])];
+      return segments.map((segment) => ({ html: routeSegmentHtml(segment) }));
     }
     const pairMatch = summary.match(/(\d+\s+pairs?)(?:\s*\(([^)]+)\))?/i);
     if (route) parts.push(route);
     if (pairMatch?.[1]) parts.push(pairMatch[1]);
-    if (pairMatch?.[2]) parts.push(pairMatch[2]);
     return parts;
   };
   const scrobbleActivityBits = (row) => {
@@ -428,13 +426,13 @@
     const key = providerKey(value);
     return key && window.CW?.ProviderMeta?.get?.(key) ? key : "";
   };
-  const activityProviderChip = (value, iconOnly = false) => {
+  const activityProviderChip = (value) => {
     const key = activityProviderKey(value);
     if (!key) return "";
     const label = visibleProviderLabel(key) || key;
     const logo = providerLogLogo(key);
     const src = logo ? `<img src="${esc(logo)}" alt="" loading="lazy" onerror="this.onerror=null;this.hidden=true">` : "";
-    const text = iconOnly && src ? "" : `<span>${esc(label)}</span>`;
+    const text = `<span>${esc(label)}</span>`;
     return `<span class="cw-profile-activity-provider" data-provider="${esc(key.toLowerCase())}" title="${esc(label)}">${src}${text}</span>`;
   };
   const activityRouteChip = (value) => {
@@ -444,12 +442,11 @@
     if (nodes.length < 2) return "";
     return nodes.map((node, index) => `${index ? `<span class="material-symbols-rounded cw-profile-activity-route-arrow" aria-hidden="true">chevron_right</span>` : ""}${node}`).join("");
   };
-  const activityChipHtml = (bit, index) => {
-    if (bit && typeof bit === "object") return `<span class="cw-profile-activity-chip${index === 0 ? " is-primary" : ""} has-route">${bit.html}</span>`;
+  const activityChipHtml = (bit) => {
+    if (bit && typeof bit === "object") return `<span class="cw-profile-activity-chip">${bit.html}</span>`;
     const route = activityRouteChip(bit);
     const provider = !route ? activityProviderChip(bit) : "";
-    const cls = `cw-profile-activity-chip${index === 0 ? " is-primary" : ""}${route ? " has-route" : ""}${provider ? " has-provider" : ""}`;
-    return `<span class="${cls}">${route || provider || esc(bit)}</span>`;
+    return `<span class="cw-profile-activity-chip">${route || provider || esc(bit)}</span>`;
   };
   const activityMetaBits = (row) => {
     if (String(row?.kind || "").toLowerCase() === "sync") return syncActivityBits(row);
@@ -472,51 +469,35 @@
     for (const [name, seconds] of units) if (delta >= seconds) return `in ${Math.floor(delta / seconds)}${name}`;
     return "in less than 1m";
   };
-  const schedulerActivityRow = (status) => {
+  const schedulerActivityHtml = (status) => {
     const eff = status?.effective || {};
     const enabled = !!eff.enabled || !!status?.running;
     if (!enabled) return null;
-    const mode = String(eff.mode || status?.effective_mode || "").replace(/_/g, " ").trim();
     const next = Number(status?.next_run_at || 0);
-    const last = Number(status?.last_run_at || 0);
-    const tick = Number(status?.last_tick || 0);
-    const bits = [];
-    if (mode && mode !== "disabled") bits.push(mode);
-    if (next > 0) bits.push(`next ${futureTime(next) || profileDateTime.format(new Date(next * 1000), { dateStyle: "short", timeStyle: "short" })}`);
-    return {
-      id: "scheduler-status",
-      kind: "scheduler",
-      icon: "event_available",
-      badge: "Scheduler",
-      title: status?.running ? "Scheduler running" : "Scheduler active",
-      meta: bits.join(" - "),
-      status: status?.running ? "running" : "completed",
-      severity: status?.last_error ? "warning" : "info",
-      created_at: last || tick || Math.floor(Date.now() / 1000),
-      event_count: 0,
-    };
+    const label = status?.last_error ? "Scheduler needs attention" : "Automatic sync";
+    const nextLabel = next > Date.now() / 1000 ? `Next sync ${futureTime(next)}` : next > 0 ? "Next sync due" : "Waiting for the next run";
+    return `<div class="cw-profile-activity-schedule${status?.last_error ? " is-warn" : ""}"><span>${esc(label)}</span><span>${esc(nextLabel)}</span></div>`;
   };
   const profileActivityRow = (row) => {
     const tone = activityTone(row);
+    const badge = activityLabel(row);
     const bits = activityMetaBits(row);
     const time = relTime(row?.created_at);
     const events = activityEventCount(row);
     const detail = bits.length
       ? bits.map(activityChipHtml).join("")
       : `<span class="cw-profile-activity-chip">${esc(badge)}</span>`;
-    const side = [
-      `<span>${esc(time || badge)}</span>`,
-      events ? `<span class="cw-profile-activity-count">${esc(events)}</span>` : "",
-    ].filter(Boolean).join("");
+    const status = tone === "bad" ? "Failed" : tone === "warn" ? "Needs attention" : tone === "live" ? "In progress" : ({completed:"Completed",skipped:"Skipped",stopped:"Stopped"}[String(row?.status || "").toLowerCase()] || "");
     return `
       <button class="cw-profile-activity-row cw-profile-activity-row--${esc(String(row?.kind || "sync").toLowerCase())} is-${esc(tone)}" type="button" data-event-group-id="${esc(row?.id || "")}" data-event-domain="${esc(String(row?.domain || "sync").toLowerCase())}">
         <span class="cw-profile-activity-copy">
           <span class="cw-profile-activity-top">
             <strong>${esc(activityTitle(row))}</strong>
+            ${status && !isScrobbleActivity(row) ? `<span class="cw-profile-activity-status">${esc(status)}</span>` : ""}
           </span>
-          <span class="cw-profile-activity-meta">${detail}</span>
+          <span class="cw-profile-activity-meta">${detail}${events ? `<span class="cw-profile-activity-count">${esc(events)}</span>` : ""}</span>
         </span>
-        <small>${side}</small>
+        <small>${esc(time || badge)}</small>
       </button>
     `;
   };
@@ -544,10 +525,9 @@
       includeSchedulerStatus ? api("/api/scheduling/status") : Promise.resolve(null),
     ]);
     const rows = feedRes.status === "fulfilled" && Array.isArray(feedRes.value?.items) ? feedRes.value.items.slice() : [];
-    const schedulerRow = schedulerRes.status === "fulfilled" ? schedulerActivityRow(schedulerRes.value) : null;
-    if (schedulerRow && !rows.some((row) => String(row?.kind || "") === "scheduler")) rows.push(schedulerRow);
+    const schedulerRow = schedulerRes.status === "fulfilled" ? schedulerActivityHtml(schedulerRes.value) : "";
     rows.sort((a, b) => Number(b?.created_at || 0) - Number(a?.created_at || 0));
-    host.innerHTML = rows.length ? rows.slice(0, mobilePaging.matches ? 3 : ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty("No recent activity yet.");
+    host.innerHTML = (rows.length ? rows.slice(0, mobilePaging.matches ? 3 : ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty("No recent activity yet.")) + (schedulerRow || "");
   }
 
   function wireProfileActivity() {
@@ -1201,7 +1181,7 @@
   }
 
   function renderProgressItems(progressItems) {
-    $("#profile-progress").innerHTML = progressItems.length ? progressItems.slice(0, 3).map(progressCard).join("") : empty("No recent progress yet.");
+    $("#profile-progress").innerHTML = progressItems.length ? progressItems.slice(0, mobilePaging.matches ? 3 : 4).map(progressCard).join("") : empty("No recent progress yet.");
   }
 
   let overviewPayload = null;
@@ -4681,6 +4661,11 @@
     });
     mobileSelect.addEventListener('change', () => {
       if (!selectTab(mobileSelect.value)) syncMobileView();
+    });
+    $("#profile-hero-avatar")?.addEventListener("click", event => {
+      if (viewingAs() || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      selectTab("account");
     });
     if (tabs) new MutationObserver(syncMobileView).observe(tabs, {subtree: true, attributes: true, attributeFilter: ['hidden']});
     syncMobileView();

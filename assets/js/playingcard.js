@@ -191,6 +191,7 @@
     try { await window.CW?.OverviewProfile?.ready; } catch {}
     const now = Date.now();
     const scope = profileScope();
+    const revision = CARD.cacheRevision;
     if (CARD.cacheScope !== scope) {
       CARD.cacheScope = scope;
       CARD.cachePayload = null;
@@ -208,6 +209,7 @@
         const r = await fetch(currentlyWatchingUrl(), { cache: "no-store" });
         if (!r.ok) return { streams: [], primary: null, ts: 0 };
         const j = await r.json();
+        if (revision !== CARD.cacheRevision || scope !== profileScope()) return { streams: [], primary: null, ts: 0 };
         const streams = activeStreamsFromPayload(j);
         const ts = Number(j?.ts) || 0;
         countByKey.clear();
@@ -228,7 +230,7 @@
       } catch {
         return { streams: [], primary: null, ts: 0 };
       } finally {
-        CARD.cacheBusy = null;
+        if (revision === CARD.cacheRevision) CARD.cacheBusy = null;
       }
     })();
     return CARD.cacheBusy;
@@ -242,6 +244,7 @@
     poll: null,
     tick: null,
     cacheBusy: null,
+    cacheRevision: 0,
     cacheAt: 0,
     cacheScope: "",
     cachePayload: null,
@@ -466,6 +469,7 @@
   };
 
   async function renderSelectedStream() {
+    const revision = CARD.cacheRevision;
     if (!isUiEnabled()) { hide(true); return; }
     const p = selectedStream();
     if (!p) {
@@ -506,17 +510,19 @@
 
     const renderKey = keyOf(p);
     const meta = await getMetaFor(p);
-    if (!meta || CARD.selectedKey !== renderKey) return;
+    if (!meta || CARD.selectedKey !== renderKey || revision !== CARD.cacheRevision) return;
     card.render(modelFor(p, meta));
   }
 
   async function refreshCard(preferredKey = "", force = false) {
+    const revision = CARD.cacheRevision;
     if (!isUiEnabled()) {
       hide(true);
       return;
     }
 
     const data = await fetchCurrentlyWatchingData(force);
+    if (revision !== CARD.cacheRevision) return;
     if (!isUiEnabled()) { hide(true); return; }
     CARD.streams = Array.isArray(data?.streams) ? data.streams.slice() : [];
 
@@ -539,6 +545,10 @@
   });
 
   window.addEventListener("cw:overview-profile-changed", () => {
+    CARD.cacheRevision += 1;
+    CARD.cacheBusy = null;
+    CARD.streams = [];
+    hide(true);
     CARD.cachePayload = null;
     CARD.cacheAt = 0;
     CARD.cacheScope = profileScope();

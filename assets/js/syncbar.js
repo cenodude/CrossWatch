@@ -123,6 +123,8 @@
     _runKeyOf(s) { return s?.run_id || s?.run_uuid || s?.raw_started_ts || (s?.started_at ? Date.parse(s.started_at) : null) || null; }
     lastEvent() { return this._lastEventTs; }
     isRunning() { return !!(this._running || (this.timeline.start && !this.timeline.done)); }
+    isWaiting() { return !!this._waiting; }
+    isRunBusy() { return !!this._runBusy || this.isRunning(); }
     state() { return { timeline: { ...this.timeline }, running: this.isRunning() }; }
     _stamp() { this._lastEventTs = Date.now(); }
     _afterUpdate(scheduleDone = false) {
@@ -158,6 +160,8 @@
       clearTimeout(this._pendingDoneTimer);
       Object.assign(this, {
         _pendingDone: false,
+        _waiting: false,
+        _runBusy: false,
         _doneAt: 0,
         _pctMemo: 0,
         _phaseMemo: -1,
@@ -338,6 +342,8 @@
       }
       const exitCode = sum?.exit_code != null ? Number(sum.exit_code) : null;
       const unresolved = Number(sum?.unresolved || 0);
+      this._runBusy = !!sum.run_busy;
+      this._waiting = !!sum.waiting;
       if (Number.isFinite(unresolved) && unresolved >= 0) this._unresolved = unresolved;
 
       const finishedAt = asEpochSec(sum?.finished_at);
@@ -353,6 +359,12 @@
         this._runKey = key;
         this.markInit();
       }
+      this._runBusy = !!sum.run_busy;
+      this._waiting = !!sum.waiting;
+      if (this._waiting && !mapped.pre && !mapped.post) {
+        this._holdAtTen = false;
+        this._pctMemo = 0;
+      }
       this._streamArmed = !!(running || (mapped.start && !mapped.done) || this._pendingDone);
       if (running && Object.hasOwn(sum, "current_pair")) {
         this._pairMeta = this._pairData(sum.current_pair);
@@ -366,7 +378,7 @@
         PhaseAgg.snap.started = PhaseAgg.snap.total > 0;
         PhaseAgg.snap.finished = !!ph.snapshot.final || (PhaseAgg.snap.total > 0 && PhaseAgg.snap.done >= PhaseAgg.snap.total);
       }
-      if (ph.apply) {
+      if (ph.apply && !(this._waiting && !mapped.pre && !mapped.post)) {
         PhaseAgg.apply.total = +ph.apply.total || 0;
         PhaseAgg.apply.done = +ph.apply.done || 0;
         PhaseAgg.apply.progress = Math.max(PhaseAgg.apply.progress, +ph.apply.progress || 0);
@@ -504,12 +516,13 @@
       const isRunning = this.isRunning();
       const shouldFlow = isRunning && !hardDone;
       const currentStep = hardDone ? "done" : this.timeline.post ? "syncing" : this.timeline.pre ? "discovering" : this.timeline.start ? "start" : "";
-      const statusText = this._hadError ? "Error" : hardDone ? "Synced" : this._pendingDone ? "Finalizing" : this.timeline.post ? "Syncing" : this.timeline.pre ? "Discovering" : isRunning ? "Starting" : "Idle";
+      const statusText = this._hadError ? "Error" : hardDone ? "Synced" : this._waiting ? "Waiting" : this._pendingDone ? "Finalizing" : this.timeline.post ? "Syncing" : this.timeline.pre ? "Discovering" : isRunning ? "Starting" : "Idle";
       const settled = hardDone || this._hadError;
       const doneAge = settled && this._finishedAt ? (window.relTimeFromEpoch?.(this._finishedAt) || "") : "";
       const phaseLabel = (this._hadError
         ? `Sync failed${this._exitCode != null ? ` (code ${this._exitCode})` : ""}`
         : hardDone ? "Completed successfully"
+        : this._waiting ? "Waiting for your sync pairs"
         : this._pendingDone ? "Wrapping up final tasks"
         : this._writing ? writeLabel(this._writing)
         : this._reading ? `Reading ${this._reading}`

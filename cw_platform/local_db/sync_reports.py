@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime
@@ -210,6 +211,9 @@ def save_report(base_path: str | Path | None, summary: Mapping[str, Any]) -> str
         )
         for table in ("sync_run_timeline", "sync_run_provider_counts", "sync_run_feature_lanes", "sync_run_spotlight_items"):
             conn.execute(f"DELETE FROM {table} WHERE run_id=?", (run_id,))
+        attribution = {key: summary[key] for key in ("pair_summaries", "pair_attribution_complete", "pair_scope_ids") if key in summary}
+        conn.execute("UPDATE sync_run_reports SET pair_summary_json=? WHERE run_id=?",
+                     (json.dumps(attribution, separators=(",", ":")) if attribution else None, run_id))
         if timeline:
             conn.executemany(
                 "INSERT INTO sync_run_timeline(run_id,flag,value,updated_at) VALUES(?,?,?,?)",
@@ -299,6 +303,7 @@ def list_reports(
     *,
     limit: int = 60,
     feature_keys: Sequence[str] | None = None,
+    include_pair_summaries: bool = False,
 ) -> list[dict[str, Any]]:
     conn = get_conn(base_path)
     if conn is None:
@@ -412,6 +417,12 @@ def list_reports(
         }
         for provider, value in provider_posts.items():
             report[f"{provider}_post"] = value
+        try:
+            attribution = json.loads(row["pair_summary_json"] or "{}") if include_pair_summaries else {}
+            if isinstance(attribution, dict):
+                report.update({key: attribution[key] for key in ("pair_summaries", "pair_attribution_complete", "pair_scope_ids") if key in attribution})
+        except (TypeError, ValueError):
+            pass
         out.append(report)
     return out
 

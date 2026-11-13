@@ -951,7 +951,7 @@ def test_profile_avatar_is_seeded_in_main_and_profile_html() -> None:
 
     assert 'id="cw-nav-profile-avatar" class="cw-nav-profile-avatar" aria-hidden="true" data-cw-avatar-url="/api/profile/avatar?ts=1785066084"><img src="/api/profile/avatar?ts=1785066084" alt=""></span>' in main
     assert 'id="cw-nav-profile-avatar" class="cw-nav-profile-avatar" aria-hidden="true" data-cw-avatar-url="/api/profile/avatar?ts=1785066084"><img src="/api/profile/avatar?ts=1785066084" alt=""></span>' in profile
-    assert 'id="profile-hero-avatar" class="cw-media-hero-avatar" aria-hidden="true"><img src="/api/profile/avatar?ts=1785066084" alt=""></span>' in profile
+    assert 'id="profile-hero-avatar" class="cw-media-hero-avatar" href="/profile#account" aria-label="Open user settings" title="User settings"><img src="/api/profile/avatar?ts=1785066084" alt=""></a>' in profile
 
 
 def test_account_menu_preserves_existing_avatar_node_for_same_url() -> None:

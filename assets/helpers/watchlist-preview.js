@@ -546,6 +546,8 @@
   };
 
   function renderCachedPreview({ preserveIfSame = true } = {}) {
+    const profile = window.CW?.OverviewProfile;
+    if (profile?.ready && !profile.isAdmin && !profile.id) return false;
     const card = document.getElementById("placeholder-card");
     const msg = document.getElementById("wall-msg");
     const row = document.getElementById("poster-row");
@@ -798,6 +800,7 @@
   }
 
   async function loadWall() {
+    if (window.CW?.OverviewProfile?.ready) await window.CW.OverviewProfile.ready;
     const card = document.getElementById("placeholder-card");
     const msg = document.getElementById("wall-msg");
     const row = document.getElementById("poster-row");
@@ -868,6 +871,7 @@
       markPreviewClean(refreshVersion);
       return true;
     } catch {
+      if (myReq !== wallReqSeq) return false;
       if (cached?.items?.length) {
         return renderWall(row, msg, cached.items, cached.last_sync_epoch || 0, { total: cached.total ?? null });
       }
@@ -1008,8 +1012,8 @@
     return true;
   }
 
-  function clearWatchlistPreview() {
-    clearAllWallCaches();
+  function clearWatchlistPreview(clearCache = true) {
+    if (clearCache !== false) clearAllWallCaches();
     wallReqSeq += 1;
     previewBusy = false;
     window.__wallLoading = false;
@@ -1038,7 +1042,7 @@
   });
   window.addEventListener("sync-complete", markWatchlistPreviewDirty);
   window.addEventListener("watchlist:refresh", markWatchlistPreviewDirty);
-  window.addEventListener("cw:overview-profile-changed", markWatchlistPreviewDirty);
+  window.addEventListener("cw:overview-profile-changed", () => { clearWatchlistPreview(false); markWatchlistPreviewDirty(); });
   window.addEventListener("cw:sync-state-cleared", clearWatchlistPreview);
 
   const WatchlistPreview = {

@@ -28,6 +28,7 @@
   function viewedProfileId() {
     if (managedUser()) return txt(d.documentElement.dataset.cwProfileId);
     const overview = w.CW?.OverviewProfile;
+    if (overview?.isDefaultView) return "";
     return overview && overview.isAdmin ? txt(overview.id) : "";
   }
 

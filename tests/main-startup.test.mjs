@@ -86,7 +86,7 @@ function setup({ authPending = false } = {}) {
     };
   };
   const classList = { add() {}, remove() {}, toggle() {}, contains() { return false; } };
-  const historyList = { innerHTML: "" };
+  const historyList = { innerHTML: "", dataset: {}, querySelector() { return this; } };
   const document = {
     ...eventTarget(), readyState: "loading", documentElement: { dataset: {}, classList },
     body: { dataset: {} },

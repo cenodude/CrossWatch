@@ -322,8 +322,8 @@ const titleLine = (e) => {
 };
 
 const EVENT_TYPES = [
-  "cloud_history_read",
   "", "write_succeeded", "write_attempted", "write_failed", "unresolved_recorded",
+  "cloud_history_read",
   "blackbox_promoted", "blackbox_blocked", "tombstone_created", "plan_created",
   "provider_health", "sync_run_started", "sync_run_finished",
 ];
@@ -533,7 +533,7 @@ export default {
     if (statisticsReturn(props?.returnContext)) back.label = 'Sync activity';
     let runFilter = String(props?.runId || props?.run_id || "").trim();
     let visibility = ["open", "acknowledged", "all"].includes(initialVisibility) ? initialVisibility : ls("cw.events.visibility", "open");
-    if (runFilter) visibility = ["open", "acknowledged", "all"].includes(initialVisibility) ? initialVisibility : "all";
+    if (runFilter || initialGroupId) visibility = ["open", "acknowledged", "all"].includes(initialVisibility) ? initialVisibility : "all";
     let order = ls("cw.events.order", "newest");
     let mode = ["grouped", "raw"].includes(initialMode) ? initialMode : ls("cw.events.mode", "grouped");
     if (initialGroupId) mode = "grouped";
@@ -570,10 +570,9 @@ export default {
               <label class="ev-date" id="ev-since-wrap" hidden><span class="material-symbols-rounded" aria-hidden="true">event</span><input id="ev-since" type="date" aria-label="Since"></label>
               <label class="ev-date" id="ev-until-wrap" hidden><span class="material-symbols-rounded" aria-hidden="true">event</span><input id="ev-until" type="date" aria-label="Until"></label>
               <div class="ev-filters" id="ev-filters"></div>
-              <button class="ev-linkbtn" id="ev-clear-hidden" type="button">Clear filters</button>
             </div>
-            <div class="ev-mf-summary" id="ev-mf-summary" hidden></div>
           </div>
+          <div class="ev-mf-summary" id="ev-mf-summary" hidden></div>
         </div>
 
         <div class="ev-tabsbar">
@@ -685,7 +684,7 @@ export default {
       ev.preventDefault();
     });
 
-    let dateRange = runFilter ? "all" : ls("cw.events.range", "all");
+    let dateRange = runFilter || initialGroupId ? "all" : ls("cw.events.range", "all");
     const ddRange = createDropdown({
       label: "All time", value: dateRange,
       items: [
@@ -702,9 +701,10 @@ export default {
     const ddOrigin = createDropdown({ label: "Any origin", items: [{ value: "", label: "Any origin" }], onChange: () => load(0) });
     const ddFeature = createDropdown({ label: "Any feature", items: [{ value: "", label: "Any feature" }, ...["history", "ratings", "watchlist", "progress", "collection"].map((f) => ({ value: f, label: FEATURE_LABEL[f] }))], onChange: () => load(0) });
     const ddPair = createDropdown({ label: "Any pair", items: [{ value: "", label: "Any pair" }], onChange: () => load(0) });
+    const overviewScopes = [{ value: "", label: "All profiles" }, { value: "__default__", label: "Admin / Default instances" }];
     const ddProfile = createDropdown({
       label: "All profiles",
-      items: [{ value: "", label: "All profiles" }],
+      items: overviewScopes,
       onChange: (v) => {
         eventScope = v;
         clearDetail();
@@ -731,7 +731,7 @@ export default {
             .map((row) => ({ value: String(row?.id || "").trim(), label: String(row?.label || row?.id || "").trim() }))
             .filter((row) => row.value && row.label);
           if (!rows.length) return;
-          ddProfile.setItems([{ value: "", label: "All profiles" }, ...rows]);
+          ddProfile.setItems([...overviewScopes, ...rows]);
           ddProfile.value = eventScope;
         } catch {}
       })();
@@ -1597,8 +1597,8 @@ export default {
           ${badge}
         </div>`;
       const summaryCards =
-        scard(isProblem ? "error" : "check_circle", isProblem ? "error" : "ok", "Outcome",
-          `<span>${esc(reasonLabel(reason, g.reason_label) || statusLabel(g.status, g.domain))}</span>`, [esc(problemSub)]) +
+        ((isProblem || reason || g.reason_label) ? scard(isProblem ? "error" : "check_circle", isProblem ? "error" : "ok", "Outcome",
+          `<span>${esc(reasonLabel(reason, g.reason_label) || statusLabel(g.status, g.domain))}</span>`, isProblem ? [esc(problemSub)] : []) : "") +
         ((g.source_provider || g.destination_provider) ? scard("swap_horiz", "info", "Route", esc(routeShort), cx.pairMode ? [esc(modeTxt)] : [],
           g.feature ? `<span class="ev-badge info">${esc(feat)}</span>` : "") : "") +
         ((g.item_key || item) ? scard("inventory_2", "info", "Item", esc(item || g.item_key),
@@ -1739,7 +1739,7 @@ export default {
           <div class="ev-dtitle">${esc(g.summary || item || "")}</div>
           ${item ? `<div class="ev-ditem">${esc(item)}</div>` : ""}
         </div>
-        <div class="ev-scards">${summaryCards}</div>
+        ${summaryCards ? `<div class="ev-scards">${summaryCards}</div>` : ""}
         <div class="ev-tabs" role="tablist">
           <button class="ev-tab${detailTab === "timeline" ? " on" : ""}" data-tab="timeline" type="button"><span class="material-symbols-rounded" aria-hidden="true">timeline</span>Timeline</button>
           <button class="ev-tab${detailTab === "details" ? " on" : ""}" data-tab="details" type="button"><span class="material-symbols-rounded" aria-hidden="true">description</span>Details</button>
@@ -2006,6 +2006,7 @@ export default {
 
     const resetFilters = () => {
       qEl.value = "";
+      runFilter = "";
       ddCategory.reset(); ddType.reset(); ddProvider.reset(); ddOrigin.reset(); ddFeature.reset(); ddPair.reset();
       dateRange = "all"; lset("cw.events.range", "all"); ddRange.value = "all";
       sinceEl.value = ""; untilEl.value = ""; syncRangeUI();
@@ -2028,7 +2029,6 @@ export default {
     qEl.addEventListener("input", () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => load(0), 250); });
     sinceEl.addEventListener("change", () => load(0));
     untilEl.addEventListener("change", () => load(0));
-    Q("#ev-clear-hidden", root).addEventListener("click", () => clearHidden());
 
     Q("#ev-more", root).addEventListener("click", (ev) => {
       const btn = ev.currentTarget;

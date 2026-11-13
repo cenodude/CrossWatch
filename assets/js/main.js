@@ -71,6 +71,7 @@
   (window.CW ||= {}).syncBar = sync;
 
   let summary = null;
+  let summaryRevision = 0;
   let enabledFromPairs = null;
   let lastPairsAt = 0;
   let lastSummaryEventAt = 0;
@@ -233,7 +234,13 @@
     return true;
   };
 
+  const summaryVisible = () => {
+    const scope = String(window.CW?.OverviewProfile?.id || "");
+    return !scope || (summary?.summary_scope === scope && summary?.details_available === true);
+  };
+
   const getLaneStats = (sum, key) => {
+    if (!summaryVisible()) return mkLane();
     const f = sum?.features?.[key] || sum?.[key] || {};
     const out = {
       added: (f.added ?? 0) | 0,
@@ -471,6 +478,14 @@
       const chipState = laneState(feat.key);
       const header = Object.assign(document.createElement("div"), { className: "lane-h" });
       header.innerHTML = `<div class="lane-ico"><span class="material-symbols-rounded material-symbol" aria-hidden="true">${feat.icon}</span></div><div class="lane-title">${feat.label}</div><div class="lane-badges"><span class="delta"><b>${fmtDelta(added, removed, updated)}</b></span><span class="chip ${chipState}">${!enabled ? "Disabled" : chipState === "err" ? "Failed" : chipState === "ok" ? "Synced" : chipState === "run" ? "Running" : "Skipped"}</span></div>`;
+      if (!summaryVisible()) {
+        header.querySelector(".delta")?.remove();
+        const chip = header.querySelector(".lane-badges .chip");
+        if (chip) { chip.className = "chip skip"; chip.textContent = summary ? "Unavailable" : "Loading"; }
+      } else if (summary?.waiting) {
+        const chip = header.querySelector(".lane-badges .chip");
+        if (chip) { chip.className = "chip skip"; chip.textContent = "Waiting"; }
+      }
       header.appendChild(createLaneControls(feat));
       lane.appendChild(header);
 
@@ -484,7 +499,8 @@
       const cappedTotal = Math.min(25, total);
       if (!enabled || !cappedTotal || !spots.length) {
         let emptyText = "Awaiting results…";
-        if (!enabled) emptyText = "Feature not configured";
+        if (!summaryVisible()) emptyText = summary ? "Item details are unavailable for this run." : "Loading sync results…";
+        else if (!enabled) emptyText = "Feature not configured";
         else if (cappedTotal > 0) emptyText = updated && !added && !removed ? `${updated} updated` : `${cappedTotal} change${cappedTotal === 1 ? "" : "s"}`;
         else if (sync.state().timeline.done) emptyText = "No changes";
         body.appendChild(Object.assign(document.createElement("div"), { className: "spot muted small", textContent: emptyText }));
@@ -515,7 +531,9 @@
   const renderAll = () => { renderLanes(); elSpot.textContent = ""; };
 
   async function pullPairs() {
+    const profile = String(window.CW?.OverviewProfile?.id || "");
     const arr = await fetchJSON("/api/pairs", null);
+    if (profile !== String(window.CW?.OverviewProfile?.id || "")) return;
     if (!Array.isArray(arr)) return;
     if (!arr.length) return void (enabledFromPairs = EMPTY_ENABLED());
     const enabled = EMPTY_ENABLED();
@@ -560,6 +578,7 @@
   };
 
   function hydrateFromLog() {
+    if (window.CW?.OverviewProfile?.id) return false;
     const txt = document.getElementById("det-log")?.innerText || document.getElementById("det-log")?.textContent || "";
     if (!txt) return false;
     const tallies = Object.create(null);
@@ -648,6 +667,10 @@
       btn.title = running ? "Synchronization running…" : "Run synchronization";
     }
     safe(window.recomputeRunDisabled);
+    if (btn && (sync.isWaiting?.() || (sync.isRunBusy?.() && !sync.isRunning()))) {
+      btn.disabled = true;
+      btn.title = sync.isWaiting?.() ? "Waiting for your sync pairs" : "Synchronization is already running";
+    }
   };
 
   const wireRunButton = () => {
@@ -674,9 +697,15 @@
 
   function applySummarySnapshot(s, source) {
     if (!s) return;
+    if (JSON.stringify(s.pair_scope_ids || []) !== JSON.stringify(summary?.pair_scope_ids || []) || s.details_available !== summary?.details_available) {
+      for (const key of FEAT_KEYS) { delete hydratedLanes[key]; delete lastCounts[key]; lastLaneTs[key] = 0; }
+      spotsModal?.classList.add("hidden");
+    }
+    if (s.progress_scoped && !s.running && !s.timeline?.start && !s.timeline?.done) sync.reset();
     lastSummaryEventAt = nowTs();
     const runKey = runKeyOf(s) || "_";
     if (runKey !== prevRunKey) {
+      for (const key of FEAT_KEYS) { delete hydratedLanes[key]; delete lastCounts[key]; lastLaneTs[key] = 0; }
       finishedForRun = null;
       prevRunKey = runKey;
       logHydratedForRun = null;
@@ -714,20 +743,25 @@
 
   const pullSummary = async () => {
     if (authSetupPending()) return;
+    if (window.CW?.OverviewProfile?.ready) await window.CW.OverviewProfile.ready;
     if (sumBusy) return;
     sumBusy = true;
+    const revision = summaryRevision;
     try {
       safe(sumAbort?.abort?.bind(sumAbort));
       sumAbort = new AbortController();
-      const snap = await fetchJSON("/api/run/summary", null, sumAbort.signal);
-      if (snap) applySummarySnapshot(snap, "poll");
+      const scope = String(window.CW?.OverviewProfile?.id || "");
+      const url = scope ? `/api/run/summary?user_profile=${encodeURIComponent(scope)}` : "/api/run/summary";
+      const snap = await fetchJSON(url, null, sumAbort.signal);
+      if (snap && revision === summaryRevision) applySummarySnapshot(snap, "poll");
     } finally {
-      sumBusy = false;
+      if (revision === summaryRevision) sumBusy = false;
     }
   };
 
-  window.openSummaryStream = function openSummaryStream() {
+  window.openSummaryStream = async function openSummaryStream() {
     try {
+      if (window.CW?.OverviewProfile?.ready) await window.CW.OverviewProfile.ready;
       if (authSetupPending()) {
         safe(esSummary?.close?.bind(esSummary));
         esSummary = null;
@@ -738,36 +772,41 @@
       const url = new URL("/api/run/summary/stream", document.baseURI);
       url.searchParams.set("_ts", String(nowTs()));
       const viewAs = String(window.CW?.OverviewProfile?.id || "").trim();
+      const revision = summaryRevision;
       if (viewAs) url.searchParams.set("user_profile", viewAs);
       esSummary = new EventSource(url.toString());
       window.esSum = esSummary;
+      const stream = esSummary;
+      const current = () => revision === summaryRevision && esSummary === stream;
+      const listen = (events, handler) => on(stream, events, (event) => { if (current() && !viewAs) handler(event); });
       esSummary.onmessage = (ev) => {
+        if (!current()) return;
         try { applySummarySnapshot(JSON.parse(ev.data || "{}"), "sse"); } catch {}
       };
-      on(esSummary, ["run:start", "run:pair", "feature:start"], () => safe(sync.markInit?.bind(sync)));
-      on(esSummary, ["run:pair", "one:plan", "two:plan"], (e) => {
+      listen(["run:start", "run:pair", "feature:start"], () => safe(sync.markInit?.bind(sync)));
+      listen(["run:pair", "one:plan", "two:plan"], (e) => {
         try { sync.setPair(JSON.parse(e.data || "{}")); } catch {}
       });
-      on(esSummary, ["snapshot:start"], (e) => {
+      listen(["snapshot:start"], (e) => {
         try { sync.snapStart(JSON.parse(e.data || "{}")); } catch {}
       });
-      on(esSummary, ["progress:snapshot", "snapshot:progress"], (e) => {
+      listen(["progress:snapshot", "snapshot:progress"], (e) => {
         try { sync.snap(JSON.parse(e.data || "{}")); } catch {}
       });
-      on(esSummary, ["progress:apply", "apply:add:progress", "apply:update:progress", "apply:remove:progress"], (e) => {
+      listen(["progress:apply", "apply:add:progress", "apply:update:progress", "apply:remove:progress"], (e) => {
         try { sync.applyProg(JSON.parse(e.data || "{}")); } catch {}
       });
-      on(esSummary, ["apply:add:start", "apply:update:start", "apply:remove:start"], (e) => {
+      listen(["apply:add:start", "apply:update:start", "apply:remove:start"], (e) => {
         try { sync.applyStart(JSON.parse(e.data || "{}")); } catch {}
       });
-      on(esSummary, ["apply:add:done", "apply:update:done", "apply:remove:done"], (e) => {
+      listen(["apply:add:done", "apply:update:done", "apply:remove:done"], (e) => {
         try { sync.applyDone(JSON.parse(e.data || "{}")); } catch {}
       });
-      on(esSummary, ["run:error", "run:aborted"], () => {
+      listen(["run:error", "run:aborted"], () => {
         try { sync.error(); setRunButtonState(false); } catch {}
       });
-      esSummary.onopen = () => safe(summaryStream.onOpen.bind(summaryStream));
-      esSummary.onerror = () => summaryStream.onError();
+      esSummary.onopen = () => { if (current()) safe(summaryStream.onOpen.bind(summaryStream)); };
+      esSummary.onerror = () => { if (current()) summaryStream.onError(); };
     } catch {}
   };
 
@@ -814,6 +853,14 @@
   });
 
   window.addEventListener("cw:overview-profile-changed", () => {
+    summaryRevision++;
+    summary = null;
+    sumBusy = false;
+    safe(sumAbort?.abort?.bind(sumAbort));
+    sync.reset();
+    for (const key of FEAT_KEYS) { delete hydratedLanes[key]; delete lastCounts[key]; lastLaneTs[key] = 0; }
+    spotsModal?.classList.add("hidden");
+    renderAll();
     safe(() => window.openSummaryStream?.());
     safe(() => pullSummary());
     safe(queuePairsRefresh);

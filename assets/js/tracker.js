@@ -483,7 +483,7 @@
       const signature = JSON.stringify([name, user?.avatar_url]);
       if (identity.dataset.signature !== signature) {
         identity.dataset.signature = signature;
-        identity.innerHTML = `<span class="cw-media-hero-avatar">${symbol("person")}${user?.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="" onerror="this.hidden=true">` : ""}</span><span>${esc(name)}</span>`;
+        identity.innerHTML = `<a class="cw-media-hero-avatar" href="/profile#account" aria-label="Open user settings" title="User settings">${symbol("person")}${user?.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="" onerror="this.hidden=true">` : ""}</a><span>${esc(name)}</span>`;
       }
     }
     const host = state.root?.querySelector('.trk-profile-picker');
