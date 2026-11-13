@@ -220,6 +220,41 @@ for (const mode of ['Tracker','Media hub']) test(`${mode}: delayed media updates
   }
 });
 
+for (const width of [1440,390]) test(`Tracker detail progress sits beside the year at ${width}px`, async t => {
+  const {page,release}=await fixture(t,'flat-dark',width);
+  release();
+  let percent=2;
+  await page.route('**/api/tracker/title?**',route=>route.fulfill({json:{
+    title:{...items[0],title:"The Handmaid's Tale",year:2017},show:false,
+    ratings:[{rating:7.5}],progress:percent == null ? [] : [{key:'progress:1',progress_percent:percent}],
+    plays:[],watchlist:[],collection:[],attention:[],seasons:[],note_key:'title:1',note:{status:'watching'},
+  }}));
+  await page.locator('.trk-play').first().click();
+  const detail=page.locator(width < 800 ? '.trk-sheet:visible .trk-detail' : '[data-trk-slot="title"]');
+  const facts=detail.locator('.trk-detail-facts');
+  await facts.getByRole('progressbar').waitFor();
+  assert.equal(await facts.getByRole('progressbar').getAttribute('aria-valuenow'),'2');
+  assert.equal(await facts.locator('.trk-detail-progress-track i').evaluate(el=>el.style.width),'2%');
+  assert.match(await facts.textContent(),/2017.*7.5\/10.*2%/);
+  assert.equal(await detail.locator('.trk-badges').count(),0);
+  const layout=await facts.evaluate(el=>{
+    const year=el.querySelector('.trk-detail-sub').getBoundingClientRect();
+    const progress=el.querySelector('.trk-detail-progress').getBoundingClientRect();
+    return {sameRow:Math.abs(year.top-progress.top)<4,overflow:el.scrollWidth>el.clientWidth};
+  });
+  assert.deepEqual(layout,{sameRow:true,overflow:false});
+  await mkdir('.tmp/tracker-detail',{recursive:true});
+  await detail.screenshot({path:`.tmp/tracker-detail/progress-${width}.png`});
+  for (const value of [0,null]) {
+    if (width < 800) await page.keyboard.press('Escape');
+    percent=value;
+    await page.locator('.trk-play').first().click();
+    if (value === 0) await page.waitForFunction(()=>[...document.querySelectorAll('.trk-detail-progress')].some(el=>el.getAttribute('aria-valuenow')==='0'));
+    else await detail.locator('.trk-detail-progress').waitFor({state:'detached'});
+    assert.equal(await detail.locator('.trk-detail-progress').count(),value === 0 ? 1 : 0);
+  }
+});
+
 test('Tracker resume points include providers and stay mounted during title updates', async t => {
   const {page,release}=await fixture(t,'flat-dark',1440);
   release();
@@ -239,6 +274,7 @@ test('Tracker resume points include providers and stay mounted during title upda
   await resume.getByText('66%',{exact:true}).waitFor();
   assert.match(await resume.textContent(),/CrossWatch · Family.*25%.*PUBLICMETADB.*22m left.*66%/s);
   assert.equal(await resume.locator('.cw-mm-resume-episode').count(),1);
+  assert.deepEqual(await resume.locator('.cw-mm-progress-copy strong').allTextContents(),['CrossWatch · Family','PUBLICMETADB · default']);
   assert.equal(providerRequests,1);
   await page.evaluate(()=>{
     window.resumeRow=document.querySelector('.cw-mm-resume .cw-mm-progress-row');
@@ -283,9 +319,9 @@ test('grouped resume points keep provider actions and fit a narrow media card', 
   const {page,release}=await fixture(t,'flat-dark',1440);
   release();
   await page.route('**/api/playback_progress/items?**',route=>route.fulfill({json:{items:[
-    {provider:'CROSSWATCH',instance_id:'default',season:1,episode:1,episode_title:'S01E01',progress_percent:65,remaining_seconds:1080},
-    {provider:'PLEX',instance_id:'family',instance_label:'Family',season:1,episode:1,episode_title:'No Strings',progress_percent:42,remaining_seconds:1500,can_remove_progress:true},
-    {provider:'TRAKT',instance_id:'default',season:1,episode:1,episode_title:'No Strings',progress_percent:60,remaining_seconds:1200},
+    {provider:'CROSSWATCH',instance_id:'default',instance_label:'CrossWatch Personal',season:1,episode:1,episode_title:'S01E01',progress_percent:65,remaining_seconds:1080},
+    {provider:'PLEX',instance_id:'family',instance_label:'Plex Family',season:1,episode:1,episode_title:'No Strings',progress_percent:42,remaining_seconds:1500,can_remove_progress:true},
+    {provider:'TRAKT',instance_id:'P01',instance_label:'  ',season:1,episode:1,episode_title:'No Strings',progress_percent:60,remaining_seconds:1200},
   ]}}));
   await page.evaluate(async()=>{
     CW.ItemActions={canWrite:()=>true,openMenu:options=>{window.resumeAction={feature:options.feature,focusRow:options.focusRow,rows:options.progressRows.length,scopeRows:options.scope()[0].querySelectorAll('.cw-mm-progress-row').length};}};
@@ -294,6 +330,8 @@ test('grouped resume points keep provider actions and fit a narrow media card', 
   const resume=page.locator('#cw-media-modal .cw-mm-resume');
   assert.equal(await resume.locator('.cw-mm-resume-episode').count(),1);
   assert.equal(await resume.locator('.cw-mm-progress-row').count(),3);
+  assert.deepEqual(await resume.locator('.cw-mm-progress-copy strong').allTextContents(),['CrossWatch Personal','Plex Family','TRAKT · P01']);
+  assert.match(await resume.locator('[data-ia-ref="PLEX:family"]').getAttribute('aria-label'),/Plex Family: resume point/);
   assert.equal(await resume.locator('h6').textContent(),'S1E1No Strings');
   assert.deepEqual(await resume.getByRole('progressbar').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-valuenow'))),['65','42','60']);
   const action=resume.locator('[data-ia-ref="PLEX:family"]');

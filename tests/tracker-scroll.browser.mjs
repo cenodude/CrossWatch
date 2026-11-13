@@ -82,7 +82,7 @@ test("Search filters keep tracker toolbars compact and retain view-specific cont
   for (const [theme,width,height] of [["original",1440,900],["flat-dark",1440,900],["flat-light",1440,900],["flat-dark",390,844]]) {
     const {page,errors} = await fixture(browser,theme,width,height);
     const viewSelect = async view => {
-      if(width < 768) await page.locator('#trk-mobile-view').selectOption(view,{force:true});
+      if(width < 768 && view !== 'cleanup') await page.locator(`.trk-tabs [data-trk-view="${view}"]`).click();
       else {
         if(view === 'cleanup') await page.locator('.trk-others>summary').click();
         await page.locator(`[data-trk-view="${view}"]`).click();

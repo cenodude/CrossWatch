@@ -926,11 +926,10 @@
   const showTab = window.showTab;
   window.showTab = function (name) {
     const requested = name || "main";
-    const effective = DOC.classList.contains("cw-compact") && requested !== "main" ? "main" : requested;
-    const args = [effective, ...Array.prototype.slice.call(arguments, 1)];
+    const args = [requested, ...Array.prototype.slice.call(arguments, 1)];
     const ret = typeof showTab === "function" ? showTab.apply(this, args) : undefined;
     try {
-      DOC.dataset.tab = effective;
+      DOC.dataset.tab = requested;
     } catch {}
     return ret;
   };

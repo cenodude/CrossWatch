@@ -66,15 +66,29 @@ async function swipeSurface(page, content = '<button id="swipe-card" style="widt
 
 const touchSessions = new WeakMap();
 
-async function swipe(page, from = {x:90,y:300}, to = {x:290,y:300}) {
+async function swipe(page, from = {x:90,y:300}, to = {x:290,y:300}, steps = 8, interval = 0) {
   if (!touchSessions.has(page)) touchSessions.set(page, await page.context().newCDPSession(page));
   const session = touchSessions.get(page);
   await session.send('Input.dispatchTouchEvent', {type:'touchStart',touchPoints:[from]});
-  for (let step = 1; step <= 8; step++) {
-    await session.send('Input.dispatchTouchEvent', {type:'touchMove',touchPoints:[{x:from.x+(to.x-from.x)*step/8,y:from.y+(to.y-from.y)*step/8}]});
+  for (let step = 1; step <= steps; step++) {
+    if (interval) await page.waitForTimeout(interval);
+    await session.send('Input.dispatchTouchEvent', {type:'touchMove',touchPoints:[{x:from.x+(to.x-from.x)*step/steps,y:from.y+(to.y-from.y)*step/steps}]});
   }
   await session.send('Input.dispatchTouchEvent', {type:'touchEnd',touchPoints:[]});
 }
+
+test('mobile swipes claim the first horizontal move and allow slower gestures', async t => {
+  const {page} = await fixture(t);
+  await swipeSurface(page);
+  await page.evaluate(() => { document.body.style.minHeight = '2400px'; });
+  await swipe(page, {x:90,y:300}, {x:294,y:306}, 12);
+  await page.waitForURL('**/#tracker');
+  const started = Date.now();
+  await swipe(page, {x:294,y:300}, {x:90,y:306}, 40, 25);
+  assert.ok(Date.now() - started > 900);
+  await page.waitForURL('**/#main');
+  assert.equal(await page.evaluate(() => window.swipeCardClicks || 0), 0);
+});
 
 test('mobile swipes follow visible shortcuts in both directions without opening cards', async t => {
   const {page} = await fixture(t);
@@ -92,7 +106,7 @@ test('mobile swipes follow visible shortcuts in both directions without opening 
   await swipe(page);
   assert.equal(new URL(page.url()).pathname, '/profile');
   await swipe(page, {x:290,y:300}, {x:90,y:300});
-  await page.waitForURL('**/?ui=full#tracker');
+  await page.waitForURL('**/#tracker');
   await page.locator('#cw-mobile-bottom-nav').waitFor();
   await swipeSurface(page);
   await swipe(page, {x:290,y:300}, {x:90,y:300});
@@ -392,5 +406,5 @@ test('managed writers retain permitted shortcuts and routes from the media hub',
   await page.waitForURL('**/profile#overview');
   await openSettings(page);
   assert.deepEqual(await page.locator('#cw-mobile-shortcut-0 option').evaluateAll(nodes=>nodes.map(node=>node.value)), ['tracker','snapshots','playlists','editor','profile/overview']);
-  for (const route of ['main','tracker']) assert.equal(await page.locator(`#cw-mobile-bottom-nav [data-mobile-route="${route}"]`).getAttribute('href'), `/?main=1&ui=full#${route}`);
+  for (const route of ['main','tracker']) assert.equal(await page.locator(`#cw-mobile-bottom-nav [data-mobile-route="${route}"]`).getAttribute('href'), `/?main=1#${route}`);
 });

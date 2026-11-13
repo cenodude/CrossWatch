@@ -813,8 +813,9 @@
 
   const providerDisplay = (row) => {
     const name = window.CW?.ProviderMeta?.label?.(row.provider) || row.label || row.provider;
-    const profile = row.instance !== "default" ? row.instanceLabel || row.instance : "";
-    return { name, profile, full: profile ? `${name} · ${profile}` : name };
+    const profile = String(row.instanceLabel || "").trim() || row.instance || "default";
+    const prefixed = profile.toLowerCase() === name.toLowerCase() || profile.toLowerCase().startsWith(`${name.toLowerCase()} `);
+    return { name, profile, full: prefixed ? profile : `${name} · ${profile}` };
   };
   const episodeCode = (row) => (row.season != null && row.episode != null ? `S${row.season}E${row.episode}` : "Episode");
 

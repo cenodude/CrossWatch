@@ -3,7 +3,7 @@
   "short_name": "CrossWatch",
   "description": "Sync watchlists, history and ratings across Plex, Trakt, SIMKL, Jellyfin and more.",
   "id": "/",
-  "start_url": "/?ui=compact",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],

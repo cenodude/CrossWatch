@@ -95,7 +95,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
     return route.fulfill({contentType:'text/html',body:html});
   });
   await page.goto('https://profile-mobile.test/profile');
-  await page.locator('.cw-profile-mobile-view').waitFor({state:'attached'});
+  await page.locator('.cw-profile-tabs').waitFor({state:'attached'});
   await page.evaluate(()=>document.fonts.ready);
   return {page,state};
 }
@@ -237,7 +237,7 @@ for(const width of [390,980,1440]) test(`Hub Progress keeps provider actions, fi
     window.CW.ItemActions={openMenu:args=>{window.__providerAction=args;}};
     window.CW.ProfileMediaModal={canOpen:()=>true,open:item=>window.__openedMedia=item};
   });
-  if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('playback');
+  if(width<=760) await page.locator('[data-profile-tab="playback"]').click();
   else await page.locator('[data-profile-tab="playback"]').click();
   const panel=page.locator('#profile-panel-playback');
   await panel.locator('.cw-play-card').first().waitFor();
@@ -302,7 +302,7 @@ for(const width of [390,980,1440]) test(`Hub Progress keeps provider actions, fi
   await progressRow.locator('.cw-tl-select').click();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await page.reload();
-  if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('playback');
+  if(width<=760) await page.locator('[data-profile-tab="playback"]').click();
   else await page.locator('[data-profile-tab="playback"]').click();
   await panel.locator('.cw-play-row').first().waitFor();
   assert.equal(await page.locator('#profile-playback-timeline').isVisible(),false);
@@ -319,7 +319,7 @@ for(const width of [390,1440]) test(`Hub History preserves filters, provider act
     window.CW.ItemActions={openMenu:args=>{window.__providerAction={feature:args.feature,refs:args.refs,focus:args.focus};}};
     window.CW.ProfileMediaModal={canOpen:()=>true,open:item=>window.__openedMedia=item};
   });
-  if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('history');
+  if(width<=760) await page.locator('[data-profile-tab="history"]').click();
   else await page.locator('[data-profile-tab="history"]').click();
   const panel=page.locator('#profile-panel-history');
   await panel.locator('.cw-hist-card').first().waitFor();
@@ -387,7 +387,7 @@ for(const width of [390,1440]) test(`Hub library pages preserve filters, sorting
   });
   for(const key of ['watchlist','ratings','collection']) {
     state.empty=false;
-    if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption(key);
+    if(width<=760) await page.locator(`[data-profile-tab="${key}"]`).click();
     else await page.locator(`[data-profile-tab="${key}"]`).click();
     const panel=page.locator(`#profile-panel-${key}`), collection=key==='collection';
     await panel.locator(collection?'.cw-collection-card':'.cw-hist-card').first().waitFor();
@@ -453,7 +453,7 @@ for (const width of [390,1440]) test(`Account menu opens profile Settings and pr
   assert.equal(await page.locator('[data-cw-profile-menu-action="account"]').getAttribute('aria-current'), 'page');
   await page.locator('[data-cw-profile-menu-action="ratings"]').click();
   await page.locator('#profile-panel-ratings.active').waitFor();
-  if (width <= 760) await page.locator('.cw-profile-mobile-view select').selectOption('history');
+  if (width <= 760) await page.locator('[data-profile-tab="history"]').click();
   else await page.locator('[data-profile-tab="history"]').click();
   await page.locator('#cw-nav-profile-link').click();
   assert.equal(await page.locator('[data-cw-profile-menu-action="history"]').getAttribute('aria-current'), 'page');
@@ -472,7 +472,7 @@ test('My Media Hub shortcut returns to Overview when the profile tab changed wit
   const hub = page.locator('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]');
   await page.locator('#profile-panel-overview.active').waitFor();
   assert.equal(await hub.getAttribute('aria-current'), 'page');
-  await page.locator('.cw-profile-mobile-view select').selectOption('history');
+  await page.locator('[data-profile-tab="history"]').click();
   await page.locator('#profile-panel-history.active').waitFor();
   assert.equal(new URL(page.url()).hash, '#overview');
   await page.waitForFunction(()=>!document.querySelector('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]').hasAttribute('aria-current'));
@@ -491,7 +491,7 @@ for(const theme of ['original','flat-dark','flat-light']) {
       const {page,state}=await fixture(t,theme,width);
       await page.setViewportSize({width, height});
       for(const section of ['overview','collection','history','ratings','watchlist','playback','account']) {
-        if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption(section);
+        if(width<=760) await page.locator(`[data-profile-tab="${section}"]`).click();
         else await page.locator(`[data-profile-tab="${section}"]`).click();
         const panel=page.locator(`#profile-panel-${section}`);
         await panel.waitFor();
@@ -543,7 +543,7 @@ for(const theme of ['original','flat-dark','flat-light']) {
         }
       }
       state.empty=true;
-      if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('watchlist');
+      if(width<=760) await page.locator('[data-profile-tab="watchlist"]').click();
       else await page.locator('[data-profile-tab="watchlist"]').click();
       await page.locator('#profile-watchlist-refresh').click();
       await page.locator('#profile-watchlist-list .cw-profile-empty').waitFor();
@@ -605,12 +605,12 @@ for (const width of [390,1440,2250]) test(`Hub Overview keeps provider actions a
   assert.equal(await avatar.getAttribute('href'),'/profile#account');
   await avatar.click();
   await page.locator('#profile-panel-account.active').waitFor();
-  if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('overview');
+  if(width<=760) await page.locator('[data-profile-tab="overview"]').click();
   else await page.locator('[data-profile-tab="overview"]').click();
   await avatar.focus();
   await page.keyboard.press('Enter');
   await page.locator('#profile-panel-account.active').waitFor();
-  if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('overview');
+  if(width<=760) await page.locator('[data-profile-tab="overview"]').click();
   else await page.locator('[data-profile-tab="overview"]').click();
   if(process.env.CW_PROFILE_SCREENSHOTS) {
     await mkdir(process.env.CW_PROFILE_SCREENSHOTS,{recursive:true});
@@ -635,7 +635,7 @@ test("Media Hub uses compact mobile previews and independent paged lists", async
   const sections = [['history','/api/profile/history',48],['ratings','/api/profile/ratings',48],['watchlist','/api/profile/watchlist',48],['collection','/api/profile/collection',24],['playback','/api/playback_progress/items',48]];
   for (const [section,path,desktopSize] of sections) {
     const requested = page.waitForResponse(response=>new URL(response.url()).pathname===path && new URL(response.url()).searchParams.get('page_size')==='20');
-    await page.locator('.cw-profile-mobile-view select').selectOption(section);
+    await page.locator(`[data-profile-tab="${section}"]`).click();
     await requested;
     const selector = page.locator(`#profile-${section}-page-size`);
     assert.equal(await selector.inputValue(),'20');
@@ -654,7 +654,7 @@ test("Media Hub uses compact mobile previews and independent paged lists", async
   assert.equal(state.queries.filter(query=>sections.slice(0,4).some(([,path])=>path===query.path)).length,unrelatedReads);
   await page.setViewportSize({width:390,height:844});
   await page.reload();
-  await page.locator('.cw-profile-mobile-view select').selectOption('playback');
+  await page.locator('[data-profile-tab="playback"]').click();
   await page.locator('#profile-panel-playback.active').waitFor();
   assert.equal(await page.locator('#profile-playback-page-size').inputValue(),'10');
 });
@@ -666,7 +666,7 @@ for(const width of [390,1440]) test(`Hub card actions and provider overflow rema
     window.CW.ItemActions={openMenu:args=>{window.__providerAction=args.focus;}};
     window.CW.ProfileMediaModal={canOpen:()=>true,open:item=>window.__openedMedia=item};
   });
-  if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('history');
+  if(width<=760) await page.locator('[data-profile-tab="history"]').click();
   else await page.locator('[data-profile-tab="history"]').click();
   const card=page.locator('#profile-history-list .cw-hist-card').first();
   await card.waitFor();
@@ -697,7 +697,7 @@ for(const width of [390,1440]) test(`Hub card actions and provider overflow rema
   }
   await card.locator('[data-ia-cover]').click();
   assert.equal(await page.evaluate(()=>window.__providerAction),null);
-  if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('playback');
+  if(width<=760) await page.locator('[data-profile-tab="playback"]').click();
   else await page.locator('[data-profile-tab="playback"]').click();
   const progress=page.locator('#profile-panel-playback [data-playback-menu]').first();
   await progress.click();
@@ -718,7 +718,7 @@ for(const width of [390,1440]) test(`Hub card actions and provider overflow rema
 
 test('Mobile card action sheets dismiss without navigating or changing playback',async t=>{
   const {page}=await fixture(t,'flat-dark',390,{playback:true});
-  await page.locator('.cw-profile-mobile-view select').selectOption('playback');
+  await page.locator('[data-profile-tab="playback"]').click();
   const trigger=page.locator('#profile-panel-playback [data-playback-menu]').first();
   const sheet=page.locator('.cw-card-action-menu:popover-open');
   const url=page.url();
@@ -762,4 +762,28 @@ test('Mobile card action sheets dismiss without navigating or changing playback'
   await page.waitForFunction(()=>!history.state?.cwCardActions);
   assert.equal(await page.locator('body > [inert]').count(),0);
   assert.equal(page.url(),url);
+});
+
+test('Mobile Hub uses compact shelves, sticky tabs and two-column progress', async t => {
+  const {page} = await fixture(t,'flat-dark',390,{count:12,playback:true});
+  await page.locator('.cw-cw-card').first().waitFor();
+  const art = await page.locator('.cw-cw-art').first().boundingBox();
+  assert.ok(Math.abs(art.width - 240) < 3,JSON.stringify(art));
+  assert.ok(Math.abs(art.height - 135) < 3);
+  const copy = await page.locator('.cw-cw-copy').first().boundingBox();
+  assert.ok(copy.y >= art.y + art.height);
+  assert.ok(Math.abs((await page.locator('.cw-hub-poster').first().boundingBox()).width - 130) < 2);
+  await mkdir('.tmp/mobile-implementation',{recursive:true});
+  await page.screenshot({path:'.tmp/mobile-implementation/hub-overview.png'});
+  await page.locator('[data-profile-tab="playback"]').click();
+  await page.locator('#profile-panel-playback .cw-hist-card').first().waitFor();
+  const cards = await page.locator('#profile-panel-playback .cw-hist-card').evaluateAll(els => els.slice(0,2).map(el => {const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width};}));
+  assert.ok(Math.abs(cards[0].y - cards[1].y) < 2);
+  assert.ok(cards[0].width < 190 && cards[0].width > 140);
+  await page.evaluate(()=>window.scrollTo(0,200));
+  const nav = await page.locator('.cw-profile-tabs').boundingBox();
+  const header = await page.locator('body > header').boundingBox();
+  assert.ok(Math.abs(nav.y - header.height) < 2, JSON.stringify({nav,header}));
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth > innerWidth),false);
+  await page.screenshot({path:'.tmp/mobile-implementation/hub-progress.png'});
 });
