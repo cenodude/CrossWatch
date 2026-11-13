@@ -130,8 +130,12 @@ test('dismissing the banner respects cooldown while keeping manual installation 
 
 test('legacy Compact preferences and links keep full mobile navigation and routes', async t => {
   const frontend = await readFile(new URL('../ui_frontend.py', import.meta.url),'utf8');
-  const bootstrap = [...frontend.matchAll(/<script>([\s\S]*?)<\/script>/g)].find(match => match[1].includes('dataset.cwInitialTab'))[1];
   const page = await fixture(t);
+  const bootstrap = await page.evaluate(source => {
+    const doc = new DOMParser().parseFromString(source, 'text/html');
+    return [...doc.querySelectorAll('script')].find(script => script.textContent.includes('dataset.cwInitialTab'))?.textContent;
+  }, frontend);
+  assert.ok(bootstrap);
   await page.evaluate(() => localStorage.setItem('cw_ui_mode','compact'));
   for (const query of ['', '?ui=compact', '?compact=1']) {
     await page.goto(`https://pwa-install.test/${query}#settings/sync`);
