@@ -162,7 +162,9 @@
   }
 
 
-    // PWA: install banner (Android prompt and fallback, iOS guidance)
+let _cwInstallPrompt = null;
+let _cwAppInstalled = false;
+
 function _cwIsMobile() {
   return _cwIsLikelyHandheld();
 }
@@ -214,7 +216,53 @@ function _cwIsSecureEnough() {
 }
 
 
+function _cwSyncInstallAction() {
+  const menu = D.getElementById("cw-mobile-navigation");
+  const existing = D.getElementById("cw-mobile-install");
+  if (!_cwInstallPrompt || _cwAppInstalled || _cwIsStandalone() || !_cwIsSecureEnough()) {
+    if (existing?.contains(D.activeElement)) D.getElementById("cw-mobile-more")?.focus({preventScroll:true});
+    existing?.remove();
+    return;
+  }
+  if (!menu || existing) return;
+  const action = D.createElement("div");
+  action.id = "cw-mobile-install";
+  action.className = "cw-mobile-extra-destinations";
+  action.innerHTML = '<button type="button" class="tab"><span class="material-symbols-rounded cw-mobile-destination-icon" aria-hidden="true">install_mobile</span><span>Install CrossWatch</span></button>';
+  action.querySelector("button").addEventListener("click", async () => {
+    const prompt = _cwInstallPrompt;
+    if (!prompt || _cwAppInstalled || _cwIsStandalone()) return;
+    _cwInstallPrompt = null;
+    _cwSyncInstallAction();
+    try {
+      await prompt.prompt();
+    } catch (error) {
+      console.warn("[crosswatch] Install prompt failed", error);
+    }
+  });
+  menu.appendChild(action);
+}
+
+window.addEventListener("beforeinstallprompt", event => {
+  if (!_cwIsMobile() || !_cwIsSecureEnough() || _cwAppInstalled || _cwIsStandalone()) return;
+  _cwInstallPrompt = event;
+  _cwSyncInstallAction();
+  event.userChoice.then(choice => {
+    if (_cwInstallPrompt === event) _cwInstallPrompt = null;
+    if (choice.outcome === "accepted") _cwAppInstalled = true;
+    _cwSyncInstallAction();
+  }).catch(() => {
+    if (_cwInstallPrompt === event) _cwInstallPrompt = null;
+    _cwSyncInstallAction();
+  });
+});
+D.addEventListener("cw-mobile-navigation-ready", _cwSyncInstallAction);
+window.matchMedia?.("(display-mode: standalone)")?.addEventListener("change", _cwSyncInstallAction);
+
 window.addEventListener("appinstalled", () => {
+  _cwAppInstalled = true;
+  _cwInstallPrompt = null;
+  _cwSyncInstallAction();
   _cwMarkInstallDismissed();
   try { document.getElementById("cw-install")?.classList.remove("show"); } catch {}
 });
@@ -250,6 +298,7 @@ function _cwEnsureInstallUi() {
 }
 
 function cwInitPwaInstall() {
+  _cwSyncInstallAction();
   if (_cwIsStandalone()) return;
   if (!_cwIsSecureEnough()) return;
 
@@ -321,7 +370,7 @@ window.cwPwaDiag = function () {
       ios: _cwIsIOS(),
       android: _cwIsAndroid(),
       dismissedRecently: _cwInstallDismissedRecently(),
-      hasInstallPrompt: false,
+      hasInstallPrompt: !!_cwInstallPrompt && !_cwAppInstalled && !_cwIsStandalone(),
       swSupported: "serviceWorker" in navigator,
     };
   } catch {

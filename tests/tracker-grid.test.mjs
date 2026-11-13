@@ -31,8 +31,9 @@ test("record cards retain half ratings, episode artwork, selection and editing",
   assert.match(html,/kind=still&amp;season=1&amp;episode=2/);
   assert.match(html,/Your rating: 7.5 out of 10/);
   assert.match(html,/data-trk-pick="0" checked/);
-  assert.match(html,/data-trk-row-edit="0"/);
-  assert.match(html,/data-trk-row-info/);
+  assert.match(html,/data-trk-card-menu data-trk-card-index="0"/);
+  assert.match(html,/data-trk-card-open/);
+  assert.doesNotMatch(html,/trk-cover-action|data-trk-row-edit/);
   assert.match(html,/is-selected/);
   assert.match(html,/&lt;Title>/);
 });
@@ -62,6 +63,7 @@ for (const view of ["history","shows","titles","watchlist","ratings","progress",
     const items=[{key:"one",type:"movie",title:"One",date:"today",last_watched:"today",updated:"today",status:"dropped",user_rating:7.5},{key:"two",type:"movie",title:"Two",date:"today"}];
     const state={view,items,shows:items,noteRows:items};
     const html=render(state);
+    assert.equal((html.match(/data-trk-card-menu /g)||[]).length,2);
     assert.equal((html.match(/class="trk-grid-status"/g)||[]).length,1);
     assert.match(html,/trk-grid-labels.*trk-grid-date.*trk-grid-status/);
     assert.match(html,/data-status="dropped"/);
@@ -90,7 +92,7 @@ function preferences(initial = {}) {
   let saved = JSON.stringify(initial);
   const state = {view:"history",layouts:{},picked:new Set()};
   const views = ["history","shows","titles","watchlist","ratings","progress","collection","cleanup"];
-  const context = vm.createContext({state,STORE_KEY:"test",VIEWS:views.map(id=>({id})),MEDIA:[],PAGE_SIZES:[],renderSlots:()=>{},localStorage:{getItem:()=>saved,setItem:(_,value)=>{saved=value;}}});
+  const context = vm.createContext({state,STORE_KEY:"test",VIEWS:views.map(id=>({id})),MEDIA:[],PAGE_SIZES:[],MOBILE_PAGE_SIZES:[],renderSlots:()=>{},localStorage:{getItem:()=>saved,setItem:(_,value)=>{saved=value;}}});
   vm.runInContext(prefs + "loadView();",context);
   vm.runInContext(`function choose(value) { const layout = {dataset:{trkLayout:value}}; ${click} }`,context);
   return {state,views,choose:value=>vm.runInContext(`choose(${JSON.stringify(value)})`,context),reload:()=>vm.runInContext("loadView()",context)};
@@ -129,4 +131,27 @@ test("saved per-tab choices override legacy preferences and reject invalid value
   assert.equal(state.layouts.shows,"grid");
   assert.equal(state.layouts.ratings,"list");
   assert.equal(state.layouts.unknown,undefined);
+});
+
+for (const [name,row,plays,expected] of [
+  ["manually completed movie without history",{type:"movie",status:"completed"},[],"Log a watch"],
+  ["watched movie",{type:"movie"},[{type:"movie"}],"Log a rewatch"],
+  ["different episode",{type:"episode",season:2,episode:3},[{season:2,episode:2}],"Log a watch"],
+  ["same episode",{type:"episode",season:2,episode:3},[{season:2,episode:3}],"Log a rewatch"],
+]) test(`watch menu label uses history for ${name}`, async () => {
+  const ref={feature:"progress",key:"one"};
+  const button={firstElementChild:{textContent:"check"},lastElementChild:{textContent:"Log a watch"}};
+  const context=vm.createContext({state:{ref,title:{plays}},menu:{querySelector:()=>button,matches:()=>true},row,ref});
+  const code=source.slice(source.indexOf("  async function updateWatchLabel("),source.indexOf("  function openOverviewActions("));
+  await vm.runInContext(code+"updateWatchLabel(menu,row,ref)",context);
+  assert.equal(button.lastElementChild.textContent,expected);
+});
+
+test("logging from an episode card preserves its season and episode", () => {
+  let prefill;
+  const context=vm.createContext({state:{title:{watchlist:[]},progress:{42:{next:{season:3,episode:1}}}},headItem:()=>({type:"show",ids:{tmdb:42},title:"Show"}),openLog:value=>{prefill=value;}});
+  const code=source.slice(source.indexOf("  function logFromTitle("),source.indexOf("  async function loadSeasons("));
+  vm.runInContext(code+"logFromTitle({season:2,episode:7})",context);
+  assert.equal(prefill.season,2);
+  assert.equal(prefill.episode,7);
 });

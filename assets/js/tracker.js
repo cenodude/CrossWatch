@@ -493,20 +493,20 @@
     host.hidden = scope?.isAdmin !== true;
     if (host.hidden) return;
     const profiles = scope.profiles || [];
-    const rows = [{id:"",label:profiles.length ? "All profiles" : "No profiles"}, ...profiles];
+    const rows = [{id:"",label:"All profiles"}, {id:"__default__",label:"Admin / Default instances"}, ...profiles];
     const signature = JSON.stringify(rows.map(row => [row.id,row.label]));
     if (select.dataset.signature !== signature) {
       select.innerHTML = rows.map(row => `<option value="${esc(row.id)}">${esc(row.label)}</option>`).join('');
       select.dataset.signature = signature;
     }
     select.value = scope.id || "";
-    select.disabled = !profiles.length;
+    select.disabled = false;
     if (!select.dataset.bound) {
       select.dataset.bound = "1";
       select.addEventListener('change', () => scope.setActive(select.value));
     }
     window.CW?.ProfileSelect?.enhanceUserProfile?.(select, {className:"trk-profile-select"});
-    host.querySelector('.cw-icon-select-btn')?.setAttribute('aria-label', `View as profile: ${scope.label || (profiles.length ? 'All profiles' : 'No profiles')}`);
+    host.querySelector('.cw-icon-select-btn')?.setAttribute('aria-label', `View as profile: ${scope.label || 'All profiles'}`);
   }
 
   function viewCount(view) {
@@ -592,8 +592,7 @@
     const left = Number.isInteger(row.aired_episodes_left) && row.aired_episodes_left > 0 ? row.aired_episodes_left : null;
     const badge = remaining != null ? `${num(remaining)} min left` : watched || (left != null ? `${num(left)} aired episode${left === 1 ? "" : "s"} left` : "Up next");
     const detail = [episodeLabel(row), row.episode_title || (remaining != null ? watched : "")].filter(Boolean).join(" · ");
-    const writable = window.CW?.AuthState?.read?.()?.permissions?.write !== false;
-    return `<article class="trk-overview-card" data-trk-motion-key="${esc(`${row.key || title}:${row.season || 0}:${row.episode || 0}`)}"><button type="button" class="trk-overview-open" data-trk-overview-open="${kind}:${index}" aria-label="Open ${esc([title, detail, badge].filter(Boolean).join(", "))}"><span class="trk-overview-art">${symbol(art?.kind === "movie" || row.type === "movie" ? "movie" : "tv")}${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-overview-badge">${esc(badge)}</span><span class="trk-overview-copy"><strong>${esc(title)}</strong>${detail ? `<span class="trk-overview-meta">${esc(detail)}</span>` : ""}</span><span class="trk-overview-arrow" aria-hidden="true">${icon("arrow_forward")}</span>${percent != null ? `<span class="trk-overview-progress" aria-hidden="true"><i style="width:${percent}%"></i></span>` : ""}</span></button>${kind === "continue" ? `<div class="trk-overview-actions"><button type="button" class="trk-overview-quick" data-trk-overview-watch="${index}"${state.overviewBusy || !writable ? " disabled" : ""} title="Mark watched" aria-label="Mark ${esc(title)} ${esc(episodeLabel(row))} watched">${icon("check")}</button><button type="button" class="trk-overview-quick" data-trk-overview-drop="${index}"${state.overviewBusy || !writable ? " disabled" : ""} title="Mark as dropped and hide from this overview" aria-label="Drop ${esc(title)}">${icon("do_not_disturb_on")}</button></div>` : ""}</article>`;
+    return `<article class="trk-overview-card" data-trk-motion-key="${esc(`${row.key || title}:${row.season || 0}:${row.episode || 0}`)}"><button type="button" class="trk-overview-open" data-trk-overview-open="${kind}:${index}" aria-label="Open ${esc([title, detail, badge].filter(Boolean).join(", "))}"><span class="trk-overview-art">${symbol(art?.kind === "movie" || row.type === "movie" ? "movie" : "tv")}${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-overview-badge">${esc(badge)}</span><span class="trk-overview-copy"><strong>${esc(title)}</strong>${detail ? `<span class="trk-overview-meta">${esc(detail)}</span>` : ""}</span><span class="trk-overview-arrow" aria-hidden="true">${icon("arrow_forward")}</span>${percent != null ? `<span class="trk-overview-progress" aria-hidden="true"><i style="width:${percent}%"></i></span>` : ""}</span></button>${kind === "continue" ? `<button type="button" class="cw-card-actions trk-overview-menu" data-trk-overview-menu="${index}" title="Actions" aria-label="Actions for ${esc(title)}" aria-haspopup="menu" aria-expanded="false"${state.overviewBusy ? " disabled" : ""}>${icon("more_horiz")}</button>` : ""}</article>`;
   }
 
   function renderAiringTimeline(rows, data, message) {
@@ -681,7 +680,7 @@
     const calendarScroll = state.root.querySelector(".trk-calendar")?.scrollLeft || 0;
     const continueScroll = state.root.querySelector(".trk-overview-grid")?.scrollLeft || 0;
     const active = document.activeElement;
-    const attr = ["data-trk-overview-more", "data-trk-overview-open", "data-trk-overview-watch", "data-trk-overview-drop"].find(name => active?.hasAttribute(name));
+    const attr = ["data-trk-overview-more", "data-trk-overview-open", "data-trk-overview-menu"].find(name => active?.hasAttribute(name));
     const value = attr ? active.getAttribute(attr) : "";
     if (metadata && state.root.querySelector(".trk-overview")) {
       const template = document.createElement("template");
@@ -862,8 +861,30 @@
     }
   }
 
-  async function overviewWatch(index) {
-    const row = overviewRows("continue")[index];
+  async function updateWatchLabel(menu, row, ref) {
+    if (!ref || ref.feature === "history" || (row.episode == null && row.type !== "movie")) return;
+    const same = state.ref && ["note", "show", "feature", "key"].every(key => state.ref[key] === ref[key]);
+    try {
+      const data = same && state.title ? state.title : await getJSON(`/api/tracker/title?${inst()}&${new URLSearchParams(ref)}`);
+      const watched = (data.plays || []).some(play => row.type === "movie" || Number(play.season) === Number(row.season) && Number(play.episode) === Number(row.episode));
+      const button = menu.querySelector("[data-trk-watch-label]");
+      if (!button || !menu.matches(":popover-open")) return;
+      button.lastElementChild.textContent = watched ? "Log a rewatch" : "Log a watch";
+      button.firstElementChild.textContent = watched ? "replay" : "check";
+    } catch {}
+  }
+
+  function openOverviewActions(button) {
+    const row = overviewRows("continue")[Number(button.dataset.trkOverviewMenu)];
+    if (!row) return;
+    const disabled = !!state.overviewBusy || window.CW?.AuthState?.read?.()?.permissions?.write === false;
+    const entries = [{icon:"check", label:"Log a watch", attrs:' data-trk-watch-label', disabled, run:() => overviewWatch(row)},
+      {icon:"do_not_disturb_on", label:row.type === "movie" ? "Drop title" : "Drop show", disabled:disabled || row.status === "dropped", run:() => overviewDrop(row)}];
+    const menu = window.CW.CardActions.open(button, entries, {title:cardTitle(row),subtitle:[episodeLabel(row),row.episode_title].filter(Boolean).join(" · ")});
+    void updateWatchLabel(menu, row, row.ref);
+  }
+
+  async function overviewWatch(row) {
     if (!row || state.overviewBusy || window.CW?.AuthState?.read?.()?.permissions?.write === false) return;
     const instance = state.instance;
     const item = row.type === "episode" ? {type:"episode", series_title:cardTitle(row), series_year:row.series_year || row.year, season:row.season, episode:row.episode, ids:row.ids || {}, show_ids:row.show_ids || {tmdb:String(row.art?.tmdb || "")}} : {type:"movie", title:cardTitle(row), year:row.year, ids:row.ids || {tmdb:String(row.art?.tmdb || "")}};
@@ -877,8 +898,7 @@
     finally { state.overviewBusy = ""; renderOverviewSlot(); }
   }
 
-  async function overviewDrop(index) {
-    const row = overviewRows("continue")[index];
+  async function overviewDrop(row) {
     if (!row || state.overviewBusy || window.CW?.AuthState?.read?.()?.permissions?.write === false) return;
     const instance = state.instance, ref = row.ref;
     state.overviewBusy = row.key;
@@ -1238,31 +1258,46 @@
           ${rating != null ? `<span class="cw-media-card-score" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}
           ${date || status ? `<div class="trk-grid-labels">${date ? `<span class="trk-grid-date" title="${esc(whenText(date))}">${esc(!recent && timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}${status ? `<span class="trk-grid-status">${status}</span>` : ""}</div>` : ""}
           ${shows ? progressCell(item, "bar") : !notes && feature === "progress" ? extraCell(item, feature, "bar") : ""}
-          ${cardActions(item, index, {recent, info:card && !recent})}
+          ${card ? `<button type="button" class="trk-grid-open" data-trk-card-open data-trk-card-index="${index}" data-trk-card-recent="${recent}" aria-label="Open details for ${esc(title)}"></button>` : ""}
         </div>
-        <div class="trk-grid-copy"><strong title="${esc(title)}">${esc(title)}</strong><small>${esc(meta)}</small>${shows ? `<div class="trk-grid-progress">${progressCell(item, "count")}</div>` : notes ? tagChips(item.tags, 3) : feature === "progress" ? extraCell(item, feature, "count") : ""}
-          ${!shows && !notes ? `<div class="trk-grid-tools">${healthIcon(item, state.view === "cleanup")}<button type="button" class="trk-icon" ${recent ? `data-trk-recent-edit="${index}"` : `data-trk-row-edit="${index}"`} title="Edit" aria-label="Edit ${esc(title)}">${icon("edit")}</button></div>` : ""}
+        <div class="trk-grid-copy"><strong title="${esc(title)}">${esc(title)}</strong><small>${esc(meta)}</small>${notes ? tagChips(item.tags, 3) : !shows && feature === "progress" ? extraCell(item, feature, "count") : ""}
+          <div class="trk-grid-tools">${shows ? progressCell(item, "count") : !notes ? healthIcon(item, state.view === "cleanup") : ""}<button type="button" class="cw-card-actions" data-trk-card-menu data-trk-card-index="${index}" data-trk-card-recent="${recent}" title="Actions" aria-label="Actions for ${esc(title)}" aria-haspopup="menu" aria-expanded="false">${icon("more_horiz")}</button></div>
         </div></article>`;
     }).join("");
     const more = recent ? "" : timelineOn() ? state.items.length < state.total ? `<div class="cw-pager"><button type="button" class="cw-btn" data-trk-action="more"${state.loading ? " disabled" : ""}>Show older plays</button></div>` : "" : pager();
     return `<div class="trk-cover-grid">${cards}</div>${more}`;
   }
 
-  function cardActions(item, index, {recent = false, info = false} = {}) {
-    const writable = window.CW?.AuthState?.read?.()?.permissions?.write !== false;
-    const disabled = !writable || !!state.overviewBusy;
-    const title = cardTitle(item);
-    return `<div class="trk-card-actions">${info ? `<button type="button" class="trk-cover-action" data-trk-row-info title="Open details" aria-label="Open details for ${esc(title)}">${icon("info")}</button>` : ""}<button type="button" class="trk-cover-action" data-trk-card-action="log" data-trk-card-index="${index}" data-trk-card-recent="${recent}" title="Watched" aria-label="Log a watch for ${esc(title)}"${disabled ? " disabled" : ""}>${icon("check")}</button><button type="button" class="trk-cover-action" data-trk-card-action="drop" data-trk-card-index="${index}" data-trk-card-recent="${recent}" title="Dropped" aria-label="Mark ${esc(title)} as dropped"${disabled || item.status === "dropped" ? " disabled" : ""}>${icon("do_not_disturb_on")}</button></div>`;
-  }
-
-  async function cardQuickAction(button) {
-    if (button.disabled || state.overviewBusy || window.CW?.AuthState?.read?.()?.permissions?.write === false) return;
+  function gridCardContext(button) {
     const recent = button.dataset.trkCardRecent === "true";
     const rows = recent ? overviewRows("recent") : state.view === "shows" ? state.shows : state.view === "titles" ? state.noteRows : state.items;
     const row = rows[Number(button.dataset.trkCardIndex)];
+    return {row, recent, ref:row ? recent ? row.ref : rowRef(button.closest(".trk-play")) : null};
+  }
+
+  function openGridActions(button) {
+    const {row, recent, ref} = gridCardContext(button);
     if (!row) return;
-    const ref = recent ? row.ref : rowRef(button.closest(".trk-play"));
-    if (button.dataset.trkCardAction === "log") { selectRef(ref, {action:"log"}); return; }
+    const feature = recent ? "history" : listFeature();
+    const disabled = window.CW?.AuthState?.read?.()?.permissions?.write === false || !!state.overviewBusy;
+    const media = canCard(cardItem(row, !!ref.show || isChild(row) || row.type === "show"));
+    const entries = [{icon:"info", label:"View details", run:() => selectRef(ref, {openMedia:media})}];
+    if (ref.show || ref.note) {
+      if (ref.show) entries.push({icon:"edit", label:"Edit title", disabled, run:() => selectRef(ref, {action:"edit-title"})});
+      entries.push({icon:"notes", label:"My notes", disabled, run:() => selectRef(ref, {action:"notes"})});
+    } else {
+      const label = feature === "history" ? "Edit watch" : feature === "progress" ? "Edit progress" : feature === "ratings" ? "Edit rating" : "Edit item";
+      entries.push({icon:"edit", label, disabled, run:() => openSheet("edit", {item:row, feature})});
+    }
+    entries.push({icon:ref.feature === "history" ? "replay" : "check", label:ref.feature === "history" ? "Log a rewatch" : "Log a watch", attrs:' data-trk-watch-label', disabled, run:() => cardQuickAction(button, "log", row, ref)});
+    entries.push({icon:"do_not_disturb_on", label:"Mark as dropped", disabled:disabled || row.status === "dropped", run:() => cardQuickAction(button, "drop", row, ref)});
+    const menu = window.CW.CardActions.open(button, entries, {title:cardTitle(row),subtitle:[episodeLabel(row),row.episode_title].filter(Boolean).join(" · ")});
+    void updateWatchLabel(menu, row, ref);
+  }
+
+  async function cardQuickAction(button, action, row, ref) {
+    if (button.disabled || state.overviewBusy || window.CW?.AuthState?.read?.()?.permissions?.write === false) return;
+    if (action === "log") { selectRef(ref, {action:"log", watchItem:row}); return; }
     const instance = state.instance;
     state.overviewBusy = row.key;
     button.disabled = true;
@@ -2162,7 +2197,7 @@
     } catch {}
   }
 
-  function selectRef(ref, { openMedia = false, action = "" } = {}) {
+  function selectRef(ref, { openMedia = false, action = "", watchItem = null } = {}) {
     state.ref = ref;
     saveView();
     state.statusMenu = false;
@@ -2178,7 +2213,10 @@
     setSlot("title", renderTitle());
     if (narrow() && !openMedia && !action) openSheet('title');
     loadTitle().then(() => {
-      if (action && state.ref === ref && state.title) detailAction(action);
+      if (action && state.ref === ref && state.title) {
+        if (action === "log") logFromTitle(watchItem);
+        else detailAction(action);
+      }
       else if (openMedia && state.ref === ref) openCard();
     });
   }
@@ -3792,7 +3830,7 @@
     if (log.pick?.type === "show") loadSeasons(log);
   }
 
-  function logFromTitle() {
+  function logFromTitle(item = null) {
     const data = state.title;
     if (!data) return;
     const head = headItem();
@@ -3801,8 +3839,8 @@
       type: head.type,
       pick: { type: head.type, tmdb: head.ids.tmdb, title: head.title, year: head.year, ids: head.ids },
       watchlistKey: data.watchlist[0]?.key || "",
-      season: next?.season || 1,
-      episode: next?.episode || "",
+      season: item?.season ?? next?.season ?? 1,
+      episode: item?.episode ?? next?.episode ?? "",
     });
   }
 
@@ -4636,20 +4674,18 @@
         renderOverviewSlot();
         return;
       }
-      const quick = event.target.closest("[data-trk-card-action]");
-      if (quick) { void cardQuickAction(quick); return; }
-      const recentEdit = event.target.closest("[data-trk-recent-edit]");
-      if (recentEdit) {
-        const item = overviewRows("recent")[Number(recentEdit.dataset.trkRecentEdit)];
-        if (item) openSheet("edit", {item, feature:"history"});
+      const cardMenu = event.target.closest("[data-trk-card-menu]");
+      if (cardMenu) { openGridActions(cardMenu); return; }
+      const cardOpen = event.target.closest("[data-trk-card-open]");
+      if (cardOpen) {
+        const {ref} = gridCardContext(cardOpen);
+        if (ref) selectRef(ref, {openMedia:true});
         return;
       }
       const overviewCard = event.target.closest("[data-trk-overview-open]");
       if (overviewCard) { const [kind, index] = overviewCard.dataset.trkOverviewOpen.split(":"); overviewOpen(kind, Number(index)); return; }
-      const overviewDropped = event.target.closest("[data-trk-overview-drop]");
-      if (overviewDropped) { overviewDrop(Number(overviewDropped.dataset.trkOverviewDrop)); return; }
-      const overviewWatched = event.target.closest("[data-trk-overview-watch]");
-      if (overviewWatched) { overviewWatch(Number(overviewWatched.dataset.trkOverviewWatch)); return; }
+      const overviewMenu = event.target.closest("[data-trk-overview-menu]");
+      if (overviewMenu) { openOverviewActions(overviewMenu); return; }
       const layout = event.target.closest("[data-trk-layout]");
       if (layout) {
         state.layouts[state.view] = layout.dataset.trkLayout === "grid" ? "grid" : "list";
@@ -4697,11 +4733,6 @@
         if (state.open.has(key)) state.open.delete(key);
         else state.open.add(key);
         setSlot("main", renderMain());
-        return;
-      }
-      const rowInfo = event.target.closest("[data-trk-row-info]");
-      if (rowInfo) {
-        selectRef(rowRef(rowInfo.closest(".trk-play")), { openMedia: true });
         return;
       }
       const rowEdit = event.target.closest("[data-trk-row-edit]");

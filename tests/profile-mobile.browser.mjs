@@ -30,7 +30,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
     const bootstrap=doc.createElement('script');
     bootstrap.textContent='window.CW={AuthState:{read:()=>({isAdmin:true,permissions:{write:true}})},Meta:{peek:()=>null,get:async()=>({year:2026,runtime_minutes:58,genres:["Drama","Mystery"],detail:{number_of_seasons:2,status:"Returning Series"}})}};';
     doc.body.append(bootstrap);
-    for(const path of [...(activity?['helpers/provider-meta']:[]),'helpers/selection-bar','helpers/profile-datetime','helpers/month-bar','helpers/icon-select','helpers/account-menu',...(hero?['helpers/profile-select','js/overview-profile']:[]),'js/profile-page']) {
+    for(const path of [...(activity?['helpers/provider-meta']:[]),'helpers/card-actions','helpers/selection-bar','helpers/profile-datetime','helpers/month-bar','helpers/icon-select','helpers/account-menu',...(hero?['helpers/profile-select','js/overview-profile']:[]),'js/profile-page']) {
       const script=doc.createElement('script');
       script.src=`/assets/${path}.js`;
       doc.body.append(script);
@@ -89,6 +89,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
         const page = Number(url.searchParams.get('page') || 1), size = Number(url.searchParams.get('page_size') || 48);
         Object.assign(json,{items:list.slice((page-1)*size,page*size),page,page_size:size,pages:Math.ceil(list.length/size)});
       }
+      if(state.providerRefs && path==='/api/profile/history') json.items=json.items.map(item=>({...item,present:state.providerRefs,missing:[]}));
       return route.fulfill({json});
     }
     return route.fulfill({contentType:'text/html',body:html});
@@ -253,7 +254,8 @@ for(const width of [390,980,1440]) test(`Hub Progress keeps provider actions, fi
   assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
   await panel.locator('[data-ia-chip]').first().click();
   assert.ok(await page.evaluate(()=>!!window.__providerAction));
-  await panel.locator('[data-playback-action="update_progress"]').first().click();
+  await panel.locator('[data-playback-menu]').first().click();
+  await page.locator('.cw-card-action-menu [data-playback-action="update_progress"]').click();
   await page.locator('#profile-playback-edit[open]').waitFor();
   assert.match(await page.locator('#profile-playback-edit-sub').innerText(),/1 provider record/);
   await page.locator('#profile-playback-edit [data-playback-dialog-cancel]').click();
@@ -357,7 +359,11 @@ for(const width of [390,1440]) test(`Hub History preserves filters, provider act
   assert.equal(await panel.locator('[data-timeline-filters-toggle]').isVisible(),false);
   assert.equal(await page.locator('#profile-history-filters').isVisible(),false);
   assert.notEqual(await panel.evaluate(el=>getComputedStyle(el).getPropertyValue('--hist-tone-rgb')),syncedAccent);
-  assert.match(await panel.locator('.cw-hist-route').first().textContent(),/Sent to 1/);
+  assert.match(await panel.locator('[data-hub-route-actions]').first().getAttribute('aria-label'),/Sent to 1/);
+  assert.doesNotMatch(await panel.locator('.cw-hist-route').first().textContent(),/Sent to/);
+  await panel.locator('[data-hub-route-actions]').first().click();
+  await page.getByRole('menuitem',{name:'View media details'}).click();
+  assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
   await panel.locator('[data-timeline-view="list"]').click();
   await panel.locator('.cw-hist-row').first().waitFor();
   assert.equal(await panel.locator('.cw-hist-cell--when').first().isVisible(),true);
@@ -390,7 +396,15 @@ for(const width of [390,1440]) test(`Hub library pages preserve filters, sorting
     assert.equal(await page.locator(`#profile-${key}-timeline`).isVisible(),false);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     await snapshot(page,`hub-${key}-${width}`);
+    const card=panel.locator(collection?'.cw-collection-card':'.cw-hist-card').first();
+    const selectBounds=await card.locator('.cw-tl-select').boundingBox();
+    const cardBounds=await card.boundingBox();
+    assert.ok(selectBounds.x<cardBounds.x+cardBounds.width/2);
+    assert.equal(await card.locator('.cw-card-actions').isVisible(),true);
     if(collection) {
+      await card.locator('[data-collection-actions]').click();
+      await page.getByRole('menuitem',{name:'Manage providers'}).click();
+      assert.equal(await page.evaluate(()=>window.__providerAction),'collection');
       assert.equal(await panel.locator('.cw-collection-quality img[alt="4K"]').count(),items.length);
       const sortRequest=page.waitForResponse(r=>r.url().includes('/api/profile/collection?')&&new URL(r.url()).searchParams.get('sort')==='title');
       await page.locator('#profile-collection-sort').selectOption('title',{force:true});
@@ -512,7 +526,8 @@ for(const theme of ['original','flat-dark','flat-light']) {
             assert.ok(box.x+box.width<=rating.x);
           }
           if(section==='playback') {
-            await panel.locator('[data-playback-action="update_progress"]').first().tap();
+            await panel.locator('[data-playback-menu]').first().tap();
+            await page.locator('.cw-card-action-menu [data-playback-action="update_progress"]').tap();
             await page.locator('#profile-playback-edit[open]').waitFor();
             const dialog=await page.locator('#profile-playback-edit').boundingBox();
             assert.ok(dialog.x>=0&&dialog.x+dialog.width<=width&&dialog.y>=0&&dialog.y+dialog.height<=height+1,JSON.stringify(dialog));
@@ -642,4 +657,109 @@ test("Media Hub uses compact mobile previews and independent paged lists", async
   await page.locator('.cw-profile-mobile-view select').selectOption('playback');
   await page.locator('#profile-panel-playback.active').waitFor();
   assert.equal(await page.locator('#profile-playback-page-size').inputValue(),'10');
+});
+
+for(const width of [390,1440]) test(`Hub card actions and provider overflow remain usable at ${width}px`,async t=>{
+  const {page,state}=await fixture(t,'flat-dark',width,{history:true,playback:true});
+  state.providerRefs=['PLEX','TRAKT','SIMKL','MDBLIST','CROSSWATCH','JELLYFIN','EMBY','KODI','TOFA','SILO'].map(provider=>({provider,instance:'default'}));
+  await page.evaluate(()=>{
+    window.CW.ItemActions={openMenu:args=>{window.__providerAction=args.focus;}};
+    window.CW.ProfileMediaModal={canOpen:()=>true,open:item=>window.__openedMedia=item};
+  });
+  if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('history');
+  else await page.locator('[data-profile-tab="history"]').click();
+  const card=page.locator('#profile-history-list .cw-hist-card').first();
+  await card.waitFor();
+  const strip=card.locator('.cw-provider-strip'),more=strip.locator('[data-provider-overflow]');
+  await more.waitFor();
+  const shown=await strip.locator('[data-ia-chip]:visible').count();
+  assert.ok(shown<10);
+  assert.equal(await more.innerText(),`+${10-shown}`);
+  const bounds=await strip.boundingBox();
+  for(const chip of await strip.locator(':scope > :visible').all()) {
+    const box=await chip.boundingBox();
+    assert.ok(box.x+box.width<=bounds.x+bounds.width+1);
+    assert.ok(box.y>=bounds.y && box.y+box.height<=bounds.y+bounds.height+1);
+  }
+  await more.click();
+  assert.equal(await page.getByRole('menuitem').count(),10-shown);
+  await page.keyboard.press('End');
+  assert.match(await page.locator(':focus').innerText(),/Silo/i);
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(()=>window.__providerAction.provider),'SILO');
+  assert.equal(await page.locator('.cw-card-action-menu:popover-open').count(),0);
+  if(width===1440) {
+    await card.evaluate(el=>el.style.width='600px');
+    await more.waitFor({state:'hidden'});
+    assert.equal(await strip.locator('[data-ia-chip]:visible').count(),10);
+    await card.evaluate(el=>el.style.width='');
+    await more.waitFor();
+  }
+  await card.locator('[data-ia-cover]').click();
+  assert.equal(await page.evaluate(()=>window.__providerAction),null);
+  if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('playback');
+  else await page.locator('[data-profile-tab="playback"]').click();
+  const progress=page.locator('#profile-panel-playback [data-playback-menu]').first();
+  await progress.click();
+  assert.equal(await page.getByRole('menuitem',{name:'Edit progress'}).count(),1);
+  assert.equal(await page.getByRole('menuitem',{name:'Mark as watched'}).count(),1);
+  assert.equal(await page.getByRole('menuitem',{name:'Remove resume point'}).count(),1);
+  const menu=await page.locator('.cw-card-action-menu:popover-open').boundingBox();
+  assert.ok(menu.x>=0 && menu.x+menu.width<=width);
+  if(process.env.CW_PROFILE_SCREENSHOTS) await page.screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/card-actions-open-${width}.png`});
+  await page.keyboard.press('Escape');
+  assert.equal(await progress.getAttribute('aria-expanded'),'false');
+  await page.evaluate(()=>{document.documentElement.dataset.cwRole='user';document.documentElement.dataset.cwPermWrite='off';});
+  await progress.click();
+  assert.equal(await page.getByRole('menuitem',{name:'Edit progress'}).count(),0);
+  await page.getByRole('menuitem',{name:'View media details'}).click();
+  assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
+});
+
+test('Mobile card action sheets dismiss without navigating or changing playback',async t=>{
+  const {page}=await fixture(t,'flat-dark',390,{playback:true});
+  await page.locator('.cw-profile-mobile-view select').selectOption('playback');
+  const trigger=page.locator('#profile-panel-playback [data-playback-menu]').first();
+  const sheet=page.locator('.cw-card-action-menu:popover-open');
+  const url=page.url();
+  await trigger.click();
+  await sheet.waitFor();
+  assert.equal(await sheet.getAttribute('role'),'dialog');
+  assert.equal(await sheet.locator('h2').innerText(),items[0].title);
+  const bounds=await sheet.boundingBox();
+  const grip=await sheet.locator('.cw-card-action-grip').boundingBox();
+  const title=await sheet.locator('h2').boundingBox();
+  assert.ok(Math.abs(grip.x+grip.width/2-195)<1);
+  assert.ok(title.y>grip.y+grip.height && title.x<32);
+  assert.equal(bounds.x,0);
+  assert.equal(bounds.width,390);
+  assert.equal(Math.round(bounds.y+bounds.height),844);
+  assert.equal(await page.evaluate(()=>document.documentElement.classList.contains('cw-card-sheet-open')),true);
+  await page.keyboard.press('End');
+  await page.keyboard.press('Tab');
+  assert.match(await page.locator(':focus').innerText(),/View media details/);
+  if(process.env.CW_PROFILE_SCREENSHOTS) {
+    await mkdir(process.env.CW_PROFILE_SCREENSHOTS,{recursive:true});
+    await page.screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/mobile-actions-sheet.png`});
+  }
+  await page.goBack();
+  await sheet.waitFor({state:'hidden'});
+  assert.equal(page.url(),url);
+  assert.equal(await trigger.evaluate(el=>el===document.activeElement),true);
+  assert.equal(await page.evaluate(()=>document.documentElement.classList.contains('cw-card-sheet-open')),false);
+  await trigger.click();
+  await page.touchscreen.tap(8,100);
+  await sheet.waitFor({state:'hidden'});
+  await page.waitForFunction(()=>!history.state?.cwCardActions);
+  assert.equal(page.url(),url);
+  await trigger.click();
+  const head=await sheet.locator('header').boundingBox();
+  const cdp=await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:195,y:head.y+15}]});
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:195,y:head.y+95}]});
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  await sheet.waitFor({state:'hidden'});
+  await page.waitForFunction(()=>!history.state?.cwCardActions);
+  assert.equal(await page.locator('body > [inert]').count(),0);
+  assert.equal(page.url(),url);
 });

@@ -199,6 +199,62 @@
     if (profileTabs) new MutationObserver(scheduleUpdate).observe(profileTabs, {subtree:true, attributes:true, attributeFilter:['class']});
     renderShortcuts();
     installShortcuts();
+    initMobileSwipeNavigation(nav);
+  }
+
+  function initMobileSwipeNavigation(nav) {
+    const mobile = window.matchMedia('(max-width: 760px)');
+    const excluded = 'header, nav, input, textarea, select, summary, [contenteditable]:not([contenteditable="false"]), [role="slider"], [role="scrollbar"], [draggable="true"], [aria-haspopup], [data-no-swipe], .wr-page, video, audio, canvas';
+    let gesture = null;
+    const blocked = () => !mobile.matches || !nav.getClientRects().length || (window.visualViewport?.scale || 1) > 1.05 ||
+      document.querySelector('.cw-nav-open, .cw-card-sheet-open, .cw-ia-sheet-open, .cw-mm-open, .cx-modal-open') ||
+      [...document.querySelectorAll('dialog[open], [aria-modal="true"], [role="dialog"], [popover]:popover-open')].some(node => node.getClientRects().length);
+    const currentRoute = () => window.location.pathname === '/profile' ? 'profile/overview' :
+      window.location.pathname === '/' ? window.location.hash.slice(1).split('?')[0] || 'main' : '';
+    const destination = dx => {
+      const links = [...nav.querySelectorAll('a[data-mobile-route]')];
+      const index = links.findIndex(link => link.dataset.mobileRoute === currentRoute());
+      return index < 0 ? null : links[index + (dx > 0 ? 1 : -1)];
+    };
+    const reset = () => { gesture = null; };
+    document.addEventListener('touchstart', event => {
+      reset();
+      if (event.touches.length !== 1 || blocked() || !(event.target instanceof Element) || event.target.closest(excluded)) return;
+      const touch = event.touches[0];
+      if (touch.clientX < 24 || touch.clientX > window.innerWidth - 24) return;
+      for (let node = event.target; node && node !== document.body; node = node.parentElement) {
+        const style = getComputedStyle(node);
+        if ((node.scrollWidth > node.clientWidth + 2 && /auto|scroll/.test(style.overflowX)) || /none|pan-x/.test(style.touchAction)) return;
+      }
+      gesture = {id:touch.identifier, x:touch.clientX, y:touch.clientY, started:performance.now(), route:currentRoute(), horizontal:false};
+    }, {passive:true});
+    document.addEventListener('touchmove', event => {
+      if (!gesture) return;
+      if (event.touches.length !== 1 || blocked() || currentRoute() !== gesture.route) return reset();
+      const touch = event.touches[0];
+      const dx = touch.clientX - gesture.x, dy = touch.clientY - gesture.y;
+      if (!gesture.horizontal && Math.abs(dy) > 12 && Math.abs(dy) >= Math.abs(dx)) return reset();
+      if (!gesture.horizontal && Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.7) {
+        if (!destination(dx) || !event.cancelable) return reset();
+        gesture.horizontal = true;
+      }
+      if (gesture.horizontal && event.cancelable) event.preventDefault();
+    }, {passive:false});
+    document.addEventListener('touchend', event => {
+      const start = gesture;
+      reset();
+      if (!start?.horizontal) return;
+      const touch = [...event.changedTouches].find(item => item.identifier === start.id);
+      if (!touch) return;
+      if (event.cancelable) event.preventDefault();
+      const dx = touch.clientX - start.x, dy = touch.clientY - start.y;
+      if (event.touches.length || blocked() || currentRoute() !== start.route || performance.now() - start.started > 900 ||
+          Math.abs(dx) < Math.max(70, window.innerWidth * .18) || Math.abs(dx) < Math.abs(dy) * 1.7) return;
+      destination(dx)?.click();
+    }, {passive:false});
+    document.addEventListener('touchcancel', reset, {passive:true});
+    window.addEventListener('hashchange', reset);
+    mobile.addEventListener('change', reset);
   }
 
   function normalizeAvatarUrl(value) {

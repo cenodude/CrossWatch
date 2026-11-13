@@ -52,6 +52,115 @@ async function openSettings(page) {
   await page.locator('#cw-mobile-widgets > summary').click();
 }
 
+async function swipeSurface(page, content = '<button id="swipe-card" style="width:100%;height:100%">Media card</button>') {
+  await page.evaluate(content => {
+    document.querySelector('#swipe-surface')?.remove();
+    const surface = document.createElement('div');
+    surface.id = 'swipe-surface';
+    surface.style.cssText = 'position:fixed;inset:200px 0 auto;height:260px;z-index:1000;background:#111;';
+    surface.innerHTML = content;
+    surface.addEventListener('click', () => { window.swipeCardClicks = (window.swipeCardClicks || 0) + 1; });
+    document.body.appendChild(surface);
+  }, content);
+}
+
+const touchSessions = new WeakMap();
+
+async function swipe(page, from = {x:90,y:300}, to = {x:290,y:300}) {
+  if (!touchSessions.has(page)) touchSessions.set(page, await page.context().newCDPSession(page));
+  const session = touchSessions.get(page);
+  await session.send('Input.dispatchTouchEvent', {type:'touchStart',touchPoints:[from]});
+  for (let step = 1; step <= 8; step++) {
+    await session.send('Input.dispatchTouchEvent', {type:'touchMove',touchPoints:[{x:from.x+(to.x-from.x)*step/8,y:from.y+(to.y-from.y)*step/8}]});
+  }
+  await session.send('Input.dispatchTouchEvent', {type:'touchEnd',touchPoints:[]});
+}
+
+test('mobile swipes follow visible shortcuts in both directions without opening cards', async t => {
+  const {page} = await fixture(t);
+  await swipeSurface(page);
+  await page.locator('#swipe-card').tap();
+  await page.waitForFunction(() => window.swipeCardClicks === 1);
+  await page.evaluate(() => { window.swipeCardClicks = 0; });
+  await swipe(page);
+  await page.waitForURL('**/#tracker');
+  assert.equal(await page.evaluate(() => window.swipeCardClicks || 0), 0);
+  await swipe(page);
+  await page.waitForURL('**/profile#overview');
+  await page.locator('#cw-mobile-bottom-nav').waitFor();
+  await swipeSurface(page);
+  await swipe(page);
+  assert.equal(new URL(page.url()).pathname, '/profile');
+  await swipe(page, {x:290,y:300}, {x:90,y:300});
+  await page.waitForURL('**/?ui=full#tracker');
+  await page.locator('#cw-mobile-bottom-nav').waitFor();
+  await swipeSurface(page);
+  await swipe(page, {x:290,y:300}, {x:90,y:300});
+  await page.waitForURL(url => url.hash === '#main');
+  await page.locator('#swipe-card').tap();
+  await page.waitForFunction(() => window.swipeCardClicks === 1);
+  await swipe(page, {x:290,y:300}, {x:90,y:300});
+  assert.equal(new URL(page.url()).hash, '#main');
+});
+
+test('mobile swipes pick up shortcut changes and leave gestures to interactive content', async t => {
+  const {page} = await fixture(t);
+  await openSettings(page);
+  await page.locator('#cw-mobile-shortcut-0').selectOption('snapshots');
+  await page.locator('#cw-mobile-shortcut-1').selectOption('editor');
+  await page.keyboard.press('Escape');
+  await swipeSurface(page);
+  await swipe(page);
+  await page.waitForURL('**/#snapshots');
+  await swipe(page);
+  await page.waitForURL('**/#editor');
+  await swipe(page, {x:290,y:300}, {x:90,y:300});
+  await page.waitForURL('**/#snapshots');
+  for (const content of [
+    '<div style="height:100%;overflow-x:auto"><div style="width:1200px;height:100%">Carousel</div></div>',
+    '<input type="range" style="width:100%;height:240px">',
+    '<textarea style="width:100%;height:240px"></textarea>',
+    '<div contenteditable="true" style="height:100%">Edit title</div>',
+    '<div draggable="true" style="height:100%">Drag item</div>',
+    '<div style="touch-action:none;height:100%">Timeline</div>',
+    '<div data-no-swipe style="height:100%">Custom gesture</div>'
+  ]) {
+    await swipeSurface(page, content);
+    await swipe(page);
+    assert.equal(new URL(page.url()).hash, '#snapshots', content);
+  }
+  await swipeSurface(page, '<div id="swipe-carousel" style="height:100%;overflow-x:auto"><div style="width:1200px;height:100%">Carousel</div></div>');
+  await swipe(page, {x:290,y:300}, {x:90,y:300});
+  await page.waitForFunction(() => document.querySelector('#swipe-carousel').scrollLeft > 0);
+  assert.equal(new URL(page.url()).hash, '#snapshots');
+  await swipeSurface(page, '<div id="swipe-scroll" style="height:100%;overflow-y:auto"><div style="height:1200px">Scrollable content</div></div>');
+  await swipe(page, {x:190,y:390}, {x:190,y:230});
+  await page.waitForFunction(() => document.querySelector('#swipe-scroll').scrollTop > 0);
+  assert.equal(new URL(page.url()).hash, '#snapshots');
+  await swipeSurface(page);
+  await swipe(page, {x:90,y:300}, {x:110,y:400});
+  await swipe(page, {x:5,y:300}, {x:290,y:300});
+  await swipe(page, {x:90,y:300}, {x:125,y:300});
+  assert.equal(new URL(page.url()).hash, '#snapshots');
+  await page.evaluate(() => {
+    const dialog = document.createElement('dialog');
+    dialog.id = 'swipe-dialog';
+    dialog.textContent = 'Dialog';
+    document.body.appendChild(dialog);
+    dialog.showModal();
+  });
+  await swipe(page);
+  assert.equal(new URL(page.url()).hash, '#snapshots');
+  await page.evaluate(() => document.querySelector('#swipe-dialog').remove());
+  await page.locator('#cw-mobile-more').click();
+  await swipe(page);
+  assert.equal(new URL(page.url()).hash, '#snapshots');
+  await page.keyboard.press('Escape');
+  await page.setViewportSize({width:1200,height:900});
+  await swipe(page);
+  assert.equal(new URL(page.url()).hash, '#snapshots');
+});
+
 test('default mobile bar has two replaceable shortcuts and destination icons', async t => {
   const {page} = await fixture(t);
   const routes = () => page.locator('#cw-mobile-bottom-nav a').evaluateAll(nodes=>nodes.map(node=>node.dataset.mobileRoute));
