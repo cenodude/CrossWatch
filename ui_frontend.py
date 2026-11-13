@@ -27,7 +27,7 @@ DEFAULT_MANIFEST: str = r"""{
   "short_name": "CrossWatch",
   "description": "Sync watchlists, history and ratings across Plex, Trakt, SIMKL, Jellyfin and more.",
   "id": "/",
-  "start_url": "/?ui=compact",
+  "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],
@@ -133,7 +133,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js", "details-log.js",
+    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js", "month-bar.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
@@ -143,7 +143,7 @@ _APP_SCRIPTS = (
     "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js", "assistant-settings.js",
 )
 _USER_HELPER_SCRIPTS = (
-    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js",
+    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js",
 )
 _USER_APP_SCRIPTS = (
@@ -881,34 +881,6 @@ def _get_index_html_static() -> str:
 <script>
 (() => {
   try {
-    const q = new URLSearchParams(window.location.search || "");
-    const ui = String(q.get("ui") || "").toLowerCase();
-    const explicit = ui === "compact" || ui === "full" || q.get("compact") === "1" || q.get("full") === "1";
-    const hasCompactViewport = !!window.matchMedia?.("(max-width: 680px)")?.matches;
-    const uaLooksMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
-    const likelyHandheld = (() => {
-      try {
-        if (typeof navigator.userAgentData?.mobile === "boolean") return navigator.userAgentData.mobile;
-      } catch {}
-      if (uaLooksMobile) return true;
-      try {
-        const coarse = !!window.matchMedia?.("(pointer: coarse)")?.matches;
-        const fine = !!window.matchMedia?.("(pointer: fine)")?.matches;
-        const points = Number(navigator.maxTouchPoints || 0);
-        return points > 1 && coarse && !fine && hasCompactViewport;
-      } catch {}
-      return false;
-    })();
-    let saved = "";
-    try { saved = String(localStorage.getItem("cw_ui_mode") || "").toLowerCase(); } catch {}
-    const wantCompact = ui === "compact" || q.get("compact") === "1" || (!explicit && (saved === "compact" || (saved !== "full" && hasCompactViewport && likelyHandheld)));
-    if (wantCompact) document.documentElement.classList.add("cw-compact");
-  } catch {}
-})();
-</script>
-<script>
-(() => {
-  try {
     const segment = (value) => {
       try { value = decodeURIComponent(String(value || "")); } catch {}
       return String(value || "").trim().toLowerCase().replace(/-/g, "_");
@@ -926,7 +898,6 @@ def _get_index_html_static() -> str:
     }
     const tabs = new Set(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
     let tab = tabs.has(route) ? route : "main";
-    if (document.documentElement.classList.contains("cw-compact") && tab !== "main") tab = "main";
     document.documentElement.dataset.cwInitialTab = tab;
     document.documentElement.dataset.tab = tab;
     if (tab === "settings") {
@@ -1057,9 +1028,6 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
 __CW_NAV_PROFILE_MENU__
   </nav>
 
-  <div class="cw-ui-toggle" aria-label="UI mode">
-    <button id="cw-ui-mode-switch" class="cw-ui-mode-switch" type="button" role="switch" aria-checked="false" aria-label="Compact mode" onclick="cwSetUiMode(document.documentElement.classList.contains('cw-compact') ? 'full' : 'compact')"><span>Compact</span><span class="cw-ui-switch-track" aria-hidden="true"><span class="cw-ui-switch-thumb"></span></span></button>
-  </div>
 </header>
 
 <div id="cw-main-loading" role="status">Loading dashboard...</div>
@@ -2779,6 +2747,12 @@ def get_profile_html(user: dict | None = None) -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
 <title>Profile | CrossWatch</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/pwa/apple-touch-icon.png?v=__CW_VERSION__">
+<meta name="application-name" content="CrossWatch">
+<meta name="apple-mobile-web-app-title" content="CrossWatch">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <link rel="icon" type="image/png" sizes="64x64" href="/assets/pwa/favicon-64.png?v=__CW_VERSION__">
 <meta name="theme-color" content="#0b0b0f">
 <script>
@@ -2836,9 +2810,6 @@ def get_profile_html(user: dict | None = None) -> str:
   <nav class="tabs" aria-label="Primary navigation">
     {profile_nav}
   </nav>
-  <div class="cw-ui-toggle" aria-label="UI mode">
-    <button id="cw-profile-compact-switch" class="cw-ui-mode-switch" type="button" role="switch" aria-checked="false" aria-label="Compact mode"><span>Compact</span><span class="cw-ui-switch-track" aria-hidden="true"><span class="cw-ui-switch-thumb"></span></span></button>
-  </div>
 </header>
 <main class="cw-profile-shell" data-profile-id="{profile_id}" data-username="{username}" data-display-name="{display_name}">
   <section class="cw-profile-hero cw-media-hero" id="profile-hero">
@@ -3232,6 +3203,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <script src="/assets/helpers/icon-select.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/profile-select.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/auth-state.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/pwa-install.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/account-menu.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/notifications.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/update-notifications.js?v=__CW_VERSION__" defer></script>

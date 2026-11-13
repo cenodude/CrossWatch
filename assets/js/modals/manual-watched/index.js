@@ -34,7 +34,6 @@ const installCloseShield = () => {
   closeShieldCleanup?.();
   const shield = document.createElement("div");
   const until = Date.now() + 900;
-  window.__cwSuppressUiModeUntil = Math.max(Number(window.__cwSuppressUiModeUntil || 0), until);
   const swallow = (e) => {
     if (Date.now() > until) return cleanup();
     e.preventDefault();

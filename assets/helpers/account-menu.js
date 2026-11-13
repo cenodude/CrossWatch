@@ -17,7 +17,7 @@
 
   function initMobileNavigation() {
     const nav = document.querySelector('header > nav.tabs');
-    if (!nav || document.documentElement.classList.contains('cw-compact') || $('cw-mobile-nav-toggle')) return;
+    if (!nav || $('cw-mobile-nav-toggle')) return;
     const header = nav.parentElement;
     const panel = document.createElement('div');
     panel.id = 'cw-mobile-navigation';
@@ -104,7 +104,7 @@
       return [...valid, ...defaults.filter(route => !valid.includes(route))].slice(0, 2);
     };
     const shortcuts = readShortcuts();
-    const routeBase = window.location.pathname === '/' ? '' : document.documentElement.dataset.cwRole === 'user' ? '/?main=1&ui=full' : '/?ui=full';
+    const routeBase = window.location.pathname === '/' ? '' : document.documentElement.dataset.cwRole === 'user' ? '/?main=1' : '/';
     const link = ([route, icon, label], extra = '') => `<a href="${route === 'profile/overview' ? '/profile#overview' : `${routeBase}#${route}`}" data-mobile-route="${route}" ${extra}><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><span>${label}</span></a>`;
     nav.innerHTML =
       '<button id="cw-mobile-more" type="button" aria-controls="cw-mobile-navigation" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span><span>More</span></button>';
@@ -226,7 +226,7 @@
         const style = getComputedStyle(node);
         if ((node.scrollWidth > node.clientWidth + 2 && /auto|scroll/.test(style.overflowX)) || /none|pan-x/.test(style.touchAction)) return;
       }
-      gesture = {id:touch.identifier, x:touch.clientX, y:touch.clientY, started:performance.now(), route:currentRoute(), horizontal:false};
+      gesture = {id:touch.identifier, x:touch.clientX, y:touch.clientY, route:currentRoute(), horizontal:false};
     }, {passive:true});
     document.addEventListener('touchmove', event => {
       if (!gesture) return;
@@ -234,7 +234,7 @@
       const touch = event.touches[0];
       const dx = touch.clientX - gesture.x, dy = touch.clientY - gesture.y;
       if (!gesture.horizontal && Math.abs(dy) > 12 && Math.abs(dy) >= Math.abs(dx)) return reset();
-      if (!gesture.horizontal && Math.abs(dx) > 18 && Math.abs(dx) > Math.abs(dy) * 1.7) {
+      if (!gesture.horizontal && Math.abs(dx) > 4 && Math.abs(dx) > Math.abs(dy) * 1.7) {
         if (!destination(dx) || !event.cancelable) return reset();
         gesture.horizontal = true;
       }
@@ -248,7 +248,7 @@
       if (!touch) return;
       if (event.cancelable) event.preventDefault();
       const dx = touch.clientX - start.x, dy = touch.clientY - start.y;
-      if (event.touches.length || blocked() || currentRoute() !== start.route || performance.now() - start.started > 900 ||
+      if (event.touches.length || blocked() || currentRoute() !== start.route ||
           Math.abs(dx) < Math.max(70, window.innerWidth * .18) || Math.abs(dx) < Math.abs(dy) * 1.7) return;
       destination(dx)?.click();
     }, {passive:false});
@@ -441,10 +441,6 @@
   window.visualViewport?.addEventListener('resize', sizeMenu);
 
   function initNavigation() {
-    $('cw-profile-compact-switch')?.addEventListener('click', () => {
-      try { localStorage.setItem('cw_ui_mode', 'compact'); } catch {}
-      window.location.assign('/?ui=compact#main');
-    });
     initMobileNavigation();
     initMobileBottomNavigation();
   }

@@ -560,6 +560,7 @@
     refreshCard(CARD.selectedKey, true).catch(() => {});
   });
 
+  Object.assign(window.CW.PlayingCard, { currentlyWatching: fetchCurrentlyWatchingData, progress: progressModel });
   window.updatePlayingCard = (payload) => refreshCard(keyOf(payload || {}), false);
   const refreshVisibility = () => refreshCard(CARD.selectedKey, false).catch(() => {});
   window.addEventListener('cw:mobile-playing-card-changed', refreshVisibility);

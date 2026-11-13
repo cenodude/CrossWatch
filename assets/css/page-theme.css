@@ -352,6 +352,11 @@ dialog.cw-page-panel {
 .cw-media-hero .cw-media-hero-logo,#page-tracker .trk-hero-logo{background:transparent;filter:drop-shadow(0 0 1px rgba(255,255,255,.6)) drop-shadow(0 2px 3px rgba(0,0,0,.8))}
 .cw-page-media-modal .cw-mm-title-logo{background:transparent;filter:drop-shadow(0 0 1px rgba(255,255,255,.6)) drop-shadow(0 2px 3px rgba(0,0,0,.8))}
 #page-tracker .trk-hero-selection small{color:var(--cw-theme-muted);font-size:13px}
+#page-tracker .trk-hero-playback{color:var(--cw-theme-muted);font-size:12px;font-weight:400}
+#page-tracker .trk-hero-playback-copy>strong{color:var(--cw-theme-text);font-size:16px;font-weight:600}
+#page-tracker .trk-hero-playback-state{color:var(--cw-success,#39c989);font-size:11px;font-weight:500;letter-spacing:.12em;text-transform:uppercase}
+#page-tracker .trk-hero-playback-track{background:color-mix(in srgb,var(--cw-theme-muted) 24%,transparent)}
+#page-tracker .trk-hero-playback-track i{background:var(--cw-theme-accent)}
 #layout .cw-themed-page :is(.ss-hero-seg, .cw-editor-hero-seg) strong {
   color: var(--cw-theme-text);
   -webkit-text-fill-color: currentColor;
@@ -876,12 +881,6 @@ dialog.eg-dialog{font-size:14px;line-height:1.45;background:var(--is-surface);co
   #page-editor .cw-table tbody tr:has(input[type=checkbox]:checked),#page-tracker .cw-table tbody tr:has(input[type=checkbox]:checked){border-color:var(--accent)}
 }
 
-.cw-ui-mode-switch{color:inherit;background:transparent;border:0;border-radius:10px}
-.cw-ui-switch-track{background:var(--muted);border-radius:999px}
-.cw-ui-switch-thumb{background:var(--panel);border-radius:50%}
-html.cw-compact .cw-ui-switch-track{background:var(--accent)}
-.cw-ui-mode-switch:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-
 @media(max-width:760px){
   body>header .cw-page-mobile-navigation{background:var(--cw-mobile-nav-panel);border:1px solid var(--cw-mobile-nav-border);border-radius:18px 18px 0 0;box-shadow:0 -12px 36px #0006}
   body>header .cw-page-mobile-navigation .tab{background:var(--cw-mobile-nav-tile);border:0;border-radius:10px;color:var(--cw-mobile-nav-text);font-family:inherit;font-size:14px;font-weight:600;text-decoration:none;box-shadow:none;text-shadow:none;transform:none}
@@ -898,10 +897,6 @@ html.cw-compact .cw-ui-switch-track{background:var(--accent)}
   .cw-mobile-widget-icon{color:var(--cw-mobile-nav-accent)}
 }
 
-.cw-profile-mobile-view{background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);border-radius:14px;color:var(--cw-theme-text)}
-.cw-profile-mobile-view>span{font-weight:700}
-.cw-profile-mobile-view select{background:var(--cw-theme-input);border:1px solid var(--cw-theme-border);border-radius:10px;color:var(--cw-theme-text);color-scheme:inherit}
-.cw-profile-mobile-view select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 
 @media(max-width:760px){
   .pair-config-modal #cx-modal .cx-tabsrow{background:var(--cw-theme-surface,var(--panel))}
@@ -1111,6 +1106,10 @@ button.cw-mm-provider[data-ia-chip]:hover,button.cw-mm-provider[data-mm-episode]
 #page-tracker .trk-watch-summary-stats dd{color:var(--cw-theme-text)}
 #page-tracker .trk-poster{background:var(--cw-theme-surface-strong);border:1px solid var(--cw-theme-border);color:var(--cw-theme-muted)}
 #page-tracker .trk-detail-title{color:var(--cw-theme-text)}
+#page-tracker :is(.trk-detail-progress,.trk-detail-rating){color:var(--cw-theme-muted);font-weight:400}
+#page-tracker .trk-detail-rating .material-symbol{color:var(--cw-theme-accent)}
+#page-tracker .trk-detail-progress-track{background:var(--cw-theme-surface-strong)}
+#page-tracker .trk-detail-progress-track i{background:var(--cw-theme-accent)}
 #page-tracker .trk-detail-health{border:1px solid var(--cw-theme-border);background:var(--cw-theme-surface)}
 #page-tracker .trk-detail-health strong{color:var(--cw-theme-text)}
 #page-tracker .trk-detail-health :is(span,small){color:var(--cw-theme-muted)}
@@ -1446,7 +1445,7 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-hero-backdrop{opacity:.24}
 .cw-page-mobile-view select:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:2px}
 .cw-editor-source-summary{color:var(--cw-theme-muted);font-size:12px;font-weight:400;line-height:1.5}
 @media(max-width:760px){
-  :is(#page-analyzer,#page-tracker) .cw-page-mobile-view select,#page-analyzer :is(input,select),#page-events :is(input,select){font-size:16px}
+  #page-analyzer .cw-page-mobile-view select,#page-analyzer :is(input,select),#page-events :is(input,select){font-size:16px}
   #page-analyzer .an-table tr{background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);border-radius:var(--cw-page-control-radius)}
   #page-analyzer .an-table td{border:0}
   #page-analyzer .an-table td[data-label]::before{font-size:11px;color:var(--cw-theme-muted)}
@@ -1652,3 +1651,10 @@ html[data-cw-theme="flat-light"] .mr-page .mr-sparkline{filter:brightness(.65)}
 .cw-provider-more{color:var(--profile-muted);font:inherit;font-size:11px;font-weight:400;font-variant-numeric:tabular-nums}
 
 .cw-hist-coverage.is-conflict>.cw-card-actions{color:rgb(var(--hist-conflict-rgb))}
+
+@media(max-width:760px){
+  body.cw-profile-page .cw-profile-tabs,#page-tracker .trk-navigation{background:var(--cw-page-bg,var(--panel));border-bottom:1px solid var(--cw-theme-border)}
+  body.cw-profile-page .cw-cw-card{background:transparent;border-color:transparent;box-shadow:none}
+  body.cw-profile-page .cw-cw-copy,#page-tracker .trk-overview-copy{color:var(--cw-theme-text);text-shadow:none}
+  body.cw-profile-page .cw-cw-sub,#page-tracker .trk-overview-meta{color:var(--cw-theme-muted)}
+}
