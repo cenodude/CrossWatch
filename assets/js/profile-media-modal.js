@@ -465,6 +465,8 @@
     if (!root || root.hidden || !state.tracker || !data) return;
     const tmdb = String(data.title?.art?.tmdb || data.title?.ids?.tmdb || "");
     if (tmdb && tmdb !== tmdbOf(state.item)) return;
+    const instance = trackerData()?.provider_instance;
+    if (instance && data.provider_instance && instance !== data.provider_instance) return;
     state.tracker.data = data;
     if (!personView) void scheduleRender();
   }
@@ -822,8 +824,8 @@
       const logo = window.CW?.ProviderMeta?.logoPath?.(row.provider) || "";
       const who = providerDisplay(row);
       const updated = Date.parse(String(row.updated || ""));
-      const meta = [episodes ? who.full : "", row.remaining ? `${runtimeLabel(Math.round(row.remaining / 60))} left` : "", Number.isFinite(updated) ? `paused ${relTime(Math.floor(updated / 1000))}` : ""].filter(Boolean).join(" · ");
-      const heading = episodes ? `${episodeCode(row)}${row.episodeTitle ? ` · ${row.episodeTitle}` : ""}` : who.full;
+      const meta = [row.remaining ? `${runtimeLabel(Math.round(row.remaining / 60))} left` : "", Number.isFinite(updated) ? `paused ${relTime(Math.floor(updated / 1000))}` : ""].filter(Boolean).join(" · ");
+      const heading = who.full;
       const value = Math.round(row.pct);
       const mark = logo ? `<img src="${esc(logo)}" alt="" loading="lazy">` : `<b>${esc(who.name.slice(0, 2))}</b>`;
       const label = `${episodes ? `${episodeCode(row)} on ` : ""}${who.full}: resume point`;
@@ -833,18 +835,29 @@
       return `<div class="cw-mm-progress-row" data-mm-key="${esc(`progress:${refId(row)}:${row.season ?? ""}:${row.episode ?? ""}`)}">
         ${logoHtml}
         <span class="cw-mm-progress-copy"><strong>${esc(heading)}</strong><small>${esc(meta)}</small></span>
-        <span class="cw-mm-progress-mini"><i style="width:${value}%"></i></span>
+        <span class="cw-mm-progress-mini" role="progressbar" aria-label="${esc(`${episodes ? `${episodeCode(row)} · ` : ""}${who.full}`)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${value}"><i style="width:${value}%"></i></span>
         <b>${value}%</b>
       </div>`;
     }).join("");
     if (!list) return "";
-    return `<div class="cw-mm-progress-rows" data-mm-progress>${list}</div>`;
+    return `<div class="cw-mm-progress-rows"${episodes ? "" : " data-mm-progress"}>${list}</div>`;
   }
 
   function showResumePoints() {
     const rows = Array.isArray(state.progress) ? state.progress : [];
     if (!rows.length) return "";
-    return `<div class="cw-mm-seasons-progress cw-mm-resume"><h5>Resume points</h5>${progressRowsHtml(rows, true)}</div>`;
+    const groups = new Map();
+    rows.forEach((row) => {
+      const key = row.season != null && row.episode != null ? `${row.season}:${row.episode}` : `unknown:${refId(row)}:${row.rid}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    });
+    const cards = [...groups].map(([key, records]) => {
+      const code = episodeCode(records[0]);
+      const title = records.map(row => String(row.episodeTitle || "").trim()).find(title => title && !/^s\s*\d+\s*e\s*\d+$/i.test(title));
+      return `<section class="cw-mm-resume-episode" data-mm-key="${esc(`resume:${key}`)}"><h6><span>${esc(code)}</span>${title ? `<strong>${esc(title)}</strong>` : ""}</h6>${progressRowsHtml(records, true)}</section>`;
+    }).join("");
+    return `<div class="cw-mm-seasons-progress cw-mm-resume"><h5>Resume points</h5><div class="cw-mm-resume-list" data-mm-progress>${cards}</div></div>`;
   }
 
   function movieProgressBox() {
@@ -860,14 +873,10 @@
     const summary = best ? `<b>${pct}%</b>` : watched ? "<b>Watched</b>" : watchStatus || (rows === null ? "Checking..." : "Not started");
     const lastEpoch = local ? Math.max(0, ...(local.plays || []).map(playEpoch)) : Math.max(Number(history?.last_epoch) || 0, Number(scrobble?.last_epoch) || 0);
     const lastSeen = lastEpoch ? [`Last watched ${relTime(lastEpoch)}`, dateFmt.format(new Date(lastEpoch * 1000))] : [];
-    const watchline = watchStatus
-      ? `<div class="cw-mm-watchline"><span class="cw-mm-watchline-copy"><strong>${esc(watchStatus)}</strong></span></div>`
-      : watched
-      ? `<div class="cw-mm-watchline is-watched">${icon("check_circle")}
-          <span class="cw-mm-watchline-copy"><strong>${esc(watched === 1 ? "Watched once" : `Watched ${plural(watched, "time")}`)}</strong><small>${esc(lastSeen.join(" · ") || (local ? "In this tracker" : history?.count ? "In your synced history" : "Scrobbled"))}</small></span>
-          <span class="cw-mm-watchline-count"><b>${esc(numberFmt.format(watched))}</b><small>${watched === 1 ? "play" : "plays"}</small></span>
-        </div>`
-      : `<div class="cw-mm-watchline">${icon("visibility")}<span class="cw-mm-watchline-copy"><strong>Not watched yet</strong><small>${local ? "No plays in this tracker" : "No synced history or scrobbles"}</small></span></div>`;
+    const historyDetail = watchStatus || (watched
+      ? lastSeen.join(" · ") || (local ? "In this tracker" : history?.count ? "In your synced history" : "Scrobbled")
+      : local ? "No plays in this tracker" : "No synced history or scrobbles");
+    const watchline = `<div class="cw-mm-watch-summary cw-mm-watch-history"><div><h4>Watch history</h4><p>${esc(historyDetail)}</p></div>${watchStatus ? "" : `<div class="cw-mm-watch-stats"><strong class="cw-mm-watch-result${watched ? " is-watched" : ""}">${watched ? icon("check_circle") : ""}${esc(watched ? watched === 1 ? "Watched once" : `Watched ${plural(watched, "time")}` : "Not watched yet")}</strong></div>`}</div>`;
     return `<div class="cw-mm-box"><h4>Watch progress <small>${summary}</small></h4>
       <div class="cw-mm-progress${!best && watched ? " is-done" : ""}"><i style="width:${pct}%"></i></div>
       ${progressRowsHtml(records)}

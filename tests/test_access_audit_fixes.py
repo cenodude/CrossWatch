@@ -876,23 +876,23 @@ def test_profile_hero_has_both_art_layers_and_now_playing_readout() -> None:
     import pathlib
 
     css = pathlib.Path("assets/css/profile-page.css").read_text(encoding="utf-8")
-    for marker in ('id="profile-hero-art"', 'id="profile-hero-now"', 'id="profile-hero-seam"',
+    for marker in ('id="profile-hero-art"', 'id="profile-hero-now"',
                    'id="profile-now"', 'id="profile-now-fill"', 'id="profile-member-since"',
                    'id="profile-hero-chips"', 'class="cw-profile-last hidden" role="button" tabindex="0"',
-                   'class="cw-profile-last-poster"'):
+                   'id="profile-hero-media"', 'class="cw-media-hero-kicker"'):
         assert marker in html, marker
     assert "profile-last-details" not in html
     assert ".cw-profile-shell{width:100%;max-width:none;" in css
     assert "width:min(1380px,calc(100vw - 40px))" not in css
 
 
-def test_profile_overview_uses_the_new_pair_layout() -> None:
+def test_profile_overview_has_media_sections_and_statistics() -> None:
     html = _profile_html()
-    assert "Continue Watching" in html
-    assert "Recent Watchlist" in html
-    assert 'id="recent-activity"' in html
+    assert "Continue watching" in html
+    assert "Recently added to watchlist" in html
+    assert 'id="profile-activity"' in html
     assert 'id="profile-quick-stats"' in html
-    assert html.count('class="cw-profile-pair-grid"') == 2
+    assert 'class="cw-hub-secondary"' in html
     # the old duplicated blocks are gone, the Main widget grid took over
     assert 'id="profile-history"' not in html
     assert 'id="profile-ratings"' not in html
@@ -933,9 +933,6 @@ def test_profile_css_defines_the_crossover() -> None:
     css = pathlib.Path("assets/css/profile-page.css").read_text(encoding="utf-8")
     assert ".cw-profile-hero-now{" in css
     assert ".cw-profile-hero-art{position:absolute;inset:0;" in css
-    assert ".cw-profile-last{position:absolute;z-index:3;right:46px;bottom:34px;width:min(470px,38vw);" in css
-    assert ".cw-profile-last-poster{width:90px;height:auto;justify-self:end;margin:-11px -15px -11px 0;" in css
-    assert "border-radius:0 15px 15px 0" in css
     assert ".cw-profile-hero.is-playing .cw-profile-last{display:none}" in css
     assert ".cw-profile-hero.is-playing .cw-profile-hero-art{" in css
     assert css.count("{") == css.count("}")
@@ -973,57 +970,7 @@ def test_services_chip_counts_connected_instances_only() -> None:
     assert "providerCount(" not in js
 
 
-def test_continue_watching_and_watchlist_use_designed_rows() -> None:
-    import pathlib
-
-    js = pathlib.Path("assets/js/profile-page.js").read_text(encoding="utf-8")
-    assert "function progressCard(item)" in js
-    assert "function watchlistRow(item)" in js
-    assert "function mediaKindLabel(item)" in js
-    assert "map(progressCard)" in js
-    assert "map(watchlistRow)" in js
-
-    css = pathlib.Path("assets/css/profile-page.css").read_text(encoding="utf-8")
-    assert ".cw-cw-card{" in css
-
-
 # Continue Watching card + widget layout controls
-def test_continue_watching_card_matches_the_spec() -> None:
-    import pathlib
-
-    js = pathlib.Path("assets/js/profile-page.js").read_text(encoding="utf-8")
-    card = js[js.index("function progressCard(item)"):js.index("function mediaKindLabel(item)")]
-    # landscape artwork, not a portrait poster
-    assert "watchlistPreviewArt(item) || poster(item" in card
-    assert 'class="cw-cw-art"' in card
-    # title, episode/year sub-line, bar + percentage, nothing else
-    for marker in ("cw-cw-title", "cw-cw-sub", "cw-cw-track", "cw-cw-pct"):
-        assert marker in card, marker
-    assert 'const episode = episodeOf(item);' in card
-    assert 'class="cw-cw-episode"' in card
-    # provider icons overlay the artwork; no provider text on the card body
-    assert 'class="cw-cw-providers"' in card
-    assert "progressProviders(item).map(providerIconHtml)" in card
-    body = card[card.index('class="cw-cw-title"'):]
-    assert "provider" not in body.lower()
-
-    css = pathlib.Path("assets/css/profile-page.css").read_text(encoding="utf-8")
-    assert "aspect-ratio:16/9" in css
-    assert "#profile-progress .cw-cw-episode{" in css
-    assert "-webkit-line-clamp:2" in css
-    assert "#profile-progress{display:flex" in css and "overflow-x:auto" in css
-
-
-def test_progress_fill_width_is_not_overridden_by_flex_grow() -> None:
-    import pathlib
-
-    css = pathlib.Path("assets/css/profile-page.css").read_text(encoding="utf-8")
-    fill = css[css.index(".cw-cw-track i{"):css.index(".cw-cw-pct{")]
-    # the fill must not grow - its inline width:N% is the single source of truth
-    assert "flex:" not in fill
-    assert "width" not in fill
-
-
 def test_widget_layout_toolbar_offers_reset() -> None:
     import pathlib
 
@@ -1074,33 +1021,6 @@ def test_profile_widgets_adopt_the_profile_card_style() -> None:
 
 
 # Continue Watching / Recent Watchlist sizing and the profile widget skin
-def test_three_continue_watching_cards_fit_without_clipping() -> None:
-    import pathlib
-
-    css = pathlib.Path("assets/css/profile-page.css").read_text(encoding="utf-8")
-    assert "flex:0 0 calc((100% - 24px)/3)" in css
-    # the row still scrolls once there are more than three
-    assert "#profile-progress{display:flex" in css and "overflow-x:auto" in css
-
-
-def test_watchlist_shows_three_rows_with_an_added_stamp() -> None:
-    import pathlib
-
-    js = pathlib.Path("assets/js/profile-page.js").read_text(encoding="utf-8")
-    assert "watchlistItems.slice(0, 3).map((item) => watchlistRow(item, wall?.last_sync_epoch))" in js
-    added = js[js.index("function addedEpoch(item)"):js.index("function watchlistRow(item, fallbackSyncEpoch = 0)")]
-    assert "added_epoch" in added and "added_when" in added and "Date.parse" in added
-    assert "function syncedEpoch(item, fallbackEpoch = 0)" in added
-    assert "updated ${relTime(when)}" in js
-    assert 'class="cw-profile-watchlist-sync"' in js
-
-
-def test_watchlist_widget_is_renamed() -> None:
-    html = _profile_html()
-    assert "<h2>Recent Watchlist</h2>" in html
-    assert "Recent Watchlist Additions" not in html
-
-
 def test_profile_widget_skin_is_scoped_and_unmuted() -> None:
     import pathlib
 
