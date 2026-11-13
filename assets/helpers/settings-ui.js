@@ -1268,7 +1268,7 @@ function cwBuildAnimeMappingPanel() {
               <dd><a href="https://github.com/cenodude/CrossWatch/blob/main/cw_platform/anime_mapping/cw_mappings.json" target="_blank" rel="noopener noreferrer">CW Anime DB<span class="material-symbols-rounded" aria-hidden="true">open_in_new</span></a><span class="am-dataset-version" id="anime_mapping_cw_version">-</span></dd>
             </div>
           </dl>
-          <p class="am-details-copy">AniBridge handles episode numbering across AniDB, MyAnimeList, AniList, TMDB and TVDB. animeApi adds SIMKL and Kitsu identity. The CW Anime DB fixes verified mistakes in that data. Your own custom mappings always come first.</p>
+          <p class="am-details-copy">AniBridge maps episodes, animeApi links IDs, and CW Anime DB adds corrections. Your custom mappings take priority.</p>
           <div class="auth-card-notes" id="anime_mapping_error"></div>
         </section>
 

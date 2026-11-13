@@ -2830,3 +2830,10 @@ html:not([data-tab="main"]) .cw-pc-scrobble[data-tab-scope="main"],body.cx-modal
 .cw-pc-scrobble .pc-route-options .pc-route{padding:9px 8px;min-height:55px}
 }
 @media(prefers-reduced-motion:reduce){.cw-pc-scrobble,.cw-pc-scrobble .pc-progress{transition:none}}
+
+html:is([data-cw-theme],.cw-theme-original) body #page-settings #auth-providers .cw-connection-overlay[data-cw-connection-provider="anime-mapping"] .am-advanced-panel{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;padding:12px 18px}
+html:is([data-cw-theme],.cw-theme-original) body #page-settings #auth-providers .cw-connection-overlay[data-cw-connection-provider="anime-mapping"] .am-advanced-head{grid-template-columns:auto minmax(0,1fr);min-width:0;padding:0}
+html:is([data-cw-theme],.cw-theme-original) body #page-settings #auth-providers .cw-connection-overlay[data-cw-connection-provider="anime-mapping"] .am-actions{display:flex;flex-wrap:wrap;gap:10px;padding:0}
+@media(max-width:720px){html:is([data-cw-theme],.cw-theme-original) body #page-settings #auth-providers .cw-connection-overlay[data-cw-connection-provider="anime-mapping"] .am-advanced-panel{grid-template-columns:minmax(0,1fr)}}
+html:is([data-cw-theme],.cw-theme-original) body #page-settings #auth-providers .cw-connection-overlay[data-cw-connection-provider="anime-mapping"] .cw-connection-modal-footer{position:sticky;bottom:0;z-index:1}
+html:is([data-cw-theme],.cw-theme-original) body #page-settings #auth-providers .cw-connection-overlay[data-cw-connection-provider="anime-mapping"] .cw-connection-modal-panel{scroll-padding-bottom:80px}
