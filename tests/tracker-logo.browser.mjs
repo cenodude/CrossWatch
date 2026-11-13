@@ -57,7 +57,7 @@ async function fixture(t,theme,width) {
     }
     const attrs=theme==='original'?'class="cw-theme-original"':`data-cw-theme="${theme}" class="cw-theme-${theme==='flat-light'?'light':'dark'}"`;
     const css=['fonts/material-symbols-rounded','themes/tokens','css/base','crosswatch','css/layout','css/components','css/pages','css/page-theme','ui-shell',theme==='original'?'themes/original-coverage':'themes/flat'];
-    return route.fulfill({contentType:'text/html',body:`<!doctype html><html ${attrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(file=>`<link rel="stylesheet" href="/assets/${file}.css">`).join('')}</head><body><main id="layout"><section id="page-tracker" class="cw-themed-page"></section></main><script>const metadata=${JSON.stringify(metadata)};window.CW={AuthState:{read:()=>({isAdmin:true,user:{display_name:"Header user",username:"header"}})},OverviewProfile:{isAdmin:true,id:"",profiles:[{id:"family",label:"Family"}],instanceForProvider:()=>"",setActive:()=>{}},Meta:{peek:item=>metadata[item.ids?.tmdb]||null,get:async item=>metadata[item.ids?.tmdb]||null},ProfileDateTime:{format:date=>date.toISOString().slice(0,10)}};</script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/js/profile-media-modal.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
+    return route.fulfill({contentType:'text/html',body:`<!doctype html><html ${attrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(file=>`<link rel="stylesheet" href="/assets/${file}.css">`).join('')}</head><body><main id="layout"><section id="page-tracker" class="cw-themed-page"></section></main><script>const metadata=${JSON.stringify(metadata)};window.CW={AuthState:{read:()=>({isAdmin:true,user:{display_name:"Header user",username:"header"}})},OverviewProfile:{isAdmin:true,id:"",profiles:[{id:"family",label:"Family"}],instanceForProvider:()=>"",setActive:()=>{}},Meta:{peek:item=>metadata[item.ids?.tmdb]||null,get:async item=>metadata[item.ids?.tmdb]||null},ProfileDateTime:{format:date=>date.toISOString().slice(0,10)}};</script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/helpers/card-actions.js"></script><script src="/assets/js/profile-media-modal.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
   });
   await page.goto('https://tracker-logo.test/');
   await page.locator('.trk-play').first().waitFor();
@@ -540,20 +540,12 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
     assert.equal(await page.locator('[data-trk-input="status-labels"]').isChecked(),false);
     await page.locator('[data-trk-input="status-labels"]').check();
     assert.equal(await page.locator('.trk-grid-status').count(),2);
-    const infoButton=page.locator('.trk-grid-card [data-trk-row-info]').nth(2);
+    const infoButton=page.locator('.trk-grid-card [data-trk-card-open]').nth(2);
     assert.equal(await infoButton.getAttribute('aria-label'),'Open details for House of the Dragon');
     assert.equal(await infoButton.evaluate(el=>!!el.closest('.trk-grid-art')),true);
-    assert.equal(await page.locator('.trk-grid-copy [data-trk-row-info]').count(),0);
-    if (width >= 800) {
-      await page.mouse.move(0,0);
-      assert.equal(await infoButton.evaluate(el=>getComputedStyle(el.closest('.trk-card-actions')).opacity),'0');
-      await page.keyboard.press('Tab');
-      await infoButton.focus();
-      assert.equal(await infoButton.evaluate(el=>getComputedStyle(el.closest('.trk-card-actions')).opacity),'1');
-      await infoButton.evaluate(el=>el.blur());
-      await page.locator('.trk-grid-art').nth(2).hover();
-    }
-    assert.equal(await infoButton.evaluate(el=>getComputedStyle(el.closest('.trk-card-actions')).opacity),'1');
+    assert.equal(await page.locator('.trk-grid-copy [data-trk-card-menu]').count(),3);
+    assert.equal(await page.locator('.trk-cover-action').count(),0);
+    await infoButton.focus();
     const infoBounds=await infoButton.boundingBox();
     const minimumTarget = width < 800 ? 44 : 40;
     assert.ok(infoBounds.width>=minimumTarget&&infoBounds.height>=minimumTarget);

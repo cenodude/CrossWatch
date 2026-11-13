@@ -1426,16 +1426,13 @@
       <span class="cw-collection-info">
         <strong class="cw-collection-name">${esc(title)}</strong>
         <span class="cw-collection-meta">${esc(meta)}</span>
-        ${providerStrip ? `<span class="cw-collection-sources">${providerStrip}</span>` : ""}
       </span>`;
-    const selectKey = collectionSelectable() ? String(item?.key || "") : "";
-    if (selectKey) {
-      return `<article class="cw-collection-card cw-tl-card${collectionState.selected.has(selectKey) ? " is-selected" : ""}" data-collection-key="${esc(selectKey)}">
+    const selectKey = String(item?.key || key);
+    return `<article class="cw-collection-card cw-tl-card${collectionState.selected.has(selectKey) ? " is-selected" : ""}" data-collection-key="${esc(selectKey)}">
       <button class="cw-collection-open" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(ariaTitle)}">${inner}</button>
-      ${collectionSelectBox(selectKey)}
+      ${collectionSelectable() ? collectionSelectBox(selectKey) : ""}
+      <span class="cw-collection-card-foot"><span class="cw-collection-sources">${providerStrip}</span>${cardActionsButton(`data-collection-actions="${esc(selectKey)}"`, `Actions for ${title}`)}</span>
     </article>`;
-    }
-    return `<button class="cw-collection-card" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(ariaTitle)}">${inner}</button>`;
   }
 
   const collectionSelectable = () => canWriteRecords();
@@ -1458,6 +1455,7 @@
 
   function syncCollectionSelection() {
     const grid = $("#profile-collection-grid");
+    refreshProviderStrips(grid);
     const bar = $("#profile-collection-bulk");
     if (!collectionSelectable()) {
       collectionState.selected.clear();
@@ -1608,10 +1606,10 @@
     const stored = recallCollectionMeta(item);
     const release = collectionIsoFmt(collectionReleaseIso(item, null)) || stored?.r || "";
     const genres = collectionGenreText(item, null) || stored?.g || "";
-    const selectKey = collectionSelectable() ? String(item?.key || "") : "";
+    const selectKey = String(item?.key || key);
     const img = `<img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">`;
     const cells = `<span class="cw-collection-cell cw-collection-cell--title">
-        ${selectKey ? collectionSelectBox(selectKey) : ""}
+        ${collectionSelectable() ? collectionSelectBox(selectKey) : ""}
         <strong>${esc(title)}</strong>
         ${stamp ? `<span class="cw-collection-pill">${esc(stamp)}</span>` : ""}
       </span>
@@ -1622,7 +1620,7 @@
         ${added ? `<small>${esc(relTime(added))}</small>` : ""}
       </span>
       <span class="cw-collection-cell cw-collection-cell--type"><span class="cw-collection-pill cw-collection-pill--type"><span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>${esc(kind)}</span></span>
-      <span class="cw-collection-cell cw-collection-cell--providers">${providerStrip}</span>`;
+      <span class="cw-collection-cell cw-collection-cell--providers"><span class="cw-collection-sources">${providerStrip}</span>${cardActionsButton(`data-collection-actions="${esc(selectKey)}"`, `Actions for ${title}`)}</span>`;
     if (selectKey) {
       return `<article class="cw-collection-row cw-tl-row${collectionState.selected.has(selectKey) ? " is-selected" : ""}" data-collection-index="${index}" data-collection-key="${esc(selectKey)}">
       <button class="cw-collection-cell cw-collection-cell--poster cw-collection-open" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(title)}">${img}</button>
@@ -2029,6 +2027,18 @@
     collectionBar().wire();
     const collectionPanel = $("#profile-panel-collection");
     collectionPanel?.addEventListener("click", (event) => {
+      const action = event.target?.closest?.("[data-collection-actions]");
+      if (action) {
+        event.preventDefault();
+        event.stopPropagation();
+        const item = collectionState.items.find((entry) => String(entry.key) === action.dataset.collectionActions);
+        if (!item) return;
+        const card = action.closest("[data-collection-key]");
+        const entries = [{ label: "View media details", icon: "info", run: () => card?.querySelector("[data-profile-poster-key]")?.click() }];
+        if (collectionSelectable() && window.CW?.ItemActions) entries.unshift({ label: "Manage providers", icon: "edit", run: () => window.CW.ItemActions.openMenu({ anchor: action, feature: "collection", item: { ...collectionSelectionEntry(item), tmdb: item.tmdb }, refs: { present: timelineEndpoints(collectionSelectionEntry(item).present), missing: [] }, fillMissing: true, scope: () => [card], onChanged: () => loadCollection({ quiet: true }) }) });
+        openCardActions(action, entries, {title:item.title});
+        return;
+      }
       const pick = event.target?.closest?.("[data-collection-select]");
       if (pick) {
         void selectCollection(pick.dataset.collectionSelect);
@@ -2158,15 +2168,60 @@
     return `${verbs[role] || ""} ${label}${rating != null ? ` · ${rating}/10` : ""}`.trim();
   }
 
-  const PROVIDER_CHIP_MAX = 6;
+  function cardActionsButton(attrs, label = "Actions") {
+    return `<button type="button" class="cw-card-actions" ${attrs} title="${esc(label)}" aria-label="${esc(label)}" aria-haspopup="${attrs.includes("data-ia-cover") ? "dialog" : "menu"}"${attrs.includes("data-ia-cover") ? "" : ' aria-expanded="false"'}><span class="material-symbols-rounded" aria-hidden="true">more_horiz</span></button>`;
+  }
+
+  function openCardActions(anchor, entries, options) {
+    window.CW.CardActions.open(anchor, entries, options);
+  }
 
   function providerChipStrip(entries, moreClass) {
-    if (entries.length <= PROVIDER_CHIP_MAX) return entries.map((entry) => entry.html).join("");
-    const ordered = entries.filter((entry) => entry.missing).concat(entries.filter((entry) => !entry.missing));
-    const shown = ordered.slice(0, PROVIDER_CHIP_MAX - 1);
-    const hidden = ordered.slice(PROVIDER_CHIP_MAX - 1);
-    const names = hidden.map((entry) => entry.title);
-    return `${shown.map((entry) => entry.html).join("")}<span class="${esc(moreClass)} cw-provider-more" title="${esc(names.join("\n"))}" aria-label="${esc(`${hidden.length} more: ${names.join(", ")}`)}">+${hidden.length}</span>`;
+    return `<span class="cw-provider-strip">${entries.map((entry) => entry.html).join("")}<button type="button" class="${esc(moreClass)} cw-provider-more" data-provider-overflow hidden aria-haspopup="menu" aria-expanded="false"></button></span>`;
+  }
+
+  const providerStripNodes = new Set();
+  let providerStripObserver = null;
+
+  function fitProviderStrip(strip) {
+    const more = strip.querySelector("[data-provider-overflow]");
+    const chips = [...strip.children].filter((node) => node !== more);
+    if (!more || !strip.clientWidth) return;
+    const style = getComputedStyle(strip);
+    const gap = parseFloat(style.columnGap) || 6;
+    const width = strip.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+    chips.forEach((chip) => { chip.hidden = false; });
+    more.hidden = true;
+    const widths = chips.map((chip) => chip.getBoundingClientRect().width);
+    if (widths.reduce((sum, width) => sum + width, 0) + gap * Math.max(0, chips.length - 1) <= width) return;
+    more.textContent = `+${chips.length}`;
+    more.hidden = false;
+    let available = width - more.getBoundingClientRect().width;
+    let shown = 0;
+    while (shown < chips.length && available >= widths[shown] + gap) available -= widths[shown++] + gap;
+    chips.forEach((chip, index) => { chip.hidden = index >= shown; });
+    more.textContent = `+${chips.length - shown}`;
+    more.setAttribute("aria-label", `${chips.length - shown} more providers`);
+    more.title = chips.slice(shown).map((chip) => chip.title || chip.getAttribute("aria-label") || "Provider").join("\n");
+    more.onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      openCardActions(more, chips.slice(shown).map((chip) => ({ label: chip.title || chip.getAttribute("aria-label") || "Provider", icon: "account_circle", run: () => { if (chip.matches("button")) chip.click(); } })));
+    };
+  }
+
+  function refreshProviderStrips(host) {
+    providerStripObserver ||= new ResizeObserver((entries) => entries.forEach(({ target }) => fitProviderStrip(target)));
+    for (const node of providerStripNodes) {
+      if (node.isConnected) continue;
+      providerStripObserver.unobserve(node);
+      providerStripNodes.delete(node);
+    }
+    host?.querySelectorAll(".cw-provider-strip").forEach((node) => {
+      providerStripNodes.add(node);
+      providerStripObserver.observe(node);
+      fitProviderStrip(node);
+    });
   }
 
   function timelineChipEntry(ref, role, options = {}) {
@@ -2211,9 +2266,7 @@
     const state = conflict ? " is-conflict" : full ? " is-full" : "";
     const hint = conflict ? "Scores still differ after provider rounding or reaction conversion. Badges show each provider's saved score."
       : adjusted ? "Equivalent scores. Scores match after provider rounding or reaction conversion. Badges show each provider's saved score." : "Add or remove on your providers";
-    const labelHtml = actionable
-      ? `<button type="button" class="cw-hist-coverage-label" data-ia-cover aria-haspopup="dialog" title="${esc(hint)}">${esc(label)}<span class="material-symbols-rounded" aria-hidden="true">expand_more</span></button>`
-      : `<span class="cw-hist-coverage-label"${adjusted || conflict ? ` title="${esc(hint)}"` : ""}>${esc(label)}</span>`;
+    const labelHtml = cardActionsButton(actionable ? "data-ia-cover" : "data-hub-details", `${label}. ${hint}`);
     return `<span class="cw-hist-coverage${state}"><span class="cw-hist-providers">${chips}</span>${labelHtml}</span>`;
   }
 
@@ -2235,7 +2288,7 @@
       ? `<span class="material-symbols-rounded cw-hist-route-arrow" aria-hidden="true">arrow_forward</span><span class="cw-hist-providers">${providerChipStrip(sinks.map((ref) => timelineChipEntry(ref, "sink")), "cw-hist-provider")}</span>`
       : "";
     const label = sinks.length ? `Sent to ${numberFmt.format(sinks.length)}` : "Not sent";
-    return `<span class="cw-hist-route${sinks.length ? "" : " is-unsent"}">${from}${to}<span class="cw-hist-coverage-label">${esc(label)}</span></span>`;
+    return `<span class="cw-hist-route${sinks.length ? "" : " is-unsent"}">${from}${to}${cardActionsButton("data-hub-route-actions", `${label}. Scrobble actions`)}</span>`;
   }
 
   const RECORD_PHASE_WORKING = { remove: "Removing…", remove_progress: "Removing…", mark_watched: "Marking watched…", update_progress: "Updating…" };
@@ -2852,7 +2905,7 @@
       const reload = () => load({ quiet: true });
       const movie = String(item.type || "").toLowerCase() === "movie";
       void actions.openMenu({
-        anchor: node,
+        anchor: node.hidden ? node.closest(".cw-provider-strip")?.querySelector("[data-provider-overflow]") || node : node,
         feature,
         item: entry,
         refs: { present: timelineEndpoints(item.present), missing: timelineEndpoints(item.missing) },
@@ -2919,11 +2972,11 @@
       const info = `<strong class="cw-hist-name">${esc(title)}</strong>
           <span class="cw-hist-meta">${esc(timelineSubtitle(item))}</span>
           ${detail(item)}`;
-      const key = selectable() ? selectionKey(item) : "";
+      const key = selectionKey(item);
       if (key) {
         return `<article class="cw-hist-card cw-tl-card${state.selected.has(key) ? " is-selected" : ""}" data-timeline-key="${esc(key)}">
           <button class="cw-hist-art cw-tl-open" type="button" data-profile-poster-key="${esc(posterKey)}" aria-label="Show details for ${esc(title)}">${art}</button>
-          ${selectBox(key)}
+          ${selectable() ? selectBox(key) : ""}
           <span class="cw-hist-info">${info}</span>
         </article>`;
       }
@@ -2938,8 +2991,8 @@
       const epoch = epochOf(item?.sort_epoch);
       const title = titleOf(item);
       const code = timelineCode(item);
-      const key = selectable() ? selectionKey(item) : "";
-      const titleCell = `${key ? selectBox(key) : ""}<span class="cw-tl-title-stack"><span class="cw-tl-title-line"><strong>${esc(title)}</strong>${code ? `<span class="cw-collection-pill">${esc(code)}</span>` : ""}${rewatchPill(item, true)}</span>${cfg.showIds ? timelineIds(item) : ""}</span>`;
+      const key = selectionKey(item);
+      const titleCell = `${key && selectable() ? selectBox(key) : ""}<span class="cw-tl-title-stack"><span class="cw-tl-title-line"><strong>${esc(title)}</strong>${code ? `<span class="cw-collection-pill">${esc(code)}</span>` : ""}${rewatchPill(item, true)}</span>${cfg.showIds ? timelineIds(item) : ""}</span>`;
       const cells = `<span class="cw-hist-cell cw-hist-cell--when"><strong>${esc(timeFmt(epoch) || "—")}</strong><small>${esc(relTime(epoch))}</small></span>
         <span class="cw-hist-cell cw-hist-cell--type">${pill(item)}</span>
         <span class="cw-hist-cell cw-hist-cell--where">${detail(item)}</span>`;
@@ -3076,6 +3129,7 @@
         </section>`).join("");
       }
       timelineImages.observe(host);
+      refreshProviderStrips(host);
       syncSelection();
     }
 
@@ -3358,6 +3412,17 @@
       enhanceCoverageSelect();
       host.addEventListener("click", (event) => {
         const target = event.target;
+        const routeActions = target?.closest?.("[data-hub-route-actions],[data-hub-details]");
+        if (routeActions) {
+          event.preventDefault();
+          event.stopPropagation();
+          const card = routeActions.closest("[data-timeline-key]");
+          openCardActions(routeActions, [
+            { label: "View media details", icon: "info", run: () => card?.querySelector("[data-profile-poster-key]")?.click() },
+            ...(routeActions.hasAttribute("data-hub-route-actions") ? [{ label: "Open synced history", icon: "history", run: () => setSource("synced") }] : []),
+          ]);
+          return;
+        }
         const actionNode = target?.closest?.("[data-ia-chip],[data-ia-cover]");
         if (actionNode) {
           event.preventDefault();
@@ -3750,11 +3815,7 @@
     }
 
     function actions(item, key) {
-      if (!canAct()) return "";
-      const button = (action, icon, label, enabled, tone = "") => (enabled
-        ? `<button class="cw-tl-action${tone}" type="button" data-playback-action="${action}" data-playback-key="${esc(key)}" title="${label}" aria-label="${label}"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span></button>`
-        : "");
-      return `<span class="cw-tl-actions">${button("update_progress", "edit", "Edit progress", item?.can_update_progress)}${button("mark_watched", "check_circle", "Mark as watched", item?.can_mark_watched, " is-good")}${button("remove_progress", "delete", "Remove progress", item?.can_remove_progress, " is-danger")}</span>`;
+      return cardActionsButton(`data-playback-menu="${esc(key)}"`, `Actions for ${titleFor(item)}`);
     }
 
     function card(item) {
@@ -3844,6 +3905,7 @@
         </section>`).join("");
       }
       timelineImages.observe(host);
+      refreshProviderStrips(host);
       syncSelection();
     }
 
@@ -3851,7 +3913,8 @@
       const pending = state.pendingAction;
       const feedback = state.actionFeedback;
       const icons = { update_progress: "edit", mark_watched: "check_circle", remove_progress: "delete" };
-      panel()?.querySelectorAll("[data-playback-action], [data-playback-bulk]").forEach((button) => {
+      panel()?.querySelectorAll("[data-playback-menu]").forEach((button) => { button.disabled = !!pending; });
+      panel()?.querySelectorAll("[data-playback-bulk]").forEach((button) => {
         const action = button.dataset.playbackAction || button.dataset.playbackBulk;
         const active = !!pending && pending.action === action && (button.dataset.playbackBulk ? pending.bulk : pending.keys.has(button.dataset.playbackKey));
         const result = feedback?.action === action ? (button.dataset.playbackBulk ? (feedback.bulk ? feedback.outcome : "") : feedback.results.get(button.dataset.playbackKey)) : "";
@@ -4454,6 +4517,20 @@
       });
       host.addEventListener("click", (event) => {
         const target = event.target;
+        const menuButton = target?.closest?.("[data-playback-menu]");
+        if (menuButton) {
+          event.preventDefault();
+          const item = state.items.find((entry) => keyOf(entry) === menuButton.dataset.playbackMenu);
+          if (!item || state.pendingAction) return;
+          const entries = [{ label: "View media details", icon: "info", run: () => menuButton.closest("[data-playback-key]")?.querySelector("[data-profile-poster-key]")?.click() }];
+          if (canAct()) {
+            for (const [action, icon, label] of [["update_progress", "edit", "Edit progress"], ["mark_watched", "check_circle", "Mark as watched"], ["remove_progress", "delete", "Remove resume point"]]) {
+              if (item[CAPABILITY[action]]) entries.push({ label, icon, danger: action === "remove_progress", attrs: ` data-playback-action="${action}"`, run: () => runAction(action, [item]) });
+            }
+          }
+          openCardActions(menuButton, entries, {title:titleFor(item),subtitle:item.season != null && item.episode != null ? `S${String(item.season).padStart(2,"0")} · E${String(item.episode).padStart(2,"0")}` : ""});
+          return;
+        }
         const chip = target?.closest?.("[data-ia-chip]");
         if (chip && window.CW?.ItemActions) {
           event.preventDefault();
@@ -4461,7 +4538,7 @@
           const item = state.items.find((entry) => keyOf(entry) === card?.dataset.playbackKey);
           if (item) {
             void window.CW.ItemActions.openMenu({
-              anchor: chip,
+              anchor: chip.hidden ? chip.closest(".cw-provider-strip")?.querySelector("[data-provider-overflow]") || chip : chip,
               feature: "progress",
               item: { title: titleFor(item), type: item.media_type },
               progressRows: progressRowsOf(item),
@@ -4470,12 +4547,6 @@
               onChanged: () => load({ background: true }),
             });
           }
-          return;
-        }
-        const actionBtn = target?.closest?.("[data-playback-action]");
-        if (actionBtn) {
-          const item = state.items.find((entry) => keyOf(entry) === actionBtn.dataset.playbackKey);
-          if (item) void runAction(actionBtn.dataset.playbackAction, [item]);
           return;
         }
         const bulkBtn = target?.closest?.("[data-playback-bulk]");
@@ -5059,7 +5130,7 @@
 
   function wirePosterOverlay() {
     const openFromTarget = (target, event) => {
-      if (target?.closest?.("[data-collection-resize]")) return false;
+      if (target?.closest?.("[data-collection-resize],[data-provider-overflow],[data-collection-actions]")) return false;
       const btn = target?.closest?.("[data-profile-poster-key]");
       if (!btn) return false;
       const item = posterItems.get(btn.dataset.profilePosterKey || "");

@@ -90,7 +90,7 @@ async function fixture(t, theme, {realMedia = false, touch = true, width = 1440,
       });
       await page.addScriptTag({url:'/assets/js/profile-media-modal.js'});
     }
-    for (const file of ["helpers/account-menu","helpers/icon-select","helpers/selection-bar","js/tracker"]) await page.addScriptTag({url:`/assets/${file}.js`});
+    for (const file of ["helpers/account-menu","helpers/icon-select","helpers/selection-bar","helpers/card-actions","js/tracker"]) await page.addScriptTag({url:`/assets/${file}.js`});
     if (profiles !== null) for (const file of ['helpers/api','helpers/profile-select','js/overview-profile']) await page.addScriptTag({url:`/assets/${file}.js`});
     await page.evaluate(() => TrackerPage.mount(document.querySelector("#page-tracker")));
     await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
@@ -137,7 +137,7 @@ for (const theme of ["original","flat-dark","flat-light"]) for (const width of [
   const layout = await cards.evaluateAll(elements => elements.map(el => {
     const rect = selector => el.querySelector(selector).getBoundingClientRect();
     const art = rect('.trk-overview-art'), copy = rect('.trk-overview-copy'), badge = rect('.trk-overview-badge'), arrow = rect('.trk-overview-arrow');
-    const actions = el.parentElement.querySelector('.trk-overview-actions').getBoundingClientRect();
+    const actions = el.parentElement.querySelector('.trk-overview-menu').getBoundingClientRect();
     return {inside:copy.left>=art.left && copy.right<=art.right && copy.bottom<=art.bottom,clear:badge.bottom<=copy.top && actions.right<=badge.left && copy.right<=arrow.left,overflow:el.scrollWidth>el.clientWidth+1};
   }));
   assert.ok(layout.every(row=>row.inside && row.clear && !row.overflow),JSON.stringify(layout));
@@ -479,8 +479,9 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   await page.locator('.trk-tabs [data-trk-view="overview"]').click();
   await page.locator('[data-trk-overview-open="continue:0"]').click();
   await page.waitForFunction(() => window.openedTitle?.options.tracker);
-  await page.locator('[data-trk-overview-watch="0"]').click();
-  await page.waitForFunction(() => document.querySelector('[data-trk-overview-watch="0"]')?.disabled === false);
+  await page.locator('[data-trk-overview-menu="0"]').click();
+  await page.getByRole('menuitem',{name:'Log a watch',exact:true}).click();
+  await page.waitForFunction(() => document.querySelector('[data-trk-overview-menu="0"]')?.disabled === false);
   assert.equal(writes.length,1);
   assert.equal(writes[0].provider_instance,"default");
   assert.equal(writes[0].items[0].ids.tmdb,"1");
@@ -509,15 +510,15 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   assert.equal(await page.locator(".trk-overview-empty").count(),3);
 });
 
-for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: cover hover actions and real media cards`, async t => {
+for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: cover menus and real media cards`, async t => {
   const {page,requests,writes,drops} = await fixture(t,theme,{realMedia:true,touch:false});
   const cover = page.locator('[data-trk-overview-open="continue:0"] .trk-overview-art');
-  const actions = page.locator('.trk-overview-actions').first();
+  const actions = page.locator('.trk-overview-menu').first();
   await page.mouse.move(0,0);
-  assert.equal(await actions.evaluate(el => getComputedStyle(el).opacity),"0");
+  assert.equal(await actions.evaluate(el => getComputedStyle(el).backgroundColor),"rgba(0, 0, 0, 0)");
   const before = requests.length;
   await cover.hover();
-  assert.equal(await actions.evaluate(el => getComputedStyle(el).opacity),"1");
+  assert.equal(await actions.isVisible(),true);
   assert.equal(await page.locator('.trk-overview-peek').count(),0);
   assert.equal(requests.length,before);
   if (process.env.CW_OVERVIEW_SCREENSHOTS) {
@@ -525,11 +526,11 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: cover
     await page.locator('.trk-overview-card').first().screenshot({path:`${process.env.CW_OVERVIEW_SCREENSHOTS}/${theme}-hover.png`});
   }
   await page.locator('[data-trk-overview-open="continue:0"] .trk-overview-copy>strong').hover();
-  assert.equal(await actions.evaluate(el => getComputedStyle(el).opacity),"1");
+  assert.equal(await actions.isVisible(),true);
   await page.locator('[data-trk-overview-open="continue:0"]').focus();
   await page.keyboard.press('Tab');
-  assert.equal(await page.locator('[data-trk-overview-watch="0"]').evaluate(el => el === document.activeElement),true);
-  assert.equal(await actions.evaluate(el => getComputedStyle(el).opacity),"1");
+  assert.equal(await page.locator('[data-trk-overview-menu="0"]').evaluate(el => el === document.activeElement),true);
+  assert.equal(await actions.isVisible(),true);
   for (const [kind, name] of [["continue","Movie 1"],["recent","Movie 1"],["airing","Show 1"]]) {
     const target = page.locator(`[data-trk-overview-open="${kind}:0"]`);
     if (kind === 'airing') await target.click({position:{x:100,y:100}});
@@ -543,32 +544,47 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: cover
     await modal.waitFor({state:'hidden'});
   }
   await cover.hover();
-  await page.locator('[data-trk-overview-watch="0"]').click();
-  await page.waitForFunction(() => document.querySelector('[data-trk-overview-watch="0"]')?.disabled === false);
+  await page.locator('[data-trk-overview-menu="0"]').click();
+  await page.getByRole('menuitem',{name:'Log a watch',exact:true}).click();
+  await page.waitForFunction(() => document.querySelector('[data-trk-overview-menu="0"]')?.disabled === false);
   assert.equal(writes.length,1);
   assert.equal(await page.locator('#cw-media-modal').isVisible(),false);
   await cover.hover();
-  await page.locator('[data-trk-overview-drop="0"]').click();
-  await page.waitForFunction(() => document.querySelector('[data-trk-overview-drop="0"]')?.disabled === false);
+  await page.locator('[data-trk-overview-menu="0"]').click();
+  await page.getByRole('menuitem',{name:'Drop title',exact:true}).click();
+  await page.waitForFunction(() => document.querySelector('.trk-overview-menu')?.disabled === false);
   assert.deepEqual(drops,[{provider_instance:"default",keys:["movie:0"],status:"dropped",view:"progress",feature:"progress"}]);
   assert.equal(await page.locator('#cw-media-modal').isVisible(),false);
   for (let i=0;i<5;i++) await page.locator('[data-trk-overview-more="continue"]').click();
   await page.locator('[data-trk-overview-open="continue:20"] .trk-overview-art').hover();
-  await page.locator('[data-trk-overview-drop="20"]').click();
-  await page.waitForFunction(() => document.querySelector('[data-trk-overview-drop="20"]')?.disabled === false);
+  await page.locator('[data-trk-overview-menu="20"]').click();
+  await page.getByRole('menuitem',{name:'Drop show',exact:true}).click();
+  await page.waitForFunction(() => document.querySelector('.trk-overview-menu')?.disabled === false);
   assert.deepEqual(drops[1],{provider_instance:"default",keys:["tmdb:100"],status:"dropped",view:"shows",feature:"history"});
   await page.evaluate(() => { window.CW.AuthState.read = () => ({permissions:{write:false}}); });
   await page.locator('[data-trk-overview-more="continue"]').click();
-  assert.equal(await page.locator('[data-trk-overview-drop="0"]').isDisabled(),true);
-  assert.equal(await page.locator('[data-trk-overview-watch="0"]').isDisabled(),true);
+  await page.locator('[data-trk-overview-menu="0"]').click();
+  assert.equal(await page.getByRole('menuitem',{name:'Drop title',exact:true}).isDisabled(),true);
+  assert.equal(await page.getByRole('menuitem',{name:'Log a watch',exact:true}).isDisabled(),true);
 });
 
-test("touch covers expose accessible quick actions and open the real media card", async t => {
+test("touch covers expose an unboxed action menu and open the real media card", async t => {
   const {page} = await fixture(t,"flat-dark",{realMedia:true,touch:true,width:390});
-  const action = page.locator('[data-trk-overview-watch="0"]');
+  const action = page.locator('[data-trk-overview-menu="0"]');
   assert.equal(await action.isVisible(),true);
   const bounds = await action.boundingBox();
   assert.ok(bounds.width >= 44 && bounds.height >= 44);
+  assert.equal(await action.evaluate(el => getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
+  await action.tap();
+  const menu = page.locator('.cw-card-action-menu:popover-open');
+  await menu.waitFor();
+  const menuBounds = await menu.boundingBox();
+  assert.ok(menuBounds.x >= 0 && menuBounds.x + menuBounds.width <= 390);
+  if (process.env.CW_OVERVIEW_SCREENSHOTS) {
+    await mkdir(process.env.CW_OVERVIEW_SCREENSHOTS,{recursive:true});
+    await page.screenshot({path:`${process.env.CW_OVERVIEW_SCREENSHOTS}/overview-menu-phone.png`});
+  }
+  await page.keyboard.press('Escape');
   await page.locator('[data-trk-overview-open="recent:0"] .trk-grid-art').tap();
   await page.locator('#cw-media-modal').waitFor();
   assert.equal(await page.locator('#cw-mm-title').getAttribute('aria-label'),"Movie 1");
@@ -703,29 +719,30 @@ test("cached overview skips show rebuilding and shares the compact History cards
   await page.locator('.trk-tabs [data-trk-view="history"]').click();
   await page.locator('[data-trk-layout="grid"]').click();
   const history = page.locator('.trk-grid-card').first();
-  await history.locator('.trk-grid-art').hover();
-  assert.equal(await history.locator('[data-trk-card-action]').count(),2);
-  assert.equal(await history.locator('[data-trk-row-info]').count(),1);
-  await history.locator('[data-trk-card-action="log"]').click();
+  assert.equal(await history.locator('.trk-cover-action').count(),0);
+  assert.equal(await history.locator('[data-trk-card-open]').count(),1);
+  await history.locator('[data-trk-card-menu]').click();
+  await page.getByRole('menuitem',{name:'Log a rewatch',exact:true}).click();
   await page.locator('.trk-sheet:visible').waitFor();
   await page.keyboard.press('Escape');
-  await history.locator('.trk-grid-art').hover();
   const title = await history.locator('.trk-grid-copy>strong').boundingBox();
-  const edit = await history.locator('[data-trk-row-edit]').boundingBox();
+  const edit = await history.locator('[data-trk-card-menu]').boundingBox();
   assert.ok(Math.abs(title.y + title.height/2 - edit.y - edit.height/2) < 2);
-  await history.locator('[data-trk-card-action="drop"]').click();
-  await page.waitForFunction(() => document.querySelector('[data-trk-card-action="drop"]')?.disabled === false);
+  await history.locator('[data-trk-card-menu]').click();
+  await page.getByRole('menuitem',{name:'Mark as dropped',exact:true}).click();
+  await page.waitForFunction(() => document.querySelector('[data-trk-card-menu]')?.disabled === false);
   assert.equal(drops[0].feature,"history");
   await page.locator('.trk-tabs [data-trk-view="overview"]').click();
   const recent = page.locator('[data-trk-overview-open="recent:0"]');
   await recent.waitFor();
   assert.equal(await recent.locator('.trk-grid-art').count(),1);
-  assert.equal(await recent.locator('[data-trk-row-info]').count(),0);
+  assert.equal(await recent.locator('[data-trk-card-open]').count(),1);
   assert.equal(await recent.locator('[data-trk-pick]').count(),0);
   await recent.focus();
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.openedTitle?.options.tracker);
-  await recent.locator('[data-trk-recent-edit]').click();
+  await recent.locator('[data-trk-card-menu]').click();
+  await page.getByRole('menuitem',{name:'Edit watch',exact:true}).click();
   await page.locator('.trk-sheet:visible').waitFor();
   await page.keyboard.press('Escape');
   assert.equal(requests.filter(path => path === "/api/tracker/overview/shows").length,streamCount);
@@ -895,6 +912,18 @@ for (const theme of ["original","flat-dark","flat-light"]) for (const width of [
   await page.reload();
   await boot();
   assert.equal(await page.locator('#trk-profile').inputValue(),'ann');
+  await Promise.all([page.waitForEvent('load'),choose(page,'#trk-profile','__default__')]);
+  await boot();
+  assert.equal(await page.locator('#trk-profile').inputValue(),'__default__');
+  assert.match(await button.textContent(),/Admin \/ Default instances/);
+  assert.equal(await page.locator('#trk-instance').inputValue(),'default');
+  const defaultReads = scopedReads.filter(row=>row.path==='/api/tracker/summary').at(-1);
+  assert.equal(defaultReads.instance,'default');
+  assert.equal(defaultReads.viewAs,'');
+  await page.reload();
+  await boot();
+  assert.equal(await page.locator('#trk-profile').inputValue(),'__default__');
+  assert.equal(await page.locator('#trk-instance').inputValue(),'default');
   await Promise.all([page.waitForEvent('load'),choose(page,'#trk-profile','')]);
   await boot();
   assert.equal(await page.locator('#trk-profile').inputValue(),'');
@@ -908,8 +937,12 @@ test('Tracker profile picker respects managed users and an empty profile list', 
   assert.equal(await managed.page.locator('#trk-instance').inputValue(),'other');
   assert.equal(await managed.page.evaluate(()=>CW.OverviewProfile.setActive('bob')),false);
   const empty = await fixture(t,'flat-light',{width:390,profiles:[]});
-  assert.equal(await empty.page.locator('#trk-profile').isDisabled(),true);
-  assert.match(await empty.page.locator('.trk-profile-picker').textContent(),/No profiles/);
+  assert.equal(await empty.page.locator('#trk-profile').isDisabled(),false);
+  assert.deepEqual(await empty.page.locator('#trk-profile option').allTextContents(),['All profiles','Admin / Default instances']);
+  await Promise.all([empty.page.waitForEvent('load'),choose(empty.page,'#trk-profile','__default__')]);
+  await empty.boot();
+  assert.equal(await empty.page.locator('#trk-profile').inputValue(),'__default__');
+  assert.equal(await empty.page.locator('#trk-instance').inputValue(),'default');
 });
 
 test('Tracker reloads the selected profile when returning from another page', async t => {
@@ -1036,4 +1069,62 @@ test('Wrapped dismissal storage events update only the matching profile and trac
   await other.evaluate(()=>localStorage.clear());
   await page.locator('[data-trk-wrapped="2025"]').waitFor();
   assert.equal(requests.length,before);
+});
+
+for (const width of [1440,390]) test(`Tracker grid action menus preserve editing and artwork navigation at ${width}px`, async t => {
+  const {page} = await fixture(t,"flat-dark",{width,touch:width < 760});
+  await page.route("**/api/tracker/shows?**", route => route.fulfill({json:{shows:[{...rows[0],key:"show:1",watched:2,total:10}],total:1}}));
+  await page.route("**/api/tracker/notes?**", route => route.fulfill({json:{notes:[rows[0]],total:1}}));
+  await page.route("**/api/tracker/items?**", route => route.fulfill({json:{items:rows.map(row => ({...row,date_field:"watched_at"})),total:rows.length}}));
+  const menu = page.locator('.cw-card-action-menu:popover-open');
+  for (const [view,label,field] of [["history","Edit watch","date"],["progress","Edit progress","progress_percent"],["ratings","Edit rating","rating"],["watchlist","Edit item","title"],["collection","Edit item","title"],["shows","Edit title",null],["titles","My notes",null]]) {
+    if (width < 760) await choose(page,'#trk-mobile-view',view);
+    else if (await page.locator(`.trk-tabs [data-trk-view="${view}"]`).isVisible()) await page.locator(`.trk-tabs [data-trk-view="${view}"]`).click();
+    else {
+      await page.locator('.trk-others summary').click();
+      await page.locator(`.trk-others [data-trk-view="${view}"]`).click();
+    }
+    await page.locator('[data-trk-layout="grid"]').click();
+    const card = page.locator('.trk-grid-card').first();
+    const trigger = card.locator('[data-trk-card-menu]');
+    await card.waitFor();
+    const before = await card.boundingBox();
+    await trigger.click();
+    await menu.waitFor();
+    assert.equal(await menu.getByRole('menuitem',{name:label,exact:true}).count(),1);
+    const bounds = await menu.boundingBox();
+    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width && bounds.y >= 0 && bounds.y + bounds.height <= 900);
+    assert.deepEqual(await card.boundingBox(),before);
+    assert.notEqual(await menu.evaluate(el => getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
+    await page.keyboard.press('End');
+    assert.equal(await page.evaluate(() => document.activeElement.textContent.trim()),'do_not_disturb_onMark as dropped');
+    await page.keyboard.press('Escape');
+    assert.equal(await trigger.evaluate(el => el === document.activeElement),true);
+    if (field) {
+      await trigger.click();
+      await menu.getByRole('menuitem',{name:label,exact:true}).click();
+      await page.locator(`.trk-sheet:visible [data-trk-edit="${field}"]`).waitFor({state:"attached"});
+      await page.keyboard.press('Escape');
+    }
+    await page.evaluate(() => {window.openedTitle = null;});
+    await card.locator('[data-trk-card-open]').click();
+    await page.waitForFunction(() => !!window.openedTitle?.options.tracker);
+    await card.locator('[data-trk-pick]').check();
+    assert.equal(await page.locator('.trk-grid-card').first().getAttribute('aria-selected'),'true');
+    await page.locator('.trk-grid-card').first().locator('[data-trk-pick]').uncheck();
+  }
+  await page.evaluate(() => {window.CW.AuthState.read = () => ({permissions:{write:false}});});
+  await page.locator('.trk-grid-card').first().locator('[data-trk-card-menu]').click();
+  assert.equal(await menu.locator('button:not(:disabled)').count(),1);
+  await page.keyboard.press('End');
+  assert.equal(await page.evaluate(() => document.activeElement.textContent.trim()),'infoView details');
+  await page.keyboard.press('Escape');
+  if (process.env.CW_TRACKER_ACTION_SCREENSHOTS) {
+    await page.evaluate(() => {window.CW.AuthState.read = () => ({permissions:{write:true}});});
+    if (width < 760) await choose(page,'#trk-mobile-view','history');
+    else await page.locator('.trk-tabs [data-trk-view="history"]').click();
+    await page.locator('.trk-grid-card').first().locator('[data-trk-card-menu]').click();
+    await mkdir(process.env.CW_TRACKER_ACTION_SCREENSHOTS,{recursive:true});
+    await page.screenshot({path:`${process.env.CW_TRACKER_ACTION_SCREENSHOTS}/tracker-actions-${width}.png`});
+  }
 });
