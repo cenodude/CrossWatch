@@ -88,8 +88,20 @@ test('Tracker media card controls and watch history', async t => {
   assert.equal(await modal.locator('[data-mm-trailer]').getAttribute('class'), 'cw-mm-btn');
   assert.equal(await modal.locator('.cw-mm-chips [data-status]').count(), 0);
   assert.equal(await modal.locator('.cw-mm-trk-header [data-mm-status-picker]').count(), 1);
-  assert.equal(await modal.locator('.cw-mm-trk>.cw-mm-trk-notes:last-child [data-mm-trk="notes"]').count(), 1);
+  const notes=modal.locator('.cw-mm-stack>.cw-mm-box:last-child>.cw-mm-trk-notes');
+  assert.equal(await notes.locator('[data-mm-trk="notes"]').count(), 1);
+  assert.equal(await notes.locator('h4').count(), 0);
+  assert.match(await notes.textContent(), /Add notes/);
+  assert.equal(await modal.locator('.cw-mm-trk .cw-mm-trk-notes').count(), 0);
   assert.equal(await modal.locator('.cw-mm-trk-actions [data-mm-trk="notes"]').count(), 0);
+  const actions = modal.locator('.cw-mm-trk-actions');
+  assert.deepEqual(await actions.locator('button').evaluateAll(buttons => buttons.map(button => button.dataset.mmTrk)), ['log','rate','list','map','origin','remove']);
+  assert.equal(await actions.locator('.is-icon').count(), 6);
+  assert.equal(await actions.locator('[data-mm-trk="log"]').getAttribute('aria-label'), 'Watched');
+  assert.equal(await actions.locator('[data-mm-trk="log"]').evaluate(el => [...el.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent.trim())), false);
+  await actions.locator('[data-mm-trk="origin"]').click();
+  await actions.locator('[data-mm-trk="remove"]').click();
+  assert.deepEqual(await page.evaluate(()=>mediaActions.splice(0)), [['origin',''],['remove','']]);
   assert.equal(await modal.locator('[data-mm-providers]').evaluate(el=>el.open), false);
   await modal.locator('[data-mm-providers]').evaluate(el=>{window.providersToggled=new Promise(resolve=>el.addEventListener('toggle',resolve,{once:true}));});
   await modal.locator('[data-mm-providers] summary').click();
@@ -121,12 +133,187 @@ test('Tracker media card controls and watch history', async t => {
   assert.equal(await modal.locator('.cw-mm-body').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
   await mkdir('.tmp/media-card', {recursive:true});
   await modal.screenshot({path:'.tmp/media-card/updated.png'});
+  await page.evaluate(()=>{mediaData.note.notes='Watch again with the family.';CW.ProfileMediaModal.updateTracker(mediaData);});
+  await notes.locator('[aria-label="Edit notes"]').waitFor();
+  assert.match(await notes.textContent(),/My notes.*Watch again with the family\./s);
+  assert.deepEqual(await modal.locator('.cw-mm-stack h4').allTextContents(),['Watch history','Details','My notesedit_note']);
+  await notes.locator('[data-mm-trk="notes"]').click();
+  assert.deepEqual(await page.evaluate(()=>mediaActions.at(-1)),['notes','']);
+  await modal.locator('.cw-mm-stack').screenshot({path:'.tmp/media-card/notes-populated.png'});
+  await page.setViewportSize({width:390,height:844});
+  await page.evaluate(()=>{mediaData.note.notes='';CW.ProfileMediaModal.updateTracker(mediaData);});
+  await notes.getByRole('button',{name:'Add notes'}).waitFor();
+  assert.equal(await notes.locator('h4').count(),0);
+  assert.equal(await modal.locator('.cw-mm-stack').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
+  await modal.locator('.cw-mm-stack').screenshot({path:'.tmp/media-card/notes-empty-mobile.png'});
   await page.evaluate(()=>{mediaData.note_key=null;CW.ProfileMediaModal.updateTracker(mediaData);});
   await modal.locator('[data-mm-status-picker] summary').click();
   assert.equal(await modal.locator('[data-mm-trk-status]:disabled').count(),6);
   await page.evaluate(()=>CW.ProfileMediaModal.open({type:'movie',ids:{tmdb:1}}));
   assert.equal(await modal.locator('[data-mm-providers]').count(),0);
   assert.equal(await modal.locator('section.cw-mm-lives').count(),1);
+});
+
+for (const mode of ['Tracker','Media hub']) test(`${mode}: delayed media updates preserve mounted content`, async t => {
+  const {page, release} = await fixture(t, 'flat-dark', 1440);
+  release();
+  let finishPresence, finishProgress;
+  const presence = new Promise(resolve=>{finishPresence=resolve;});
+  const progress = new Promise(resolve=>{finishProgress=resolve;});
+  t.after(()=>{finishPresence();finishProgress();});
+  await page.route('**/api/profile/title?**', async route=>{await presence;return route.fulfill({json:{ok:true,plays:[],synced:{count:0,episodes:[],present:[],missing:[]}}});});
+  await page.route('**/api/playback_progress/items?**', async route=>{await progress;return route.fulfill({json:{items:[{provider:'PLEX',instance_id:'default',season:1,episode:2,progress_percent:66,remaining_seconds:1320}]}});});
+  await page.route('**/api/metadata/tmdb/season?**', route=>route.fulfill({json:{ok:true,episodes:[1,2,3].map(episode=>({episode,name:`Episode ${episode}`,runtime:42}))}}));
+  await page.evaluate(mode=>{
+    metadata[3].detail.seasons=[{season:1,episode_count:3}];
+    window.mediaData={title:{art:{tmdb:3}},note_key:'show:3',note:{status:'watching'},plays:[]};
+    CW.Meta.get=()=>new Promise(resolve=>{window.finishMeta=()=>resolve({...metadata[3],overview:'Fresh description',tagline:'New metadata'});});
+    window.opening=CW.ProfileMediaModal.open({type:'show',ids:{tmdb:3}},mode==='Tracker'?{tracker:{data:mediaData,onAction(){}}}:{});
+  },mode);
+  const modal=page.locator('#cw-media-modal');
+  await modal.locator('.cw-mm-title-logo:visible').waitFor();
+  await modal.locator('[data-mm-tab="overview"]').focus();
+  await page.evaluate(()=>{
+    const body=document.querySelector('.cw-mm-body');
+    body.scrollTop=120;
+    window.mounted={poster:body.querySelector('.cw-mm-poster'),logo:body.querySelector('.cw-mm-title-logo'),tab:document.activeElement,scroll:body.scrollTop};
+  });
+  await page.evaluate(()=>finishMeta());
+  await page.waitForFunction(()=>document.querySelector('.cw-mm-overview')?.textContent==='Fresh description');
+  assert.deepEqual(await page.evaluate(()=>({poster:mounted.poster===document.querySelector('.cw-mm-poster'),logo:mounted.logo===document.querySelector('.cw-mm-title-logo'),focus:document.activeElement===mounted.tab,scroll:document.querySelector('.cw-mm-body').scrollTop===mounted.scroll})),{poster:true,logo:true,focus:true,scroll:true});
+  finishPresence();
+  await modal.locator('[data-mm-season-toggle="1"]').click();
+  await modal.locator('#cw-mm-season-detail-1 .cw-mm-season-episode').first().waitFor();
+  if(mode==='Tracker')await modal.locator('[data-mm-status-picker] summary').click();
+  await page.evaluate(()=>{
+    window.seasonNode=document.querySelector('[data-mm-season-toggle="1"]');
+    seasonNode.focus();
+    window.resumeScroll=document.querySelector('.cw-mm-body').scrollTop;
+  });
+  finishProgress();
+  await modal.locator('.cw-mm-resume').waitFor();
+  await page.evaluate(()=>opening);
+  assert.deepEqual(await page.evaluate(()=>({season:seasonNode===document.querySelector('[data-mm-season-toggle="1"]'),expanded:seasonNode.getAttribute('aria-expanded'),focus:document.activeElement===seasonNode,scroll:document.querySelector('.cw-mm-body').scrollTop===resumeScroll,logo:mounted.logo===document.querySelector('.cw-mm-title-logo')})),{season:true,expanded:'true',focus:true,scroll:true,logo:true});
+  if(mode==='Tracker'){
+    assert.equal(await modal.locator('[data-mm-status-picker]').evaluate(el=>el.open),true);
+    await page.evaluate(()=>{
+      window.refreshMutations=[];
+      window.refreshObserver=new MutationObserver(rows=>refreshMutations.push(...rows));
+      refreshObserver.observe(document.querySelector('.cw-mm-body'),{subtree:true,childList:true,attributes:true,characterData:true});
+      CW.ProfileMediaModal.updateTracker(mediaData);
+    });
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    assert.equal(await page.evaluate(()=>refreshMutations.length),0);
+    await page.evaluate(()=>{refreshObserver.disconnect();mediaData.note.status='completed';CW.ProfileMediaModal.updateTracker(mediaData);});
+    await page.waitForFunction(()=>document.querySelector('.cw-mm-trk .trk-status-btn')?.dataset.status==='completed');
+    assert.equal(await modal.locator('[data-mm-status-picker]').evaluate(el=>el.open),true);
+    await page.evaluate(()=>{mediaData.plays=[{key:'first',season:1,episode:1,date:'2026-11-01T12:00:00Z'}];CW.ProfileMediaModal.updateTracker(mediaData);});
+    await modal.locator('[data-mm-trk-edit="first"]').waitFor();
+    await page.evaluate(()=>{
+      window.editPlay=document.querySelector('[data-mm-trk-edit="first"]');
+      editPlay.focus();
+      mediaData.plays.unshift({key:'second',season:1,episode:2,date:'2026-11-02T12:00:00Z'});
+      CW.ProfileMediaModal.updateTracker(mediaData);
+    });
+    await modal.locator('[data-mm-trk-edit="second"]').waitFor();
+    assert.equal(await page.evaluate(()=>document.activeElement===editPlay&&editPlay===document.querySelector('[data-mm-trk-edit="first"]')),true);
+  }
+});
+
+test('media refresh retains failed artwork and resets title logo visibility on navigation', async t => {
+  const {page,release}=await fixture(t,'flat-dark',1440);
+  release();
+  let posterRequests=0;
+  await page.route('**/art/tmdb/movie/1?**',route=>{
+    if(new URL(route.request().url()).searchParams.get('kind')==='logo')return route.fallback();
+    posterRequests++;
+    return route.fulfill({status:404,body:''});
+  });
+  await page.evaluate(async()=>{
+    window.data={title:{art:{tmdb:1}},plays:[]};
+    await CW.ProfileMediaModal.open({type:'movie',ids:{tmdb:1}},{tracker:{data,onAction(){}}});
+  });
+  const modal=page.locator('#cw-media-modal');
+  await modal.locator('.cw-mm-title-logo:visible').waitFor();
+  await page.waitForFunction(()=>document.querySelector('.cw-mm-poster')?.getAttribute('src').includes('placeholder_poster'));
+  const previousRequests=posterRequests;
+  await page.evaluate(()=>{window.failedPoster=document.querySelector('.cw-mm-poster');CW.ProfileMediaModal.updateTracker(data);});
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  assert.equal(await page.evaluate(()=>failedPoster===document.querySelector('.cw-mm-poster')&&failedPoster.getAttribute('src').includes('placeholder_poster')),true);
+  assert.equal(posterRequests,previousRequests);
+  await page.evaluate(()=>CW.ProfileMediaModal.open({type:'movie',ids:{tmdb:2},title:'Another title'}));
+  await modal.locator('.cw-mm-title-text:visible').waitFor();
+  assert.equal(await modal.locator('.cw-mm-title-text').textContent(),'Another title');
+  assert.equal(await modal.locator('.cw-mm-title-logo').isVisible(),false);
+});
+
+for (const [mode, width] of [['Tracker',1440],['Media hub',390]]) test(`${mode}: compact season overview expands cached episodes`, async t => {
+  const {page, release} = await fixture(t, 'flat-dark', width);
+  release();
+  const requests = new Map();
+  const plays = [1,3].map(episode => ({season:4,episode,epoch:1794000000,date:'2026-11-07T12:00:00Z'}));
+  await page.route('**/api/profile/title?**', route => route.fulfill({json:{ok:true,plays,synced:{count:2,episodes:plays,present:[],missing:[]}}}));
+  await page.route('**/api/playback_progress/items?**', route => route.fulfill({json:{items:[{provider:'PLEX',instance_id:'default',season:4,episode:2,progress_percent:66,remaining_seconds:1320}]}}));
+  await page.route('**/api/metadata/tmdb/season?**', route => {
+    const season = Number(new URL(route.request().url()).searchParams.get('season'));
+    requests.set(season,(requests.get(season)||0)+1);
+    if(season===5 && requests.get(season)===1)return route.fulfill({json:{ok:false}});
+    return route.fulfill({json:{ok:true,episodes:Array.from({length:5},(_,index)=>({episode:index+1,name:`Episode ${index+1}`,runtime:42,air_date:'2025-11-01'}))}});
+  });
+  await page.evaluate(async ({mode,plays}) => {
+    metadata[3].detail.seasons = [1,2,3,4,5,0].map(season=>({season,episode_count:5,air_date:season?'2025-11-01':''}));
+    window.openSeasonCard = () => CW.ProfileMediaModal.open({type:'show',ids:{tmdb:3}}, mode==='Tracker'?{tracker:{data:{plays},onAction(){}}}:{});
+    await openSeasonCard();
+  },{mode,plays});
+  const modal = page.locator('#cw-media-modal');
+  const seasons = modal.locator('.cw-mm-seasons-progress').filter({has:page.locator('[data-mm-seasons-all]')});
+  assert.deepEqual(await seasons.locator('[data-mm-season-toggle]').evaluateAll(rows=>rows.map(row=>row.dataset.mmSeasonToggle)),['5','4','3']);
+  assert.equal(requests.has(5),false);
+  const current = seasons.locator('[data-mm-season-toggle="4"]');
+  await current.focus();
+  await page.keyboard.press('Enter');
+  await seasons.locator('#cw-mm-season-detail-4 .cw-mm-season-episode').first().waitFor();
+  assert.equal(await current.getAttribute('aria-expanded'),'true');
+  assert.equal(await current.evaluate(el=>el===document.activeElement),true);
+  assert.match(await current.textContent(),/2025.*5 episodes.*2\/5.*In progress/s);
+  assert.match(await seasons.locator('#cw-mm-season-detail-4').textContent(),/Where you left off.*22m left.*66% watched/);
+  assert.equal(await seasons.locator('#cw-mm-season-detail-4 .cw-mm-season-episode').count(),3);
+  await seasons.locator('[data-mm-season-more]').click();
+  assert.equal(await seasons.locator('#cw-mm-season-detail-4 .cw-mm-season-episode').count(),5);
+  await seasons.locator('[data-mm-season-more]').click();
+  await seasons.locator('[data-mm-episode="4:2"]').click();
+  assert.equal(await modal.locator('#cw-mm-title').textContent(),'Episode 2');
+  await modal.locator('[data-mm-series]').click();
+  assert.equal(await current.getAttribute('aria-expanded'),'true');
+  await current.click();
+  await current.click();
+  assert.equal(requests.get(4),1);
+  await seasons.locator('[data-mm-seasons-all]').click();
+  const picker = seasons.locator('[data-mm-season-picker]');
+  assert.deepEqual(await picker.locator('option:not([disabled])').evaluateAll(options=>options.map(option=>option.value)),['5','4','3','2','1','0']);
+  await picker.selectOption('0');
+  await seasons.locator('#cw-mm-season-detail-0 .cw-mm-season-episode').first().waitFor();
+  await seasons.locator('[data-mm-season-toggle="0"]').click();
+  assert.equal(await seasons.locator('[data-mm-season-toggle="0"]').count(),1);
+  await seasons.locator('[data-mm-season-toggle="5"]').click();
+  await seasons.locator('[data-mm-season-retry="5"]').click();
+  await seasons.locator('#cw-mm-season-detail-5 .cw-mm-season-episode').first().waitFor();
+  assert.equal(requests.get(5),2);
+  await current.click();
+  await mkdir('.tmp/media-card',{recursive:true});
+  const summary=modal.locator('.cw-mm-watch-summary');
+  assert.match(await summary.textContent(),/16 episodes · 2 seasons.*2\/16 watched.*13%/s);
+  assert.equal(await summary.locator('[role="progressbar"]').getAttribute('aria-valuenow'),'13');
+  assert.equal(await summary.locator('.cw-mm-watch-meter').evaluate(el=>el.getBoundingClientRect().width<=160),true);
+  assert.equal(await summary.evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
+  await summary.screenshot({path:`.tmp/media-card/watch-summary-${mode.replace(' ','-').toLowerCase()}.png`});
+  await seasons.screenshot({path:`.tmp/media-card/seasons-${mode.replace(' ','-').toLowerCase()}.png`});
+  assert.deepEqual(await seasons.evaluate(el=>[el,...el.querySelectorAll('button,select')].filter(node=>node.scrollWidth>node.clientWidth+1).map(node=>({className:node.className,width:node.clientWidth,scrollWidth:node.scrollWidth}))),[]);
+  await page.evaluate(()=>openSeasonCard());
+  assert.equal(await modal.locator('[data-mm-season-toggle="4"]').getAttribute('aria-expanded'),'false');
+  await modal.locator('[data-mm-season-toggle="4"]').click();
+  await modal.locator('#cw-mm-season-detail-4 .cw-mm-season-episode').first().waitFor();
+  assert.equal(requests.get(4),1);
 });
 
 for(const theme of ['original','flat-dark','flat-light']) for(const width of [320,768,1440]) {

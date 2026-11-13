@@ -185,6 +185,7 @@
   const featureOf = (id) => FEATURES.find((f) => f.id === id) || FEATURES[0];
   const pad = (n) => String(n).padStart(2, "0");
   const num = (n) => Number(n || 0).toLocaleString();
+  const tabCountFormat = new Intl.NumberFormat("en", {notation:"compact", maximumFractionDigits:1});
   const plural = (n, one, many) => `${num(n)} ${Number(n) === 1 ? one : many}`;
   const providerName = (p) => window.CW?.ProviderMeta?.label?.(p) || String(p || "");
   const mobile = () => !!window.matchMedia?.("(max-width:760px)")?.matches;
@@ -499,8 +500,9 @@
 
   function viewCount(view) {
     if (view === "cleanup") return attentionTotal();
+    if (view === state.view && !state.loading && ["history", "shows", "titles"].includes(view)) return state.total;
     if (view === "titles") return state.notes.total || null;
-    if (view === "shows" || view === "history") return null;
+    if (view === "shows") return null;
     return state.counts[view] ?? null;
   }
 
@@ -520,7 +522,7 @@
     return VIEWS.filter(v => v.id !== "cleanup").map((v) => {
       const active = state.view === v.id;
       const count = active ? viewCount(v.id) : 0;
-      const badge = count ? `<small class="trk-tab-count">${esc(num(count))}</small>` : "";
+      const badge = count ? `<small class="trk-tab-count" title="${esc(num(count))}" aria-label="${esc(num(count))}">${esc(tabCountFormat.format(count))}</small>` : "";
       return `<button type="button" role="tab" class="trk-tab${active ? " active" : ""}" data-trk-view="${v.id}" aria-selected="${active}" tabindex="${active || state.view === "cleanup" && v.id === "overview" ? 0 : -1}">${symbol(v.icon)}<span>${esc(v.label)}</span>${badge}</button>`;
     }).join("");
   }

@@ -526,16 +526,26 @@ dialog.eg-dialog{font-size:14px;line-height:1.45;background:var(--is-surface);co
 .cw-mm-tabs button.active::after{border-radius:3px;background:rgb(var(--mm-accent))}
 .cw-mm-seasons-progress h5,.cw-mm-cast-strip h5{font-size:13.5px}
 :is(.cw-mm-seasons-progress,.cw-mm-cast-strip) h5 button{border:0;background:transparent;color:rgb(var(--mm-accent));font:inherit;font-size:12.5px;cursor:pointer}
-.cw-mm-season-row{border:0;border-radius:10px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
-.cw-mm-season-row:hover{background:rgba(255,255,255,.05)}
-.cw-mm-season-name{color:var(--mm-muted);font-size:12.5px}
-.cw-mm-season-row:is(.is-started,.is-done) .cw-mm-season-name{color:var(--mm-text)}
-.cw-mm-season-track{border-radius:999px;background:rgba(255,255,255,.07)}
-.cw-mm-season-track i{border-radius:inherit;background:linear-gradient(90deg,rgb(var(--mm-accent)),#b794ff)}
-.cw-mm-season-row.is-done .cw-mm-season-track i{background:linear-gradient(90deg,rgba(var(--mm-green),.65),rgb(var(--mm-green)))}
-.cw-mm-season-count{color:var(--mm-muted);font-size:12px;font-variant-numeric:tabular-nums}
-.cw-mm-season-row.is-done .cw-mm-season-count{color:rgb(var(--mm-green))}
-.cw-mm-season-count .material-symbols-rounded{font-size:16px}
+.cw-mm-season-item{border-top:1px solid var(--mm-line)}
+.cw-mm-season-row,.cw-mm-season-episode{border:0;background:transparent;color:var(--mm-text);font:inherit;text-align:left;cursor:pointer}
+.cw-mm-season-row:hover,.cw-mm-season-episode:hover{background:var(--mm-panel)}
+.cw-mm-season-number{border-radius:8px;background:var(--mm-panel);color:var(--mm-muted);font-size:20px;font-variant-numeric:tabular-nums}
+.cw-mm-season-row.is-started .cw-mm-season-number{background:rgba(var(--mm-accent),.16);color:rgb(var(--mm-accent))}
+.cw-mm-season-name{color:var(--mm-text);font-size:14px}
+.cw-mm-season-meta,.cw-mm-season-count,.cw-mm-season-picker label{font-size:12px}
+.cw-mm-season-meta,.cw-mm-season-status,.cw-mm-season-order,.cw-mm-season-episode small,.cw-mm-season-episode-number,.cw-mm-season-episode-status,.cw-mm-season-detail-label{color:var(--mm-muted)}
+.cw-mm-season-status,.cw-mm-season-order,.cw-mm-season-episode small,.cw-mm-season-episode-number,.cw-mm-season-episode-status,.cw-mm-season-detail-label{font-size:11.5px}
+.cw-mm-season-row>.material-symbols-rounded{color:var(--mm-muted);font-size:18px}
+.cw-mm-season-track>span{border-radius:2px;background:var(--mm-line)}
+.cw-mm-season-track i{border-radius:inherit;background:rgb(var(--mm-accent))}
+.cw-mm-season-row.is-started .cw-mm-season-status,.cw-mm-season-episode.is-started .cw-mm-season-episode-status{color:rgb(var(--mm-accent))}
+.cw-mm-season-row.is-done .cw-mm-season-status,.cw-mm-season-episode.is-done .cw-mm-season-episode-status{color:rgb(var(--mm-green))}
+.cw-mm-season-count{font-variant-numeric:tabular-nums}
+.cw-mm-season-episode{border-top:1px solid var(--mm-line)}
+.cw-mm-season-episode strong{font-size:13px;font-weight:600}
+.cw-mm-season-detail-label{text-transform:uppercase;letter-spacing:.07em}
+.cw-mm-season-more{border:0;background:transparent;color:rgb(var(--mm-accent));font:inherit;font-size:12px;cursor:pointer}
+.cw-mm-season-picker select{border:1px solid var(--mm-line);border-radius:8px;background:var(--mm-bg);color:var(--mm-text);font:inherit}
 .cw-mm-cast-face{border:0;background:transparent;color:inherit;font:inherit;cursor:pointer}
 .cw-mm-cast-face img,.cw-mm-cast-face .cw-mm-initials{border-radius:50%;box-shadow:0 6px 14px rgba(0,0,0,.35)}
 .cw-mm-cast-face .cw-mm-initials{font-size:18px}
@@ -547,6 +557,11 @@ dialog.eg-dialog{font-size:14px;line-height:1.45;background:var(--is-surface);co
 .cw-mm-progress{border-radius:999px;background:rgba(255,255,255,.08)}
 .cw-mm-progress i{border-radius:inherit;background:linear-gradient(90deg,rgb(var(--mm-accent)),#b794ff)}
 .cw-mm-progress.is-done i{background:linear-gradient(90deg,rgba(var(--mm-green),.65),rgb(var(--mm-green)))}
+.cw-mm-watch-summary p{color:var(--mm-muted);font-size:12px}
+.cw-mm-watch-stats strong{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.cw-mm-watch-meter small{color:var(--mm-muted);font-size:11.5px;font-variant-numeric:tabular-nums}
+.cw-mm-watch-meter>span{border-radius:2px;background:var(--mm-line)}
+.cw-mm-watch-meter i{border-radius:inherit;background:rgb(var(--mm-accent))}
 .cw-mm-progress-row{border:1px solid var(--mm-line);border-radius:12px;background:rgba(255,255,255,.02)}
 .cw-mm-progress-logo{border-radius:10px;background:rgba(255,255,255,.07)}
 .cw-mm-progress-logo b{font-size:10.5px}
@@ -672,7 +687,7 @@ dialog.eg-dialog{font-size:14px;line-height:1.45;background:var(--is-surface);co
 .cw-page-media-modal .cw-mm-tabs button{font-weight:600}
 .cw-page-media-modal .cw-mm-seasons-progress h5,.cw-mm-cast-strip h5{font-weight:600}
 .cw-page-media-modal :is(.cw-mm-seasons-progress,.cw-mm-cast-strip) h5 button{font-weight:600}
-.cw-page-media-modal .cw-mm-season-name{font-weight:400}
+.cw-page-media-modal :is(.cw-mm-season-name,.cw-mm-season-number){font-weight:600}
 .cw-page-media-modal .cw-mm-season-count{font-weight:400}
 .cw-page-media-modal .cw-mm-cast-face small{font-weight:400}
 .cw-page-media-modal .cw-mm-box h4{font-weight:600}
@@ -828,7 +843,7 @@ button.cw-mm-provider[data-ia-chip]:hover,button.cw-mm-provider[data-mm-episode]
 .cw-mm-provider.is-more{background:transparent;color:var(--mm-muted)}
 .cw-mm-provider.is-more:hover,.cw-mm-provider.is-more.is-ia-open{color:rgb(var(--mm-accent))}
 .cw-dash-source[data-ia-ref]:hover,.cw-rating-provider-icon[data-ia-ref]:hover,.cw-scrobble-source-pill[data-ia-ref]:hover,.cw-scrobble-source-pill[data-ia-ref].is-ia-open,.cw-dash-source[data-ia-ref].is-ia-open,.cw-rating-provider-icon[data-ia-ref].is-ia-open{box-shadow:0 0 0 2px var(--cw-theme-accent)}
-.cw-mm-btn.is-danger:hover,.cw-mm-btn.is-danger.is-ia-open{border-color:color-mix(in srgb,var(--cw-theme-danger) 45%,transparent);background:var(--cw-page-danger-bg);color:var(--cw-page-danger-text)}
+.cw-mm-trk-actions .cw-mm-btn.is-danger,.cw-mm-btn.is-danger:hover,.cw-mm-btn.is-danger.is-ia-open{border-color:color-mix(in srgb,var(--cw-theme-danger) 45%,transparent);background:var(--cw-page-danger-bg);color:var(--cw-page-danger-text)}
 [data-ia-state="work"]{opacity:.8}
 [data-ia-state="work"]::before{border:2px solid transparent;border-radius:50%;border-top-color:var(--cw-theme-accent);border-right-color:var(--cw-theme-accent);animation:cw-ia-spin .8s linear infinite}
 [data-ia-state="ok"]{animation:cw-ia-pulse .9s ease-out}

@@ -106,6 +106,25 @@ async function choose(page, selector, value) {
   await page.locator(`.cw-icon-select-menu:not(.hidden) [data-value="${value}"]`).click();
 }
 
+test("selected History, Shows and My titles tabs show their loaded totals", async t => {
+  const {page} = await fixture(t,"flat-dark",{width:1440});
+  await page.route('**/api/tracker/items?**', route => route.fulfill({json:{items:[rows[0]],total:12345}}));
+  await page.route('**/api/tracker/shows?**', route => route.fulfill({json:{shows:[],total:10000}}));
+  await page.route('**/api/tracker/notes?**', route => route.fulfill({json:{notes:[],total:1200000}}));
+  for (const [view,total,compact] of [['history',12345,'12.3K'],['shows',10000,'10K'],['titles',1200000,'1.2M']]) {
+    await page.locator(`.trk-tabs [data-trk-view="${view}"]`).click();
+    const badge = page.locator(`.trk-tabs [data-trk-view="${view}"] .trk-tab-count`);
+    await badge.filter({hasText:compact}).waitFor();
+    const exact = await page.evaluate(value=>value.toLocaleString(),total);
+    assert.equal(await badge.getAttribute('title'),exact);
+    assert.equal(await badge.getAttribute('aria-label'),exact);
+    assert.equal(await page.locator('.trk-tabs .trk-tab-count').count(),1);
+  }
+  await page.route('**/api/tracker/items?**', route => route.fulfill({json:{items:[rows[0]],total:2}}));
+  await page.locator('.trk-tabs [data-trk-view="history"]').click();
+  await page.locator('.trk-tabs [data-trk-view="history"] .trk-tab-count').filter({hasText:'2'}).waitFor();
+});
+
 for (const theme of ["original","flat-dark","flat-light"]) for (const width of [320,768,1440]) test(`${theme}: Continue watching overlays and honest badges at ${width}px`, async t => {
   const left = width === 320 ? 1 : 3;
   const {page,requests} = await fixture(t,theme,{width,continuing:[rows[0],{...rows[1],remaining_minutes:null,progress_percent:14}],next:[{...episodes[0],aired_episodes_left:left},{...episodes[1],remaining_minutes:42}]});
