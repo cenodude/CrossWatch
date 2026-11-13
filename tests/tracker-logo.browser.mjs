@@ -57,7 +57,7 @@ async function fixture(t,theme,width) {
     }
     const attrs=theme==='original'?'class="cw-theme-original"':`data-cw-theme="${theme}" class="cw-theme-${theme==='flat-light'?'light':'dark'}"`;
     const css=['fonts/material-symbols-rounded','themes/tokens','css/base','crosswatch','css/layout','css/components','css/pages','css/page-theme','ui-shell',theme==='original'?'themes/original-coverage':'themes/flat'];
-    return route.fulfill({contentType:'text/html',body:`<!doctype html><html ${attrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(file=>`<link rel="stylesheet" href="/assets/${file}.css">`).join('')}</head><body><main id="layout"><section id="page-tracker" class="cw-themed-page"></section></main><script>const metadata=${JSON.stringify(metadata)};window.CW={AuthState:{read:()=>({isAdmin:true})},Meta:{peek:item=>metadata[item.ids?.tmdb]||null,get:async item=>metadata[item.ids?.tmdb]||null},ProfileDateTime:{format:date=>date.toISOString().slice(0,10)}};</script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/js/profile-media-modal.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
+    return route.fulfill({contentType:'text/html',body:`<!doctype html><html ${attrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(file=>`<link rel="stylesheet" href="/assets/${file}.css">`).join('')}</head><body><main id="layout"><section id="page-tracker" class="cw-themed-page"></section></main><script>const metadata=${JSON.stringify(metadata)};window.CW={AuthState:{read:()=>({isAdmin:true,user:{display_name:"Header user",username:"header"}})},OverviewProfile:{isAdmin:true,id:"",profiles:[{id:"family",label:"Family"}],instanceForProvider:()=>"",setActive:()=>{}},Meta:{peek:item=>metadata[item.ids?.tmdb]||null,get:async item=>metadata[item.ids?.tmdb]||null},ProfileDateTime:{format:date=>date.toISOString().slice(0,10)}};</script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/js/profile-media-modal.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
   });
   await page.goto('https://tracker-logo.test/');
   await page.locator('.trk-play').first().waitFor();
@@ -220,6 +220,95 @@ for (const mode of ['Tracker','Media hub']) test(`${mode}: delayed media updates
   }
 });
 
+test('Tracker resume points include providers and stay mounted during title updates', async t => {
+  const {page,release}=await fixture(t,'flat-dark',1440);
+  release();
+  let providerRequests=0;
+  await page.route('**/api/playback_progress/items?**',route=>{
+    providerRequests++;
+    return route.fulfill({json:{items:[
+      {provider:'CROSSWATCH',provider_label:'CrossWatch',instance_id:'family',instance_label:'Family',season:2,episode:7,progress_percent:25},
+      {provider:'PUBLICMETADB',instance_id:'default',season:2,episode:7,progress_percent:66,remaining_seconds:1320},
+    ]}});
+  });
+  await page.evaluate(async()=>{
+    window.localProgress={title:{art:{tmdb:3}},provider_instance:'family',plays:[],progress:[]};
+    await CW.ProfileMediaModal.open({type:'show',ids:{tmdb:3}},{tracker:{label:'Family',data:localProgress,onAction(){}}});
+  });
+  const resume=page.locator('#cw-media-modal .cw-mm-resume');
+  await resume.getByText('66%',{exact:true}).waitFor();
+  assert.match(await resume.textContent(),/CrossWatch · Family.*25%.*PUBLICMETADB.*22m left.*66%/s);
+  assert.equal(await resume.locator('.cw-mm-resume-episode').count(),1);
+  assert.equal(providerRequests,1);
+  await page.evaluate(()=>{
+    window.resumeRow=document.querySelector('.cw-mm-resume .cw-mm-progress-row');
+    localProgress.note={status:'watching'};
+    CW.ProfileMediaModal.updateTracker(localProgress);
+  });
+  await page.waitForFunction(()=>document.querySelector('.cw-mm-trk .trk-status-btn')?.dataset.status==='watching');
+  assert.equal(await page.evaluate(()=>resumeRow===document.querySelector('.cw-mm-resume .cw-mm-progress-row')),true);
+  assert.match(await resume.textContent(),/PUBLICMETADB.*66%/s);
+  assert.equal(providerRequests,1);
+});
+
+test('movie watch history uses the compact summary for Tracker and Media hub', async t => {
+  const {page,release}=await fixture(t,'flat-dark',1440);
+  release();
+  await page.route('**/api/profile/title?**',route=>route.fulfill({json:{ok:true,synced:{count:1,last_epoch:1785369600}}}));
+  await page.evaluate(async()=>{
+    window.movieHistory={title:{art:{tmdb:1}},plays:[{key:'play:1',date:'2026-07-30T00:00:00Z'}]};
+    await CW.ProfileMediaModal.open({type:'movie',ids:{tmdb:1}},{tracker:{data:movieHistory}});
+  });
+  const summary=page.locator('#cw-media-modal .cw-mm-watch-history');
+  assert.match(await summary.textContent(),/Watch history.*Last watched.*2026-07-30.*Watched once/s);
+  assert.equal(await summary.locator('.cw-mm-watchline-count').count(),0);
+  assert.equal(await summary.evaluate(node=>getComputedStyle(node).borderTopWidth),'0px');
+  await mkdir('.tmp/media-card',{recursive:true});
+  await summary.screenshot({path:'.tmp/media-card/watch-history-desktop.png'});
+  await page.evaluate(()=>{movieHistory.plays.push({key:'play:2',date:'2026-08-01T00:00:00Z'});CW.ProfileMediaModal.updateTracker(movieHistory);});
+  await summary.locator('.cw-mm-watch-result').filter({hasText:'Watched 2 times'}).waitFor();
+  await page.setViewportSize({width:390,height:844});
+  await summary.scrollIntoViewIfNeeded();
+  assert.equal(await summary.evaluate(node=>node.scrollWidth<=node.clientWidth),true);
+  await summary.screenshot({path:'.tmp/media-card/watch-history-mobile.png'});
+  await page.evaluate(()=>{movieHistory.plays=[];CW.ProfileMediaModal.updateTracker(movieHistory);});
+  await summary.getByText('Not watched yet',{exact:true}).waitFor();
+  assert.equal(await summary.locator('.material-symbols-rounded').count(),0);
+  await page.evaluate(()=>CW.ProfileMediaModal.open({type:'movie',ids:{tmdb:1}}));
+  await summary.locator('.cw-mm-watch-result').filter({hasText:'Watched once'}).waitFor();
+  assert.equal(await summary.locator('.material-symbols-rounded').count(),1);
+});
+
+test('grouped resume points keep provider actions and fit a narrow media card', async t => {
+  const {page,release}=await fixture(t,'flat-dark',1440);
+  release();
+  await page.route('**/api/playback_progress/items?**',route=>route.fulfill({json:{items:[
+    {provider:'CROSSWATCH',instance_id:'default',season:1,episode:1,episode_title:'S01E01',progress_percent:65,remaining_seconds:1080},
+    {provider:'PLEX',instance_id:'family',instance_label:'Family',season:1,episode:1,episode_title:'No Strings',progress_percent:42,remaining_seconds:1500,can_remove_progress:true},
+    {provider:'TRAKT',instance_id:'default',season:1,episode:1,episode_title:'No Strings',progress_percent:60,remaining_seconds:1200},
+  ]}}));
+  await page.evaluate(async()=>{
+    CW.ItemActions={canWrite:()=>true,openMenu:options=>{window.resumeAction={feature:options.feature,focusRow:options.focusRow,rows:options.progressRows.length,scopeRows:options.scope()[0].querySelectorAll('.cw-mm-progress-row').length};}};
+    await CW.ProfileMediaModal.open({type:'show',ids:{tmdb:3}});
+  });
+  const resume=page.locator('#cw-media-modal .cw-mm-resume');
+  assert.equal(await resume.locator('.cw-mm-resume-episode').count(),1);
+  assert.equal(await resume.locator('.cw-mm-progress-row').count(),3);
+  assert.equal(await resume.locator('h6').textContent(),'S1E1No Strings');
+  assert.deepEqual(await resume.getByRole('progressbar').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-valuenow'))),['65','42','60']);
+  const action=resume.locator('[data-ia-ref="PLEX:family"]');
+  const rid=await action.getAttribute('data-ia-play');
+  await action.click();
+  assert.deepEqual(await page.evaluate(()=>resumeAction),{feature:'progress',focusRow:rid,rows:3,scopeRows:3});
+  await mkdir('.tmp/media-card',{recursive:true});
+  await resume.screenshot({path:'.tmp/media-card/resume-grouped-desktop.png'});
+  await page.setViewportSize({width:390,height:844});
+  await resume.scrollIntoViewIfNeeded();
+  assert.equal(await resume.evaluate(node=>node.scrollWidth<=node.clientWidth),true);
+  assert.equal(await resume.locator('.cw-mm-progress-row').evaluateAll(rows=>rows.every(row=>row.scrollWidth<=row.clientWidth)),true);
+  await resume.screenshot({path:'.tmp/media-card/resume-grouped-mobile.png'});
+});
+
 test('media refresh retains failed artwork and resets title logo visibility on navigation', async t => {
   const {page,release}=await fixture(t,'flat-dark',1440);
   release();
@@ -365,6 +454,10 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
     const heading=page.locator('.trk-hero-heading');
     assert.equal(await page.locator('.cw-page-hero-title').count(),0);
     assert.equal(await page.locator('.cw-page-hero-kicker').textContent(),'CW TRACKER');
+    assert.match(await page.locator('[data-trk-slot="identity"]').innerText(),/Header user/);
+    const profileBounds=await page.locator('.trk-profile-picker').boundingBox();
+    const identityBounds=await page.locator('[data-trk-slot="identity"]').boundingBox();
+    assert.ok(identityBounds.x+identityBounds.width<=profileBounds.x);
     await heading.locator('img').waitFor();
     assert.equal(await heading.locator('img').getAttribute('alt'),'Arrival');
     assert.equal(await page.locator('.trk-play.is-selected').count(),0);
@@ -479,6 +572,7 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
       data.note.status='on_hold';
       CW.ProfileMediaModal.updateTracker(data);
     });
+    await page.waitForFunction(()=>document.querySelector('.cw-mm-trk .trk-status-btn')?.dataset.status==='on_hold');
     assert.equal(await modal.locator('.cw-mm-trk .trk-status-btn').getAttribute('data-status'),'on_hold');
     await page.evaluate(()=>CW.ProfileMediaModal.open({type:'movie',title:'Missing logo',ids:{tmdb:'2'}}));
     await page.waitForFunction(()=>{const image=document.querySelector('.cw-mm-title-logo');return image?.complete&&!image.naturalWidth;});

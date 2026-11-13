@@ -475,6 +475,17 @@
   const currentProfileScope = () => String(window.CW?.OverviewProfile?.id || "");
 
   function renderProfilePicker() {
+    const identity = state.root?.querySelector('[data-trk-slot="identity"]');
+    const user = window.CW?.AuthState?.read?.()?.user;
+    const name = String(user?.display_name || user?.label || user?.username || "");
+    if (identity) {
+      identity.hidden = !name;
+      const signature = JSON.stringify([name, user?.avatar_url]);
+      if (identity.dataset.signature !== signature) {
+        identity.dataset.signature = signature;
+        identity.innerHTML = `<span class="cw-media-hero-avatar">${symbol("person")}${user?.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="" onerror="this.hidden=true">` : ""}</span><span>${esc(name)}</span>`;
+      }
+    }
     const host = state.root?.querySelector('.trk-profile-picker');
     const select = host?.querySelector('select');
     const scope = window.CW?.OverviewProfile;
@@ -1775,11 +1786,16 @@
     if (!root.querySelector(".cw-root")) {
       root.innerHTML = `
         <div class="cw-root">
-          <div class="cw-topline cw-page-hero cw-page-hero-tracker" data-hero-icon="inventory_2">
+          <div class="cw-topline cw-page-hero cw-page-hero-tracker cw-media-hero" data-hero-icon="inventory_2">
             <img class="trk-hero-backdrop" alt="" aria-hidden="true" hidden>
-            <div class="trk-hero-topbar">
-              <div class="cw-page-hero-kicker">CW TRACKER</div>
-              <div class="trk-profile-picker" hidden><select id="trk-profile" aria-label="View as profile"></select></div>
+            <div class="trk-hero-topbar cw-media-hero-topbar">
+              <div class="cw-media-hero-brand">
+                <div class="cw-page-hero-kicker cw-media-hero-kicker">CW TRACKER</div>
+                <div class="cw-media-hero-identity" data-trk-slot="identity" hidden></div>
+              </div>
+              <div class="cw-media-hero-account">
+                <div class="trk-profile-picker" hidden><select id="trk-profile" aria-label="View as profile"></select></div>
+              </div>
             </div>
             <div class="cw-head-copy cw-page-hero-copy">
               <div class="cw-title-row"><div>
@@ -4952,6 +4968,7 @@
       } catch {} finally { overviewChecking = false; }
     };
     window.addEventListener("cw:month-theme-changed",paintMonthlyBanner);
+    window.addEventListener("cw:auth-state-changed", renderProfilePicker);
     window.addEventListener("cw:overview-profile-changed", () => {
       if (profileScope !== null && profileScope !== currentProfileScope() && !state.root?.classList.contains('hidden')) {
         window.location.reload();

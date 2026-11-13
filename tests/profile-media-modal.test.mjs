@@ -425,11 +425,63 @@ test("a show lists each paused episode with its provider", () => {
   ];
   const html = api.showResumePoints();
   assert.match(html, /Resume points/);
-  assert.match(html, /S2E4 · The Long Night/);
+  assert.match(html, /S2E4<\/span><strong>The Long Night/);
   assert.match(html, /S1E1/);
   assert.match(html, /48%/);
   api.state.progress = [];
   assert.equal(api.showResumePoints(), "");
+});
+
+test("resume points group providers by episode and keep account actions and progress distinct", () => {
+  const api = modal(null, "show", {canWrite:()=>true});
+  api.state.progress = [
+    {rid:"cw",provider:"CROSSWATCH",label:"CrossWatch",instance:"default",season:1,episode:1,episodeTitle:"S01E01",pct:65,remaining:1080},
+    {rid:"plex",provider:"PLEX",label:"Plex",instance:"family",instanceLabel:"Family",season:1,episode:1,episodeTitle:"No Strings",pct:42,remaining:1500,record:{can_remove_progress:true}},
+    {rid:"trakt",provider:"TRAKT",label:"Trakt",instance:"default",season:1,episode:1,episodeTitle:"No Strings",pct:60,remaining:1200},
+    {rid:"next",provider:"PLEX",label:"Plex",instance:"default",season:1,episode:2,episodeTitle:"S01E02",pct:10},
+    {rid:"unknown",provider:"PLEX",label:"Plex",instance:"default",pct:20},
+    {rid:"unknown2",provider:"TRAKT",label:"Trakt",instance:"default",pct:30},
+  ];
+  const html = api.showResumePoints();
+  assert.equal((html.match(/class="cw-mm-resume-episode"/g)||[]).length,4);
+  assert.equal((html.match(/<strong>No Strings<\/strong>/g)||[]).length,1);
+  assert.doesNotMatch(html,/S01E01|S01E02/);
+  assert.match(html,/Plex · Family/);
+  assert.match(html,/data-ia-ref="PLEX:family" data-ia-play="plex"/);
+  for (const pct of [65,42,60,10,20,30]) assert.match(html,new RegExp(`aria-valuenow="${pct}"`));
+  assert.match(html,/18m left/);
+  assert.match(html,/25m left/);
+  assert.equal((html.match(/data-mm-progress/g)||[]).length,1);
+});
+
+test("Tracker resume points and season previews include provider progress", () => {
+  const api=show({});
+  api.state.progress=[
+    {provider:"CROSSWATCH",label:"CrossWatch",instance:"family",instanceLabel:"Family",season:1,episode:2,pct:35},
+    {provider:"PUBLICMETADB",instance:"default",season:1,episode:2,pct:66},
+  ];
+  api.state.tracker={label:"Family",data:{provider_instance:"family",plays:[],progress:[]}};
+  const html=api.showResumePoints();
+  assert.match(html,/CrossWatch · Family/);
+  assert.match(html,/PUBLICMETADB/);
+  assert.match(html,/35%/);
+  assert.match(html,/66%/);
+  assert.equal((html.match(/class="cw-mm-resume-episode"/g)||[]).length,1);
+  api.state.overviewSeason=1;
+  api.state.progress=api.state.progress.slice(1);
+  assert.match(api.seasonProgress(),/66% watched/);
+  api.state.progress=[];
+  assert.equal(api.showResumePoints(),"");
+  assert.doesNotMatch(api.seasonProgress(),/In progress/);
+});
+
+test("Tracker movie progress includes providers alongside local watch history", () => {
+  const api=modal({});
+  api.state.progress=[{provider:"PUBLICMETADB",instance:"default",pct:66}];
+  api.state.tracker={data:{plays:[{date:"2026-11-13T12:00:00Z"}],progress:[]}};
+  assert.match(api.movieProgressBox(),/PUBLICMETADB/);
+  assert.match(api.movieProgressBox(),/66%/);
+  assert.match(api.movieProgressBox(),/Watched once/);
 });
 
 test("opened from the tracker the card shows that instance's plays and hands actions back", async () => {
