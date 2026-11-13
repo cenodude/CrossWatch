@@ -397,13 +397,28 @@ def test_run_log_visibility_requires_owning_the_whole_run(monkeypatch) -> None:
     assert sync_api.run_log_visible_to_user(cfg, None) is True
 
 
-def test_summary_stream_no_longer_relies_on_absent_pair_attribution() -> None:
+def test_summary_stream_hides_unattributed_events_from_managed_users(monkeypatch) -> None:
+    import asyncio
     from api import syncAPI as sync_api
-    import inspect
 
-    src = inspect.getsource(sync_api.api_run_summary_stream)
-    assert 'obj.get("pair_id")' not in src
-    assert "run_log_visible_to_user" in src
+    req = _request("/api/run/summary/stream")
+    req.state.cw_user = {"is_admin": False, "profile_id": MANAGED_PROFILE}
+    monkeypatch.setattr(req, "is_disconnected", lambda: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(sync_api, "_env", lambda: (lambda: {}, None))
+    monkeypatch.setattr(sync_api, "_rt", lambda: ({"SYNC": [json.dumps({"event": "ui:spotlight", "items": [{"title": "Private"}]})]},))
+    monkeypatch.setattr(sync_api, "_summary_snapshot_for_response", lambda: {"run_id": "old", "running": True})
+    monkeypatch.setattr(sync_api, "_hydrate_summary_spotlights_from_log", lambda *_: None)
+
+    async def first_message():
+        response = await sync_api.api_run_summary_stream(req)
+        chunk = await anext(response.body_iterator)
+        await response.body_iterator.aclose()
+        return chunk
+
+    chunk = asyncio.run(first_message())
+    assert chunk.startswith("data:")
+    assert "Private" not in chunk
+    assert json.loads(chunk.removeprefix("data: "))["details_available"] is False
 
 
 # M4 - next-URL guards reject backslash-smuggled absolute targets

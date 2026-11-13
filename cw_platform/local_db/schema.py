@@ -676,6 +676,7 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         conn.execute(_CREATE_ACTIVITY_EVENT_IDS)
         conn.execute(_CREATE_TTL_DEDUPE_ENTRIES)
         conn.execute(_CREATE_SYNC_RUN_REPORTS)
+        _ensure_column(conn, "sync_run_reports", "pair_summary_json", "TEXT")
         conn.execute(_CREATE_SYNC_RUN_TIMELINE)
         conn.execute(_CREATE_SYNC_RUN_PROVIDER_COUNTS)
         conn.execute(_CREATE_SYNC_RUN_FEATURE_LANES)

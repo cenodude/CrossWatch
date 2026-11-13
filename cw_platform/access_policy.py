@@ -6,7 +6,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .provider_instances import instances_for_user_profile, list_user_profiles, normalize_instance_id, normalize_user_profile_id, provider_display_key, user_profiles_for_instance
+from .provider_instances import DEFAULT_OVERVIEW_SCOPE, instances_for_user_profile, list_user_profiles, normalize_instance_id, normalize_overview_scope, normalize_user_profile_id, provider_display_key, user_profiles_for_instance
 
 READ_PERMISSION_KEYS = ("dashboard", "watchlist", "playback")
 
@@ -193,7 +193,7 @@ def managed_profile_id(user: Mapping[str, Any] | None) -> str:
 
 
 def profile_instances_map(cfg: Mapping[str, Any], profile_id: Any) -> dict[str, list[str]]:
-    pid = normalize_user_profile_id(profile_id)
+    pid = normalize_overview_scope(profile_id)
     if not pid:
         return {}
     out: dict[str, list[str]] = {}
@@ -283,7 +283,7 @@ def requested_view_as_profile(request: Any) -> str:
         query_raw = str(request.query_params.get("user_profile") or "").strip()
     except Exception:
         query_raw = ""
-    if query_raw.lower() in VIEW_AS_ALL:
+    if query_raw.lower() in VIEW_AS_ALL or query_raw.lower() == DEFAULT_OVERVIEW_SCOPE:
         return ""
     pid = normalize_user_profile_id(query_raw)
     if pid:
@@ -504,14 +504,14 @@ def filter_pairs_for_user(cfg: Mapping[str, Any], user: Mapping[str, Any] | None
 
 
 def filter_pairs_for_profile(cfg: Mapping[str, Any], profile_id: Any, pairs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    pid = normalize_user_profile_id(profile_id)
+    pid = normalize_overview_scope(profile_id)
     if not pid:
         return [decorate_pair_profile(cfg, pair) for pair in pairs if isinstance(pair, Mapping)]
     instances = profile_instances_map(cfg, pid)
     return [
         decorate_pair_profile(cfg, pair)
         for pair in pairs
-        if isinstance(pair, Mapping) and pair_profile_id(pair) == pid and profile_allows_pair(instances, pair)
+        if isinstance(pair, Mapping) and (pid == DEFAULT_OVERVIEW_SCOPE or pair_profile_id(pair) == pid) and profile_allows_pair(instances, pair)
     ]
 
 

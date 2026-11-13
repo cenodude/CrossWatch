@@ -21,7 +21,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
   const state={empty:false,queries:[],playing:null,watchGate:null};
   if(hero) await page.clock.install();
   const fixtureItems = count ? Array.from({length:count},(_,index)=>({...items[index % items.length],key:`movie:tmdb:${index+1}`,title:`Movie ${index+1}`,tmdb:String(index+1),ids:{tmdb:String(index+1)}})) : items;
-  const html=await page.evaluate(({source,theme,hero})=>{
+  const html=await page.evaluate(({source,theme,hero,activity})=>{
     const doc=new DOMParser().parseFromString(source,'text/html');
     doc.querySelectorAll('script').forEach(script=>script.remove());
     doc.documentElement.className=theme==='original'?'cw-theme-original':`cw-theme-${theme==='flat-light'?'light':'dark'}`;
@@ -30,13 +30,13 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
     const bootstrap=doc.createElement('script');
     bootstrap.textContent='window.CW={AuthState:{read:()=>({isAdmin:true,permissions:{write:true}})},Meta:{peek:()=>null,get:async()=>({year:2026,runtime_minutes:58,genres:["Drama","Mystery"],detail:{number_of_seasons:2,status:"Returning Series"}})}};';
     doc.body.append(bootstrap);
-    for(const path of ['helpers/selection-bar','helpers/profile-datetime','helpers/month-bar','helpers/icon-select','helpers/account-menu',...(hero?['helpers/profile-select','js/overview-profile']:[]),'js/profile-page']) {
+    for(const path of [...(activity?['helpers/provider-meta']:[]),'helpers/selection-bar','helpers/profile-datetime','helpers/month-bar','helpers/icon-select','helpers/account-menu',...(hero?['helpers/profile-select','js/overview-profile']:[]),'js/profile-page']) {
       const script=doc.createElement('script');
       script.src=`/assets/${path}.js`;
       doc.body.append(script);
     }
     return '<!doctype html>'+doc.documentElement.outerHTML;
-  },{source:template,theme,hero});
+  },{source:template,theme,hero,activity});
   await page.route('https://profile-mobile.test/**',async route=>{
     const url=new URL(route.request().url()),path=url.pathname;
     if(path.startsWith('/assets/')) {
@@ -83,7 +83,8 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
       if(path==='/api/state/wall') json={items:list};
       if(path==='/api/profile/title') json={item:items[0],title:items[0].title};
       if(path==='/api/profile/preferences') json={preferences:{}};
-      if(activity && path==='/api/events/feed') json={items:state.empty?[]:Array.from({length:8},(_,index)=>({id:`event-${index}`,kind:'sync',title:'Watchlist sync completed',summary:'Plex -> Trakt',created_at:1793989800-index*3600,event_count:14,status:'completed'}))};
+      if(activity && path==='/api/events/feed') json={items:state.empty?[]:Array.from({length:8},(_,index)=>({id:String(index+1),kind:'sync',title:'Sync run completed',feature:index%2?'history':'watchlist',summary:'Sync run completed successfully, Plex -> Trakt, SIMKL, CrossWatch (Watchlist)',created_at:Math.floor(Date.now()/1000)-60-index*3600,event_count:14,status:index===1?'warning':'completed'}))};
+      if(activity && path==='/api/scheduling/status') json=state.empty?{}:{running:true,effective:{enabled:true,mode:'every_n_hours'},next_run_at:Date.now()/1000+10800};
       if (count && ['/api/profile/collection','/api/profile/history','/api/profile/ratings','/api/profile/watchlist','/api/playback_progress/items'].includes(path)) {
         const page = Number(url.searchParams.get('page') || 1), size = Number(url.searchParams.get('page_size') || 48);
         Object.assign(json,{items:list.slice((page-1)*size,page*size),page,page_size:size,pages:Math.ceil(list.length/size)});
@@ -197,6 +198,38 @@ test('Hub header shares slow playback polls and retains loaded artwork',async t=
   assert.deepEqual(artRequests,[]);
 });
 
+for(const width of [1440,2250]) for(const count of [3,12]) test(`Hub media grids match Tracker sizing at ${width}px with ${count} items`,async t=>{
+  const {page}=await fixture(t,'flat-dark',width,{count,history:true,playback:true,library:true});
+  for(const key of ['history','watchlist','ratings','playback','collection']) {
+    await page.locator(`[data-profile-tab="${key}"]`).click();
+    const panel=page.locator(`#profile-panel-${key}`);
+    const card=panel.locator(key==='collection'?'.cw-collection-card':'.cw-hist-card').first();
+    await card.waitFor();
+    const size=await card.boundingBox();
+    if(key==='collection') {
+      assert.ok(size.width<=240,JSON.stringify({key,size}));
+    } else {
+      const reference=await panel.locator('.cw-hist-day-body').first().evaluate(grid=>{
+        const tracker=document.createElement('div');
+        tracker.id='page-tracker';
+        tracker.style.cssText='position:absolute;visibility:hidden;padding:0;border:0';
+        tracker.innerHTML='<div class="trk-cover-grid"><article class="trk-grid-card"><div class="trk-grid-art"></div></article></div>';
+        tracker.firstElementChild.style.width=`${grid.getBoundingClientRect().width}px`;
+        document.body.append(tracker);
+        const {width,height}=tracker.querySelector('.trk-grid-art').getBoundingClientRect();
+        tracker.remove();
+        return {width,height};
+      });
+      const art=await card.locator('.cw-hist-art').boundingBox();
+      assert.ok(Math.abs(size.width-reference.width)<=2,JSON.stringify({key,size,reference}));
+      assert.ok(Math.abs(art.height-reference.height)<=2,JSON.stringify({key,art,reference}));
+      assert.ok(await card.evaluate(el=>el.scrollWidth<=el.clientWidth+1),`${key} card overflows`);
+    }
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    if(count===12) await snapshot(page,`hub-sizing-${key}-${width}`);
+  }
+});
+
 for(const width of [390,980,1440]) test(`Hub Progress keeps provider actions, filters and timeline at ${width}px`,async t=>{
   const {page,state}=await fixture(t,'flat-dark',width,{playback:true});
   await page.evaluate(()=>{
@@ -213,7 +246,8 @@ for(const width of [390,980,1440]) test(`Hub Progress keeps provider actions, fi
   assert.match(await page.locator('#profile-playback-errors').innerText(),/TRAKT.*Timed out/is);
   assert.equal(await panel.locator('.cw-play-progress strong').first().evaluate(el=>getComputedStyle(el).fontWeight),'400');
   const columns=await panel.locator('.cw-hist-day-body').first().evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length);
-  assert.equal(columns,width<=760?2:width<=1100?3:4);
+  const gridWidth=await panel.locator('.cw-hist-day-body').first().evaluate(el=>el.getBoundingClientRect().width);
+  assert.equal(columns,width<=760?2:Math.floor((gridWidth+16)/256));
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   await panel.locator('[data-profile-poster-key]').first().click();
   assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
@@ -504,12 +538,21 @@ for(const theme of ['original','flat-dark','flat-light']) {
 }
 
 
-for (const width of [390,1440]) test(`Hub Overview keeps provider actions and bounded previews at ${width}px`, async t => {
+for (const width of [390,1440,2250]) test(`Hub Overview keeps provider actions and bounded previews at ${width}px`, async t => {
   const {page,state} = await fixture(t,'flat-dark',width,{count:12,activity:true});
   await page.waitForFunction(()=>document.querySelectorAll('#profile-watchlist .cw-hub-poster').length===4);
-  await page.waitForFunction(()=>document.querySelectorAll('#profile-progress .cw-cw-card').length===3);
+  await page.waitForFunction(expected=>document.querySelectorAll('#profile-progress .cw-cw-card').length===expected,width<=760?3:4);
   assert.equal(await page.locator('#profile-activity .cw-profile-activity-row').count(),width<=760?3:4);
   assert.equal(await page.locator('#profile-activity .cw-profile-activity-row>.material-symbols-rounded').count(),0);
+  assert.equal(await page.locator('#profile-activity .cw-profile-activity-row strong').first().innerText(),'Watchlist sync');
+  assert.match(await page.locator('#profile-activity .cw-profile-activity-row').nth(1).innerText(),/History sync.*Needs attention/s);
+  assert.match(await page.locator('#profile-activity .cw-profile-activity-meta').first().innerText(),/Trakt.*SIMKL.*CrossWatch/s);
+  assert.equal(await page.locator('#profile-activity .cw-profile-activity-schedule').count(),1);
+  assert.doesNotMatch(await page.locator('#profile-activity').innerText(),/every.n.hours|Scheduler running/);
+  assert.equal(await page.locator('#profile-activity .cw-profile-activity-row').first().evaluate(el=>el.querySelector('small').getBoundingClientRect().right<el.querySelector('strong').getBoundingClientRect().left),true);
+  await page.evaluate(()=>{window.openEvents=props=>{window.__activityEvent=props;};});
+  await page.locator('#profile-activity .cw-profile-activity-row').first().click();
+  assert.equal(await page.evaluate(()=>window.__activityEvent.groupId),'1');
   assert.equal(await page.locator('#profile-progress [role="progressbar"]').first().getAttribute('aria-valuenow'),'45');
   assert.equal(await page.locator('#profile-watchlist .cw-hub-providers').first().locator('[data-provider]').count(),2);
   assert.match(await page.locator('.cw-hub-poster-art img').first().getAttribute('src'),/kind=poster/);
@@ -518,9 +561,23 @@ for (const width of [390,1440]) test(`Hub Overview keeps provider actions and bo
   const watchlist=await page.locator('#profile-watchlist').boundingBox();
   assert.ok(watchlist.y>=progress.y+progress.height);
   if(width>760) {
+    const reference=await page.evaluate(()=>{
+      const tracker=document.createElement('div');
+      tracker.id='page-tracker';
+      tracker.style.cssText=`position:absolute;visibility:hidden;padding:0;border:0;width:${document.querySelector('#profile-progress').getBoundingClientRect().width}px`;
+      tracker.innerHTML='<div class="trk-overview-grid">'+Array.from({length:4},()=>'<article class="trk-overview-card"><div class="trk-overview-art"></div></article>').join('')+'</div>';
+      tracker.firstElementChild.style.width=`${document.querySelector('#profile-progress').getBoundingClientRect().width}px`;
+      document.body.append(tracker);
+      const {width,height}=tracker.querySelector('.trk-overview-art').getBoundingClientRect();
+      tracker.remove();
+      return {width,height};
+    });
+    const hubCard=await page.locator('.cw-cw-card').first().boundingBox();
+    assert.ok(Math.abs(hubCard.width-reference.width)<=2,JSON.stringify({hubCard,reference}));
+    assert.ok(Math.abs(hubCard.height-reference.height)<=2,JSON.stringify({hubCard,reference}));
     const activity=await page.locator('#profile-activity').boundingBox();
     assert.ok(Math.abs(watchlist.y-activity.y)<2);
-    assert.ok(activity.height<=watchlist.height+40);
+    assert.ok(activity.height<=watchlist.height+40,JSON.stringify({activity,watchlist}));
   }
   await page.evaluate(()=>{window.CW.ProfileMediaModal={canOpen:()=>true,open:item=>window.__openedMedia=item};});
   await page.locator('.cw-hub-poster').first().click();
@@ -529,11 +586,23 @@ for (const width of [390,1440]) test(`Hub Overview keeps provider actions and bo
   assert.equal(await page.evaluate(()=>window.__openedMedia.progress),45);
   assert.equal(await page.locator('.cw-cw-title').first().evaluate(el=>getComputedStyle(el).fontWeight),'500');
   assert.equal(await page.locator('.cw-profile-activity-row strong').first().evaluate(el=>getComputedStyle(el).fontWeight),'500');
+  const avatar=page.getByRole('link',{name:'Open user settings'});
+  assert.equal(await avatar.getAttribute('href'),'/profile#account');
+  await avatar.click();
+  await page.locator('#profile-panel-account.active').waitFor();
+  if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('overview');
+  else await page.locator('[data-profile-tab="overview"]').click();
+  await avatar.focus();
+  await page.keyboard.press('Enter');
+  await page.locator('#profile-panel-account.active').waitFor();
+  if(width<=760) await page.locator('.cw-profile-mobile-view select').selectOption('overview');
+  else await page.locator('[data-profile-tab="overview"]').click();
   if(process.env.CW_PROFILE_SCREENSHOTS) {
     await mkdir(process.env.CW_PROFILE_SCREENSHOTS,{recursive:true});
     await page.locator('#profile-panel-overview img').evaluateAll(images=>Promise.all(images.map(img=>{img.loading='eager';return img.decode().catch(()=>{});})));
     await page.evaluate(()=>window.scrollTo(0,0));
     await page.screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/hub-overview-${width}.png`,fullPage:true});
+    await page.locator("#profile-activity").locator("..").screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/hub-activity-${width}.png`});
   }
   state.empty=true;
   await page.evaluate(()=>{localStorage.clear();sessionStorage.clear();});

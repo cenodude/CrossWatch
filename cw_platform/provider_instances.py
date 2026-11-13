@@ -10,6 +10,7 @@ import re
 import uuid
 
 _DEFAULT_INSTANCE = "default"
+DEFAULT_OVERVIEW_SCOPE = "__default__"
 _INSTANCES_KEY = "instances"
 _CROSSWATCH_PROFILE_ROOT = "profiles"
 _USER_PROFILES_KEY = "user_profiles"
@@ -136,6 +137,12 @@ def normalize_user_profile_id(v: Any) -> str:
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", raw):
         return ""
     return raw
+
+
+def normalize_overview_scope(v: Any) -> str:
+    if str(v or "").strip().lower() == DEFAULT_OVERVIEW_SCOPE:
+        return DEFAULT_OVERVIEW_SCOPE
+    return normalize_user_profile_id(v)
 
 
 def normalize_provider_instance_uid(v: Any) -> str:
@@ -867,6 +874,10 @@ def user_profile_for_instance(cfg: Mapping[str, Any], provider_name: Any, instan
 
 
 def instances_for_user_profile(cfg: Mapping[str, Any], profile_id: Any) -> dict[str, list[str]]:
+    if normalize_overview_scope(profile_id) == DEFAULT_OVERVIEW_SCOPE:
+        from .modules_registry import provider_names
+
+        return {provider_display_key(provider): [_DEFAULT_INSTANCE] for provider in provider_names()}
     pid = normalize_user_profile_id(profile_id)
     if not pid:
         return {}

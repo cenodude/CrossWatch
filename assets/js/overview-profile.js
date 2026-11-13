@@ -2,6 +2,8 @@
 /* CrossWatch overview account/profile scope */
 (function () {
   const DEFAULT_INSTANCE = "default";
+  const DEFAULT_SCOPE = "__default__";
+  const DEFAULT_SCOPE_LABEL = "Admin / Default instances";
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[m]));
   const providerKey = (value) => window.CW?.ProviderMeta?.keyOf?.(value) || String(value || "").trim().toUpperCase();
@@ -34,7 +36,7 @@
   function storedId() {
     try {
       const id = String(localStorage.getItem(STORE_KEY) || "").trim().toLowerCase();
-      return /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) ? id : "";
+      return id === DEFAULT_SCOPE || /^[a-z0-9][a-z0-9-]{0,63}$/.test(id) ? id : "";
     } catch { return ""; }
   }
 
@@ -50,10 +52,12 @@
   }
 
   function activeFilter() {
+    if (activeId === DEFAULT_SCOPE) return Object.fromEntries((window.CW?.ProviderMeta?.order || []).map((provider) => [providerKey(provider), [DEFAULT_INSTANCE]]));
     return normalizeInstances(activeProfile()?.instances || {});
   }
 
   function matchesEndpoint(provider, instance) {
+    if (activeId === DEFAULT_SCOPE) return !!providerKey(provider) && instanceKey(instance) === DEFAULT_INSTANCE;
     const filter = activeFilter();
     if (!Object.keys(filter).length) return true;
     const prov = providerKey(provider);
@@ -63,13 +67,14 @@
   function instanceForProvider(provider) {
     const prov = providerKey(provider);
     if (!prov) return "";
+    if (activeId === DEFAULT_SCOPE) return DEFAULT_INSTANCE;
     const values = activeFilter()[prov] || [];
     return values.length ? instanceKey(values[0]) : "";
   }
 
   function matchesSources(value) {
     const filter = activeFilter();
-    if (!Object.keys(filter).length) return true;
+    if (activeId !== DEFAULT_SCOPE && !Object.keys(filter).length) return true;
     const rows = [];
     const push = (provider, instance = DEFAULT_INSTANCE) => {
       const prov = providerKey(provider);
@@ -87,7 +92,7 @@
         else push(provider);
       }
     }
-    return rows.some((row) => (filter[row.provider] || []).includes(row.instance));
+    return rows.some((row) => matchesEndpoint(row.provider, row.instance));
   }
 
   function emit() {
@@ -179,7 +184,7 @@
   function setActive(id) {
     if (!isAdmin) return false;
     const next = String(id || "").trim();
-    const valid = next && profiles.some((row) => row.id === next) ? next : "";
+    const valid = next === DEFAULT_SCOPE || (next && profiles.some((row) => row.id === next)) ? next : "";
     if (valid === activeId) return false;
     activeId = valid;
     storeId(valid);
@@ -194,14 +199,14 @@
     if (!host || !select) return;
     host.classList.toggle("hidden", !isAdmin);
     if (!isAdmin) return;
-    const rows = profiles.length ? [{ id: "", label: "All profiles" }, ...profiles] : [{ id: "", label: "No profiles" }];
+    const rows = [{ id: "", label: "All profiles" }, { id: DEFAULT_SCOPE, label: DEFAULT_SCOPE_LABEL }, ...profiles];
     const signature = rows.map((row) => `${row.id}::${row.label}`).join("|");
     if (select.dataset.signature !== signature) {
       select.innerHTML = rows.map((row) => `<option value="${esc(row.id)}">${esc(row.label)}</option>`).join("");
       select.dataset.signature = signature;
     }
     select.value = activeId;
-    select.disabled = profiles.length === 0;
+    select.disabled = false;
     if (!select.dataset.bound) {
       select.dataset.bound = "1";
       select.addEventListener("change", () => setActive(select.value));
@@ -279,7 +284,7 @@
       } else {
         profiles = [];
       }
-      if (isAdmin && activeId && !profiles.some((row) => row.id === activeId)) {
+      if (isAdmin && activeId && activeId !== DEFAULT_SCOPE && !profiles.some((row) => row.id === activeId)) {
         activeId = "";
         storeId("");
       }
@@ -302,7 +307,8 @@
     get profiles() { return profiles.slice(); },
     get isAdmin() { return isAdmin; },
     get id() { return activeId; },
-    get label() { return activeProfile()?.label || ""; },
+    get isDefaultView() { return isAdmin && activeId === DEFAULT_SCOPE; },
+    get label() { return activeId === DEFAULT_SCOPE ? DEFAULT_SCOPE_LABEL : activeProfile()?.label || ""; },
     get profile() { return activeProfile(); },
     get filter() { return activeFilter(); },
     instanceForProvider,

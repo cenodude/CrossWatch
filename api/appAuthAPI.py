@@ -25,7 +25,7 @@ from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config, save_conf
 from cw_platform.access_policy import clean_managed_permissions
 from cw_platform.profile_preferences import clean_user_preferences
 from cw_platform.event_archive.audit import record_audit
-from cw_platform.provider_instances import list_user_profiles, normalize_user_profile_id
+from cw_platform.provider_instances import list_user_profiles, normalize_overview_scope, normalize_user_profile_id
 
 __all__ = [
     "router",
@@ -670,7 +670,7 @@ def is_admin_authenticated(cfg: dict[str, Any], token: str | None) -> bool:
 
 
 def effective_user_profile_id(cfg: dict[str, Any], token: str | None, requested_profile: Any = "") -> str:
-    req = normalize_user_profile_id(requested_profile)
+    req = normalize_overview_scope(requested_profile)
     if not auth_required(cfg):
         return req
     user = current_user(cfg, token)
@@ -688,7 +688,7 @@ def effective_request_profile_id(cfg: dict[str, Any], request: Any, requested_pr
         user = None
     if isinstance(user, dict):
         if user.get("is_admin"):
-            return normalize_user_profile_id(requested_profile)
+            return normalize_overview_scope(requested_profile)
         return normalize_user_profile_id(user.get("profile_id")) or "__none__"
     token = request.cookies.get(COOKIE_NAME) if request is not None else None
     return effective_user_profile_id(cfg, token, requested_profile)

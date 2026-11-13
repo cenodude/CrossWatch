@@ -864,6 +864,11 @@
       if (label) label.textContent = running ? (pending ? "Cancelling…" : "Cancel") : "Synchronize";
       runButton.title = running ? "Cancel the running synchronization" : "Run synchronization";
       runButton.disabled = running ? pending : !canRun;
+      if (window.syncBar?.isWaiting?.() || (window.syncBar?.isRunBusy?.() && !window.syncBar?.isRunning?.())) {
+        runButton.disabled = true;
+        if (label) label.textContent = window.syncBar?.isWaiting?.() ? "Waiting" : "Synchronize";
+        runButton.title = window.syncBar?.isWaiting?.() ? "Waiting for your sync pairs" : "Synchronization is already running";
+      }
     }
     byId("cw-sync-split")?.classList.toggle("running", running);
     byId("cw-sync-split")?.classList.toggle("cancelling", pending);

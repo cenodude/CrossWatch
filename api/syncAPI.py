@@ -8,6 +8,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from datetime import datetime, timezone, date
 from contextlib import contextmanager
+from copy import deepcopy
 
 import dataclasses as _dc, importlib, inspect, json, os, re, shlex, shutil, threading, time, uuid
 import asyncio
@@ -16,9 +17,9 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, sync_provider_supports_feature
-from cw_platform.access_policy import filter_pairs_for_user, managed_profile_id, managed_profile_instances, pair_ids_for_user, request_user, requested_assign_profile, user_can_access_pair
+from cw_platform.access_policy import filter_pairs_for_profile, filter_pairs_for_user, managed_profile_id, managed_profile_instances, pair_ids_for_user, request_user, requested_assign_profile, user_can_access_pair
 from cw_platform.identity_links import clean_identity_map
-from cw_platform.provider_instances import list_user_profiles, normalize_user_profile_id
+from cw_platform.provider_instances import DEFAULT_OVERVIEW_SCOPE, list_user_profiles, normalize_overview_scope, normalize_user_profile_id
 from cw_platform.local_db.legacy_files import LAST_SYNC_JSON
 from cw_platform.memory_release import clear_caches, release_memory
 from cw_platform.reason_labels import friendly_reason, reason_hint, reason_message
@@ -32,6 +33,7 @@ from cw_platform.run_control import (
 )
 from cw_platform.value_coercion import coerce_bool
 from services.scheduler_webhooks import notify_scheduler_webhook, resolve_completion_event
+from services import run_summary
 
 __all__ = ["router", "_is_sync_running", "_load_state", "_find_state_path"]
 
@@ -388,7 +390,7 @@ def _summary_set_timeline(flag: str, value: bool = True) -> None:
 
 def _summary_snapshot() -> dict[str, Any]:
     with SUMMARY_LOCK:
-        return dict(SUMMARY)
+        return deepcopy(SUMMARY)
 
 def _epoch_seconds(v: Any) -> int | None:
     if v in (None, ""):
@@ -452,7 +454,7 @@ def _latest_report_summary() -> dict[str, Any] | None:
         from cw_platform.config_base import CONFIG
         from cw_platform.local_db.sync_reports import list_reports
 
-        rows = list_reports(CONFIG, limit=1, feature_keys=FEATURE_KEYS)
+        rows = list_reports(CONFIG, limit=1, feature_keys=FEATURE_KEYS, include_pair_summaries=True)
     except Exception:
         rows = []
     if not rows:
@@ -519,7 +521,7 @@ def _summary_snapshot_for_response() -> dict[str, Any]:
         if not _summary_has_run(SUMMARY):
             SUMMARY.clear()
             SUMMARY.update(persisted)
-        return dict(SUMMARY)
+        return deepcopy(SUMMARY)
 
 def _summary_stream_replay_start_index(buf: Sequence[Any], snap: Mapping[str, Any], *, log_visible: bool = True) -> int:
     if not log_visible:
@@ -1027,6 +1029,11 @@ def _run_pairs_thread(run_id: str, overrides: dict | None = None, *, interactive
                 and (not pair_scope_ids or str(p.get("id") or "") in pair_scope_ids)
             ]
 
+            from cw_platform.orchestrator._pairs import expand_sync_user_pairs
+            summary_pairs = expand_sync_user_pairs({**cfg, "pairs": [p for p in pairs_for_run if coerce_bool(p.get("enabled", True), True)]})
+            with SUMMARY_LOCK:
+                run_summary.initialize(SUMMARY, summary_pairs)
+
             for pair in pairs_for_run:
                 if not coerce_bool(pair.get("enabled", True), True):
                     continue
@@ -1206,19 +1213,20 @@ def _run_fraction(phase: Mapping[str, Any]) -> float:
     earlier = min(features - 1, max(0, _count_of(phase.get("feature_index")) - 1))
     return min(1.0, (max(0, _count_of(phase.get("pair_index")) - 1) + (earlier + step) / features) / pairs)
 
-def _track_apply_progress(ev: str, o: Mapping[str, Any]) -> None:
+def _track_apply_progress(ev: str, o: Mapping[str, Any], target: dict[str, Any] | None = None) -> None:
     if ev not in _APPLY_TRACKED_EVENTS:
         return
     with SUMMARY_LOCK:
-        phase = SUMMARY.setdefault("_phase", {}).setdefault("apply", {"total": 0, "done": 0, "final": False})
+        target = SUMMARY if target is None else target
+        phase = target.setdefault("_phase", {}).setdefault("apply", {"total": 0, "done": 0, "final": False})
         if ev == "run:pair":
-            SUMMARY["current_pair"] = {key: o[key] for key in ("pair_id", "src", "dst", "src_instance", "dst_instance", "mode") if key in o}
+            target["current_pair"] = {key: o[key] for key in ("pair_id", "src", "dst", "src_instance", "dst_instance", "mode") if key in o}
             features = o.get("features")
             phase.update(pair_index=_count_of(o.get("i")), pair_count=_count_of(o.get("n")), feature_count=len(features) if isinstance(features, list) else 1,
                          feature_index=0, step_planned=0, step_settled=0, step_finished=False, current=0)
         elif ev == "run:feature":
-            if isinstance(SUMMARY.get("current_pair"), dict):
-                SUMMARY["current_pair"]["feature"] = str(o.get("feature") or "")
+            if isinstance(target.get("current_pair"), dict):
+                target["current_pair"]["feature"] = str(o.get("feature") or "")
             phase.update(feature_index=_count_of(o.get("i")), feature_count=_count_of(o.get("n")), step_planned=0, step_settled=0, step_finished=False, current=0)
         elif ev == "feature:done":
             phase["step_finished"] = True
@@ -1249,6 +1257,10 @@ def _parse_sync_line(line: str) -> None:
         if isinstance(o, dict) and o.get("event"):
             ev = str(o.get("event") or "")
             _track_apply_progress(ev, o)
+            with SUMMARY_LOCK:
+                pair_summary = run_summary.record_event(SUMMARY, o, merge=_merge_spotlight_items, resolve=_spotlight_items_from_keys)
+            if pair_summary is not None:
+                _track_apply_progress(ev, {**o, "i": 1, "n": 1} if ev == "run:pair" else o, pair_summary)
             if ev == "snapshot:start":
                 _summary_set_timeline("pre", True)
             elif ev in ("apply:add:start", "apply:update:start", "apply:remove:start"):
@@ -1423,6 +1435,8 @@ def _parse_sync_line(line: str) -> None:
     m = re.search(r"\[SYNC\]\s+exit code:\s+(?P<code>\d+)", s)
     if m:
         code = int(m.group("code"))
+        with SUMMARY_LOCK:
+            run_summary.finish(SUMMARY, failed=code != 0, cancelled=bool(SUMMARY.get("cancelled")))
         _summary_set("exit_code", code)
         started = SUMMARY.get("raw_started_ts")
         if started:
@@ -3061,34 +3075,29 @@ def _empty_summary_for_pairs(pairs: Sequence[Mapping[str, Any]]) -> dict[str, An
     }
 
 
-def _scope_summary_for_user(cfg: dict[str, Any], user: Mapping[str, Any] | None, snap: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(user, Mapping) or bool(user.get("is_admin")):
-        return snap
-    pairs = filter_pairs_for_user(cfg, user, [pair for pair in (cfg.get("pairs") or []) if isinstance(pair, dict)])
-    allowed_ids = {str(pair.get("id") or "").strip() for pair in pairs if str(pair.get("id") or "").strip()}
-    scope_raw = snap.get("pair_scope_ids")
-    scope_ids = {str(value or "").strip() for value in scope_raw if str(value or "").strip()} if isinstance(scope_raw, list) else set()
-    if scope_ids and not (scope_ids & allowed_ids):
-        return _empty_summary_for_pairs(pairs)
-    if not scope_ids and (snap.get("run_id") or snap.get("running")):
-        return _empty_summary_for_pairs(pairs)
-    out = dict(snap)
-    current_pair = out.get("current_pair")
-    if isinstance(current_pair, Mapping) and str(current_pair.get("pair_id") or "") not in allowed_ids:
-        out["current_pair"] = None
+def _scope_summary_for_user(cfg: dict[str, Any], user: Mapping[str, Any] | None, snap: dict[str, Any],
+                            requested_profile: str = "", *, global_progress: bool = False) -> dict[str, Any]:
+    admin = not isinstance(user, Mapping) or bool(user.get("is_admin"))
+    defaults = admin and normalize_overview_scope(requested_profile) == DEFAULT_OVERVIEW_SCOPE
+    if admin and not defaults:
+        return {key: value for key, value in snap.items() if key not in {"pair_summaries", "pair_attribution_complete", "_active_pair_summary"}}
+    from cw_platform.orchestrator._pairs import expand_sync_user_pairs
+
+    candidates = [pair for pair in cfg.get("pairs", []) if isinstance(pair, dict)]
+    parents = filter_pairs_for_profile(cfg, DEFAULT_OVERVIEW_SCOPE, candidates) if defaults else filter_pairs_for_user(cfg, user, candidates)
+    pairs = [dict(pair) for pair in expand_sync_user_pairs({**cfg, "pairs": parents})]
+    scope = DEFAULT_OVERVIEW_SCOPE if defaults else managed_profile_id(user) or "__none__"
+    out = run_summary.scoped_summary(snap, pairs, scope=scope, global_progress=defaults or global_progress, merge=_merge_spotlight_items)
     out["enabled"] = _enabled_from_pairs(pairs)
-    out["pair_scope_ids"] = sorted(scope_ids & allowed_ids) if scope_ids else sorted(allowed_ids)
-    allowed_providers: set[str] = set()
-    for pair in pairs:
-        for key in ("source", "target"):
-            prov = str(pair.get(key) or "").strip().upper()
-            if prov:
-                allowed_providers.add(prov)
-    for key in ("provider_counts", "provider_counts_pre", "provider_counts_post"):
-        counts = out.get(key)
-        if isinstance(counts, Mapping):
-            out[key] = {str(k).upper(): v for k, v in counts.items() if str(k).strip().upper() in allowed_providers}
     return out
+
+
+def _scope_request_summary(cfg: dict[str, Any], request: Request | None, snap: dict[str, Any]) -> dict[str, Any]:
+    user = _request_user(request)
+    requested = str(request.query_params.get("user_profile") or "") if request is not None else ""
+    original = getattr(getattr(request, "state", None), "cw_user", None)
+    admin = isinstance(original, Mapping) and bool(original.get("is_admin"))
+    return _scope_summary_for_user(cfg, user, snap, requested, global_progress=admin)
 
 # Trigger sync run endpoint
 @router.post("/run")
@@ -3248,7 +3257,6 @@ def api_run_summary(request: Request = cast(Request, None)) -> JSONResponse:
         cfg = _env()[0]()
     except Exception:
         cfg = {}
-    user = _request_user(request)
     snap0 = _summary_snapshot_for_response()
     snap = dict(snap0 or {})
     snap.setdefault("features", {})
@@ -3270,7 +3278,7 @@ def api_run_summary(request: Request = cast(Request, None)) -> JSONResponse:
     except Exception:
         pass
 
-    return JSONResponse(_scope_summary_for_user(cfg, user, snap))
+    return JSONResponse(_scope_request_summary(cfg, request, snap))
 
 @router.get("/run/unresolved")
 def api_run_unresolved(request: Request = cast(Request, None)) -> JSONResponse:
@@ -3325,13 +3333,12 @@ def api_run_summary_file(request: Request = cast(Request, None)) -> Response:
         cfg = _env()[0]()
     except Exception:
         cfg = {}
-    user = _request_user(request)
     snap0 = _summary_snapshot_for_response()
     snap = dict(snap0 or {})
     snap.setdefault("features", {})
     snap.setdefault("enabled", _lanes_enabled_defaults())
 
-    js = json.dumps(_scope_summary_for_user(cfg, user, snap), indent=2)
+    js = json.dumps(_scope_request_summary(cfg, request, snap), indent=2)
     return Response(
         content=js,
         media_type="application/json",
@@ -3346,12 +3353,22 @@ _SSE_HEARTBEAT_COMMENT = ": keep-alive\n\n"
 async def api_run_summary_stream(request: Request) -> StreamingResponse:
     import html, re
     TAG_RE = re.compile(r"<[^>]+>")
-    try:
-        cfg_for_scope = _env()[0]()
-    except Exception:
-        cfg_for_scope = {}
     user_for_scope = _request_user(request)
     managed_scope = bool(user_for_scope and not user_for_scope.get("is_admin"))
+    scoped_view = managed_scope or normalize_overview_scope(request.query_params.get("user_profile")) == DEFAULT_OVERVIEW_SCOPE
+
+    def snapshot_for_view(hydrate: bool) -> dict[str, Any]:
+        try:
+            cfg = _env()[0]()
+        except Exception:
+            cfg = {}
+        snap = _summary_snapshot_for_response()
+        if hydrate and not scoped_view:
+            try:
+                _hydrate_summary_spotlights_from_log(snap)
+            except Exception:
+                pass
+        return _scope_request_summary(cfg, request, snap)
 
     def dehtml(s: str) -> str:
         return html.unescape(TAG_RE.sub("", s or ""))
@@ -3416,10 +3433,10 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
         LOG_BUFFERS = _rt()[0]
         try:
             initial_buf = LOG_BUFFERS.get("SYNC") or []
-            initial_log_visible = (not managed_scope) or run_log_visible_to_user(cfg_for_scope, user_for_scope)
+            initial_log_visible = not scoped_view
             last_idx = _summary_stream_replay_start_index(
                 initial_buf,
-                _summary_snapshot_for_response(),
+                await asyncio.to_thread(_summary_snapshot_for_response),
                 log_visible=initial_log_visible,
             )
         except Exception:
@@ -3430,7 +3447,7 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
                 break
             emitted = False
             buf_len = 0
-            log_visible = (not managed_scope) or run_log_visible_to_user(cfg_for_scope, user_for_scope)
+            log_visible = not scoped_view
             try:
                 buf = LOG_BUFFERS.get("SYNC") or []
                 buf_len = len(buf)
@@ -3453,19 +3470,13 @@ async def api_run_summary_stream(request: Request) -> StreamingResponse:
             except Exception:
                 pass
 
-            snap = dict(_summary_snapshot_for_response() or {})
-            snap.setdefault("features", {})
-            snap.setdefault("enabled", _lanes_enabled_defaults())
-            hydrate_sig = (buf_len, (snap.get("timeline", {}) or {}).get("done"))
-            if hydrate_sig != last_hydrate_sig:
-                last_hydrate_sig = hydrate_sig
-                try:
-                    _hydrate_summary_spotlights_from_log(snap)
-                except Exception:
-                    pass
-
-            snap = _scope_summary_for_user(cfg_for_scope, user_for_scope, snap)
+            snap = await asyncio.to_thread(snapshot_for_view, buf_len != last_hydrate_sig)
+            last_hydrate_sig = buf_len
             key = (
+                snap.get("waiting"),
+                snap.get("run_busy"),
+                snap.get("run_id"),
+                snap.get("details_available"),
                 snap.get("running"),
                 json.dumps(snap.get("current_pair"), sort_keys=True),
                 snap.get("exit_code"),

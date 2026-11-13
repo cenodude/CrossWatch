@@ -299,7 +299,7 @@
   }
 
   function widgetPageStep(key) {
-    if (profileGridLimitApplies(key)) return GRID_PAGE_STEP;
+    if (profileGridLimitApplies(key)) return 3;
     if (effectiveSize(key) === "large") return widgetView(key) === "media" ? MEDIA_PAGE_STEP : (key === "ratings" ? RATING_PAGE_STEP : PAGE_STEP);
     const step = widgetView(key) === "grid" ? GRID_PAGE_STEP : (key === "ratings" ? RATING_PAGE_STEP : PAGE_STEP);
     return effectiveSpan(key) === 2 ? step * 2 : step;
@@ -310,7 +310,7 @@
   }
 
   function widgetMaxItems(key) {
-    return profileGridLimitApplies(key) ? GRID_PAGE_STEP : MAX_WIDGET_ITEMS;
+    return profileGridLimitApplies(key) ? 3 : MAX_WIDGET_ITEMS;
   }
 
   function widgetTotal(key) {
@@ -1464,6 +1464,24 @@
       </${tag}>`;
   }
 
+  function profileWidgetCard(item, kind, index) {
+    const playlist = kind === "playlists";
+    const title = item?.label || item?.title || "Untitled";
+    const age = relTime(item?.sort_epoch || item?.captured_at || item?.watched_at || item?.ts);
+    const meta = playlist ? [item?.type || "Sync", item?.status || "completed", item?.details, age] : [typeLabel(item), kind === "history" ? item?.year : "", kind === "scrobble" ? activityLabel(item) : "", kind === "progress" && Number.isFinite(Number(item?.progress)) ? `${Math.round(Number(item.progress))}% watched` : "", age];
+    const art = playlist ? "" : backdropPoster(item, null, "w300") || poster(item);
+    const route = kind === "scrobble" ? {html:sourceIcons(scrobbleRouteRows(item), 8, iconActions(kind)),route:scrobbleRouteIcons(item).route} : {html:sourceIcons(item?.sources, 3, iconActions(kind)),route:sourceRouteTitle(item?.sources)};
+    const tag = playlist ? "div" : "button";
+    return `<${tag} class="cw-hub-widget-row${playlist ? " cw-hub-widget-row--plain" : ""}"${playlist ? "" : ` type="button"${widgetItemAttrs(kind, index)}`}>
+      ${art ? `<img class="cw-hub-widget-art" src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">` : ""}
+      <span class="cw-hub-widget-copy">
+        <span class="cw-hub-widget-title"><strong>${esc(title)}</strong>${kind === "ratings" && item?.rating != null ? `<span class="cw-hub-widget-rating" aria-label="Rating ${esc(item.rating)}">${esc(item.rating)}<small>/10</small></span>` : ""}</span>
+        <span class="cw-hub-widget-meta">${esc(meta.filter(Boolean).join(" · "))}</span>
+        ${route.html ? `<span class="cw-hub-widget-providers cw-history-sources" aria-label="${esc(route.route || "Providers")}">${route.html}</span>` : ""}
+      </span>
+    </${tag}>`;
+  }
+
   function activityLabel(item) {
     const method = String(item?.method || "").toLowerCase();
     const event = String(item?.event || "").toLowerCase();
@@ -1801,8 +1819,9 @@
   };
 
   function historyPageLink(kind) {
-    const link = HISTORY_PAGE_LINKS[kind];
+    const link = HISTORY_PAGE_LINKS[kind] || (ON_PROFILE_PAGE ? {progress:{href:"/profile#playback",label:"View all progress"},playlists:{href:"/#playlists",label:"View all playlists"}}[kind] : null);
     if (!link || !(ON_PROFILE_PAGE || document.getElementById("cw-nav-profile-link"))) return "";
+    if (ON_PROFILE_PAGE) return `<a class="cw-hub-widget-more" href="${esc(link.href)}" aria-label="${esc(link.label)}">View all<span aria-hidden="true"> →</span></a>`;
     return `<a class="cw-dash-see-more cw-dash-history-link" href="${esc(link.href)}">
         <span class="cw-dash-see-more-label">${esc(link.label)}</span>
         <span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span>
@@ -1860,7 +1879,9 @@
     def.host?.classList.toggle("cw-widget-view-icon", view === "icon");
     def.host?.classList.toggle("cw-widget-view-media", view === "media");
     def.host?.classList.toggle("cw-widget-view-grid", view === "grid");
-    const cardFn = view === "media" && def.media ? def.media : view === "icon" ? def.icon : def.list;
+    const compact = profileGridLimitApplies(kind);
+    def.host?.classList.toggle("cw-hub-widget-list", compact);
+    const cardFn = compact ? (item, index) => profileWidgetCard(item, kind, index) : view === "media" && def.media ? def.media : view === "icon" ? def.icon : def.list;
     renderPagedList(
       def.host,
       latestItems[kind] || [],
@@ -2251,7 +2272,7 @@
     });
     window.addEventListener("settings-changed", () => markWidgetsDirty(300, { forceConfig: true }));
     window.addEventListener("cw-user-profiles-changed", () => markWidgetsDirty(150, { forceConfig: true, preserve: hasLoaded }));
-    window.addEventListener("cw:overview-profile-changed", () => markWidgetsDirty(0, { preserve: hasLoaded }));
+    window.addEventListener("cw:overview-profile-changed", () => { clearDashboardWidgetState(); markWidgetsDirty(0, { preserve: false }); });
     window.addEventListener("activity-log-cleared", () => markWidgetsDirty(100));
     window.addEventListener("cw:sync-state-cleared", clearDashboardWidgetState);
     window.addEventListener("sync-complete", refreshForSyncComplete);

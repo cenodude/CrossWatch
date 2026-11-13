@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
 from cw_platform.access_policy import request_user, user_can_access_pair, pair_profile_id, profile_allows_pair, profile_instances_map
-from cw_platform.provider_instances import normalize_user_profile_id
+from cw_platform.provider_instances import DEFAULT_OVERVIEW_SCOPE, normalize_overview_scope
 from cw_platform.config_base import load_config
 from cw_platform.id_map import canonical_key, coalesce_ids, typed_keys_for_item, ID_KEYS
 from cw_platform.value_coercion import coerce_bool
@@ -151,7 +151,7 @@ def launch(session, task, *args, applying=False, prepare=None):
 def reviews(request: Request, user_profile: str = Query(default="", max_length=64)):
     cfg = load_config()
     user_id = owner(request)
-    profile = normalize_user_profile_id(user_profile)
+    profile = normalize_overview_scope(user_profile)
     if user_profile.strip() and not profile:
         raise HTTPException(400, "Invalid profile")
     instances = profile_instances_map(cfg, profile) if profile else {}
@@ -167,7 +167,7 @@ def reviews(request: Request, user_profile: str = Query(default="", max_length=6
                 continue
             if profile:
                 assigned = pair_profile_id(pair)
-                matches = assigned == profile if assigned else profile_allows_pair(instances, pair)
+                matches = assigned == profile if assigned and profile != DEFAULT_OVERVIEW_SCOPE else profile_allows_pair(instances, pair)
                 if not matches:
                     continue
             available.append(dict(

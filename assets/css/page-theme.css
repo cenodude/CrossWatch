@@ -8,6 +8,8 @@ body.cw-profile-page .cw-profile-chips::before{content:"\00b7";color:var(--cw-th
 @media(max-width:760px){.cw-media-hero-identity::before{content:none}}
 .cw-media-hero-identity{color:var(--cw-theme-muted);font-size:13px;font-weight:400}
 .cw-media-hero-avatar{border-radius:50%;background:var(--cw-theme-surface);color:var(--cw-theme-muted)}
+a.cw-media-hero-avatar{text-decoration:none;cursor:pointer}
+a.cw-media-hero-avatar:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .cw-media-hero-context:focus-visible{outline:2px solid var(--profile-accent);outline-offset:6px;border-radius:4px}
 body.cw-profile-page :is(#profile-display-name,.cw-profile-username,.cw-profile-chip){font-size:13px;font-weight:400;color:var(--profile-muted)}
 body.cw-profile-page .cw-profile-chip :is(strong,small){font-size:12px;font-weight:400}
@@ -96,15 +98,31 @@ body.cw-profile-page .cw-profile-activity-row:hover{background:var(--cw-page-hov
 body.cw-profile-page .cw-profile-activity-row.is-bad strong{color:var(--profile-danger)}
 body.cw-profile-page .cw-profile-activity-row.is-warn strong{color:var(--cw-theme-warning)}
 .cw-profile-activity-row strong{color:var(--profile-text);font-size:14px;font-weight:500}
-.cw-profile-activity-chip{border-radius:999px;background:transparent;color:var(--profile-muted);font-size:11.5px;font-weight:400}
-.cw-profile-activity-chip.is-primary{color:var(--profile-muted);background:transparent}
+.cw-profile-activity-chip{background:transparent;color:var(--profile-muted);font-size:12px;font-weight:400}
 .cw-profile-activity-provider img{filter:drop-shadow(0 1px 2px rgba(0,0,0,.38))}
 .cw-profile-activity-provider span{font-weight:400}
 .cw-profile-activity-route-arrow{color:var(--profile-muted);font-size:15px;font-weight:400}
 .cw-profile-activity-row small{color:var(--profile-muted);font-size:11.5px;font-weight:400}
 .cw-profile-activity-count{color:var(--profile-muted);font-size:11px;font-weight:400}
+.cw-profile-activity-status{color:var(--profile-muted);font-size:11px;font-weight:400}
+.cw-profile-activity-row.is-bad .cw-profile-activity-status{color:var(--profile-danger)}
+.cw-profile-activity-row.is-warn .cw-profile-activity-status,.cw-profile-activity-schedule.is-warn{color:var(--cw-theme-warning)}
+.cw-profile-activity-row.is-live .cw-profile-activity-status{color:var(--profile-accent)}
+.cw-profile-activity-schedule{color:var(--profile-muted);font-size:12px;font-weight:400}
 .cw-hub-stats{border-top:1px solid var(--cw-theme-border);color:var(--profile-muted);font-size:12px;font-weight:400}
 .cw-hub-stat strong{font-size:15px;font-weight:500;color:var(--profile-text)}
+body.cw-profile-page #dashboard-widgets-card .cw-dash-widget{--dash-text:var(--profile-text);--dash-muted:var(--profile-muted);--dash-icon:var(--profile-muted);border:0;border-radius:0;background:transparent;box-shadow:none;backdrop-filter:none;-webkit-backdrop-filter:none;color:var(--profile-text)}
+body.cw-profile-page #dashboard-widgets-card .cw-dash-title-row h3{font-size:18px;font-weight:500;color:var(--profile-text)}
+body.cw-profile-page #dashboard-widgets-card .cw-dash-widget-head{border:0}
+.cw-hub-widget-row{border:0;border-bottom:1px solid var(--cw-theme-border);border-radius:0;background:transparent;color:var(--profile-text);font:inherit;box-shadow:none}
+.cw-hub-widget-row:hover{background:var(--cw-page-hover-bg)}
+.cw-hub-widget-art{border-radius:6px;background:var(--cw-theme-surface)}
+.cw-hub-widget-title strong{font-size:14px;font-weight:500;line-height:1.4}
+.cw-hub-widget-rating{font-size:14px;font-weight:500;color:var(--profile-text)}
+.cw-hub-widget-rating small,.cw-hub-widget-meta{font-size:12px;font-weight:400;color:var(--profile-muted)}
+.cw-hub-widget-more{color:var(--profile-accent);font-size:12px;font-weight:400;text-decoration:none}
+.cw-hub-widget-more:hover{text-decoration:underline}
+.cw-hub-widget-row:focus-visible,.cw-hub-widget-more:focus-visible{outline:2px solid var(--profile-accent);outline-offset:2px}
 body.cw-profile-page :is(.cw-hub-poster,.cw-cw-card,.cw-profile-activity-row,.cw-hub-section-head a,.cw-hub-section-head button,.cw-profile-tabs button,.cw-profile-last):focus-visible{outline:2px solid var(--profile-accent);outline-offset:3px}
 /* Legacy page aliases point to the shared palette while their layouts migrate. */
 html[data-cw-theme] :is(#page-editor .cw-root, #page-snapshots, #page-playlists),html[data-cw-theme] :is(#page-tracker .cw-root, #page-snapshots, #page-playlists) {
