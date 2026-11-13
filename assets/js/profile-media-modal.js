@@ -19,6 +19,8 @@
   const extraMetadata = new Map();
   let personView = null;
   let collectionView = null;
+  let pendingRender = null;
+  const renderedAttributes = new WeakMap();
 
   const kindOf = (item) => (String(item?.type || item?.media_type || "").toLowerCase() === "movie" ? "movie" : "show");
   const tmdbOf = (item) => String(window.CW?.Meta?.tmdbId?.(item) || item?.tmdb || item?.ids?.tmdb || "").trim();
@@ -104,7 +106,7 @@
     state.actionTargets = Object.fromEntries(keys.map((key, index) => [LIVE_FEATURES[key], results[index]?.rows || []]));
     state.actionOthers = Object.fromEntries(keys.map((key, index) => [LIVE_FEATURES[key], results[index]?.others || []]));
     state.actionPairless = new Set(keys.filter((key, index) => results[index]?.hasPair === false).map((key) => LIVE_FEATURES[key]));
-    if (!personView) render();
+    if (!personView) void scheduleRender();
   }
 
   function actionItem(entry) {
@@ -123,8 +125,8 @@
     const seq = state.seq;
     const presence = await loadPresence(state.item);
     if (seq !== state.seq || root.hidden || personView) return;
-    state.presence = presence;
-    render();
+    if (presence) state.presence = presence;
+    await scheduleRender();
   }
 
   const releaseDate = () => String(state.meta?.release?.date || state.meta?.detail?.release_date || "").slice(0, 10) || null;
@@ -280,6 +282,14 @@
       </section>`;
     document.body.appendChild(root);
     root.addEventListener("click", onClick);
+    root.addEventListener("change", (event) => {
+      if (!event.target.matches?.("[data-mm-season-picker]")) return;
+      state.overviewSeason = Number(event.target.value);
+      state.overviewChosenSeason = state.overviewSeason;
+      state.seasonEpisodesExpanded = false;
+      renderPanel();
+      void loadSeason(state.overviewSeason);
+    });
     root.addEventListener("toggle", (event) => {
       if (event.target.matches?.("[data-mm-providers]") && event.target.isConnected) state.providersExpanded = event.target.open;
       if (!event.target.matches?.("[data-mm-collection]") || !event.target.isConnected) return;
@@ -365,7 +375,7 @@
     }
     if (seq !== state.seq) return;
     state.progress = rows;
-    if (state.tab === "overview") renderPanel();
+    if (state.tab === "overview") await scheduleRender(true);
   }
 
   let compactMediaCard = document.documentElement.dataset.cwMediaCard === "compact";
@@ -410,10 +420,15 @@
       statusBusy: false,
       seasons: sameTitle ? new Map([...state.seasons].filter(([, data]) => !data.loading && !data.error)) : new Map(),
       season: null,
+      overviewSeason: null,
+      overviewChosenSeason: null,
+      seasonPickerOpen: false,
+      seasonEpisodesExpanded: false,
       episode: null,
       progress: null,
     });
     if (root.hidden) state.lastFocus = document.activeElement;
+    root.querySelectorAll("details[open]").forEach((details) => { details.open = false; });
     root.hidden = false;
     document.documentElement.classList.add("cw-mm-open");
     root.querySelector(".cw-mm-hero-art").style.backgroundImage = `url("${backdropUrl(item)}")`;
@@ -427,7 +442,7 @@
         if (seq !== state.seq || root.hidden) return;
         state.meta = meta || state.meta;
         state.loading = false;
-        render();
+        void scheduleRender();
       }),
       loadPresence(item).then((presence) => {
         if (seq !== state.seq || root.hidden) return;
@@ -437,9 +452,10 @@
           const latest = watchedEpisodes().sort((a, b) => Number(b.season) - Number(a.season) || Number(b.episode) - Number(a.episode))[0];
           if (latest) void loadSeason(latest.season);
         }
-        render();
+        void scheduleRender();
       }),
     ]);
+    if (seq === state.seq && !root.hidden) await scheduleRender();
     return true;
   }
 
@@ -450,7 +466,7 @@
     const tmdb = String(data.title?.art?.tmdb || data.title?.ids?.tmdb || "");
     if (tmdb && tmdb !== tmdbOf(state.item)) return;
     state.tracker.data = data;
-    if (!personView) render();
+    if (!personView) void scheduleRender();
   }
 
   function close() {
@@ -465,18 +481,82 @@
     if (focus && typeof focus.focus === "function") focus.focus({ preventScroll: true });
   }
 
+  function scheduleRender(panelOnly = false) {
+    if (pendingRender?.seq === state.seq) {
+      pendingRender.panelOnly &&= panelOnly;
+      return pendingRender.promise;
+    }
+    const update = { seq: state.seq, panelOnly };
+    pendingRender = update;
+    update.promise = new Promise((resolve) => {
+      window.requestAnimationFrame(() => {
+        if (pendingRender === update) pendingRender = null;
+        if (update.seq === state.seq && root && !root.hidden) {
+          if (update.panelOnly) renderPanel();
+          else render();
+        }
+        resolve();
+      });
+    });
+    return update.promise;
+  }
+
+  function renderKey(node) {
+    if (node.nodeType !== 1) return node.nodeName;
+    const attrs = renderedAttributes.get(node) || new Map([...node.attributes].map(({ name, value }) => [name, value]));
+    const identity = attrs.get("id") || attrs.get("data-mm-key") || [...attrs].filter(([name]) => /^data-(mm-|ia-)/.test(name)).map(([name, value]) => `${name}:${value}`).join("|") || attrs.get("data-src") || attrs.get("src") || attrs.get("href") || (attrs.get("class") || "").split(" ")[0];
+    return `${node.nodeName}:${identity}`;
+  }
+
+  function patchChildren(host, source) {
+    const available = new Map();
+    for (const child of host.childNodes) {
+      const key = renderKey(child);
+      if (!available.has(key)) available.set(key, []);
+      available.get(key).push(child);
+    }
+    let cursor = host.firstChild;
+    for (const next of [...source.childNodes]) {
+      const current = available.get(renderKey(next))?.shift() || next.cloneNode(false);
+      if (current !== cursor) host.insertBefore(current, cursor);
+      if (current.nodeType === 1) {
+        const previous = renderedAttributes.get(current) || new Map([...current.attributes].map(({ name, value }) => [name, value]));
+        const attributes = new Map([...next.attributes].map(({ name, value }) => [name, value]));
+        for (const [name] of previous) if (!attributes.has(name)) current.removeAttribute(name);
+        for (const [name, value] of attributes) if (previous.get(name) !== value) current.setAttribute(name, value);
+        if (current.tagName === "OPTION" && previous.has("selected") !== attributes.has("selected")) current.selected = attributes.has("selected");
+        renderedAttributes.set(current, attributes);
+        patchChildren(current, next);
+      } else if (current.nodeValue !== next.nodeValue) current.nodeValue = next.nodeValue;
+      cursor = current.nextSibling;
+    }
+    for (const children of available.values()) for (const child of children) child.remove();
+  }
+
+  function patchContent(host, html) {
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const body = root?.querySelector(".cw-mm-body");
+    const scroll = body?.scrollTop;
+    const focused = document.activeElement;
+    patchChildren(host, template.content);
+    if (focused?.isConnected && document.activeElement !== focused) focused.focus({ preventScroll: true });
+    if (body && body.scrollTop !== scroll) body.scrollTop = scroll;
+  }
+
   function render() {
     const body = root?.querySelector(".cw-mm-body");
     if (!body) return;
-    if (personView) { body.innerHTML = personPanel(); return; }
+    if (personView) { patchContent(body, personPanel()); return; }
     if (state.episode) {
-      body.innerHTML = episodeDetail();
+      patchContent(body, episodeDetail());
       return;
     }
-    body.innerHTML = `${tagline()}${top()}${livesCard()}${tabs()}<div class="cw-mm-panel" role="tabpanel">${panel()}</div>`;
+    patchContent(body, `${tagline()}${top()}${livesCard()}${tabs()}<div class="cw-mm-panel" role="tabpanel">${panel()}</div>`);
     const logo = body.querySelector(".cw-mm-title-logo");
     const label = body.querySelector(".cw-mm-title-text");
-    if (logo && label) {
+    if (logo && label && logo.getAttribute("src") !== logo.dataset.src) {
+      label.hidden = false;
       logo.onload = () => { logo.hidden = false; label.hidden = true; };
       logo.onerror = () => { logo.hidden = true; label.hidden = false; };
       logo.src = logo.dataset.src;
@@ -486,11 +566,11 @@
   function renderPanel() {
     if (state.episode || personView) { render(); return; }
     const host = root?.querySelector(".cw-mm-panel");
-    if (host) host.innerHTML = panel();
+    if (host) patchContent(host, panel());
     root?.querySelectorAll("[data-mm-tab]").forEach((btn) => {
       const active = btn.dataset.mmTab === state.tab;
-      btn.classList.toggle("active", active);
-      btn.setAttribute("aria-selected", String(active));
+      if (btn.classList.contains("active") !== active) btn.classList.toggle("active", active);
+      if (btn.getAttribute("aria-selected") !== String(active)) btn.setAttribute("aria-selected", String(active));
     });
   }
 
@@ -750,7 +830,7 @@
       const logoHtml = editable
         ? `<button type="button" class="cw-mm-progress-logo" data-ia-chip data-ia-ref="${esc(refId(row))}" data-ia-play="${esc(row.rid)}" title="${esc(label)}" aria-label="${esc(label)}" aria-haspopup="dialog">${mark}</button>`
         : `<span class="cw-mm-progress-logo">${mark}</span>`;
-      return `<div class="cw-mm-progress-row">
+      return `<div class="cw-mm-progress-row" data-mm-key="${esc(`progress:${refId(row)}:${row.season ?? ""}:${row.episode ?? ""}`)}">
         ${logoHtml}
         <span class="cw-mm-progress-copy"><strong>${esc(heading)}</strong><small>${esc(meta)}</small></span>
         <span class="cw-mm-progress-mini"><i style="width:${value}%"></i></span>
@@ -764,7 +844,7 @@
   function showResumePoints() {
     const rows = Array.isArray(state.progress) ? state.progress : [];
     if (!rows.length) return "";
-    return `<div class="cw-mm-seasons-progress"><h5>Resume points</h5>${progressRowsHtml(rows, true)}</div>`;
+    return `<div class="cw-mm-seasons-progress cw-mm-resume"><h5>Resume points</h5>${progressRowsHtml(rows, true)}</div>`;
   }
 
   function movieProgressBox() {
@@ -816,12 +896,13 @@
         second = episodeSlot("Upcoming", { season: upcoming.season_number, episode: upcoming.episode_number }, upcoming);
       }
       const pair = `${first}${second}`;
-      main = `<div class="cw-mm-box"><h4>Watch progress <small>${numberFmt.format(watched)}/${numberFmt.format(total)} episodes <b>${pct}%</b></small></h4>
-        <div class="cw-mm-progress"><i style="width:${pct}%"></i></div>
+      const seasonCount = Number(detail.number_of_seasons) || seasonList().length;
+      const summary = [total ? plural(total, "episode") : "", seasonCount ? plural(seasonCount, "season") : ""].filter(Boolean).join(" · ");
+      main = `<div class="cw-mm-box"><div class="cw-mm-watch-summary"><div><h4>Watch progress</h4>${summary ? `<p>${esc(summary)}</p>` : ""}</div><div class="cw-mm-watch-stats"><strong>${total ? `${numberFmt.format(watched)}/${numberFmt.format(total)}` : plural(watched, "episode")} watched</strong>${total ? `<div class="cw-mm-watch-meter" role="progressbar" aria-label="Episodes watched" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}" aria-valuetext="${esc(`${plural(watched, "episode")} watched out of ${numberFmt.format(total)}`)}"><span><i style="width:${pct}%"></i></span><small>${pct}%</small></div>` : ""}</div></div>
         ${unmatchedEpisodes().length ? `<p class="cw-mm-muted">${plural(unmatchedEpisodes().length, "watched episode")} could not be matched to TMDB season numbering and ${unmatchedEpisodes().length === 1 ? "is" : "are"} excluded from progress.</p>` : pair ? `<div class="cw-mm-episodes-pair">${pair}</div>` : empty("No episode information on TMDB.")}${seasonProgress()}${showResumePoints()}</div>`;
     }
     return `<div class="cw-mm-grid-2">${main}<div class="cw-mm-stack">${trackerData() ? trackerBox() : `<div class="cw-mm-box">${watchHistory(state.presence?.plays)}</div>`}
-      <div class="cw-mm-box"><h4>Details</h4>${detailTiles()}</div>
+      <div class="cw-mm-box"><h4>Details</h4>${detailTiles()}${trackerNotes()}</div>
 
     </div></div>`;
   }
@@ -850,22 +931,32 @@
       rate: rating != null ? "Change or remove your rating in this tracker" : "Add your rating to this tracker",
       list: listed ? "Remove this title from this tracker watchlist" : "Add this title to this tracker watchlist",
       map: "Choose the correct movie or show for this tracker entry",
+      origin: "Inspect the source of this tracker entry",
+      remove: "Preview removing this title or its watch history",
       notes: "Edit personal dates, status, tags and notes. These stay in CrossWatch and do not sync",
     };
-    const button = (action, symbol, label, primary = false) => `<button type="button" class="cw-mm-btn${primary ? " is-primary" : " is-icon"}" data-mm-trk="${action}" title="${esc(`${label}: ${hints[action]}`)}" aria-label="${esc(label)}">${icon(symbol)}${primary ? esc(label) : ""}</button>`;
+    const button = (action, symbol, label, primary = false) => `<button type="button" class="cw-mm-btn is-icon${primary ? " is-primary" : ""}${action === "remove" ? " is-danger" : ""}" data-mm-trk="${action}" title="${esc(`${label}: ${hints[action]}`)}" aria-label="${esc(label)}">${icon(symbol)}</button>`;
     const actions = [
       button("log", "add_circle", "Watched", true),
       button("rate", rating != null ? "star" : "star_outline", rating != null ? `Change rating (${rating}/10)` : "Rate"),
       button("list", listed ? "bookmark_remove" : "bookmark_add", listed ? "Remove from watchlist" : "Add to watchlist"),
       button("map", "compare_arrows", "Fix match"),
+      ["plays", "ratings", "watchlist", "collection", "progress"].some(key => data[key]?.length) ? button("origin", "alt_route", "Where does this come from?") : "",
+      data.note_key ? button("remove", "delete", "Remove title or watch history") : "",
     ].join("");
+    return `<div class="cw-mm-box cw-mm-trk"><div class="cw-mm-trk-header">${trackerStatus(data)}<small class="cw-mm-muted">${esc(state.tracker.label || "")}</small></div>
+      <div class="cw-mm-trk-actions">${actions}</div>${watchHistory(plays, true)}</div>`;
+  }
+
+  function trackerNotes() {
+    const data = trackerData();
+    if (!data?.note_key) return "";
     const note = data.note;
     const tags = (note?.tags || []).slice(0, 8).map((tag) => `<span class="cw-mm-trk-tag">${esc(tag)}</span>`).join("");
     const noteDates = [note?.started ? `Started ${note.started}` : "", note?.finished ? `Finished ${note.finished}` : ""].filter(Boolean).join(" · ");
     const hasNotes = !!(tags || note?.notes || noteDates || Object.keys(note?.fields || {}).length);
-    const noteLine = data.note_key ? `<div class="cw-mm-trk-notes"><h4>My notes</h4>${noteDates ? `<p class="cw-mm-muted">${esc(noteDates)}</p>` : ""}${tags ? `<div class="cw-mm-trk-note">${tags}</div>` : ""}${note?.notes ? `<p class="cw-mm-trk-note-text">${esc(note.notes)}</p>` : ""}<button type="button" class="cw-mm-notes-action" data-mm-trk="notes">${icon(hasNotes ? "edit_note" : "add")}<span>${hasNotes ? "Edit notes" : "Add notes"}</span></button></div>` : "";
-    return `<div class="cw-mm-box cw-mm-trk"><div class="cw-mm-trk-header">${trackerStatus(data)}<small class="cw-mm-muted">${esc(state.tracker.label || "")}</small></div>
-      <div class="cw-mm-trk-actions">${actions}</div>${watchHistory(plays, true)}${noteLine}</div>`;
+    if (!hasNotes) return `<div class="cw-mm-trk-notes"><button type="button" class="cw-mm-notes-action" data-mm-trk="notes">${icon("add")}<span>Add notes</span></button></div>`;
+    return `<div class="cw-mm-trk-notes"><h4>My notes<button type="button" class="cw-mm-notes-action is-icon" data-mm-trk="notes" title="Edit notes" aria-label="Edit notes">${icon("edit_note")}</button></h4>${noteDates ? `<p class="cw-mm-muted">${esc(noteDates)}</p>` : ""}${tags ? `<div class="cw-mm-trk-note">${tags}</div>` : ""}${note?.notes ? `<p class="cw-mm-trk-note-text">${esc(note.notes)}</p>` : ""}</div>`;
   }
 
   function watchHistory(plays, editable = false) {
@@ -878,7 +969,7 @@
       const date = new Date(epoch * 1000);
       return time ? window.CW.ProfileDateTime.format(date, { hour: "2-digit", minute: "2-digit" }) : dateFmt.format(date);
     };
-    const rows = (state.historyExpanded ? sorted : sorted.slice(0, 5)).map((play) => `<li class="cw-mm-trk-play">${show ? `<b>${play.season != null ? esc(`S${play.season} E${play.episode}`) : ""}</b>` : ""}<span>${esc(when(play))}</span><span>${esc(when(play, true))}</span>${editable ? `<button type="button" class="cw-mm-trk-icon" data-mm-trk-edit="${esc(play.key)}" title="Edit play" aria-label="Edit play${show ? ` ${esc(episodeCode(play))}` : ""}">${icon("edit")}</button>` : ""}</li>`).join("");
+    const rows = (state.historyExpanded ? sorted : sorted.slice(0, 5)).map((play) => `<li class="cw-mm-trk-play" data-mm-key="${esc(play.key || `${epochOf(play)}:${play.season ?? ""}:${play.episode ?? ""}`)}">${show ? `<b>${play.season != null ? esc(`S${play.season} E${play.episode}`) : ""}</b>` : ""}<span>${esc(when(play))}</span><span>${esc(when(play, true))}</span>${editable ? `<button type="button" class="cw-mm-trk-icon" data-mm-trk-edit="${esc(play.key)}" title="Edit play" aria-label="Edit play${show ? ` ${esc(episodeCode(play))}` : ""}">${icon("edit")}</button>` : ""}</li>`).join("");
     const more = sorted.length > 5 ? `<button type="button" class="cw-mm-btn cw-mm-history-more" data-mm-history-more aria-expanded="${!!state.historyExpanded}">${state.historyExpanded ? "Show less" : `Show ${esc(plural(sorted.length - 5, "older play"))}`}</button>` : "";
     const message = editable ? "No plays in this tracker yet." : state.presenceLoading ? "Loading watch history..." : !Array.isArray(plays) ? "Watch history unavailable." : "No watch history yet.";
     return `<h4>Watch history</h4>${rows ? `<ul class="cw-mm-trk-plays${show ? "" : " is-movie"}${editable ? "" : " is-readonly"}">${rows}</ul>${more}` : `<p class="cw-mm-muted">${message}</p>`}`;
@@ -887,27 +978,64 @@
   const initialsOf = (name) => String(name || "?").split(/\s+/).map((part) => part[0] || "").join("").slice(0, 2).toUpperCase();
 
   function seasonProgress() {
-    const seasons = seasonList({ specials: true });
+    const seasons = seasonList({ specials: true, newestFirst: true });
     if (!watchReady() || !seasons.length) return "";
     const counts = new Map();
     for (const row of matchedEpisodes()) {
       counts.set(Number(row.season), (counts.get(Number(row.season)) || 0) + 1);
     }
-    const shown = seasons.slice(0, 8);
+    const watchedEpisodes = watchedMap();
+    const progress = Array.isArray(state.progress) ? state.progress : [];
+    const shown = seasons.filter((row, index) => index < 3 || Number(row.season) === state.overviewChosenSeason);
     const rows = shown.map((row) => {
       const number = Number(row.season);
       const total = Number(row.episode_count) || 0;
       const watched = Math.min(total, counts.get(number) || 0);
       const pct = total ? Math.round((watched / total) * 100) : 0;
       const done = total > 0 && watched >= total;
-      return `<button type="button" class="cw-mm-season-row${done ? " is-done" : watched ? " is-started" : ""}" data-mm-season-jump="${esc(number)}" title="${esc(row.name || `Season ${number}`)}">
-        <span class="cw-mm-season-name">${esc(number === 0 ? "Specials" : `Season ${number}`)}</span>
-        <span class="cw-mm-season-track"><i style="width:${pct}%"></i></span>
-        <span class="cw-mm-season-count">${done ? icon("check_circle") : ""}${numberFmt.format(watched)}/${numberFmt.format(total)}</span>
-      </button>`;
+      const resume = progress.filter((entry) => Number(entry.season) === number && Number(entry.episode) > 0 && Number(entry.episode) <= total && entry.pct > 0 && entry.pct < 100);
+      const started = watched > 0 || resume.length > 0;
+      const expanded = state.overviewSeason === number;
+      const name = number === 0 ? "Specials" : `Season ${number}`;
+      const year = /^\d{4}/.exec(String(row.air_date || ""))?.[0];
+      const segments = total <= 24 ? Array.from({ length: total }, (_, index) => {
+        const part = resume.find((entry) => Number(entry.episode) === index + 1);
+        const value = watchedEpisodes.has(`${number}:${index + 1}`) ? 100 : part ? Math.min(100, Math.max(0, part.pct)) : 0;
+        return `<span><i style="width:${value}%"></i></span>`;
+      }).join("") : `<span><i style="width:${pct}%"></i></span>`;
+      return `<div class="cw-mm-season-item" data-mm-key="season:${number}"><button type="button" class="cw-mm-season-row${done ? " is-done" : started ? " is-started" : ""}" data-mm-season-toggle="${esc(number)}" aria-expanded="${expanded}" aria-controls="cw-mm-season-detail-${number}">
+        <span class="cw-mm-season-number">${number === 0 ? "SP" : numberFmt.format(number)}</span>
+        <span class="cw-mm-season-copy"><span class="cw-mm-season-name">${esc(name)}</span><span class="cw-mm-season-meta">${esc([year, plural(total, "episode")].filter(Boolean).join(" · "))}</span></span>
+        <span class="cw-mm-season-stats"><span class="cw-mm-season-count">${numberFmt.format(watched)}/${numberFmt.format(total)}<span class="cw-mm-season-watched-label"> watched</span></span><span class="cw-mm-season-status">${done ? "Completed" : started ? "In progress" : "Not started"}</span><span class="cw-mm-season-track" aria-hidden="true">${segments}</span></span>
+        ${icon(expanded ? "expand_more" : "chevron_right")}
+      </button><div class="cw-mm-season-detail" id="cw-mm-season-detail-${number}"${expanded ? "" : " hidden"}>${expanded ? seasonEpisodes(number, watchedEpisodes, resume) : ""}</div></div>`;
     }).join("");
-    const more = seasons.length > shown.length ? `<button type="button" data-mm-goto="episodes">All ${numberFmt.format(seasons.length)} seasons</button>` : "";
-    return `<div class="cw-mm-seasons-progress"><h5>Seasons${more}</h5>${rows}</div>`;
+    const more = seasons.length > 3 ? `<button type="button" data-mm-seasons-all aria-expanded="${!!state.seasonPickerOpen}" aria-controls="cw-mm-season-picker">All ${numberFmt.format(seasons.length)} seasons</button>` : "";
+    const picker = state.seasonPickerOpen ? `<div class="cw-mm-season-picker" id="cw-mm-season-picker"><label for="cw-mm-season-select">Jump to season</label><select id="cw-mm-season-select" data-mm-season-picker><option value="" disabled${state.overviewSeason == null ? " selected" : ""}>Choose a season</option>${seasons.map((row) => `<option value="${esc(row.season)}"${Number(row.season) === state.overviewSeason ? " selected" : ""}>${esc(Number(row.season) === 0 ? "Specials" : `Season ${row.season}`)}</option>`).join("")}</select></div>` : '<div id="cw-mm-season-picker" hidden></div>';
+    return `<div class="cw-mm-seasons-progress"><h5>Seasons${more}</h5><p class="cw-mm-season-order">Newest first</p>${picker}${rows}</div>`;
+  }
+
+  function seasonEpisodes(number, watched, progress) {
+    const data = state.seasons.get(String(number));
+    if (!data || data.loading) return '<p class="cw-mm-muted" role="status">Loading episodes...</p>';
+    if (data.error) return `<p class="cw-mm-muted">Episode details unavailable.</p><button type="button" class="cw-mm-btn" data-mm-season-retry="${number}">Try again</button>`;
+    const episodes = data.episodes || [];
+    if (!episodes.length) return '<p class="cw-mm-muted">No episodes found for this season.</p>';
+    const resumeIndex = episodes.findIndex((ep) => progress.some((row) => Number(row.episode) === Number(ep.episode)));
+    const nextIndex = episodes.findIndex((ep) => !watched.has(`${number}:${ep.episode}`));
+    const previewStart = Math.max(0, resumeIndex >= 0 ? resumeIndex : nextIndex);
+    const start = state.seasonEpisodesExpanded ? 0 : previewStart;
+    const shown = state.seasonEpisodesExpanded ? episodes : episodes.slice(start, start + 3);
+    const rows = shown.map((ep) => {
+      const resume = progress.find((row) => Number(row.episode) === Number(ep.episode));
+      const done = watched.has(`${number}:${ep.episode}`);
+      const upcoming = Date.parse(String(ep.air_date || "")) > Date.now();
+      const status = resume ? `${Math.round(resume.pct)}% watched` : done ? "Watched" : upcoming ? "Upcoming" : "Unwatched";
+      const details = [resume?.remaining ? `${runtimeLabel(Math.round(resume.remaining / 60))} left` : runtimeLabel(ep.runtime), fmtIso(ep.air_date)].filter(Boolean).join(" · ");
+      return `<button type="button" class="cw-mm-season-episode${resume ? " is-started" : done ? " is-done" : ""}" data-mm-episode="${number}:${esc(ep.episode)}"><span class="cw-mm-season-episode-number">${esc(String(ep.episode).padStart(2, "0"))}</span><span class="cw-mm-season-copy"><strong>${esc(ep.name || `Episode ${ep.episode}`)}</strong>${details ? `<small>${esc(details)}</small>` : ""}</span><span class="cw-mm-season-episode-status">${esc(status)}</span></button>`;
+    }).join("");
+    const more = episodes.length > 3 || previewStart > 0 ? `<button type="button" class="cw-mm-season-more" data-mm-season-more aria-expanded="${!!state.seasonEpisodesExpanded}">${state.seasonEpisodesExpanded ? "Show less" : `Show all ${plural(episodes.length, "episode")}`}</button>` : "";
+    return `<p class="cw-mm-season-detail-label">${resumeIndex >= 0 && !state.seasonEpisodesExpanded ? "Where you left off" : "Episodes"}</p>${rows}${more}`;
   }
 
   function castStrip() {
@@ -920,8 +1048,9 @@
     return `<div class="cw-mm-cast-strip"><h5>Top cast<button type="button" data-mm-goto="cast">See all</button></h5><div>${faces}</div></div>`;
   }
 
-  function seasonList({ specials = false } = {}) {
-    const seasons = (state.meta?.detail?.seasons || []).filter((row) => Number(row?.episode_count) > 0);
+  function seasonList({ specials = false, newestFirst = false } = {}) {
+    const seasons = (state.meta?.detail?.seasons || []).filter((row) => Number(row?.episode_count) > 0)
+      .sort((a, b) => (newestFirst ? -1 : 1) * (Number(a.season) - Number(b.season)));
     const regular = seasons.filter((row) => Number(row.season) > 0);
     if (!regular.length) return seasons;
     return specials ? [...regular, ...seasons.filter((row) => Number(row.season) === 0)] : regular;
@@ -942,12 +1071,12 @@
     }
     if (seq !== state.seq) return;
     state.seasons.set(key, result);
-    if (state.episode || state.tab === "overview" || (state.tab === "episodes" && String(state.season) === key)) renderPanel();
+    if (state.episode || state.tab === "overview" || (state.tab === "episodes" && String(state.season) === key)) await scheduleRender(true);
   }
 
   function episodesTab() {
     if (!state.meta) return empty(state.loading ? "Loading seasons..." : "No season information on TMDB.");
-    const seasons = seasonList({ specials: true });
+    const seasons = seasonList({ specials: true, newestFirst: true });
     if (!seasons.length) return empty("No season information on TMDB.");
     const watched = watchedMap();
     if (state.season == null) {
@@ -1102,7 +1231,7 @@
     }
     if (seq !== state.seq || collectionView !== view) return;
     Object.assign(view, { data, loading: false, error: !data });
-    renderPanel();
+    await scheduleRender(true);
   }
 
   async function openPerson(id, retry = false) {
@@ -1114,7 +1243,7 @@
     const data = await fetchExtra("person", id);
     if (seq !== state.seq || personView !== view) return;
     Object.assign(view, { loading: false, data });
-    render();
+    await scheduleRender();
     root.querySelector("#cw-mm-title")?.focus({ preventScroll: true });
   }
 
@@ -1178,6 +1307,8 @@
     if (statusChoice && !statusChoice.disabled && !state.statusBusy && state.tracker?.onAction) {
       const seq = state.seq;
       state.statusBusy = true;
+      const statusPicker = root.querySelector("[data-mm-status-picker]");
+      if (statusPicker) statusPicker.open = false;
       renderPanel();
       root.querySelector("[data-mm-status-picker] summary")?.focus({ preventScroll: true });
       Promise.resolve(state.tracker.onAction("status", statusChoice.dataset.mmTrkStatus)).finally(() => {
@@ -1225,10 +1356,30 @@
       void window.CW?.Trailer?.openFor?.(state.item, state.meta);
       return;
     }
-    const jump = target?.closest?.("[data-mm-season-jump]");
-    if (jump) {
-      state.tab = "episodes";
-      state.season = Number(jump.dataset.mmSeasonJump);
+    if (target?.closest?.("[data-mm-seasons-all]")) {
+      state.seasonPickerOpen = !state.seasonPickerOpen;
+      renderPanel();
+      return;
+    }
+    const seasonToggle = target?.closest?.("[data-mm-season-toggle]");
+    if (seasonToggle) {
+      const number = Number(seasonToggle.dataset.mmSeasonToggle);
+      state.overviewSeason = state.overviewSeason === number ? null : number;
+      state.seasonEpisodesExpanded = false;
+      renderPanel();
+      if (state.overviewSeason != null) void loadSeason(number);
+      return;
+    }
+    if (target?.closest?.("[data-mm-season-more]")) {
+      state.seasonEpisodesExpanded = !state.seasonEpisodesExpanded;
+      renderPanel();
+      return;
+    }
+    const seasonRetry = target?.closest?.("[data-mm-season-retry]");
+    if (seasonRetry) {
+      const number = Number(seasonRetry.dataset.mmSeasonRetry);
+      state.seasons.delete(String(number));
+      void loadSeason(number);
       renderPanel();
       return;
     }

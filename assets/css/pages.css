@@ -1019,9 +1019,11 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 .cw-mm-lives[open]>summary .material-symbols-rounded,.cw-mm-trk details[open] .trk-status-caret{transform:rotate(180deg)}
 .cw-mm-trk-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
 .cw-mm-trk .trk-status-pick{position:relative;margin:0}
-.cw-mm-trk-notes{margin-top:18px;min-width:0}
+.cw-mm-trk-notes{margin-top:16px;min-width:0}
+.cw-mm-box .cw-mm-trk-notes>h4{margin-bottom:8px}
 .cw-mm-trk-note-text{white-space:pre-wrap;overflow-wrap:anywhere}
 .cw-mm-notes-action{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 2px;cursor:pointer}
+.cw-mm-notes-action.is-icon{justify-content:center;width:40px}
 .cw-mm-trk .trk-status-menu{position:absolute;top:calc(100% + 6px);left:0;width:240px;max-width:70vw;z-index:5}
 .cw-mm-trk .trk-status-item{min-height:40px}
 .cw-mm-trk summary{list-style:none}
@@ -1055,13 +1057,25 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 .cw-mm-panel{animation:cwMmFade .18s ease}
 .cw-mm-grid-2{display:grid;grid-template-columns:minmax(0,2fr) minmax(240px,1fr);gap:36px}
 .cw-mm-seasons-progress{display:grid;gap:2px}
+.cw-mm-resume{margin-top:20px}
 .cw-mm-seasons-progress h5,.cw-mm-cast-strip h5{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px}
 :is(.cw-mm-seasons-progress,.cw-mm-cast-strip) h5 button{padding:0}
-.cw-mm-season-row{display:grid;grid-template-columns:78px minmax(0,1fr) 74px;align-items:center;gap:12px;padding:7px 10px;transition:background .14s ease}
-.cw-mm-season-name{white-space:nowrap}
-.cw-mm-season-track{height:7px;overflow:hidden}
-.cw-mm-season-track i{display:block;height:100%;transform-origin:left;animation:cwMmGrowX .5s cubic-bezier(.2,.9,.3,1.1) both}
-.cw-mm-season-count{display:inline-flex;align-items:center;justify-content:flex-end;gap:4px}
+.cw-mm-season-item{container-type:inline-size}
+.cw-mm-season-row{display:grid;grid-template-columns:44px minmax(0,1fr) minmax(90px,120px) 20px;align-items:center;width:100%;gap:14px;padding:16px 0;transition:background .14s ease}
+.cw-mm-season-number{display:grid;place-items:center;min-height:50px;padding:4px}
+.cw-mm-season-copy{display:grid;gap:3px;min-width:0;overflow-wrap:anywhere}
+.cw-mm-season-stats{display:grid;gap:3px;text-align:right;min-width:0}
+.cw-mm-season-track{display:flex;gap:3px;height:3px;margin-top:4px}
+.cw-mm-season-track>span{flex:1;min-width:0;overflow:hidden}
+.cw-mm-season-track i{display:block;height:100%}
+.cw-mm-season-detail:not([hidden]){display:grid;padding:0 0 16px 58px}
+.cw-mm-season-detail-label,.cw-mm-season-order{margin:0 0 8px}
+.cw-mm-season-episode{display:grid;grid-template-columns:26px minmax(0,1fr) auto;align-items:center;gap:10px;padding:12px 0;width:100%}
+.cw-mm-season-episode-status{max-width:105px;text-align:right}
+.cw-mm-season-more{justify-self:start;min-height:44px;padding:10px 0}
+.cw-mm-season-picker{display:grid;gap:6px;margin:0 0 12px}
+.cw-mm-season-picker select{width:100%;min-height:44px;padding:8px 12px}
+@container(max-width:420px){.cw-mm-season-row{grid-template-columns:36px minmax(0,1fr) minmax(64px,82px) 18px;gap:8px;padding:12px 0}.cw-mm-season-number{min-height:44px}.cw-mm-season-detail:not([hidden]){padding-left:0}.cw-mm-season-watched-label{display:none}.cw-mm-season-episode{gap:8px;grid-template-columns:22px minmax(0,1fr) auto}}
 .cw-mm-cast-strip{margin-top:4px}
 .cw-mm-cast-strip>div{display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:12px}
 .cw-mm-cast-face{display:grid;justify-items:center;gap:6px;min-width:0;padding:0}
@@ -1072,6 +1086,13 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 .cw-mm-box h4{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 12px}
 .cw-mm-progress{height:6px;margin-bottom:16px;overflow:hidden}
 .cw-mm-progress i{display:block;height:100%}
+.cw-mm-watch-summary{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:center;gap:12px;margin-bottom:16px}
+.cw-mm-watch-summary h4,.cw-mm-watch-summary p{margin:0}
+.cw-mm-watch-summary p{margin-top:3px}
+.cw-mm-watch-stats{display:grid;justify-items:end;gap:6px;min-width:0;text-align:right}
+.cw-mm-watch-meter{display:flex;align-items:center;gap:8px;width:min(100%,160px)}
+.cw-mm-watch-meter>span{flex:1;min-width:0;height:3px;overflow:hidden}
+.cw-mm-watch-meter i{display:block;height:100%}
 .cw-mm-progress-rows{display:grid;gap:8px;margin-bottom:14px}
 .cw-mm-progress-row{display:grid;grid-template-columns:34px minmax(0,1fr) minmax(80px,160px) 44px;align-items:center;gap:12px;padding:8px 10px}
 .cw-mm-progress-logo{display:grid;place-items:center;width:34px;height:34px}
@@ -1090,7 +1111,8 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 :is(.cw-mm-ep,.cw-mm-eprow) strong{display:block}
 :is(.cw-mm-ep,.cw-mm-eprow) small{display:block;margin:2px 0 4px}
 :is(.cw-mm-ep,.cw-mm-eprow) p{display:-webkit-box;margin:0;overflow:hidden;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical}
-.cw-mm-stack{display:grid;align-content:start;gap:16px}
+.cw-mm-stack{display:grid;align-content:start;gap:24px;padding:20px 0}
+.cw-mm-stack>.cw-mm-box{padding:0}
 .cw-mm-tiles{display:grid;grid-template-columns:1fr;gap:0}
 .cw-mm-tile{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0}
 .cw-mm-tile>.material-symbols-rounded{display:none;place-items:center;flex:0 0 auto;width:34px;height:34px}
@@ -1141,7 +1163,7 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 .cw-mm-eprow{grid-template-columns:110px minmax(0,1fr)}
 .cw-mm-eprow>.cw-mm-watched{grid-column:2}
 .cw-mm-tiles{grid-template-columns:1fr}}
-@media(prefers-reduced-motion:reduce){.cw-mm-backdrop,.cw-mm-card,.cw-mm-panel,.cw-mm-cover-track i,.cw-mm-season-track i{animation:none}}
+@media(prefers-reduced-motion:reduce){.cw-mm-backdrop,.cw-mm-card,.cw-mm-panel,.cw-mm-cover-track i{animation:none}}
 .cw-mm-tile>span:last-child{display:flex;width:100%;justify-content:space-between;gap:16px}
 .cw-mm-actions>:where(a,[data-mm-clear-all]){padding:0 8px}
 .cw-mm-actions>[data-mm-clear-all]{gap:6px}
@@ -2248,6 +2270,7 @@ html:is([data-cw-theme],.cw-theme-original) .cx-modal-shell .scrm-modal .scrm-pa
 .cw-mm-trk-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
 .cw-mm-trk-actions .cw-mm-btn{height:38px;padding:0 12px}
 .cw-mm-trk-actions .cw-mm-btn.is-icon{flex:0 0 38px;width:38px;justify-content:center;padding:0}
+.cw-mm-trk-actions .is-danger{margin-inline-start:auto}
 .cw-mm-trk-plays{display:grid;grid-template-columns:max-content minmax(0,1fr) max-content 32px;column-gap:12px;margin:0;padding:0;list-style:none}
 .cw-mm-trk-plays.is-movie{grid-template-columns:minmax(0,1fr) max-content 32px}
 .cw-mm-trk-plays.is-readonly{grid-template-columns:max-content minmax(0,1fr) max-content}
