@@ -13,13 +13,14 @@ from providers.auth._auth_TOFA import TofaError, is_configured as auth_is_config
 from providers.sync._mod_common import build_op_result, build_session, dedup_keys
 from providers.sync.tofa import _collection as feat_collection
 from providers.sync.tofa import _history as feat_history
+from providers.sync.tofa import _playlists as feat_playlists
 from providers.sync.tofa import _presence as feat_presence
 from providers.sync.tofa import _progress as feat_progress
 from providers.sync.tofa import _watchlist as feat_watchlist
 from providers.sync.tofa._common import REQUIRED_CAPABILITIES, TofaSyncError, capabilities, label_tofa, shared_limiter
 
 __VERSION__ = "0.1"
-__all__ = ["get_manifest", "TOFAModule", "OPS", "feat_collection", "feat_history", "feat_progress", "feat_watchlist"]
+__all__ = ["get_manifest", "TOFAModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_watchlist"]
 
 if "ctx" not in globals():
     class _NullCtx:
@@ -29,7 +30,7 @@ if "ctx" not in globals():
     ctx = _NullCtx()  # type: ignore[assignment]
 
 
-_FEATURES = {"watchlist": True, "ratings": False, "history": True, "progress": True, "playlists": False, "collection": True}
+_FEATURES = {"watchlist": True, "ratings": False, "history": True, "progress": True, "playlists": True, "collection": True}
 _FEATURE_MODULES = {
     "watchlist": feat_watchlist,
     "history": feat_history,
@@ -37,6 +38,23 @@ _FEATURE_MODULES = {
     "collection": feat_collection,
 }
 _ACCEPTED_IDS = ["tmdb", "imdb", "tvdb"]
+_PLAYLIST_CAPABILITIES: dict[str, Any] = {
+    "read": True,
+    "create": True,
+    "create_endpoint_types": ["collection"],
+    "create_privacy": {"values": ["private", "household"], "default": "private", "editable": True},
+    "rename": True,
+    "delete": True,
+    "add": True,
+    "remove": True,
+    "reorder": True,
+    "smart": True,
+    "smart_writable": False,
+    "media_types": ["movie", "show"],
+    "endpoint_types": ["collection"],
+    "accepted_ids": ["tmdb"],
+    "provides_ids": ["tmdb"],
+}
 
 
 def _current_instance_id(cfg: Mapping[str, Any] | None = None) -> str:
@@ -117,6 +135,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "accepted_ids": list(_ACCEPTED_IDS),
                 "provides_ids": list(_ACCEPTED_IDS),
             },
+            "playlists": dict(_PLAYLIST_CAPABILITIES),
             "library_presence": {"features": list(feat_presence.FEATURES)},
         },
     }
@@ -272,6 +291,50 @@ class _TOFAOPS:
 
     def library_presence(self, cfg: Mapping[str, Any], items: Iterable[Mapping[str, Any]], *, feature: str) -> list[dict[str, Any]]:
         return self._adapter(cfg).library_presence(feature, items)
+
+    def _playlist_adapter(self, cfg: Mapping[str, Any], instance: str | None) -> TOFAModule:
+        inst = normalize_instance_id(instance) if instance is not None else _current_instance_id(cfg)
+        return TOFAModule({**cfg, "_cw_provider_instance": inst})
+
+    def list_playlist_resources(self, cfg: Mapping[str, Any], *, instance: str | None = None):
+        return list(feat_playlists.list_resources(self._playlist_adapter(cfg, instance)))
+
+    def get_playlist_snapshot(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None):
+        return feat_playlists.get_snapshot(self._playlist_adapter(cfg, instance), playlist_id)
+
+    def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None,
+                        items: Iterable[Mapping[str, Any]] | None = None, privacy: str | None = None, instance: str | None = None, dry_run: bool = False):
+        return feat_playlists.create(self._playlist_adapter(cfg, instance), name, media_type=media_type, items=list(items or []), privacy=privacy, dry_run=dry_run)
+
+    def rename_playlist(self, cfg: Mapping[str, Any], playlist_id: str, name: str, *, instance: str | None = None, dry_run: bool = False):
+        return feat_playlists.rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def update_playlist_privacy(self, cfg: Mapping[str, Any], playlist_id: str, privacy: str, *, instance: str | None = None, dry_run: bool = False):
+        return feat_playlists.set_privacy(self._playlist_adapter(cfg, instance), playlist_id, privacy, dry_run=dry_run)
+
+    def delete_playlist(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        return feat_playlists.delete(self._playlist_adapter(cfg, instance), playlist_id, dry_run=dry_run)
+
+    def add_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, items: Iterable[Mapping[str, Any]], *,
+                           instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return feat_playlists.add(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def remove_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, items: Iterable[Mapping[str, Any]], *,
+                              instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        lst = list(items or [])
+        if dry_run:
+            return {"ok": True, "count": len(lst), "dry_run": True, "unresolved": [], "confirmed_keys": []}
+        return feat_playlists.remove(self._playlist_adapter(cfg, instance), playlist_id, lst)
+
+    def reorder_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, ordered_keys: Iterable[str], *,
+                               instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
+        keys = list(ordered_keys or [])
+        if dry_run:
+            return {"ok": True, "count": 0, "dry_run": True}
+        return feat_playlists.reorder(self._playlist_adapter(cfg, instance), playlist_id, keys)
 
 
 OPS = _TOFAOPS()
