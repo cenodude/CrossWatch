@@ -271,7 +271,7 @@ def _write(adapter: Any, items: Iterable[Mapping[str, Any]], *, clear: bool) -> 
                 _dbg(FEATURE, "item_unresolved_before_write", key=key)
             continue
         payload, key = built
-        entries.append({"payload": payload, "key": key})
+        entries.append({"payload": payload, "key": key, "item": dict(item)})
 
     if not entries:
         return {

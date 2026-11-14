@@ -222,6 +222,138 @@ def test_http_failure_marks_batch_unresolved(monkeypatch: pytest.MonkeyPatch) ->
     assert res["unresolved_keys"] == ["tmdb:550"]
 
 
+def test_history_conflict_retries_only_rejected_item_with_tmdb(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _history as hi
+
+    http = FakeHTTP([
+        _Resp(200, {"results": [
+            {"index": 0, "status": "inserted"},
+            {"index": 1, "status": "invalid", "reason": "not_found"},
+            {"index": 2, "status": "invalid", "reason": "id_conflict"},
+            {"index": 3, "status": "deferred", "reason": "unmatched"},
+        ]}),
+        _Resp(200, {"results": [{"index": 0, "status": "inserted", "resolved_tmdb_id": 113988}]}),
+    ])
+    _patch(monkeypatch, hi, http)
+    items = [{
+        "type": "episode", "show_ids": {"tmdb": "113988", "imdb": "tt13207736", "tvdb": "123", "mal": "456"},
+        "ids": {"tmdb": str(700 + i)}, "season": 1, "episode": i + 1,
+        "series_title": "DAHMER", "title": f"Episode {i + 1}", "watched_at": "2026-01-01T20:00:00Z",
+    } for i in range(4)]
+
+    res = hi.add(Adapter(), items)
+
+    assert len(http.calls) == 2
+    original = http.calls[0]["json"]["items"][2]
+    expected = {k: v for k, v in original.items() if k not in ("imdb_id", "tvdb_id", "mal_id")}
+    assert http.calls[1]["json"] == {"items": [expected]}
+    assert original["imdb_id"] == "tt13207736"
+    assert items[2]["show_ids"]["imdb"] == "tt13207736"
+    assert http.calls[0]["headers"]["Idempotency-Key"] != http.calls[1]["headers"]["Idempotency-Key"]
+    assert res["confirmed_keys"] == ["tmdb:113988#s01e01", "tmdb:113988#s01e03"]
+    assert res["unresolved_keys"] == ["tmdb:113988#s01e02"]
+    assert res["unresolved"][0]["reason"] == "not_found"
+    assert res["deferred_keys"] == ["tmdb:113988#s01e04"]
+    assert res["resolved_tmdb"] == {"tmdb:113988#s01e03": 113988}
+    assert res["status_counts"] == {"inserted": 2, "invalid": 1, "deferred": 1}
+
+
+@pytest.mark.parametrize("resource", ["history", "ratings", "watchlist"])
+def test_resolver_unavailable_retries_unchanged_with_new_idempotency_key(monkeypatch: pytest.MonkeyPatch, resource: str) -> None:
+    from providers.sync.punchplay import _common
+
+    sleeps = []
+    monkeypatch.setattr(_common.time, "sleep", sleeps.append)
+    http = FakeHTTP([
+        _Resp(200, {"results": [{"index": 0, "status": "deferred", "reason": "resolver_unavailable"}]}),
+        _Resp(200, {"results": [{"index": 0, "status": "inserted"}]}),
+    ])
+    _patch(monkeypatch, _common, http)
+    entries = [{"key": "tmdb:550", "payload": {"tmdb_id": 550, "imdb_id": "tt0137523", "kind": "movie"}}]
+
+    res = _common.bulk_write(Adapter(), resource, entries, None, feature=resource)
+
+    assert len(http.calls) == 2
+    assert http.calls[0]["json"] == http.calls[1]["json"]
+    assert http.calls[0]["headers"]["Idempotency-Key"] != http.calls[1]["headers"]["Idempotency-Key"]
+    assert sleeps == [1.0]
+    assert res["confirmed_keys"] == ["tmdb:550"]
+    assert res["unresolved_keys"] == res["deferred_keys"] == []
+    assert res["status_counts"] == {"inserted": 1}
+
+
+@pytest.mark.parametrize("status,reason", [("invalid", "id_conflict"), ("deferred", "resolver_unavailable")])
+def test_bulk_recovery_is_bounded_and_preserves_final_failure(monkeypatch: pytest.MonkeyPatch, status: str, reason: str) -> None:
+    from providers.sync._mod_PUNCHPLAY import OPS
+    from providers.sync.punchplay import _common, _watchlist as wl
+
+    monkeypatch.setattr(_common.time, "sleep", lambda *_a: None)
+    response = {"results": [{"index": 0, "status": status, "reason": reason, "error": "lookup failed"}]}
+    http = FakeHTTP([_Resp(200, response), _Resp(200, response)])
+    _patch(monkeypatch, wl, http)
+
+    res = OPS.add({"punchplay": {"access_token": "at"}}, [
+        {"type": "movie", "ids": {"tmdb": "550", "imdb": "tt0137523"}},
+    ], feature="watchlist")
+
+    assert len(http.calls) == 2
+    assert res["count"] == 0
+    assert res["confirmed_keys"] == []
+    assert res["unresolved_keys"] == ["tmdb:550"]
+    assert res["unresolved"] == [{
+        "key": "tmdb:550", "status": status, "reason": reason, "error": "lookup failed",
+        "item": {"type": "movie", "ids": {"tmdb": "550", "imdb": "tt0137523"}},
+    }]
+    assert not res.get("accepted_keys")
+    assert not res.get("skipped_keys")
+    assert not res.get("deferred_keys")
+
+
+@pytest.mark.parametrize("ids", [{"tmdb": "550"}, {"imdb": "tt0137523", "tvdb": "123"}])
+def test_id_conflict_without_tmdb_fallback_remains_unresolved(monkeypatch: pytest.MonkeyPatch, ids: dict[str, str]) -> None:
+    from providers.sync.punchplay import _watchlist as wl
+
+    http = FakeHTTP([_Resp(200, {"results": [{"index": 0, "status": "invalid", "reason": "id_conflict"}]})])
+    _patch(monkeypatch, wl, http)
+
+    res = wl.add(Adapter(), [{"type": "movie", "ids": ids}])
+
+    assert len(http.calls) == 1
+    assert res["confirmed_keys"] == []
+    assert len(res["unresolved_keys"]) == 1
+    assert res["unresolved"][0]["reason"] == "id_conflict"
+
+
+@pytest.mark.parametrize("response,expected_status", [
+    (_Resp(503, {"error": "service_unavailable"}), "http:503"),
+    (_Resp(200, {"results": []}), "missing_result"),
+    (_Resp(200, {"results": [{"index": 0, "status": "invalid", "reason": "not_found"}]}), "invalid"),
+])
+def test_conflict_retry_failure_does_not_lose_original_key(monkeypatch: pytest.MonkeyPatch, response: _Resp, expected_status: str) -> None:
+    from providers.sync.punchplay import _watchlist as wl
+
+    http = FakeHTTP([
+        _Resp(200, {"results": [
+            {"index": 0, "status": "inserted"},
+            {"index": 1, "status": "invalid", "reason": "id_conflict"},
+        ]}),
+        response,
+    ])
+    _patch(monkeypatch, wl, http)
+
+    res = wl.add(Adapter(), [
+        {"type": "movie", "ids": {"tmdb": "551"}},
+        {"type": "movie", "ids": {"tmdb": "550", "imdb": "tt0137523"}},
+    ])
+
+    assert len(http.calls) == 2
+    assert res["confirmed_keys"] == ["tmdb:551"]
+    assert res["accepted_keys"] == ["tmdb:551"]
+    assert res["unresolved_keys"] == ["tmdb:550"]
+    assert res["unresolved"][0]["status"] == expected_status
+    assert res["ok"] is (response.status_code == 200)
+
+
 def test_request_in_progress_retries_same_key(monkeypatch: pytest.MonkeyPatch) -> None:
     from providers.sync.punchplay import _common, _watchlist as wl
 
@@ -237,6 +369,137 @@ def test_request_in_progress_retries_same_key(monkeypatch: pytest.MonkeyPatch) -
     assert len(http.calls) == 2
     assert http.calls[0]["headers"]["Idempotency-Key"] == http.calls[1]["headers"]["Idempotency-Key"]
     assert res["confirmed_keys"] == ["tmdb:550"]
+
+
+def test_bulk_recovery_keeps_separate_plays_with_the_same_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.punchplay import _common
+
+    monkeypatch.setattr(_common.time, "sleep", lambda *_a: None)
+    http = FakeHTTP([
+        _Resp(200, {"results": [
+            {"index": 0, "status": "inserted"},
+            {"index": 1, "status": "invalid", "reason": "id_conflict"},
+            {"index": 2, "status": "deferred", "reason": "resolver_unavailable"},
+        ]}),
+        _Resp(200, {"results": [
+            {"index": 1, "status": "inserted"},
+            {"index": 0, "status": "skipped"},
+        ]}),
+    ])
+    _patch(monkeypatch, _common, http)
+    entries = [{"key": "tmdb:550", "payload": {
+        "tmdb_id": 550, "imdb_id": "tt0137523", "kind": "movie",
+        "watched_at": f"2026-01-0{i + 1}T20:00:00Z", "client_item_id": f"play-{i}",
+    }} for i in range(3)]
+
+    res = _common.bulk_write(Adapter(), "history", entries, None, feature="history")
+
+    assert len(http.calls) == 2
+    retried = http.calls[1]["json"]["items"]
+    assert [item["client_item_id"] for item in retried] == ["play-1", "play-2"]
+    assert "imdb_id" not in retried[0]
+    assert retried[1] == entries[2]["payload"]
+    assert res["confirmed_keys"] == ["tmdb:550", "tmdb:550"]
+    assert res["skipped_keys"] == ["tmdb:550"]
+    assert res["unresolved_keys"] == res["deferred_keys"] == []
+    assert res["status_counts"] == {"inserted": 2, "skipped": 1}
+
+
+@pytest.mark.parametrize("exception_name", ["Timeout", "ConnectionError"])
+@pytest.mark.parametrize("status,reason", [("invalid", "id_conflict"), ("deferred", "resolver_unavailable")])
+def test_recovery_transport_failure_keeps_confirmed_items(config_base, monkeypatch, exception_name, status, reason):
+    from unittest.mock import Mock
+
+    import requests
+    from cw_platform.orchestrator import _unresolved
+    from cw_platform.orchestrator._applier import apply_add
+    from providers.sync._mod_PUNCHPLAY import OPS
+    from providers.sync.punchplay import _common
+
+    monkeypatch.setattr(_unresolved, "STATE_DIR", config_base)
+    monkeypatch.setattr(_common.time, "sleep", lambda *_a: None)
+    request = Mock(side_effect=[
+        _Resp(200, {"results": [
+            {"index": 0, "status": "inserted"},
+            {"index": 1, "status": status, "reason": reason},
+        ]}),
+        getattr(requests, exception_name)("transport failed"),
+    ])
+    monkeypatch.setattr(_common, "punchplay_request", request)
+    items = [
+        {"type": "movie", "ids": {"tmdb": "551"}},
+        {"type": "movie", "ids": {"tmdb": "550", "imdb": "tt0137523"}},
+    ]
+
+    result = apply_add(
+        dst_ops=OPS, cfg={"punchplay": {"access_token": "at"}}, dst_name="PUNCHPLAY", feature="watchlist",
+        items=items, dry_run=False, emit=lambda *a, **kw: None, dbg=lambda *a, **kw: None,
+        chunk_size=100, chunk_pause_ms=0,
+    )
+
+    assert request.call_count == 2
+    assert result["ok"] is False
+    assert result["confirmed"] == 1
+    assert result["confirmed_keys"] == ["tmdb:551"]
+    assert result["accepted_keys"] == ["tmdb:551"]
+    assert result["unresolved"] == 1
+    assert result["unresolved_keys"] == ["tmdb:550"]
+    assert result["skipped"] == 0
+    saved = _unresolved.load_unresolved_map("PUNCHPLAY", "watchlist", cross_features=False)
+    assert set(saved) == {"tmdb:550"}
+    assert _unresolved.load_unresolved_items("PUNCHPLAY")[0]["item"]["ids"] == items[1]["ids"]
+    assert saved["tmdb:550"]["reason"] == f"write_failed:{exception_name}"
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+@pytest.mark.parametrize("feature", ["history", "ratings", "watchlist"])
+@pytest.mark.parametrize("status,reason", [("invalid", "id_conflict"), ("deferred", "resolver_unavailable")])
+def test_exhausted_recovery_preserves_analyzer_reason(config_base, monkeypatch, mixed, feature, status, reason):
+    import services.analyzer as analyzer
+    from cw_platform.id_map import canonical_key
+    from cw_platform.orchestrator import _unresolved
+    from cw_platform.orchestrator._applier import _normalize
+    from providers.sync._mod_PUNCHPLAY import OPS
+    from providers.sync.punchplay import _common
+
+    monkeypatch.setattr(_unresolved, "STATE_DIR", config_base)
+    monkeypatch.setattr(_common.time, "sleep", lambda *_a: None)
+    monkeypatch.setattr(analyzer, "_cfg", lambda: {})
+    monkeypatch.setattr(analyzer, "_read_cw_state", lambda *_a: {
+        path.name: json.loads(path.read_text()) for path in config_base.glob("*.json")
+    })
+    failed = {"type": "movie", "title": "Failed item", "ids": {"tmdb": "550", "imdb": "tt0137523"}, "rating": 8}
+    if feature == "history":
+        failed = {
+            "type": "episode", "title": "Failed episode", "series_title": "DAHMER",
+            "ids": {"tmdb": "700"}, "show_ids": {"tmdb": "113988", "imdb": "tt13207736"},
+            "season": 1, "episode": 1, "watched_at": "2026-01-01T20:00:00Z",
+        }
+    items = ([{"type": "movie", "ids": {"tmdb": "551"}, "rating": 9, "watched_at": "2026-01-01T20:00:00Z"}] if mixed else []) + [failed]
+    initial = ([{"index": 0, "status": "inserted"}] if mixed else []) + [{"index": int(mixed), "status": status, "reason": reason}]
+    http = FakeHTTP([
+        _Resp(200, {"results": initial}),
+        _Resp(200, {"results": [{"index": 0, "status": status, "reason": reason}]}),
+    ])
+    _patch(monkeypatch, _common, http)
+
+    raw = OPS.add({"punchplay": {"access_token": "at"}}, items, feature=feature)
+    result = _normalize(raw, items, "apply:add", dst="PUNCHPLAY", feature=feature, emit=lambda *a, **kw: None)
+
+    key = canonical_key(failed)
+    assert len(http.calls) == 2
+    assert raw["unresolved"][0]["item"] == failed
+    assert result["confirmed"] == int(mixed)
+    assert result["unresolved"] == 1
+    assert result["failure_details"][key]["reason"] == reason
+    saved = _unresolved.load_unresolved_map("PUNCHPLAY", feature, cross_features=False)
+    assert set(saved) == {key}
+    assert saved[key]["reason"] == reason
+    records = analyzer._unresolved_records(None)
+    assert records
+    assert {row["key"] for row in records} == {key}
+    assert {row["reason"] for row in records} == {reason}
+    assert all(row["provider"] == "PUNCHPLAY" and row["feature"] == feature for row in records)
 
 
 def test_indeterminate_retries_with_a_new_key(monkeypatch: pytest.MonkeyPatch) -> None:
