@@ -27,9 +27,9 @@
   const EMPTY_PROVIDER_RETRIES = 2;
   const EMPTY_PROVIDER_RETRY_MS = 300;
   const SAFE_NAME_CHARS = " _.'-&()";
-  const PLAYLIST_COMPATIBLE_PROVIDERS = new Set(["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "TMDB", "FLICKLIST", "SILO", "CROSSWATCH"]);
+  const PLAYLIST_COMPATIBLE_PROVIDERS = new Set(["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "TMDB", "FLICKLIST", "SILO", "TOFA", "CROSSWATCH"]);
   const SIMKL_PLAYLIST_WARNING = "SIMKL status buckets are not true playlists. Changes may move or remove items from your SIMKL library. Use with caution. SIMKL custom lists need SIMKL PRO or VIP.";
-  const PRIVACY_LABELS = { public: "Public", private: "Private", unlisted: "Unlisted", friends: "Friends", friends_only: "Friends only", link: "Anyone with the link" };
+  const PRIVACY_LABELS = { public: "Public", private: "Private", unlisted: "Unlisted", friends: "Friends", friends_only: "Friends only", friends_of_friends: "Friends of friends", plex: "Anyone signed into Plex", link: "Anyone with the link" };
   const CREATE_TYPE_LABELS = { movie: "Movies", show: "Shows", anime: "Anime" };
   const RULESET_PRESETS = {
     direct: {
@@ -222,6 +222,7 @@
   }
 
   function createTypeLabel(type) {
+    if (type === "cloud_list") return "Cloud list";
     return CREATE_TYPE_LABELS[type] || titleize(type);
   }
 
@@ -290,7 +291,7 @@
     const providerGate = state.loaded && !hasCompatiblePlaylistProvider() ? `
       <div class="pl-banner warn">
         <span class="material-symbols-rounded" aria-hidden="true">warning</span>
-        <span>Playlists need at least one compatible provider (Plex, Trakt, MDBList, Jellyfin, Emby, Silo, PublicMetaDB, SIMKL, TMDb, FlickList or CrossWatch). Configure one in Connections to enable playlist endpoints and mappings.</span>
+        <span>Playlists need at least one compatible provider (Plex, Trakt, MDBList, Jellyfin, Emby, Silo, PublicMetaDB, SIMKL, TMDb, FlickList, Tofa or CrossWatch). Configure one in Connections to enable playlist endpoints and mappings.</span>
         <button type="button" class="pl-btn small" data-action="open-connections">Open Connections</button>
       </div>
     ` : "";
@@ -476,6 +477,7 @@
     const raw = String(ep.playlist_type || ep.endpoint_type || ep.kind || "").toLowerCase();
     if (id.includes("watchlist") || raw === "watchlist") return "Watchlist";
     if (raw === "custom_list") return "Custom list";
+    if (raw === "cloud_list") return "Cloud list";
     if (raw === "liked_list") return "Liked list";
     if (raw === "followed_list") return "Followed list";
     if (raw === "public_list") return "Public list";
@@ -1353,6 +1355,7 @@
       public_list: ["public", "Public list"],
       collaboration: ["group", "Shared list"],
       collection: ["collections_bookmark", "Collection"],
+      cloud_list: ["cloud", "Cloud list"],
       movie: ["movie", "Movies"],
       movies: ["movie", "Movies"],
       show: ["tv", "Shows"],
@@ -1887,7 +1890,7 @@
       select.innerHTML = selectOptions(types.map((t) => ({ value: t, label: createTypeLabel(t) })), types.includes(current) ? current : types[0]);
       wrap.classList.toggle("hidden", types.length <= 1);
       const help = $("#pl-ep-create-type-help", root);
-      if (help) help.textContent = types.every((t) => CREATE_TYPE_LABELS[t]) ? "A list holds one kind of title. This cannot be changed later." : "Collections group titles in the library, playlists keep their own order.";
+      if (help) help.textContent = types.includes("cloud_list") ? "Cloud lists can include titles outside your server and have their own privacy settings. Playlists use your server's media." : (types.every((t) => CREATE_TYPE_LABELS[t]) ? "A list holds one kind of title. This cannot be changed later." : "Collections group titles in the library, playlists keep their own order.");
       window.CW?.IconSelect?.enhance?.(select, { className: "cw-plain-select" });
       updateCreatePrivacy();
     };

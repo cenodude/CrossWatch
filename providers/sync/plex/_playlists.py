@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable as IterableABC, Mapping as MappingABC
+from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
 from cw_platform.interactive_reads import retained_read, replaying
@@ -15,6 +16,7 @@ from cw_platform.playlists import (
     PlaylistResource,
     PlaylistSnapshot,
     PlaylistUserError,
+    PlaylistUnavailableError,
 )
 
 from ._common import (
@@ -32,6 +34,7 @@ from ._history import (
     _pms_find_in_guid_index as _hist_find_in_guid_index,
 )
 from . import _watchlist as feat_watchlist
+from . import _cloud_lists as cloud_lists
 from .._log import log as cw_log
 
 _PROVIDER = "PLEX"
@@ -216,6 +219,8 @@ def _resource_from_collection(adapter: Any, section: Any, coll: Any) -> Playlist
             "section_title": str(getattr(section, "title", "") or ""),
             "subtype": subtype,
             "smart": smart,
+            "can_rename": not smart,
+            "can_delete": not smart,
             "item_count": getattr(coll, "childCount", None),
         },
     )
@@ -303,13 +308,22 @@ def _first_empty_playlist_seed(adapter: Any) -> Any | None:
 
 @retained_read
 def list_resources(adapter: Any) -> list[PlaylistResource]:
-    srv = _server(adapter)
     out = [_watchlist_resource(adapter)]
-    out.extend(_resource_from_playlist(adapter, pl) for pl in _iter_video_playlists(srv))
-    for section, coll in _iter_collections(srv):
-        res = _resource_from_collection(adapter, section, coll)
-        if res:
-            out.append(res)
+    srv = getattr(getattr(adapter, "client", None), "server", None)
+    if srv is not None:
+        out.extend(_resource_from_playlist(adapter, pl) for pl in _iter_video_playlists(srv))
+        for section, coll in _iter_collections(srv):
+            res = _resource_from_collection(adapter, section, coll)
+            if res:
+                out.append(res)
+    elif not cloud_lists.available(adapter):
+        raise PlaylistError("plex server not connected")
+    try:
+        out.extend(cloud_lists.list_resources(adapter))
+    except PlaylistUnavailableError as exc:
+        if srv is None:
+            raise
+        _warn("cloud_lists_unavailable", error_type=type(exc).__name__)
     _info("list_resources_done", count=len(out))
     return out
 
@@ -357,6 +371,8 @@ def _obj_key(obj: Any) -> str:
 
 @retained_read
 def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
+    if str(playlist_id).startswith(cloud_lists.PREFIX):
+        return cloud_lists.get_snapshot(adapter, playlist_id)
     if _is_watchlist_id(playlist_id):
         resource = _watchlist_resource(adapter)
         idx = feat_watchlist.build_index(adapter) or {}
@@ -377,14 +393,14 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
             raise
         subtype = _collection_subtype(section, coll)
         items = []
-        for obj in raw:
+        for pos, obj in enumerate(raw):
             if str(getattr(obj, "type", "") or "").lower() != subtype:
                 continue
             items.append(
                 PlaylistItem.from_media(
                     plex_normalize(obj),
                     playlist_item_id=getattr(obj, "ratingKey", None),
-                    position=None,
+                    position=pos,
                     provider_media_id=getattr(obj, "ratingKey", None),
                 )
             )
@@ -574,8 +590,11 @@ def create(
     *,
     media_type: str | None = None,
     items: Sequence[Mapping[str, Any]] | None = None,
+    privacy: str | None = None,
     dry_run: bool = False,
 ) -> PlaylistResource:
+    if str(media_type or "").strip().lower() == "cloud_list":
+        return cloud_lists.create(adapter, name, privacy=privacy, items=items, dry_run=dry_run)
     nm = str(name or "").strip()
     if not nm:
         raise ValueError("playlist name required")
@@ -632,17 +651,22 @@ def create(
 
 
 def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) -> PlaylistResource:
+    if str(playlist_id).startswith(cloud_lists.PREFIX):
+        return cloud_lists.update(adapter, playlist_id, name=name, dry_run=dry_run)
     if _is_watchlist_id(playlist_id):
         raise PlaylistUnsupported("plex watchlist cannot be renamed as a playlist")
-    if _is_collection_id(playlist_id):
-        raise PlaylistUnsupported("plex collections must be renamed in plex")
     nm = str(name or "").strip()
     if not nm:
         raise ValueError("playlist name required")
     srv = _server(adapter)
-    pl = _find_playlist(srv, playlist_id)
+    section, pl = _find_collection(srv, playlist_id) if _is_collection_id(playlist_id) else (None, _find_playlist(srv, playlist_id))
     _guard_writable(pl)
     if dry_run:
+        if section is not None:
+            resource = _resource_from_collection(adapter, section, pl)
+            if resource is None:
+                raise PlaylistUnsupported("unsupported plex collection type")
+            return replace(resource, name=nm)
         return PlaylistResource(
             provider=_PROVIDER,
             id=str(getattr(pl, "ratingKey", None) or playlist_id),
@@ -672,16 +696,21 @@ def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) 
         _warn("rename_failed", list_id=str(playlist_id), error=str(e))
         raise PlaylistError(f"plex rename playlist failed: {e}") from e
     _info("rename_done", list_id=str(playlist_id), name=nm)
+    if section is not None:
+        resource = _resource_from_collection(adapter, section, pl)
+        if resource is None:
+            raise PlaylistUnsupported("unsupported plex collection type")
+        return resource
     return _resource_from_playlist(adapter, pl)
 
 
 def delete(adapter: Any, playlist_id: Any, *, dry_run: bool = False) -> dict[str, Any]:
+    if str(playlist_id).startswith(cloud_lists.PREFIX):
+        return cloud_lists.delete(adapter, playlist_id, dry_run=dry_run)
     if _is_watchlist_id(playlist_id):
         raise PlaylistUnsupported("plex watchlist cannot be deleted as a playlist")
-    if _is_collection_id(playlist_id):
-        raise PlaylistUnsupported("plex collections must be deleted in plex")
     srv = _server(adapter)
-    pl = _find_playlist(srv, playlist_id)
+    pl = _find_collection(srv, playlist_id)[1] if _is_collection_id(playlist_id) else _find_playlist(srv, playlist_id)
     _guard_writable(pl)
     if dry_run:
         return {"ok": True, "dry_run": True}
@@ -730,6 +759,8 @@ def _guard_writable(pl: Any) -> None:
 
 
 def add(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    if str(playlist_id).startswith(cloud_lists.PREFIX):
+        return cloud_lists.add(adapter, playlist_id, items)
     if _is_watchlist_id(playlist_id):
         lst = list(items or [])
         count, unresolved = feat_watchlist.add(adapter, lst)
@@ -798,6 +829,8 @@ def add(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -> d
 
 
 def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    if str(playlist_id).startswith(cloud_lists.PREFIX):
+        return cloud_lists.remove(adapter, playlist_id, items)
     if _is_watchlist_id(playlist_id):
         lst = list(items or [])
         count, unresolved = feat_watchlist.remove(adapter, lst)
@@ -911,10 +944,50 @@ def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -
 
 
 def reorder(adapter: Any, playlist_id: Any, ordered_keys: Sequence[str]) -> dict[str, Any]:
+    if str(playlist_id).startswith(cloud_lists.PREFIX):
+        return cloud_lists.reorder(adapter, playlist_id, ordered_keys)
     if _is_watchlist_id(playlist_id):
         return {"ok": True, "count": 0, "reordered": 0, "unsupported": True}
     if _is_collection_id(playlist_id):
-        return {"ok": True, "count": 0, "reordered": 0, "unsupported": True}
+        srv = _server(adapter)
+        snapshot = get_snapshot(adapter, playlist_id) if replaying() else None
+        _section, collection = _find_collection(srv, playlist_id)
+        _guard_writable(collection)
+        current = list(collection.items() or [])
+        by_key = {_obj_key(item): str(item.ratingKey) for item in current if _obj_key(item)}
+        if snapshot is not None:
+            captured = snapshot.by_key()
+            if any(key not in captured or not captured[key].provider_media_id for key in ordered_keys):
+                return {"ok": False, "count": 0, "reordered": 0, "error": "collection_item_ids_unavailable"}
+            by_key = {key: str(item.provider_media_id) for key, item in captured.items()}
+        current_ids = [str(item.ratingKey) for item in current]
+        target = list(dict.fromkeys(by_key[key] for key in ordered_keys if key in by_key))
+        if any(mid not in current_ids for mid in target):
+            raise PlaylistError("plex collection membership changed; refresh before reordering")
+        selected = set(target)
+        ordered = target + [mid for mid in current_ids if mid not in selected]
+        if not target:
+            return {"ok": True, "count": 0, "reordered": 0}
+        if getattr(collection, "collectionSort", None) != 2:
+            collection.sortUpdate(sort="custom")
+            collection.reload()
+            current = list(collection.items() or [])
+        work = [str(item.ratingKey) for item in current]
+        objects = {str(item.ratingKey): item for item in current}
+        if set(work) != set(ordered) or len(work) != len(ordered):
+            raise PlaylistError("plex collection membership changed; refresh before reordering")
+        moves = 0
+        for pos, mid in enumerate(ordered):
+            if work[pos] == mid:
+                continue
+            collection.moveItem(objects[mid], after=objects[ordered[pos - 1]] if pos else None)
+            work.remove(mid)
+            work.insert(pos, mid)
+            moves += 1
+        collection.reload()
+        if [str(item.ratingKey) for item in collection.items()] != ordered:
+            raise PlaylistError("plex collection order was not confirmed")
+        return {"ok": True, "count": moves, "reordered": moves}
 
     if replaying():
         snapshot = get_snapshot(adapter, playlist_id)

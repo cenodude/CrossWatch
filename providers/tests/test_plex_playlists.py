@@ -107,6 +107,25 @@ class FakeCollection:
         self._items.remove(obj)
         self.childCount = len(self._items)
 
+    def editTitle(self, title: str) -> None:
+        self.calls.append(("rename", title))
+        self.title = title
+
+    def reload(self):
+        return self
+
+    def delete(self) -> None:
+        self.calls.append(("delete",))
+
+    def sortUpdate(self, sort: str) -> None:
+        self.calls.append(("sort", sort))
+        self.collectionSort = 2
+
+    def moveItem(self, item: Any, after: Any = None) -> None:
+        self.calls.append(("move", item, after))
+        self._items.remove(item)
+        self._items.insert(self._items.index(after) + 1 if after else 0, item)
+
 
 class FakeSection:
     def __init__(self, title: str, key: int | str, typ: str, collections: list[FakeCollection]):
@@ -273,7 +292,7 @@ def test_collection_snapshot_and_writes_use_scoped_ids():
     assert snap.resource.name == "Movies"
     assert snap.resource.can_reorder is False
     assert snap.ordered_keys() == ["tmdb:1"]
-    assert snap.items[0].position is None
+    assert snap.items[0].position == 0
 
     add_res = plpl.add(ad, collection_id, [_media(2, "B")])
     assert add_res["count"] == 1
@@ -310,7 +329,8 @@ def test_smart_collection_writes_rejected_and_reorder_unsupported():
         plpl.add(ad, collection_id, [_media(1, "A")])
     with pytest.raises(plpl.SmartPlaylistError):
         plpl.remove(ad, collection_id, [_media(1, "A")])
-    assert plpl.reorder(ad, collection_id, ["tmdb:1"])["unsupported"] is True
+    with pytest.raises(plpl.SmartPlaylistError):
+        plpl.reorder(ad, collection_id, ["tmdb:1"])
 
 
 def test_missing_library_media_is_unresolved():
@@ -367,7 +387,7 @@ def test_rename_and_delete_regular_playlist():
     assert deleted["ok"] is True
 
 
-def test_rename_delete_blocked_for_smart_watchlist_and_collections():
+def test_rename_delete_blocked_for_smart_and_watchlist():
     a = FObj(1, "A", plid=101, section_id=1)
     smart = FakePlaylist("Smart", 20, [a], smart=True)
     coll = FakeCollection("Movies", 30, [a], subtype="movie", section_id=1)
@@ -378,8 +398,63 @@ def test_rename_delete_blocked_for_smart_watchlist_and_collections():
         plpl.rename(ad, "20", "Nope")
     with pytest.raises(plpl.PlaylistUnsupported):
         plpl.rename(ad, plpl.WATCHLIST_ID, "Nope")
-    with pytest.raises(plpl.PlaylistUnsupported):
-        plpl.delete(ad, f"{plpl.COLLECTION_PREFIX}1:30")
+    assert plpl.rename(ad, f"{plpl.COLLECTION_PREFIX}1:30", "Renamed").name == "Renamed"
+    assert plpl.delete(ad, f"{plpl.COLLECTION_PREFIX}1:30")["ok"]
+    assert ("delete",) in coll.calls
+
+
+def test_collection_reorder_preserves_other_items_and_is_idempotent():
+    a, b, c = [FObj(i, str(i), section_id=1) for i in (1, 2, 3)]
+    coll = FakeCollection("Movies", 30, [a, b, c])
+    ad = FakeAdapter(FakeServer([], [a, b, c], [FakeSection("Movies", 1, "movie", [coll])]))
+    assert plpl.reorder(ad, "collection:1:30", ["tmdb:3", "tmdb:3", "missing"])["reordered"] == 1
+    assert [o.ratingKey for o in coll.items()] == [3, 1, 2]
+    assert ("sort", "custom") in coll.calls
+    assert plpl.reorder(ad, "collection:1:30", ["tmdb:3", "tmdb:1", "tmdb:2"])["reordered"] == 0
+
+
+def test_collection_manage_dry_run_and_smart_guards():
+    coll = FakeCollection("Movies", 30, [])
+    ad = FakeAdapter(FakeServer([], [], [FakeSection("Movies", 1, "movie", [coll])]))
+    assert plpl.rename(ad, "collection:1:30", "Other", dry_run=True).name == "Other"
+    plpl.delete(ad, "collection:1:30", dry_run=True)
+    assert not coll.calls
+    coll.smart = True
+    with pytest.raises(plpl.SmartPlaylistError):
+        plpl.rename(ad, "collection:1:30", "Other")
+    with pytest.raises(plpl.SmartPlaylistError):
+        plpl.delete(ad, "collection:1:30")
+
+
+@pytest.mark.parametrize("review", [False, True])
+def test_collection_reorder_reads_order_after_sort_change(monkeypatch, review):
+    from copy import deepcopy
+
+    a, b, c = [FObj(i, str(i), section_id=1) for i in (1, 2, 3)]
+    coll = FakeCollection("Movies", 30, [a, b, c])
+    coll.collectionSort = 1
+    ad = FakeAdapter(FakeServer([], [a, b, c], [FakeSection("Movies", 1, "movie", [coll])]))
+    snapshot = plpl.get_snapshot(ad, "collection:1:30")
+    monkeypatch.setattr(plpl, "replaying", lambda: review)
+    monkeypatch.setattr(plpl, "get_snapshot", lambda *args: snapshot)
+    monkeypatch.setattr(plpl, "_find_collection", lambda *args: (None, coll))
+    original_sort = coll.sortUpdate
+    def change_sort(sort):
+        original_sort(sort)
+        coll._items = [c, a, b]
+    monkeypatch.setattr(coll, "sortUpdate", change_sort)
+    cached = {"items": deepcopy(coll._items)}
+    monkeypatch.setattr(coll, "items", lambda: cached["items"])
+    monkeypatch.setattr(coll, "reload", lambda: cached.update(items=deepcopy(coll._items)))
+    def move(item, after=None):
+        found = next(obj for obj in coll._items if obj.ratingKey == item.ratingKey)
+        coll._items.remove(found)
+        pos = next(i + 1 for i, obj in enumerate(coll._items) if obj.ratingKey == after.ratingKey) if after else 0
+        coll._items.insert(pos, found)
+    monkeypatch.setattr(coll, "moveItem", move)
+    assert plpl.reorder(ad, "collection:1:30", ["tmdb:1", "tmdb:2"])["reordered"] == 2
+    assert [item.ratingKey for item in coll.items()] == [1, 2, 3]
+    assert plpl.reorder(ad, "collection:1:30", ["tmdb:1", "tmdb:2"])["reordered"] == 0
 
 
 def test_snapshot_ordered():

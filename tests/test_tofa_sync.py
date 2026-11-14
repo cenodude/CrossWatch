@@ -156,7 +156,7 @@ def test_manifest_registration_and_ops(server: FakeServer) -> None:
     assert _mod_TOFA.OPS.name() == "TOFA" and _mod_TOFA.OPS.label() == "Tofa"
     feats = _mod_TOFA.OPS.features()
     assert feats["watchlist"] and feats["history"] and feats["progress"] and feats["collection"]
-    assert not feats["ratings"] and not feats["playlists"]
+    assert not feats["ratings"] and feats["playlists"]
     assert _mod_TOFA.OPS.is_configured({"tofa": dict(CREDS)}) is True
     assert _mod_TOFA.OPS.is_configured({"tofa": {**CREDS, "server_id": ""}}) is False
     assert _adapter().health()["ok"] is True

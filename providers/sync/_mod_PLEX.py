@@ -126,7 +126,9 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "read": True,
     "create": True,
     "create_empty": True,
-    "create_endpoint_types": ["playlist"],
+    "create_endpoint_types": ["playlist", "cloud_list"],
+    "create_privacy": {"values": ["private", "friends", "friends_of_friends", "plex", "public"],
+                       "default": "private", "editable": True, "endpoint_types": ["cloud_list"]},
     "rename": True,
     "delete": True,
     "add": True,
@@ -134,9 +136,9 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "reorder": True,
     "smart": True,
     "smart_writable": False,
-    "media_types": ["movie", "show", "episode"],
-    "endpoint_types": ["playlist", "collection"],
-    "ordered_endpoint_types": ["playlist"],
+    "media_types": ["movie", "show", "season", "episode"],
+    "endpoint_types": ["playlist", "collection", "cloud_list"],
+    "ordered_endpoint_types": ["playlist", "cloud_list"],
     "unordered_endpoint_types": ["watchlist", "collection"],
 }
 
@@ -1387,7 +1389,7 @@ class PLEXModule:
             "watchlist": discover_ok if wl_needed else False,
             "history": pms_ok if enabled.get("history") else False,
             "ratings": pms_ok if enabled.get("ratings") else False,
-            "playlists": pms_ok if enabled.get("playlists") else False,
+            "playlists": (pms_ok or discover_ok) if enabled.get("playlists") else False,
             "progress": pms_ok if enabled.get("progress") else False,
             "collection": pms_ok if enabled.get("collection") else False,
         }
@@ -1741,6 +1743,7 @@ class _PlexOPS:
         *,
         media_type: str | None = None,
         items: Iterable[Mapping[str, Any]] | None = None,
+        privacy: str | None = None,
         instance: str | None = None,
         dry_run: bool = False,
     ):
@@ -1749,6 +1752,7 @@ class _PlexOPS:
             name,
             media_type=media_type,
             items=list(items or []),
+            privacy=privacy,
             dry_run=dry_run,
         )
 
@@ -1762,6 +1766,13 @@ class _PlexOPS:
         dry_run: bool = False,
     ):
         return self._pl().rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def update_playlist_privacy(self, cfg: Mapping[str, Any], playlist_id: str, privacy: str, *, instance: str | None = None, dry_run: bool = False):
+        from .plex import _cloud_lists
+
+        if not str(playlist_id).startswith(_cloud_lists.PREFIX):
+            raise ValueError("Privacy settings are available only for Plex cloud Lists")
+        return _cloud_lists.update(self._playlist_adapter(cfg, instance), playlist_id, privacy=privacy, dry_run=dry_run)
 
     def delete_playlist(
         self,
