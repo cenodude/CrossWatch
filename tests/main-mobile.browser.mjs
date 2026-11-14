@@ -96,6 +96,12 @@ for (const width of [390,320,1440]) test(`Main sync activity fits at ${width}px`
     await page.waitForFunction(()=>localStorage.getItem('insights.feature')==='history');
     await page.locator('#insights-mobile-feature').selectOption('watchlist');
     await page.waitForFunction(()=>localStorage.getItem('insights.feature')==='watchlist');
+    await page.evaluate(()=>{window.CW.ProfileMediaModal={canOpen:item=>!!item.ids?.tmdb,open:item=>{window.openedScrobble=item;}};});
+    await page.locator('#recent-activity [data-recent-media="0"]').click();
+    assert.equal(await page.evaluate(()=>window.openedScrobble.ids.tmdb),100);
+    await page.locator('#recent-activity [data-recent-media="1"]').focus();
+    await page.keyboard.press('Enter');
+    assert.equal(await page.evaluate(()=>window.openedScrobble.ids.tmdb),101);
   } else {
     assert.equal(await page.locator('#stat-providers .tile-k').first().isVisible(),false);
     assert.equal(await page.locator('#sync-history .history-mobile').first().isVisible(),false);
@@ -110,7 +116,19 @@ for (const width of [390,320,1440]) test(`Main sync activity fits at ${width}px`
   await page.keyboard.press('Escape');
   empty=true;
   await page.evaluate(async()=>{await refreshInsights();await refreshRecentActivity();});
-  await page.locator('#recent-activity .activity-empty').waitFor();
+  await page.locator('#recent-activity .activity-empty').waitFor({state:'attached'});
   assert.equal(await page.locator('#sync-history .history-item').count(),1);
+  assert.equal(await page.locator('#recent-activity-block').isVisible(),width>760);
+  assert.equal(await page.locator('.cw-recent-feed:has(#sync-history)').isVisible(),width>760);
+  if(width<760) {
+    await page.setViewportSize({width:1440,height:1000});
+    assert.equal(await page.locator('#recent-activity-block').isVisible(),true);
+    assert.equal(await page.locator('.cw-recent-feed:has(#sync-history)').isVisible(),true);
+    await page.setViewportSize({width,height:1000});
+  }
+  empty=false;
+  await page.evaluate(async()=>{await refreshInsights();await refreshRecentActivity();});
+  assert.equal(await page.locator('#recent-activity-block').isVisible(),true);
+  assert.equal(await page.locator('.cw-recent-feed:has(#sync-history)').isVisible(),true);
   assert.deepEqual(errors,[]);
 });

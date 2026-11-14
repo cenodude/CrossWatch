@@ -1263,7 +1263,9 @@
       const image = url ? `${url}&kind=${isChild(item) && stillSeason != null && stillEpisode != null ? `still&season=${encodeURIComponent(stillSeason)}&episode=${encodeURIComponent(stillEpisode)}` : "backdrop"}` : "";
       const rating = feature === "ratings" && !shows && !notes ? item.rating : item.user_rating;
       const date = shows ? item.last_watched : notes ? item.updated : item.date;
-      const status = state.showStatusLabels !== false ? statusPill(item.status) : "";
+      const status = state.showStatusLabels !== false ? statusOf(item.status) : null;
+      const prominentStatus = status && ["dropped", "on_hold"].includes(status.id) ? statusPill(status.id) : "";
+      const statusIcon = status && !prominentStatus ? `<span class="trk-grid-status-icon" data-status="${esc(status.id)}" tabindex="0" role="img" aria-label="${esc(status.label)}">${symbol(status.icon)}</span>` : "";
       const episode = shows ? item.last_season != null ? `Last ${se(item.last_season, item.last_episode)}` : "" : episodeCode(item);
       const meta = [isChild(item) ? item.series_year : item.year, shows ? "Show" : typeMeta(item).label, episode].filter(Boolean).join(" · ");
       let heading = "";
@@ -1275,11 +1277,11 @@
         <div class="trk-grid-art"><span class="trk-grid-placeholder" aria-hidden="true">${symbol(shows ? "tv" : typeMeta(item).icon)}</span>${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}
           ${!recent ? `<input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}">` : ""}
           ${rating != null ? `<span class="cw-media-card-score" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}
-          ${date || status ? `<div class="trk-grid-labels">${date ? `<span class="trk-grid-date" title="${esc(whenText(date))}">${esc(!recent && timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}${status ? `<span class="trk-grid-status">${status}</span>` : ""}</div>` : ""}
+          ${date || prominentStatus ? `<div class="trk-grid-labels">${date ? `<span class="trk-grid-date" title="${esc(whenText(date))}">${esc(!recent && timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}${prominentStatus ? `<span class="trk-grid-status">${prominentStatus}</span>` : ""}</div>` : ""}
           ${shows ? progressCell(item, "bar") : !notes && feature === "progress" ? extraCell(item, feature, "bar") : ""}
           ${card ? `<button type="button" class="trk-grid-open" data-trk-card-open data-trk-card-index="${index}" data-trk-card-recent="${recent}" aria-label="Open details for ${esc(title)}"></button>` : ""}
         </div>
-        <div class="trk-grid-copy"><strong title="${esc(title)}">${esc(title)}</strong><small>${esc(meta)}</small>${notes ? tagChips(item.tags, 3) : !shows && feature === "progress" ? extraCell(item, feature, "count") : ""}
+        <div class="trk-grid-copy"><strong title="${esc(title)}">${esc(title)}</strong><small>${statusIcon}<span>${esc(meta)}</span></small>${notes ? tagChips(item.tags, 3) : !shows && feature === "progress" ? extraCell(item, feature, "count") : ""}
           <div class="trk-grid-tools">${shows ? progressCell(item, "count") : !notes ? healthIcon(item, state.view === "cleanup") : ""}<button type="button" class="cw-card-actions" data-trk-card-menu data-trk-card-index="${index}" data-trk-card-recent="${recent}" title="Actions" aria-label="Actions for ${esc(title)}" aria-haspopup="menu" aria-expanded="false">${icon("more_horiz")}</button></div>
         </div></article>`;
     }).join("");
@@ -1308,6 +1310,7 @@
       const label = feature === "history" ? "Edit watch" : feature === "progress" ? "Edit progress" : feature === "ratings" ? "Edit rating" : "Edit item";
       entries.push({icon:"edit", label, disabled, run:() => openSheet("edit", {item:row, feature})});
     }
+    if (feature !== "ratings") entries.push({icon:"star", label:"Rate", disabled, run:() => selectRef(ref, {action:"rate"})});
     entries.push({icon:ref.feature === "history" ? "replay" : "check", label:ref.feature === "history" ? "Log a rewatch" : "Log a watch", attrs:' data-trk-watch-label', disabled, run:() => cardQuickAction(button, "log", row, ref)});
     entries.push({icon:"do_not_disturb_on", label:"Mark as dropped", disabled:disabled || row.status === "dropped", run:() => cardQuickAction(button, "drop", row, ref)});
     const menu = window.CW.CardActions.open(button, entries, {title:cardTitle(row),subtitle:[episodeLabel(row),row.episode_title].filter(Boolean).join(" · ")});
@@ -1429,7 +1432,7 @@
   }
 
   function heroContext() {
-    if (!state.ref && heroPlayback) return {data:heroPlayback, record:heroPlayback.title};
+    if ((state.view === "overview" || !state.ref) && heroPlayback) return {data:heroPlayback, record:heroPlayback.title};
     if (state.view === "overview") return {data:state.overview?.hero ? {title:state.overview.hero, heroMeta:state.overview.heroMeta} : null, record:state.overview?.hero};
     if (!state.ref) {
       const data = state.listHero?.view === state.view && state.listHero.instance === state.instance ? state.listHero : null;
@@ -1442,22 +1445,26 @@
 
   let heroPlayback = null;
   let heroPlaybackRequest = null;
+  let dismissedPlayback = null;
 
   function updateHeroPlayback() {
     const host = state.root?.querySelector('.trk-hero-playback');
     const stats = state.root?.querySelector('[data-trk-slot="hero"]');
     if (!host || !stats) return;
-    const live = !state.ref && heroPlayback;
+    const available = (state.view === "overview" || !state.ref) && heroPlayback;
+    const live = available && dismissedPlayback !== heroPlayback.session;
+    const restore = state.root.querySelector('[data-trk-action="show-playback"]');
+    if (restore) restore.hidden = !available || !!live;
     host.hidden = !live;
     stats.hidden = !!live;
     if (!live) return;
-    const item = live.stream;
+    const item = available.stream;
     const status = String(item.state || item.status).toLowerCase();
     host.querySelector('[data-trk-live="state"]').textContent = status === 'paused' ? 'Paused' : status === 'buffering' ? 'Buffering' : 'Now playing';
-    host.querySelector('[data-trk-live="title"]').textContent = cardTitle(live.title);
+    host.querySelector('[data-trk-live="title"]').textContent = cardTitle(available.title);
     const provider = item.source?.provider || item.provider || (typeof item.source === 'string' ? item.source : '');
-    host.querySelector('[data-trk-live="meta"]').textContent = [window.CW?.ProviderMeta?.label?.(provider) || provider, episodeCode(live.title)].filter(Boolean).join(' · ');
-    const progress = window.CW?.PlayingCard?.progress?.({...item, duration_ms:Number(item.duration_ms) || Number(live.heroMeta?.runtime_minutes) * 60000});
+    host.querySelector('[data-trk-live="meta"]').textContent = [window.CW?.ProviderMeta?.label?.(provider) || provider, episodeCode(available.title)].filter(Boolean).join(' · ');
+    const progress = window.CW?.PlayingCard?.progress?.({...item, duration_ms:Number(item.duration_ms) || Number(available.heroMeta?.runtime_minutes) * 60000});
     const pct = progress?.pct ?? Math.max(0, Math.min(100, Number(item.progress) || 0));
     const track = host.querySelector('[role="progressbar"]');
     track.setAttribute('aria-valuenow', String(Math.round(pct)));
@@ -1465,7 +1472,7 @@
     host.querySelector('[data-trk-live="percent"]').textContent = `${Math.round(pct)}%`;
     host.querySelector('[data-trk-live="remaining"]').textContent = progress?.remaining || '';
     const image = host.querySelector('img');
-    const url = artUrl(live.title, 'w185');
+    const url = artUrl(available.title, 'w185');
     if (image.dataset.url !== url) {
       image.dataset.url = url;
       image.hidden = !url;
@@ -1492,7 +1499,8 @@
           const head = {...stream, type:show ? 'episode' : 'movie', art:{kind:show ? 'tv' : 'movie',tmdb}};
           const previous = heroPlayback;
           const same = previous?.title.art.tmdb === tmdb && previous?.show === !!show;
-          heroPlayback = {stream,title:head,show:!!show,heroMeta:same ? previous.heroMeta : window.CW?.Meta?.peek?.(stream)};
+          const session = JSON.stringify([scope, stream.source?.provider || stream.source || stream.provider, stream.provider_instance || stream.instance_id || "default", stream.session_key || "", stream.started || "", tmdb || stream.title, stream.season, stream.episode]);
+          heroPlayback = {stream,session,title:head,show:!!show,heroMeta:same ? previous.heroMeta : window.CW?.Meta?.peek?.(stream)};
           if (!heroPlayback.heroMeta && !same) {
             const live = heroPlayback;
             void window.CW?.Meta?.get?.(stream,'detail',{seriesInfo:true})?.then(meta => {
@@ -1923,6 +1931,7 @@
               </div>
               <div class="cw-media-hero-account">
                 <div class="trk-profile-picker" hidden><select id="trk-profile" aria-label="View as profile"></select></div>
+                <button type="button" class="cw-btn trk-hero-restore" data-trk-action="show-playback" hidden>${icon("play_circle")}<span>Show playback</span></button>
               </div>
             </div>
             <div class="cw-head-copy cw-page-hero-copy">
@@ -4894,7 +4903,10 @@
       }
       const action = event.target.closest("[data-trk-action]")?.dataset.trkAction;
       if (['views','changes','import'].includes(action)) root.querySelector('.trk-others')?.removeAttribute('open');
-      if (action === "refresh") {
+      if (action === "show-playback") {
+        dismissedPlayback = null;
+        updateHeroPlayback();
+      } else if (action === "refresh") {
         state.progress = {};
         refresh();
       } else if (action === "prev" || action === "next") {
@@ -5103,10 +5115,15 @@
       img.remove();
     }, true);
     document.addEventListener('keydown', event => {
-      if (event.key !== 'Escape' || !state.ref || !root.getClientRects().length || state.statusMenu) return;
+      if (event.key !== 'Escape' || !root.getClientRects().length || state.statusMenu) return;
       if ([...document.querySelectorAll('[role="dialog"],[role="menu"],dialog[open],.cw-icon-select-menu')].some(node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden')) return;
       queueMicrotask(() => {
-        if (!event.defaultPrevented && !event.cancelBubble) clearSelectedTitle();
+        if (event.defaultPrevented || event.cancelBubble) return;
+        if (state.ref) clearSelectedTitle();
+        else if (heroPlayback && !root.querySelector('.trk-hero-playback')?.hidden) {
+          dismissedPlayback = heroPlayback.session;
+          updateHeroPlayback();
+        }
       });
     }, true);
     setInterval(refreshHeroPlayback, 15000);

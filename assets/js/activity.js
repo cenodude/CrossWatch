@@ -11,6 +11,7 @@
   let retryTimer = null;
   let viewAllBound = false;
   let configCheck = null;
+  let recentItems = [];
 
   function esc(value) {
     return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({
@@ -149,7 +150,7 @@
     return parts.join("");
   }
 
-  function mobileRowHTML(item, status, time) {
+  function mobileRowHTML(item, status, time, index) {
     const meta = window.CW?.Meta;
     const tmdb = meta?.tmdbId(item);
     const kind = meta?.kind(item) === "movie" ? "movie" : "tv";
@@ -165,7 +166,7 @@
     const progress = Number(item?.progress);
     const pct = Math.round(Math.max(0, Math.min(100, Number.isFinite(progress) ? progress : 0)));
     const hasProgress = item?.progress != null && item.progress !== "" && Number.isFinite(progress);
-    return `<div class="activity-mobile">
+    return `<div class="activity-mobile" data-recent-media="${index}" role="button" tabindex="0" aria-label="${esc(`View ${item?.title || "media"} details`)}">
       <div class="activity-art">${thumbnail}</div>
       <div class="activity-mobile-copy">
         <div class="activity-mobile-title">${esc(item?.title || "Untitled")}</div>
@@ -177,7 +178,7 @@
     </div>`;
   }
 
-  function rowHTML(item, recent = false) {
+  function rowHTML(item, recent = false, index = 0) {
     const status = String(item?.status || "ok").toLowerCase();
     const media = String(item?.media_type || "").toLowerCase();
     const cls = status === "ok" ? "ok" : "err";
@@ -185,7 +186,7 @@
     const progress = Number(item?.progress || 0);
     return `
       <div class="activity-item ${cls}${recent ? " activity-mobile-row" : ""}">
-        ${recent ? mobileRowHTML(item, status, time) : ""}
+        ${recent ? mobileRowHTML(item, status, time, index) : ""}
         <div class="activity-main">
           <div class="activity-title">${esc(titleOf(item))}</div>
           <div class="activity-flow-line">
@@ -262,6 +263,22 @@
     const block = $("#recent-activity-block");
     const host = $("#recent-activity");
     if (!block || !host) return;
+    if (!host.dataset.mediaBound) {
+      host.dataset.mediaBound = "1";
+      const open = event => {
+        if (event.type === "keydown" && !["Enter", " "].includes(event.key)) return;
+        const row = event.target.closest("[data-recent-media]");
+        if (!row || !window.matchMedia("(max-width:760px)").matches) return;
+        const item = recentItems[Number(row.dataset.recentMedia)];
+        if (!item) return;
+        event.preventDefault();
+        const modal = window.CW?.ProfileMediaModal;
+        if (modal?.canOpen?.(item)) void modal.open(item);
+        else void (window.CW?.WatchlistPreview?.openPreviewDrawer || window.openPreviewDrawer)?.(item);
+      };
+      host.addEventListener("click", open);
+      host.addEventListener("keydown", open);
+    }
     if (!host.dataset.artFallback) {
       host.dataset.artFallback = "1";
       host.addEventListener("error", event => {
@@ -295,8 +312,9 @@
         throw new Error("invalid_activity_response");
       }
       const items = data.items;
+      recentItems = items;
       host.innerHTML = items.length
-        ? items.map((item) => rowHTML(item, true)).join("")
+        ? items.map((item, index) => rowHTML(item, true, index)).join("")
         : `<div class="activity-empty">${display.mode === "hours" ? `No recent scrobble in the last ${display.hours} hours.` : "No recent scrobble yet."}</div>`;
     } catch {
       if (!host.children.length || host.textContent.trim() === "Loading scrobble...") {

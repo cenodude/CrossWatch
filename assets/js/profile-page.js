@@ -4266,6 +4266,7 @@
       const panel = q("filters-panel");
       const btn = q("filters-btn");
       if (!panel || !btn) return;
+      if (panel.closest(".cw-hub-mobile-sheet")) return;
       const open = typeof force === "boolean" ? force : panel.hidden;
       panel.hidden = !open;
       btn.setAttribute("aria-expanded", String(open));
@@ -5286,6 +5287,170 @@
     });
   }
 
+  function wireMobileRecordTools() {
+    const narrow = window.matchMedia("(max-width:760px)");
+    const typeSelector = "[data-timeline-type],[data-playback-type],[data-collection-type]";
+    document.querySelectorAll(".cw-hub-records.cw-profile-panel").forEach((panel) => {
+      const toolbar = panel.querySelector(".cw-hub-records-toolbar");
+      if (!toolbar) return;
+      const key = panel.id.replace("profile-panel-", "");
+      const metrics = panel.querySelector(".cw-hub-records-tiles");
+      const sources = [...panel.querySelectorAll("[data-timeline-source]")];
+      const line = document.createElement("div");
+      line.className = "cw-hub-mobile-summary";
+      const source = document.createElement("select");
+      source.setAttribute("aria-label", "History source");
+      source.dataset.cwNativeSelect = "true";
+      sources.forEach((button) => source.add(new Option(button.textContent.trim(), button.dataset.timelineSource)));
+      if (sources.length) line.append(source);
+      const total = document.createElement("span");
+      line.append(total);
+      toolbar.before(line);
+      const chips = document.createElement("div");
+      chips.className = "cw-hub-mobile-active";
+      chips.setAttribute("aria-label", "Active filters");
+      toolbar.after(chips);
+      const trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "cw-hub-mobile-filter";
+      trigger.setAttribute("aria-label", "Filters and display options");
+      trigger.setAttribute("aria-haspopup", "dialog");
+      trigger.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">tune</span><span hidden></span>';
+      toolbar.append(trigger);
+      const dialog = document.createElement("dialog");
+      dialog.className = "cw-hub-mobile-sheet";
+      dialog.id = `profile-${key}-mobile-tools`;
+      dialog.setAttribute("aria-labelledby", `${dialog.id}-title`);
+      trigger.setAttribute("aria-controls", dialog.id);
+      dialog.innerHTML = `<header><h2 id="${dialog.id}-title">Filters and display</h2><button type="button" aria-label="Close filters"><span class="material-symbols-rounded" aria-hidden="true">close</span></button></header><div class="cw-hub-mobile-sheet-body"></div><footer><button type="button" class="cw-btn">Done</button></footer>`;
+      panel.append(dialog);
+      const body = dialog.querySelector(".cw-hub-mobile-sheet-body");
+      const moved = [];
+      let enabled = false;
+      let signature = "";
+      const defaults = { coverage: "all", sort: key === "collection" ? "collected_at" : "last_updated" };
+      const selectedFilters = () => {
+        const entries = [];
+        body.querySelectorAll("select").forEach((select) => {
+          if (select.closest("[hidden]")) return;
+          const field = select.id.replace(`profile-${key}-`, "");
+          const fallback = defaults[field] || "";
+          if (!select.value || select.value === fallback) return;
+          entries.push({ label: select.selectedOptions[0]?.textContent.trim() || select.value, clear: () => {
+            select.value = fallback;
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+          } });
+        });
+        const types = [...body.querySelectorAll(typeSelector)];
+        const active = types.find((button) => button.getAttribute("aria-pressed") === "true");
+        if (active && active !== types[0]) entries.push({ label: active.querySelector("span:not(.material-symbols-rounded)")?.textContent || active.textContent, clear: () => types[0]?.click() });
+        const rating = body.querySelector('[data-timeline-rating]:not([data-timeline-rating=""])[aria-pressed="true"]');
+        if (rating) entries.push({ label: `${rating.dataset.timelineRating}/10`, clear: () => rating.click() });
+        return entries;
+      };
+      const sync = () => {
+        if (!enabled) return;
+        if (dialog.open && !panel.classList.contains("active")) dialog.close();
+        const stats = [...metrics?.querySelectorAll(".cw-hub-records-stat") || []];
+        const stat = key === "collection" ? stats.at(-1) : stats[0];
+        const text = stat ? `${stat.querySelector("strong")?.textContent || "0"} ${stat.querySelector("span")?.textContent.toLowerCase() || "items"}` : "";
+        if (total.textContent !== text) total.textContent = text;
+        source.value = panel.dataset.source || sources[0]?.dataset.timelineSource || "";
+        const coverage = body.querySelector(".cw-hub-records-filters");
+        if (coverage && coverage.hidden !== (panel.dataset.coverage !== "on")) coverage.hidden = panel.dataset.coverage !== "on";
+        const entries = selectedFilters();
+        const status = body.querySelector(".cw-play-status");
+        const warning = status?.dataset.issues;
+        const next = JSON.stringify([entries.map((entry) => entry.label), warning]);
+        if (signature !== next) {
+          signature = next;
+          chips.replaceChildren();
+          entries.forEach((entry) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = entry.label;
+            button.setAttribute("aria-label", `Remove ${entry.label} filter`);
+            const icon = document.createElement("span");
+            icon.className = "material-symbols-rounded";
+            icon.setAttribute("aria-hidden", "true");
+            icon.textContent = "close";
+            button.append(icon);
+            button.addEventListener("click", () => { entry.clear(); sync(); });
+            chips.append(button);
+          });
+          if (warning) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = warning === "loading" ? "Providers loading" : "Provider needs attention";
+            button.addEventListener("click", () => trigger.click());
+            chips.append(button);
+          }
+          chips.hidden = !chips.childElementCount;
+          const badge = trigger.lastElementChild;
+          badge.textContent = String(entries.length);
+          badge.hidden = !entries.length;
+        }
+      };
+      const relocateMenus = (destination) => {
+        panel.querySelectorAll(".cw-icon-select").forEach((wrap) => {
+          if (wrap.__cwMenu && (destination !== dialog || dialog.contains(wrap))) destination.append(wrap.__cwMenu);
+        });
+      };
+      const close = () => { if (dialog.open) dialog.close(); };
+      trigger.addEventListener("click", () => {
+        window.CW?.IconSelect?.closeAll?.();
+        relocateMenus(dialog);
+        sync();
+        dialog.showModal();
+        document.documentElement.classList.add("cw-hub-sheet-open");
+      });
+      dialog.querySelector("header button").addEventListener("click", close);
+      dialog.querySelector("footer button").addEventListener("click", close);
+      dialog.addEventListener("close", () => {
+        window.CW?.IconSelect?.closeAll?.();
+        document.documentElement.classList.remove("cw-hub-sheet-open");
+      });
+      dialog.addEventListener("click", (event) => {
+        if (event.target === dialog) {
+          const rect = dialog.getBoundingClientRect();
+          if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close();
+        }
+        if (event.target.closest("[data-timeline-toggle],[data-playback-timeline],[data-collection-timeline],[data-timeline-view],[data-playback-view],[data-collection-view],[data-playback-open-settings]")) close();
+      });
+      source.addEventListener("change", () => sources.find((button) => button.dataset.timelineSource === source.value)?.click());
+      panel.addEventListener("change", sync);
+      const observer = new MutationObserver(sync);
+      observer.observe(body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-pressed", "data-issues", "hidden"] });
+      observer.observe(panel, { attributes: true, attributeFilter: ["data-source", "data-coverage", "class"] });
+      const adapt = () => {
+        if (enabled === narrow.matches) return;
+        enabled = narrow.matches;
+        panel.classList.toggle("has-mobile-tools", enabled);
+        if (enabled) {
+          [".cw-hub-records-chips", ".cw-hist-scores", ".cw-hub-records-controls", ".cw-hub-records-filters", ".cw-hub-records-tiles", ".cw-hub-progress-summary", ".cw-play-status"].forEach((selector) => {
+            const node = panel.querySelector(selector);
+            if (!node) return;
+            const marker = document.createTextNode("");
+            node.before(marker);
+            moved.push({ node, marker });
+            body.append(node);
+          });
+          const filters = body.querySelector(".cw-play-filterpanel");
+          if (filters) filters.hidden = false;
+          sync();
+        } else {
+          close();
+          relocateMenus(document.body);
+          moved.splice(0).forEach(({ node, marker }) => marker.replaceWith(node));
+          panel.querySelectorAll(".cw-hub-records-filters,.cw-play-filterpanel").forEach((node) => { node.hidden = true; });
+          panel.querySelectorAll("[data-timeline-filters-toggle],[data-playback-filters-toggle]").forEach((button) => button.setAttribute("aria-expanded", "false"));
+        }
+      };
+      narrow.addEventListener("change", adapt);
+      adapt();
+    });
+  }
+
   async function init() {
     await resolveViewAs();
     await refreshProfile().catch((error) => toast(error.message || "Profile could not be loaded", true));
@@ -5295,6 +5460,7 @@
     watchlistPanel.wire();
     wireTabs();
     wireCollection();
+    wireMobileRecordTools();
     wirePreferences();
     wireAvatar();
     wireForms();

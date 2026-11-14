@@ -201,15 +201,19 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     return dt.toDateString()===tom.toDateString()?`tomorrow ${time}`:`${dt.toLocaleDateString([],{weekday:"short"})} ${time}`;
   }
 
+  function runAge(date, now=Date.now()) {
+    const seconds=Math.max(0,Math.floor((now-date.getTime())/1000)), unit=seconds<3600?"minute":seconds<86400?"hour":"day",
+      amount=Math.floor(seconds/({minute:60,hour:3600,day:86400}[unit]));
+    return seconds<60?"Just now":new Intl.RelativeTimeFormat(undefined,{numeric:"auto"}).format(-amount,unit);
+  }
+
   function lastSyncTip(summary, now=Date.now()) {
     if (!summary) return "Last sync: Unavailable";
     const running=!!summary.running, raw=running?(summary.started_at||summary.raw_started_ts):(summary.finished_at||summary.started_at||summary.raw_started_ts);
     if (!raw) return "Last sync: No runs recorded";
     const number=Number(raw), date=new Date(Number.isFinite(number)?(number<1e12?number*1000:number):raw);
     if (!Number.isFinite(date.getTime())||date.getTime()<=0) return "Last sync: No runs recorded";
-    const seconds=Math.max(0,Math.floor((now-date.getTime())/1000)), unit=seconds<3600?"minute":seconds<86400?"hour":"day",
-      amount=Math.floor(seconds/({minute:60,hour:3600,day:86400}[unit])),
-      relative=seconds<60?"Just now":new Intl.RelativeTimeFormat(undefined,{numeric:"auto"}).format(-amount,unit),
+    const relative=runAge(date,now),
       exact=date.toLocaleString([],{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",timeZoneName:"short"});
     return `${running?"Sync started":"Last sync"}: ${relative}\n${exact}`;
   }
@@ -353,9 +357,37 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     aria?(el.chip.dataset.tip=aria,el.chip.setAttribute("aria-label",aria)):(el.chip.removeAttribute("data-tip"),el.chip.removeAttribute("aria-label"));
   }
 
+  function renderMobileSchedule(){
+    const row=$("#ops-card .action-row");
+    if (!row) return;
+    let line=$("#cw-mobile-last-schedule");
+    if (!line) {
+      line=document.createElement("div");
+      line.id="cw-mobile-last-schedule";
+      line.className="cw-mobile-last-schedule";
+      line.innerHTML='<span class="material-symbols-rounded" aria-hidden="true">schedule</span><span class="cw-mobile-last-schedule-copy"><span>Last scheduled run</span><time></time></span>';
+      row.insertAdjacentElement("afterend",line);
+    }
+    line.hidden=isManaged()||!S.sched.enabled;
+    const date=new Date(Number(S.sched.lastAt||0)*1000), valid=Number.isFinite(date.getTime())&&date.getTime()>0;
+    const failed=valid&&S.sched.lastOk===false;
+    line.classList.toggle("is-failed",failed);
+    $(".material-symbols-rounded",line).textContent=failed?"error_outline":"schedule";
+    const time=$("time",line);
+    time.textContent=valid?`${runAge(date)}${failed?" \u00b7 Failed":""}`:"No runs yet";
+    if (valid) {
+      time.dateTime=date.toISOString();
+      time.title=date.toLocaleString();
+    } else {
+      time.removeAttribute("datetime");
+      time.removeAttribute("title");
+    }
+  }
+
   function render(){
     const host=ensureBanner();
     if (!host) return;
+    renderMobileSchedule();
     const E=k=>{const chip=$(`#chip-${k}`,host);return {chip,icon:chip?$(".service-icon",chip):null,value:$(`#${k}-value`,host),meta:$(`#${k}-meta`,host),badges:$(`#${k}-badges`,host),tip:chip?$(".cw-hub-tip",chip):null,progress:["watch","hook"].includes(k)&&chip?$(".watch-progress",chip):null,progressValue:["watch","hook"].includes(k)?$(`#${k}-progress-value`,host):null};},
       pairs=E("pairs"), sched=E("sched"), watch=E("watch"), hook=E("hook"), health=E("health"),
       managed=isManaged(),
@@ -476,6 +508,9 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
       const adv=advancedOn(sc), captures=adv?activeCaptureJobs(sc):0, events=adv?activeEventRules(sc):0, wh=webhookState(sc);
       const warnings=(Array.isArray(st?.scheduling_warnings)?st.scheduling_warnings:(Array.isArray(st?.warnings)?st.warnings:[])).map(x=>String(x||"").trim()).filter(Boolean);
       S.sched={enabled:schedulingOn(sc),standard:!!sc.enabled&&sc.mode!=="disabled",advanced:adv,running:!!st?.running,next:+(st?.next_run_at||st?.next_run||0)||0,captures:captures,webhooks:!!wh.active,webhookLabel:wh.label||"",warning:!!st?.warning||warnings.length>0,warnings};
+      const latest=[st,...Object.values(st?.profiles||{})].filter(row=>Number.isFinite(Number(row?.last_run_at))&&Number(row.last_run_at)>0).sort((a,b)=>Number(b.last_run_at)-Number(a.last_run_at))[0];
+      S.sched.lastAt=Number(latest?.last_run_at)||0;
+      S.sched.lastOk=latest?.last_run_ok;
       S.evt={enabled:adv&&events>0,count:events};
     } catch { S.sched={enabled:false,running:false,next:0,advanced:false,captures:0,webhooks:false,webhookLabel:"",warning:false,warnings:[]}; S.evt={enabled:false,count:0}; }
     render();

@@ -52,6 +52,18 @@ async function openSettings(page) {
   await page.locator('#cw-mobile-widgets > summary').click();
 }
 
+test('Quick add is available on Home and stays hidden in Tracker and Media Hub',async t=>{
+  const {page}=await fixture(t);
+  await page.locator('#cw-quick-add .cw-qa-fab').waitFor();
+  for(const tab of ['tracker','profile','main']) {
+    await page.evaluate(tab=>{
+      document.documentElement.dataset.tab=tab;
+      document.dispatchEvent(new Event('tab-changed'));
+    },tab);
+    assert.equal(await page.locator('#cw-quick-add .cw-qa-fab').isVisible(),tab==='main');
+  }
+});
+
 async function swipeSurface(page, content = '<button id="swipe-card" style="width:100%;height:100%">Media card</button>') {
   await page.evaluate(content => {
     document.querySelector('#swipe-surface')?.remove();
