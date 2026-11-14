@@ -2492,7 +2492,11 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
         return bool(str(blk.get("server") or "").strip() and str(blk.get("access_token") or blk.get("token") or blk.get("api_key") or "").strip())
 
     if ck == "kodi":
-        return bool(str(blk.get("server") or "").strip() and blk.get("connection_verified") is True)
+        if str(blk.get("server") or "").strip() and blk.get("connection_verified") is True:
+            return True
+        from providers.sync.kodi._addon_sync import addon_ready
+
+        return addon_ready(cfg, inst)
 
     if ck == "mdblist":
         return _provider_auth().is_configured("mdblist", blk)

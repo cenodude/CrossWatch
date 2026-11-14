@@ -794,7 +794,7 @@ def test_rating_support_per_destination() -> None:
     for sink in ("emby", "jellyfin", "kodi", "bingebase", ""):
         assert route_ratings.supports(sink, "movie") is False
     movie_only = {s for s in route_ratings.RATING_SINKS if not route_ratings.supports(s, "episode")}
-    assert movie_only == {"simkl", "anilist", "kitsu", "myanimelist"}
+    assert movie_only == {"simkl", "anilist", "kitsu", "myanimelist", "silo"}
 
 
 def test_rate_goes_to_the_viewers_route_with_show_scoped_episode(sent_ratings) -> None:

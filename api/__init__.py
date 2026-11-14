@@ -26,6 +26,7 @@ from .probesAPI import (
     STATUS_CACHE as PROBES_STATUS_CACHE,
 )
 from .scrobbleAPI import router as scrobble_router
+from .kodiSyncAPI import router as kodi_sync_router
 from .scrobblerManagementAPI import router as scrobbler_management_router
 from .authenticationAPI import register_auth
 from .wallAPI import register_wall
@@ -116,6 +117,7 @@ def register(
     app.include_router(dashboard_router)
     app.include_router(scheduling_router)
     app.include_router(scrobble_router)
+    app.include_router(kodi_sync_router)
     app.include_router(scrobbler_management_router)
     app.include_router(sync_router)
     app.include_router(version_router)

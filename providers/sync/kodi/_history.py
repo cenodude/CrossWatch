@@ -17,9 +17,11 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
     def payload(source: Mapping[str, Any], target: Mapping[str, Any]) -> tuple[dict[str, Any], str | None]:
         context = dict(target)
         context.update(source)
+        kodi_time = getattr(getattr(adapter, "client", None), "kodi_time", None)
+        lastplayed = kodi_time(source.get("watched_at")) if callable(kodi_time) else watched_at_to_kodi(source.get("watched_at"), item=context)
         return {
             "playcount": max(1, int(source.get("playcount") or 1)),
-            "lastplayed": watched_at_to_kodi(source.get("watched_at"), item=context),
+            "lastplayed": lastplayed,
         }, None
 
     return operation_result(adapter, "history", "add", items, payload, dry_run=dry_run)

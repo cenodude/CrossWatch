@@ -92,7 +92,12 @@ def configured_block(cfg: Mapping[str, Any] | None, instance_id: Any = "default"
 
 def is_configured(cfg: Mapping[str, Any] | None, instance_id: Any = "default") -> bool:
     block = configured_block(cfg, instance_id)
-    return bool(str(block.get("server") or "").strip() and block.get("connection_verified") is True)
+    if str(block.get("server") or "").strip() and block.get("connection_verified") is True:
+        return True
+    from providers.sync.kodi._addon_sync import addon_ready
+
+    inst = normalize_instance_id(instance_id)
+    return addon_ready(cfg, pick_instance_id(cfg) if inst == "default" else inst)
 
 
 def make_config(cfg: Mapping[str, Any], instance_id: Any = "default") -> KodiConfig:
@@ -570,10 +575,13 @@ def fetch_libraries_from_cfg(cfg: dict[str, Any] | None = None, instance_id: Any
     cfg2 = cfg or load_config()
     ensure_whitelist_defaults(cfg2, instance_id=instance_id)
     kcfg = make_config(cfg2, normalize_instance_id(instance_id))
-    if not (kcfg.server and kcfg.connection_verified):
+    from providers.sync.kodi._addon_sync import addon_client
+
+    addon = addon_client(cfg2, normalize_instance_id(instance_id))
+    if addon is None and not (kcfg.server and kcfg.connection_verified):
         return []
     try:
-        sources = KodiClient(kcfg).get_sources("video")
+        sources = (addon or KodiClient(kcfg)).get_sources("video")
     except Exception:
         return []
 
@@ -759,7 +767,7 @@ class LibraryIndex:
         return candidates
 
     def resolve(self, item: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str]:
-        candidates = self.candidates(item)
+        candidates = [c for c in self.candidates(item) if (to_int(c.get("_kodi_id")) or 0) > 0]
         if len(candidates) == 1:
             return candidates[0], "ok"
         if not candidates:
@@ -897,6 +905,10 @@ def apply_set_details(adapter: Any, target: Mapping[str, Any], payload: Mapping[
         raise RuntimeError("missing_kodi_client")
     media_type = str(target.get("_kodi_type") or target.get("type") or "").lower()
     kodi_id = int(target.get("_kodi_id") or 0)
+    set_target = getattr(client, "set_target", None)
+    if callable(set_target):
+        set_target(media_type, kodi_id, payload, target)
+        return
     if media_type == "movie":
         client.set_movie(kodi_id, payload)
     elif media_type == "episode":

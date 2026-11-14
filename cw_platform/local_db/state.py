@@ -807,6 +807,28 @@ def remove_feature_states(base_path: str | Path, keys: Iterable[tuple[str, str, 
         return len(ids), int(items or 0)
 
 
+def remove_provider_instance_state(base_path: str | Path, provider: str, instance: str) -> tuple[int, int]:
+    wanted = _feature_key(provider, instance, "")[:2]
+    removed = items = 0
+    with _LOCK:
+        conn = get_conn(base_path)
+        if conn is None:
+            raise RuntimeError("State database is unavailable")
+        for state_table, item_table in (("provider_feature_state", "baseline_items"), ("pair_feature_state", "pair_baseline_items")):
+            rows = conn.execute(f"SELECT id,provider,instance FROM {state_table}").fetchall()
+            ids = [int(row["id"]) for row in rows if _feature_key(row["provider"], row["instance"], "")[:2] == wanted]
+            if not ids:
+                continue
+            placeholders = ",".join("?" for _ in ids)
+            items += int(conn.execute(f"SELECT COUNT(*) FROM {item_table} WHERE provider_state_id IN ({placeholders})", ids).fetchone()[0] or 0)
+            with conn:
+                conn.execute(f"DELETE FROM {item_table} WHERE provider_state_id IN ({placeholders})", ids)
+                conn.execute(f"DELETE FROM {state_table} WHERE id IN ({placeholders})", ids)
+            removed += len(ids)
+        _invalidate()
+    return removed, items
+
+
 def save_feature_blocks(
     base_path: str | Path,
     blocks: Mapping[tuple[str, str, str], Mapping[str, Any]],
