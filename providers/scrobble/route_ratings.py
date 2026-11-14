@@ -9,7 +9,7 @@ from typing import Any
 from cw_platform.provider_instances import normalize_instance_id
 
 OPS_SINKS: tuple[str, ...] = (
-    "trakt", "simkl", "mdblist", "plex", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "scrob", "kitsu", "myanimelist",
+    "trakt", "simkl", "mdblist", "plex", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "scrob", "kitsu", "myanimelist", "silo",
 )
 EPISODE_SINKS: frozenset[str] = frozenset({"trakt", "plex", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "scrob"})
 RATING_SINKS: tuple[str, ...] = (*OPS_SINKS, "anilist")

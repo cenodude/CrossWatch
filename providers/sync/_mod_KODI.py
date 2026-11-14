@@ -13,7 +13,7 @@ from providers.sync.kodi import _progress as feat_progress
 from providers.sync.kodi import _ratings as feat_ratings
 from providers.sync.kodi._common import KodiClient, health_payload, is_configured, item_key, make_config, pick_instance_id
 
-__VERSION__ = "1.0"
+__VERSION__ = "1.1"
 _MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "KODIModule", "OPS"]
 
@@ -97,9 +97,12 @@ class KODIModule:
         self.config = cfg or {}
         self.instance_id = pick_instance_id(cfg)
         self.cfg = make_config(self.config, self.instance_id)
-        if not self.cfg.server:
+        from providers.sync.kodi._addon_sync import addon_client
+
+        addon = addon_client(self.config, self.instance_id)
+        if addon is None and not self.cfg.server:
             raise RuntimeError("Kodi config requires server")
-        self.client = KodiClient(self.cfg)
+        self.client = addon or KodiClient(self.cfg)
         self._kodi_library_index = None
 
     @staticmethod

@@ -898,6 +898,11 @@ def handle(app: Any, cfg: dict[str, Any], instance_id: Any, payload: Mapping[str
         group = _group(app, inst) if source_enabled(cfg, "watcher") else None
         out["routes"] = _route_rows(cfg, group, clean_viewers(body.get("viewers"))) if group is not None else []
         out["people"] = _route_people(cfg, group) if group is not None else []
+        from providers.sync.kodi._addon_sync import handle_ping
+
+        library_sync = handle_ping(cfg, inst, body)
+        if library_sync is not None:
+            out["library_sync"] = library_sync
         if not source_enabled(cfg, "watcher"):
             return ignored("watcher_disabled")
         return out
