@@ -560,15 +560,18 @@ for (const width of [390,1440]) test(`Account menu opens profile Settings and pr
   assert.equal(new URL(page.url()).hash, '#account');
   await page.locator('#cw-nav-profile-link').click();
   assert.equal(await page.locator('[data-cw-profile-menu-action="account"]').getAttribute('aria-current'), 'page');
-  await page.locator('[data-cw-profile-menu-action="ratings"]').click();
+  await page.keyboard.press('Escape');
+  await page.locator('[data-profile-tab="ratings"]').click();
   await page.locator('#profile-panel-ratings.active').waitFor();
   if (width <= 760) await page.locator('[data-profile-tab="history"]').click();
   else await page.locator('[data-profile-tab="history"]').click();
   await page.locator('#cw-nav-profile-link').click();
-  assert.equal(await page.locator('[data-cw-profile-menu-action="history"]').getAttribute('aria-current'), 'page');
-  await page.locator('[data-cw-profile-menu-action="profile"]').click();
+  assert.equal(await page.locator('#cw-profile-menu [aria-current="page"]').count(), 0);
+  await page.keyboard.press('Escape');
+  if (width <= 760) await page.locator('[data-mobile-route="profile/overview"]').click();
+  else await page.locator('#tab-profile').click();
   await page.locator('#profile-panel-overview.active').waitFor();
-  assert.equal(new URL(page.url()).hash, '');
+  assert.equal(new URL(page.url()).hash, '#overview');
 });
 
 test('My Media Hub shortcut returns to Overview when the profile tab changed without a hash change', async t => {

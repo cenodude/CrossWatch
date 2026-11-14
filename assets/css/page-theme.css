@@ -1603,8 +1603,10 @@ html[data-cw-theme="flat-light"] .mr-page .mr-sparkline{filter:brightness(.65)}
   text-decoration: none;
   transform: none;
 }
-#cw-profile-menu.cw-page-account-menu .cw-account-group-toggle { font-size: 13px; font-weight: 750; }
-#cw-profile-menu .cw-menu-icon, #cw-profile-menu .cw-account-chevron { color: var(--cw-theme-muted); font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24; }
+#cw-profile-menu .cw-account-identity strong { font-size: 14px; font-weight: 600; }
+#cw-profile-menu :is(.cw-account-identity span,.cw-account-version) { color: var(--cw-theme-muted); font-size: 12px; }
+header .tabs #tab-settings .cw-settings-icon { color: var(--cw-theme-muted); font-variation-settings: "FILL" 0, "wght" 300, "GRAD" 0, "opsz" 20; }
+#cw-profile-menu .cw-menu-icon { color: var(--cw-theme-muted); font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24; }
 #cw-profile-menu.cw-page-account-menu .cw-menu-item:is(:hover, [aria-current="page"]) { background: var(--cw-page-hover-bg); }
 #cw-profile-menu.cw-page-account-menu .cw-menu-item:focus-visible { outline: 2px solid var(--cw-theme-accent); outline-offset: -2px; }
 #cw-profile-menu.cw-page-account-menu .cw-menu-item.danger,

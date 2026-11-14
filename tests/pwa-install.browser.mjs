@@ -22,7 +22,7 @@ async function fixture(t, {early = false, secure = true, standalone = false, mob
     if (path.startsWith('/assets/')) return route.fulfill({body:await readFile(new URL('..'+path, import.meta.url)),contentType:path.endsWith('.css')?'text/css':path.endsWith('.woff2')?'font/woff2':'text/javascript'});
     if (path.startsWith('/api/')) return route.fulfill({json:{}});
     return route.fulfill({contentType:'text/html',body:`<!doctype html><html data-cw-theme="flat-dark" class="cw-theme-dark" data-cw-role="admin"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${styles.map(path=>`<link rel="stylesheet" href="/assets/${path}.css">`).join('')}</head><body>
-      <header><nav class="tabs"><button id="tab-main" class="tab">Home</button><button id="tab-tracker" class="tab">Tracker</button><button id="tab-playlists" class="tab">Playlists</button></nav></header><main><h1>CrossWatch</h1></main><a href="/profile" data-cw-profile-menu-action="profile">My Media Hub</a>
+      <header><nav class="tabs"><button id="tab-main" class="tab">Home</button><button id="tab-tracker" class="tab">Tracker</button><button id="tab-playlists" class="tab">Playlists</button><a id="tab-profile" class="tab" href="/profile#overview">My Media Hub</a></nav></header><main><h1>CrossWatch</h1></main>
       <script>
         Object.defineProperty(navigator,'standalone',{configurable:true,value:${standalone}});
         window.emitInstall = (mode = 'normal') => {
