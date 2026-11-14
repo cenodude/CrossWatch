@@ -63,7 +63,10 @@ async function fixture(t,theme,width) {
   await page.locator('.trk-play').first().waitFor();
   const select=async index=>{
     await page.locator('.trk-play').nth(index).click();
-    if(width<=1320) {
+    if(width<=760) {
+      await page.locator('#cw-media-modal').waitFor();
+      await page.evaluate(()=>CW.ProfileMediaModal.close());
+    } else if(width<=1320) {
       await page.locator('.trk-title-sheet [data-trk-sheet="close"]').waitFor();
       await page.locator('.trk-title-sheet [data-trk-sheet="close"]').click();
     }
@@ -223,6 +226,7 @@ for (const mode of ['Tracker','Media hub']) test(`${mode}: delayed media updates
 for (const width of [1440,390]) test(`Tracker detail progress sits beside the year at ${width}px`, async t => {
   const {page,release}=await fixture(t,'flat-dark',width);
   release();
+  if (width <= 760) await page.evaluate(()=>CW.ProfileMediaModal.canOpen=()=>false);
   let percent=2;
   await page.route('**/api/tracker/title?**',route=>route.fulfill({json:{
     title:{...items[0],title:"The Handmaid's Tale",year:2017},show:false,
@@ -589,6 +593,7 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
     assert.ok(infoBounds.width>=minimumTarget&&infoBounds.height>=minimumTarget);
     if(process.env.CW_LOGO_SCREENSHOTS) await page.locator('.trk-grid-card').first().screenshot({path:`${process.env.CW_LOGO_SCREENSHOTS}/${theme}-${width}-grid.png`});
     await infoButton.click();
+    await page.locator('.trk-title-info:visible').click();
     const modal=page.locator('#cw-media-modal');
     await modal.locator('.cw-mm-title-logo').waitFor();
     assert.equal(await page.locator('.trk-sheet:visible').count(),0);

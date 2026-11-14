@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+import json
 import math
 import re
 import threading
@@ -289,6 +290,8 @@ def _apply_live_overlay(item: dict[str, Any], stream: Mapping[str, Any]) -> None
     remaining = _live_remaining_seconds(stream, progress)
     provider = str(stream.get("_live_provider") or _live_source_provider(stream.get("source")) or "").strip().lower()
     instance_id = normalize_instance_id(stream.get("_live_instance_id") or stream.get("provider_instance"))
+    item["live_session_key"] = json.dumps([provider, instance_id, str(stream.get("session_key") or ""), sorted(_live_stream_keys(stream))], separators=(",", ":"))
+    item["live_routes"] = [dict(route) for route in stream.get("routes") or [] if isinstance(route, Mapping)]
     item["live_state"] = str(stream.get("state") or "").strip().lower()
     item["live_source"] = str(stream.get("source") or "").strip()
     item["live_provider"] = provider
@@ -301,8 +304,21 @@ def _apply_live_overlay(item: dict[str, Any], stream: Mapping[str, Any]) -> None
         item["live_remaining_seconds"] = remaining
 
 
-def _overlay_live_streams(items: list[dict[str, Any]], streams: list[dict[str, Any]] | None = None) -> None:
+def _overlay_live_streams(
+    items: list[dict[str, Any]],
+    streams: list[dict[str, Any]] | None = None,
+    *,
+    cfg: Mapping[str, Any] | None = None,
+    user_filter: Mapping[str, Any] | None = None,
+) -> None:
+    if not items:
+        return
     live_streams = streams if streams is not None else _load_live_streams()
+    if cfg is not None and live_streams:
+        from providers.scrobble.playing_routes import attach_playing_routes
+
+        live_streams = [stream for stream in live_streams if _user_filter_allows(user_filter, _live_source_provider(stream.get("source")), stream.get("provider_instance"))]
+        attach_playing_routes(live_streams, dict(cfg), {"instances": dict(user_filter)} if user_filter else {})
     if not live_streams:
         return
     by_key: dict[str, list[dict[str, Any]]] = {}
@@ -313,25 +329,26 @@ def _overlay_live_streams(items: list[dict[str, Any]], streams: list[dict[str, A
         return
     for item in items:
         provider = str(item.get("provider") or "").strip().lower()
-        if provider not in LIVE_MEDIA_PROVIDERS:
-            continue
         instance_id = normalize_instance_id(item.get("instance_id"))
         candidates: list[dict[str, Any]] = []
         for key in _live_match_keys(item):
             for stream in by_key.get(key, []):
                 live_provider = str(stream.get("_live_provider") or _live_source_provider(stream.get("source")) or "").strip().lower()
                 live_instance = normalize_instance_id(stream.get("_live_instance_id") or stream.get("provider_instance"))
-                if live_provider and live_provider != provider:
-                    continue
-                if live_instance != instance_id:
-                    continue
-                candidates.append(stream)
+                endpoints = {(live_provider, live_instance)}
+                for route in stream.get("routes") or []:
+                    if isinstance(route, Mapping) and route.get("destination"):
+                        endpoints.add((str(route["destination"]).strip().lower(), normalize_instance_id(route.get("destination_instance"))))
+                if (provider, instance_id) in endpoints:
+                    candidates.append(stream)
         if candidates:
             _apply_live_overlay(item, sorted(candidates, key=_live_rank)[0])
 
 
 def _record_group_keys(item: Mapping[str, Any]) -> list[str]:
     keys: list[str] = []
+    if item.get("live_session_key"):
+        keys.append(f"live:{item['live_session_key']}")
     key = str(item.get("canonical_key") or "").strip().lower()
     profile = _group_text(normalize_instance_id(item.get("instance_id")))
     if key and not key.startswith("unknown:"):
@@ -394,7 +411,16 @@ def _float_or_none(value: Any) -> float | None:
 def _split_progress_groups(records: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     numeric: list[tuple[float, dict[str, Any]]] = []
     missing: list[dict[str, Any]] = []
+    sessions: dict[str, list[dict[str, Any]]] = {}
     for record in records:
+        session = str(record.get("live_session_key") or "")
+        if session:
+            sessions.setdefault(session, []).append(record)
+    linked = [group for group in sessions.values() if len(group) > 1]
+    linked_ids = {id(record) for group in linked for record in group}
+    for record in records:
+        if id(record) in linked_ids:
+            continue
         progress = _float_or_none(record.get("progress_percent"))
         if progress is None:
             missing.append(record)
@@ -412,7 +438,7 @@ def _split_progress_groups(records: list[dict[str, Any]]) -> list[list[dict[str,
             groups[-1].append(record)
     if missing:
         groups.append(sorted(missing, key=_record_order_key))
-    return groups
+    return linked + groups
 
 
 def _remaining_seconds(duration_seconds: Any, progress_percent: Any) -> int | None:
@@ -565,6 +591,8 @@ def _combine_records(records: list[dict[str, Any]]) -> dict[str, Any]:
             ),
         )[0]
         for key in (
+            "live_session_key",
+            "live_routes",
             "live_state",
             "live_source",
             "live_provider",
@@ -1224,7 +1252,7 @@ class PlaybackProgressService:
                                 item["provider"], item["instance_id"], "progress")
         ]
         _share_artwork_metadata(items)
-        _overlay_live_streams(items)
+        _overlay_live_streams(items, cfg=cfg, user_filter=user_filter)
         summary_rows = [dict(item) for item in items]
         summary = _playback_summary(summary_rows if provider_filter else _group_records(summary_rows))
         filtered = self._apply_filters(items, media_type=media_type, progress_min=progress_min, progress_max=progress_max, age=age, rating_min=rating_min, search=search)

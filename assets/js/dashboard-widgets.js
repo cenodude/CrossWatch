@@ -601,6 +601,7 @@
 
   function isOnMain() {
     if (ON_PROFILE_PAGE) return true;
+    if (mobileViewport.matches) return false;
     const tab = String(document.documentElement.dataset.tab || "").toLowerCase();
     if (tab) return tab === "main";
     return !!document.getElementById("tab-main")?.classList.contains("active");
@@ -703,7 +704,7 @@
           <h3>Touch feedback</h3>
           <label><input type="checkbox" data-mobile-notification-alerts><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">notifications_active</span><span>Notification alerts</span><small>Banner and vibration when supported, while open</small></label>
           <label><input type="checkbox" data-mobile-haptics><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">vibration</span><span>Haptic feedback</span><small>Short vibration on menu taps</small></label>
-          <h3>Dashboard widgets</h3><p>Choose what appears on this device's mobile dashboard. Desktop settings stay separate.</p>
+          <h3>Dashboard widgets</h3><p>${ON_PROFILE_PAGE ? "Choose what appears on this device's mobile dashboard. Desktop settings stay separate." : "Media widgets are available in My Media Hub. Main focuses on sync activity."}</p>
           <label><input type="checkbox" data-mobile-sync-results><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">sync_alt</span><span>Sync results</span><small>Watchlist, ratings, history and other sync-result cards</small></label>
           <label><input type="checkbox" data-mobile-provider-stats><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">bar_chart</span><span>Provider statistics</span><small>Provider totals and feature selector</small></label>
           ${WIDGETS.map(({ key, label }) => `<label><input type="checkbox" data-mobile-widget="${key}"><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">${({watchlist:"movie",history:"history",ratings:"star",scrobble:"sensors",progress:"play_circle",playlists:"queue_music"})[key]}</span><span>${esc(label)}</span><small></small></label>`).join("")}
@@ -781,7 +782,7 @@
       input.parentElement.querySelector("small").textContent = enabled ? "" : key === 'watchlist' && cfg.ui?.show_watchlist_preview !== false ? 'No watchlist content available' : 'Disabled in main settings';
       if (input.checked) shown += 1;
     }
-    picker.querySelector(".cw-mobile-widget-count").textContent = `${shown} shown`;
+    picker.querySelector(".cw-mobile-widget-count").textContent = ON_PROFILE_PAGE ? `${shown} shown` : "";
     document.dispatchEvent(new Event('cw-mobile-settings-ready'));
   }
 

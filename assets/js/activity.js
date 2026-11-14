@@ -149,14 +149,43 @@
     return parts.join("");
   }
 
-  function rowHTML(item) {
+  function mobileRowHTML(item, status, time) {
+    const meta = window.CW?.Meta;
+    const tmdb = meta?.tmdbId(item);
+    const kind = meta?.kind(item) === "movie" ? "movie" : "tv";
+    const poster = /^\d+$/.test(tmdb || "") ? `/art/tmdb/${kind}/${tmdb}?fallback=2&size=w185` : "";
+    const thumbnail = poster
+      ? `<picture><source media="(max-width:760px)" srcset="${esc(poster)}"><img src="/assets/img/placeholder_poster.svg?v=2" alt="" loading="lazy" decoding="async"></picture>`
+      : `<span class="material-symbols-rounded" aria-hidden="true">${kind === "movie" ? "movie" : "tv"}</span>`;
+    const episode = String(item?.media_type || "").toLowerCase() === "episode";
+    const detail = episode ? [item?.season != null ? `Season ${item.season}` : "", item?.episode != null ? `Episode ${item.episode}` : ""].filter(Boolean).join(" \u00b7 ") : [item?.year, "Movie"].filter(Boolean).join(" \u00b7 ");
+    const targets = Array.isArray(item?.targets) && item.targets.length ? item.targets : [{target:item?.target,target_instance:item?.target_instance}];
+    const endpoint = (provider, instance) => `<span title="${esc(`${providerLabel(provider)} \u00b7 ${profileLabel(instance, provider)}`)}">${esc(providerLabel(provider))}</span>`;
+    const route = `${endpoint(item?.source, item?.source_instance)} <span aria-hidden="true">&#8594;</span> ${targets.filter(target => target?.target).map(target => endpoint(target.target, target.target_instance)).join(" \u00b7 ")}`;
+    const progress = Number(item?.progress);
+    const pct = Math.round(Math.max(0, Math.min(100, Number.isFinite(progress) ? progress : 0)));
+    const hasProgress = item?.progress != null && item.progress !== "" && Number.isFinite(progress);
+    return `<div class="activity-mobile">
+      <div class="activity-art">${thumbnail}</div>
+      <div class="activity-mobile-copy">
+        <div class="activity-mobile-title">${esc(item?.title || "Untitled")}</div>
+        <div class="activity-mobile-detail"><span>${esc(detail)}</span><span>${esc(time)}</span></div>
+        ${hasProgress ? `<div class="activity-mobile-progress"><span role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${pct}"><span style="width:${pct}%"></span></span><span>${pct}%</span></div>` : ""}
+        <div class="activity-mobile-route">${route}</div>
+        <div class="activity-mobile-method${status !== "ok" ? " is-error" : ""}">${methodOf(item) === "webhook" ? "Webhook" : "Watcher"}${status !== "ok" ? " \u00b7 Failed to scrobble" : ""}</div>
+      </div>
+    </div>`;
+  }
+
+  function rowHTML(item, recent = false) {
     const status = String(item?.status || "ok").toLowerCase();
     const media = String(item?.media_type || "").toLowerCase();
     const cls = status === "ok" ? "ok" : "err";
     const time = rel(item?.captured_at || item?.watched_at);
     const progress = Number(item?.progress || 0);
     return `
-      <div class="activity-item ${cls}">
+      <div class="activity-item ${cls}${recent ? " activity-mobile-row" : ""}">
+        ${recent ? mobileRowHTML(item, status, time) : ""}
         <div class="activity-main">
           <div class="activity-title">${esc(titleOf(item))}</div>
           <div class="activity-flow-line">
@@ -233,6 +262,15 @@
     const block = $("#recent-activity-block");
     const host = $("#recent-activity");
     if (!block || !host) return;
+    if (!host.dataset.artFallback) {
+      host.dataset.artFallback = "1";
+      host.addEventListener("error", event => {
+        const img = event.target;
+        if (!(img instanceof HTMLImageElement) || !img.closest(".activity-art picture")) return;
+        img.closest("picture").querySelector("source")?.remove();
+      }, true);
+    }
+
 
     if (authSetupPending()) {
       if (!host.children.length) host.innerHTML = `<div class="activity-empty">Loading scrobble...</div>`;
@@ -258,7 +296,7 @@
       }
       const items = data.items;
       host.innerHTML = items.length
-        ? items.map((item) => rowHTML(item)).join("")
+        ? items.map((item) => rowHTML(item, true)).join("")
         : `<div class="activity-empty">${display.mode === "hours" ? `No recent scrobble in the last ${display.hours} hours.` : "No recent scrobble yet."}</div>`;
     } catch {
       if (!host.children.length || host.textContent.trim() === "Loading scrobble...") {

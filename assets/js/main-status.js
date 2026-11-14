@@ -23,6 +23,25 @@
   let metaMo = null;
   let authRetry = 0;
   let dots = null;
+  const providerInfoOnMobile = () => window.matchMedia("(max-width:760px), (pointer:coarse) and (max-height:600px)").matches;
+
+  function openProviderInfo(node) {
+    const pill = node.matches('.conn-pill') ? node : node.querySelector('.conn-pill');
+    if (!pill) return;
+    const key = pill.dataset.providerKey || pill.dataset.prov;
+    const instance = pill.dataset.providerInstance || "default";
+    if (!providerInfoOnMobile() || !window.CW?.CardActions?.open) return openProviderConnection(key, instance);
+    const entries = [];
+    if (!isManagedUser() && (typeof meta.sectionId !== "function" || meta.sectionId(key))) {
+      entries.push({icon:"settings", label:"Connection settings", run:() => openProviderConnection(key, instance)});
+    }
+    entries.push({icon:"close", label:"Close"});
+    const sheet = window.CW.CardActions.open(pill, entries, {
+      title:providerLabel(key),
+      subtitle:pill.title.split("\n").filter(line => !line.startsWith("Provider:")).join("\n"),
+    });
+    sheet.classList.add('cw-provider-info-sheet');
+  }
 
   function providerStatusInstance(data) {
     const probe = data?._cw_probe && typeof data._cw_probe === "object" ? data._cw_probe : null;
@@ -368,7 +387,7 @@
     pill.classList.toggle("has-vip", !!vip);
     pill.role = "button";
     pill.tabIndex = 0;
-    pill.ariaLabel = `Open ${name} connection settings`;
+    pill.ariaLabel = `Open ${name} connection ${providerInfoOnMobile() ? "information" : "settings"}`;
     if (detail) pill.title = detail;
     else pill.removeAttribute("title");
     const logoSrc = providerLogo(provKey);
@@ -400,7 +419,7 @@
     pill.dataset.providerInstance = inst;
     pill.role = "button";
     pill.tabIndex = 0;
-    pill.ariaLabel = `Open ${name} connection settings`;
+    pill.ariaLabel = `Open ${name} connection ${providerInfoOnMobile() ? "information" : "settings"}`;
     if (detail) pill.title = detail;
     pill.innerHTML = `<div class="conn-brand">${
       vip ? `<span class="conn-slot">${CROWN}</span>` : ""
@@ -496,7 +515,7 @@
     const host = $("conn-badges");
     if (!host || host.dataset.boundProviderOpen === "1") return;
     host.dataset.boundProviderOpen = "1";
-    const openFrom = (node) => openProviderConnection(node?.dataset?.providerKey || node?.dataset?.prov, node?.dataset?.providerInstance || "default");
+    const openFrom = (node) => openProviderInfo(node);
     host.addEventListener("click", (ev) => {
       const node = ev.target?.closest?.(".conn-pill[data-provider-key],.conn-item[data-provider-key]");
       if (node && host.contains(node)) openFrom(node);

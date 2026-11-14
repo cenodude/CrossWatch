@@ -11,13 +11,13 @@
   ];
   const VIEWS = [
     { id: "overview", label: "Overview", icon: "space_dashboard" },
-    { id: "history", label: "History", icon: "history" },
-    { id: "shows", label: "Shows", icon: "tv" },
-    { id: "titles", label: "My titles", icon: "bookmarks" },
     { id: "watchlist", label: "Watchlist", icon: "bookmark" },
+    { id: "history", label: "History", icon: "history" },
     { id: "ratings", label: "Ratings", icon: "star" },
     { id: "progress", label: "Progress", icon: "play_circle" },
     { id: "collection", label: "Collection", icon: "video_library" },
+    { id: "shows", label: "Shows", icon: "tv" },
+    { id: "titles", label: "My titles", icon: "bookmarks" },
     { id: "cleanup", label: "Clean up", icon: "health_and_safety" },
   ];
   const MEDIA = [
@@ -558,6 +558,11 @@
       source.classList.toggle('ins-card', !mobile());
       source.classList.toggle('cw-page-panel', !mobile());
     }
+    const tools = state.root?.querySelector('.trk-secondary-actions');
+    if (tools) {
+      if (mobile()) navigation?.querySelector('.trk-others-menu')?.append(tools);
+      else state.root.querySelector('.trk-add-split')?.before(tools);
+    }
     const list = navigation?.querySelector(".trk-tabs");
     if (!list?.clientWidth) return;
     const tabs = [...list.querySelectorAll("[data-trk-view]")];
@@ -981,9 +986,7 @@
         <div class="trk-actions">
           ${state.view === "history" ? `<button type="button" class="cw-filter-chip trk-icon-btn${state.byDay ? " active" : ""}" data-trk-action="by-day" aria-pressed="${state.byDay}" aria-label="Group by day" title="By day">${symbol("calendar_view_day", "cw-type-icon")}</button>` : ""}
           <div class="cw-type-filter trk-layout" role="group" aria-label="Display layout">${[['list', 'view_list', 'List'], ['grid', 'grid_view', 'Grid']].map(([value, glyph, label]) => `<button type="button" class="cw-filter-chip trk-icon-btn${(state.layouts[state.view] || "list") === value ? " active" : ""}" data-trk-layout="${value}" aria-pressed="${(state.layouts[state.view] || "list") === value}" aria-label="${label} view" title="${label} view">${symbol(glyph, "cw-type-icon")}</button>`).join("")}</div>
-          <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="views" title="Saved views" aria-label="Saved views">${icon("bookmarks")}</button>
-          <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="changes" title="Changes: everything you logged, edited or deleted" aria-label="Changes">${icon("manage_history")}</button>
-          <button type="button" class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="import" title="Import from a connected service" aria-label="Import">${icon("download")}</button>
+          <div class="trk-secondary-actions">${[['views','bookmarks','Saved views'],['changes','manage_history','Changes'],['import','download','Import']].map(([action,glyph,label]) => `<button type="button" class="cw-btn trk-icon-btn" data-trk-action="${action}" title="${label}" aria-label="${label}">${icon(glyph)}<span class="trk-tool-label">${label}</span></button>`).join('')}</div>
           <div class="trk-add-split">
             <button type="button" class="cw-btn primary trk-log-btn" data-trk-action="log" aria-label="Log a watch">${icon("add_circle")}<span>Log a watch</span></button>
             <button type="button" class="cw-btn primary trk-add-toggle" data-trk-action="add-menu" aria-label="More add options" aria-haspopup="menu" aria-expanded="false" aria-controls="trk-add-menu" title="More add options">${icon("expand_more")}</button>
@@ -2319,7 +2322,7 @@
     setSlot('title', renderTitle());
   }
 
-  function selectRef(ref, { openMedia = false, action = "", watchItem = null } = {}) {
+  function selectRef(ref, { openMedia = mobile(), action = "", watchItem = null } = {}) {
     state.ref = ref;
     saveView();
     state.statusMenu = false;
@@ -2339,7 +2342,10 @@
         if (action === "log") logFromTitle(watchItem);
         else detailAction(action);
       }
-      else if (openMedia && state.ref === ref) openCard();
+      else if (openMedia && state.ref === ref) {
+        if (canCard(state.title ? cardItem(state.title.title, state.title.show) : null)) openCard();
+        else if (narrow()) openSheet('title');
+      }
     });
   }
 
@@ -4818,8 +4824,8 @@
       if (cardMenu) { openGridActions(cardMenu); return; }
       const cardOpen = event.target.closest("[data-trk-card-open]");
       if (cardOpen) {
-        const {ref} = gridCardContext(cardOpen);
-        if (ref) selectRef(ref, {openMedia:true});
+        const {ref, recent} = gridCardContext(cardOpen);
+        if (ref) selectRef(ref, {openMedia:recent || mobile()});
         return;
       }
       const overviewCard = event.target.closest("[data-trk-overview-open]");
@@ -4887,6 +4893,7 @@
         return;
       }
       const action = event.target.closest("[data-trk-action]")?.dataset.trkAction;
+      if (['views','changes','import'].includes(action)) root.querySelector('.trk-others')?.removeAttribute('open');
       if (action === "refresh") {
         state.progress = {};
         refresh();

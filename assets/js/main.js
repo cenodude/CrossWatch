@@ -362,6 +362,7 @@
           <span class="material-symbols-rounded" aria-hidden="true">visibility</span>
         </button>
       </div>
+      <span class="cw-hub-refresh-status" role="status" hidden>Checking providers…</span>
     `;
     actions.insertBefore(wrap, refreshBtn || null);
     hubLayoutHost = wrap;
@@ -381,12 +382,11 @@
         saveAndRenderLayout(Object.fromEntries(FEAT_KEYS.map((key) => [key, { ...hubLayout[key], hidden: false }])));
         window.CW?.DashboardWidgets?.showAll?.();
       } else if (btn.classList.contains("cw-hub-refresh-proxy")) {
-        toggleTools(false);
         document.getElementById("btn-status-refresh")?.click();
       }
     });
     document.addEventListener("click", (ev) => {
-      if (!hubLayoutHost?.contains(ev.target)) toggleTools(false);
+      if (!hubLayoutHost?.contains(ev.target) && !ev.target.closest('#btn-status-refresh')) toggleTools(false);
     });
     renderHubLayoutStrip();
   };

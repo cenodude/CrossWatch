@@ -155,7 +155,7 @@
     const label = String(providerLabel(raw) || "").trim();
     return (!label || label === "?" || /^unknown$/i.test(label) || /^none$/i.test(label)) ? "" : label;
   };
-  const providerIconHtml = (provider) => {
+  const providerIconHtml = (provider, options = {}) => {
     const label = visibleProviderLabel(provider);
     if (!label) return "";
     const key = providerKey(provider).toLowerCase().replace(/[^a-z0-9-]+/g, "");
@@ -164,7 +164,7 @@
       ? `<img class="cw-profile-provider-logo" src="${esc(logo)}" alt="" loading="lazy" onerror="this.onerror=null;this.hidden=true;this.nextElementSibling.hidden=false">`
       : "";
     const fallbackHidden = logo ? " hidden" : "";
-    return `<span class="cw-profile-provider-badge cw-profile-provider-badge--icon" data-provider="${esc(key)}" title="${esc(label)}" aria-label="${esc(label)}">${icon}<span class="cw-profile-provider-fallback"${fallbackHidden}>${esc(label.slice(0, 2))}</span></span>`;
+    return `<span class="cw-profile-provider-badge cw-profile-provider-badge--icon" data-provider="${esc(key)}" title="${esc(options.title || label)}" aria-label="${esc(options.title || label)}">${icon}<span class="cw-profile-provider-fallback"${fallbackHidden}>${esc(label.slice(0, 2))}</span></span>`;
   };
   const providerName = (value) => {
     if (!value) return "";
@@ -872,10 +872,24 @@
     return epoch ? `Paused ${relTime(epoch)}` : "";
   };
 
+  const liveRouteProviders = (item) => {
+    const refs = new Map();
+    for (const route of Array.isArray(item?.live_routes) ? item.live_routes : []) {
+      for (const side of ["source", "destination"]) {
+        const provider = providerKey(route?.[side]);
+        if (!provider) continue;
+        const instance = String(route[`${side}_instance`] || "default");
+        const label = String(route[`${side}_label`] || (instance === "default" ? "Default" : instance));
+        const method = route.kind === "webhook" ? "webhook" : "watcher";
+        refs.set(`${provider}:${instance}`, { provider, instance, title: `${visibleProviderLabel(provider)} · ${label}: active ${method} route` });
+      }
+    }
+    return [...refs.values()];
+  };
   const progressProviders = (item) => {
     const out = [];
     const push = (value) => {
-      const name = providerName(value);
+      const name = providerKey(providerName(value));
       if (!name || name.toLowerCase() === "combined" || out.includes(name)) return;
       out.push(name);
     };
@@ -885,6 +899,7 @@
       push(item?.provider);
       push(item?.source);
     }
+    for (const ref of liveRouteProviders(item)) push(ref);
     return out;
   };
 
@@ -895,7 +910,10 @@
     const episode = episodeOf(item);
     const sub = [episode || yearOf(item), `${Math.round(pct)}% watched`].filter(Boolean).join(" · ");
     const remainingLabel = remainingOf(item);
-    const providerIcons = progressProviders(item).map(providerIconHtml).filter(Boolean).join("");
+    const routes = liveRouteProviders(item);
+    const providerIcons = progressProviders(item).map((provider) => providerIconHtml(provider, {
+      title: routes.filter((ref) => ref.provider === provider).map((ref) => ref.title).join("\n"),
+    })).filter(Boolean).join("");
     const providerStrip = providerIcons ? `<span class="cw-cw-providers">${providerIcons}</span>` : "";
     return `<button class="cw-cw-card" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(titleOf(item))}">
       <span class="cw-cw-art"><img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
@@ -3780,18 +3798,17 @@
       return { rid: String(index), provider, instance: String(record?.instance_id || "default"), provider_label: name, label: codeFor(item) ? `${codeFor(item)} on ${name}` : name, record };
     });
     const providerChips = (item) => {
-      if (canAct() && window.CW?.ItemActions) {
-        return providerChipStrip(progressRowsOf(item).map((row) => timelineChipEntry(
-          { provider: row.provider, instance: row.instance },
-          "source",
-          { action: true, play: row.rid, title: `${row.provider_label}: resume point` },
-        )), "cw-hist-provider");
+      const rows = progressRowsOf(item);
+      const present = new Set(rows.map((row) => `${row.provider}:${row.instance}`));
+      const entries = rows.map((row) => timelineChipEntry(
+        { provider: row.provider, instance: row.instance },
+        "source",
+        { action: canAct() && !!window.CW?.ItemActions, play: row.rid, title: `${row.provider_label}: resume point` },
+      ));
+      for (const ref of liveRouteProviders(item)) {
+        if (!present.has(`${ref.provider}:${ref.instance}`)) entries.push(timelineChipEntry(ref, "source", { title: ref.title }));
       }
-      const rows = Array.isArray(item?.providers) && item.providers.length ? item.providers : [item];
-      return providerChipStrip(timelineEndpoints(rows.map((row) => ({
-        provider: row?.provider,
-        instance: String(row?.instance_id || "default").toLowerCase() === "default" ? "default" : profileLabel(row),
-      }))).map((ref) => timelineChipEntry(ref, "source")), "cw-hist-provider");
+      return providerChipStrip(entries, "cw-hist-provider");
     };
     const errorName = (error) => {
       const provider = String(error?.provider || "").trim();
