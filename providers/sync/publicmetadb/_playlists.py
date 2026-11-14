@@ -255,6 +255,7 @@ def create(
     *,
     media_type: str | None = None,
     items: Sequence[Mapping[str, Any]] | None = None,
+    privacy: str | None = None,
     dry_run: bool = False,
 ) -> PlaylistResource:
     nm = str(name or "").strip()
@@ -275,7 +276,7 @@ def create(
         )
     data = adapter.client.post_json(
         "/api/external/lists",
-        json={"name": nm, "description": "", "is_public": False, "type": "custom"},
+        json={"name": nm, "description": "", "is_public": privacy == "public", "type": "custom"},
     )
     item = data.get("item") if isinstance(data, Mapping) else None
     row = dict(item) if isinstance(item, Mapping) else dict(data) if isinstance(data, Mapping) else {}

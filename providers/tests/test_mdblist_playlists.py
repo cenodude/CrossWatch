@@ -210,7 +210,7 @@ def test_create_static_list_uses_current_user_add_route(monkeypatch):
     res = pl.create(FakeAdapter(), "Short", media_type="show")
     assert res.id == "303"
     call = next(c for c in captured if c["url"].endswith("/lists/user/add"))
-    assert call["json"] == {"name": "Short"}
+    assert call["json"] == {"name": "Short", "private": True}
 
 
 def test_rename_static_list_uses_update_route(monkeypatch):
@@ -218,7 +218,7 @@ def test_rename_static_list_uses_update_route(monkeypatch):
         monkeypatch,
         {
             ("GET", "/lists/user"): FakeResp(200, USER_LISTS),
-            ("POST", "/lists/101/update"): FakeResp(200, {"ok": True}),
+            ("PUT", "/lists/101"): FakeResp(200, {"ok": True}),
         },
     )
 
@@ -226,7 +226,7 @@ def test_rename_static_list_uses_update_route(monkeypatch):
 
     assert renamed.id == "101"
     assert renamed.name == "Renamed"
-    update_call = next(c for c in captured if c["url"].endswith("/lists/101/update"))
+    update_call = next(c for c in captured if c["method"] == "PUT" and c["url"].endswith("/lists/101"))
     assert update_call["json"] == {"name": "Renamed"}
 
 

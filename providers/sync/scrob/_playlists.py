@@ -373,6 +373,7 @@ def create(
     *,
     media_type: str | None = None,
     items: Sequence[Mapping[str, Any]] | None = None,
+    privacy: str | None = None,
     dry_run: bool = False,
 ) -> PlaylistResource:
     nm = str(name or "").strip()[:255]
@@ -380,7 +381,7 @@ def create(
         raise ValueError("playlist name required")
     if dry_run:
         return PlaylistResource(provider="SCROB", id="", name=nm, instance=_instance_id(adapter), can_add=True, can_remove=True, media_types=MEDIA_TYPES)
-    resp = scrob_request(adapter, "POST", PATH_LISTS, json={"name": nm, "privacy_level": "private"})
+    resp = scrob_request(adapter, "POST", PATH_LISTS, json={"name": nm, "privacy_level": privacy or "private"})
     data = safe_json(resp)
     if resp.status_code not in (200, 201) or not isinstance(data, Mapping):
         raise ScrobPlaylistError(f"scrob create list failed: http {resp.status_code}")
@@ -403,6 +404,16 @@ def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) 
         if not (200 <= resp.status_code < 300):
             raise ScrobPlaylistError(f"scrob rename list failed: http {resp.status_code}")
     return PlaylistResource(provider="SCROB", id=res.id, name=nm, instance=res.instance, can_add=res.can_add, can_remove=res.can_remove, media_types=res.media_types, extra=dict(res.extra))
+
+
+def set_privacy(adapter: Any, playlist_id: Any, privacy: str, *, dry_run: bool = False) -> PlaylistResource:
+    res = _owned(adapter, playlist_id, "can_rename")
+    if not dry_run:
+        resp = scrob_request(adapter, "PATCH", PATH_LIST.format(list_id=res.id), json={"privacy_level": privacy})
+        if not (200 <= resp.status_code < 300):
+            raise ScrobPlaylistError(f"scrob privacy change failed: http {resp.status_code}")
+    extra = {**dict(res.extra), "privacy": privacy, "private": privacy != "public"}
+    return PlaylistResource(provider="SCROB", id=res.id, name=res.name, instance=res.instance, can_add=res.can_add, can_remove=res.can_remove, media_types=res.media_types, extra=extra)
 
 
 def delete(adapter: Any, playlist_id: Any, *, dry_run: bool = False) -> dict[str, Any]:

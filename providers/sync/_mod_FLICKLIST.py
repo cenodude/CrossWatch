@@ -26,7 +26,7 @@ from providers.sync.flicklist._common import (
     tag_dropped_shows as flicklist_tag_dropped_shows,
 )
 
-__VERSION__ = "1.1"
+__VERSION__ = "1.2"
 _MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "FLICKLISTModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
 
@@ -144,6 +144,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "types": {"movies": True, "shows": True, "seasons": True, "episodes": True},
                 "accepted_ids": list(_ACCEPTED_IDS),
                 "batch_size": 1000,
+                "create_privacy": {"values": ["private", "unlisted", "public"], "default": "private"},
             },
             "collection": {
                 "read": True,
@@ -311,8 +312,8 @@ class FLICKLISTModule:
     def resolve_playlist(self, ref: str) -> Any:
         return feat_playlists.resolve(self, ref)
 
-    def create_playlist(self, name: str, *, media_type: str | None = None, items: Sequence[Mapping[str, Any]] | None = None, dry_run: bool = False) -> Any:
-        return feat_playlists.create(self, name, media_type=media_type, items=items, dry_run=dry_run)
+    def create_playlist(self, name: str, *, media_type: str | None = None, items: Sequence[Mapping[str, Any]] | None = None, privacy: str | None = None, dry_run: bool = False) -> Any:
+        return feat_playlists.create(self, name, media_type=media_type, items=items, privacy=privacy, dry_run=dry_run)
 
     def add_playlist_items(self, playlist_id: str, items: Sequence[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
         if dry_run:
@@ -390,8 +391,8 @@ class _FLICKLISTOPS:
     def resolve_playlist(self, cfg: Mapping[str, Any], ref: str, *, instance: str | None = None) -> Any:
         return self._adapter(cfg, instance).resolve_playlist(ref)
 
-    def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
-        return self._adapter(cfg, instance).create_playlist(name, media_type=media_type, dry_run=dry_run)
+    def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None, privacy: str | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
+        return self._adapter(cfg, instance).create_playlist(name, media_type=media_type, privacy=privacy, dry_run=dry_run)
 
     def add_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, items: Sequence[Mapping[str, Any]], *, instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
         return self._adapter(cfg, instance).add_playlist_items(playlist_id, items, dry_run=dry_run)

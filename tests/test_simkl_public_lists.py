@@ -77,7 +77,7 @@ def test_capabilities_offer_link_resolve():
     assert callable(getattr(mod.OPS, "resolve_playlist", None))
 
 
-def test_followed_and_shared_lists_are_listed_read_only(monkeypatch):
+def test_followed_and_shared_lists_are_listed_read_only_and_own_lists_writable(monkeypatch):
     adapter, session = _adapter(monkeypatch, {})
     res = _custom(pl.list_resources(adapter))
     assert list(res) == ["list:10", "list:2733", "list:3000"]
@@ -86,7 +86,8 @@ def test_followed_and_shared_lists_are_listed_read_only(monkeypatch):
     assert followed.name == "Star Wars (TV Shows) by SIMKL" and followed.extra["endpoint_type"] == "followed_list" and followed.extra["public_list"]
     shared = res["list:3000"]
     assert shared.extra["endpoint_type"] == "collaboration" and shared.media_types == ("anime",)
-    assert not any(r.can_add or r.can_remove or r.can_reorder for r in res.values())
+    assert res["list:10"].can_add and res["list:10"].can_remove and res["list:10"].can_reorder
+    assert not any(r.can_add or r.can_remove or r.can_reorder for rid, r in res.items() if rid != "list:10")
     assert {p.get("followed") or p.get("collaborants") or "own" for _url, p in session.calls} == {"own", "true"}
 
 

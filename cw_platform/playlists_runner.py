@@ -21,6 +21,7 @@ from .playlists import (
     PlaylistSnapshot,
     builtin_rulesets,
     normalize_ruleset,
+    resolve_create_privacy,
     supports_playlists,
     validate_ruleset,
 )
@@ -572,12 +573,17 @@ def _materialize_pending(
     if not seed_items:
         raise PlaylistRunError(f"{provider} cannot create '{name}' from an empty source playlist")
 
+    try:
+        privacy = resolve_create_privacy(ops, pending.get("privacy"), pending.get("media_type"))
+    except ValueError as e:
+        raise PlaylistRunError(f"{provider} {e}") from e
     res = ops.create_playlist(
         view,
         name,
         media_type=pending.get("media_type"),
         items=[dict(it.item or {}) for it in seed_items],
         instance=inst,
+        **({"privacy": privacy} if privacy else {}),
     )
     new_id = str(getattr(res, "id", "") or "").strip()
     if not new_id:

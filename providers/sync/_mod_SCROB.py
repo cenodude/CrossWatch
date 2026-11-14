@@ -22,7 +22,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.1"
+__VERSION__ = "1.2"
 _MANUAL_RATING_SCALE = {"step": 1}
 os.environ.setdefault("CW_SCROB_UA", http_user_agent("Scrob", override_env="CW_SCROB_UA"))
 __all__ = ["get_manifest", "SCROBModule", "OPS"]
@@ -94,6 +94,7 @@ CAPABILITIES: dict[str, Any] = {
         "link_example": "http://your-scrob-server:7330/list/12",
         "media_types": ["movies", "shows", "seasons"],
         "accepted_ids": ["tmdb", "tvdb"],
+        "create_privacy": {"values": ["private", "friends_only", "public"], "default": "private", "editable": True},
     },
 }
 
@@ -282,11 +283,14 @@ class _SCROBOPS:
         return feat_playlists.resolve(self._adapter(cfg, instance_id=instance), ref)
 
     def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None,
-                        items: Iterable[Mapping[str, Any]] | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
-        return feat_playlists.create(self._adapter(cfg, instance_id=instance), name, media_type=media_type, items=list(items or []), dry_run=dry_run)
+                        items: Iterable[Mapping[str, Any]] | None = None, privacy: str | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
+        return feat_playlists.create(self._adapter(cfg, instance_id=instance), name, media_type=media_type, items=list(items or []), privacy=privacy, dry_run=dry_run)
 
     def rename_playlist(self, cfg: Mapping[str, Any], playlist_id: str, name: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
         return feat_playlists.rename(self._adapter(cfg, instance_id=instance), playlist_id, name, dry_run=dry_run)
+
+    def update_playlist_privacy(self, cfg: Mapping[str, Any], playlist_id: str, privacy: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
+        return feat_playlists.set_privacy(self._adapter(cfg, instance_id=instance), playlist_id, privacy, dry_run=dry_run)
 
     def delete_playlist(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
         return feat_playlists.delete(self._adapter(cfg, instance_id=instance), playlist_id, dry_run=dry_run)

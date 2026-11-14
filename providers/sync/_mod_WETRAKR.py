@@ -16,7 +16,7 @@ from providers.sync._log import log
 from providers.sync.wetrakr import _history, _playlists, _progress, _ratings, _watchlist
 from providers.sync.wetrakr._common import WRITE_BATCH_SIZE, WeTrakrSyncError, body_of, commit_snapshot, dropped_show_tokens, item_key, request, tag_dropped_shows, write_lock
 
-__VERSION__ = "0.4"
+__VERSION__ = "0.5"
 _MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "WETRAKRModule", "OPS"]
 _FEATURES = {"watchlist": True, "history": True, "ratings": True, "progress": True, "playlists": True, "collection": False}
@@ -34,6 +34,7 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "resolve": True,
     "link_example": "https://wetrakr.com/lists/12345",
     "media_types": ["movies", "shows", "seasons", "episodes"],
+    "create_privacy": {"values": ["private", "friends", "public"], "default": "private", "editable": True},
 }
 
 
@@ -228,11 +229,14 @@ class _WETRAKROPS:
         return _playlists.resolve(self._playlist_adapter(cfg, instance), ref)
 
     def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None,
-                        items: Iterable[Mapping[str, Any]] | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
-        return _playlists.create(self._playlist_adapter(cfg, instance), name, media_type=media_type, items=list(items or []), dry_run=dry_run)
+                        items: Iterable[Mapping[str, Any]] | None = None, privacy: str | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
+        return _playlists.create(self._playlist_adapter(cfg, instance), name, media_type=media_type, items=list(items or []), privacy=privacy, dry_run=dry_run)
 
     def rename_playlist(self, cfg: Mapping[str, Any], playlist_id: str, name: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
         return _playlists.rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def update_playlist_privacy(self, cfg: Mapping[str, Any], playlist_id: str, privacy: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
+        return _playlists.set_privacy(self._playlist_adapter(cfg, instance), playlist_id, privacy, dry_run=dry_run)
 
     def delete_playlist(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
         return _playlists.delete(self._playlist_adapter(cfg, instance), playlist_id, dry_run=dry_run)

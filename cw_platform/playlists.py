@@ -389,6 +389,7 @@ class PlaylistOps(Protocol):
         name: str,
         *,
         media_type: str | None = None,
+        privacy: str | None = None,
         instance: str | None = None,
         dry_run: bool = False,
     ) -> PlaylistResource: ...
@@ -442,6 +443,16 @@ class PlaylistOps(Protocol):
         dry_run: bool = False,
     ) -> dict[str, Any]: ...
 
+    def update_playlist_privacy(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        privacy: str,
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> PlaylistResource: ...
+
 
 def supports_playlists(ops: Any) -> bool:
     return bool(ops) and all(callable(getattr(ops, m, None)) for m in _PLAYLIST_METHODS)
@@ -460,3 +471,34 @@ def playlist_capabilities(source: Any) -> dict[str, Any]:
                 root = None
     caps = root.get("playlists") if isinstance(root, Mapping) else None
     return dict(caps) if isinstance(caps, Mapping) else {}
+
+
+def create_privacy_options(source: Any, endpoint_type: Any = None) -> dict[str, Any] | None:
+    raw = playlist_capabilities(source).get("create_privacy")
+    if not isinstance(raw, Mapping):
+        return None
+    values: list[str] = []
+    for x in raw.get("values") or []:
+        v = str(x or "").strip().lower()
+        if v and v not in values:
+            values.append(v)
+    if not values:
+        return None
+    types = [str(x or "").strip().lower() for x in raw.get("endpoint_types") or [] if str(x or "").strip()]
+    wanted = str(endpoint_type or "").strip().lower()
+    if types and wanted and wanted not in types:
+        return None
+    default = str(raw.get("default") or "").strip().lower()
+    return {"values": values, "default": default if default in values else values[0], "endpoint_types": types, "editable": bool(raw.get("editable"))}
+
+
+def resolve_create_privacy(source: Any, value: Any, endpoint_type: Any = None) -> str | None:
+    opts = create_privacy_options(source, endpoint_type)
+    if not opts:
+        return None
+    wanted = str(value or "").strip().lower()
+    if not wanted:
+        return str(opts["default"])
+    if wanted not in opts["values"]:
+        raise ValueError(f"privacy must be one of: {', '.join(opts['values'])}")
+    return wanted

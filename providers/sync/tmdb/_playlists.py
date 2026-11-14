@@ -317,6 +317,7 @@ def create(
     *,
     media_type: str | None = None,
     items: Sequence[Mapping[str, Any]] | None = None,
+    privacy: str | None = None,
     dry_run: bool = False,
 ) -> PlaylistResource:
     nm = str(name or "").strip()
@@ -324,11 +325,12 @@ def create(
         raise ValueError("playlist name required")
     if dry_run:
         return PlaylistResource(provider="TMDB", id="", name=nm, instance=_instance_id(adapter), can_add=True, can_remove=True, media_types=MEDIA_TYPES)
-    resp = adapter.client.v4("POST", "/list", json_body={"name": nm, "iso_639_1": "en", "public": 0})
+    public = 1 if privacy == "public" else 0
+    resp = adapter.client.v4("POST", "/list", json_body={"name": nm, "iso_639_1": "en", "public": public})
     data = _json(resp)
     if not _ok(resp) or not isinstance(data, Mapping) or not data.get("id"):
         raise TMDBPlaylistError(_error_of(resp) if not _ok(resp) else "TMDb create list returned no id")
-    resource = _resource(adapter, {"id": data.get("id"), "name": nm, "number_of_items": 0, "public": 0})
+    resource = _resource(adapter, {"id": data.get("id"), "name": nm, "number_of_items": 0, "public": public})
     if resource is None:
         raise TMDBPlaylistError("TMDb create list returned no id")
     remember_resource(list_resources, adapter, resource)
@@ -427,3 +429,19 @@ def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -
 
 def reorder(adapter: Any, playlist_id: Any, ordered_keys: Sequence[str]) -> dict[str, Any]:
     return {"ok": True, "count": 0, "reordered": 0, "unsupported": True}
+
+
+def set_privacy(adapter: Any, playlist_id: Any, privacy: str, *, dry_run: bool = False) -> PlaylistResource:
+    lid = str(playlist_id or "").strip()
+    res = _find_resource(adapter, lid)
+    if res is None or res.extra.get("public_list") or not res.can_add:
+        raise PlaylistReadOnlyError(f"The TMDb list {lid} is read only")
+    public = privacy == "public"
+    if not dry_run:
+        resp = adapter.client.v4("PUT", f"/list/{res.id}", json_body={"public": public})
+        if not _ok(resp):
+            raise TMDBPlaylistError(_error_of(resp))
+    extra = {**dict(res.extra or {}), "private": not public}
+    _info("privacy_done", list_id=res.id, public=public)
+    return PlaylistResource(provider="TMDB", id=res.id, name=res.name, instance=res.instance, kind=res.kind, can_read=res.can_read,
+                            can_add=res.can_add, can_remove=res.can_remove, can_reorder=res.can_reorder, media_types=res.media_types, extra=extra)

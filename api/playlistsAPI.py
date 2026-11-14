@@ -155,6 +155,7 @@ def api_playlist_resource_create(payload: dict[str, Any] = Body(...), request: R
         str(instance or "default"),
         payload.get("name") or payload.get("create_name"),
         payload.get("media_type"),
+        payload.get("privacy"),
     )
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
 
@@ -170,13 +171,25 @@ def api_playlist_resource_rename(
     instance = payload.get("instance") or "default"
     if not user_can_access_instance(cfg, request_user(request), provider, instance):
         return _scope_denied()
-    res = svc.rename_provider_playlist(
-        cfg,
-        str(provider or ""),
-        str(instance or "default"),
-        playlist_id,
-        payload.get("name"),
-    )
+    res: dict[str, Any] = {"ok": False, "error": "nothing to change"}
+    if payload.get("name") is not None:
+        res = svc.rename_provider_playlist(
+            cfg,
+            str(provider or ""),
+            str(instance or "default"),
+            playlist_id,
+            payload.get("name"),
+        )
+        if not res.get("ok"):
+            return JSONResponse(res, status_code=400)
+    if payload.get("privacy") is not None:
+        res = svc.update_provider_playlist_privacy(
+            cfg,
+            str(provider or ""),
+            str(instance or "default"),
+            str((res.get("resource") or {}).get("id") or playlist_id),
+            payload.get("privacy"),
+        )
     return JSONResponse(res, status_code=(200 if res.get("ok") else 400))
 
 

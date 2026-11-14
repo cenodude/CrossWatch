@@ -146,7 +146,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.2"
+__VERSION__ = "2.3"
 _MANUAL_RATING_SCALE = {"step": 0.5, "min": 1}
 __all__ = ["get_manifest", "MDBLISTModule", "OPS"]
 
@@ -228,6 +228,7 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "resolve": True,
     "link_example": "https://mdblist.com/lists/name/list-name",
     "media_types": ["movies", "shows"],
+    "create_privacy": {"values": ["private", "public"], "default": "private", "editable": True},
 }
 
 
@@ -1162,6 +1163,7 @@ class _MDBLISTOPS:
         *,
         media_type: str | None = None,
         items: Iterable[Mapping[str, Any]] | None = None,
+        privacy: str | None = None,
         instance: str | None = None,
         dry_run: bool = False,
     ):
@@ -1170,6 +1172,7 @@ class _MDBLISTOPS:
             name,
             media_type=media_type,
             items=list(items or []),
+            privacy=privacy,
             dry_run=dry_run,
         )
 
@@ -1183,6 +1186,9 @@ class _MDBLISTOPS:
         dry_run: bool = False,
     ):
         return self._pl().rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def update_playlist_privacy(self, cfg: Mapping[str, Any], playlist_id: str, privacy: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
+        return self._pl().set_privacy(self._playlist_adapter(cfg, instance), playlist_id, privacy, dry_run=dry_run)
 
     def delete_playlist(
         self,

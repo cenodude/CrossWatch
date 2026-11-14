@@ -18,7 +18,9 @@ from cw_platform.playlists import (
     PlaylistPlanError,
     PlaylistReadOnlyError,
     PlaylistUnavailableError,
+    create_privacy_options,
     playlist_capabilities,
+    resolve_create_privacy,
     supports_playlists,
     validate_ruleset,
 )
@@ -227,6 +229,7 @@ def create_provider_playlist(
     instance: str | None,
     playlist_name: Any,
     media_type: Any = None,
+    privacy: Any = None,
 ) -> dict[str, Any]:
     name = str(provider or "").strip().upper()
     inst = normalize_instance_id(instance)
@@ -243,8 +246,12 @@ def create_provider_playlist(
         label = " or ".join(allowed_types)
         return {"ok": False, "error": f"{name} can only create a {label}"}
     try:
+        create_kwargs = _create_privacy_kwargs(ops, privacy, endpoint_type)
+    except ValueError as e:
+        return {"ok": False, "error": f"{name} {e}"}
+    try:
         view = build_provider_config_view(cfg, name, inst)
-        resource = ops.create_playlist(view, create_name, media_type=endpoint_type, instance=inst)
+        resource = ops.create_playlist(view, create_name, media_type=endpoint_type, instance=inst, **create_kwargs)
     except Exception as e:
         return _internal_playlist_error("create", e, provider=name, instance=inst, media_type=endpoint_type)
     if isinstance(resource, PlaylistResource):
@@ -347,7 +354,77 @@ def _resource_with_manage_flags(resource: PlaylistResource, ops: Any) -> dict[st
     delete_default = endpoint_type != "collection"
     data["can_rename"] = bool(can_manage and bool(extra.get("can_rename", True)) and callable(getattr(ops, "rename_playlist", None)) and caps.get("rename", True))
     data["can_delete"] = bool(can_manage and bool(extra.get("can_delete", delete_default)) and callable(getattr(ops, "delete_playlist", None)) and caps.get("delete", True))
+    privacy_opts = create_privacy_options(ops, endpoint_type)
+    privacy = _resource_privacy(extra, privacy_opts["values"]) if privacy_opts else ""
+    if privacy:
+        data["privacy"] = privacy
+    data["can_edit_privacy"] = bool(
+        privacy_opts
+        and privacy_opts.get("editable")
+        and can_manage
+        and data.get("can_add")
+        and extra.get("can_edit_privacy", True)
+        and not extra.get("public_list")
+        and endpoint_type not in _SHARED_ENDPOINT_TYPES
+        and callable(getattr(ops, "update_playlist_privacy", None))
+    )
     return data
+
+
+_SHARED_ENDPOINT_TYPES = {"collaboration", "followed_list", "liked_list", "public_list"}
+
+
+def _resource_privacy(extra: Mapping[str, Any], values: list[str]) -> str:
+    privacy = str(extra.get("privacy") or "").strip().lower()
+    if privacy in values:
+        return privacy
+    if isinstance(extra.get("private"), bool):
+        guess = "private" if extra["private"] else "public"
+        return guess if guess in values else ""
+    return ""
+
+
+def update_provider_playlist_privacy(
+    cfg: Mapping[str, Any],
+    provider: str,
+    instance: str | None,
+    playlist_id: Any,
+    privacy: Any,
+) -> dict[str, Any]:
+    name = str(provider or "").strip().upper()
+    inst = normalize_instance_id(instance)
+    ops = _providers().get(name)
+    update = getattr(ops, "update_playlist_privacy", None) if ops else None
+    if not ops or not supports_playlists(ops) or not callable(update):
+        return {"ok": False, "error": "changing the privacy of this provider's lists is not supported"}
+    pid = str(playlist_id or "").strip()
+    if not pid:
+        return {"ok": False, "error": "playlist id required"}
+    wanted = str(privacy or "").strip().lower()
+    try:
+        view = build_provider_config_view(cfg, name, inst)
+        current = _find_resource_data(ops, view, inst, pid)
+        if not current:
+            return {"ok": False, "error": "playlist not found"}
+        if not current.get("can_edit_privacy"):
+            return {"ok": False, "error": "the privacy of this list cannot be changed"}
+        raw_extra = current.get("extra")
+        extra: Mapping[str, Any] = raw_extra if isinstance(raw_extra, Mapping) else {}
+        endpoint_type = str(current.get("endpoint_type") or extra.get("endpoint_type") or "").strip().lower()
+        opts = create_privacy_options(ops, endpoint_type) or {"values": []}
+        if wanted not in opts["values"]:
+            return {"ok": False, "error": f"{name} privacy must be one of: {', '.join(opts['values'])}"}
+        resource = update(view, pid, wanted, instance=inst)
+        if isinstance(resource, PlaylistResource):
+            resource_data = _resource_with_manage_flags(resource, ops)
+        elif isinstance(resource, Mapping):
+            resource_data = _resource_with_manage_flags(PlaylistResource.from_dict(resource), ops)
+        else:
+            resource_data = dict(current)
+        resource_data["privacy"] = wanted
+    except Exception as e:
+        return _internal_playlist_error("privacy change", e, provider=name, instance=inst)
+    return {"ok": True, "provider": name, "instance": inst, "resource": resource_data}
 
 
 def _resource_can_be_managed(resource: Mapping[str, Any]) -> bool:
@@ -402,7 +479,16 @@ def _clean_pending_create(value: Any) -> dict[str, Any] | None:
     name = str(value.get("name") or "").strip()
     if not name:
         return None
-    return {"name": name, "media_type": str(value.get("media_type") or "playlist").strip().lower()}
+    out = {"name": name, "media_type": str(value.get("media_type") or "playlist").strip().lower()}
+    privacy = str(value.get("privacy") or "").strip().lower()
+    if privacy:
+        out["privacy"] = privacy
+    return out
+
+
+def _create_privacy_kwargs(ops: Any, value: Any, endpoint_type: Any) -> dict[str, Any]:
+    privacy = resolve_create_privacy(ops, value, endpoint_type)
+    return {"privacy": privacy} if privacy else {}
 
 
 def creatable_endpoint_types(ops: Any) -> list[str]:
@@ -684,6 +770,12 @@ def upsert_endpoint(cfg: dict[str, Any], payload: Mapping[str, Any]) -> dict[str
     if not ops or not supports_playlists(ops):
         return {"ok": False, "error": "provider not playlist-capable"}
 
+    pending = clean.get("pending_create")
+    if isinstance(pending, Mapping) and pending.get("privacy"):
+        try:
+            resolve_create_privacy(ops, pending.get("privacy"), pending.get("media_type"))
+        except ValueError as e:
+            return {"ok": False, "error": f"{clean['provider']} {e}"}
     create = bool(payload.get("create"))
     create_name = str(payload.get("create_name") or clean["name"] or "").strip()
     if create and not clean["playlist_id"]:
@@ -697,8 +789,12 @@ def upsert_endpoint(cfg: dict[str, Any], payload: Mapping[str, Any]) -> dict[str
             return {"ok": False, "error": f"{clean['provider']} can only create a {label}"}
         clean["playlist_type"] = media_type
         try:
+            create_kwargs = _create_privacy_kwargs(ops, payload.get("privacy"), media_type)
+        except ValueError as e:
+            return {"ok": False, "error": f"{clean['provider']} {e}"}
+        try:
             view = build_provider_config_view(cfg, clean["provider"], clean["instance"])
-            res = ops.create_playlist(view, create_name, media_type=media_type, instance=clean["instance"])
+            res = ops.create_playlist(view, create_name, media_type=media_type, instance=clean["instance"], **create_kwargs)
             clean["playlist_id"] = res.id
             clean["playlist_name"] = clean["playlist_name"] or res.name
         except Exception as e:

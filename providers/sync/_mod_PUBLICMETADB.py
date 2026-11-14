@@ -26,7 +26,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.4"
+__VERSION__ = "1.5"
 _MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "PUBLICMETADBModule", "OPS"]
 
@@ -80,6 +80,7 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "endpoint_types": ["playlist"],
     "ordered_endpoint_types": [],
     "unordered_endpoint_types": ["playlist"],
+    "create_privacy": {"values": ["private", "public"], "default": "private"},
 }
 
 
@@ -487,6 +488,7 @@ class _PUBLICMETADBOPS:
         *,
         media_type: str | None = None,
         items: Iterable[Mapping[str, Any]] | None = None,
+        privacy: str | None = None,
         instance: str | None = None,
         dry_run: bool = False,
     ):
@@ -495,6 +497,7 @@ class _PUBLICMETADBOPS:
             name,
             media_type=media_type,
             items=list(items or []),
+            privacy=privacy,
             dry_run=dry_run,
         )
 
