@@ -1756,4 +1756,10 @@ class _ShutdownCancelFilter(logging.Filter):
 
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run the CrossWatch server")
+    parser.add_argument("--host", default=os.getenv("WEB_HOST") or "0.0.0.0")
+    parser.add_argument("--port", type=int, default=os.getenv("WEB_PORT") or "8787")
+    args = parser.parse_args()
+    main(host=args.host, port=args.port)
