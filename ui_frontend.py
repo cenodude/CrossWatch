@@ -297,7 +297,7 @@ def _assert_admin_shell_stripped(html: str, *, settings_panes: set[str] | None =
 
 def _profile_nav_tab(label: str, href: str, active: bool = False) -> str:
     cls = "tab active" if active else "tab"
-    route = {"Main": "main", "Captures": "snapshots", "Playlists": "playlists", "Tracker": "tracker", "Editor": "editor"}.get(label)
+    route = {"Main": "main", "Hub": "profile", "Captures": "snapshots", "Playlists": "playlists", "Tracker": "tracker", "Editor": "editor"}.get(label)
     tab_id = f' id="tab-{route}"' if route else ""
     return f"<button{tab_id} class=\"{cls}\" type=\"button\" onclick=\"location.href='{href}'\">{label}</button>"
 
@@ -584,38 +584,27 @@ def _profile_avatar_inner(user: dict | None = None) -> str:
     return '<span class="material-symbols-rounded" aria-hidden="true">person</span>'
 
 
-_PROFILE_MENU_ITEMS = (
-    ("profile", "home", "Overview", ""),
-    ("watchlist", "bookmark", "Watchlist", "watchlist"),
-    ("history", "history", "History", ""),
-    ("ratings", "star", "Ratings", ""),
-    ("collections", "video_library", "Collections", ""),
-    ("playback", "resume", "Progress", "playback"),
-)
-
-
 def _profile_menu_items(user: dict | None = None) -> str:
-    is_admin = bool(isinstance(user, dict) and user.get("is_admin"))
-    perms = _managed_user_permissions(user)
-    media = "\n".join(
-        f'        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="{action}"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">{icon}</span><span>{label}</span></button>'
-        for action, icon, label, permission in _PROFILE_MENU_ITEMS
-        if not permission or is_admin or perms.get(permission)
-    )
-    tracker = ""
-    if is_admin or _managed_tracker_allowed(user):
-        tracker = """
-        <div class="cw-menu-sep" role="separator"></div>
-        <button class="cw-menu-item cw-account-group-toggle" type="button" role="menuitem" aria-expanded="true" aria-controls="cw-account-tracker"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">menu_book</span><span>CW Tracker</span><span class="material-symbols-rounded cw-account-chevron" aria-hidden="true">expand_more</span></button>
-        <div id="cw-account-tracker" class="cw-account-group" role="group" aria-label="CW Tracker">
-          <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="tracker"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">home</span><span>Overview</span></button>
-        </div>"""
-    return f"""        <button class="cw-menu-item cw-account-group-toggle" type="button" role="menuitem" aria-expanded="true" aria-controls="cw-account-media"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">bar_chart</span><span>My Media Hub</span><span class="material-symbols-rounded cw-account-chevron" aria-hidden="true">expand_more</span></button>
-        <div id="cw-account-media" class="cw-account-group" role="group" aria-label="My Media Hub">
-{media}
-        </div>{tracker}
-        <div class="cw-menu-sep" role="separator"></div>
-        <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="account"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">person</span><span>My Profile</span></button>"""
+    user = user or {}
+    name = html_lib.escape(str(user.get("display_name") or user.get("label") or user.get("username") or "Profile"))
+    username = html_lib.escape(str(user.get("username") or ""))
+    preferences = ""
+    if user.get("is_admin") or _managed_user_permissions(user).get("write"):
+        preferences = '<button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="preferences"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">tune</span><span>Preferences</span></button>'
+    return f"""<div class="cw-account-identity"><strong>{name}</strong><span>@{username}</span></div>
+        <div data-cw-account-panel="main">
+          <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="account"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">person</span><span>My profile</span></button>
+          {preferences}
+          <button class="cw-menu-item" type="button" role="menuitem" data-cw-account-view="help"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help &amp; About</span></button>
+          <div class="cw-menu-sep" role="separator"></div>
+          <button class="cw-menu-item danger" type="button" role="menuitem" data-cw-profile-menu-action="logout"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Log out</span></button>
+        </div>
+        <div data-cw-account-panel="help" hidden>
+          <button class="cw-menu-item" type="button" role="menuitem" data-cw-account-view="main"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">arrow_back</span><span>Back</span></button>
+          <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="help"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help</span></button>
+          <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="about"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">info</span><span>About CrossWatch</span></button>
+        </div>
+        <div class="cw-account-version">__CW_CURRENT_VERSION__</div>"""
 
 
 def _nav_profile_link(user: dict | None = None) -> str:
@@ -626,8 +615,6 @@ def _nav_profile_link(user: dict | None = None) -> str:
       </button>
       <div class="cw-menu cw-profile-menu cw-page-account-menu hidden" id="cw-profile-menu" role="menu" aria-labelledby="cw-nav-profile-link">
 __CW_NAV_PROFILE_ITEMS__
-        <div class="cw-menu-sep" role="separator" aria-hidden="true"></div>
-        <button class="cw-menu-item danger" type="button" role="menuitem" data-cw-profile-menu-action="logout"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Logout</span></button>
       </div>
     </div>""".replace("__CW_NAV_PROFILE_AVATAR__", _nav_profile_avatar(user)).replace("__CW_NAV_PROFILE_ITEMS__", _profile_menu_items(user))
 
@@ -645,9 +632,10 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
     if write_allowed:
         tabs = [
             '    <button id="tab-main" class="tab active" type="button" onclick="showTab(\'main\')">Main</button>',
+            *(['    <button id="tab-tracker" class="tab" type="button" onclick="showTab(\'tracker\')">Tracker</button>'] if tracker else []),
+            _profile_nav_tab("Hub", "/profile#overview"),
             '    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">Captures</button>',
             '    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>',
-            *(['    <button id="tab-tracker" class="tab" type="button" onclick="showTab(\'tracker\')">Tracker</button>'] if tracker else []),
             '    <button id="tab-editor" class="tab" type="button" onclick="showTab(\'editor\')">Editor</button>',
             *(['    <button id="tab-settings" class="tab" type="button" onclick="showTab(\'settings\')">Settings</button>'] if settings_panes else []),
             _nav_profile_link(user),
@@ -659,7 +647,7 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
             '  <nav class="tabs" aria-label="Primary navigation">\n' + "\n".join(tabs) + "\n",
         )
     else:
-        tabs = ['    <button id="tab-main" class="tab" data-cw-profile-home="1" type="button" onclick="location.href=\'/profile\'">Main</button>']
+        tabs = [_profile_nav_tab("Hub", "/profile#overview")]
         tabs.append(_nav_profile_link(user))
         html = html.replace(
             '<div class="brand" role="button" tabindex="0" title="Go to Main" onclick="showTab(\'main\')" onkeypress="if(event.key===\'Enter\'||event.key===\' \')showTab(\'main\')">',
@@ -691,11 +679,6 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
         html = _remove_html_section(html, '  <section id="ops-card"')
         html = _remove_html_section(html, '  <section id="stats-card"')
         html = _remove_html_section(html, '  <section id="dashboard-widgets-card"')
-    html = _remove_html_range(
-        html,
-        '    <div class="cw-tabmenu" id="tab-settings-menu">',
-        '    <div class="cw-tabmenu" id="tab-about-menu">',
-    )
     if settings_panes:
         html = _strip_settings_panes(html, settings_panes)
         html = _remove_line(html, '<div id="save-frost" class="hidden" aria-hidden="true"></div>')
@@ -990,9 +973,10 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
 
   <nav class="tabs" aria-label="Primary navigation">
     <button id="tab-main" class="tab active" type="button" onclick="showTab('main')">Main</button>
+    <button id="tab-tracker" class="tab" type="button" onclick="showTab('tracker')">Tracker</button>
+    <button id="tab-profile" class="tab" type="button" onclick="location.href='/profile#overview'">Hub</button>
     <button id="tab-snapshots" class="tab" type="button" onclick="showTab('snapshots')">Captures</button>
     <button id="tab-playlists" class="tab" type="button" onclick="showTab('playlists')">Playlists</button>
-    <button id="tab-tracker" class="tab" type="button" onclick="showTab('tracker')">Tracker</button>
     <button id="tab-editor" class="tab" type="button" onclick="showTab('editor')">Editor</button>
     <div class="cw-tabmenu" id="tab-settings-menu">
       <button id="tab-settings" class="tab" type="button"
@@ -1010,19 +994,6 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
         <button class="cw-menu-item" data-settings-pane="scheduling" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('scheduling')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">schedule</span><span>Scheduling</span></button>
         <button class="cw-menu-item" data-settings-pane="app" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('app')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">security</span><span>UI and Security</span></button>
         <button class="cw-menu-item" data-settings-pane="maintenance" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect('maintenance')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">build</span><span>Maintenance</span></button>
-      </div>
-    </div>
-    <div class="cw-tabmenu" id="tab-about-menu">
-      <button id="tab-about" class="tab" type="button"
-              aria-haspopup="menu" aria-expanded="false"
-              onclick="window.cwToggleAboutMenu(event)">
-        <span>About</span>
-        <span class="tab-caret" aria-hidden="true"></span>
-      </button>
-      <div class="cw-menu hidden" id="cw-about-menu" role="menu" aria-labelledby="tab-about">
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('about')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">info</span><span>About</span></button>
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('help')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help</span></button>
-        <button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect('assistant')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">auto_awesome</span><span>Ask CrossWatch</span></button>
       </div>
     </div>
 __CW_NAV_PROFILE_MENU__
@@ -2662,35 +2633,28 @@ def get_profile_html(user: dict | None = None) -> str:
         '<button class="cw-menu-item" data-settings-pane="maintenance" type="button" role="menuitem" onclick="window.cwSettingsMenuSelect(\'maintenance\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">build</span><span>Maintenance</span></button>'
         '</div></div>'
     )
-    about_nav = (
-        '<div class="cw-tabmenu" id="tab-about-menu">'
-        '<button id="tab-about" class="tab" type="button" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleAboutMenu(event)"><span>About</span><span class="tab-caret" aria-hidden="true"></span></button>'
-        '<div class="cw-menu hidden" id="cw-about-menu" role="menu" aria-labelledby="tab-about">'
-        '<button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect(\'about\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">info</span><span>About</span></button>'
-        '<button class="cw-menu-item" type="button" role="menuitem" onclick="window.cwAboutMenuSelect(\'help\')"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help</span></button>'
-        '</div></div>'
-    )
     nav_items: list[str] = []
     if is_admin:
         nav_items.extend([
             _profile_nav_tab("Main", "/"),
+            _profile_nav_tab("Tracker", "/#tracker"),
+            _profile_nav_tab("Hub", "/profile#overview", active=True),
             _profile_nav_tab("Captures", "/#snapshots"),
             _profile_nav_tab("Playlists", "/#playlists"),
-            _profile_nav_tab("Tracker", "/#tracker"),
             _profile_nav_tab("Editor", "/#editor"),
             settings_nav,
-            about_nav,
         ])
     elif write_nav:
         nav_items.extend([
             _profile_nav_tab("Main", "/?main=1#main"),
+            *([_profile_nav_tab("Tracker", "/?main=1#tracker")] if _managed_tracker_allowed(user) else []),
+            _profile_nav_tab("Hub", "/profile#overview", active=True),
             _profile_nav_tab("Captures", "/?main=1#snapshots"),
             _profile_nav_tab("Playlists", "/?main=1#playlists"),
-            *([_profile_nav_tab("Tracker", "/?main=1#tracker")] if _managed_tracker_allowed(user) else []),
             _profile_nav_tab("Editor", "/?main=1#editor"),
         ])
     else:
-        nav_items.append(_profile_nav_tab("Main", "/profile", active=True))
+        nav_items.append(_profile_nav_tab("Hub", "/profile#overview", active=True))
     nav_items.append(_nav_profile_link(user).strip())
     profile_nav = "\n    ".join(nav_items)
     history_panel = _profile_timeline_panel(

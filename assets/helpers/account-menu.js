@@ -94,7 +94,7 @@
     for (const item of [['snapshots', 'photo_library', 'Captures'], ['playlists', 'queue_music', 'Playlists'], ['editor', 'edit_note', 'Editor']]) {
       if ($(`tab-${item[0]}`)) choices.push(item);
     }
-    if (document.querySelector('[data-cw-profile-menu-action="profile"]')) choices.push(['profile/overview', 'bar_chart', 'My Media Hub']);
+    if ($('tab-profile')) choices.push(['profile/overview', 'bar_chart', 'Hub']);
     const storageKey = 'cw.mobile.shortcuts.v1';
     const defaults = [...new Set(['tracker', 'profile/overview', ...choices.map(item => item[0])])].filter(route => choices.some(item => item[0] === route)).slice(0, 2);
     const readShortcuts = () => {
@@ -110,7 +110,7 @@
       '<button id="cw-mobile-more" type="button" aria-controls="cw-mobile-navigation" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span><span>More</span></button>';
     document.body.appendChild(nav);
     document.body.classList.add('cw-has-bottom-nav');
-    const icons = {'tab-main':'home','tab-snapshots':'photo_library','tab-playlists':'queue_music','tab-tracker':'inventory_2','tab-editor':'edit_note','tab-settings':'settings','tab-about':'info'};
+    const icons = {'tab-main':'home','tab-snapshots':'photo_library','tab-playlists':'queue_music','tab-tracker':'inventory_2','tab-editor':'edit_note','tab-settings':'tune','tab-profile':'bar_chart'};
     document.querySelectorAll('#cw-mobile-navigation .tab').forEach(tab => {
       const icon = document.createElement('span');
       icon.className = 'material-symbols-rounded cw-mobile-destination-icon';
@@ -132,10 +132,11 @@
       const items = [...fixed, ...shortcuts.map(route => choices.find(item => item[0] === route)).filter(Boolean)];
       nav.querySelectorAll('a').forEach(node => node.remove());
       $('cw-mobile-more').insertAdjacentHTML('beforebegin', items.map(item => link(item)).join(''));
-      extra.innerHTML = choices.filter(item => !$(`tab-${item[0]}`) && !shortcuts.includes(item[0])).map(item => link(item, 'class="tab"')).join('');
+      extra.innerHTML = choices.filter(item => !$(item[0] === 'profile/overview' ? 'tab-profile' : `tab-${item[0]}`) && !shortcuts.includes(item[0])).map(item => link(item, 'class="tab"')).join('');
       for (const route of ['main', 'tracker', 'snapshots', 'playlists', 'editor']) {
         $(`tab-${route}`)?.classList.toggle('cw-mobile-pinned', items.some(item => item[0] === route));
       }
+      $('tab-profile')?.classList.toggle('cw-mobile-pinned', shortcuts.includes('profile/overview'));
       document.querySelectorAll('#cw-mobile-navigation [data-settings-pane]').forEach(item => {
         item.classList.toggle('cw-mobile-pinned', shortcuts.includes(`settings/${item.dataset.settingsPane}`));
       });
@@ -179,6 +180,11 @@
       if (event.target.closest('a') && $('cw-mobile-more').getAttribute('aria-expanded') === 'true') $('cw-mobile-nav-toggle').click();
     });
     const update = () => {
+      const hub = $('tab-profile');
+      const onProfile = window.location.pathname === '/profile';
+      hub?.classList.toggle('active', onProfile);
+      if (onProfile) hub?.setAttribute('aria-current', 'page');
+      else hub?.removeAttribute('aria-current');
       const profileTab = document.querySelector('[data-profile-tab].active')?.dataset.profileTab || window.location.hash.slice(1).split('?')[0] || 'overview';
       const route = window.location.pathname === '/' ? window.location.hash.slice(1).split('?')[0] || 'main' : window.location.pathname === '/profile' && profileTab === 'overview' ? 'profile/overview' : '';
       let matched = false;
@@ -314,11 +320,24 @@
     m.style.maxHeight = `${Math.max(44, bottom - m.getBoundingClientRect().top - 12)}px`;
   }
 
+  function setAccountView(view) {
+    menu()?.querySelectorAll('[data-cw-account-panel]').forEach(panel => {
+      panel.hidden = panel.dataset.cwAccountPanel !== view;
+    });
+  }
+
+  async function openHelpAbout(value) {
+    if (value === 'about' && typeof window.openAbout !== 'function') {
+      try { await import(`/assets/js/modals.js?v=${encodeURIComponent(window.APP_VERSION || '')}`); }
+      catch { return; }
+    }
+    window.cwAboutMenuSelect?.(value);
+  }
+
   function markCurrentPage() {
     const onProfile = window.location.pathname === '/profile';
     const tab = document.querySelector('[data-profile-tab].active')?.dataset.profileTab || window.location.hash.slice(1).split('?')[0] || 'overview';
-    const profileActions = {overview:'profile', collection:'collections', account:'account', security:'account', preferences:'account', playback_progress:'playback'};
-    const current = onProfile ? profileActions[tab] || tab : window.location.hash.startsWith('#tracker') ? 'tracker' : '';
+    const current = onProfile && ['account','security','preferences'].includes(tab) ? (tab === 'preferences' ? 'preferences' : 'account') : '';
     menu()?.querySelectorAll('[data-cw-profile-menu-action]').forEach(item => {
       if (item.dataset.cwProfileMenuAction === current) item.setAttribute('aria-current', 'page');
       else item.removeAttribute('aria-current');
@@ -332,6 +351,7 @@
     m.classList.toggle("hidden", !open);
     b.setAttribute("aria-expanded", open ? "true" : "false");
     if (open) {
+      setAccountView('main');
       markCurrentPage();
       sizeMenu();
       focusMenuItem(menuItems()[0]);
@@ -379,14 +399,13 @@
       toggle(event);
       return;
     }
-    const group = event.target?.closest?.('#cw-profile-menu .cw-account-group-toggle');
-    if (group) {
+    const view = event.target?.closest?.('#cw-profile-menu [data-cw-account-view]');
+    if (view) {
       event.preventDefault();
       event.stopPropagation();
-      const expanded = group.getAttribute('aria-expanded') !== 'true';
-      group.setAttribute('aria-expanded', String(expanded));
-      $(group.getAttribute('aria-controls')).hidden = !expanded;
-      focusMenuItem(group);
+      setAccountView(view.dataset.cwAccountView);
+      sizeMenu();
+      focusMenuItem(menuItems()[0]);
       return;
     }
     const action = event.target?.closest?.("[data-cw-profile-menu-action]");
@@ -395,14 +414,8 @@
       event.stopPropagation();
       close();
       const value = String(action.dataset.cwProfileMenuAction || "");
-      if (value === "profile") window.location.href = "/profile";
-      else if (value === "account") window.location.href = "/profile#account";
-      else if (value === "tracker") window.location.href = `${document.documentElement.dataset.cwRole === 'user' ? '/?main=1' : '/'}#tracker?view=overview`;
-      else if (value === "watchlist") openProfileTab("watchlist");
-      else if (value === "history") openProfileTab("history");
-      else if (value === "ratings") openProfileTab("ratings");
-      else if (value === "collections") openProfileTab("collection");
-      else if (value === "playback") openProfileTab("playback");
+      if (value === "account" || value === "preferences") openProfileTab(value);
+      else if (value === "help" || value === "about") void openHelpAbout(value);
       else if (value === "logout") void logout();
       return;
     }
@@ -440,9 +453,82 @@
   window.addEventListener('resize', sizeMenu);
   window.visualViewport?.addEventListener('resize', sizeMenu);
 
+  function initDesktopNavigation() {
+    const panel = $('cw-mobile-navigation');
+    if (!panel) return;
+    const settings = $('tab-settings');
+    if (settings) {
+      settings.title = 'Settings';
+      settings.setAttribute('aria-label', 'Settings');
+      const icon = settings.querySelector('.cw-mobile-destination-icon');
+      if (icon) icon.classList.add('cw-settings-icon');
+    }
+    const destinations = ['snapshots','playlists','editor'].map(route => $(`tab-${route}`)).filter(Boolean);
+    if (!destinations.length) return;
+    const anchors = destinations.map(node => {
+      const anchor = document.createComment('');
+      node.before(anchor);
+      return anchor;
+    });
+    const host = document.createElement('div');
+    host.id = 'cw-desktop-more';
+    host.className = 'cw-tabmenu';
+    host.hidden = true;
+    host.innerHTML = '<button id="cw-desktop-more-toggle" class="tab" type="button" aria-haspopup="menu" aria-controls="cw-desktop-more-menu" aria-expanded="false">More<span class="tab-caret" aria-hidden="true"></span></button><div id="cw-desktop-more-menu" class="cw-menu hidden" role="menu" aria-labelledby="cw-desktop-more-toggle"></div>';
+    anchors[0].before(host);
+    const toggle = host.firstElementChild, dropdown = host.lastElementChild;
+    const close = () => {
+      dropdown.classList.add('hidden');
+      toggle.setAttribute('aria-expanded','false');
+    };
+    toggle.addEventListener('click', () => {
+      const open = toggle.getAttribute('aria-expanded') !== 'true';
+      close();
+      if (open) {
+        window.cwCloseSettingsMenu?.();
+        dropdown.classList.remove('hidden');
+        toggle.setAttribute('aria-expanded','true');
+        destinations[0].focus();
+      }
+    });
+    host.addEventListener('click', event => { if (event.target.closest('[role="menuitem"]')) close(); });
+    document.addEventListener('click', event => { if (!host.contains(event.target)) close(); }, true);
+    host.addEventListener('keydown', event => {
+      if (event.key === 'Escape') { close(); toggle.focus(); }
+      const index = destinations.indexOf(document.activeElement);
+      if (['ArrowDown','ArrowUp','Home','End'].includes(event.key)) {
+        event.preventDefault();
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? destinations.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : -1) + destinations.length) % destinations.length;
+        dropdown.classList.remove('hidden');
+        toggle.setAttribute('aria-expanded','true');
+        destinations[next].focus();
+      }
+    });
+    const narrow = window.matchMedia('(min-width: 761px) and (max-width: 1150px)');
+    const sync = () => {
+      close();
+      host.hidden = !narrow.matches;
+      destinations.forEach((node,index) => {
+        if (narrow.matches) {
+          dropdown.append(node);
+          node.setAttribute('role','menuitem');
+        } else {
+          anchors[index].after(node);
+          node.removeAttribute('role');
+        }
+      });
+    };
+    const active = () => toggle.classList.toggle('active', destinations.some(node => node.classList.contains('active')));
+    new MutationObserver(active).observe(dropdown,{subtree:true,attributes:true,attributeFilter:['class']});
+    narrow.addEventListener('change',sync);
+    sync();
+    active();
+  }
+
   function initNavigation() {
     initMobileNavigation();
     initMobileBottomNavigation();
+    initDesktopNavigation();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initNavigation, {once: true});
   else initNavigation();

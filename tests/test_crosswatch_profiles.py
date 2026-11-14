@@ -1842,7 +1842,7 @@ def test_non_admin_shell_omits_admin_only_modules() -> None:
 
     html = ui_frontend.get_index_html(include_admin=False)
 
-    assert '<html lang="en" data-cw-role="user"' in html
+    assert 'data-cw-role="user"' in html
     assert "/assets/js/modals.js" not in html
     assert "/assets/auth/auth_loader.js" not in html
     assert "/assets/js/user-profiles.js" not in html
@@ -1864,8 +1864,8 @@ def test_non_admin_shell_omits_admin_only_modules() -> None:
     assert "openAnalyzer()" not in html
     assert "openEvents()" not in html
     assert "openExporter()" not in html
-    assert 'id="tab-main"' in html
-    assert 'id="tab-main" class="tab" data-cw-profile-home="1" type="button"' in html
+    assert 'id="tab-main"' not in html
+    assert 'id="tab-profile" class="tab"' in html
     assert '<a id="tab-main"' not in html
     assert 'id="tab-watchlist"' not in html
     assert 'id="tab-playback"' not in html
@@ -1895,8 +1895,8 @@ def test_non_admin_shell_uses_initial_permissions() -> None:
     assert 'data-cw-perm-playback="off"' in watchlist_only
     assert 'data-cw-perm-write="off"' in watchlist_only
     assert f'data-cw-profile-id="{ALICE_PROFILE_ID}"' in watchlist_only
-    assert 'id="tab-main"' in watchlist_only
-    assert 'id="tab-main" class="tab" data-cw-profile-home="1" type="button"' in watchlist_only
+    assert 'id="tab-main"' not in watchlist_only
+    assert 'id="tab-profile" class="tab"' in watchlist_only
     assert 'id="tab-playback"' not in watchlist_only
     assert 'id="ops-card"' not in watchlist_only
     assert 'id="stats-card"' not in watchlist_only
@@ -1907,8 +1907,8 @@ def test_non_admin_shell_uses_initial_permissions() -> None:
     assert 'data-cw-perm-dashboard="off"' in dashboard_only
     assert 'data-cw-perm-watchlist="off"' in dashboard_only
     assert 'data-cw-perm-playback="on"' in dashboard_only
-    assert 'id="tab-main"' in dashboard_only
-    assert 'id="tab-main" class="tab" data-cw-profile-home="1" type="button"' in dashboard_only
+    assert 'id="tab-main"' not in dashboard_only
+    assert 'id="tab-profile" class="tab"' in dashboard_only
     assert 'id="tab-playback"' not in dashboard_only
     assert 'id="tab-watchlist"' not in dashboard_only
     assert 'id="ops-card"' not in dashboard_only
@@ -1940,7 +1940,7 @@ def test_profile_nav_keeps_read_only_managed_links() -> None:
         user={"is_admin": False, "profile_id": ALICE_PROFILE_ID, "username": "pascal", "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": False}},
     )
 
-    assert """<button class="tab active" type="button" onclick="location.href='/profile'">Main</button>""" in html
+    assert """<button id="tab-profile" class="tab active" type="button" onclick="location.href='/profile#overview'">Hub</button>""" in html
     assert """location.href='/profile#watchlist'">Watchlist</button>""" not in html
     assert """location.href='/profile#playback'">Playback</button>""" not in html
     assert 'href="/profile#watchlist">View all</a>' in html
@@ -1958,12 +1958,12 @@ def test_profile_nav_uses_full_user_links_for_write_managed_user() -> None:
         user={"is_admin": False, "profile_id": ALICE_PROFILE_ID, "username": "pascal", "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True}},
     )
 
-    assert """<button class="tab" type="button" onclick="location.href='/?main=1#main'">Main</button>""" in html
+    assert """<button id="tab-main" class="tab" type="button" onclick="location.href='/?main=1#main'">Main</button>""" in html
     assert """location.href='/profile#watchlist'">Watchlist</button>""" not in html
     assert """location.href='/profile#playback'">Playback</button>""" not in html
-    assert """<button class="tab" type="button" onclick="location.href='/?main=1#snapshots'">Captures</button>""" in html
-    assert """<button class="tab" type="button" onclick="location.href='/?main=1#playlists'">Playlists</button>""" in html
-    assert """<button class="tab" type="button" onclick="location.href='/?main=1#editor'">Editor</button>""" in html
+    assert """<button id="tab-snapshots" class="tab" type="button" onclick="location.href='/?main=1#snapshots'">Captures</button>""" in html
+    assert """<button id="tab-playlists" class="tab" type="button" onclick="location.href='/?main=1#playlists'">Playlists</button>""" in html
+    assert """<button id="tab-editor" class="tab" type="button" onclick="location.href='/?main=1#editor'">Editor</button>""" in html
     assert 'href="/profile#watchlist">View all</a>' in html
     assert 'href="/profile#playback">View all</a>' in html
     assert 'href="/?main=1#settings">Settings</a>' not in html
@@ -1988,17 +1988,18 @@ def test_profile_page_supports_admin_account() -> None:
 
     assert 'data-cw-role="admin"' in html
     assert 'data-cw-profile-id=""' in html
-    assert 'id="profile-role" class="cw-profile-role">Administrator</span>' in html
-    assert """<button class="tab" type="button" onclick="location.href='/'">Main</button>""" in html
+    assert 'id="profile-role" class="cw-profile-role" hidden>Administrator</span>' in html
+    assert """<button id="tab-main" class="tab" type="button" onclick="location.href='/'">Main</button>""" in html
     assert """location.href='/profile#watchlist'">Watchlist</button>""" not in html
     assert """location.href='/profile#playback'">Playback</button>""" not in html
-    assert """<button class="tab" type="button" onclick="location.href='/#snapshots'">Captures</button>""" in html
-    assert """<button class="tab" type="button" onclick="location.href='/#playlists'">Playlists</button>""" in html
-    assert """<button class="tab" type="button" onclick="location.href='/#editor'">Editor</button>""" in html
+    assert """<button id="tab-snapshots" class="tab" type="button" onclick="location.href='/#snapshots'">Captures</button>""" in html
+    assert """<button id="tab-playlists" class="tab" type="button" onclick="location.href='/#playlists'">Playlists</button>""" in html
+    assert """<button id="tab-editor" class="tab" type="button" onclick="location.href='/#editor'">Editor</button>""" in html
     assert 'id="tab-settings" class="tab"' in html
     assert '<span>Settings</span><span class="tab-caret"' in html
-    assert 'id="tab-about" class="tab"' in html
-    assert '<span>About</span><span class="tab-caret"' in html
+    assert 'id="tab-about" class="tab"' not in html
+    assert 'data-cw-account-view="help"' in html
+    assert 'data-cw-profile-menu-action="about"' in html
     assert 'id="cw-profile-logout"' not in html
     assert 'onclick="window.cwSettingsMenuLogout()"' not in html
     assert 'data-cw-profile-menu-action="logout"' in html

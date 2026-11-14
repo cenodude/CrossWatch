@@ -2395,7 +2395,7 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 @media(max-width:760px){#page-tracker .trk-overview-section-head h2{font-size:19px}}
 @media(max-width:760px){#page-tracker .trk-overview-grid{display:flex;gap:12px;overflow-x:auto;scroll-snap-type:x proximity;scroll-padding-inline:2px;padding:8px 2px 12px}#page-tracker .trk-overview-card{flex:0 0 240px;scroll-snap-align:start}#page-tracker .trk-overview-art{aspect-ratio:16/9;min-height:0;overflow:visible;margin-bottom:64px}}
 @media(max-width:760px){
-  body.cw-profile-page .cw-profile-tabs,#page-tracker .trk-navigation{position:sticky;top:var(--cw-mobile-header-height,64px);z-index:20;display:flex;gap:0;margin:0 0 16px;min-height:48px;max-width:100%}
+  body.cw-profile-page .cw-profile-tabs,#page-tracker .trk-navigation{position:sticky;top:var(--cw-mobile-header-height,64px);z-index:9;display:flex;gap:0;margin:0 0 16px;min-height:48px;max-width:100%}
   body.cw-profile-page .cw-profile-tabs{scrollbar-width:none}
   body.cw-profile-page .cw-profile-tabs button,#page-tracker .trk-tab{flex-shrink:0;min-height:48px;padding:0 12px;font-size:14px;gap:5px;white-space:nowrap}
   body.cw-profile-page .cw-profile-tabs button>.material-symbols-rounded,#page-tracker .trk-tabs .material-symbol{display:none}
@@ -3197,14 +3197,18 @@ html body img:is([src*="/assets/img/placeholder_poster.svg"],[src*="/art/tmdb/"]
   line-height: 1.35;
   cursor: pointer;
 }
-#cw-profile-menu.cw-page-account-menu .cw-account-group-toggle {
-  grid-template-columns: 19px minmax(0, 1fr) 16px;
-}
-#cw-profile-menu .cw-account-group .cw-menu-item { padding-left: 22px; }
-#cw-profile-menu .cw-account-group[hidden] { display: none; }
+#cw-profile-menu [data-cw-account-panel][hidden] { display: none; }
 #cw-profile-menu .cw-menu-icon { display: grid; place-items: center; font-size: 19px; line-height: 1; }
-#cw-profile-menu .cw-account-chevron { font-size: 16px; }
-#cw-profile-menu .cw-account-group-toggle[aria-expanded="false"] .cw-account-chevron { transform: rotate(-90deg); }
+#cw-profile-menu .cw-account-identity { display: grid; gap: 4px; padding: 10px 8px 14px; overflow-wrap: anywhere; }
+#cw-profile-menu .cw-account-version { padding: 10px 8px 4px; }
+#cw-desktop-more[hidden] { display: none; }
+@media (min-width: 761px) {
+  header .tabs #tab-settings { width: 44px; height: 44px; padding: 0; font-size: 0; justify-content: center; }
+  header .tabs #tab-settings > span:not(.cw-settings-icon) { display: none; }
+  header .tabs #tab-settings .cw-settings-icon { display: inline-block; font-size: 20px; }
+  #cw-desktop-more-menu { min-width: 172px; }
+  header .tabs #cw-desktop-more-menu .tab { display: flex; width: 100%; justify-content: flex-start; padding: 10px 14px; }
+}
 #cw-profile-menu .cw-menu-sep { flex: 0 0 1px; margin: 5px 0; }
 @media (max-width: 760px), (pointer: coarse) {
   #cw-profile-menu.cw-page-account-menu .cw-menu-item { min-height: 44px; }
