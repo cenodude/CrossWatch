@@ -783,15 +783,40 @@
   }
   const overviewCacheKey = () => {
     const auth = window.CW?.AuthState?.read?.();
-    return JSON.stringify([auth?.user?.id || auth?.user?.username, auth?.profileId, auth?.role, auth?.permissions, state.instance]);
+    return JSON.stringify([auth?.user?.id || auth?.user?.username, auth?.profileId, auth?.role, auth?.permissions, currentProfileScope(), window.CW?.OverviewProfile?.filter, state.instance]);
   };
+
+  const OVERVIEW_STORE_KEY = "cw.tracker.overview.v1";
+  const OVERVIEW_CACHE_TTL = 10 * 60 * 1000;
+
+  function savedOverviews() {
+    try {
+      const entries = JSON.parse(sessionStorage.getItem(OVERVIEW_STORE_KEY) || "[]");
+      return Array.isArray(entries) ? entries.filter(entry => entry?.payload?.day === today() && Date.now() - Number(entry.t || 0) < OVERVIEW_CACHE_TTL).slice(-16) : [];
+    } catch { return []; }
+  }
+
+  function restoreOverview() {
+    const key = overviewCacheKey();
+    const saved = savedOverviews().find(entry => entry.key === key);
+    if (!saved || saved.payload.scope !== key) return;
+    state.overview = saved.payload;
+    state.stats = saved.stats || state.stats;
+    overviewCache.set(key, state.overview);
+  }
 
   function rememberOverview() {
     if (!state.overview || state.overview.checking || state.overview.calendar_error) return;
     const key = overviewCacheKey();
+    if (state.overview.scope !== key) return;
     overviewCache.delete(key);
     overviewCache.set(key, state.overview);
     while (overviewCache.size > 16) overviewCache.delete(overviewCache.keys().next().value);
+    try {
+      const entries = savedOverviews().filter(entry => entry.key !== key);
+      entries.push({key, t:Date.now(), payload:state.overview, stats:state.stats});
+      sessionStorage.setItem(OVERVIEW_STORE_KEY, JSON.stringify(entries.slice(-16)));
+    } catch {}
   }
 
   async function loadOverviewHero(data) {
@@ -804,7 +829,7 @@
     if (!item) return;
     try {
       data.heroMeta = await window.CW?.Meta?.get?.(item, "detail", {seriesInfo:true});
-      if (state.overview === data && state.view === "overview") updateHeroSelection();
+      if (state.overview === data && state.view === "overview") { updateHeroSelection(); rememberOverview(); }
     } catch {}
   }
 
@@ -5244,8 +5269,12 @@
       state.offset = 0;
       state.scrollTop = 0;
     }
-    await refresh();
+    if (state.view === "overview" && !state.overview) restoreOverview();
+    render();
+    updateHeroSelection();
+    updateHeroBackdrop();
     void refreshHeroPlayback();
+    await refresh();
     if (reviewYear) openYearlyReview({},reviewYear);
     else if (reviewMonth || state.monthlyReview) openMonthlyReview({},reviewMonth || '',!!reviewMonth);
   }

@@ -18,7 +18,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
   const errors=[];
   page.on('pageerror',error=>errors.push(error.message));
   t.after(()=>assert.deepEqual(errors,[]));
-  const state={empty:false,queries:[],playing:null,watchGate:null};
+  const state={empty:false,queries:[],playing:null,watchGate:null,gates:new Map(),username:'mobile'};
   if(hero) await page.clock.install();
   const fixtureItems = count ? Array.from({length:count},(_,index)=>({...items[index % items.length],key:`movie:tmdb:${index+1}`,title:`Movie ${index+1}`,tmdb:String(index+1),ids:{tmdb:String(index+1)}})) : items;
   const html=await page.evaluate(({source,theme,hero,activity})=>{
@@ -47,6 +47,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
     if(path.startsWith('/api/')) {
       const list=state.empty?[]:fixtureItems;
       state.queries.push({path,params:Object.fromEntries(url.searchParams)});
+      if(state.gates.has(path)) await state.gates.get(path);
       if(path==='/api/watch/currently_watching') {
         state.watchStarted?.();
         if(state.watchGate) await state.watchGate;
@@ -96,7 +97,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
       if(state.providerRefs && path==='/api/profile/history') json.items=json.items.map(item=>({...item,present:state.providerRefs,missing:[]}));
       return route.fulfill({json});
     }
-    return route.fulfill({contentType:'text/html',body:html});
+    return route.fulfill({contentType:'text/html',body:html.replace('data-username="mobile"',`data-username="${state.username}"`)});
   });
   await page.goto('https://profile-mobile.test/profile');
   await page.locator('.cw-profile-tabs').waitFor({state:'attached'});
@@ -109,6 +110,113 @@ async function snapshot(page,name) {
   await mkdir(process.env.CW_PROFILE_SCREENSHOTS,{recursive:true});
   await page.locator('.cw-profile-panel.active').screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/${name}.png`});
 }
+
+for(const width of [390,1440]) test(`Hub restores cached cards before profile and provider requests at ${width}px`,async t=>{
+  const {page,state}=await fixture(t,'flat-dark',width,{activity:true});
+  await page.locator('#profile-progress .cw-cw-card[data-profile-poster-key]').first().waitFor();
+  await page.waitForFunction(()=>Object.keys(localStorage).some(key=>key.includes('.overview') && JSON.parse(localStorage.getItem(key)).payload.progress));
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  t.after(()=>release());
+  for(const path of ['/api/profile','/api/dashboard/widgets','/api/state/wall','/api/insights','/api/status','/api/profile/collection','/api/playback_progress/items','/api/events/feed']) state.gates.set(path,gate);
+  state.queries=[];
+  state.playing={type:'movie',title:'Live movie',ids:{tmdb:'3'},state:'playing',progress:35,duration:120};
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('#profile-progress .cw-cw-card[data-profile-poster-key]').first().waitFor();
+  await page.locator('#profile-watchlist .cw-hub-poster[data-profile-poster-key]').first().waitFor();
+  await page.locator('#profile-now-title').filter({hasText:'Live movie'}).waitFor();
+  assert.ok(state.queries.some(query=>query.path==='/api/profile'));
+  await page.evaluate(()=>{
+    window.savedProgressCard=document.querySelector('#profile-progress .cw-cw-card[data-profile-poster-key]');
+    window.savedProgressImage=window.savedProgressCard.querySelector('img');
+    window.savedWatchlistCard=document.querySelector('#profile-watchlist .cw-hub-poster[data-profile-poster-key]');
+    window.cardReplacements=0;
+    new MutationObserver(records=>{window.cardReplacements+=records.reduce((sum,record)=>sum+record.removedNodes.length,0);}).observe(document.querySelector('#profile-progress'),{childList:true});
+  });
+  state.gates.clear();
+  const refreshed=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/playback_progress/items');
+  release();
+  await refreshed;
+  await page.waitForFunction(()=>document.querySelector('#profile-display-name').textContent==='Mobile preview');
+  assert.equal(await page.evaluate(()=>window.savedProgressCard===document.querySelector('#profile-progress .cw-cw-card[data-profile-poster-key]') && window.savedProgressImage===window.savedProgressCard.querySelector('img') && window.savedWatchlistCard===document.querySelector('#profile-watchlist .cw-hub-poster[data-profile-poster-key]') && window.cardReplacements===0),true);
+  assert.equal(await page.locator('#profile-now-title').textContent(),'Live movie');
+});
+
+test('Hub renders fast sections while a provider request is pending',async t=>{
+  const {page,state}=await fixture(t,'flat-dark',390);
+  await page.locator('#profile-progress .cw-cw-card[data-profile-poster-key]').first().waitFor();
+  await page.evaluate(()=>localStorage.clear());
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  t.after(()=>release());
+  state.gates.set('/api/profile/collection',gate);
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('#profile-watchlist .cw-hub-poster[data-profile-poster-key]').first().waitFor();
+  await page.locator('#profile-progress .cw-cw-card[data-profile-poster-key]').first().waitFor();
+  assert.equal(await page.locator('#profile-watchlist .cw-hub-poster[data-profile-poster-key]').count(),3);
+  release();
+});
+
+test('Hub clears cold loading placeholders when overview requests fail',async t=>{
+  const {page}=await fixture(t,'flat-dark',390);
+  await page.locator('#profile-progress [data-profile-poster-key]').first().waitFor();
+  await page.evaluate(()=>localStorage.clear());
+  await page.route('**/api/**',async route=>{
+    const path=new URL(route.request().url()).pathname;
+    if(['/api/dashboard/widgets','/api/state/wall','/api/playback_progress/items'].includes(path)) return route.fulfill({status:503,json:{error:'Unavailable'}});
+    await route.fallback();
+  });
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.getByText('No recent progress yet.',{exact:true}).waitFor();
+  await page.getByText('No watchlist items yet.',{exact:true}).waitFor();
+  assert.equal(await page.locator('#profile-progress [data-profile-poster-key],#profile-watchlist [data-profile-poster-key]').count(),0);
+});
+
+test('Hub updates progress in place and removes completed items after revalidation',async t=>{
+  const {page,state}=await fixture(t,'flat-dark',390);
+  await page.waitForFunction(()=>Object.keys(localStorage).some(key=>key.includes('.overview') && JSON.parse(localStorage.getItem(key)).payload.progress));
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  t.after(()=>release());
+  state.gates.set('/api/dashboard/widgets',gate);
+  await page.route('**/api/playback_progress/items?**',async route=>{
+    await gate;
+    await route.fulfill({json:{items:[{...items[2],progress:70},items[0]]}});
+  });
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('#profile-progress [data-profile-poster-key]').nth(2).waitFor();
+  await page.evaluate(()=>{
+    window.keptCard=document.querySelectorAll('#profile-progress [data-profile-poster-key]')[2];
+    window.keptImage=window.keptCard.querySelector('img');
+    window.keptPosterKey=window.keptCard.dataset.profilePosterKey;
+    window.unchangedCard=document.querySelector('#profile-progress [data-profile-poster-key]');
+  });
+  release();
+  await page.waitForFunction(()=>document.querySelector('#profile-progress [role="progressbar"]').getAttribute('aria-valuenow')==='70');
+  assert.equal(await page.locator('#profile-progress [data-profile-poster-key]').count(),2);
+  assert.equal(await page.evaluate(()=>{
+    const cards=document.querySelectorAll('#profile-progress [data-profile-poster-key]');
+    return cards[0]===window.keptCard && cards[0].querySelector('img')===window.keptImage && cards[0].dataset.profilePosterKey===window.keptPosterKey && cards[1]===window.unchangedCard;
+  }),true);
+});
+
+test('Hub does not display cached cards belonging to another account',async t=>{
+  const {page,state}=await fixture(t,'flat-dark',390);
+  await page.locator('#profile-progress .cw-cw-card[data-profile-poster-key]').first().waitFor();
+  await page.waitForFunction(()=>Object.keys(localStorage).some(key=>key.includes('.overview')));
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  t.after(()=>release());
+  for(const path of ['/api/dashboard/widgets','/api/state/wall','/api/playback_progress/items']) state.gates.set(path,gate);
+  state.username='another-user';
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.locator('#profile-progress .cw-profile-skeleton,.cw-profile-panel.active').first().waitFor();
+  await page.waitForFunction(()=>document.querySelector('.cw-profile-shell').dataset.username==='another-user');
+  assert.equal(await page.locator('#profile-progress .cw-cw-card[data-profile-poster-key]').count(),0);
+  assert.equal(await page.locator('#profile-watchlist .cw-hub-poster[data-profile-poster-key]').count(),0);
+  release();
+  await page.locator('#profile-progress .cw-cw-card[data-profile-poster-key]').first().waitFor();
+});
 
 async function openRecordTools(panel) {
   if(await panel.evaluate(el=>el.classList.contains('has-mobile-tools')) && !await panel.locator('.cw-hub-mobile-sheet').evaluate(el=>el.open)) await panel.locator('.cw-hub-mobile-filter').click();
