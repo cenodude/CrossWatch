@@ -68,7 +68,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
         items:list.map(item=>({...item,media_info:{resolution:'uhd_4k',hdr:'dolby_vision',audio:'dolby_atmos'},present:[{provider:'PLEX',instance:'default',rating:8.5}],missing:[{provider:'TRAKT',instance:'default'}]})),
         stats:{plays:list.length,full:0,partial:list.length,endpoints:2,mismatch:1,average:8.5},
         counts:{all:list.length,movie:list.length,ratings:{8.5:list.length}},
-        providers:path==='/api/profile/collection'?['PLEX','TRAKT']:[{provider:'PLEX',count:list.length},{provider:'TRAKT',count:list.length}],
+        providers:[{provider:'PLEX',count:list.length},{provider:'TRAKT',count:list.length}],
         months:list.length?[{month:'2025-01',count:1},{month:'2026-11',count:2}]:[],
       });
       if(path==='/api/playback_progress/items') json={items:list,total:list.length,providers:[],errors:[]};
@@ -109,6 +109,92 @@ async function snapshot(page,name) {
   await mkdir(process.env.CW_PROFILE_SCREENSHOTS,{recursive:true});
   await page.locator('.cw-profile-panel.active').screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/${name}.png`});
 }
+
+async function openRecordTools(panel) {
+  if(await panel.evaluate(el=>el.classList.contains('has-mobile-tools')) && !await panel.locator('.cw-hub-mobile-sheet').evaluate(el=>el.open)) await panel.locator('.cw-hub-mobile-filter').click();
+}
+
+async function clickRecordControl(panel,selector) {
+  const mobile=await panel.evaluate(el=>el.classList.contains('has-mobile-tools'));
+  const sheet=panel.locator('.cw-hub-mobile-sheet');
+  if(mobile && selector.includes('filters-toggle')) {
+    if(await sheet.evaluate(el=>el.open)) await sheet.getByRole('button',{name:'Done',exact:true}).click();
+    else await openRecordTools(panel);
+    return;
+  }
+  if(mobile && selector.includes('data-timeline-source')) {
+    await panel.getByRole('combobox',{name:'History source'}).selectOption('scrobble');
+    return;
+  }
+  await openRecordTools(panel);
+  await panel.locator(selector).click();
+  if(mobile && await sheet.evaluate(el=>el.open)) await sheet.getByRole('button',{name:'Done',exact:true}).click();
+}
+
+test('Hub mobile tools keep filters accessible without crowding the media lists',async t=>{
+  const {page}=await fixture(t,'flat-dark',390,{history:true,playback:true,library:true});
+  for(const key of ['history','watchlist','ratings','playback','collection']) {
+    await page.locator(`[data-profile-tab="${key}"]`).click();
+    const panel=page.locator(`#profile-panel-${key}`);
+    const sheet=panel.locator('.cw-hub-mobile-sheet');
+    await panel.locator('.cw-hist-card,.cw-play-card,.cw-collection-card').first().waitFor();
+    assert.equal(await panel.locator('.cw-hub-records-head').isVisible(),false);
+    assert.equal(await panel.locator('.cw-hub-records-controls').isVisible(),false);
+    assert.match(await panel.locator('.cw-hub-mobile-summary').innerText(),/3/);
+    const toolbar=await panel.locator('.cw-hub-records-toolbar').boundingBox();
+    assert.ok(toolbar.height<=48);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+    await panel.locator('.cw-hub-mobile-filter').click();
+    assert.equal(await sheet.evaluate(el=>el.open),true);
+    assert.equal(await sheet.locator('[data-timeline-filters-toggle]:visible,[data-playback-filters-toggle]:visible').count(),0);
+    assert.equal(await sheet.evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
+    if(process.env.CW_PROFILE_SCREENSHOTS) {
+      await mkdir(process.env.CW_PROFILE_SCREENSHOTS,{recursive:true});
+      await page.screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/mobile-sheet-${key}.png`});
+    }
+    const provider=page.locator(`#profile-${key}-provider`);
+    const wrap=provider.locator('xpath=following-sibling::*[1]');
+    await wrap.locator('button').click();
+    await sheet.locator('.cw-icon-select-menu:not(.hidden) [data-value]').filter({hasText:/plex/i}).first().click();
+    await page.waitForFunction(key=>document.querySelector(`#profile-${key}-provider`).value.toUpperCase().includes('PLEX'),key);
+    await sheet.getByRole('button',{name:'Done',exact:true}).click();
+    const clear=panel.locator('.cw-hub-mobile-active button[aria-label^="Remove"]');
+    await clear.first().waitFor();
+    await clear.first().click();
+    await page.waitForFunction(key=>document.querySelector(`#profile-${key}-provider`).value==='',key);
+    await panel.locator('.cw-hub-mobile-filter').click();
+    await sheet.locator('[data-timeline-type="movie"],[data-playback-type="movie"],[data-collection-type="movie"]').click();
+    await sheet.getByRole('button',{name:'Done',exact:true}).click();
+    await panel.getByRole('button',{name:'Remove Movies filter',exact:true}).click();
+    await page.waitForFunction(key=>!document.querySelector(`#profile-panel-${key} .cw-hub-mobile-active [aria-label="Remove Movies filter"]`),key);
+    if(key==='history') {
+      await panel.getByRole('combobox',{name:'History source'}).selectOption('scrobble');
+      await panel.locator('.cw-hist-route').first().waitFor();
+      await panel.locator('.cw-hub-mobile-filter').click();
+      assert.equal(await page.locator('#profile-history-filters').isVisible(),false);
+      await page.keyboard.press('Escape');
+      assert.equal(await sheet.evaluate(el=>el.open),false);
+      await panel.getByRole('combobox',{name:'History source'}).selectOption('synced');
+    }
+    if(key==='playback') assert.equal(await panel.getByRole('button',{name:'Provider needs attention'}).isVisible(),true);
+    await panel.evaluate(el=>el.scrollIntoView({block:'start'}));
+    await snapshot(page,`mobile-tools-${key}`);
+  }
+  const panel=page.locator('#profile-panel-collection');
+  await panel.locator('.cw-hub-mobile-filter').click();
+  await page.setViewportSize({width:1440,height:900});
+  await page.waitForFunction(()=>!document.querySelector('#profile-panel-collection').classList.contains('has-mobile-tools'));
+  assert.equal(await panel.locator('.cw-hub-mobile-sheet').evaluate(el=>el.open),false);
+  assert.equal(await panel.locator('.cw-hub-records-head').isVisible(),true);
+  assert.equal(await panel.locator('.cw-hub-records-controls').isVisible(),true);
+  assert.equal(await panel.locator('.cw-hub-mobile-filter').isVisible(),false);
+  assert.equal(await panel.locator('#profile-collection-provider').count(),1);
+  await page.setViewportSize({width:390,height:844});
+  await panel.locator('.cw-hub-mobile-filter').click();
+  await page.locator('#profile-collection-sort').selectOption('title',{force:true});
+  await panel.locator('.cw-hub-mobile-sheet').getByRole('button',{name:'Done',exact:true}).click();
+  await panel.getByRole('button',{name:/Remove.*Title.*filter/i}).waitFor();
+});
 
 for(const width of [390,1440]) test(`Hub header follows playback and falls back to last watched at ${width}px`,async t=>{
   const {page,state}=await fixture(t,'flat-dark',width,{hero:true});
@@ -266,7 +352,7 @@ for(const width of [390,980,1440]) test(`Hub Progress keeps provider actions, fi
   await panel.locator('[data-playback-select]').first().check({force:true});
   assert.equal(await page.locator('#profile-playback-bulk').isVisible(),true);
   await panel.locator('[data-playback-select]').first().uncheck({force:true});
-  await panel.locator('[data-playback-filters-toggle]').click();
+  await clickRecordControl(panel,'[data-playback-filters-toggle]');
   const filters=page.locator('#profile-playback-filters-panel');
   const bounds=await filters.boundingBox();
   assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width);
@@ -274,18 +360,18 @@ for(const width of [390,980,1440]) test(`Hub Progress keeps provider actions, fi
   await page.locator('#profile-playback-provider').selectOption('PLEX:default',{force:true});
   await providerRequest;
   assert.equal(await page.locator('#profile-playback-filters-count').innerText(),'1');
-  await panel.locator('[data-playback-filters-toggle]').click();
-  await panel.locator('[data-playback-filter="progress"]').click();
+  await clickRecordControl(panel,'[data-playback-filters-toggle]');
+  await clickRecordControl(panel,'[data-playback-filter="progress"]');
   await page.waitForFunction(()=>document.querySelector('[data-playback-filter="progress"]')?.getAttribute('aria-pressed')==='true');
-  await panel.locator('[data-playback-timeline]').click();
+  await clickRecordControl(panel,'[data-playback-timeline]');
   await page.locator('#profile-playback-timeline .cw-hist-bars').waitFor();
   assert.equal(await panel.locator('[data-playback-timeline]').getAttribute('aria-label'),'Hide timeline');
   await page.locator('#profile-playback-timeline [data-timeline-zoom="1"]').click();
   const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.profile.playback')));
   assert.equal(saved.timeline,true);
-  await panel.locator('[data-playback-timeline]').click();
+  await clickRecordControl(panel,'[data-playback-timeline]');
   await snapshot(page,`hub-progress-${width}`);
-  await panel.locator('[data-playback-view="list"]').click();
+  await clickRecordControl(panel,'[data-playback-view="list"]');
   await panel.locator('.cw-play-row').first().waitFor();
   const progressRow=panel.locator('.cw-play-row').first();
   assert.equal(await progressRow.locator('.cw-hist-cell--when').isVisible(),true);
@@ -312,7 +398,7 @@ for(const width of [390,980,1440]) test(`Hub Progress keeps provider actions, fi
   assert.equal(await page.locator('#profile-playback-timeline').isVisible(),false);
   assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.profile.playback')).zoom),saved.zoom);
   state.empty=true;
-  await page.locator('#profile-playback-refresh').click();
+  await clickRecordControl(panel,'#profile-playback-refresh');
   await panel.locator('.cw-profile-empty').waitFor();
   await snapshot(page,`hub-progress-empty-${width}`);
 });
@@ -337,14 +423,14 @@ for(const width of [390,1440]) test(`Hub History preserves filters, provider act
   assert.equal(await page.evaluate(()=>window.__providerAction.refs.missing[0].provider),'TRAKT');
   await panel.locator('[data-profile-poster-key]').first().click();
   assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
-  await panel.locator('[data-timeline-filters-toggle]').click();
+  await clickRecordControl(panel,'[data-timeline-filters-toggle]');
   assert.equal(await page.locator('#profile-history-filters').isVisible(),true);
   const coverageRequest=page.waitForResponse(r=>r.url().includes('/api/profile/history?')&&new URL(r.url()).searchParams.get('coverage')==='partial');
   await page.locator('#profile-history-coverage').selectOption('partial',{force:true});
   await coverageRequest;
   assert.equal(await panel.locator('[data-timeline-filters-toggle]').textContent(),'Filters · 1');
-  await panel.locator('[data-timeline-filters-toggle]').click();
-  await panel.locator('[data-timeline-toggle]').click();
+  await clickRecordControl(panel,'[data-timeline-filters-toggle]');
+  await clickRecordControl(panel,'[data-timeline-toggle]');
   await page.locator('#profile-history-timeline .cw-hist-bars').waitFor();
   assert.equal(await page.locator('#profile-history-timeline [data-timeline-month-jump]').count(),2);
   const zoom=page.locator('#profile-history-timeline .cw-hist-zoom-level');
@@ -358,7 +444,7 @@ for(const width of [390,1440]) test(`Hub History preserves filters, provider act
   assert.equal(saved.timeline,true);
   await snapshot(page,`hub-history-${width}`);
   const syncedAccent=await panel.evaluate(el=>getComputedStyle(el).getPropertyValue('--hist-tone-rgb'));
-  await panel.locator('[data-timeline-source="scrobble"]').click();
+  await clickRecordControl(panel,'[data-timeline-source="scrobble"]');
   await panel.locator('.cw-hist-route').first().waitFor();
   assert.equal(await panel.locator('[data-timeline-filters-toggle]').isVisible(),false);
   assert.equal(await page.locator('#profile-history-filters').isVisible(),false);
@@ -368,7 +454,7 @@ for(const width of [390,1440]) test(`Hub History preserves filters, provider act
   await panel.locator('[data-hub-route-actions]').first().click();
   await page.getByRole('menuitem',{name:'View media details'}).click();
   assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
-  await panel.locator('[data-timeline-view="list"]').click();
+  await clickRecordControl(panel,'[data-timeline-view="list"]');
   await panel.locator('.cw-hist-row').first().waitFor();
   assert.equal(await panel.locator('.cw-hist-cell--when').first().isVisible(),true);
   assert.equal(await panel.locator('.cw-hist-cell--title strong').first().evaluate(el=>getComputedStyle(el).fontWeight),'500');
@@ -378,7 +464,7 @@ for(const width of [390,1440]) test(`Hub History preserves filters, provider act
   await page.locator('#profile-history-timeline .cw-hist-bars').waitFor();
   assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.profile.history')).zoom),saved.zoom);
   state.empty=true;
-  await page.locator('#profile-history-refresh').click();
+  await clickRecordControl(panel,'#profile-history-refresh');
   await panel.locator('.cw-profile-empty').waitFor();
   assert.equal(await page.locator('#profile-history-timeline').isVisible(),false);
 });
@@ -410,39 +496,41 @@ for(const width of [390,1440]) test(`Hub library pages preserve filters, sorting
       await page.getByRole('menuitem',{name:'Manage providers'}).click();
       assert.equal(await page.evaluate(()=>window.__providerAction),'collection');
       assert.equal(await panel.locator('.cw-collection-quality img[alt="4K"]').count(),items.length);
+      await openRecordTools(panel);
       const sortRequest=page.waitForResponse(r=>r.url().includes('/api/profile/collection?')&&new URL(r.url()).searchParams.get('sort')==='title');
       await page.locator('#profile-collection-sort').selectOption('title',{force:true});
       await sortRequest;
       await page.locator('#profile-collection-sort').selectOption('collected_at',{force:true});
+      if(width<=760) await panel.locator('.cw-hub-mobile-sheet').getByRole('button',{name:'Done',exact:true}).click();
     } else {
       await panel.locator('[data-ia-chip]').first().click();
       assert.equal(await page.evaluate(()=>window.__providerAction),key);
-      await panel.locator('[data-timeline-filters-toggle]').click();
+      await clickRecordControl(panel,'[data-timeline-filters-toggle]');
       const coverageRequest=page.waitForResponse(r=>r.url().includes(`/api/profile/${key}?`)&&new URL(r.url()).searchParams.get('coverage')==='partial');
       await page.locator(`#profile-${key}-coverage`).selectOption('partial',{force:true});
       await coverageRequest;
-      await panel.locator('[data-timeline-filters-toggle]').click();
+      await clickRecordControl(panel,'[data-timeline-filters-toggle]');
       if(key==='ratings') {
         assert.equal(await panel.locator('[data-timeline-rating="10"]').isDisabled(),true);
         const ratingRequest=page.waitForResponse(r=>r.url().includes('/api/profile/ratings?')&&new URL(r.url()).searchParams.get('rating')==='8.5');
-        await panel.locator('[data-timeline-rating="8.5"]').click();
+        await clickRecordControl(panel,'[data-timeline-rating="8.5"]');
         await ratingRequest;
         assert.equal(await panel.locator('[data-timeline-rating="8.5"]').getAttribute('aria-pressed'),'true');
       }
     }
     if(key!=='watchlist') {
-      await panel.locator(collection?'[data-collection-timeline]':'[data-timeline-toggle]').click();
+      await clickRecordControl(panel,collection?'[data-collection-timeline]':'[data-timeline-toggle]');
       await page.locator(`#profile-${key}-timeline .cw-hist-bars`).waitFor();
       assert.equal(await page.locator(`#profile-${key}-timeline [data-timeline-month-jump]`).count(),2);
       assert.equal(await page.evaluate(key=>JSON.parse(localStorage.getItem(`cw.profile.${key}`)).timeline,key),true);
     }
-    await panel.locator(collection?'[data-collection-view="list"]':'[data-timeline-view="list"]').click();
+    await clickRecordControl(panel,collection?'[data-collection-view="list"]':'[data-timeline-view="list"]');
     await panel.locator(collection?'.cw-collection-row:not(.cw-collection-row--head)':'.cw-hist-row').first().waitFor();
     if(key==='watchlist') assert.equal(await panel.locator('.cw-hist-cell--when').first().isVisible(),false);
     await snapshot(page,`hub-${key}-list-${width}`);
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     state.empty=true;
-    await page.locator(`#profile-${key}-refresh`).click();
+    await clickRecordControl(panel,`#profile-${key}-refresh`);
     await panel.locator('.cw-profile-empty').waitFor();
   }
 });
@@ -557,6 +645,7 @@ for(const theme of ['original','flat-dark','flat-light']) {
           }
           const list=panel.locator('[data-timeline-view="list"],[data-playback-view="list"],[data-collection-view="list"]');
           if(await list.count()) {
+            await openRecordTools(panel);
             await list.tap();
             await panel.locator('.cw-hist-row,.cw-collection-row').first().waitFor();
             assert.equal(await page.evaluate(w=>document.documentElement.scrollWidth>w+1,width),false,`${section} list`);
@@ -566,7 +655,7 @@ for(const theme of ['original','flat-dark','flat-light']) {
       state.empty=true;
       if(width<=760) await page.locator('[data-profile-tab="watchlist"]').click();
       else await page.locator('[data-profile-tab="watchlist"]').click();
-      await page.locator('#profile-watchlist-refresh').click();
+      await clickRecordControl(page.locator('#profile-panel-watchlist'),'#profile-watchlist-refresh');
       await page.locator('#profile-watchlist-list .cw-profile-empty').waitFor();
       await snapshot(page,`${theme}-${width}-empty`);
     });

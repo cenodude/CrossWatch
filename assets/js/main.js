@@ -1162,7 +1162,7 @@
     const mobile = isMobileLayout();
     const tmdbReady = hasTmdbMetadata();
     const showDesktop = canWrite() && !mobile && onMainTab() && desktopEnabled() && tmdbReady;
-    const showMobile = canWrite() && mobile && ['main', 'tracker'].includes(currentTab()) && mobileEnabled() && tmdbReady;
+    const showMobile = canWrite() && mobile && onMainTab() && mobileEnabled() && tmdbReady;
     const showAny = showDesktop || showMobile;
     el.classList.toggle("hidden", !showAny);
     el.classList.toggle("is-desktop", showDesktop);

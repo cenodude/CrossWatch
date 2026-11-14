@@ -35,7 +35,8 @@ for (const [theme, [attributes, sheet]] of Object.entries(themes)) {
           <section id="ops-card"><div class="action-row"></div></section>
           <script>
             const cfg={scheduling:{enabled:true,mode:'hourly'}};
-            window.CW={API:{Config:{load:async()=>cfg},Pairs:{list:async()=>[]},Scheduling:{status:async()=>({config:cfg.scheduling,next_run_at:${now / 1000 + 3600},last_run_at:${now / 1000 - 1},last_backup_job_id:'backup'})}}};
+            window.schedulerStatus={config:cfg.scheduling,next_run_at:${now / 1000 + 3600},last_run_at:${now / 1000 - 1},last_backup_job_id:'backup'};
+            window.CW={API:{Config:{load:async()=>cfg},Pairs:{list:async()=>[]},Scheduling:{status:async()=>window.schedulerStatus}}};
           </script><script src="/assets/helpers/touch-help.js"></script><script src="/assets/js/schedulerbanner.js"></script>
         </body></html>`});
       });
@@ -47,12 +48,32 @@ for (const [theme, [attributes, sheet]] of Object.entries(themes)) {
         for (const viewport of [320, 760, 761, 1280, 390]) {
           await page.setViewportSize({width:viewport,height:700});
           assert.equal(await page.locator('.cw-status-dock').isVisible(),viewport>760);
+          assert.equal(await page.locator('#cw-mobile-last-schedule').isVisible(),viewport<=760);
           for (const id of ['chip-sched','chip-watch','chip-pairs','chip-health']) {
             if (viewport<=760) assert.equal(await page.locator(`#${id}`).isVisible(),false);
           }
         }
+        const lastRun=page.locator('#cw-mobile-last-schedule time');
+        assert.equal(await lastRun.textContent(),'Just now');
+        await page.evaluate(fixed=>{
+          schedulerStatus.last_run_at=fixed/1000-600;
+          schedulerStatus.profiles={family:{last_run_at:fixed/1000-120,last_run_ok:false}};
+          document.dispatchEvent(new Event('scheduling-status-refresh'));
+        },now);
+        await page.waitForFunction(()=>document.querySelector('#cw-mobile-last-schedule time')?.textContent==='2 minutes ago \u00b7 Failed');
+        assert.equal(await lastRun.getAttribute('datetime'),new Date(now-120_000).toISOString());
+        await mkdir('.pytest_tmp/scheduler-tooltip',{recursive:true});
+        await page.screenshot({path:`.pytest_tmp/scheduler-tooltip/${theme}-${width}.png`});
+        await page.evaluate(()=>{
+          schedulerStatus.last_run_at=0;
+          schedulerStatus.profiles={};
+          document.dispatchEvent(new Event('scheduling-status-refresh'));
+        });
+        await page.waitForFunction(()=>document.querySelector('#cw-mobile-last-schedule time')?.textContent==='No runs yet');
+        assert.equal(await lastRun.getAttribute('datetime'),null);
         return;
       }
+      assert.equal(await page.locator('#cw-mobile-last-schedule').isVisible(),false);
       if (width < 800) await chip.tap();
       else await chip.focus();
       const tip = page.locator(width < 800 ? "#cw-touch-help" : "#chip-sched .cw-hub-tip");

@@ -1281,7 +1281,7 @@ test('Tracker Escape clears selection after menus and dialogs, including a pendi
 
 for (const width of [1440,390]) test(`Tracker playback banner shares the live cache and restores stats at ${width}px`, async t => {
   const {page} = await fixture(t,'flat-dark',{width,playback:true});
-  let stream = {type:'episode',title:'VisionQuest',ids:{tmdb_show:'99'},season:1,episode:1,state:'playing',progress:65,duration_ms:3600000,source:'PLEX'};
+  let stream = {type:'episode',title:'VisionQuest',ids:{tmdb_show:'99'},season:1,episode:1,state:'playing',progress:65,duration_ms:3600000,source:'PLEX',session_key:'session-one'};
   let reads = 0;
   await page.route('**/api/watch/currently_watching*', route => { reads++; return route.fulfill({json:{streams:stream ? [stream] : []}}); });
   const update = () => page.evaluate(async () => {
@@ -1318,6 +1318,29 @@ for (const width of [1440,390]) test(`Tracker playback banner shares the live ca
   await page.locator('.cw-page-hero-tracker').screenshot({path:`.tmp/tracker-playback/hero-${width}.png`});
   assert.equal(await banner.evaluate(el => el.scrollWidth <= el.clientWidth),true);
   if (width === 1440) assert.ok((await banner.boundingBox()).width >= 400);
+  await page.keyboard.press('Escape');
+  await banner.waitFor({state:'hidden'});
+  const restore=page.locator('[data-trk-action="show-playback"]');
+  await restore.waitFor();
+  await page.locator('.cw-page-hero-tracker').screenshot({path:`.tmp/tracker-playback/hidden-${width}.png`});
+  assert.equal(await page.locator('[data-trk-slot="hero"]').getAttribute('hidden'),null);
+  stream={...stream,state:'playing',progress:72};
+  await update();
+  assert.equal(await banner.isVisible(),false);
+  assert.equal(await restore.isVisible(),true);
+  await restore.click();
+  await banner.waitFor();
+  assert.equal(await banner.locator('[role="progressbar"]').getAttribute('aria-valuenow'),'72');
+  assert.equal(await restore.isVisible(),false);
+  await page.keyboard.press('Escape');
+  await banner.waitFor({state:'hidden'});
+  await update();
+  assert.equal(await banner.isVisible(),false);
+  stream={...stream,session_key:'session-two',progress:5};
+  await update();
+  await banner.waitFor();
+  assert.equal(await banner.locator('[role="progressbar"]').getAttribute('aria-valuenow'),'5');
+  await page.locator('.cw-page-hero-tracker').screenshot({path:`.tmp/tracker-playback/restored-${width}.png`});
   stream=null;
   await update();
   await banner.waitFor({state:'hidden'});
@@ -1427,4 +1450,87 @@ for (const width of [390,320]) test(`Mobile Tracker toolbar stays in two rows at
   await page.setViewportSize({width:1440,height:900});
   await page.locator('.trk-actions [data-trk-action="views"]').waitFor({state:'visible'});
   assert.equal(await page.locator('[data-trk-action="views"]').count(),1);
+});
+
+
+for (const width of [1440,390]) test(`Recently watched menu opens the shared rating dialog at ${width}px`, async t => {
+  const {page,writes} = await fixture(t,'flat-dark',{width,touch:width<760});
+  const recent=page.locator('[data-trk-overview-open="recent:0"]');
+  await recent.locator('[data-trk-card-menu]').click();
+  await page.getByRole('menuitem',{name:'Rate',exact:true}).click();
+  const dialog=page.locator('.trk-sheet:visible');
+  await dialog.locator('[data-trk-rate-value]').waitFor();
+  assert.match(await dialog.innerText(),/Rate Movie 1/);
+  assert.equal(await dialog.locator('[data-trk-rate-value]').textContent(),'Not rated');
+  const saved=page.waitForResponse(response=>response.url().endsWith('/api/tracker/add'));
+  await dialog.locator('[data-trk-rate="8.5"]').click();
+  await saved;
+  assert.equal(writes.length,1);
+  assert.equal(writes[0].feature,'ratings');
+  assert.equal(writes[0].item.rating,8.5);
+  assert.equal(writes[0].item.title,'Movie 1');
+  assert.equal(writes[0].provider_instance,'default');
+});
+
+
+for (const width of [1440,390]) test(`Tracker cards keep routine statuses quiet and exceptions visible at ${width}px`, async t => {
+  const {page}=await fixture(t,'flat-dark',{width,touch:width<760});
+  const items=['watching','completed','dropped','on_hold'].map((status,index)=>({...rows[index],status,ref:{feature:'history',key:rows[index].key}}));
+  await page.route('**/api/tracker/overview?**',route=>route.fulfill({json:{revision:'status-icons',metadata_available:true,continue:[],recent:items,shows:{continue:[],airing:[],done:true}}}));
+  await page.locator('[data-trk-action="refresh"]').evaluate(el=>el.click());
+  const cards=page.locator('[data-trk-overview-open^="recent:"]');
+  await cards.first().locator('.trk-grid-status-icon').waitFor();
+  for (const [index,label] of [[0,'Watching'],[1,'Completed']]) {
+    const card=cards.nth(index);
+    assert.equal(await card.locator('.trk-grid-art .trk-status').count(),0);
+    const icon=card.locator('.trk-grid-copy>small .trk-grid-status-icon');
+    assert.equal(await icon.getAttribute('aria-label'),label);
+    await icon.focus();
+    assert.equal(await icon.evaluate(el=>getComputedStyle(el,'::after').visibility),'visible');
+    const fits=await card.locator('.trk-grid-copy>small').evaluate(el=>el.scrollWidth<=el.clientWidth+1);
+    assert.equal(fits,true);
+  }
+  assert.match(await cards.nth(2).locator('.trk-grid-status').innerText(),/Dropped/);
+  assert.match(await cards.nth(3).locator('.trk-grid-status').innerText(),/On hold/);
+  assert.equal(await cards.nth(2).locator('.trk-grid-status-icon').count(),0);
+  await mkdir('.tmp/tracker-status',{recursive:true});
+  await cards.first().scrollIntoViewIfNeeded();
+  await page.screenshot({path:`.tmp/tracker-status/cards-${width}.png`});
+  await page.route('**/api/tracker/items?**',route=>route.fulfill({json:{items,total:items.length}}));
+  await page.locator('.trk-tabs [data-trk-view="history"]').evaluate(el=>el.click());
+  await page.locator('[data-trk-layout="grid"]').click();
+  await page.locator('.trk-grid-status-icon').first().waitFor();
+  await page.locator('[data-trk-input="status-labels"]').evaluate(el=>el.click());
+  assert.equal(await page.locator('.trk-grid-status-icon,.trk-grid-status').count(),0);
+});
+
+
+test('Tracker Overview prioritizes live playback while Escape closes dialogs and selection first', async t => {
+  const {page}=await fixture(t,'flat-dark',{playback:true,touch:false});
+  const stream={type:'movie',title:'Live movie',ids:{tmdb:'99'},state:'playing',progress:30,duration_ms:3600000,source:'PLEX',session_key:'live'};
+  await page.route('**/api/watch/currently_watching*',route=>route.fulfill({json:{streams:[stream]}}));
+  await page.evaluate(async()=>{
+    await CW.PlayingCard.currentlyWatching(true);
+    window.dispatchEvent(new Event('currently-watching-updated'));
+  });
+  const banner=page.locator('.trk-hero-playback');
+  await banner.waitFor();
+  const recent=page.locator('[data-trk-overview-open="recent:0"]');
+  await recent.locator('[data-trk-card-menu]').click();
+  await page.getByRole('menuitem',{name:'Rate',exact:true}).click();
+  await page.locator('.trk-sheet:visible [data-trk-rate-value]').waitFor();
+  assert.equal(await banner.isVisible(),true);
+  assert.match(await page.locator('.trk-hero-heading').textContent(),/Live movie/);
+  await page.keyboard.press('Escape');
+  await page.locator('.trk-sheet:visible').waitFor({state:'hidden'});
+  assert.equal(await banner.isVisible(),true);
+  await page.keyboard.press('Escape');
+  assert.equal(await banner.isVisible(),true);
+  await page.keyboard.press('Escape');
+  await banner.waitFor({state:'hidden'});
+  await page.locator('[data-trk-action="show-playback"]').click();
+  await banner.waitFor();
+  await recent.locator('[data-trk-card-menu]').click();
+  await page.keyboard.press('Escape');
+  assert.equal(await banner.isVisible(),true);
 });
