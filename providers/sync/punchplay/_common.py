@@ -588,6 +588,14 @@ def snapshot_pages(adapter: Any, resource: str, *, feature: str, limit: int = PA
         after = nxt_int
 
 
+def _bulk_failure(entry: Mapping[str, Any], **details: Any) -> dict[str, Any]:
+    failure = {"key": str(entry.get("key") or ""), **details}
+    item = entry.get("item")
+    if isinstance(item, Mapping):
+        failure["item"] = dict(item)
+    return failure
+
+
 def classify_bulk_results(
     results: Any,
     sent: Sequence[Mapping[str, Any]],
@@ -633,21 +641,25 @@ def classify_bulk_results(
             tmdb = _as_int(row.get("resolved_tmdb_id"))
             if tmdb:
                 resolved_tmdb[key] = tmdb
-        elif status == "deferred":
+        elif status == "deferred" and str(row.get("reason") or "").strip() != "resolver_unavailable":
             deferred_keys.append(key)
             accepted_keys.append(key)
         else:
             unresolved_keys.append(key)
-            unresolved.append({
+            entry = {
                 "key": key,
                 "status": status or "invalid",
                 "error": str(row.get("error") or "")[:200],
-            })
+            }
+            reason = str(row.get("reason") or "").strip()
+            if reason:
+                entry["reason"] = reason[:100]
+            unresolved.append(_bulk_failure(sent[idx] if 0 <= idx < len(sent) else {}, **entry))
 
     for idx, key in key_by_index.items():
         if idx not in seen_index and key:
             unresolved_keys.append(key)
-            unresolved.append({"key": key, "status": "missing_result"})
+            unresolved.append(_bulk_failure(sent[idx] if 0 <= idx < len(sent) else {}, key=key, status="missing_result"))
 
     return {
         "confirmed_keys": confirmed,
@@ -682,7 +694,8 @@ def bulk_write(
     status_counts: dict[str, int] = {}
     ok = True
 
-    for batch in chunk_items(items):
+    batches = [(batch, False) for batch in chunk_items(items)]
+    for batch, retried in batches:
         payload = {"items": [dict(entry.get("payload") or {}) for entry in batch]}
         key_by_index = {i: str(entry.get("key") or "") for i, entry in enumerate(batch)}
         operation_id = f"{time.time_ns()}-{secrets.token_hex(8)}"
@@ -691,13 +704,27 @@ def bulk_write(
         waits = 0
         while True:
             headers = {"Idempotency-Key": idempotency_key(resource, payload, attempt=attempt, operation_id=operation_id)}
-            resp = punchplay_request(
-                adapter,
-                "POST",
-                URL_BULK.format(resource=resource),
-                json=payload,
-                headers=headers,
-            )
+            try:
+                resp = punchplay_request(
+                    adapter,
+                    "POST",
+                    URL_BULK.format(resource=resource),
+                    json=payload,
+                    headers=headers,
+                )
+            except requests.RequestException as exc:
+                if not retried:
+                    raise
+                ok = False
+                error = type(exc).__name__
+                for entry in batch:
+                    key = str(entry.get("key") or "")
+                    if key:
+                        unresolved_keys.append(key)
+                        unresolved.append(_bulk_failure(entry, status="transport_error", reason=f"write_failed:{error}", error=error))
+                _warn(feature, "bulk_recovery_failed", resource=resource, error=error, items=len(batch))
+                resp = None
+                break
             code = int(resp.status_code)
             err = error_of(resp)
 
@@ -711,19 +738,55 @@ def bulk_write(
                 continue
             break
 
+        if resp is None:
+            continue
+
         if not (200 <= code < 300):
             ok = False
             for entry in batch:
                 key = str(entry.get("key") or "")
                 if key:
                     unresolved_keys.append(key)
-                    unresolved.append({"key": key, "status": f"http:{code}", "error": err})
+                    unresolved.append(_bulk_failure(entry, status=f"http:{code}", error=err))
             _warn(feature, "bulk_write_failed", resource=resource, status=code, error=err, request_id=request_id_of(resp), items=len(batch))
             continue
 
         body = safe_json(resp) or {}
+        results = body.get("results") if isinstance(body, Mapping) else None
+        if not retried and isinstance(results, list):
+            retry_entries: dict[int, dict[str, Any]] = {}
+            remaining_results: list[Any] = []
+            resolver_unavailable = False
+            for row in results:
+                try:
+                    idx = int(row["index"]) if isinstance(row, Mapping) else -1
+                except (KeyError, TypeError, ValueError):
+                    idx = -1
+                if idx not in key_by_index:
+                    remaining_results.append(row)
+                    continue
+                status = str(row.get("status") or "").strip()
+                reason = str(row.get("reason") or "").strip()
+                retry_payload = dict(batch[idx].get("payload") or {})
+                if status == "invalid" and reason == "id_conflict" and retry_payload.get("tmdb_id") and any(
+                    retry_payload.get(k) for k in ("imdb_id", "tvdb_id", "mal_id")
+                ):
+                    for field in ("imdb_id", "tvdb_id", "mal_id"):
+                        retry_payload.pop(field, None)
+                elif status == "deferred" and reason == "resolver_unavailable":
+                    resolver_unavailable = True
+                else:
+                    remaining_results.append(row)
+                    continue
+                retry_entries[idx] = {**batch[idx], "payload": retry_payload}
+            if retry_entries:
+                if resolver_unavailable:
+                    time.sleep(1.0)
+                batches.append((list(retry_entries.values()), True))
+                key_by_index = {idx: key for idx, key in key_by_index.items() if idx not in retry_entries}
+                results = remaining_results
         parsed = classify_bulk_results(
-            body.get("results") if isinstance(body, Mapping) else None,
+            results,
             [dict(e) for e in batch],
             key_by_index,
         )
