@@ -86,8 +86,9 @@
   const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
   const profileCacheKey = (name) => {
     const shell = $(".cw-profile-shell");
-    const id = shell?.dataset?.profileId || shell?.dataset?.username || document.documentElement?.dataset?.cwProfileId || "self";
-    return `cw.profile.${id}${viewAsState.id ? `.as-${viewAsState.id}` : ""}.${name}.v1`;
+    const auth = window.CW?.AuthState?.read?.();
+    const scope = JSON.stringify([auth?.user?.id || auth?.user?.username || shell?.dataset?.username, auth?.role || document.documentElement.dataset.cwRole, auth?.permissions, auth?.profileId || shell?.dataset?.profileId, viewAsState.id, window.CW?.OverviewProfile?.filter]);
+    return `cw.profile.${scope}.${name}.v2`;
   };
   const readCache = (key, ttl = OVERVIEW_CACHE_TTL_MS) => {
     try {
@@ -100,14 +101,6 @@
   };
   const writeCache = (key, payload) => {
     try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), payload })); } catch {}
-  };
-  const readAnyCache = (key) => {
-    try {
-      const entry = JSON.parse(localStorage.getItem(key) || "null");
-      return entry && entry.payload ? entry.payload : null;
-    } catch {
-      return null;
-    }
   };
   const profileRouteSegment = (value) => {
     try {
@@ -513,8 +506,16 @@
   async function loadProfileActivity({ preserve = false } = {}) {
     const host = $("#profile-activity");
     if (!host) return;
-    if (!preserve || !host.children.length) host.innerHTML = skeleton("activity", 4);
     await waitForOverviewProfile();
+    const cacheKey = profileCacheKey(mobilePaging.matches ? "activity.mobile" : "activity");
+    const cached = readCache(cacheKey);
+    const render = payload => {
+      const rows = (payload.items || []).slice().sort((a, b) => Number(b?.created_at || 0) - Number(a?.created_at || 0));
+      const html = (rows.length ? rows.slice(0, mobilePaging.matches ? 3 : ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty("No recent activity yet.")) + (schedulerActivityHtml(payload.scheduler) || "");
+      if (host.innerHTML !== html) host.innerHTML = html;
+    };
+    if (cached) render(cached);
+    else if (!preserve || !host.children.length) host.innerHTML = skeleton("activity", 4);
     const params = new URLSearchParams({ limit: String(mobilePaging.matches ? 3 : ACTIVITY_LIMIT), visibility: "all" });
     const userProfile = String(window.CW?.OverviewProfile?.id || "").trim();
     if (userProfile) params.set("user_profile", userProfile);
@@ -524,10 +525,13 @@
       api(`/api/events/feed?${params.toString()}`),
       includeSchedulerStatus ? api("/api/scheduling/status") : Promise.resolve(null),
     ]);
-    const rows = feedRes.status === "fulfilled" && Array.isArray(feedRes.value?.items) ? feedRes.value.items.slice() : [];
-    const schedulerRow = schedulerRes.status === "fulfilled" ? schedulerActivityHtml(schedulerRes.value) : "";
-    rows.sort((a, b) => Number(b?.created_at || 0) - Number(a?.created_at || 0));
-    host.innerHTML = (rows.length ? rows.slice(0, mobilePaging.matches ? 3 : ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty("No recent activity yet.")) + (schedulerRow || "");
+    if (cacheKey !== profileCacheKey(mobilePaging.matches ? "activity.mobile" : "activity")) return;
+    const next = {
+      items: feedRes.status === "fulfilled" ? feedRes.value?.items || [] : cached?.items || [],
+      scheduler: schedulerRes.status === "fulfilled" ? schedulerRes.value : cached?.scheduler,
+    };
+    render(next);
+    if (feedRes.status === "fulfilled") writeCache(cacheKey, next);
   }
 
   function wireProfileActivity() {
@@ -1198,41 +1202,103 @@
       </div>`).join("");
   }
 
+  function patchOverviewNode(current, next) {
+    if (current.nodeType !== next.nodeType || current.nodeName !== next.nodeName) { current.replaceWith(next); return; }
+    if (current.nodeType === Node.TEXT_NODE) {
+      if (current.textContent !== next.textContent) current.textContent = next.textContent;
+      return;
+    }
+    if (current.nodeType !== Node.ELEMENT_NODE) return;
+    for (const attr of [...current.attributes]) if (!next.hasAttribute(attr.name)) current.removeAttribute(attr.name);
+    for (const attr of next.attributes) if (current.getAttribute(attr.name) !== attr.value) current.setAttribute(attr.name, attr.value);
+    const oldChildren = [...current.childNodes], newChildren = [...next.childNodes];
+    for (let index = 0; index < Math.max(oldChildren.length, newChildren.length); index++) {
+      if (!newChildren[index]) oldChildren[index].remove();
+      else if (!oldChildren[index]) current.append(newChildren[index]);
+      else patchOverviewNode(oldChildren[index], newChildren[index]);
+    }
+  }
+
+  function renderOverviewCards(host, items, card, message) {
+    const existing = new Map([...host.children].map(node => [node.dataset.overviewKey, node]));
+    const seen = new Map();
+    const keep = new Set();
+    for (const [index, item] of items.entries()) {
+      const identity = JSON.stringify([item.key || item.id || tmdbId(item) || titleOf(item), mediaKindLabel(item), episodeOf(item)]);
+      const occurrence = seen.get(identity) || 0;
+      seen.set(identity, occurrence + 1);
+      const key = `${identity}:${occurrence}`;
+      const template = document.createElement("template");
+      template.innerHTML = card(item);
+      const next = template.content.firstElementChild;
+      next.dataset.overviewKey = key;
+      const current = existing.get(key);
+      if (current) {
+        const generatedKey = next.dataset.profilePosterKey, retainedKey = current.dataset.profilePosterKey;
+        posterItems.set(retainedKey, posterItems.get(generatedKey));
+        posterItems.delete(generatedKey);
+        next.dataset.profilePosterKey = retainedKey;
+        patchOverviewNode(current, next);
+      }
+      const node = current || next;
+      keep.add(node);
+      if (host.children[index] !== node) host.insertBefore(node, host.children[index] || null);
+    }
+    for (const node of [...host.children]) if (!keep.has(node)) { posterItems.delete(node.dataset.profilePosterKey); node.remove(); }
+    if (!items.length) {
+      const html = empty(message);
+      if (host.innerHTML !== html) host.innerHTML = html;
+    }
+  }
+
   function renderProgressItems(progressItems) {
-    $("#profile-progress").innerHTML = progressItems.length ? progressItems.slice(0, mobilePaging.matches ? 3 : 4).map(progressCard).join("") : empty("No recent progress yet.");
+    renderOverviewCards($("#profile-progress"), progressItems.slice(0, mobilePaging.matches ? 3 : 4), progressCard, "No recent progress yet.");
   }
 
   let overviewPayload = null;
   let overviewPagingDirty = false;
+  let overviewRequest = 0;
+  let overviewHeroSignature = "";
 
   function renderOverview(payload = {}) {
     overviewPayload = payload;
     prunePosterItems();
     const widgets = payload.widgets || {};
     const wall = payload.wall || { items: [] };
-    const progress = payload.progress || { items: [] };
+    const progress = payload.progress;
     const insights = payload.insights || null;
     const status = payload.status || null;
     const collection = payload.collection || null;
     const history = widgets?.recent_history?.items || [];
     const scrobble = widgets?.recent_scrobble?.items || [];
     const widgetProgress = widgets?.recent_progress?.items || [];
-    const progressItems = progress?.items?.length ? progress.items : widgetProgress;
-    renderHero(scrobble, history);
+    const progressItems = Array.isArray(progress?.items) ? progress.items : widgetProgress;
+    const heroSignature = JSON.stringify([scrobble, history]);
+    if (payload.widgets && overviewHeroSignature !== heroSignature) { overviewHeroSignature = heroSignature; renderHero(scrobble, history); }
     renderQuickStats({ wall, widgets, progressItems, insights, collection });
     const watchlistItems = Array.isArray(wall?.items) ? wall.items : [];
     renderHeroChips({
       services: connectedServices(status),
     });
-    renderProgressItems(progressItems);
-    $("#profile-watchlist").innerHTML = watchlistItems.length ? watchlistItems.slice(0, 4).map(watchlistCard).join("") : empty("No watchlist items yet.");
+    if (payload.progress || payload.widgets) renderProgressItems(progressItems);
+    if (payload.wall) renderOverviewCards($("#profile-watchlist"), watchlistItems.slice(0, 4), watchlistCard, "No watchlist items yet.");
   }
 
   async function loadOverview() {
+    const request = ++overviewRequest;
     const cacheKey = profileCacheKey(mobilePaging.matches ? "overview.mobile" : "overview");
-    const cached = readCache(cacheKey) || readAnyCache(cacheKey);
+    const cached = readCache(cacheKey);
     if (cached) renderOverview(cached);
     else paintOverviewSkeletons();
+    const next = { ...cached };
+    const current = () => request === overviewRequest && cacheKey === profileCacheKey(mobilePaging.matches ? "overview.mobile" : "overview");
+    const update = (key, value) => {
+      if (!current()) return;
+      next[key] = value;
+      renderOverview(next);
+      writeCache(cacheKey, next);
+    };
+    void refreshNowPlaying();
     const widgetParams = new URLSearchParams({
       include: "history,ratings,scrobble,progress",
       history_limit: mobilePaging.matches ? "3" : "8",
@@ -1242,46 +1308,17 @@
     });
     if (cached?.widgets?.version) widgetParams.set("known_version", cached.widgets.version);
 
-    const [widgetsRes, wallRes, insightsRes, statusRes, collectionRes] = await Promise.allSettled([
-      api(`/api/dashboard/widgets?${widgetParams.toString()}`),
-      api(`/api/state/wall?limit=${mobilePaging.matches ? 4 : 8}`),
-      api("/api/insights?limit_samples=0&history=0&runtime=0&include_events=0"),
-      api("/api/status"),
-      api("/api/profile/collection?page=1&page_size=1"),
+    await Promise.allSettled([
+      api(`/api/dashboard/widgets?${widgetParams.toString()}`).then(value => {
+        if (!value?.not_modified) update("widgets", value);
+      }),
+      api(`/api/state/wall?limit=${mobilePaging.matches ? 4 : 8}`).then(value => update("wall", value)),
+      api("/api/insights?limit_samples=0&history=0&runtime=0&include_events=0").then(value => update("insights", value)),
+      api("/api/status").then(value => update("status", value)),
+      api("/api/profile/collection?page=1&page_size=1").then(value => update("collection", {counts:value?.counts || {}, total:Number(value?.total) || 0})),
+      api(`/api/playback_progress/items?page=1&page_size=${mobilePaging.matches ? 3 : 8}`).then(value => update("progress", value || {items:[]})),
     ]);
-    const widgetsNotModified = widgetsRes.status === "fulfilled" && widgetsRes.value?.not_modified && cached?.widgets;
-    const widgets = widgetsRes.status === "fulfilled"
-      ? (widgetsNotModified ? (cached?.widgets || {}) : widgetsRes.value)
-      : (cached?.widgets || {});
-    const next = {
-      widgets,
-      wall: wallRes.status === "fulfilled" ? wallRes.value : (cached?.wall || { items: [] }),
-      progress: cached?.progress || { items: [] },
-      insights: insightsRes.status === "fulfilled" ? insightsRes.value : (cached?.insights || null),
-      status: statusRes.status === "fulfilled" ? statusRes.value : (cached?.status || null),
-      collection: collectionRes.status === "fulfilled"
-        ? { counts: collectionRes.value?.counts || {}, total: Number(collectionRes.value?.total) || 0 }
-        : (cached?.collection || null),
-    };
-    if (!next.progress?.items?.length && next.widgets?.recent_progress?.items?.length) {
-      next.progress = { items: next.widgets.recent_progress.items };
-    }
-    renderOverview(next);
-    writeCache(cacheKey, next);
-    if (widgetsNotModified) {
-      refreshNowPlaying();
-      return;
-    }
-
-    api(`/api/playback_progress/items?page=1&page_size=${mobilePaging.matches ? 3 : 8}`).then((progress) => {
-      const fresh = { ...next, progress: progress || { items: [] } };
-      overviewPayload = fresh;
-      const progressItems = fresh.progress?.items?.length ? fresh.progress.items : (fresh.widgets?.recent_progress?.items || []);
-      renderProgressItems(progressItems);
-      renderQuickStats({ wall: fresh.wall, widgets: fresh.widgets, progressItems, insights: fresh.insights, collection: fresh.collection });
-      writeCache(cacheKey, fresh);
-    }).catch(() => {});
-    refreshNowPlaying();
+    if (current()) renderOverview({...next, widgets:next.widgets || {}, wall:next.wall || {items:[]}});
   }
 
   mobilePaging.addEventListener("change", () => {
@@ -5265,12 +5302,13 @@
   }
 
   async function resolveViewAs() {
+    try { await window.__cwAuthBootstrapPromise; } catch {}
     const overview = window.CW?.OverviewProfile;
-    if (document.documentElement?.dataset?.cwRole !== "admin" || !overview) return;
-    const ready = overview.ready;
+    const ready = overview?.ready;
     if (ready && typeof ready.then === "function") {
-      await Promise.race([ready.catch(() => {}), new Promise((resolve) => setTimeout(resolve, 3000))]);
+      await ready.catch(() => {});
     }
+    if (document.documentElement?.dataset?.cwRole !== "admin" || !overview) return;
     const wanted = new URLSearchParams(window.location.search).get(VIEW_AS_PARAM);
     if (wanted !== null) overview.setActive(wanted);
     viewAsState.id = String(overview.id || "");
@@ -5453,7 +5491,9 @@
 
   async function init() {
     await resolveViewAs();
-    await refreshProfile().catch((error) => toast(error.message || "Profile could not be loaded", true));
+    const account = window.CW?.AuthState?.read?.()?.user;
+    if (account) renderProfile({user:account});
+    void refreshProfile().catch((error) => toast(error.message || "Profile could not be loaded", true));
     historyPanel.wire();
     ratingsPanel.wire();
     playbackPanel.wire();
@@ -5471,6 +5511,10 @@
     wirePosterOverlay();
     wireProfileActivity();
     void openUpgradeNotice();
+    if (nowTimer) clearInterval(nowTimer);
+    nowTimer = setInterval(() => {
+      if (document.visibilityState === "visible") refreshNowPlaying();
+    }, 15000);
     const [overviewResult, activityResult] = await Promise.allSettled([
       loadOverview(),
       loadProfileActivity(),
@@ -5482,10 +5526,6 @@
       const host = $("#profile-activity");
       if (host) host.innerHTML = empty("Recent activity could not be loaded.");
     }
-    if (nowTimer) clearInterval(nowTimer);
-    nowTimer = setInterval(() => {
-      if (document.visibilityState === "visible") refreshNowPlaying();
-    }, 15000);
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });

@@ -82,8 +82,13 @@ async function fixture(t, theme, {realMedia = false, playback = false, touch = t
     return route.fulfill({json});
   });
   await page.goto("https://overview.test/#tracker");
-  const boot = async () => {
+  const boot = async ({wait = true, account = "admin", scope = "", permissions = {write:true}} = {}) => {
     await page.evaluate(managed => { document.documentElement.dataset.cwRole = managed ? "user" : "admin"; window.CW = {AuthState:{read:()=>({isAdmin:!managed,permissions:{write:true}})},ProfileMediaModal:{canOpen:item=>!!item.ids?.tmdb,open:(item,options)=>{window.openedTitle={item,options};}}}; },managed);
+    await page.evaluate(({account,scope,permissions}) => {
+      const read = window.CW.AuthState.read;
+      window.CW.AuthState.read = () => ({...read(),user:{id:account},permissions});
+      if (scope) window.CW.OverviewProfile = {id:scope,profiles:[],isAdmin:true};
+    }, {account,scope,permissions});
     if (realMedia) {
       await page.evaluate(() => {
         const meta = item => ({title:item.title,year:2026,genres:[],detail:{},overview:"Media card overview"});
@@ -94,6 +99,7 @@ async function fixture(t, theme, {realMedia = false, playback = false, touch = t
     if (playback) for (const file of ['helpers/playing-card','js/playingcard']) await page.addScriptTag({url:`/assets/${file}.js`});
     for (const file of ["helpers/account-menu","helpers/icon-select","helpers/selection-bar","helpers/card-actions","js/tracker"]) await page.addScriptTag({url:`/assets/${file}.js`});
     if (profiles !== null) for (const file of ['helpers/api','helpers/profile-select','js/overview-profile']) await page.addScriptTag({url:`/assets/${file}.js`});
+    if (!wait) { await page.evaluate(() => { void TrackerPage.mount(document.querySelector("#page-tracker")); }); return; }
     await page.evaluate(() => TrackerPage.mount(document.querySelector("#page-tracker")));
     await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
     await page.evaluate(() => document.fonts.ready);
@@ -115,6 +121,57 @@ async function choose(page, selector, value) {
   await button.click();
   await page.locator(`.cw-icon-select-menu:not(.hidden) [data-value="${value}"]`).click();
 }
+
+for (const width of [390,1440]) test(`Tracker restores its overview before slow summary requests at ${width}px`, async t => {
+  const {page,boot,requests} = await fixture(t, "flat-dark", {width,playback:true});
+  await page.waitForFunction(() => JSON.parse(sessionStorage.getItem("cw.tracker.overview.v1") || "[]").length > 0);
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const pending = new Promise(resolve => { started = resolve; });
+  t.after(() => release());
+  await page.route("**/api/tracker/summary?**", async route => {
+    started();
+    await gate;
+    await route.fallback();
+  });
+  await page.reload();
+  requests.length = 0;
+  await boot({wait:false});
+  await pending;
+  await page.locator('[data-trk-overview-open="continue:0"]').waitFor();
+  assert.match(await page.locator('.trk-overview').innerText(), /Movie 1/);
+  assert.equal(requests.includes('/api/tracker/overview'), false);
+  await page.waitForFunction(() => document.querySelector('.trk-hero-title') || document.querySelector('.trk-overview'));
+  release();
+  await page.waitForResponse(response => new URL(response.url()).pathname === '/api/tracker/overview');
+  await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
+});
+
+for (const invalidation of ['account','profile','permissions','instance','expired','corrupt']) test(`Tracker rejects overview snapshots after ${invalidation} changes`, async t => {
+  const {page,boot} = await fixture(t, "flat-dark");
+  await page.waitForFunction(() => JSON.parse(sessionStorage.getItem("cw.tracker.overview.v1") || "[]").length > 0);
+  await page.evaluate(invalidation => {
+    const key = 'cw.tracker.overview.v1';
+    if (invalidation === 'expired') {
+      const entries = JSON.parse(sessionStorage.getItem(key));
+      entries.forEach(entry => { entry.t = Date.now() - 11 * 60 * 1000; });
+      sessionStorage.setItem(key,JSON.stringify(entries));
+    }
+    if (invalidation === 'corrupt') sessionStorage.setItem(key,'invalid json');
+    if (invalidation === 'instance') localStorage.setItem('cw.tracker.view.v3',JSON.stringify({instance:'other',view:'overview'}));
+  },invalidation);
+  let release, started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const pending = new Promise(resolve => { started = resolve; });
+  t.after(() => release());
+  await page.route("**/api/tracker/summary?**", async route => { started(); await gate; await route.fallback(); });
+  await page.reload();
+  await boot({wait:false,account:invalidation === 'account' ? 'another-user' : 'admin',scope:invalidation === 'profile' ? 'family' : '',permissions:invalidation === 'permissions' ? {write:false} : {write:true}});
+  await pending;
+  assert.equal(await page.locator('[data-trk-overview-open="continue:0"]').count(),0);
+  release();
+  await page.locator('[data-trk-overview-open="continue:0"]').waitFor();
+});
 
 for (const width of [390,1440]) test(`Tracker shared navigation order and icons at ${width}px`, async t => {
   const {page} = await fixture(t, 'flat-dark', {width});
