@@ -386,6 +386,7 @@ def create(
     *,
     media_type: str | None = None,
     items: Sequence[Mapping[str, Any]] | None = None,
+    privacy: str | None = None,
     dry_run: bool = False,
 ) -> PlaylistResource:
     nm = str(name or "").strip()
@@ -393,7 +394,7 @@ def create(
         raise ValueError("playlist name required")
     if dry_run:
         return PlaylistResource(provider="FLICKLIST", id="", name=nm, instance=_instance_id(adapter), can_add=True, can_remove=True, media_types=MEDIA_TYPES)
-    resp = flicklist_request(adapter, "POST", URL_LISTS, json={"name": nm})
+    resp = flicklist_request(adapter, "POST", URL_LISTS, json={"name": nm, "privacy": privacy or "private"})
     if not ok_status(resp):
         raise FlickListPlaylistError(error_of(resp) or f"http:{int(resp.status_code)}")
     data = safe_json(resp)

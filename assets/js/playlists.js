@@ -28,7 +28,9 @@
   const EMPTY_PROVIDER_RETRY_MS = 300;
   const SAFE_NAME_CHARS = " _.'-&()";
   const PLAYLIST_COMPATIBLE_PROVIDERS = new Set(["PLEX", "TRAKT", "MDBLIST", "JELLYFIN", "EMBY", "PUBLICMETADB", "SIMKL", "TMDB", "FLICKLIST", "SILO", "CROSSWATCH"]);
-  const SIMKL_PLAYLIST_WARNING = "SIMKL status buckets are not true playlists. Changes may move or remove items from your SIMKL library. Use with caution. SIMKL custom lists are read only and need SIMKL PRO or VIP.";
+  const SIMKL_PLAYLIST_WARNING = "SIMKL status buckets are not true playlists. Changes may move or remove items from your SIMKL library. Use with caution. SIMKL custom lists need SIMKL PRO or VIP.";
+  const PRIVACY_LABELS = { public: "Public", private: "Private", unlisted: "Unlisted", friends: "Friends", friends_only: "Friends only", link: "Anyone with the link" };
+  const CREATE_TYPE_LABELS = { movie: "Movies", show: "Shows", anime: "Anime" };
   const RULESET_PRESETS = {
     direct: {
       label: "Direct sync",
@@ -92,6 +94,7 @@
     resourceCreate: (body) => request(`${BASE}/resources`, { method: "POST", body: JSON.stringify(body) }),
     resourceResolve: (provider, instance, ref) => request(`${BASE}/resources/resolve`, { method: "POST", body: JSON.stringify({ provider, instance: instance || "default", ref }) }),
     resourceRename: (provider, instance, id, name) => request(`${BASE}/resources/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ provider, instance: instance || "default", name }) }),
+    resourceUpdate: (provider, instance, id, changes) => request(`${BASE}/resources/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ provider, instance: instance || "default", ...changes }) }),
     resourceDelete: (provider, instance, id) => request(`${BASE}/resources/${encodeURIComponent(id)}?provider=${encodeURIComponent(provider)}&instance=${encodeURIComponent(instance || "default")}`, { method: "DELETE" }),
     overview: () => request(`${BASE}/overview`),
     activity: () => request(`${BASE}/activity`),
@@ -216,6 +219,40 @@
     const found = state.providers.find((p) => String(p.provider || "").toUpperCase() === key);
     const types = (found && found.create_endpoint_types) || [];
     return types.length ? types : ["playlist"];
+  }
+
+  function createTypeLabel(type) {
+    return CREATE_TYPE_LABELS[type] || titleize(type);
+  }
+
+  function createPrivacyOptions(provider, endpointType) {
+    const key = String(provider || "").toUpperCase();
+    const found = state.providers.find((p) => String(p.provider || "").toUpperCase() === key);
+    const raw = found && found.capabilities && found.capabilities.create_privacy;
+    const values = raw && Array.isArray(raw.values) ? raw.values.map((v) => String(v || "").toLowerCase()).filter(Boolean) : [];
+    if (!values.length) return null;
+    const types = Array.isArray(raw.endpoint_types) ? raw.endpoint_types.map((t) => String(t || "").toLowerCase()) : [];
+    if (types.length && endpointType && !types.includes(String(endpointType).toLowerCase())) return null;
+    const def = String(raw.default || "").toLowerCase();
+    return { values, default: values.includes(def) ? def : values[0] };
+  }
+
+  function fillPrivacySelect(select, provider, endpointType) {
+    const opts = select ? createPrivacyOptions(provider, endpointType) : null;
+    if (!select) return null;
+    if (!opts) {
+      select.innerHTML = "";
+      return null;
+    }
+    const current = select.value;
+    select.innerHTML = selectOptions(opts.values.map((v) => ({ value: v, label: PRIVACY_LABELS[v] || titleize(v) })), opts.values.includes(current) ? current : opts.default);
+    window.CW?.IconSelect?.enhance?.(select, { className: "cw-plain-select" });
+    return opts;
+  }
+
+  function privacyPayload(select, wrapHidden) {
+    const value = !wrapHidden && select ? String(select.value || "").trim() : "";
+    return value ? { privacy: value } : {};
   }
 
   function providerCanResolve(provider) {
@@ -1200,6 +1237,40 @@
     updateEndpointGeneratedName(root);
   }
 
+  function fillEditPrivacy(root, resource) {
+    const wrap = $("#pl-ep-edit-privacy-wrap", root);
+    const select = $("#pl-ep-edit-privacy", root);
+    const extra = resource.extra || {};
+    const opts = resource.can_edit_privacy ? createPrivacyOptions(val("#pl-ep-provider", root), resource.endpoint_type || extra.endpoint_type || "") : null;
+    const current = opts && opts.values.includes(String(resource.privacy || "")) ? String(resource.privacy) : "";
+    root.dataset.epEditPrivacy = current;
+    if (wrap) wrap.classList.toggle("hidden", !opts);
+    if (!select) return;
+    if (!opts) {
+      select.innerHTML = "";
+      return;
+    }
+    select.innerHTML = selectOptions(opts.values.map((v) => ({ value: v, label: PRIVACY_LABELS[v] || titleize(v) })), current, current ? "" : "Keep current");
+    window.CW?.IconSelect?.enhance?.(select, { className: "cw-plain-select" });
+  }
+
+  function editNameChanged(root) {
+    if (!root.dataset.epEditCanRename) return false;
+    return String(val("#pl-ep-edit-name", root) || "").trim() !== String(root.dataset.epEditName || "").trim();
+  }
+
+  function editPanelChanges(root) {
+    const changes = {};
+    if (root.dataset.epEditCanRename) {
+      const name = String(val("#pl-ep-edit-name", root) || "").trim();
+      if (name && name !== String(root.dataset.epEditName || "").trim()) changes.name = name;
+    }
+    const wrap = $("#pl-ep-edit-privacy-wrap", root);
+    const privacy = wrap && !wrap.classList.contains("hidden") ? String(val("#pl-ep-edit-privacy", root) || "") : "";
+    if (privacy && privacy !== String(root.dataset.epEditPrivacy || "")) changes.privacy = privacy;
+    return changes;
+  }
+
   function setEndpointManageMode(root, mode, resources = []) {
     const next = String(mode || "");
     root.dataset.epManageMode = next;
@@ -1219,13 +1290,21 @@
     if (linkPanel) linkPanel.classList.toggle("hidden", next !== "link");
     if (next !== "link") applyFieldError($("#pl-ep-link-ref", root), "", "");
     if (next === "edit" && resources[0]) {
-      root.dataset.epEditResourceId = String(resources[0].id || "");
+      const resource = resources[0];
+      root.dataset.epEditResourceId = String(resource.id || "");
+      root.dataset.epEditName = String(resource.name || resource.id || "");
+      root.dataset.epEditCanRename = resource.can_rename ? "1" : "";
       if (editName) {
-        editName.value = resources[0].name || resources[0].id || "";
+        editName.value = resource.name || resource.id || "";
         applyFieldError(editName, "", `${String(editName.value || "").trim().length}/${PLAYLIST_NAME_MAX} characters`);
       }
+      $("#pl-ep-edit-name-wrap", root)?.classList.toggle("hidden", !resource.can_rename);
+      fillEditPrivacy(root, resource);
     } else {
       root.dataset.epEditResourceId = "";
+      root.dataset.epEditName = "";
+      root.dataset.epEditCanRename = "";
+      root.dataset.epEditPrivacy = "";
     }
     if (next === "delete") {
       root.__plDeleteResourceIds = resources.map((r) => String(r.id || "")).filter(Boolean);
@@ -1342,8 +1421,7 @@
 
   function updateEndpointPlaylistActions(root) {
     const provider = val("#pl-ep-provider", root);
-    const isSimkl = String(provider || "").toUpperCase() === "SIMKL";
-    const canCreate = !isSimkl && creatableEndpointTypes(provider).length > 0;
+    const canCreate = creatableEndpointTypes(provider).length > 0;
     const createBtn = $("#pl-ep-list-create", root);
     const editBtn = $("#pl-ep-list-edit", root);
     const deleteBtn = $("#pl-ep-list-delete", root);
@@ -1360,7 +1438,7 @@
       linkBtn.title = linkBtn.disabled ? "Finish or cancel the current provider playlist action first" : "Add a list from a link";
     }
     const selected = selectedEndpointResources(root);
-    const editOk = !creating && !managing && selected.length === 1 && !!selected[0].can_rename;
+    const editOk = !creating && !managing && selected.length === 1 && !!(selected[0].can_rename || selected[0].can_edit_privacy);
     const deleteOk = !creating && !managing && selected.length > 0 && selected.every((r) => !!r.can_delete);
     if (createBtn) {
       createBtn.disabled = !canCreate || managing;
@@ -1371,7 +1449,7 @@
       editBtn.disabled = !editOk;
       editBtn.title = creating || managing ? "Finish or cancel the current provider playlist action first"
         : (!selected.length ? "Select one provider playlist to rename"
-          : (selected.length > 1 ? "Select exactly one playlist to rename" : (selected[0].can_rename ? "Rename selected provider playlist" : "Selected playlist cannot be renamed")));
+          : (selected.length > 1 ? "Select exactly one playlist to rename" : (selected[0].can_rename ? "Rename selected provider playlist" : (selected[0].can_edit_privacy ? "Change the privacy of the selected provider playlist" : "Selected playlist cannot be renamed"))));
     }
     if (deleteBtn) {
       deleteBtn.disabled = !deleteOk;
@@ -1404,10 +1482,10 @@
     const deleteSubmit = $("#pl-ep-delete-submit", root);
     if (editSubmit && editName) {
       const editValue = val("#pl-ep-edit-name", root);
-      const err = mode === "edit" ? playlistNameError(editValue) : "";
+      const err = mode === "edit" && editNameChanged(root) ? playlistNameError(editValue) : "";
       applyFieldError(editName, err, `${String(editValue || "").trim().length}/${PLAYLIST_NAME_MAX} characters`);
       editSubmit.disabled = !!err;
-      editSubmit.title = err || "Rename this provider playlist";
+      editSubmit.title = err || "Save the changes to this provider playlist";
     }
     if (deleteSubmit) {
       const ids = root.__plDeleteResourceIds || [];
@@ -1429,13 +1507,14 @@
     const provider = val("#pl-ep-provider", root);
     const instance = val("#pl-ep-instance", root) || "default";
     const mediaType = val("#pl-ep-create-type", root) || creatableEndpointTypes(provider)[0];
+    const privacy = privacyPayload($("#pl-ep-create-privacy", root), $("#pl-ep-create-privacy-wrap", root)?.classList.contains("hidden"));
     if (submit) {
       submit.disabled = true;
       submit.dataset.originalText = submit.innerHTML;
       submit.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">sync</span>Creating...`;
     }
     try {
-      const res = await API.resourceCreate({ provider, instance, name: createName, media_type: mediaType });
+      const res = await API.resourceCreate({ provider, instance, name: createName, media_type: mediaType, ...privacy });
       const resource = res.resource || {};
       const search = $("#pl-ep-playlist-search", root);
       if (search) search.value = "";
@@ -1486,9 +1565,9 @@
 
   function openEndpointResourceEdit(root, ctx) {
     const selected = selectedEndpointResources(root);
-    if (selected.length !== 1 || !selected[0].can_rename) return;
+    if (selected.length !== 1 || !(selected[0].can_rename || selected[0].can_edit_privacy)) return;
     setEndpointManageMode(root, "edit", selected);
-    $("#pl-ep-edit-name", root)?.focus();
+    $(selected[0].can_rename ? "#pl-ep-edit-name" : "#pl-ep-edit-privacy", root)?.focus();
     syncModalPrimary(ctx);
   }
 
@@ -1496,7 +1575,7 @@
     const submit = $("#pl-ep-edit-submit", root);
     const nameInput = $("#pl-ep-edit-name", root);
     const renameName = val("#pl-ep-edit-name", root);
-    const err = playlistNameError(renameName);
+    const err = editNameChanged(root) ? playlistNameError(renameName) : "";
     applyFieldError(nameInput, err, `${String(renameName || "").trim().length}/${PLAYLIST_NAME_MAX} characters`);
     if (err) {
       syncModalPrimary(ctx);
@@ -1506,21 +1585,35 @@
     const provider = val("#pl-ep-provider", root);
     const instance = val("#pl-ep-instance", root) || "default";
     if (!playlistId) return;
+    const changes = editPanelChanges(root);
+    if (!Object.keys(changes).length) {
+      setEndpointManageMode(root, "");
+      syncEndpointManagePanel(root);
+      syncModalPrimary(ctx);
+      return;
+    }
     if (submit) {
       submit.disabled = true;
       submit.dataset.originalText = submit.innerHTML;
       submit.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">sync</span>Saving...`;
     }
     try {
-      const res = await API.resourceRename(provider, instance, playlistId, renameName);
+      const res = await API.resourceUpdate(provider, instance, playlistId, changes);
       const resource = res.resource || {};
       setEndpointManageMode(root, "");
       await loadEndpointResources(root, resource.id || playlistId, isEdit);
     } catch (error) {
-      setModalError(error && error.message ? error.message : "Could not rename provider playlist.");
+      setModalError(error && error.message ? error.message : "Could not save the provider playlist changes.");
+      if (changes.name && changes.privacy) {
+        try {
+          await loadEndpointResources(root, playlistId, isEdit);
+          const fresh = (root.__plEndpointResources || []).find((r) => String(r.id || "") === playlistId);
+          if (fresh) root.dataset.epEditName = String(fresh.name || fresh.id || "");
+        } catch {}
+      }
     } finally {
       if (submit) {
-        submit.innerHTML = submit.dataset.originalText || `<span class="material-symbols-rounded" aria-hidden="true">check</span>Save rename`;
+        submit.innerHTML = submit.dataset.originalText || `<span class="material-symbols-rounded" aria-hidden="true">check</span>Save changes`;
         delete submit.dataset.originalText;
       }
       syncEndpointManagePanel(root);
@@ -1673,20 +1766,28 @@
               <select id="pl-ep-create-type"></select>
               <div class="pl-help" id="pl-ep-create-type-help">Collections group titles in the library, playlists keep their own order.</div>
             </div>
+            <div class="pl-field hidden" id="pl-ep-create-privacy-wrap">
+              <label for="pl-ep-create-privacy">Privacy</label>
+              <select id="pl-ep-create-privacy"></select>
+            </div>
             <div class="pl-create-actions">
               <button type="button" class="pl-btn small" id="pl-ep-create-cancel">Cancel</button>
               <button type="button" class="pl-btn small primary" id="pl-ep-create-submit"><span class="material-symbols-rounded" aria-hidden="true">add</span>Create playlist</button>
             </div>
           </div>
           <div class="pl-create-panel pl-resource-manage-panel hidden" id="pl-ep-edit-panel">
-            <div class="pl-field full">
+            <div class="pl-field full" id="pl-ep-edit-name-wrap">
               <label for="pl-ep-edit-name">Playlist name</label>
               <input id="pl-ep-edit-name" maxlength="${PLAYLIST_NAME_MAX}" value="" placeholder="Playlist name" aria-describedby="pl-ep-edit-name-error">
               <div class="pl-field-error" id="pl-ep-edit-name-error"></div>
             </div>
+            <div class="pl-field full hidden" id="pl-ep-edit-privacy-wrap">
+              <label for="pl-ep-edit-privacy">Privacy</label>
+              <select id="pl-ep-edit-privacy"></select>
+            </div>
             <div class="pl-create-actions">
               <button type="button" class="pl-btn small" id="pl-ep-edit-cancel">Cancel</button>
-              <button type="button" class="pl-btn small primary" id="pl-ep-edit-submit"><span class="material-symbols-rounded" aria-hidden="true">check</span>Save rename</button>
+              <button type="button" class="pl-btn small primary" id="pl-ep-edit-submit"><span class="material-symbols-rounded" aria-hidden="true">check</span>Save changes</button>
             </div>
           </div>
           <div class="pl-create-panel pl-resource-manage-panel hidden" id="pl-ep-link-panel">
@@ -1783,15 +1884,21 @@
       if (!wrap || !select) return;
       const types = creatableEndpointTypes(providerSelect.value);
       const current = select.value;
-      select.innerHTML = selectOptions(types.map((t) => ({ value: t, label: titleize(t) })), types.includes(current) ? current : types[0]);
+      select.innerHTML = selectOptions(types.map((t) => ({ value: t, label: createTypeLabel(t) })), types.includes(current) ? current : types[0]);
       wrap.classList.toggle("hidden", types.length <= 1);
+      const help = $("#pl-ep-create-type-help", root);
+      if (help) help.textContent = types.every((t) => CREATE_TYPE_LABELS[t]) ? "A list holds one kind of title. This cannot be changed later." : "Collections group titles in the library, playlists keep their own order.";
       window.CW?.IconSelect?.enhance?.(select, { className: "cw-plain-select" });
+      updateCreatePrivacy();
+    };
+    const updateCreatePrivacy = () => {
+      const wrap = $("#pl-ep-create-privacy-wrap", root);
+      const opts = fillPrivacySelect($("#pl-ep-create-privacy", root), providerSelect.value, val("#pl-ep-create-type", root));
+      if (wrap) wrap.classList.toggle("hidden", !opts);
     };
     const updateProviderRestrictions = () => {
       const isSimkl = String(providerSelect.value || "").toUpperCase() === "SIMKL";
       if (simklWarning) simklWarning.classList.toggle("hidden", !isSimkl);
-      if (createCheck) createCheck.disabled = isSimkl;
-      if (isSimkl) setEndpointCreateMode(root, false);
       updateCreateTypes();
       updateEndpointPlaylistActions(root);
       syncModalPrimary(ctx);
@@ -1830,6 +1937,7 @@
       syncModalPrimary(ctx);
     });
     $("#pl-ep-create-submit", root)?.addEventListener("click", () => createProviderPlaylistFromPanel(root, ctx, isEdit));
+    $("#pl-ep-create-type", root)?.addEventListener("change", updateCreatePrivacy);
     $("#pl-ep-edit-cancel", root)?.addEventListener("click", () => setEndpointManageMode(root, ""));
     $("#pl-ep-edit-submit", root)?.addEventListener("click", () => renameProviderPlaylistFromPanel(root, ctx, isEdit));
     $("#pl-ep-list-link", root)?.addEventListener("click", () => {
@@ -1933,7 +2041,8 @@
       const createNameErr = playlistNameError(createName);
       if (createNameErr) throw new Error(createNameErr);
       const createType = val("#pl-ep-create-type", root) || creatableEndpointTypes(provider)[0];
-      await API.epUpsert({ id: isEdit ? seed.id : "", name: name || nextEndpointName(0, isEdit ? seed.id : ""), provider, instance, create: true, create_name: createName, media_type: createType });
+      const privacy = privacyPayload($("#pl-ep-create-privacy", root), $("#pl-ep-create-privacy-wrap", root)?.classList.contains("hidden"));
+      await API.epUpsert({ id: isEdit ? seed.id : "", name: name || nextEndpointName(0, isEdit ? seed.id : ""), provider, instance, create: true, create_name: createName, media_type: createType, ...privacy });
     } else {
       const ids = selectedValues("#pl-ep-playlist", root);
       if (!ids.length) throw new Error("Select at least one playlist.");
@@ -2230,6 +2339,13 @@
     return String(resource.discovery ? "discovery" : ((resource.extra && resource.extra.endpoint_type) || resource.endpoint_type || resource.playlist_type || resource.kind || "")).toLowerCase();
   }
 
+  function wizardCreateType(resource, provider) {
+    const types = creatableEndpointTypes(provider);
+    const single = { movies: "movie", shows: "show", tv: "show" };
+    const wanted = ((resource && resource.media_types) || []).map((t) => String(t || "").toLowerCase());
+    return wanted.find((t) => types.includes(t)) || wanted.map((t) => single[t] || t).find((t) => types.includes(t)) || types[0];
+  }
+
   function wizardResourceWritable(resource) {
     return !resource.discovery && !resource.smart && !!(resource.can_add || resource.can_remove);
   }
@@ -2287,6 +2403,8 @@
           <div class="pl-wizard-row" id="pl-wz-new-row">
             ${cwAccounts.length > 1 ? `<div class="pl-field" id="pl-wz-cw-wrap"><label for="pl-wz-cw-account">CrossWatch instance</label><select id="pl-wz-cw-account">${accountOptions(cwAccounts)}</select></div>` : ""}
             <div class="pl-field"><label for="pl-wz-new-name">Name of the new list</label><input id="pl-wz-new-name" maxlength="${PLAYLIST_NAME_MAX}" autocomplete="off"><div class="pl-field-error"></div></div>
+            <div class="pl-field" id="pl-wz-new-type-wrap" hidden><label for="pl-wz-new-type">List type</label><select id="pl-wz-new-type"></select></div>
+            <div class="pl-field" id="pl-wz-new-privacy-wrap" hidden><label for="pl-wz-new-privacy">Privacy</label><select id="pl-wz-new-privacy"></select></div>
           </div>
         </section>
         <section class="pl-endpoint-step">
@@ -2346,7 +2464,7 @@
         return;
       }
       const rows = (lists.get(cacheKey) || []).filter((r) => !writable || wizardResourceWritable(r));
-      const canCreate = writable && creatableEndpointTypes(account.provider).length > 0 && account.provider !== "SIMKL";
+      const canCreate = writable && creatableEndpointTypes(account.provider).length > 0;
       select.innerHTML = (canCreate ? `<option value="__new__">+ Create a new list</option>` : "")
         + [...rows].sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), undefined, { sensitivity: "base", numeric: true })).map((r) => `<option value="${esc(r.id)}">${esc(r.name || r.id)}${wizardResourceType(r) === "watchlist" || String(r.id).toLowerCase().includes("watchlist") ? "" : ` (${esc(titleize(wizardResourceType(r) || "list"))})`}</option>`).join("")
         || `<option value="">No lists found</option>`;
@@ -2354,6 +2472,22 @@
       if (writable) select.dataset.canCreate = canCreate ? "1" : "";
       select.disabled = false;
       sync();
+    }
+
+    function syncNewListOptions(account) {
+      const typeWrap = $("#pl-wz-new-type-wrap", root);
+      const typeSelect = $("#pl-wz-new-type", root);
+      const privacyWrap = $("#pl-wz-new-privacy-wrap", root);
+      const types = account ? creatableEndpointTypes(account.provider) : [];
+      if (typeSelect && types.length > 1) {
+        const wanted = typeSelect.dataset.dirty && types.includes(typeSelect.value) ? typeSelect.value : wizardCreateType(sourceResource(), account.provider);
+        typeSelect.innerHTML = selectOptions(types.map((t) => ({ value: t, label: createTypeLabel(t) })), wanted);
+        window.CW?.IconSelect?.enhance?.(typeSelect, { className: "cw-plain-select" });
+      }
+      if (typeWrap) typeWrap.hidden = types.length <= 1;
+      const type = types.length > 1 ? val("#pl-wz-new-type", root) : types[0];
+      const opts = account ? fillPrivacySelect($("#pl-wz-new-privacy", root), account.provider, type) : null;
+      if (privacyWrap) privacyWrap.hidden = !opts;
     }
 
     function sync() {
@@ -2376,6 +2510,7 @@
       if (canLink) $("#pl-wz-src-link", root).placeholder = providerLinkExample(srcAccount.provider);
       const cwWrap = $("#pl-wz-cw-wrap", root);
       if (cwWrap) cwWrap.hidden = !publishing;
+      syncNewListOptions(creating ? dstAccount : null);
       const nameInput = $("#pl-wz-new-name", root);
       const src = sourceResource();
       if (nameInput && !nameInput.dataset.dirty && src) nameInput.value = String(src.name || "").replace(/[^A-Za-z0-9 _.'&()-]/g, "").trim().slice(0, PLAYLIST_NAME_MAX);
@@ -2457,6 +2592,10 @@
       if (e.target.id === "pl-wz-new-name") e.target.dataset.dirty = "1";
       syncModalPrimary(ctx);
     });
+    $("#pl-wz-new-type", root)?.addEventListener("change", (e) => {
+      e.target.dataset.dirty = "1";
+      sync();
+    });
     fill("#pl-wz-src-list", "#pl-wz-src-account");
     fill("#pl-wz-dst-list", "#pl-wz-dst-account", { writable: true });
     ctx.initial = snapshot($(".pl-dialog-body", root));
@@ -2521,8 +2660,10 @@
         ? (byKey(val("#pl-wz-cw-account", root)) || accounts.find((a) => a.provider === "CROSSWATCH"))
         : byKey(val("#pl-wz-dst-account", root));
       if (!account) throw new Error("Choose where the new list should be created.");
-      const mediaType = (srcResource.media_types || []).find((t) => creatableEndpointTypes(account.provider).includes(t)) || creatableEndpointTypes(account.provider)[0];
-      const res = await API.epUpsert({ id: "", name: nextEndpointName(1), provider: account.provider, instance: account.instance, create: true, create_name: newName, media_type: mediaType });
+      const typeWrap = $("#pl-wz-new-type-wrap", root);
+      const mediaType = !publishing && typeWrap && !typeWrap.hidden && val("#pl-wz-new-type", root) ? val("#pl-wz-new-type", root) : wizardCreateType(srcResource, account.provider);
+      const privacy = publishing ? {} : privacyPayload($("#pl-wz-new-privacy", root), $("#pl-wz-new-privacy-wrap", root)?.hidden);
+      const res = await API.epUpsert({ id: "", name: nextEndpointName(1), provider: account.provider, instance: account.instance, create: true, create_name: newName, media_type: mediaType, ...privacy });
       target = res.endpoint;
     } else {
       const account = byKey(val("#pl-wz-dst-account", root));

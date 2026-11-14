@@ -27,7 +27,7 @@ from providers.sync.punchplay._common import (
     request_id_of,
 )
 
-__VERSION__ = "1.1"
+__VERSION__ = "1.2"
 _MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "PUNCHPLAYModule", "OPS", "feat_collection", "feat_history", "feat_progress", "feat_ratings", "feat_watchlist"]
 
@@ -64,6 +64,7 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "link_example": "https://punchplay.tv/lists/12345",
     "media_types": ["movies", "shows"],
     "accepted_ids": ["tmdb"],
+    "create_privacy": {"values": ["private", "public"], "default": "private", "editable": True},
 }
 
 
@@ -358,11 +359,14 @@ class _PUNCHPLAYOPS:
         return feat_playlists.resolve(self._playlist_adapter(cfg, instance), ref)
 
     def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None,
-                        items: Iterable[Mapping[str, Any]] | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
-        return feat_playlists.create(self._playlist_adapter(cfg, instance), name, media_type=media_type, items=list(items or []), dry_run=dry_run)
+                        items: Iterable[Mapping[str, Any]] | None = None, privacy: str | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
+        return feat_playlists.create(self._playlist_adapter(cfg, instance), name, media_type=media_type, items=list(items or []), privacy=privacy, dry_run=dry_run)
 
     def rename_playlist(self, cfg: Mapping[str, Any], playlist_id: str, name: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
         return feat_playlists.rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def update_playlist_privacy(self, cfg: Mapping[str, Any], playlist_id: str, privacy: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
+        return feat_playlists.set_privacy(self._playlist_adapter(cfg, instance), playlist_id, privacy, dry_run=dry_run)
 
     def delete_playlist(self, cfg: Mapping[str, Any], playlist_id: str, *, instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
         return feat_playlists.delete(self._playlist_adapter(cfg, instance), playlist_id, dry_run=dry_run)

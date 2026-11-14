@@ -419,6 +419,7 @@ def create(
     *,
     media_type: str | None = None,
     items: Sequence[Mapping[str, Any]] | None = None,
+    privacy: str | None = None,
     dry_run: bool = False,
 ) -> PlaylistResource:
     nm = str(name or "").strip()[:100]
@@ -426,7 +427,7 @@ def create(
         raise ValueError("playlist name required")
     if dry_run:
         return PlaylistResource(provider="PUNCHPLAY", id="", name=nm, instance=_instance_id(adapter), can_add=True, can_remove=True, media_types=MEDIA_TYPES)
-    resp = punchplay_request(adapter, "POST", URL_CREATE_LIST, json={"name": nm, "description": "", "isPublic": False})
+    resp = punchplay_request(adapter, "POST", URL_CREATE_LIST, json={"name": nm, "description": "", "isPublic": privacy == "public"})
     data = safe_json(resp)
     if resp.status_code not in (200, 201) or not isinstance(data, Mapping):
         raise PunchPlayPlaylistError(f"punchplay create list failed: http {resp.status_code}")
@@ -450,6 +451,17 @@ def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) 
         if resp.status_code != 200:
             raise PunchPlayPlaylistError(f"punchplay rename list failed: http {resp.status_code}")
     return PlaylistResource(provider="PUNCHPLAY", id=res.id, name=nm, instance=res.instance, kind=res.kind, can_add=res.can_add, can_remove=res.can_remove, media_types=res.media_types, extra=dict(res.extra))
+
+
+def set_privacy(adapter: Any, playlist_id: Any, privacy: str, *, dry_run: bool = False) -> PlaylistResource:
+    res = _owned(adapter, playlist_id, op="rename")
+    public = privacy == "public"
+    if not dry_run:
+        resp = punchplay_request(adapter, "PATCH", URL_LIST_DETAILS.format(list_id=res.id), json={"isPublic": public})
+        if resp.status_code != 200:
+            raise PunchPlayPlaylistError(f"punchplay privacy change failed: http {resp.status_code}")
+    extra = {**dict(res.extra), "private": not public}
+    return PlaylistResource(provider="PUNCHPLAY", id=res.id, name=res.name, instance=res.instance, kind=res.kind, can_add=res.can_add, can_remove=res.can_remove, media_types=res.media_types, extra=extra)
 
 
 def delete(adapter: Any, playlist_id: Any, *, dry_run: bool = False) -> dict[str, Any]:

@@ -131,7 +131,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "3.1"
+__VERSION__ = "3.2"
 _MIN_PROGRESS_WRITE_VERSION = (10, 9)
 _JF_VERSION_CACHE: dict[str, tuple[float, str | None]] = {}
 
@@ -222,6 +222,7 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "media_types": ["movie", "show"],
     "endpoint_types": ["playlist", "collection"],
     "unordered_endpoint_types": ["collection"],
+    "create_privacy": {"values": ["private", "public"], "default": "private", "endpoint_types": ["playlist"], "editable": True},
 }
 
 _PROGRESS_CAPABILITIES: dict[str, Any] = {
@@ -910,6 +911,7 @@ class _JellyfinOPS:
         *,
         media_type: str | None = None,
         items: Iterable[Mapping[str, Any]] | None = None,
+        privacy: str | None = None,
         instance: str | None = None,
         dry_run: bool = False,
     ):
@@ -918,6 +920,7 @@ class _JellyfinOPS:
             name,
             media_type=media_type,
             items=list(items or []),
+            privacy=privacy,
             dry_run=dry_run,
         )
 
@@ -931,6 +934,9 @@ class _JellyfinOPS:
         dry_run: bool = False,
     ):
         return self._pl().rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def update_playlist_privacy(self, cfg: Mapping[str, Any], playlist_id: str, privacy: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
+        return self._pl().set_privacy(self._playlist_adapter(cfg, instance), playlist_id, privacy, dry_run=dry_run)
 
     def delete_playlist(
         self,

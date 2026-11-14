@@ -532,6 +532,7 @@ def create(
     *,
     media_type: str | None = None,
     items: Sequence[Mapping[str, Any]] | None = None,
+    privacy: str | None = None,
     dry_run: bool = False,
 ) -> PlaylistResource:
     nm = str(name or "").strip()
@@ -540,7 +541,7 @@ def create(
     if dry_run:
         return PlaylistResource(provider=_PROVIDER, id="", name=nm, instance=_instance_id(adapter), can_add=True, can_remove=True, can_reorder=True, media_types=MEDIA_TYPES)
     try:
-        data = body_of(request(adapter, "POST", "/sync/lists", json={"name": nm[:100], "privacy": "private"}))
+        data = body_of(request(adapter, "POST", "/sync/lists", json={"name": nm[:100], "privacy": privacy or "private"}))
     except WeTrakrSyncError as exc:
         if exc.status_code == 420:
             raise RuntimeError("wetrakr list quota reached") from None
@@ -566,6 +567,16 @@ def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) 
     renamed = _resource(adapter, data)
     _info("rename_done", list_id=res.id)
     return renamed or PlaylistResource(provider=_PROVIDER, id=res.id, name=nm, instance=res.instance, can_add=res.can_add, can_remove=res.can_remove, can_reorder=res.can_reorder, media_types=res.media_types, extra=dict(res.extra))
+
+
+def set_privacy(adapter: Any, playlist_id: Any, privacy: str, *, dry_run: bool = False) -> PlaylistResource:
+    res = _owned(adapter, playlist_id)
+    fallback = PlaylistResource(provider=_PROVIDER, id=res.id, name=res.name, instance=res.instance, can_add=res.can_add, can_remove=res.can_remove, can_reorder=res.can_reorder, media_types=res.media_types, extra={**dict(res.extra), "privacy": privacy})
+    if dry_run:
+        return fallback
+    data = body_of(request(adapter, "PUT", f"/sync/lists/{res.id}", json={"privacy": privacy}))
+    _info("privacy_done", list_id=res.id, privacy=privacy)
+    return _resource(adapter, data) or fallback
 
 
 def delete(adapter: Any, playlist_id: Any, *, dry_run: bool = False) -> dict[str, Any]:

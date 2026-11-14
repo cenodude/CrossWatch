@@ -93,7 +93,7 @@ def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any)
         seen.add(k)
     return out
 
-__VERSION__ = "2.1"
+__VERSION__ = "2.2"
 _MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "SIMKLModule", "OPS"]
 
@@ -241,13 +241,17 @@ if feat_progress:
 
 _PLAYLIST_CAPABILITIES = {
     "read": True,
-    "create": False,
+    "create": True,
+    "rename": True,
+    "delete": True,
     "add": True,
     "remove": True,
-    "reorder": False,
+    "reorder": True,
     "smart": False,
     "fixed_endpoints": True,
-    "endpoint_types": ["status_bucket"],
+    "endpoint_types": ["status_bucket", "custom_list"],
+    "create_endpoint_types": ["movie", "show", "anime"],
+    "create_privacy": {"values": ["public", "unlisted", "private"], "default": "public", "editable": True},
     "media_types": ["movie", "show", "anime"],
     "bidirectional": True,
     "unordered": True,
@@ -1021,12 +1025,51 @@ class _SIMKLOPS:
         name: str,
         *,
         media_type: str | None = None,
+        items: Iterable[Mapping[str, Any]] | None = None,
+        privacy: str | None = None,
         instance: str | None = None,
         dry_run: bool = False,
     ):
         if feat_playlists is None:
             raise SIMKLError("SIMKL playlist support is unavailable")
-        return feat_playlists.create(self._playlist_adapter(cfg, instance), name, media_type=media_type, dry_run=dry_run)
+        return feat_playlists.create(
+            self._playlist_adapter(cfg, instance),
+            name,
+            media_type=media_type,
+            items=list(items or []),
+            privacy=privacy,
+            dry_run=dry_run,
+        )
+
+    def rename_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        name: str,
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ):
+        if feat_playlists is None:
+            raise SIMKLError("SIMKL playlist support is unavailable")
+        return feat_playlists.rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def update_playlist_privacy(self, cfg: Mapping[str, Any], playlist_id: str, privacy: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
+        if feat_playlists is None:
+            raise SIMKLError("SIMKL playlist support is unavailable")
+        return feat_playlists.set_privacy(self._playlist_adapter(cfg, instance), playlist_id, privacy, dry_run=dry_run)
+
+    def delete_playlist(
+        self,
+        cfg: Mapping[str, Any],
+        playlist_id: str,
+        *,
+        instance: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        if feat_playlists is None:
+            raise SIMKLError("SIMKL playlist support is unavailable")
+        return feat_playlists.delete(self._playlist_adapter(cfg, instance), playlist_id, dry_run=dry_run)
 
     def add_playlist_items(
         self,
@@ -1054,9 +1097,9 @@ class _SIMKLOPS:
         dry_run: bool = False,
     ) -> dict[str, Any]:
         lst = list(items or [])
-        warning = _PLAYLIST_CAPABILITIES["remove_warning"]
+        warnings = [] if str(playlist_id or "").strip().lower().startswith("list:") else [_PLAYLIST_CAPABILITIES["remove_warning"]]
         if dry_run:
-            return {"ok": True, "count": len(lst), "dry_run": True, "warnings": [warning]}
+            return {"ok": True, "count": len(lst), "dry_run": True, "warnings": warnings}
         if feat_playlists is None:
             raise SIMKLError("SIMKL playlist support is unavailable")
         return feat_playlists.remove(self._playlist_adapter(cfg, instance), playlist_id, lst)
@@ -1070,6 +1113,11 @@ class _SIMKLOPS:
         instance: str | None = None,
         dry_run: bool = False,
     ) -> dict[str, Any]:
-        return {"ok": True, "count": 0, "reordered": 0, "unsupported": True}
+        keys = list(ordered_keys or [])
+        if dry_run:
+            return {"ok": True, "count": len(keys), "reordered": 0, "dry_run": True}
+        if feat_playlists is None:
+            raise SIMKLError("SIMKL playlist support is unavailable")
+        return feat_playlists.reorder(self._playlist_adapter(cfg, instance), playlist_id, keys)
 
 OPS = _SIMKLOPS()

@@ -106,7 +106,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "2.2"
+__VERSION__ = "2.3"
 _MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "TRAKTModule", "OPS"]
 
@@ -136,6 +136,7 @@ _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "resolve": True,
     "link_example": "https://trakt.tv/users/name/lists/list-name",
     "media_types": ["movies", "shows", "seasons", "episodes"],
+    "create_privacy": {"values": ["private", "link", "friends", "public"], "default": "private", "editable": True},
 }
 
 
@@ -938,10 +939,11 @@ class _TraktOPS:
         name: str,
         *,
         media_type: str | None = None,
+        privacy: str | None = None,
         instance: str | None = None,
         dry_run: bool = False,
     ):
-        return self._pl().create(self._playlist_adapter(cfg, instance), name, media_type=media_type, dry_run=dry_run)
+        return self._pl().create(self._playlist_adapter(cfg, instance), name, media_type=media_type, privacy=privacy, dry_run=dry_run)
 
     def rename_playlist(
         self,
@@ -953,6 +955,9 @@ class _TraktOPS:
         dry_run: bool = False,
     ):
         return self._pl().rename(self._playlist_adapter(cfg, instance), playlist_id, name, dry_run=dry_run)
+
+    def update_playlist_privacy(self, cfg: Mapping[str, Any], playlist_id: str, privacy: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
+        return self._pl().set_privacy(self._playlist_adapter(cfg, instance), playlist_id, privacy, dry_run=dry_run)
 
     def delete_playlist(
         self,

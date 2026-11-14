@@ -18,7 +18,7 @@ try:  # type: ignore[name-defined]
 except Exception:
     ctx = None  # type: ignore[assignment]
 
-__VERSION__ = "1.2"
+__VERSION__ = "1.3"
 _MANUAL_RATING_SCALE = {"step": 0.5}
 os.environ.setdefault("CW_TMDB_UA", http_user_agent("TMDB", override_env="CW_TMDB_UA"))
 __all__ = ["get_manifest", "TMDBModule", "OPS"]
@@ -141,6 +141,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "types": {"movies": True, "shows": True, "seasons": False, "episodes": False},
                 "accepted_ids": ["tmdb", "imdb", "tvdb"],
                 "batch_size": 100,
+                "create_privacy": {"values": ["private", "public"], "default": "private", "editable": True},
             },
         },
         "auth": {
@@ -517,8 +518,8 @@ class TMDBModule:
     def resolve_playlist(self, ref: str) -> Any:
         return self._playlists().resolve(self, ref)
 
-    def create_playlist(self, name: str, *, media_type: str | None = None, items: Sequence[Mapping[str, Any]] | None = None, dry_run: bool = False) -> Any:
-        return self._playlists().create(self, name, media_type=media_type, items=items, dry_run=dry_run)
+    def create_playlist(self, name: str, *, media_type: str | None = None, items: Sequence[Mapping[str, Any]] | None = None, privacy: str | None = None, dry_run: bool = False) -> Any:
+        return self._playlists().create(self, name, media_type=media_type, items=items, privacy=privacy, dry_run=dry_run)
 
     def add_playlist_items(self, playlist_id: str, items: Sequence[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:
         if dry_run:
@@ -584,8 +585,12 @@ class _TMDBOPS:
     def resolve_playlist(self, cfg: Mapping[str, Any], ref: str, *, instance: str | None = None) -> Any:
         return self._adapter(cfg, instance).resolve_playlist(ref)
 
-    def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
-        return self._adapter(cfg, instance).create_playlist(name, media_type=media_type, dry_run=dry_run)
+    def create_playlist(self, cfg: Mapping[str, Any], name: str, *, media_type: str | None = None, privacy: str | None = None, instance: str | None = None, dry_run: bool = False) -> Any:
+        return self._adapter(cfg, instance).create_playlist(name, media_type=media_type, privacy=privacy, dry_run=dry_run)
+
+    def update_playlist_privacy(self, cfg: Mapping[str, Any], playlist_id: str, privacy: str, *, instance: str | None = None, dry_run: bool = False) -> Any:
+        adapter = self._adapter(cfg, instance)
+        return adapter._playlists().set_privacy(adapter, playlist_id, privacy, dry_run=dry_run)
 
     def add_playlist_items(self, cfg: Mapping[str, Any], playlist_id: str, items: Sequence[Mapping[str, Any]], *, instance: str | None = None, dry_run: bool = False) -> dict[str, Any]:
         return self._adapter(cfg, instance).add_playlist_items(playlist_id, items, dry_run=dry_run)

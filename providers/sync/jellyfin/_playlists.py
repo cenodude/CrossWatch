@@ -210,6 +210,7 @@ def create(
     *,
     media_type: str | None = None,
     items: Sequence[Mapping[str, Any]] | None = None,
+    privacy: str | None = None,
     dry_run: bool = False,
 ) -> PlaylistResource:
     nm = str(name or "").strip()
@@ -231,7 +232,7 @@ def create(
     if endpoint_type == "collection":
         rid = create_collection(adapter.client, nm)
     else:
-        rid = create_playlist(adapter.client, adapter.cfg.user_id, nm, is_public=False)
+        rid = create_playlist(adapter.client, adapter.cfg.user_id, nm, is_public=privacy == "public")
     if not rid:
         raise JellyfinPlaylistError(f"jellyfin create {endpoint_type} failed")
     res = _resource_from_row(adapter, {"Id": rid, "Name": nm, "Type": "BoxSet" if endpoint_type == "collection" else "Playlist"}, endpoint_type)
@@ -267,6 +268,31 @@ def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) 
         raise JellyfinPlaylistError(f"jellyfin rename {endpoint_type} returned no id")
     _info("rename_done", list_id=res.id, endpoint_type=endpoint_type, name=res.name)
     return res
+
+
+def set_privacy(adapter: Any, playlist_id: Any, privacy: str, *, dry_run: bool = False) -> PlaylistResource:
+    endpoint_type, raw_id, resource = _resolved_resource(adapter, playlist_id)
+    if endpoint_type != "playlist":
+        raise JellyfinPlaylistError("jellyfin collections have no privacy setting")
+    public = privacy == "public"
+    if not dry_run:
+        r = adapter.client.post(f"/Playlists/{raw_id}", json={"IsPublic": public})
+        if getattr(r, "status_code", 0) not in (200, 204):
+            raise JellyfinPlaylistError("jellyfin playlist privacy change failed")
+    _info("privacy_done", list_id=resource.id, public=public)
+    return PlaylistResource(
+        provider=_PROVIDER,
+        id=resource.id,
+        name=resource.name,
+        instance=resource.instance,
+        kind=resource.kind,
+        can_read=resource.can_read,
+        can_add=resource.can_add,
+        can_remove=resource.can_remove,
+        can_reorder=resource.can_reorder,
+        media_types=resource.media_types,
+        extra={**dict(resource.extra or {}), "privacy": privacy},
+    )
 
 
 def delete(adapter: Any, playlist_id: Any, *, dry_run: bool = False) -> dict[str, Any]:

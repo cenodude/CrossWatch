@@ -7,8 +7,8 @@ from urllib.parse import unquote, urlparse
 
 from .._pagination import PageGuard, page_numbers
 
-from cw_platform.id_map import canonical_key, minimal as id_minimal
-from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PlaylistItem, PlaylistLinkError, PlaylistPlanError, PlaylistResource, PlaylistSnapshot, PlaylistUnavailableError
+from cw_platform.id_map import canonical_key, minimal as id_minimal, typed_keys_for_item
+from cw_platform.playlists import PLAYLIST_KIND_REGULAR, PlaylistAuthError, PlaylistItem, PlaylistLinkError, PlaylistPlanError, PlaylistReadOnlyError, PlaylistResource, PlaylistSnapshot, PlaylistUnavailableError
 
 from .._log import log as cw_log
 from ._common import (
@@ -28,7 +28,7 @@ BASE = "https://api.simkl.com"
 URL_STATUS = f"{BASE}/sync/all-items/{{bucket}}/{{status}}"
 URL_ADD = f"{BASE}/sync/add-to-list"
 URL_REMOVE = f"{BASE}/sync/history/remove"
-SIMKL_STATUS_WARNING = "SIMKL status buckets are not true playlists. Changes may move or remove items from your SIMKL library. Use with caution. SIMKL custom lists are read only and need SIMKL PRO or VIP."
+SIMKL_STATUS_WARNING = "SIMKL status buckets are not true playlists. Changes may move or remove items from your SIMKL library. Use with caution. SIMKL custom lists need SIMKL PRO or VIP."
 SIMKL_REMOVE_WARNING = "Removing from a SIMKL status bucket removes the item from the full SIMKL library and clears its SIMKL rating."
 
 _STATUS_ROWS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
@@ -42,11 +42,20 @@ _STATUS_META = {status: {"label": label, "media_types": media, "buckets": bucket
 _MOVIE_BLOCKED_STATUSES = {"watching", "hold"}
 URL_USER_LISTS = f"{BASE}/lists/user/{{user_id}}"
 URL_LIST = f"{BASE}/lists/{{list_id}}"
+URL_LISTS = f"{BASE}/lists"
+URL_LIST_ITEMS = f"{BASE}/lists/{{list_id}}/items"
+URL_LIST_ITEMS_REMOVE = f"{BASE}/lists/{{list_id}}/items/remove"
 CUSTOM_PREFIX = "list:"
-SIMKL_CUSTOM_WARNING = "SIMKL custom lists are read only. Use them as the source of a mapping."
+SIMKL_CUSTOM_WARNING = "This SIMKL list is read only. Use it as the source of a mapping."
 _CUSTOM_TIERS = {"pro", "vip"}
 _CUSTOM_MEDIA = {"movies": ("movies", "movie"), "tv": ("shows", "show"), "anime": ("anime", "anime")}
+_CREATE_MEDIA = {"movie": "movies", "movies": "movies", "show": "tv", "shows": "tv", "tv": "tv", "anime": "anime"}
 _CUSTOM_PAGE = 500
+_WRITE_CHUNK = 1000
+_WRITE_RETRIES = 3
+_REAUTH_ERRORS = {"oauth2_token_required", "user_token_required", "insufficient_scope"}
+_LIMIT_ERRORS = {"max_items", "max_lists", "max_items_total"}
+_DENIED_ERRORS = {"no_access", "list_error", "private_list"}
 _SIMKL_HOSTS = {"simkl.com", "www.simkl.com"}
 _ROLE_TYPES = {"follower": "followed_list", "collaborator": "collaboration"}
 _SNAPSHOT_MEMO_TTL = 6 * 3600.0
@@ -71,6 +80,14 @@ class SIMKLPremiumRequired(SIMKLPlaylistError, PlaylistPlanError):
 
 
 class SIMKLListsNotEnabled(SIMKLPlaylistError):
+    pass
+
+
+class SIMKLListLimitReached(SIMKLPlaylistError, PlaylistPlanError):
+    pass
+
+
+class SIMKLListReconnectRequired(SIMKLPlaylistError, PlaylistAuthError):
     pass
 
 
@@ -116,6 +133,7 @@ def _resource(adapter: Any, status: str) -> PlaylistResource:
             "can_rename": False,
             "can_delete": False,
             "custom_lists_supported": True,
+            "can_edit_privacy": False,
             "destructive_remove": True,
             "remove_warning": SIMKL_REMOVE_WARNING,
             "warnings": [SIMKL_STATUS_WARNING],
@@ -194,6 +212,8 @@ def _custom_resource(adapter: Any, row: Mapping[str, Any], *, me: str = "") -> P
         shared["owner"] = owner
         if endpoint_type != "collaboration":
             shared["public_list"] = True
+    list_type = str(row.get("type") or "").strip().lower()
+    writable = endpoint_type == "custom_list" and list_type == "regular" and not shared.get("unresolved")
     return PlaylistResource(
         provider=_PROVIDER,
         id=f"{CUSTOM_PREFIX}{list_id}",
@@ -201,9 +221,9 @@ def _custom_resource(adapter: Any, row: Mapping[str, Any], *, me: str = "") -> P
         instance=_instance_id(adapter),
         kind=PLAYLIST_KIND_REGULAR,
         can_read=True,
-        can_add=False,
-        can_remove=False,
-        can_reorder=False,
+        can_add=writable,
+        can_remove=writable,
+        can_reorder=writable,
         media_types=(media[1],),
         extra={
             **shared,
@@ -213,12 +233,12 @@ def _custom_resource(adapter: Any, row: Mapping[str, Any], *, me: str = "") -> P
             "privacy": str(row.get("privacy") or ""),
             "item_count": counts.get("items"),
             "updated_at": row.get("updated_at"),
-            "fixed": True,
-            "read_only": True,
+            "fixed": not writable,
+            "read_only": not writable,
             "can_create": False,
-            "can_rename": False,
-            "can_delete": False,
-            "warnings": [SIMKL_CUSTOM_WARNING],
+            "can_rename": writable,
+            "can_delete": writable,
+            "warnings": [] if writable else [SIMKL_CUSTOM_WARNING],
         },
     )
 
@@ -492,15 +512,260 @@ def get_snapshot(adapter: Any, playlist_id: Any) -> PlaylistSnapshot:
     return PlaylistSnapshot(resource=_resource(adapter, status), items=items, checkpoint=_checkpoint(adapter, status))
 
 
+def _custom_write(adapter: Any, method: str, url: str, body: Any = None, **query: Any) -> tuple[int, Any]:
+    headers = adapter_headers(adapter)
+    params = simkl_api_params_from_headers(headers, **query)
+    send = getattr(adapter.client.session, method.lower())
+    code, data, error = 0, None, ""
+    for attempt in range(_WRITE_RETRIES + 1):
+        kwargs: dict[str, Any] = {"headers": headers, "params": params, "timeout": getattr(adapter.cfg, "timeout", 15.0)}
+        if body is not None:
+            kwargs["json"] = body
+        resp = send(url, **kwargs)
+        code = int(getattr(resp, "status_code", 0) or 0)
+        data = _response_json(resp)
+        error = str(_mapping(data).get("error") or "")
+        if code == 400 and error == "rate_limit" and attempt < _WRITE_RETRIES:
+            time.sleep(1.5 * (attempt + 1))
+            continue
+        break
+    message = str(_mapping(data).get("message") or error or code)
+    if code == 404:
+        raise SIMKLListUnavailable("The SIMKL list no longer exists")
+    if error == "premium_only":
+        raise SIMKLPremiumRequired("SIMKL custom lists need SIMKL PRO or VIP")
+    if error in _REAUTH_ERRORS:
+        raise SIMKLListReconnectRequired(f"SIMKL custom list changes need a SIMKL reconnect: {error}")
+    if error in _LIMIT_ERRORS:
+        raise SIMKLListLimitReached(f"SIMKL list limit reached: {message}")
+    if error in _DENIED_ERRORS:
+        raise PlaylistReadOnlyError(f"The SIMKL list cannot be changed: {message}")
+    if error and 200 <= code < 300:
+        _warn("write_refused", url=url.replace(BASE, ""), status=code, error=error)
+        raise SIMKLPlaylistError(f"simkl custom list write refused: {error}")
+    if not (200 <= code < 300):
+        _warn("write_failed", url=url.replace(BASE, ""), status=code, error=error)
+    return code, data
+
+
+def _forget_snapshot(adapter: Any, list_id: str) -> None:
+    _SNAPSHOT_MEMO.pop((_instance_id(adapter), list_id), None)
+
+
+def _writable_target(adapter: Any, list_id: str) -> tuple[Mapping[str, Any], PlaylistResource] | None:
+    head = _custom_get(adapter, URL_LIST.format(list_id=list_id), limit=1, page=1)
+    resource = _custom_resource(adapter, head, me=_me(adapter)[0])
+    if resource is None or not resource.can_add:
+        return None
+    return head, resource
+
+
+def _custom_resource_from_write(adapter: Any, data: Any, list_id: str) -> PlaylistResource:
+    row = _mapping(data)
+    resource = _custom_resource(adapter, row, me=_me(adapter)[0]) if row.get("id") and row.get("media_type") else None
+    if resource is None:
+        head = _custom_get(adapter, URL_LIST.format(list_id=list_id), limit=1, page=1)
+        resource = _custom_resource(adapter, head, me=_me(adapter)[0])
+    if resource is None:
+        raise SIMKLPlaylistNotFound("simkl custom list not found")
+    return resource
+
+
+def _custom_entries(items: Sequence[Mapping[str, Any]], list_bucket: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    accepted: list[dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in items or []:
+        if not isinstance(raw, Mapping):
+            continue
+        media = id_minimal(raw)
+        if (_item_bucket(raw) == "movies") != (list_bucket == "movies"):
+            unresolved.append({"item": media, "hint": "wrong_media_type"})
+            continue
+        ids = _ids(media)
+        if not ids:
+            unresolved.append({"item": media, "hint": "missing_simkl_supported_id"})
+            continue
+        key = canonical_key(media)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        accepted.append({"key": key, "item": media, "ids": ids})
+    return accepted, unresolved
+
+
+def _id_pairs(ids: Any) -> set[tuple[str, str]]:
+    return {(str(k), str(v)) for k, v in _mapping(ids).items() if v not in (None, "")}
+
+
+def _rejected(rows: Any, accepted: Mapping[str, Any]) -> bool:
+    mine = _id_pairs(accepted.get("ids"))
+    return any(mine & _id_pairs(_mapping(row).get("ids")) for row in rows or [] if isinstance(row, Mapping))
+
+
+def _custom_items_write(adapter: Any, list_id: str, items: Sequence[Mapping[str, Any]], *, remove: bool) -> dict[str, Any]:
+    target = _writable_target(adapter, list_id)
+    if target is None:
+        return _read_only_result(items)
+    head = target[0]
+    bucket = (_CUSTOM_MEDIA.get(str(head.get("media_type") or "").strip().lower()) or ("shows", "show"))[0]
+    accepted, unresolved = _custom_entries(items, bucket)
+    confirmed: list[str] = []
+    ok = True
+    url = (URL_LIST_ITEMS_REMOVE if remove else URL_LIST_ITEMS).format(list_id=list_id)
+    for start in range(0, len(accepted), _WRITE_CHUNK):
+        chunk = accepted[start:start + _WRITE_CHUNK]
+        code, data = _custom_write(adapter, "POST", url, {bucket: [{"ids": row["ids"]} for row in chunk]})
+        if not (200 <= code < 300):
+            ok = False
+            unresolved.extend({"item": row["item"], "hint": f"http:{code}"} for row in chunk)
+            continue
+        body = _mapping(data)
+        not_found = body.get("not_found") if isinstance(body.get("not_found"), list) else []
+        wrong_type = body.get("wrong_type") if isinstance(body.get("wrong_type"), list) else []
+        for row in chunk:
+            if wrong_type and _rejected(wrong_type, row):
+                unresolved.append({"item": row["item"], "hint": "wrong_media_type"})
+            elif not remove and not_found and _rejected(not_found, row):
+                unresolved.append({"item": row["item"], "hint": "not_found"})
+            else:
+                confirmed.append(row["key"])
+    _forget_snapshot(adapter, list_id)
+    _info("write_done", op="remove" if remove else "add", list_id=f"{CUSTOM_PREFIX}{list_id}", applied=len(confirmed), unresolved=len(unresolved))
+    return {"ok": ok, "count": len(confirmed), "unresolved": unresolved, "confirmed_keys": confirmed}
+
+
+def _custom_reorder(adapter: Any, list_id: str, ordered_keys: Sequence[str]) -> dict[str, Any]:
+    snap = _custom_snapshot(adapter, list_id)
+    if not snap.resource.can_reorder:
+        return {"ok": False, "count": 0, "reordered": 0, "unsupported": True, "error": "read_only"}
+    by_key: dict[str, str] = {}
+    current: list[str] = []
+    for it in snap.items:
+        simkl_id = str(it.provider_media_id or "").strip()
+        if not simkl_id:
+            continue
+        current.append(simkl_id)
+        for key in {it.key, *typed_keys_for_item(it.item or {})}:
+            if key:
+                by_key.setdefault(str(key), simkl_id)
+    wanted: list[str] = []
+    for key in ordered_keys or []:
+        simkl_id = by_key.get(str(key))
+        if simkl_id and simkl_id not in wanted:
+            wanted.append(simkl_id)
+    wanted.extend(x for x in current if x not in set(wanted))
+    if wanted == current:
+        return {"ok": True, "count": 0, "reordered": 0}
+    media = str(snap.resource.media_types[0] if snap.resource.media_types else "")
+    bucket = {"movie": "movies", "show": "shows", "anime": "anime"}.get(media, "shows")
+    url = URL_LIST_ITEMS.format(list_id=list_id)
+    start = 0
+    while start < len(wanted):
+        chunk = wanted[max(0, start - 1):start + _WRITE_CHUNK - (1 if start else 0)]
+        code, _data = _custom_write(adapter, "POST", url, {bucket: [{"ids": {"simkl": int(x) if x.isdigit() else x}} for x in chunk]}, allow_reorder="yes")
+        if not (200 <= code < 300):
+            _forget_snapshot(adapter, list_id)
+            return {"ok": False, "count": 0, "reordered": 0, "error": f"http:{code}"}
+        start += len(chunk) - (1 if start else 0)
+    _forget_snapshot(adapter, list_id)
+    after = [str(it.provider_media_id or "") for it in _custom_snapshot(adapter, list_id).items if it.provider_media_id]
+    if after != wanted:
+        _warn("reorder_unconfirmed", list_id=f"{CUSTOM_PREFIX}{list_id}", wanted=len(wanted), seen=len(after))
+        return {"ok": False, "count": 0, "reordered": 0, "error": "playlist_order_unconfirmed"}
+    _info("reorder_done", list_id=f"{CUSTOM_PREFIX}{list_id}", count=len(wanted))
+    return {"ok": True, "count": len(wanted), "reordered": len(wanted)}
+
+
 def create(
     adapter: Any,
     name: str,
     *,
     media_type: str | None = None,
     items: Sequence[Mapping[str, Any]] | None = None,
+    privacy: str | None = None,
     dry_run: bool = False,
 ) -> PlaylistResource:
-    raise SIMKLPlaylistError("SIMKL status bucket endpoints cannot be created")
+    nm = str(name or "").strip()
+    if not nm:
+        raise ValueError("playlist name required")
+    simkl_media = _CREATE_MEDIA.get(str(media_type or "").strip().lower())
+    if not simkl_media:
+        raise SIMKLPlaylistError("SIMKL custom lists hold movies, shows or anime")
+    if dry_run:
+        return PlaylistResource(
+            provider=_PROVIDER,
+            id="",
+            name=nm,
+            instance=_instance_id(adapter),
+            kind=PLAYLIST_KIND_REGULAR,
+            can_add=True,
+            can_remove=True,
+            can_reorder=True,
+            media_types=(_CUSTOM_MEDIA[simkl_media][1],),
+            extra={"endpoint_type": "custom_list"},
+        )
+    user_id, tier = _me(adapter)
+    if user_id and tier not in _CUSTOM_TIERS:
+        raise SIMKLPremiumRequired("SIMKL custom lists need SIMKL PRO or VIP")
+    body: dict[str, Any] = {"name": nm, "media_type": simkl_media, "privacy": privacy or "public"}
+    code, data = _custom_write(adapter, "POST", URL_LISTS, body)
+    list_id = str(_mapping(data).get("id") or "").strip()
+    if not (200 <= code < 300) or not list_id.isdigit():
+        raise SIMKLPlaylistError(f"simkl create list failed: http {code}")
+    resource = _custom_resource_from_write(adapter, data, list_id)
+    _info("create_done", list_id=resource.id, media_type=simkl_media)
+    if items:
+        try:
+            _custom_items_write(adapter, list_id, list(items), remove=False)
+        except Exception as e:
+            _warn("create_seed_failed", list_id=resource.id, error=type(e).__name__)
+    return resource
+
+
+def _edit_list(adapter: Any, playlist_id: Any, body: Mapping[str, Any], *, op: str, dry_run: bool) -> PlaylistResource:
+    list_id = _custom_id(playlist_id)
+    if not list_id:
+        raise SIMKLPlaylistError("SIMKL status buckets cannot be changed")
+    target = _writable_target(adapter, list_id)
+    if target is None:
+        raise PlaylistReadOnlyError("The SIMKL list cannot be changed")
+    if dry_run:
+        return target[1]
+    code, data = _custom_write(adapter, "POST", URL_LIST.format(list_id=list_id), dict(body))
+    if not (200 <= code < 300):
+        raise SIMKLPlaylistError(f"simkl {op} list failed: http {code}")
+    _forget_snapshot(adapter, list_id)
+    resource = _custom_resource_from_write(adapter, data, list_id)
+    _info(f"{op}_done", list_id=resource.id)
+    return resource
+
+
+def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) -> PlaylistResource:
+    nm = str(name or "").strip()
+    if not nm:
+        raise ValueError("playlist name required")
+    return _edit_list(adapter, playlist_id, {"name": nm}, op="rename", dry_run=dry_run)
+
+
+def set_privacy(adapter: Any, playlist_id: Any, privacy: str, *, dry_run: bool = False) -> PlaylistResource:
+    return _edit_list(adapter, playlist_id, {"privacy": privacy}, op="privacy", dry_run=dry_run)
+
+
+def delete(adapter: Any, playlist_id: Any, *, dry_run: bool = False) -> dict[str, Any]:
+    list_id = _custom_id(playlist_id)
+    if not list_id:
+        raise SIMKLPlaylistError("SIMKL status buckets cannot be deleted")
+    if _writable_target(adapter, list_id) is None:
+        raise PlaylistReadOnlyError("The SIMKL list cannot be deleted")
+    if dry_run:
+        return {"ok": True, "dry_run": True}
+    code, _data = _custom_write(adapter, "DELETE", URL_LIST.format(list_id=list_id))
+    if code not in (200, 204):
+        raise SIMKLPlaylistError(f"simkl delete list failed: http {code}")
+    _forget_snapshot(adapter, list_id)
+    _info("delete_done", list_id=f"{CUSTOM_PREFIX}{list_id}")
+    return {"ok": True, "count": 1}
 
 
 def _item_bucket(item: Mapping[str, Any]) -> str:
@@ -624,8 +889,9 @@ def _write_status_shadow(status: str, accepted: Sequence[Mapping[str, Any]], con
 
 
 def add(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    if _custom_id(playlist_id):
-        return _read_only_result(items)
+    custom = _custom_id(playlist_id)
+    if custom:
+        return _custom_items_write(adapter, custom, list(items or []), remove=False)
     status = _status(playlist_id)
     body, accepted, unresolved = _accepted_items(list(items or []), status)
     if not accepted:
@@ -652,8 +918,9 @@ def _remove_payload(items: Sequence[Mapping[str, Any]], status: str) -> tuple[di
 
 
 def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
-    if _custom_id(playlist_id):
-        return _read_only_result(items)
+    custom = _custom_id(playlist_id)
+    if custom:
+        return _custom_items_write(adapter, custom, list(items or []), remove=True)
     status = _status(playlist_id)
     body, accepted, unresolved = _remove_payload(list(items or []), status)
     keys = [str(x.get("key") or "") for x in accepted if x.get("key")]
@@ -681,4 +948,7 @@ def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -
 
 
 def reorder(adapter: Any, playlist_id: Any, ordered_keys: Sequence[str]) -> dict[str, Any]:
+    custom = _custom_id(playlist_id)
+    if custom:
+        return _custom_reorder(adapter, custom, ordered_keys)
     return {"ok": True, "count": 0, "reordered": 0, "unsupported": True}

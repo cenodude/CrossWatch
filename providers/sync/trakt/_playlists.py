@@ -202,6 +202,9 @@ def _list_stamp_extra(row: Mapping[str, Any]) -> dict[str, Any]:
     count = row.get("item_count")
     if isinstance(count, int) and not isinstance(count, bool):
         out["item_count"] = count
+    privacy = str(row.get("privacy") or "").strip().lower()
+    if privacy:
+        out["privacy"] = privacy
     return out
 
 
@@ -761,7 +764,7 @@ def resolve(adapter: Any, ref: Any) -> PlaylistResource:
     raise PlaylistLinkError("unsupported Trakt list link")
 
 
-def create(adapter: Any, name: str, *, media_type: str | None = None, dry_run: bool = False) -> PlaylistResource:
+def create(adapter: Any, name: str, *, media_type: str | None = None, privacy: str | None = None, dry_run: bool = False) -> PlaylistResource:
     nm = str(name or "").strip()
     if not nm:
         raise ValueError("playlist name required")
@@ -791,7 +794,7 @@ def create(adapter: Any, name: str, *, media_type: str | None = None, dry_run: b
         "POST",
         f"{BASE}/users/me/lists",
         headers=headers,
-        json={"name": nm, "privacy": "private"},
+        json={"name": nm, "privacy": privacy or "private"},
         timeout=adapter.cfg.timeout,
         max_retries=adapter.cfg.max_retries,
     )
@@ -814,24 +817,20 @@ def create(adapter: Any, name: str, *, media_type: str | None = None, dry_run: b
     return res
 
 
-def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) -> PlaylistResource:
-    if _discovery_feed(playlist_id) is not None or _is_watchlist_id(playlist_id):
-        raise RuntimeError("trakt built-in and discovery feeds cannot be renamed")
-    nm = str(name or "").strip()
-    if not nm:
-        raise ValueError("playlist name required")
+def _update_list(adapter: Any, playlist_id: Any, body: Mapping[str, Any], *, op: str, name: str, dry_run: bool) -> PlaylistResource:
     lid = _list_id(playlist_id)
+    fallback = PlaylistResource(
+        provider=_PROVIDER,
+        id=lid,
+        name=name or lid,
+        instance=_instance_id(adapter),
+        can_add=True,
+        can_remove=True,
+        can_reorder=True,
+        media_types=("movies", "shows", "seasons", "episodes"),
+    )
     if dry_run:
-        return PlaylistResource(
-            provider=_PROVIDER,
-            id=lid,
-            name=nm,
-            instance=_instance_id(adapter),
-            can_add=True,
-            can_remove=True,
-            can_reorder=True,
-            media_types=("movies", "shows", "seasons", "episodes"),
-        )
+        return fallback
     sess = adapter.client.session
     headers = headers_for_adapter(adapter)
     r = request_with_retries(
@@ -839,28 +838,32 @@ def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) 
         "PUT",
         f"{BASE}/users/me/lists/{lid}",
         headers=headers,
-        json={"name": nm},
+        json=dict(body),
         timeout=adapter.cfg.timeout,
         max_retries=adapter.cfg.max_retries,
     )
     if r.status_code not in (200, 201):
-        _warn("write_failed", op="rename", status=r.status_code, body=((r.text or "")[:180]))
-        raise RuntimeError(f"trakt rename list failed: http {r.status_code}")
+        _warn("write_failed", op=op, status=r.status_code, body=((r.text or "")[:180]))
+        raise RuntimeError(f"trakt {op} list failed: http {r.status_code}")
     data = r.json() if (r.text or "").strip() else {}
-    res = _resource_from_list(adapter, data if isinstance(data, Mapping) else {})
-    if res is None:
-        res = PlaylistResource(
-            provider=_PROVIDER,
-            id=lid,
-            name=nm,
-            instance=_instance_id(adapter),
-            can_add=True,
-            can_remove=True,
-            can_reorder=True,
-            media_types=("movies", "shows", "seasons", "episodes"),
-        )
-    _info("rename_done", list_id=res.id, name=res.name)
+    res = _resource_from_list(adapter, data if isinstance(data, Mapping) else {}) or fallback
+    _info(f"{op}_done", list_id=res.id, name=res.name)
     return res
+
+
+def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) -> PlaylistResource:
+    if _discovery_feed(playlist_id) is not None or _is_watchlist_id(playlist_id):
+        raise RuntimeError("trakt built-in and discovery feeds cannot be renamed")
+    nm = str(name or "").strip()
+    if not nm:
+        raise ValueError("playlist name required")
+    return _update_list(adapter, playlist_id, {"name": nm}, op="rename", name=nm, dry_run=dry_run)
+
+
+def set_privacy(adapter: Any, playlist_id: Any, privacy: str, *, dry_run: bool = False) -> PlaylistResource:
+    if _discovery_feed(playlist_id) is not None or _is_watchlist_id(playlist_id):
+        raise RuntimeError("trakt built-in and discovery feeds have no privacy setting")
+    return _update_list(adapter, playlist_id, {"privacy": privacy}, op="privacy", name="", dry_run=dry_run)
 
 
 def delete(adapter: Any, playlist_id: Any, *, dry_run: bool = False) -> dict[str, Any]:

@@ -41,7 +41,6 @@ URL_LIST_ADD = f"{BASE}/lists/{{id}}/items/add"
 URL_LIST_REMOVE = f"{BASE}/lists/{{id}}/items/remove"
 URL_CREATE_LIST = f"{BASE}/lists/user/add"
 URL_DELETE_LIST = f"{BASE}/lists/{{id}}"
-URL_UPDATE_LIST = f"{BASE}/lists/{{id}}/update"
 URL_USER = f"{BASE}/user"
 
 _PROVIDER = "MDBLIST"
@@ -470,6 +469,7 @@ def create(
     *,
     media_type: str | None = None,
     items: Sequence[Mapping[str, Any]] | None = None,
+    privacy: str | None = None,
     dry_run: bool = False,
 ) -> PlaylistResource:
     nm = str(name or "").strip()
@@ -487,7 +487,7 @@ def create(
             media_types=_STATIC_MEDIA_TYPES,
         )
 
-    body: dict[str, Any] = {"name": nm}
+    body: dict[str, Any] = {"name": nm, "private": privacy != "public"}
     r = mdblist_request(
         adapter,
         "POST",
@@ -495,6 +495,8 @@ def create(
         params={"apikey": _apikey(adapter)},
         json=body,
     )
+    if r.status_code == 403 and "static_list_limit_reached" in (r.text or ""):
+        raise MDBListPlaylistError("mdblist static list limit reached")
     if r.status_code in (401, 403):
         raise MDBListPlaylistError("mdblist create list unauthorized")
     if not (200 <= r.status_code < 300):
@@ -534,8 +536,8 @@ def update_metadata(adapter: Any, playlist_id: Any, *, name: str | None = None, 
         return {"ok": True, "updated": False}
     r = mdblist_request(
         adapter,
-        "POST",
-        URL_UPDATE_LIST.format(id=resource.id),
+        "PUT",
+        URL_LIST.format(id=resource.id),
         params={"apikey": _apikey(adapter)},
         json=body,
     )
@@ -543,6 +545,30 @@ def update_metadata(adapter: Any, playlist_id: Any, *, name: str | None = None, 
         _warn("update_failed", status=r.status_code, list_id=resource.id)
         raise MDBListPlaylistError(f"mdblist update list failed: http {r.status_code}")
     return {"ok": True, "updated": True}
+
+
+def set_privacy(adapter: Any, playlist_id: Any, privacy: str, *, dry_run: bool = False) -> PlaylistResource:
+    resource = _find_owned_resource(adapter, playlist_id)
+    if resource is None:
+        raise MDBListNotOwnedError("mdblist list is not owned by the authenticated user")
+    if resource.is_smart:
+        raise MDBListDynamicListError("cannot change a dynamic mdblist list")
+    private = privacy != "public"
+    if not dry_run:
+        update_metadata(adapter, resource.id, private=private)
+    return PlaylistResource(
+        provider=_PROVIDER,
+        id=resource.id,
+        name=resource.name,
+        instance=resource.instance,
+        kind=resource.kind,
+        can_read=resource.can_read,
+        can_add=resource.can_add,
+        can_remove=resource.can_remove,
+        can_reorder=resource.can_reorder,
+        media_types=resource.media_types,
+        extra={**dict(resource.extra or {}), "private": private},
+    )
 
 
 def rename(adapter: Any, playlist_id: Any, name: str, *, dry_run: bool = False) -> PlaylistResource:
