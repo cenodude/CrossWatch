@@ -39,7 +39,7 @@ async function fixture(t, theme = 'flat-dark', restricted = false, saved = null,
       ${profileAvailable ? '<a href="/profile" data-cw-profile-menu-action="profile">Profile</a>' : ''}
       <script>window.auth={isManaged:${restricted},permissions:{write:${!restricted}},preferences:{}};window._cfgCache={tmdb_configured:true,ui:{}};window.CW={AuthState:{read:()=>auth}};window.openManualWatchedModal=()=>{window.quickAddOpened=true};window.addEventListener('hashchange',()=>{document.documentElement.dataset.tab=location.hash.slice(1).split('/')[0]||'main';document.dispatchEvent(new Event('tab-changed'));});</script>
       <script src="/assets/helpers/account-menu.js"></script><script src="/assets/helpers/playing-card.js"></script><script src="/assets/js/playingcard.js"></script>
-      <script>(()=>{const $=selector=>document.querySelector(selector),esc=value=>value;const WIDGETS=[{key:'history',label:'Recent history'},{key:'watchlist',label:'Watchlist'}],widgetLayout={},lastSettings={},currentConfig=null,mobileViewport=matchMedia('(max-width:760px)');function patchLayout(){}function resetLayout(){}function markWidgetsDirty(){}${picker}window.updateMobilePicker=updateMobilePicker;document.addEventListener('cw-mobile-navigation-ready',()=>updateMobilePicker());document.addEventListener('DOMContentLoaded',()=>updateMobilePicker());})();</script>
+      <script>(()=>{const $=selector=>document.querySelector(selector),esc=value=>value;const ON_PROFILE_PAGE=location.pathname==='/profile',WIDGETS=[{key:'history',label:'Recent history'},{key:'watchlist',label:'Watchlist'}],widgetLayout={},lastSettings={},currentConfig=null,mobileViewport=matchMedia('(max-width:760px)');function patchLayout(){}function resetLayout(){}function markWidgetsDirty(){}${picker}window.updateMobilePicker=updateMobilePicker;document.addEventListener('cw-mobile-navigation-ready',()=>updateMobilePicker());document.addEventListener('DOMContentLoaded',()=>updateMobilePicker());})();</script>
       <script>${quickAdd}</script></body></html>`});
   });
   await page.goto('https://mobile-preferences.test/');
@@ -66,7 +66,7 @@ async function swipeSurface(page, content = '<button id="swipe-card" style="widt
 
 const touchSessions = new WeakMap();
 
-async function swipe(page, from = {x:90,y:300}, to = {x:290,y:300}, steps = 8, interval = 0) {
+async function swipe(page, from = {x:290,y:300}, to = {x:90,y:300}, steps = 8, interval = 0) {
   if (!touchSessions.has(page)) touchSessions.set(page, await page.context().newCDPSession(page));
   const session = touchSessions.get(page);
   await session.send('Input.dispatchTouchEvent', {type:'touchStart',touchPoints:[from]});
@@ -81,16 +81,16 @@ test('mobile swipes claim the first horizontal move and allow slower gestures', 
   const {page} = await fixture(t);
   await swipeSurface(page);
   await page.evaluate(() => { document.body.style.minHeight = '2400px'; });
-  await swipe(page, {x:90,y:300}, {x:294,y:306}, 12);
+  await swipe(page, {x:294,y:300}, {x:90,y:306}, 12);
   await page.waitForURL('**/#tracker');
   const started = Date.now();
-  await swipe(page, {x:294,y:300}, {x:90,y:306}, 40, 25);
+  await swipe(page, {x:90,y:300}, {x:294,y:306}, 40, 25);
   assert.ok(Date.now() - started > 900);
   await page.waitForURL('**/#main');
   assert.equal(await page.evaluate(() => window.swipeCardClicks || 0), 0);
 });
 
-test('mobile swipes follow visible shortcuts in both directions without opening cards', async t => {
+test('mobile swipes follow visible shortcuts and wrap in both directions without opening cards', async t => {
   const {page} = await fixture(t);
   await swipeSurface(page);
   await page.locator('#swipe-card').tap();
@@ -104,17 +104,24 @@ test('mobile swipes follow visible shortcuts in both directions without opening 
   await page.locator('#cw-mobile-bottom-nav').waitFor();
   await swipeSurface(page);
   await swipe(page);
-  assert.equal(new URL(page.url()).pathname, '/profile');
-  await swipe(page, {x:290,y:300}, {x:90,y:300});
+  await page.waitForURL('**/#main');
+  await page.locator('#cw-mobile-bottom-nav').waitFor();
+  await swipeSurface(page);
+  await swipe(page, {x:90,y:300}, {x:290,y:300});
+  await page.waitForURL('**/profile#overview');
+  await page.locator('#cw-mobile-bottom-nav').waitFor();
+  await swipeSurface(page);
+  await swipe(page, {x:90,y:300}, {x:290,y:300});
   await page.waitForURL('**/#tracker');
   await page.locator('#cw-mobile-bottom-nav').waitFor();
   await swipeSurface(page);
-  await swipe(page, {x:290,y:300}, {x:90,y:300});
+  await swipe(page, {x:90,y:300}, {x:290,y:300});
   await page.waitForURL(url => url.hash === '#main');
   await page.locator('#swipe-card').tap();
   await page.waitForFunction(() => window.swipeCardClicks === 1);
-  await swipe(page, {x:290,y:300}, {x:90,y:300});
-  assert.equal(new URL(page.url()).hash, '#main');
+  await swipe(page);
+  await page.waitForURL('**/#tracker');
+  assert.equal(await page.evaluate(() => window.swipeCardClicks || 0), 1);
 });
 
 test('mobile swipes pick up shortcut changes and leave gestures to interactive content', async t => {
@@ -128,7 +135,7 @@ test('mobile swipes pick up shortcut changes and leave gestures to interactive c
   await page.waitForURL('**/#snapshots');
   await swipe(page);
   await page.waitForURL('**/#editor');
-  await swipe(page, {x:290,y:300}, {x:90,y:300});
+  await swipe(page, {x:90,y:300}, {x:290,y:300});
   await page.waitForURL('**/#snapshots');
   for (const content of [
     '<div style="height:100%;overflow-x:auto"><div style="width:1200px;height:100%">Carousel</div></div>',

@@ -10,7 +10,7 @@ import {chromium, webkit} from "playwright";
 const template = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_profile_html({'is_admin':True,'username':'mobile','display_name':'Mobile preview'}))"], {encoding:"utf8",maxBuffer:1024*1024});
 const items = ["The Grand Budapest Hotel", "A long episode title with plenty of words", "Arrival"].map((title,index)=>({key:`movie:tmdb:${index+1}`,type:"movie",title,year:2014,ids:{tmdb:String(index+1)},tmdb:String(index+1),sort_epoch:1793989800,watched_at:"2026-11-06T18:30:00Z",last_collected_at:1793989800,rating:8.5,watch_count:3,watch_epochs:[1793989800],providers:["PLEX","TRAKT"],sources_by_provider:{PLEX:["default"],TRAKT:["default"]},progress:45,can_update_progress:true,can_mark_watched:true,can_remove_progress:true,provider:"PLEX",provider_instance:"default",duration:120,remaining_minutes:66,media:{resolution:"4k",hdr:"dolby_vision",audio:"truehd"}}));
 
-async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=false,playback=false,library=false}={}) {
+async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=false,playback=false,library=false,liveRoutes=false}={}) {
   const browser=await (process.env.CW_PROFILE_BROWSER === "webkit" ? webkit : chromium).launch({headless:true});
   t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width,height:844},hasTouch:width<=760,isMobile:width<=760,reducedMotion:'reduce'});
@@ -79,6 +79,10 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
         months:list.length?[{month:'2025-01',count:1},{month:'2026-11',count:2}]:[],
         summary:{total:list.length,movies:list.length,almost_done:1,stale:1},
       });
+      if(liveRoutes && path==='/api/playback_progress/items') json.items=json.items.slice(0,1).map(item=>({...item,
+        live_state:'playing', live_progress_percent:76,
+        live_routes:['crosswatch','trakt','simkl'].map(destination=>({kind:'watcher',source:'plex',source_instance:'default',source_label:'Living room',destination,destination_instance:'default',destination_label:destination==='trakt'?'My Trakt':'Default'})),
+      }));
       if(path==='/api/dashboard/widgets') json={recent_history:{items:list},recent_scrobble:{items:list},recent_progress:{items:list},latest_ratings:{items:list}};
       if(path==='/api/state/wall') json={items:list};
       if(path==='/api/profile/title') json={item:items[0],title:items[0].title};
@@ -443,6 +447,23 @@ for(const width of [390,1440]) test(`Hub library pages preserve filters, sorting
   }
 });
 
+for (const width of [390,1440]) test(`Hub shared navigation order and icons at ${width}px`, async t => {
+  const {page} = await fixture(t, 'flat-dark', width);
+  const tabs = page.locator('.cw-profile-tabs [data-profile-tab]:not([data-profile-tab="account"])');
+  assert.deepEqual(await tabs.evaluateAll(nodes => nodes.map(node => node.dataset.profileTab)), ['overview','watchlist','history','ratings','playback','collection']);
+  assert.deepEqual(await tabs.locator('[data-tab-label]').allTextContents(), ['Overview','Watchlist','History','Ratings','Progress','Collection']);
+  assert.deepEqual(await tabs.locator('.material-symbols-rounded').allTextContents(), ['space_dashboard','bookmark','history','star','play_circle','video_library']);
+  if (width > 760) {
+    const style = await tabs.first().locator('.material-symbols-rounded').evaluate(el => ({size:getComputedStyle(el).fontSize,axes:getComputedStyle(el).fontVariationSettings}));
+    assert.equal(style.size, '19px');
+    assert.match(style.axes, /"FILL" 0/);
+  }
+  await page.locator('[data-profile-tab="watchlist"]').click();
+  await page.locator('#profile-panel-watchlist.active').waitFor();
+  await mkdir('.tmp/shared-navigation', {recursive:true});
+  await page.locator('.cw-profile-tabs').screenshot({path:`.tmp/shared-navigation/hub-${width}.png`});
+});
+
 for (const width of [390,1440]) test(`Account menu opens profile Settings and preserves media tabs at ${width}px`, async t => {
   const {page} = await fixture(t,'flat-dark',width);
   await page.locator('#cw-nav-profile-link').click();
@@ -786,4 +807,24 @@ test('Mobile Hub uses compact shelves, sticky tabs and two-column progress', asy
   assert.ok(Math.abs(nav.y - header.height) < 2, JSON.stringify({nav,header}));
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth > innerWidth),false);
   await page.screenshot({path:'.tmp/mobile-implementation/hub-progress.png'});
+});
+
+
+test('Hub shows observed live destinations without inventing resume actions', async t => {
+  const {page}=await fixture(t,'flat-dark',1440,{playback:true,liveRoutes:true,activity:true});
+  const icons=page.locator('.cw-cw-card').first().locator('.cw-cw-providers [data-provider]');
+  await page.waitForFunction(()=>document.querySelectorAll('.cw-cw-card .cw-cw-providers [data-provider]').length===4);
+  assert.deepEqual(await icons.evaluateAll(nodes=>nodes.map(node=>node.dataset.provider)),['plex','crosswatch','trakt','simkl']);
+  assert.match(await page.locator('.cw-cw-card').first().locator('[data-provider="trakt"]').getAttribute('title'),/My Trakt: active watcher route/);
+  await page.locator('[data-profile-tab="playback"]').click();
+  const card=page.locator('#profile-panel-playback .cw-hist-card').first();
+  await card.waitFor();
+  const chips=card.locator('.cw-provider-strip > .cw-hist-provider:not(.cw-provider-more)');
+  assert.equal(await chips.count(),4);
+  assert.match(await chips.nth(2).getAttribute('title'),/My Trakt: active watcher route/);
+  assert.equal(await chips.nth(2).evaluate(node=>node.tagName),'SPAN');
+  await card.locator('[data-playback-menu]').click();
+  await page.locator('.cw-card-action-menu [data-playback-action="update_progress"]').click();
+  await page.locator('#profile-playback-edit[open]').waitFor();
+  assert.match(await page.locator('#profile-playback-edit-sub').innerText(),/1 provider record/);
 });

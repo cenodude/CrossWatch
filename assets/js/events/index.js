@@ -560,8 +560,8 @@ export default {
             <div class="ev-vis"><span id="ev-seg"></span></div>
             <span id="ev-cat"></span>
             <span id="ev-mode"></span>
-            <button class="ev-tbtn" id="ev-more" type="button" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>More filters</span><span class="ev-more-dot" id="ev-more-dot" hidden></span><span class="material-symbols-rounded ev-tbtn-caret" aria-hidden="true">expand_more</span></button>
-            <button class="ev-tbtn ev-tbtn-refresh" id="ev-refresh" type="button"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>
+            <button class="ev-tbtn" id="ev-more" type="button" aria-label="Filters and display options" aria-expanded="false" aria-controls="ev-morefilters"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>More filters</span><span class="ev-more-dot" id="ev-more-dot" hidden></span><span class="material-symbols-rounded ev-tbtn-caret" aria-hidden="true">expand_more</span></button>
+            <button class="ev-tbtn ev-tbtn-refresh" id="ev-refresh" type="button" aria-label="Refresh events"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>
             ${isAdmin ? `<button class="ev-tbtn" id="ev-clear" type="button" title="Delete all events from the archive"><span class="material-symbols-rounded" aria-hidden="true">delete_sweep</span><span>Clear</span></button>` : ``}
           </div>
           <div class="ev-morefilters" id="ev-morefilters" hidden>

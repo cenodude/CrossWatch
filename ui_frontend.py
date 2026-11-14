@@ -1102,6 +1102,7 @@ __CW_NAV_PROFILE_MENU__
               <button id="det-copy" class="ghost det-tool-icon" type="button" title="Copy current output" aria-label="Copy current output"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span></button>
               <button id="det-clear" class="ghost det-tool-icon" type="button" title="Clear current output" aria-label="Clear current output"><span class="material-symbols-rounded" aria-hidden="true">delete</span></button>
               <button id="det-follow" class="ghost det-follow" type="button" title="Toggle auto-follow" aria-pressed="true"><span class="material-symbols-rounded det-follow-icon" aria-hidden="true">podcasts</span><span>Follow</span><span class="material-symbols-rounded det-follow-caret" aria-hidden="true">expand_more</span></button>
+              <button id="det-more" class="ghost det-tool-icon" type="button" aria-label="Log actions" aria-haspopup="menu"><span class="material-symbols-rounded" aria-hidden="true">more_horiz</span></button>
             </div>
           </div>
           <div class="det-panels">
@@ -1165,12 +1166,12 @@ __CW_NAV_PROFILE_MENU__
 
     <div class="stat-tiles" id="stat-providers"></div>
 
-    <div class="stat-block" id="recent-activity-block">
+    <div class="stat-block cw-recent-feed" id="recent-activity-block">
       <div class="stat-block-header"><span class="pill plain">Recent Scrobble</span><button id="activity-view-all" class="ghost refresh-insights" type="button">View all</button></div>
       <div id="recent-activity" class="history-list"></div>
     </div>
 
-    <div class="stat-block">
+    <div class="stat-block cw-recent-feed">
       <div class="stat-block-header"><span class="pill plain">Recent syncs</span><button class="ghost refresh-insights material-symbols-rounded" onclick="refreshInsights()" title="Refresh" aria-label="Refresh recent syncs">refresh</button></div>
       <div id="sync-history" class="history-list"></div>
     </div>
@@ -2866,8 +2867,8 @@ def get_profile_html(user: dict | None = None) -> str:
 {watchlist_tab}
     <button id="profile-tab-history" type="button" data-profile-tab="history"><span class="material-symbols-rounded" aria-hidden="true">history</span><span data-tab-label>History</span></button>
     <button id="profile-tab-ratings" type="button" data-profile-tab="ratings"><span class="material-symbols-rounded" aria-hidden="true">star</span><span data-tab-label>Ratings</span></button>
-    <button id="profile-tab-collection" type="button" data-profile-tab="collection"><span class="material-symbols-rounded" aria-hidden="true">video_library</span><span data-tab-label>Collections</span></button>
 {playback_tab}
+    <button id="profile-tab-collection" type="button" data-profile-tab="collection"><span class="material-symbols-rounded" aria-hidden="true">video_library</span><span data-tab-label>Collection</span></button>
     <button id="profile-tab-account" class="cw-profile-tab-settings" type="button" data-profile-tab="account"><span class="material-symbols-rounded" aria-hidden="true">settings</span><span>Settings</span></button>
   </div>
   <section id="profile-panel-overview" class="cw-profile-panel active">

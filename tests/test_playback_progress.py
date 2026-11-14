@@ -422,6 +422,67 @@ def test_scoped_live_stream_only_updates_matching_profile():
     assert items[1]["live_instance_id"] == "P01"
 
 
+
+def test_live_route_groups_stale_destination_progress_without_overwriting_it():
+    items = [
+        _record(progress_percent=75),
+        _record(provider="crosswatch", instance_id="P01", remote_id="cw-1", progress_percent=53),
+        _record(provider="crosswatch", instance_id="P02", remote_id="cw-2", progress_percent=53),
+        _record(provider="trakt", remote_id="trakt-1", progress_percent=30),
+        _record(provider="simkl", remote_id="simkl-1", canonical_key="tmdb:456", ids={"tmdb":"456"}, title="Another movie"),
+    ]
+    stream = {
+        "source":"plex", "provider_instance":"default", "session_key":"session-1",
+        "state":"playing", "media_type":"movie", "title":"Pressure", "year":2026,
+        "ids":{"tmdb":"123"}, "progress":76, "duration_ms":6000000, "updated":1_750_000_000,
+        "routes":[
+            {"destination":"crosswatch", "destination_instance":"P01"},
+            {"destination":"simkl", "destination_instance":"default"},
+        ],
+    }
+
+    _overlay_live_streams(items, [stream])
+    rows = _group_records(items)
+
+    assert len(rows) == 4
+    combined = next(row for row in rows if row["is_combined"])
+    assert combined["provider_count"] == 2
+    assert combined["live_progress_percent"] == 76
+    assert combined["live_remaining_seconds"] == 1440
+    assert {row["provider"]:row["progress_percent"] for row in combined["records"]} == {"plex":75, "crosswatch":53}
+    assert all("live_state" not in item for item in items[2:])
+
+
+def test_live_routes_keep_different_sessions_and_episodes_separate():
+    items = [
+        _record(instance_id=instance, provider=provider, remote_id=f"{provider}-{instance}", progress_percent=progress)
+        for instance in ("default", "P01")
+        for provider, progress in (("plex",75),("crosswatch",53))
+    ]
+    streams = [
+        {"source":"plex", "provider_instance":instance, "session_key":instance, "state":"playing",
+         "media_type":"movie", "title":"Pressure", "year":2026, "ids":{"tmdb":"123"},
+         "progress":progress, "updated":1_750_000_000,
+         "routes":[{"destination":"crosswatch", "destination_instance":instance}]}
+        for instance, progress in (("default",76),("P01",40))
+    ]
+    _overlay_live_streams(items, streams)
+    rows = _group_records(items)
+    assert len(rows) == 2
+    assert {row["live_progress_percent"] for row in rows} == {76,40}
+    assert all(len({record["instance_id"] for record in row["records"]}) == 1 for row in rows)
+
+    episode = _record(provider="crosswatch", media_type="episode", canonical_key="tmdb:123#s01e02", season=1, episode=2)
+    stream = {**streams[0], "media_type":"episode", "season":1, "episode":1, "ids":{"tmdb_show":"123"}}
+    _overlay_live_streams([episode], [stream])
+    assert "live_state" not in episode
+
+
+def test_unrelated_saved_progress_still_stays_separate():
+    rows = _group_records([_record(progress_percent=75), _record(provider="crosswatch", progress_percent=53)])
+    assert len(rows) == 2
+    assert all(not row["is_combined"] for row in rows)
+
 def test_empty_provider_profile_does_not_inherit_default_identity():
     cfg = {
         "plex": {

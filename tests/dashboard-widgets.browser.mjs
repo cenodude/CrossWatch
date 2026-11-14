@@ -12,7 +12,7 @@ const profileHTML=execFileSync('python',['-c',"import ui_frontend; print(ui_fron
 const mainSource=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
 const mainHTML=mainSource.slice(mainSource.indexOf('<!doctype html>'),mainSource.indexOf('</html>',mainSource.indexOf('<!doctype html>'))+7);
 
-for(const [profile,width] of [[true,1440],[true,390],[false,1440]]) test(`${profile?'Overview':'Main'} shared widgets at ${width}px`,async t=>{
+for(const [profile,width] of [[true,1440],[true,390],[false,1440],[false,390]]) test(`${profile?'Overview':'Main'} shared widgets at ${width}px`,async t=>{
   const browser=await chromium.launch({headless:true});
   t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width,height:1000},hasTouch:width<760});
@@ -63,6 +63,18 @@ for(const [profile,width] of [[true,1440],[true,390],[false,1440]]) test(`${prof
   });
   await page.addScriptTag({url:'/assets/helpers/provider-meta.js'});
   await page.addScriptTag({url:'/assets/js/dashboard-widgets.js'});
+  if (!profile && width < 760) {
+    await page.evaluate(()=>CW.DashboardWidgets.refresh({force:true}));
+    assert.equal(await page.locator('#dashboard-widgets-card').isVisible(),false);
+    assert.equal(queries.filter(q=>q.path==='/api/dashboard/widgets').length,0);
+    await page.setViewportSize({width:1440,height:1000});
+    await page.locator('#recent-history-list [data-cw-widget-item]').first().waitFor();
+    assert.equal(await page.locator('#dashboard-widgets-card').isVisible(),true);
+    await page.setViewportSize({width,height:1000});
+    assert.equal(await page.locator('#dashboard-widgets-card').isVisible(),false);
+    assert.deepEqual(errors,[]);
+    return;
+  }
   const first=page.locator('#recent-history-list [data-cw-widget-item]').first();
   await first.waitFor();
   if(profile) {

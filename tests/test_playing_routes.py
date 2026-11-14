@@ -113,3 +113,63 @@ def test_webhook_sessions_remain_separate_in_currently_watching(tmp_path, monkey
         assert list(currently_watching.load_state()["streams"]) == ["plextrakt:two"]
     finally:
         close_conn()
+
+
+@pytest.mark.parametrize("source_allowed", [True, False])
+def test_playback_progress_uses_observed_routes_with_profile_scope(archive, source_allowed):
+    from services.playback_progress.service import _group_records, _overlay_live_streams
+
+    for sink in ("crosswatch", "trakt"):
+        playback_recorder.record_playback(event(), route(sink))
+    items = [
+        {"provider":provider, "instance_id":"default", "remote_id":provider,
+         "canonical_key":"tmdb:253372#s02e01", "media_type":"episode", "title":"The Institute",
+         "season":2, "episode":1, "ids":{"tmdb_show":"253372"}, "progress_percent":progress}
+        for provider, progress in (("plex",75),("crosswatch",53),("trakt",53))
+    ]
+    user_filter = {"CROSSWATCH":["default"]}
+    if source_allowed:
+        user_filter["PLEX"] = ["default"]
+    _overlay_live_streams(items, [stream(state="playing", progress=76, updated=int(time.time()))], cfg={}, user_filter=user_filter)
+    assert "live_state" not in items[2]
+    if source_allowed:
+        combined = next(row for row in _group_records(items) if row["is_combined"])
+        assert {row["provider"] for row in combined["records"]} == {"plex", "crosswatch"}
+        assert combined["live_progress_percent"] == 76
+        assert {route["destination"] for route in combined["live_routes"]} == {"crosswatch"}
+    else:
+        assert all("live_state" not in item for item in items)
+
+
+def test_progress_does_not_infer_live_destinations_from_configuration(archive):
+    from services.playback_progress.service import _group_records, _overlay_live_streams
+
+    items = [
+        {"provider":provider, "instance_id":"default", "remote_id":provider,
+         "canonical_key":"tmdb:253372#s02e01", "media_type":"episode", "title":"The Institute",
+         "season":2, "episode":1, "progress_percent":progress}
+        for provider, progress in (("plex",75),("crosswatch",53))
+    ]
+    _overlay_live_streams(items, [stream(state="playing", progress=76)], cfg=route("crosswatch"))
+    assert len(_group_records(items)) == 2
+    assert "live_state" not in items[1]
+
+
+def test_progress_exposes_observed_destinations_without_saved_resume_records(archive):
+    from services.playback_progress.service import _group_records, _overlay_live_streams
+
+    for sink in ("crosswatch", "trakt", "simkl"):
+        playback_recorder.record_playback(event(), route(sink))
+    items = [{"provider":"plex", "instance_id":"default", "remote_id":"plex-1",
+              "canonical_key":"tmdb:253372#s02e01", "media_type":"episode", "title":"The Institute",
+              "season":2, "episode":1, "ids":{"tmdb_show":"253372"}, "progress_percent":75,
+              "can_update_progress":True}]
+    _overlay_live_streams(items, [stream(state="playing", progress=76)],
+                          cfg={"trakt":{"label":"My Trakt"}, "simkl":{"label":"My SIMKL"}})
+    row = _group_records(items)[0]
+    assert {r["destination"] for r in row["live_routes"]} == {"crosswatch", "trakt", "simkl"}
+    assert {r["destination_label"] for r in row["live_routes"]} == {"Default", "My Trakt", "My SIMKL"}
+    assert row["provider_count"] == 1
+    assert [r["provider"] for r in row["records"]] == ["plex"]
+    assert row["can_update_progress"] is True
+    assert row["progress_percent"] == 75

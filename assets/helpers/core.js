@@ -785,8 +785,6 @@
     if (manualRefreshStatus._inFlight) return;
     manualRefreshStatus._inFlight = true;
 
-    const btn = byId("btn-status-refresh");
-    btn?.classList.add("spin");
     setRefreshBusy(true);
 
     try {
@@ -810,7 +808,6 @@
       console.warn("Manual status refresh failed", e);
     } finally {
       setRefreshBusy(false);
-      btn?.classList.remove("spin");
       manualRefreshStatus._inFlight = false;
     }
   }
@@ -2055,10 +2052,15 @@
   }
 
   function setRefreshBusy(busy) {
-    const btn = byId("btn-status-refresh");
-    if (!btn) return;
-    btn.disabled = !!busy;
-    btn.classList.toggle("loading", !!busy);
+    document.querySelectorAll('#btn-status-refresh, .cw-hub-refresh-proxy').forEach(btn => {
+      btn.disabled = !!busy;
+      btn.classList.toggle("loading", !!busy);
+      btn.setAttribute("aria-busy", String(!!busy));
+      btn.setAttribute("aria-label", busy ? "Checking providers" : "Refresh status");
+      btn.title = busy ? "Checking providers…" : "Re-check status";
+    });
+    byId("conn-badges")?.setAttribute("aria-busy", String(!!busy));
+    document.querySelectorAll('.cw-hub-refresh-status').forEach(label => { label.hidden = !busy; });
   }
 
   window.openAbout = window.openAbout || (async (props = {}) => {

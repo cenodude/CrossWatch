@@ -661,6 +661,25 @@ function initDetailsTabs() {
   tabWatch.addEventListener("click", () => { if (!_detailsManagedUser()) setDetailsTab("watcher"); });
   tabDebug.addEventListener("click", () => { if (_canUseDebugDetailsTab()) setDetailsTab("debug"); });
 
+  document.getElementById("det-more")?.addEventListener("click", event => {
+    const entries = [
+      ["det-open-logs", "open_in_full", "Open full logs"],
+      ["det-copy", "content_copy", "Copy output"],
+      ["det-clear", "delete", "Clear output"],
+      ["det-ai", "auto_awesome", "Analyze with assistant"],
+    ].flatMap(([id, icon, label]) => {
+      const button = document.getElementById(id);
+      if (id === "det-ai" && document.documentElement.dataset.cwAssistant !== "on") return [];
+      return button && !button.hidden && !button.disabled && !button.classList.contains("hidden")
+        ? [{icon, label, run:() => button.click()}] : [];
+    });
+    entries.push({icon:"close", label:"Close details", run:() => {
+      toggleDetails();
+      document.getElementById("btn-details")?.focus();
+    }});
+    window.CW?.CardActions?.open(event.currentTarget, entries, {title:"Log actions"});
+  });
+
   const btnCopy = document.getElementById("det-copy");
   if (btnCopy) {
     btnCopy.addEventListener("click", () => {
@@ -1249,6 +1268,7 @@ function toggleDetails() {
 
   d.classList.toggle("hidden", !isOpen);
   layout?.classList.toggle("details-open", isOpen);
+  document.getElementById("btn-details")?.setAttribute("aria-expanded", String(isOpen));
   if (isOpen) {
     window._detailsOpenRAF = requestAnimationFrame(() => {
       window._detailsOpenRAF = null;

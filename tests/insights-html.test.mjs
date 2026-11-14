@@ -16,6 +16,7 @@ test('history renders markup in feature labels and results as text', () => {
     $: selector => selector === '.list' ? list : wrap,
     window:{CW:{}}, _feature:payload,
     recentSyncsDisplay:()=>({mode:'count',limit:10}),
+    rowTs:()=>0,
     totalsFor:()=>({sum:0,a:0,r:0,u:0}),
     fmtWhen:()=>payload, fmtDur:()=>payload, featureLabel:()=>payload,
   };
@@ -25,6 +26,6 @@ test('history renders markup in feature labels and results as text', () => {
   vm.runInContext(esc + '\n' + render + '\nglobalThis.render = renderHistoryTabs;',context);
   context.render([{result:payload}]);
   assert.ok(!list.innerHTML.includes('<img'));
-  assert.equal((list.innerHTML.match(/&lt;img/g)||[]).length,4);
+  assert.equal((list.innerHTML.match(/&lt;img/g)||[]).length,6);
   assert.match(list.innerHTML,/&quot;alert\(1\)&quot;/);
 });

@@ -214,10 +214,13 @@ const Analyzer = {
         <div class="an-results-heading"><div><h2 id="an-view-title"></h2><p id="an-view-description"></p></div><span id="an-checked" class="an-muted"></span></div>
         <div class="an-toolbar">
           <label class="an-search">${icon("search")}<input id="an-search" type="search" maxlength="300" aria-label="Search Analyzer results" placeholder="Search titles, IDs, providers or reasons"></label>
+          <button type="button" class="an-button an-mobile-filters" id="an-mobile-filters" aria-label="Filters and sorting" aria-expanded="false" aria-controls="an-filter-options">${icon("tune")}</button>
+          <div id="an-filter-options" class="an-filter-options">
           <label class="an-filter">Feature<select id="an-feature"><option value="">All features</option>${FEATURES.map(f => `<option value="${f}">${human(f)}</option>`).join("")}</select></label>
           <label class="an-filter" id="an-severity-wrap" hidden>Severity<select id="an-severity"><option value="">All severities</option><option value="error">Errors</option><option value="warn">Warnings</option><option value="info">Information</option></select></label>
           <label class="an-filter">Sort<select id="an-sort"><option value="title">Title A–Z</option><option value="title-desc">Title Z–A</option><option value="provider">Provider</option><option value="feature">Feature</option></select></label>
           <button type="button" class="an-button an-clear" id="an-clear" hidden>Clear filters</button>
+          </div>
         </div>
         <div class="an-list-meta"><span id="an-result-count" role="status" aria-live="polite"></span><label>Per page<select id="an-page-size" aria-label="Items per page"><option>25</option><option selected>50</option><option>100</option><option>250</option></select></label></div>
         <div id="an-workspace" class="an-workspace">
@@ -227,6 +230,10 @@ const Analyzer = {
       </section>`;
     const $ = selector => root.querySelector(selector);
     const lifetime = new AbortController();
+    $("#an-mobile-filters").addEventListener("click", event => {
+      const button = event.currentTarget;
+      button.setAttribute("aria-expanded", String(button.getAttribute("aria-expanded") !== "true"));
+    });
     let analysisController, systemController, pageController, detailController, searchTimer;
     let pairs = [], problems = [], pending = [], system = [], exclusions = [], snapshotGaps = [];
     let PROFILE_LABELS = {}, activity = {}, status = {};

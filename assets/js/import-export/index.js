@@ -33,6 +33,7 @@ const template = `
   <a class="ie-back" href="#main">${icon("arrow_back")}Main</a>
   <header class="ie-header"><div><span class="ie-eyebrow">YOUR DATA</span><h1>Import and Export</h1></div></header>
   <nav class="ie-tabs" aria-label="Transfer direction"><button type="button" data-mode="import" aria-pressed="true">${icon("upload_file")}Import a file</button><button type="button" data-mode="export" aria-pressed="false">${icon("download")}Export your data</button><button type="button" data-mode="recovery" aria-pressed="false">${icon("history")}Recover Plex history</button></nav>
+  <label class="ie-mobile-view ie-field"><span>Action</span><select id="ie-mobile-mode" data-cw-native-select="true"><option value="import">Import a file</option><option value="export">Export your data</option><option value="recovery">Recover Plex history</option></select></label>
   <div id="ie-notice" class="ie-notice" role="status" hidden></div>
   <div id="ie-progress" class="ie-progress" role="status" hidden><div class="ie-progress-copy"><strong id="ie-activity"></strong><span id="ie-elapsed"></span></div><div class="ie-progress-track" role="progressbar" aria-label="Transfer in progress"><span></span></div><p id="ie-progress-note"></p></div>
   <div id="ie-recovery" hidden></div>
@@ -53,13 +54,14 @@ const template = `
       <div class="ie-fields ie-export-fields">${select("ie-provider", "Provider")}${select("ie-instance", "Instance")}${select("ie-feature", "Feature", ["watchlist", "history", "ratings", "combined"].map(value => option(value, value === "combined" ? "History & ratings" : human(value))).join(""))}${select("ie-format", "Export format")}</div>
       <div class="ie-export-extras"><label id="ie-date-wrap"><input id="ie-date" type="checkbox" checked>Include watched dates</label><label id="ie-rewatch-wrap"><input id="ie-rewatch" type="checkbox" checked>Keep repeat watches</label></div>
     </section>
-    <section class="ie-panel ie-inclusions"><div id="ie-features-wrap"><h3>Include features</h3>${checks("features", {history:"History",ratings:"Ratings",watchlist:"Watchlist"})}</div><div><h3>Media types</h3>${checks("media", media)}</div></section>
+    <button type="button" id="ie-options" class="ie-button ie-mobile-options" aria-expanded="false" aria-controls="ie-inclusions">${icon("tune")}Features and media types</button>
+    <section id="ie-inclusions" class="ie-panel ie-inclusions"><div id="ie-features-wrap"><h3>Include features</h3>${checks("features", {history:"History",ratings:"Ratings",watchlist:"Watchlist"})}</div><div><h3>Media types</h3>${checks("media", media)}</div></section>
     <section id="ie-review" hidden>
       <div class="ie-review-heading"><div><span class="ie-eyebrow">REVIEW YOUR DATA</span><h2 id="ie-review-title">File preview</h2></div><button type="button" class="ie-button" id="ie-refresh">${icon("refresh")}Refresh preview</button></div>
       <div id="ie-metrics" class="ie-metrics"></div>
       <div id="ie-warnings" class="ie-warning" hidden></div>
       <div class="ie-filters"><label class="ie-search">${icon("search")}<input id="ie-search" type="search" maxlength="1000" placeholder="Search titles, years or IDs" aria-label="Search preview"></label>${select("ie-status", "Result", Object.entries(statuses).map(([value,label]) => option(value,label)).join(""))}</div>
-      <div class="ie-list-bar"><span id="ie-range"></span><div class="ie-list-actions"><button type="button" class="ie-link" id="ie-select-all">Select all matching</button><button type="button" class="ie-link" id="ie-select-none">Clear selection</button><label id="ie-existing-wrap"><input type="checkbox" id="ie-existing">Include existing items</label>${select("ie-page-size", "Per page", [25,50,100,200].map(value => option(value,value)).join(""))}</div></div>
+      <div class="ie-list-bar"><span id="ie-range"></span><button type="button" id="ie-selection-options" class="ie-button ie-mobile-options" aria-expanded="false" aria-controls="ie-selection-actions">${icon("checklist")}Selection</button><div id="ie-selection-actions" class="ie-list-actions"><button type="button" class="ie-link" id="ie-select-all">Select all matching</button><button type="button" class="ie-link" id="ie-select-none">Clear selection</button><label id="ie-existing-wrap"><input type="checkbox" id="ie-existing">Include existing items</label>${select("ie-page-size", "Per page", [25,50,100,200].map(value => option(value,value)).join(""))}</div></div>
       <div class="ie-table-wrap"><table><thead><tr><th class="ie-check-cell"><span class="ie-sr">Selected</span></th><th>Item</th><th id="ie-column-feature">Feature</th><th>IDs</th><th id="ie-column-status">Result</th></tr></thead><tbody id="ie-rows"></tbody></table></div>
       <nav id="ie-pagination" class="ie-pagination" aria-label="Preview pages"></nav>
       <div class="ie-apply"><div><strong id="ie-selected"></strong><p id="ie-apply-note"></p></div><button type="button" id="ie-apply" class="ie-button ie-primary" disabled></button></div>
@@ -125,6 +127,7 @@ const ImportExport = {
     $("#ie-page-size").value = "50";
     function refreshSelects() {
       $$("select").forEach(input => {
+        if (input.id === "ie-mobile-mode") return;
         const wrap = window.CW?.IconSelect?.enhance(input, {className:"ie-select",menuClassName:"ie-select-menu",sortAlphabetically:["ie-source","ie-target","ie-provider","ie-instance"].includes(input.id),sortFirstValues:["all",NEW_TRACKER]});
         const label = input.closest("label").querySelector("span");
         label.id = `${input.id}-label`;
@@ -156,6 +159,7 @@ const ImportExport = {
     function progress(title, note) {
       window.CW?.IconSelect?.closeAll();
       busy = true;
+      $("#ie-mobile-mode").disabled = true;
       $("#ie-controls").disabled = true;
       $$("[data-mode]").forEach(button => button.disabled = true);
       $("#ie-progress").hidden = false;
@@ -173,6 +177,7 @@ const ImportExport = {
     function finishProgress() {
       clearInterval(progressTimer);
       busy = false;
+      $("#ie-mobile-mode").disabled = false;
       $("#ie-controls").disabled = false;
       $$("[data-mode]").forEach(button => button.disabled = false);
       $("#ie-progress").hidden = true;
@@ -323,6 +328,7 @@ const ImportExport = {
       cancelRead();
       if (isImport()) importMedia=checked("media"); else if (mode === "export") exportMedia=checked("media");
       mode=next; data=null; rows=[]; resetSelection(); notice();
+      $("#ie-mobile-mode").value = mode;
       $("#ie-controls").hidden=mode === "recovery";
       $("#ie-recovery").hidden=mode !== "recovery";
       if (mode === "recovery") {
@@ -375,6 +381,10 @@ const ImportExport = {
     on(host,"click",event=> {
       const button=event.target.closest("button");
       if (!button || button.disabled || busy) return;
+      if (["ie-options", "ie-selection-options"].includes(button.id)) {
+        button.setAttribute("aria-expanded", String(button.getAttribute("aria-expanded") !== "true"));
+        return;
+      }
       if (button.dataset.mode) setMode(button.dataset.mode);
       else if (button.dataset.page != null) loadPage(Number(button.dataset.page));
       else if (button.id==="ie-browse") $("#ie-file").click();
@@ -385,6 +395,7 @@ const ImportExport = {
     });
     on(host,"change",event=> {
       const input=event.target;
+      if (input.id === "ie-mobile-mode") { setMode(input.value); return; }
       if (busy || mode === "recovery" || input.id === "ie-search" || input.closest("#ie-recovery")) return;
       if (input.dataset.row != null) {
         if (loading) return;

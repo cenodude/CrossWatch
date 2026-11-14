@@ -302,6 +302,8 @@ for(const theme of ["original","flat-dark","flat-light"]) {
           await page.waitForFunction(()=>!document.querySelector('.trk-list tbody tr'));
           assert.equal(await page.locator('.trk-tabs [aria-selected="true"]').getAttribute('data-trk-view'),'watchlist');
         } else if(kind==="events") {
+          assert.equal(await page.locator('#ev-cat').isVisible(),false);
+          assert.equal(await page.locator('#ev-mode').isVisible(),false);
           const time=page.locator('.ev-row .ev-time').first();
           assert.equal(await time.isVisible(),true);
           assert.ok((await time.textContent()).trim().length>3);
@@ -311,11 +313,14 @@ for(const theme of ["original","flat-dark","flat-light"]) {
           assert.equal(await page.locator('#ev-prev-top').isDisabled(),true);
           await page.locator('#ev-more').tap();
           assert.equal(await page.locator('#ev-morefilters').isVisible(),true);
+          assert.equal(await page.locator('#ev-cat').isVisible(),false);
+          assert.equal(await page.locator('#ev-mode').isVisible(),true);
           await noOverflow(page);
           await page.locator('#ev-more').tap();
           await page.locator('.ev-row .ev-line').nth(1).tap();
           await page.locator('#ev-detail-back').waitFor();
           assert.equal(await page.locator('.ev-col-list').isVisible(),false);
+          assert.equal(await page.locator('.ev-toolbar').isVisible(),false);
           await noOverflow(page);
           await screenshot(page,`${theme}-${kind}-${width}-detail`);
           await page.locator('#ev-detail-back').tap();
@@ -331,6 +336,12 @@ for(const theme of ["original","flat-dark","flat-light"]) {
           await page.locator('#ev-refresh').tap();
           await page.waitForFunction(()=>!document.querySelector('.ev-row'));
         } else {
+          assert.equal(await page.locator('#an-feature').isVisible(),false);
+          await page.locator('#an-mobile-filters').tap();
+          assert.equal(await page.locator('#an-feature').isVisible(),true);
+          await page.locator('#an-feature').selectOption('history');
+          await page.locator('#an-mobile-filters').tap();
+          assert.equal(await page.locator('#an-feature').inputValue(),'history');
           assert.equal(await page.locator('#an-mobile-view').isVisible(),true);
           assert.equal(await page.locator('#an-detail').isVisible(),false);
           assert.equal(await page.locator('.an-tabs').isVisible(),false);
@@ -342,6 +353,7 @@ for(const theme of ["original","flat-dark","flat-light"]) {
           await row.tap();
           await page.locator('#an-detail').waitFor();
           assert.equal(await page.locator('.an-list-column').isVisible(),false);
+          assert.equal(await page.locator('.an-toolbar').isVisible(),false);
           assert.equal(await page.locator('#an-close-detail').isVisible(),true);
           await noOverflow(page);
           await screenshot(page,`${theme}-${kind}-${width}-detail`);
@@ -379,6 +391,8 @@ for(const theme of ["original","flat-dark","flat-light"]) {
         assert.equal(await page.locator('.trk-tabs [aria-selected="true"]').getAttribute('data-trk-view'),'collection');
       }
       if(kind==='analyzer') {
+        assert.equal(await page.locator('#an-mobile-filters').isVisible(),false);
+        assert.equal(await page.locator('#an-feature').isVisible(),true);
         assert.equal(await page.locator('#an-mobile-view').isVisible(),false);
         assert.equal(await page.locator('.an-tabs').isVisible(),true);
         assert.equal(await page.locator('#an-detail').isVisible(),true);

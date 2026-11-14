@@ -1449,7 +1449,7 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
         sso = (
             '<div class="cw-sso"><div class="cw-sso-sep"><span>or continue with</span></div>'
             f'<div class="cw-sso-row">{sso}</div>'
-            '<p class="cw-sso-copy">Use your linked account, then return here to finish sign-in.</p></div>'
+            '</div>'
         )
     return f"""<!doctype html>
 <html lang="en"><head>
@@ -1463,7 +1463,6 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
     <section class="cw-hero" aria-hidden="true">
       <div class="cw-mark"><img src="/assets/img/CROSSWATCH.svg" alt=""><span>CrossWatch</span></div>
       <h1>Sign in to your sync hub</h1>
-      <p>CrossWatch keeps your media world synced, simple and self hosted.</p>
       <div class="cw-metrics">
         <a class="cw-help-link" href="https://wiki.crosswatch.app/" target="_blank" rel="noopener noreferrer">
           <span class="cw-help-copy">

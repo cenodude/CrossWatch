@@ -214,7 +214,7 @@
     const destination = dx => {
       const links = [...nav.querySelectorAll('a[data-mobile-route]')];
       const index = links.findIndex(link => link.dataset.mobileRoute === currentRoute());
-      return index < 0 ? null : links[index + (dx > 0 ? 1 : -1)];
+      return index < 0 || links.length < 2 ? null : links[(index + (dx < 0 ? 1 : -1) + links.length) % links.length];
     };
     const reset = () => { gesture = null; };
     document.addEventListener('touchstart', event => {
