@@ -18,6 +18,17 @@ from services import backup_cloud as cloud, backup_destinations as destinations,
 TOKEN = {"access_token": "fake-test-access", "refresh_token": "fake-test-refresh", "token_type": "Bearer", "expiry": "2030-01-01T00:00:00Z"}
 
 
+@pytest.mark.parametrize("identifier", ["../settings", "a" * 31, "a" * 33, "a" * 31 + "/", "a" * 31 + "\\", "A" * 32])
+def test_cloud_identifiers_reject_paths_and_noncanonical_ids(identifier):
+    with pytest.raises(ValueError, match="saved cloud connection"):
+        cloud._identifier(identifier)
+
+
+def test_cloud_identifier_preserves_existing_connection_ids():
+    identifier = "0123456789abcdef0123456789abcdef"
+    assert cloud._identifier(identifier) == identifier
+
+
 @pytest.fixture
 def installation(tmp_path, monkeypatch):
     monkeypatch.setattr(backups, "CONFIG", tmp_path)

@@ -56,9 +56,9 @@ def inspect(path: str, password: str = "") -> dict[str, Any]:
         try:
             _check_config_key(archive, manifest)
             validation["application_ready"] = True
-        except ValueError as exc:
+        except ValueError:
             validation["application_ready"] = False
-            validation["application_error"] = str(exc)
+            validation["application_error"] = "The application configuration could not be unlocked. Supply the original configuration key before restoring it."
         from cw_platform.tracker_store import SCHEMA_VERSION
 
         for row in manifest["files"]:

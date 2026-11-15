@@ -170,7 +170,9 @@ For Plex, you can import history for removed items into your CW Tracker.
 
 ## Backup and recovery
 
-Use **Backup & Restore** to back up CrossWatch, selected CW trackers and saved captures. Save locally, with an optional copy to OneDrive, Dropbox, Nextcloud/WebDAV or a mounted folder. Schedule automatic backups, follow their progress and restore saved data from the same dialog.
+Use **Backup & Restore** to back up CrossWatch (including mappings, blocks and custom anime rules), selected CW trackers and saved captures. Save locally, with an optional copy to OneDrive, Dropbox, Nextcloud/WebDAV or a mounted folder. Schedule automatic backups, follow their progress and restore saved data from the same dialog.
+
+Mount backup storage at `/backups`, or set `CW_BACKUP_ROOT` to another absolute path inside the container.
 
 ## Running without the web UI
 

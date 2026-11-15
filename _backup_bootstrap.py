@@ -16,6 +16,16 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 
+def application_database_target(name: str) -> Path | None:
+    configured = (os.getenv("CROSSWATCH_DB") or "").strip()
+    if not configured:
+        return None
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        if name == ".cw_databases/crosswatch.sqlite3" + suffix:
+            return Path(configured + suffix).resolve()
+    return None
+
+
 def _encrypt_safety(base: Path, safety: Path) -> Path:
     settings = base / ".cw_backups" / "settings.json"
     if not settings.exists():
@@ -59,6 +69,9 @@ def apply_pending(config: Path | None = None) -> None:
         parts = PurePosixPath(name).parts
         if not parts or PurePosixPath(name).is_absolute() or ".." in parts or "\\" in name or ":" in name or (name not in allowed_files and parts[0] not in allowed_dirs):
             raise ValueError("Invalid restore target")
+        database = application_database_target(name)
+        if database is not None:
+            return database
         path = base.joinpath(*parts).resolve()
         if not path.is_relative_to(base):
             raise ValueError("Restore target is outside the config directory")

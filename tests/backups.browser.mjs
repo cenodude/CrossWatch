@@ -44,6 +44,7 @@ async function fixture(t, theme = '', width = 1100, populated = false, overrides
 
 test('backs up only selected contents and tracker instances',async t=>{
   const {page,writes}=await fixture(t);
+  await page.getByText('Settings, connections, sync state, mappings, blocks and custom anime rules.',{exact:true}).waitFor();
   await page.getByLabel('CrossWatch application',{exact:true}).uncheck();
   await page.getByLabel('Saved captures',{exact:true}).uncheck();
   await page.getByLabel('All trackers',{exact:true}).uncheck();
@@ -107,6 +108,14 @@ test('unusable rclone is explained in destination settings',async t=>{
   await page.getByRole('button',{name:'Connection settings'}).click();
   await page.getByLabel('Additional copy',{exact:true}).selectOption('onedrive');
   await page.getByText('rclone could not start. Check its installation.',{exact:true}).waitFor();
+});
+
+for(const mountedRoot of ['/backups','/mnt/cw-backups'])test(`mounted folder shows its allowed root ${mountedRoot}`,async t=>{
+  const {page}=await fixture(t,'flat-dark',1100,false,{mounted_root:mountedRoot});
+  await page.getByRole('button',{name:'Connection settings'}).click();
+  await page.getByLabel('Additional copy',{exact:true}).selectOption('folder');
+  assert.equal(await page.getByLabel('Mounted folder inside CW').getAttribute('placeholder'),mountedRoot);
+  await page.getByText(`Use ${mountedRoot} or a folder inside it. Mount it into the container, outside /config.`,{exact:true}).waitFor();
 });
 
 for(const theme of ['', 'flat-dark', 'flat-light'])for(const width of [1100,390]) {

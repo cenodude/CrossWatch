@@ -51,10 +51,42 @@ def runtime_status() -> dict[str, Any]:
 
 
 def safe_remote_path(value: str) -> str:
+    if len(value) > 4096:
+        raise ValueError("The backup folder path is too long.")
     path = PurePosixPath(value)
     if not value or path.is_absolute() or any(p in {".", ".."} for p in value.split("/")) or any(c in value for c in "\\:\r\n\x00"):
         raise ValueError("Use a relative backup folder without parent paths.")
     return path.as_posix()
+
+
+def mounted_root() -> Path:
+    configured = os.getenv("CW_BACKUP_ROOT")
+    root = Path(configured) if configured else Path("/backups").absolute()
+    if not root.is_absolute():
+        raise ValueError("CW_BACKUP_ROOT must be an absolute directory path.")
+    return root.resolve()
+
+
+def _contained_path(root: Path, value: str) -> Path:
+    normalized = os.path.normcase(os.path.abspath(value))
+    boundary = os.path.normcase(str(root))
+    if normalized != boundary and not normalized.startswith(os.path.join(boundary, "")):
+        raise ValueError("Choose a folder inside the configured backup root.")
+    target = Path(normalized).resolve()
+    if not target.is_relative_to(root):
+        raise ValueError("The backup path points outside its allowed folder.")
+    return target
+
+
+def _mounted_folder(value: str, config_dir: Path) -> Path:
+    if not Path(value).is_absolute():
+        raise ValueError("Choose an absolute mounted folder inside the configured backup root.")
+    target = _contained_path(mounted_root(), value)
+    if target.is_relative_to(config_dir.resolve()):
+        raise ValueError("Choose a mounted folder outside the CW config directory.")
+    if not target.is_dir():
+        raise ValueError("The destination folder does not exist inside this container.")
+    return target
 
 
 def validate_destination(raw: dict[str, Any], config_dir: Path) -> dict[str, Any]:
@@ -68,12 +100,8 @@ def validate_destination(raw: dict[str, Any], config_dir: Path) -> dict[str, Any
         connection(ident, kind)
         return {"kind": kind, "connection": ident, "folder": safe_remote_path(str(raw.get("folder") or "CrossWatch"))}
     if kind == "folder":
-        target = Path(str(raw.get("path") or ""))
-        if not target.is_absolute() or target.resolve().is_relative_to(config_dir.resolve()):
-            raise ValueError("Choose an absolute mounted folder outside the CW config directory.")
-        if not target.is_dir():
-            raise ValueError("The destination folder does not exist inside this container.")
-        return {"kind": kind, "path": str(target.resolve())}
+        target = _mounted_folder(str(raw.get("path") or ""), config_dir)
+        return {"kind": kind, "path": str(target)}
     if kind != "webdav":
         raise ValueError("Choose OneDrive, Dropbox, Nextcloud / WebDAV or a mounted folder.")
     url = str(raw.get("url") or "").strip()
@@ -115,11 +143,10 @@ def _environment(destination: dict[str, Any]) -> dict[str, str]:
 def remote(destination: dict[str, Any], name: str = "") -> str:
     name = safe_remote_path(name) if name else ""
     if destination["kind"] == "folder":
-        root = Path(destination["path"]).resolve()
-        path = root.joinpath(*PurePosixPath(name).parts).resolve()
-        if not path.is_relative_to(root):
-            raise ValueError("Invalid destination path.")
-        return str(path)
+        from services.backups import CONFIG
+
+        root = _mounted_folder(str(destination["path"]), CONFIG)
+        return str(_contained_path(root, str(root.joinpath(*PurePosixPath(name).parts))))
     return "cw:" + destination["folder"].rstrip("/") + ("/" + name if name else "")
 
 

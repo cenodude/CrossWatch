@@ -89,7 +89,7 @@ def backup_configure(
     destination: Destination | None = typer.Option(None, "--destination", help="Choose the destination for encrypted copies."),
     connection: str = typer.Option("", "--connection", help="Connected account ID from cloud-connect."),
     folder: str = typer.Option("", "--folder", help="Relative backup folder on the cloud or WebDAV destination."),
-    mount: str = typer.Option("", "--mount", help="Absolute mounted folder path inside the CW container."),
+    mount: str = typer.Option("", "--mount", help="Absolute folder under /backups or the server's CW_BACKUP_ROOT."),
     server: str = typer.Option("", "--server", help="WebDAV server URL."),
     username: str = typer.Option("", "--username", help="WebDAV username."),
     app_password_file: Path | None = typer.Option(None, "--app-password-file", help="Read the WebDAV app password from a local file."),

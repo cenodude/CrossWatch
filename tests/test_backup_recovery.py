@@ -27,8 +27,10 @@ def installation(tmp_path, monkeypatch):
     monkeypatch.setattr(backups, "CONFIG", root)
     monkeypatch.setattr(config_base, "CONFIG", root)
     monkeypatch.setattr(manager, "start", lambda: None)
+    monkeypatch.setenv("CW_BACKUP_ROOT", str(tmp_path))
     monkeypatch.delenv("CW_CONFIG_KEY", raising=False)
     monkeypatch.delenv("CROSSWATCH_CONFIG_KEY", raising=False)
+    monkeypatch.delenv("CROSSWATCH_DB", raising=False)
     cfg = {"crosswatch": {"instances": {}}, "pairs": []}
     monkeypatch.setattr(config_base, "load_config", lambda: copy.deepcopy(cfg))
     monkeypatch.setattr(manager, "load_config", lambda: copy.deepcopy(cfg))
@@ -80,12 +82,15 @@ def test_crypto_does_not_remove_existing_destination(tmp_path):
     assert target.read_bytes() == b"keep me"
 
 
-def test_components_and_selected_external_tracker_are_independent(installation, tmp_path):
+def test_components_and_selected_external_tracker_are_independent(installation, tmp_path, monkeypatch):
     root, cfg = installation
     external = tmp_path / "external-tracker"
     cfg["crosswatch"]["instances"]["one"] = {"root_dir": str(external), "label": "My tracker"}
     seed_db(root / ".cw_provider" / "tracker.db", "default")
     seed_db(external / "tracker.db", "selected")
+    database = tmp_path / "database" / "custom.db"
+    seed_db(database, "application mappings")
+    monkeypatch.setenv("CROSSWATCH_DB", str(database))
     (root / "snapshots").mkdir()
     (root / "snapshots" / "capture.json").write_text("{}")
     result = backups.create_backup(components=["trackers", "captures"], trackers=["one"])
@@ -104,6 +109,76 @@ def test_failed_database_snapshot_never_falls_back_to_raw_copy(installation, mon
     with pytest.raises(ValueError, match="consistent database"):
         backups.create_backup(components=["application"])
     assert backups.list_backups() == []
+
+
+@pytest.mark.parametrize("password", ["", PASSWORD])
+@pytest.mark.parametrize("database_location", ["default", "external", "custom_name"])
+def test_application_restores_mapping_stores(installation, tmp_path, monkeypatch, password, database_location):
+    from cw_platform.anime_mapping import overrides
+    from cw_platform.local_db import db, manual_policy
+
+    root, _ = installation
+    if database_location != "default":
+        database = (tmp_path / "database" if database_location == "external" else root / ".cw_databases") / "custom.db"
+        monkeypatch.setenv("CROSSWATCH_DB", str(database))
+        seed_db(root / ".cw_databases" / "crosswatch.sqlite3", "unused")
+    monkeypatch.setattr(overrides, "CONFIG_BASE", lambda: root)
+    db.close_conn()
+    overrides.invalidate_cache()
+    try:
+        rules = {"version": 1, "providers": {"SIMKL": {"history": {
+            "adds": {"items": {"tmdb:77#show": {"type": "show", "title": "Saved correction", "ids": {"tmdb": "77"}}}},
+            "mappings": {"tmdb:77#show": {"original_key": "tmdb:5#show", "original": {"type": "show", "ids": {"tmdb": "5"}}}},
+            "blocks": ["tmdb:5#show", "tmdb:999#show"],
+        }}}}
+        manual_policy.save_policy(root, {**rules, "pairs": {"saved-pair": copy.deepcopy(rules)}})
+        expected_policy = manual_policy.load_policy(root)
+        assert expected_policy["providers"]["SIMKL"]["history"]["mappings"]
+        assert expected_policy["pairs"]["saved-pair"] == rules
+        for enabled in (True, False):
+            overrides.upsert_override({"media_type": "show", "title": "Custom anime rule", "match_provider": "tvdb", "match_id": "81472", "match_season": 2,
+                                       "target_namespace": "mal", "target_id": "999", "episode_from": 1, "episode_to": 35, "episode_start_at": 500, "enabled": enabled})
+        expected_anime = overrides.load_overrides()
+        assert [rule["enabled"] for rule in expected_anime] == [True, False]
+        source = backups.create_backup(components=["application"], password=password)
+        manifest = backups.validate_backup(source["path"], password)["manifest"]
+        members = {row["path"] for row in manifest["files"]}
+        assert ".cw_databases/crosswatch.sqlite3" in members
+        assert ".cw_state/anime_mapping_overrides.json" in members
+        assert not any("custom.db" in name or name.endswith(("-wal", "-shm")) for name in members)
+        db.close_conn()
+        if database_location == "external":
+            monkeypatch.setenv("CROSSWATCH_DB", str(tmp_path / "new-installation" / "restored.db"))
+        manual_policy.save_policy(root, {"version": 1, "providers": {}, "pairs": {}})
+        overrides.save_overrides([])
+        db.close_conn()
+        recovery.prepare(source["path"], password)
+        apply_pending(root)
+        assert manager.status()["restore"]["ok"]
+        overrides.invalidate_cache()
+        assert manual_policy.load_policy(root) == expected_policy
+        assert overrides.load_overrides() == expected_anime
+        db.close_conn()
+        safety = manager.status()["restore"]["safety_backup"]
+        recovery.prepare(safety)
+        apply_pending(root)
+        assert manager.status()["restore"]["ok"]
+        overrides.invalidate_cache()
+        assert not manual_policy.load_policy(root)["providers"]
+        assert overrides.load_overrides() == []
+    finally:
+        db.close_conn()
+        overrides.invalidate_cache()
+
+
+@pytest.mark.parametrize("scope", ["app_state", "full", "config_only"])
+def test_legacy_scope_handles_external_application_database(installation, tmp_path, monkeypatch, scope):
+    database = tmp_path / "database" / "custom.db"
+    seed_db(database, "saved")
+    monkeypatch.setenv("CROSSWATCH_DB", str(database))
+    source = backups.create_backup(scope=scope)
+    members = {row["path"] for row in backups.validate_backup(source["path"])["manifest"]["files"]}
+    assert (".cw_databases/crosswatch.sqlite3" in members) == (scope != "config_only")
 
 
 def test_password_confirmation_and_public_secret_redaction(installation):
@@ -437,6 +512,62 @@ def test_saved_password_can_start_with_configuration_encryption_prefix(installat
     password = "enc:v1:this is a user chosen password"
     manager.save_plan(plan(password=password))
     assert manager.reveal(manager.settings())["password"] == password
+
+
+@pytest.mark.parametrize("name", ["../config.json", "/settings.json", "sub/settings.json", "sub\\settings.json", "cloud-../settings.json", "unknown.json"])
+def test_backup_private_files_reject_unexpected_paths(installation, name):
+    with pytest.raises(ValueError, match="settings file"):
+        manager.read(name, {})
+    with pytest.raises(ValueError, match="settings file"):
+        manager.write(name, {})
+
+
+@pytest.mark.parametrize("suffix", [".zip", ".cwbackup"])
+def test_remote_download_uses_generated_local_names(installation, tmp_path, monkeypatch, suffix):
+    destination = tmp_path / "remote"
+    destination.mkdir()
+    manager.save_plan(plan(destination={"kind": "folder", "path": str(destination)}))
+    received = []
+
+    def download(destination, args):
+        received.append(args)
+        Path(args[2]).write_bytes(b"downloaded archive")
+
+    monkeypatch.setattr(manager.destinations, "run", download)
+    result = manager.download_remote("installation/crosswatch-backup-original" + suffix)
+    local = backups._resolve_backup_file(result["path"])[1]
+    assert local.parent.name == "imported" and local.suffix == suffix
+    assert len(local.stem) == 32 and "original" not in local.name
+    assert received[0][1].endswith("crosswatch-backup-original" + suffix)
+
+
+@pytest.mark.parametrize("path", ["crosswatch-backup-" * 10000, "crosswatch-backup-.zip", "crosswatch-backup-file.exe", "../crosswatch-backup-file.zip"], ids=["long", "empty", "extension", "traversal"])
+def test_remote_download_rejects_invalid_names_before_transfer(installation, tmp_path, monkeypatch, path):
+    destination = tmp_path / "remote"
+    destination.mkdir()
+    manager.save_plan(plan(destination={"kind": "folder", "path": str(destination)}))
+    transfers = []
+    monkeypatch.setattr(manager.destinations, "run", lambda *args: transfers.append(args))
+    with pytest.raises(ValueError):
+        manager.download_remote(path)
+    assert not transfers
+
+
+def test_validation_does_not_expose_configuration_key_errors(installation, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api import backupsAPI
+
+    backup = backups.create_backup(components=["application"])
+    monkeypatch.setattr(recovery, "_check_config_key", lambda *args: (_ for _ in ()).throw(ValueError("sensitive-key-details-and-server-path")))
+    app = FastAPI()
+    app.include_router(backupsAPI.router)
+    with TestClient(app) as client:
+        response = client.post("/api/backups/validate", json={"path": backup["path"]})
+    assert response.status_code == 200
+    assert not response.json()["validation"]["application_ready"]
+    assert "original configuration key" in response.text
+    assert "sensitive-key-details-and-server-path" not in response.text
 
 
 def test_deleting_failed_local_archive_stops_automatic_retries(installation, monkeypatch):

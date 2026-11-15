@@ -15,7 +15,7 @@ from urllib.request import urlopen
 
 import pytest
 
-from services import backup_destinations as destinations
+from services import backup_destinations as destinations, backups
 
 
 def test_missing_rclone_is_reported_before_transfer(monkeypatch):
@@ -58,11 +58,63 @@ def test_webdav_requires_explicit_insecure_http_and_separate_credentials(tmp_pat
         destinations.validate_destination({**raw, "url": "https://user:pass@localhost/dav"}, tmp_path)
 
 
-def test_mounted_destination_must_be_outside_config(tmp_path):
+def test_mounted_destination_must_be_outside_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("CW_BACKUP_ROOT", str(tmp_path))
     child = tmp_path / "nested"
     child.mkdir()
     with pytest.raises(ValueError, match="outside"):
         destinations.validate_destination({"kind": "folder", "path": str(child)}, tmp_path)
+
+
+def test_mounted_root_defaults_to_backups(monkeypatch):
+    monkeypatch.delenv("CW_BACKUP_ROOT", raising=False)
+    assert destinations.mounted_root() == Path("/backups").resolve()
+
+
+def test_mounted_destinations_are_limited_to_the_configured_root(tmp_path, monkeypatch):
+    root = tmp_path / "allowed"
+    nested = root / "nested"
+    nested.mkdir(parents=True)
+    outside = tmp_path / "allowed-other"
+    outside.mkdir()
+    monkeypatch.setenv("CW_BACKUP_ROOT", str(root))
+    assert destinations.validate_destination({"kind": "folder", "path": str(nested)}, tmp_path / "config")["path"] == str(nested.resolve())
+    assert destinations.validate_destination({"kind": "folder", "path": str(root)}, tmp_path / "config")["path"] == str(root.resolve())
+    for path in (str(outside), str(root / ".." / "allowed-other"), "relative-folder"):
+        with pytest.raises(ValueError, match="backup root"):
+            destinations.validate_destination({"kind": "folder", "path": path}, tmp_path / "config")
+        with pytest.raises(ValueError, match="backup root"):
+            destinations.remote({"kind": "folder", "path": path}, "archive.zip")
+
+
+def test_mounted_transfer_rechecks_changed_root(tmp_path, monkeypatch):
+    old_root = tmp_path / "old"
+    new_root = tmp_path / "new"
+    old_root.mkdir()
+    new_root.mkdir()
+    monkeypatch.setenv("CW_BACKUP_ROOT", str(old_root))
+    destination = destinations.validate_destination({"kind": "folder", "path": str(old_root)}, tmp_path / "config")
+    monkeypatch.setenv("CW_BACKUP_ROOT", str(new_root))
+    with pytest.raises(ValueError, match="backup root"):
+        destinations.remote(destination, "archive.zip")
+
+
+def test_mounted_paths_reject_symlinks_outside_the_root(tmp_path, monkeypatch):
+    monkeypatch.setattr(backups, "CONFIG", tmp_path / "config")
+    root = tmp_path / "allowed"
+    outside = tmp_path / "outside"
+    root.mkdir()
+    outside.mkdir()
+    link = root / "linked"
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("Creating symlinks is unavailable on this host")
+    monkeypatch.setenv("CW_BACKUP_ROOT", str(root))
+    with pytest.raises(ValueError, match="outside"):
+        destinations.validate_destination({"kind": "folder", "path": str(link)}, tmp_path / "config")
+    with pytest.raises(ValueError, match="outside"):
+        destinations.remote({"kind": "folder", "path": str(root)}, "linked/archive.zip")
 
 
 @pytest.fixture
@@ -75,9 +127,11 @@ def rclone(monkeypatch):
 
 
 @pytest.fixture(params=["folder", "webdav"])
-def destination(request, tmp_path, rclone):
+def destination(request, tmp_path, rclone, monkeypatch):
     remote = tmp_path / "remote"
     remote.mkdir()
+    monkeypatch.setenv("CW_BACKUP_ROOT", str(remote))
+    monkeypatch.setattr(backups, "CONFIG", tmp_path / "config")
     if request.param == "folder":
         yield {"kind": "folder", "path": str(remote)}
         return

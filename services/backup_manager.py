@@ -30,15 +30,29 @@ def private_dir() -> Path:
     return path
 
 
+def _private_file(name: str) -> Path:
+    if name in {"settings.json", "jobs.json", "pending.json", "restore-result.json"}:
+        filename = name
+    elif re.fullmatch(r"cloud-[0-9a-f]{32}\.json", name):
+        filename = "cloud-" + uuid.UUID(hex=name[6:-5]).hex + ".json"
+    else:
+        raise ValueError("Invalid backup settings file.")
+    base = private_dir().resolve()
+    path = base / filename
+    if path.resolve().parent != base:
+        raise ValueError("Invalid backup settings file.")
+    return path
+
+
 def read(name: str, fallback: Any) -> Any:
-    path = private_dir() / name
+    path = _private_file(name)
     if not path.exists():
         return copy.deepcopy(fallback)
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def write(name: str, value: Any) -> None:
-    path = private_dir() / name
+    path = _private_file(name)
     temp = path.with_suffix("." + uuid.uuid4().hex + ".tmp")
     try:
         with temp.open("x", encoding="utf-8") as handle:
@@ -84,6 +98,7 @@ def plan() -> dict[str, Any]:
     runtime = destinations.runtime_status()
     value["rclone_available"] = runtime["available"]
     value["rclone_error"] = runtime.get("error", "")
+    value["mounted_root"] = str(destinations.mounted_root())
     value["capture_count"] = sum(1 for _ in (backups.CONFIG / "snapshots").rglob("*.json"))
     return value
 
@@ -365,11 +380,14 @@ def download_remote(path: str) -> dict[str, Any]:
     if destination["kind"] == "none":
         raise ValueError("Configure an additional backup destination first.")
     safe = destinations.safe_remote_path(path)
-    if not re.fullmatch(r"crosswatch-backup-[a-zA-Z0-9._-]+\.(cwbackup|zip)", Path(safe).name):
+    name = Path(safe).name
+    prefix = "crosswatch-backup-"
+    suffix = ".cwbackup" if name.endswith(".cwbackup") else ".zip" if name.endswith(".zip") else ""
+    if len(name) > 255 or not suffix or not name.startswith(prefix) or not re.fullmatch(r"[a-zA-Z0-9._-]+", name[len(prefix):-len(suffix)]):
         raise ValueError("Choose a CrossWatch backup archive.")
     folder = backups._backups_dir() / "imported"
     folder.mkdir(exist_ok=True)
-    target = folder / (uuid.uuid4().hex + "-" + Path(safe).name)
+    target = folder / (uuid.uuid4().hex + suffix)
     try:
         destinations.run(destination, ["copyto", destinations.remote(destination, safe), str(target), "--max-transfer", str(backups.MAX_ARCHIVE_BYTES), "--cutoff-mode", "hard"])
         if target.stat().st_size > backups.MAX_ARCHIVE_BYTES:

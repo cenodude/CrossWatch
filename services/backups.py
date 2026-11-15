@@ -20,6 +20,7 @@ import uuid
 import zipfile
 
 from _logging import log as BASE_LOG
+from _backup_bootstrap import application_database_target
 from cw_platform.config_base import CONFIG, _current_version_norm
 
 BackupScope = Literal["config_only", "app_state", "full", "selected"]
@@ -164,6 +165,9 @@ def _resolve_restore_target(rel_path: str) -> Path:
     first = rel.split("/", 1)[0]
     if rel not in allowed_files and first not in allowed_dirs:
         raise ValueError("Invalid restore target")
+    database = application_database_target(rel)
+    if database is not None:
+        return database
     base = CONFIG.resolve()
     target = base.joinpath(*PurePosixPath(rel).parts).resolve()
     try:
@@ -416,6 +420,15 @@ def create_backup(
         raise ValueError("Select what to back up.")
     else:
         candidates = [(_rel_from_config(p), p) for root in _candidate_roots(sc, include_snapshots=include_snapshots, include_reports=include_reports, include_cache=include_cache) for p in _iter_files_under(root)]
+    if sc in {"app_state", "full"} or components is not None and "application" in components:
+        database_name = ".cw_databases/crosswatch.sqlite3"
+        database = application_database_target(database_name)
+        if database is not None:
+            names = {database_name + suffix for suffix in ("", *_SQLITE_SIDECAR_SUFFIXES)}
+            sources = {application_database_target(name) for name in names}
+            candidates = [(name, source) for name, source in candidates if name not in names and source.resolve() not in sources]
+            if database.is_file():
+                candidates.append((database_name, database))
     for rel_file, file_path in candidates:
         if rel_file in seen or rel_file == ".cw_master_key" and _is_env_key_configured():
             continue

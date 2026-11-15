@@ -67,7 +67,11 @@
     const d=s.draft, block=el('section',{class:'br-section'},[title('What to back up')]);
     Object.entries(names).forEach(([key,label])=>{
       block.append(check(label,d.components.includes(key),yes=>{d.components=yes?[...new Set([...d.components,key])]:d.components.filter(v=>v!==key);render();}));
-      if(key==='application'&&d.components.includes(key))block.append(text(s.plan.key_source==='external'?'Uses an external configuration key. Keep that key separately for restoration.':s.plan.key_source==='included'?'Configuration key included. This archive can recover saved connections.':'Settings, connections, sync state, fixes and blocks.'));
+      if(key==='application'&&d.components.includes(key)){
+        block.append(text('Settings, connections, sync state, mappings, blocks and custom anime rules.'));
+        if(s.plan.key_source==='external')block.append(text('Uses an external configuration key. Keep that key separately for restoration.'));
+        if(s.plan.key_source==='included')block.append(text('Configuration key included. This archive can recover saved connections.'));
+      }
       if(key==='trackers'&&d.components.includes(key)){
         block.append(check('All trackers',d.trackers===null,all=>{d.trackers=all?null:s.plan.available_trackers.map(t=>t.id);render();}));
         if(d.trackers!==null)s.plan.available_trackers.forEach(t=>block.append(check(t.label,d.trackers.includes(t.id),yes=>{d.trackers=yes?[...d.trackers,t.id]:d.trackers.filter(id=>id!==t.id);})));
@@ -99,7 +103,7 @@
     if(['onedrive','dropbox'].includes(dest.kind))block.append(cloudForm(dest),field('Backup folder',input(dest.folder||'CrossWatch',v=>{dest.folder=v;})));
     if(dest.kind==='webdav')block.append(field('Server type',select([['nextcloud','Nextcloud'],['owncloud','ownCloud'],['other','Other WebDAV']],dest.vendor||'nextcloud',v=>{dest.vendor=v;})),field('WebDAV URL',input(dest.url||'',v=>{dest.url=v;},'url',{placeholder:'https://cloud.example.com/remote.php/dav/files/user/'})),
       el('div',{class:'br-fields'},[field('Username',input(dest.username||'',v=>{dest.username=v;})),field(dest.has_password?'App password (leave empty to keep)':'App password',input(dest.password||'',v=>{dest.password=v;},'password',{autocomplete:'new-password'}))]),field('Backup folder',input(dest.folder||'CrossWatch',v=>{dest.folder=v;})),check('Allow HTTP for a trusted local server',!!dest.allow_http,v=>{dest.allow_http=v;}));
-    if(dest.kind==='folder')block.append(field('Mounted folder inside CW',input(dest.path||'',v=>{dest.path=v;},'text',{placeholder:'/backup-copy'})),text('Mount this folder into the container. It must be outside /config.'));
+    if(dest.kind==='folder')block.append(field('Mounted folder inside CW',input(dest.path||'',v=>{dest.path=v;},'text',{placeholder:s.plan.mounted_root||'/backups'})),text(`Use ${s.plan.mounted_root||'/backups'} or a folder inside it. Mount it into the container, outside /config.`));
     if(dest.kind!=='none')block.append(...encryptionFields(),field('Automatic additional copies to keep',select([7,14,30,60].map(n=>[String(n),`Latest ${n}`]),d.remote_keep,v=>{d.remote_keep=Number(v);})),text('Additional copies are always encrypted before transfer.'));
     block.append(actions([button('Save destination',()=>perform(async()=>{await savePlan();s.section='';render();message('Destination saved. Test the connection before relying on additional copies.');}),true),...(dest.kind!=='none'?[button('Test connection',()=>perform(async()=>{await savePlan();message('Checking upload, download and checksum.');message((await api('destination/test',{})).message);}))]:[])]));
     return block;

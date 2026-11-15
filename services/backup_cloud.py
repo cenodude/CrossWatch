@@ -26,7 +26,7 @@ _QUESTIONS = {"config_token", "config_type", "config_driveid", "config_drive_ok"
 def _identifier(value: str) -> str:
     if not re.fullmatch(r"[0-9a-f]{32}", str(value)):
         raise ValueError("Choose a saved cloud connection.")
-    return value
+    return uuid.UUID(hex=value).hex
 
 
 def _lock(ident: str):
@@ -46,7 +46,11 @@ def _save(record: dict[str, Any]) -> None:
 
 
 def _path(ident: str):
-    return manager.private_dir() / ("cloud-" + _identifier(ident) + ".conf")
+    base = manager.private_dir().resolve()
+    path = base / ("cloud-" + _identifier(ident) + ".conf")
+    if path.resolve().parent != base:
+        raise ValueError("Invalid cloud connection file.")
+    return path
 
 
 def _environment(record: dict[str, Any]) -> dict[str, str]:
