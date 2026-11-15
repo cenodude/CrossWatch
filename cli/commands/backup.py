@@ -14,7 +14,7 @@ from .._errors import CLIError
 from .._util import as_dict, error_text, fmt_ts, rows_from_payload
 from .backup_settings import read_secret, register_settings
 
-backup_app = typer.Typer(help="CrossWatch backups, cloud copies and recovery.", no_args_is_help=True)
+backup_app = typer.Typer(help="CrossWatch backups, destination copies and recovery.", no_args_is_help=True)
 
 
 def _rows(payload: Any, *keys: str) -> list[dict[str, Any]]:

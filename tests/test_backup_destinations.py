@@ -178,3 +178,15 @@ def test_real_connection_upload_progress_verification_browse_download_and_delete
         destinations.verify(destination, source, name)
     destinations.run(destination, ["deletefile", destinations.remote(destination, name)])
     assert destinations.list_remote(destination) == []
+
+
+@pytest.mark.parametrize("kind", ["onedrive", "dropbox"])
+def test_removed_destinations_are_rejected_before_transfer(tmp_path, monkeypatch, kind):
+    raw = {"kind": kind, "connection": "old-account", "folder": "CrossWatch"}
+    monkeypatch.setattr(destinations, "_binary", lambda: pytest.fail("rclone must not run"))
+    with pytest.raises(destinations.UnsupportedDestination):
+        destinations.validate_destination(raw, tmp_path)
+    with pytest.raises(destinations.UnsupportedDestination):
+        destinations.remote(raw)
+    with pytest.raises(destinations.UnsupportedDestination):
+        destinations.run(raw, ["lsjson", "cw:"])

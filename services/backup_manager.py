@@ -33,8 +33,6 @@ def private_dir() -> Path:
 def _private_file(name: str) -> Path:
     if name in {"settings.json", "jobs.json", "pending.json", "restore-result.json"}:
         filename = name
-    elif re.fullmatch(r"cloud-[0-9a-f]{32}\.json", name):
-        filename = "cloud-" + uuid.UUID(hex=name[6:-5]).hex + ".json"
     else:
         raise ValueError("Invalid backup settings file.")
     base = private_dir().resolve()
@@ -67,7 +65,11 @@ def write(name: str, value: Any) -> None:
 
 def settings() -> dict[str, Any]:
     with _LOCK:
-        return read("settings.json", {"configured": False, "components": ["application", "trackers", "captures"], "trackers": None, "encrypt_local": False, "password": "", "destination": {"kind": "none"}, "remote_keep": 30, "installation": uuid.uuid4().hex})
+        value = read("settings.json", {"configured": False, "components": ["application", "trackers", "captures"], "trackers": None, "encrypt_local": False, "password": "", "destination": {"kind": "none"}, "remote_keep": 30, "installation": uuid.uuid4().hex})
+        if value["destination"].get("kind") not in destinations.SUPPORTED_KINDS:
+            value["destination"] = {"kind": "none"}
+            value["destination_notice"] = "The saved destination is no longer supported. Backups are saved locally. Choose Nextcloud / WebDAV or a mounted folder."
+        return value
 
 
 def reveal(raw: dict[str, Any]) -> dict[str, Any]:
@@ -248,6 +250,8 @@ def run_job(job: dict[str, Any]) -> None:
             _update(ident, warning="Backup saved. Old automatic local backups could not be cleaned up. Check permissions and storage.")
         _, source = backups._resolve_backup_file(job["path"])
         destination = setup["destination"]
+        if destination["kind"] not in destinations.SUPPORTED_KINDS:
+            raise destinations.UnsupportedDestination("This destination is no longer supported. Your local backup is available. Choose Nextcloud / WebDAV or a mounted folder.")
         if destination["kind"] != "none":
             if source.suffix != ".cwbackup":
                 _update(ident, stage="encrypting")
@@ -279,7 +283,7 @@ def run_job(job: dict[str, Any]) -> None:
         current = next(r for r in _jobs() if r["id"] == ident)
         attempts = int(current.get("attempts") or 0) + 1
         message = str(exc) if isinstance(exc, ValueError) else "Backup operation failed. Check available storage and connection settings."
-        _update(ident, stage="failed", attempts=attempts, error=message, remote_status="failed" if current.get("local_status") == "saved" and current["remote_status"] != "disabled" else current["remote_status"], retry_at=time.time() + min(3600, 60 * 2 ** attempts) if attempts < 5 and not isinstance(exc, destinations.RcloneUnavailable) else 0)
+        _update(ident, stage="failed", attempts=attempts, error=message, remote_status="failed" if current.get("local_status") == "saved" and current["remote_status"] != "disabled" else current["remote_status"], retry_at=time.time() + min(3600, 60 * 2 ** attempts) if attempts < 5 and not isinstance(exc, (destinations.RcloneUnavailable, destinations.UnsupportedDestination)) else 0)
 
 
 def prune_local(*, retention_days: int = 0, max_backups: int = 0, auto_delete_old: bool = False, job_id: str | None = None) -> dict[str, Any]:

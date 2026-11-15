@@ -24,15 +24,8 @@ class Content(str, Enum):
 
 class Destination(str, Enum):
     none = "none"
-    onedrive = "onedrive"
-    dropbox = "dropbox"
     webdav = "webdav"
     folder = "folder"
-
-
-class Cloud(str, Enum):
-    onedrive = "onedrive"
-    dropbox = "dropbox"
 
 
 def read_secret(path: Path | None, prompt: bool = False, *, label: str = "Backup password", confirm: bool = False) -> str:
@@ -87,8 +80,7 @@ def backup_configure(
     set_password: bool = typer.Option(False, "--set-password", help="Prompt for a new backup password."),
     password_saved: bool = typer.Option(False, "--password-saved", help="Confirm that the new password is saved outside CW."),
     destination: Destination | None = typer.Option(None, "--destination", help="Choose the destination for encrypted copies."),
-    connection: str = typer.Option("", "--connection", help="Connected account ID from cloud-connect."),
-    folder: str = typer.Option("", "--folder", help="Relative backup folder on the cloud or WebDAV destination."),
+    folder: str = typer.Option("", "--folder", help="Relative backup folder on the WebDAV destination."),
     mount: str = typer.Option("", "--mount", help="Absolute folder under /backups or the server's CW_BACKUP_ROOT."),
     server: str = typer.Option("", "--server", help="WebDAV server URL."),
     username: str = typer.Option("", "--username", help="WebDAV username."),
@@ -126,15 +118,13 @@ def backup_configure(
     if destination is not None and destination.value != dest.get("kind"):
         dest = {"kind": destination.value}
     kind = dest.get("kind", "none")
-    if connection and kind not in {"onedrive", "dropbox"}:
-        raise CLIError("Use --connection with OneDrive or Dropbox.")
     if mount and kind != "folder":
         raise CLIError("Use --mount with --destination folder.")
-    if folder and kind not in {"onedrive", "dropbox", "webdav"}:
-        raise CLIError("Use --folder with a cloud or WebDAV destination.")
+    if folder and kind != "webdav":
+        raise CLIError("Use --folder with --destination webdav.")
     if (server or username or vendor or app_password_file is not None or ask_app_password or allow_http is not None) and kind != "webdav":
         raise CLIError("WebDAV options require --destination webdav.")
-    for key, value in (("connection", connection), ("folder", folder), ("path", mount), ("url", server), ("username", username), ("vendor", vendor)):
+    for key, value in (("folder", folder), ("path", mount), ("url", server), ("username", username), ("vendor", vendor)):
         if value:
             dest[key] = value
     if kind == "webdav":
@@ -214,70 +204,6 @@ def backup_remote_download(ctx: typer.Context, path: str = typer.Argument(..., h
     _show(state, result, "Downloaded to CW: " + str(as_dict(result.get("backup")).get("path") or ""))
 
 
-def _show_connection(state: Ctx, result: dict[str, Any]) -> None:
-    if state.out.json_mode:
-        state.out.data(result)
-        return
-    value = as_dict(result.get("connection"))
-    state.out.kv([(key, value.get(key)) for key in ("id", "kind", "status", "question")], title="Cloud connection")
-    if value.get("status") == "connected":
-        state.out.info(f"Use cw backup configure --destination {value['kind']} --connection {value['id']} to save this destination.")
-    else:
-        if value.get("question") == "config_token":
-            state.out.info(f'Run rclone authorize "{value["kind"]}" on a computer with rclone 1.76.0 or newer and a browser.')
-        state.out.records(rows_from_payload(value, "choices"), [("VALUE", "value"), ("LABEL", "label")], empty="")
-        state.out.info(f"Continue with cw backup cloud-continue {value['id']}.")
-
-
-def backup_cloud_connect(
-    ctx: typer.Context,
-    provider: Cloud = typer.Argument(...),
-    step: bool = typer.Option(False, "--step", help="Start authorization without interactive prompts. Use cloud-continue for each step."),
-) -> None:
-    """Connect OneDrive or Dropbox using rclone authorization."""
-    state: Ctx = ctx.obj
-    result = _post(state, "cloud/connect", {"kind": provider.value})
-    if step or state.out.json_mode:
-        _show_connection(state, result)
-        return
-    while True:
-        _show_connection(state, result)
-        value = as_dict(result.get("connection"))
-        if value.get("status") == "connected":
-            return
-        question = value.get("question")
-        if question == "config_token":
-            answer = str(typer.prompt("Paste the authorization result", hide_input=True))
-        elif question == "config_driveid":
-            answer = str(typer.prompt("Drive value"))
-        elif question == "config_drive_ok":
-            if not typer.confirm("Use the selected drive?", default=False):
-                raise CLIError("Connection cancelled.", exit_code=0)
-            answer = "true"
-        elif question == "config_type":
-            answer = "onedrive"
-        else:
-            raise CLIError("Unsupported authorization step. Start the connection again.")
-        result = _post(state, "cloud/continue", {"id": value["id"], "answer": answer})
-
-
-def backup_cloud_continue(
-    ctx: typer.Context,
-    connection: str = typer.Argument(..., help="Connection ID from cloud-connect."),
-    answer_file: Path | None = typer.Option(None, "--answer-file", help="Read the rclone authorization result from a local file."),
-    choice: str = typer.Option("", "--choice", help="Drive value, onedrive account type, or true to confirm the drive. Do not pass tokens here."),
-) -> None:
-    """Continue a cloud connection with a hidden prompt, token file or drive choice."""
-    state: Ctx = ctx.obj
-    state.require_service("Connecting cloud backups")
-    if choice and answer_file is not None:
-        raise CLIError("Choose --choice or --answer-file.")
-    if not choice and answer_file is None and state.out.json_mode:
-        raise CLIError("Use --answer-file or --choice for noninteractive authorization.")
-    answer = choice or read_secret(answer_file, answer_file is None, label="Authorization result or drive choice")
-    _show_connection(state, _post(state, "cloud/continue", {"id": connection, "answer": answer}))
-
-
 def backup_recovery_key(ctx: typer.Context, file: Path = typer.Argument(..., help="New local file for the generated backup password. Existing files are never overwritten.")) -> None:
     """Generate a recovery key and save it to a local file."""
     state: Ctx = ctx.obj
@@ -295,6 +221,6 @@ def register_settings(app: typer.Typer) -> None:
     for name, command in (
         ("plan", backup_plan), ("configure", backup_configure), ("status", backup_status), ("retry", backup_retry),
         ("test-destination", backup_test_destination), ("remote-list", backup_remote_list), ("remote-download", backup_remote_download),
-        ("cloud-connect", backup_cloud_connect), ("cloud-continue", backup_cloud_continue), ("recovery-key", backup_recovery_key),
+        ("recovery-key", backup_recovery_key),
     ):
         app.command(name)(command)
