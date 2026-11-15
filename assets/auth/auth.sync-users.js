@@ -6,7 +6,7 @@
 
   const PROVIDERS = new Set(["plex", "emby", "jellyfin", "silo", "tofa"]);
   const LABELS = { plex: "Plex", emby: "Emby", jellyfin: "Jellyfin", silo: "Silo", tofa: "Tofa" };
-  const KIND_CLASS = { Owner: "is-owner", Admin: "is-owner", Connected: "is-owner", Home: "is-home", Child: "is-home", Friend: "is-friend", Disabled: "is-disabled" };
+  const KIND_CLASS = { Owner: "is-owner", Admin: "is-owner", Connected: "is-owner", Home: "is-home", Child: "is-home", Friend: "is-friend", Shared: "is-friend", Disabled: "is-disabled" };
 
   const pending = new Map();
   const pendingKey = (provider, instance) => `${provider}:${instance}`;
@@ -44,7 +44,7 @@
     }
     if (provider === "silo" || provider === "tofa") {
       const key = txt(u?.id);
-      const kind = u?.connected ? "Connected" : u?.is_child ? "Child" : "";
+      const kind = u?.connected ? "Connected" : u?.shared === true ? "Shared" : u?.is_child ? "Child" : "";
       return key ? { key, username: txt(u?.username), kind, home: u?.has_pin === true, disabled: false } : null;
     }
     const key = txt(u?.id);
@@ -65,6 +65,7 @@
     if (code === "pin_locked") return "Too many incorrect PINs. Try again later.";
     if (code === "silo_unavailable") return "Could not reach the Silo server.";
     if (code === "tofa_unavailable") return "Could not reach the Tofa server.";
+    if (code === "tofa_sync_key_failed") return "Tofa did not create a watch sync key for a shared user.";
     return code || "Something went wrong.";
   }
 
@@ -82,7 +83,9 @@
     const id = `cw-su-${state.provider}-${idx}`;
     const savedPin = state.saved.find((s) => s.key === u.key)?.has_pin;
     const initial = esc((u.username || u.key).charAt(0).toUpperCase());
+    const keyLost = state.saved.find((s) => s.key === u.key)?.key_invalid === true;
     const tag = u.missing ? `<span class="cw-su-tag is-missing">Not on server</span>` : u.kind ? `<span class="cw-su-tag ${KIND_CLASS[u.kind] || ""}">${esc(u.kind)}</span>` : "";
+    const keyTag = keyLost && !u.missing ? `<span class="cw-su-tag is-missing" title="Save changes to create a new watch sync key">Key revoked</span>` : "";
     const pin = (state.provider === "plex" || state.provider === "silo" || state.provider === "tofa") && u.home
       ? `<input type="password" class="cw-su-pin" inputmode="numeric" maxlength="8" autocomplete="off" data-pin="${esc(u.key)}" placeholder="${savedPin ? "PIN saved" : (state.provider === "silo" || state.provider === "tofa") ? "Profile PIN" : "PIN if needed"}" ${on ? "" : "hidden"} data-lpignore="true" data-1p-ignore="true" data-bwignore="true">`
       : "";
@@ -93,7 +96,7 @@
     return `
       <label class="cw-wl-row cw-su-row ${on ? "is-on" : ""}" for="${id}" data-row="${esc(u.key)}" data-search="${esc(u.username.toLowerCase())}">
         <span class="cw-wl-ic cw-su-avatar" aria-hidden="true">${initial}</span>
-        <span class="cw-su-copy"><span class="cw-wl-name">${esc(u.username || u.key)}</span>${tag}${usage}</span>
+        <span class="cw-su-copy"><span class="cw-wl-name">${esc(u.username || u.key)}</span>${tag}${keyTag}${usage}</span>
         ${pin}
         <span class="cw-wl-check cw-wl-scr"><input type="checkbox" id="${id}" data-key="${esc(u.key)}" data-name="${esc(u.username)}" ${on ? "checked" : ""} ${u.disabled && !on ? "disabled" : ""}><span class="cw-wl-box"></span></span>
       </label>`;
@@ -132,6 +135,7 @@
   function dirty(state) {
     const saved = new Set(state.saved.map((s) => s.key));
     if (saved.size !== state.selected.size || [...state.selected].some((k) => !saved.has(k))) return true;
+    if (state.saved.some((s) => s.key_invalid === true && state.selected.has(s.key))) return true;
     return [...state.pins.values()].some((v) => txt(v));
   }
 

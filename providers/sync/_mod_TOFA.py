@@ -9,7 +9,7 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from cw_platform.provider_instances import normalize_instance_id
-from providers.auth._auth_TOFA import TofaError, is_configured as auth_is_configured, provider_block
+from providers.auth._auth_TOFA import SYNC_KEY_INVALID, TofaError, is_configured as auth_is_configured, is_shared_user, provider_block
 from providers.sync._mod_common import build_op_result, build_session, dedup_keys
 from providers.sync.tofa import _collection as feat_collection
 from providers.sync.tofa import _history as feat_history
@@ -17,7 +17,7 @@ from providers.sync.tofa import _playlists as feat_playlists
 from providers.sync.tofa import _presence as feat_presence
 from providers.sync.tofa import _progress as feat_progress
 from providers.sync.tofa import _watchlist as feat_watchlist
-from providers.sync.tofa._common import REQUIRED_CAPABILITIES, TofaSyncError, capabilities, label_tofa, shared_limiter
+from providers.sync.tofa._common import REQUIRED_CAPABILITIES, TofaSyncError, capabilities, label_tofa, shared_limiter, tofa_request
 
 __VERSION__ = "0.1"
 __all__ = ["get_manifest", "TOFAModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_watchlist"]
@@ -185,6 +185,14 @@ class TOFAModule:
     def _section(self) -> Mapping[str, Any]:
         return provider_block(self.config, self.instance_id)
 
+    def _shared_account_ok(self) -> bool:
+        if not is_shared_user(self._section()):
+            return False
+        resp = tofa_request(self, "GET", "/users/me")
+        if resp.status_code != 200:
+            raise TofaSyncError(f"tofa_health_http_{resp.status_code}")
+        return True
+
     def health(self) -> Mapping[str, Any]:
         start = time.perf_counter()
         ok = False
@@ -195,7 +203,7 @@ class TOFAModule:
             reason = "missing_authentication"
         else:
             try:
-                caps = capabilities(self)
+                caps = set(REQUIRED_CAPABILITIES) if self._shared_account_ok() else capabilities(self)
                 missing = [c for c in REQUIRED_CAPABILITIES if c not in caps]
                 api["system_info"] = {"capabilities": len(caps)}
                 if missing:
@@ -204,7 +212,7 @@ class TOFAModule:
                 else:
                     ok, status = True, "ok"
             except TofaError as exc:
-                status = "auth_failed" if str(exc) in ("reconnect_required", "profile_locked", "authentication_failed") else "service_unavailable"
+                status = "auth_failed" if str(exc) in ("reconnect_required", "profile_locked", "authentication_failed", SYNC_KEY_INVALID) else "service_unavailable"
                 reason = str(exc) or exc.__class__.__name__
             except TofaSyncError as exc:
                 text = str(exc)

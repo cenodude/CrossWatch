@@ -3280,10 +3280,22 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         try:
             cfg = load_config()
             own = str(provider_block(cfg, inst).get("profile_id") or "")
-            rows = _tofa_client(cfg, inst).list_profiles()
+            client = _tofa_client(cfg, inst)
+            rows = client.list_profiles()
             users = [{"id": p["id"], "username": p["name"], "has_pin": p["has_pin"], "is_child": p["is_child"], "is_primary": p["is_primary"],
                       "connected": p["id"] == own} for p in rows]
-            return {"ok": True, "instance": inst, "users": users}
+            shared_error = ""
+            try:
+                guests = client.shared_profiles()
+            except Exception as e:
+                guests, shared_error = [], _tofa_error(e)
+                _safe_log(log_fn, "TOFA", f"[TOFA] shared users failed reason={shared_error} instance={inst}")
+            users.extend({"id": p["id"], "username": p["username"], "has_pin": False, "is_child": p["is_child"], "is_primary": p["is_primary"],
+                          "connected": False, "shared": True, "user_id": p["user_id"]} for p in guests)
+            out = {"ok": True, "instance": inst, "users": users}
+            if shared_error:
+                out["shared_error"] = shared_error
+            return out
         except Exception as e:
             _safe_log(log_fn, "TOFA", f"[TOFA] users failed reason={_tofa_error(e)} instance={inst}")
             return {"ok": False, "error": _tofa_error(e), "instance": inst, "users": []}

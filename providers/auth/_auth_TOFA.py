@@ -42,7 +42,11 @@ KEEPALIVE_SEC = 7 * 86400
 HTTP_TIMEOUT = 20
 CLOUD_POST_PER_SEC = 5.0
 PROFILE_ERROR_CODES = frozenset({"invalid_pin", "profile_locked", "profile_unlock_expired"})
-UA = http_user_agent("TofaAuth", override_env="CW_TOFA_UA")
+SYNC_KEY_CAPABILITY = "auth.watch_sync_keys"
+SYNC_KEY_NAME = "CrossWatch"
+SYNC_KEY_INVALID = "sync_key_invalid"
+SYNC_KEY_ERROR_CODES = frozenset({"api_key_invalid", "api_key_access_lost"})
+UA =http_user_agent("TofaAuth", override_env="CW_TOFA_UA")
 
 _SESSION_KEYS = (
     "access_token",
@@ -74,6 +78,10 @@ class TofaAuthError(TofaError):
 
 
 class TofaReconnectRequired(TofaAuthError):
+    pass
+
+
+class TofaSyncKeyInvalid(TofaReconnectRequired):
     pass
 
 
@@ -194,12 +202,28 @@ def writable_block(cfg: dict[str, Any], instance_id: Any = None) -> dict[str, An
     return ensure_instance_block(cfg, "tofa", instance_id)
 
 
+def is_shared_user(block: Mapping[str, Any] | None) -> bool:
+    return (block or {}).get("shared") is True
+
+
+def sync_key_of(block: Mapping[str, Any] | None) -> str:
+    return str((block or {}).get("sync_key_token") or "").strip() if is_shared_user(block) else ""
+
+
+def sync_key_invalid(block: Mapping[str, Any] | None) -> bool:
+    return is_shared_user(block) and (not sync_key_of(block) or str((block or {}).get("auth_error") or "") == SYNC_KEY_INVALID)
+
+
 def has_auth(block: Mapping[str, Any] | None) -> bool:
     b = block or {}
+    if is_shared_user(b):
+        return bool(sync_key_of(b))
     return bool(str(b.get("access_token") or "").strip() or str(b.get("refresh_token") or "").strip())
 
 
 def needs_reconnect(block: Mapping[str, Any] | None) -> bool:
+    if is_shared_user(block):
+        return sync_key_invalid(block)
     return str((block or {}).get("auth_error") or "") == "reconnect_required"
 
 
@@ -662,6 +686,10 @@ class TofaClient:
 
     def access_token(self, *, refresh: bool = True) -> str:
         block = self.block
+        if is_shared_user(block):
+            if sync_key_invalid(block):
+                raise TofaSyncKeyInvalid(SYNC_KEY_INVALID)
+            return sync_key_of(block)
         if needs_reconnect(block):
             raise TofaReconnectRequired("reconnect_required")
         if refresh and (not str(block.get("access_token") or "").strip() or about_to_expire(block)):
@@ -705,6 +733,10 @@ class TofaClient:
             )
         except requests.RequestException as exc:
             raise TofaServiceUnavailable("service_unavailable") from exc
+        if is_shared_user(block):
+            if self._sync_key_rejected(resp):
+                raise TofaSyncKeyInvalid(SYNC_KEY_INVALID)
+            return resp
         if resp.status_code == 401 and error_code(resp) == "profile_unlock_expired":
             if profile and retry and self._profile_unlocked_again():
                 self.cfg = _load_config()
@@ -760,6 +792,28 @@ class TofaClient:
             return False
         return True
 
+    def _sync_key_rejected(self, resp: Any) -> bool:
+        code = error_code(resp) if getattr(resp, "status_code", None) in (401, 403) else ""
+        if code not in SYNC_KEY_ERROR_CODES:
+            return False
+        try:
+            full = _load_config()
+            entry = sync_user_entry(full, self.instance_id) if is_sync_user_instance(self.instance_id) else None
+            if isinstance(entry, dict) and is_shared_user(entry):
+                key_id = str(entry.get("sync_key_id") or "").strip()
+                parent = writable_block(full, token_instance(self.instance_id))
+                raw_users = parent.get("sync_users")
+                users: dict[str, Any] = raw_users if isinstance(raw_users, dict) else {}
+                hit = [e for e in users.values() if isinstance(e, dict) and is_shared_user(e) and (e is entry or (key_id and str(e.get("sync_key_id") or "") == key_id))]
+                if any(str(e.get("auth_error") or "") != SYNC_KEY_INVALID for e in hit):
+                    for e in hit:
+                        e["auth_error"] = SYNC_KEY_INVALID
+                    save_config(full)
+                    log(f"TOFA: watch sync key rejected, save the identity again (instance={self.instance_id} code={code})", level="WARN")
+        except Exception:
+            pass
+        return True
+
     def _flag_profile_pin(self) -> None:
         try:
             full = _load_config()
@@ -785,6 +839,74 @@ class TofaClient:
         if not isinstance(data, list):
             raise TofaInvalidResponse("profiles_not_list")
         return [normalize_profile(row) for row in data if isinstance(row, Mapping)]
+
+    def sync_keys_supported(self) -> bool:
+        if not self.block.get("is_admin") or is_sync_user_instance(self.instance_id):
+            return False
+        data = self.request_json("GET", "/system/info")
+        caps = data.get("capabilities") if isinstance(data, Mapping) else None
+        return isinstance(caps, list) and SYNC_KEY_CAPABILITY in caps
+
+    def shared_profiles(self) -> list[dict[str, Any]]:
+        if not self.sync_keys_supported():
+            return []
+        data = self.request_json("GET", "/users/list")
+        users = data if isinstance(data, list) else (data.get("users") or data.get("items")) if isinstance(data, Mapping) else None
+        if not isinstance(users, list):
+            raise TofaInvalidResponse("users_not_list")
+        own = str(self.block.get("user_id") or "").strip()
+        out: list[dict[str, Any]] = []
+        for user in users:
+            uid = str(user.get("id") or "").strip() if isinstance(user, Mapping) else ""
+            if not uid or uid == own:
+                continue
+            name = " ".join(str(user.get("username") or user.get("email") or "").split()) or "User"
+            raw = self.request_json("GET", f"/users/{quote(uid, safe='')}/profiles")
+            rows = raw if isinstance(raw, list) else raw.get("profiles") if isinstance(raw, Mapping) else None
+            if not isinstance(rows, list):
+                raise TofaInvalidResponse("profiles_not_list")
+            profiles = [normalize_profile(row) for row in rows if isinstance(row, Mapping)]
+            for p in profiles:
+                label = name if len(profiles) == 1 else f"{name} ({p['name']})"
+                out.append({**p, "has_pin": False, "user_id": uid, "username": label, "shared": True})
+        return out
+
+    def create_sync_key(self, user_id: str) -> tuple[str, str]:
+        resp = self.request("POST", f"/users/{quote(str(user_id), safe='')}/watch-sync-keys", json={"name": SYNC_KEY_NAME})
+        if resp.status_code == 429:
+            raise TofaRateLimited("rate_limited", _retry_after(resp))
+        if resp.status_code >= 500:
+            raise TofaServiceUnavailable("service_unavailable")
+        if resp.status_code not in (200, 201):
+            raise TofaServerError(error_code(resp) or f"http_{resp.status_code}")
+        data = _json(resp)
+        secret = str(data.get("secret") or "").strip() if isinstance(data, Mapping) else ""
+        key_id = str(data.get("id") or data.get("key_id") or "").strip() if isinstance(data, Mapping) else ""
+        if not secret or not key_id:
+            raise TofaInvalidResponse("invalid_response")
+        log(f"TOFA: watch sync key created (instance={self.instance_id} user={user_id})", level="INFO")
+        return secret, key_id
+
+    def revoke_sync_key(self, user_id: str, key_id: str) -> bool:
+        try:
+            resp = self.request("DELETE", f"/users/{quote(str(user_id), safe='')}/watch-sync-keys/{quote(str(key_id), safe='')}")
+        except TofaError as exc:
+            log(f"TOFA: watch sync key revoke failed (instance={self.instance_id} user={user_id} reason={exc})", level="WARN")
+            return False
+        ok = resp.status_code in (200, 204, 404)
+        log(f"TOFA: watch sync key {'revoked' if ok else 'revoke failed'} (instance={self.instance_id} user={user_id} status={resp.status_code})",
+            level="INFO" if ok else "WARN")
+        return ok
+
+    def revoke_sync_keys(self, users: Mapping[str, Any] | None) -> None:
+        seen: set[tuple[str, str]] = set()
+        for entry in (users or {}).values():
+            if not isinstance(entry, Mapping) or not is_shared_user(entry):
+                continue
+            ref = (str(entry.get("user_id") or "").strip(), str(entry.get("sync_key_id") or "").strip())
+            if all(ref) and ref not in seen:
+                seen.add(ref)
+                self.revoke_sync_key(*ref)
 
     def _store_profile(self, cfg: dict[str, Any], profile: Mapping[str, Any], token: str | None, token_expires_at: int | None) -> None:
         block = writable_block(cfg, self.instance_id)
@@ -845,6 +967,12 @@ class TofaClient:
     def disconnect(self, cfg: dict[str, Any]) -> None:
         self.cfg = cfg
         block = writable_block(cfg, self.instance_id)
+        users = block.get("sync_users")
+        if isinstance(users, dict) and has_auth(block) and not needs_reconnect(block):
+            self.revoke_sync_keys(users)
+        for entry in users.values() if isinstance(users, dict) else []:
+            if isinstance(entry, dict) and is_shared_user(entry):
+                entry.update({"sync_key_token": "", "sync_key_id": "", "auth_error": SYNC_KEY_INVALID})
         clear_oauth(block)
         save_config(cfg)
         log(f"TOFA: disconnected (instance={self.instance_id})", level="INFO")
@@ -918,6 +1046,9 @@ def request_with_auth(
 
     token = client.access_token()
     resp = call(session, method, url, timeout=timeout, max_retries=max_retries, **merged(token))
+    if is_shared_user(client.block):
+        client._sync_key_rejected(resp)
+        return resp
     if getattr(resp, "status_code", None) == 401 and error_code(resp) == "profile_unlock_expired":
         if profile and client._profile_unlocked_again():
             client.cfg = _load_config()

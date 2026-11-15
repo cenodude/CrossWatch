@@ -7,7 +7,7 @@ import copy
 import re
 import secrets
 import time
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from typing import Any, cast
 
@@ -547,6 +547,9 @@ def _sync_user_rows(cfg: Mapping[str, Any], provider: str, inst: str) -> list[di
         if provider == "tofa":
             row["has_pin"] = bool(str(entry.get("profile_token") or "").strip())
             row["needs_pin"] = bool(entry.get("profile_locked")) and not row["has_pin"]
+            if entry.get("shared") is True:
+                row["shared"] = True
+                row["key_invalid"] = str(entry.get("auth_error") or "") == "sync_key_invalid" or not str(entry.get("sync_key_token") or "").strip()
         rows.append(row)
     rows.sort(key=lambda row: row["username"].casefold())
     return rows
@@ -568,12 +571,16 @@ def _build_sync_user_entry(provider: str, key: str, raw: Mapping[str, Any], exis
         entry["profile_token"] = token
         entry["profile_token_expires_at"] = int(raw.get("profile_token_expires_at") or existing.get("profile_token_expires_at") or 0) if token else 0
     elif provider == "tofa":
-        locked = bool(raw.get("profile_locked", existing.get("profile_locked")))
+        shared = raw.get("shared") is True
+        locked = False if shared else bool(raw.get("profile_locked", existing.get("profile_locked")))
         entry = {"profile_id": key, "profile_name": name, "username": name, "user": name, "profile_locked": locked,
                  "profile_primary": bool(raw.get("profile_primary", existing.get("profile_primary"))), "auth_error": ""}
         token = str(raw.get("profile_token") or existing.get("profile_token") or "") if locked else ""
         entry["profile_token"] = token
         entry["profile_token_expires_at"] = int(raw.get("profile_token_expires_at") or existing.get("profile_token_expires_at") or 0) if token else 0
+        if shared:
+            entry.update({"shared": True, "user_id": str(raw.get("user_id") or ""), "sync_key_id": str(raw.get("sync_key_id") or ""),
+                          "sync_key_token": str(raw.get("sync_key_token") or "")})
     else:
         entry = {"user_id": key, "username": name, "user": name}
     entry["added_at"] = existing.get("added_at") or now
@@ -606,7 +613,43 @@ def _silo_prepare_sync_users(cfg: Mapping[str, Any], inst: str, wanted: dict[str
     return ""
 
 
-def _tofa_prepare_sync_users(cfg: Mapping[str, Any], inst: str, wanted: dict[str, Mapping[str, Any]]) -> str:
+_TOFA_SHARED_FIELDS = ("home_pin", "shared", "user_id", "sync_key_id", "sync_key_token")
+
+
+def _tofa_saved_users(cfg: Mapping[str, Any], inst: str) -> dict[str, Mapping[str, Any]]:
+    base = cfg.get("tofa") if isinstance(cfg.get("tofa"), Mapping) else {}
+    parent = base if inst == "default" else ((base or {}).get("instances") or {}).get(inst)
+    users = parent.get("sync_users") if isinstance(parent, Mapping) else None
+    return {str(k): v for k, v in users.items() if isinstance(v, Mapping)} if isinstance(users, Mapping) else {}
+
+
+def _tofa_live_keys(users: Mapping[str, Mapping[str, Any]]) -> dict[str, tuple[str, str]]:
+    dead = {str(e.get("sync_key_id") or "").strip() for e in users.values() if str(e.get("auth_error") or "") == "sync_key_invalid"}
+    out: dict[str, tuple[str, str]] = {}
+    for entry in users.values():
+        uid, key_id, secret = (str(entry.get(k) or "").strip() for k in ("user_id", "sync_key_id", "sync_key_token"))
+        if entry.get("shared") is True and uid and key_id and secret and key_id not in dead:
+            out.setdefault(uid, (secret, key_id))
+    return out
+
+
+def _tofa_key_refs(users: Mapping[str, Mapping[str, Any]]) -> set[tuple[str, str]]:
+    return {(str(e.get("user_id") or ""), str(e.get("sync_key_id") or "")) for e in users.values()
+            if e.get("shared") is True and str(e.get("user_id") or "") and str(e.get("sync_key_id") or "")}
+
+
+def _tofa_revoke_keys(cfg: Mapping[str, Any], inst: str, refs: Iterable[tuple[str, str]]) -> None:
+    from providers.auth._auth_TOFA import TofaClient
+
+    refs = sorted(set(refs))
+    if not refs:
+        return
+    client = TofaClient(cfg, instance_id=inst)
+    for uid, key_id in refs:
+        client.revoke_sync_key(uid, key_id)
+
+
+def _tofa_prepare_sync_users(cfg: Mapping[str, Any], inst: str, wanted: dict[str, Mapping[str, Any]], created: list[tuple[str, str]] | None = None) -> str:
     from providers.auth._auth_TOFA import TofaClient, TofaError, TofaRateLimited
 
     client = TofaClient(cfg, instance_id=inst)
@@ -614,11 +657,31 @@ def _tofa_prepare_sync_users(cfg: Mapping[str, Any], inst: str, wanted: dict[str
         profiles = {p["id"]: p for p in client.list_profiles()}
     except TofaError:
         return "tofa_unavailable"
+    shared: dict[str, dict[str, Any]] | None = None
+    keys = _tofa_live_keys(_tofa_saved_users(cfg, inst))
     for key, raw in list(wanted.items()):
         profile = profiles.get(key)
         if profile is None:
-            return "not_found"
-        row = {k: v for k, v in raw.items() if k != "home_pin"}
+            if shared is None:
+                try:
+                    shared = {p["id"]: p for p in client.shared_profiles()}
+                except TofaError:
+                    return "tofa_unavailable"
+            guest = shared.get(key)
+            if guest is None:
+                return "not_found"
+            uid = guest["user_id"]
+            if uid not in keys:
+                try:
+                    keys[uid] = client.create_sync_key(uid)
+                except TofaError:
+                    return "tofa_sync_key_failed"
+                if created is not None:
+                    created.append((uid, keys[uid][1]))
+            wanted[key] = {"key": key, "username": guest["username"], "shared": True, "user_id": uid, "profile_primary": bool(guest["is_primary"]),
+                           "sync_key_token": keys[uid][0], "sync_key_id": keys[uid][1]}
+            continue
+        row = {k: v for k, v in raw.items() if k not in _TOFA_SHARED_FIELDS}
         row["profile_locked"] = bool(profile["has_pin"])
         row["profile_primary"] = bool(profile["is_primary"])
         pin = str(raw.get("home_pin") or "").strip()
@@ -776,9 +839,12 @@ def api_provider_sync_users_update(provider: str, instance_id: str, payload: dic
         silo_error = _silo_prepare_sync_users(cfg, inst, wanted)
         if silo_error:
             return {"ok": False, "error": silo_error}
+    created_keys: list[tuple[str, str]] = []
+    stale_keys: set[tuple[str, str]] = set()
     if _cfg_key(provider) == "tofa" and wanted:
-        tofa_error = _tofa_prepare_sync_users(cfg, inst, wanted)
+        tofa_error = _tofa_prepare_sync_users(cfg, inst, wanted, created_keys)
         if tofa_error:
+            _tofa_revoke_keys(cfg, inst, created_keys)
             return {"ok": False, "error": tofa_error}
 
     def _mutate(latest: dict[str, Any]) -> dict[str, Any]:
@@ -795,6 +861,9 @@ def api_provider_sync_users_update(provider: str, instance_id: str, payload: dic
         current: dict[str, Any] = raw_current if isinstance(raw_current, dict) else {}
         now = int(time.time())
         updated = {key: _build_sync_user_entry(prov, key, raw, current.get(key) or {}, now) for key, raw in wanted.items()}
+        if prov == "tofa":
+            stale_keys.clear()
+            stale_keys.update(_tofa_key_refs(_tofa_saved_users(latest, inst)) - _tofa_key_refs(updated))
         for key in set(current) - set(updated):
             user_inst = sync_user_instance_id(inst, key)
             remove_instance_from_user_profiles(latest, prov, user_inst)
@@ -821,10 +890,15 @@ def api_provider_sync_users_update(provider: str, instance_id: str, payload: dic
     try:
         _, result = update_config(_mutate)
     except (KeyError, ValueError) as exc:
+        _tofa_revoke_keys(cfg, inst, created_keys)
         code = _sync_user_error(exc)
         if code == "sync_user_limit_reached":
             return {"ok": False, "error": code, "limit": _max_sync_users_per_connection(load_config() or {})}
         return {"ok": False, "error": code}
+    except Exception:
+        _tofa_revoke_keys(cfg, inst, created_keys)
+        raise
+    _tofa_revoke_keys(cfg, inst, stale_keys)
     _invalidate_provider_cache(provider)
     return {"ok": True, **result, "count": len(result["users"])}
 
@@ -909,6 +983,9 @@ def api_provider_instances_delete(provider: str, instance_id: str, request: Requ
 
         stremio_addon.set_instance_enabled(cfg, inst, False)
         stremio_addon.forget_instance(inst)
+
+    if _cfg_key(provider) == "tofa":
+        _tofa_revoke_keys(cfg, inst, _tofa_key_refs(_tofa_saved_users(cfg, inst)))
 
     insts.pop(inst, None)
     remove_instance_from_user_profiles(cfg, provider, inst)

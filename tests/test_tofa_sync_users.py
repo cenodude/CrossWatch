@@ -268,3 +268,386 @@ def test_sync_runs_with_the_identity_profile(server: list[dict[str, Any]]) -> No
     index = TOFAModule({**_cfg(), "_cw_provider_instance": "default~p-kid"}).build_index("collection")
     assert "tmdb:100" in index
     assert {c["instance"] for c in server if c["path"] == "/media/files"} == {"default~p-kid"}
+
+
+def _shared_cfg() -> dict[str, Any]:
+    cfg = _cfg()
+    cfg["tofa"]["is_admin"] = True
+    cfg["tofa"]["sync_users"]["p-cen"] = {
+        "profile_id": "p-cen", "profile_name": "cenodude", "username": "cenodude", "user": "cenodude", "profile_locked": False,
+        "profile_primary": True, "profile_token": "", "auth_error": "", "shared": True, "user_id": "u-cen",
+        "sync_key_id": "k-1", "sync_key_token": "tofa_wsk_secret",
+    }
+    return cfg
+
+
+class Recorder:
+    def __init__(self, routes: dict[tuple[str, str], Any]) -> None:
+        self.routes = routes
+        self.calls: list[dict[str, Any]] = []
+
+    def request(self, method: str, url: str, **kw: Any) -> ResponseStub:
+        path = url.split("/api/v1", 1)[1]
+        self.calls.append({"method": method.upper(), "path": path, "headers": dict(kw.get("headers") or {}), "json": kw.get("json")})
+        hit = self.routes.get((method.upper(), path))
+        if hit is None:
+            raise AssertionError(f"unexpected {method} {path}")
+        return hit if isinstance(hit, ResponseStub) else ResponseStub(200, hit)
+
+    def post(self, url: str, **kw: Any) -> ResponseStub:
+        raise AssertionError("a watch sync key must never trigger a token refresh")
+
+
+def _store(monkeypatch: pytest.MonkeyPatch, cfg: dict[str, Any]) -> dict[str, Any]:
+    from providers.auth import _auth_TOFA as tofa
+
+    holder = {"cfg": cfg}
+    monkeypatch.setattr(tofa, "save_config", lambda c: holder.__setitem__("cfg", c))
+    monkeypatch.setattr(tofa, "load_config", lambda: holder["cfg"])
+    return holder
+
+
+def test_shared_user_uses_its_sync_key_and_never_the_admin_session() -> None:
+    from providers.auth import _auth_TOFA as tofa
+
+    cfg = _shared_cfg()
+    block = tofa.provider_block(cfg, "default~p-cen")
+    assert tofa.is_shared_user(block) and tofa.is_configured(block) and not tofa.needs_profile_pin(block)
+    session = Recorder({("GET", "/users/me"): {"id": "u-cen", "username": "cenodude"}})
+    client = tofa.TofaClient(cfg, instance_id="default~p-cen", session=session)  # type: ignore[arg-type]
+    assert client.access_token() == "tofa_wsk_secret"
+    client.account()
+    headers = session.calls[0]["headers"]
+    assert headers["Authorization"] == "Bearer tofa_wsk_secret" and headers["X-Profile-Id"] == "p-cen" and "X-Profile-Token" not in headers
+    assert not tofa.is_shared_user(tofa.provider_block(cfg, "default")) and not tofa.is_shared_user(tofa.provider_block(cfg, "default~p-kid"))
+    cfg["tofa"]["sync_users"]["p-cen"]["sync_key_token"] = ""
+    assert not tofa.is_configured(tofa.provider_block(cfg, "default~p-cen"))
+    with pytest.raises(tofa.TofaSyncKeyInvalid):
+        tofa.TofaClient(cfg, instance_id="default~p-cen").access_token()
+
+
+@pytest.mark.parametrize("status,code", [(401, "api_key_invalid"), (403, "api_key_access_lost")])
+def test_rejected_sync_key_flags_only_that_identity(monkeypatch: pytest.MonkeyPatch, status: int, code: str) -> None:
+    from providers.auth import _auth_TOFA as tofa
+
+    holder = _store(monkeypatch, _shared_cfg())
+    session = Recorder({("GET", "/users/me"): ResponseStub(status, {"code": code})})
+    with pytest.raises(tofa.TofaSyncKeyInvalid):
+        tofa.TofaClient(holder["cfg"], instance_id="default~p-cen", session=session).account()  # type: ignore[arg-type]
+    users = holder["cfg"]["tofa"]["sync_users"]
+    assert users["p-cen"]["auth_error"] == "sync_key_invalid"
+    assert holder["cfg"]["tofa"].get("auth_error", "") == "" and users["p-kid"].get("auth_error", "") == ""
+    assert tofa.status_for_block(tofa.provider_block(holder["cfg"], "default~p-cen"))["reconnect_required"] is True
+    assert tofa.is_configured(tofa.provider_block(holder["cfg"], "default"))
+
+
+def test_request_with_auth_never_refreshes_for_a_sync_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.auth import _auth_TOFA as tofa
+
+    holder = _store(monkeypatch, _shared_cfg())
+    session = Recorder({})
+    seen: list[dict[str, Any]] = []
+
+    def call(sess: Any, method: str, url: str, **kw: Any) -> ResponseStub:
+        seen.append(kw["headers"])
+        return ResponseStub(401, {"code": "api_key_invalid"})
+
+    resp = tofa.request_with_auth(session, "GET", f"{SERVER}/api/v1/users/me/watch-state", cfg=holder["cfg"],  # type: ignore[arg-type]
+                                  instance_id="default~p-cen", request_func=call)
+    assert resp.status_code == 401 and len(seen) == 1 and seen[0]["Authorization"] == "Bearer tofa_wsk_secret"
+    assert holder["cfg"]["tofa"]["sync_users"]["p-cen"]["auth_error"] == "sync_key_invalid"
+
+
+def test_shared_profiles_lists_other_users_for_admins_only() -> None:
+    from providers.auth import _auth_TOFA as tofa
+
+    routes: dict[tuple[str, str], Any] = {
+        ("GET", "/system/info"): {"version": "0.13.3", "capabilities": ["sync.user_state", "auth.watch_sync_keys"]},
+        ("GET", "/users/list"): [{"id": "u-1", "username": "owner", "email": None}, {"id": "u-cen", "username": "cenodude", "email": None},
+                                 {"id": "u-two", "username": "duo", "email": None}],
+        ("GET", "/users/u-cen/profiles"): [{"id": "p-cen", "name": "cenodude", "is_primary": True, "is_locked": True}],
+        ("GET", "/users/u-two/profiles"): [{"id": "p-d1", "name": "Main", "is_primary": True}, {"id": "p-d2", "name": "Kids", "is_kids": True}],
+    }
+    cfg = _shared_cfg()
+    rows = tofa.TofaClient(cfg, session=Recorder(routes)).shared_profiles()  # type: ignore[arg-type]
+    assert [(r["id"], r["user_id"], r["username"], r["has_pin"]) for r in rows] == [
+        ("p-cen", "u-cen", "cenodude", False), ("p-d1", "u-two", "duo (Main)", False), ("p-d2", "u-two", "duo (Kids)", False)]
+    assert rows[0]["shared"] is True and rows[0]["is_primary"] is True
+    cfg["tofa"]["is_admin"] = False
+    assert tofa.TofaClient(cfg, session=Recorder({})).shared_profiles() == []  # type: ignore[arg-type]
+    cfg["tofa"]["is_admin"] = True
+    old = dict(routes)
+    old[("GET", "/system/info")] = {"capabilities": ["sync.user_state"]}
+    assert tofa.TofaClient(cfg, session=Recorder(old)).shared_profiles() == []  # type: ignore[arg-type]
+
+
+def test_sync_key_create_and_revoke_calls() -> None:
+    from providers.auth import _auth_TOFA as tofa
+
+    routes: dict[tuple[str, str], Any] = {
+        ("POST", "/users/u-cen/watch-sync-keys"): ResponseStub(201, {"id": "k-9", "name": "CrossWatch", "secret": "s-9", "expires_at": None}),
+        ("DELETE", "/users/u-cen/watch-sync-keys/k-9"): ResponseStub(204, None),
+        ("DELETE", "/users/u-cen/watch-sync-keys/k-gone"): ResponseStub(404, {"code": "not_found"}),
+        ("DELETE", "/users/u-cen/watch-sync-keys/k-err"): ResponseStub(500, {"code": "boom"}),
+    }
+    session = Recorder(routes)
+    client = tofa.TofaClient(_shared_cfg(), session=session)  # type: ignore[arg-type]
+    assert client.create_sync_key("u-cen") == ("s-9", "k-9")
+    create = session.calls[0]
+    assert create["json"] == {"name": "CrossWatch"} and create["headers"]["Authorization"] == "Bearer a1"
+    assert client.revoke_sync_key("u-cen", "k-9") and client.revoke_sync_key("u-cen", "k-gone")
+    assert client.revoke_sync_key("u-cen", "k-err") is False
+    routes[("POST", "/users/u-cen/watch-sync-keys")] = ResponseStub(201, {"id": "k-10"})
+    with pytest.raises(tofa.TofaInvalidResponse):
+        client.create_sync_key("u-cen")
+
+
+def _guests(self: Any) -> list[dict[str, Any]]:
+    return [{"id": "p-cen", "name": "cenodude", "username": "cenodude", "user_id": "u-cen", "is_primary": True, "has_pin": False, "is_child": False, "shared": True},
+            {"id": "p-d1", "name": "Main", "username": "duo (Main)", "user_id": "u-two", "is_primary": True, "has_pin": False, "is_child": False, "shared": True},
+            {"id": "p-d2", "name": "Kids", "username": "duo (Kids)", "user_id": "u-two", "is_primary": False, "has_pin": False, "is_child": True, "shared": True}]
+
+
+def _household(self: Any) -> list[dict[str, Any]]:
+    return [{"id": "p-kid", "name": "Kid", "has_pin": True, "is_primary": False}, {"id": "p-guest", "name": "Guest", "has_pin": False, "is_primary": False}]
+
+
+def test_prepare_creates_one_key_per_shared_user(monkeypatch: pytest.MonkeyPatch) -> None:
+    from api import providerInstancesAPI as api
+    from providers.auth import _auth_TOFA as tofa
+
+    made: list[str] = []
+
+    def create(self: Any, uid: str) -> tuple[str, str]:
+        made.append(uid)
+        return f"secret-{uid}", f"key-{uid}"
+
+    monkeypatch.setattr(tofa.TofaClient, "list_profiles", _household)
+    monkeypatch.setattr(tofa.TofaClient, "shared_profiles", _guests)
+    monkeypatch.setattr(tofa.TofaClient, "create_sync_key", create)
+    wanted: dict[str, Any] = {"p-cen": {"key": "p-cen", "username": "x"}, "p-d1": {"key": "p-d1", "username": "x"}, "p-d2": {"key": "p-d2", "username": "x"},
+                              "p-guest": {"key": "p-guest", "username": "Guest", "shared": True, "sync_key_token": "forged", "user_id": "u-evil"}}
+    created: list[tuple[str, str]] = []
+    assert api._tofa_prepare_sync_users(_shared_cfg(), "default", wanted, created) == ""
+    assert made == ["u-two"] and created == [("u-two", "key-u-two")]
+    assert wanted["p-cen"]["sync_key_token"] == "tofa_wsk_secret" and wanted["p-cen"]["sync_key_id"] == "k-1"
+    assert wanted["p-d1"]["sync_key_token"] == wanted["p-d2"]["sync_key_token"] == "secret-u-two"
+    entry = api._build_sync_user_entry("tofa", "p-d2", wanted["p-d2"], {}, 100)
+    assert entry["shared"] is True and entry["user_id"] == "u-two" and entry["username"] == "duo (Kids)" and entry["profile_locked"] is False
+    assert entry["profile_primary"] is False and entry["sync_key_id"] == "key-u-two"
+    household = api._build_sync_user_entry("tofa", "p-guest", wanted["p-guest"], {}, 100)
+    assert "shared" not in household and "sync_key_token" not in household and "user_id" not in household
+
+    def broken(self: Any, uid: str) -> tuple[str, str]:
+        raise tofa.TofaServerError("forbidden")
+
+    monkeypatch.setattr(tofa.TofaClient, "create_sync_key", broken)
+    cfg = _shared_cfg()
+    cfg["tofa"]["sync_users"]["p-cen"]["auth_error"] = "sync_key_invalid"
+    assert api._tofa_prepare_sync_users(cfg, "default", {"p-cen": {"key": "p-cen", "username": "x"}}) == "tofa_sync_key_failed"
+    assert api._tofa_prepare_sync_users(cfg, "default", {"p-nobody": {"key": "p-nobody", "username": "x"}}) == "not_found"
+
+
+def _api(monkeypatch: pytest.MonkeyPatch, store: dict[str, Any]) -> Any:
+    from api import providerInstancesAPI as api
+
+    def fake_load() -> dict[str, Any]:
+        return copy.deepcopy(store)
+
+    def fake_save(cfg: dict[str, Any]) -> None:
+        store.clear()
+        store.update(cfg)
+
+    def fake_update(mutator: Any) -> tuple[dict[str, Any], Any]:
+        cfg = fake_load()
+        result = mutator(cfg)
+        fake_save(cfg)
+        return cfg, result
+
+    monkeypatch.setattr(api, "load_config", fake_load)
+    monkeypatch.setattr(api, "save_config", fake_save)
+    monkeypatch.setattr(api, "update_config", fake_update)
+    monkeypatch.setattr(api, "_admin_required_response", lambda request, cfg: None)
+    monkeypatch.setattr(api, "_invalidate_provider_cache", lambda provider: None)
+    return api
+
+
+def _raise_forbidden(self: Any, uid: str) -> tuple[str, str]:
+    from providers.auth import _auth_TOFA as tofa
+
+    raise tofa.TofaServerError("forbidden")
+
+
+def test_sync_users_api_revokes_keys_nobody_uses(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.auth import _auth_TOFA as tofa
+
+    store = _shared_cfg()
+    api = _api(monkeypatch, store)
+    revoked: list[tuple[str, str]] = []
+    monkeypatch.setattr(tofa.TofaClient, "list_profiles", _household)
+    monkeypatch.setattr(tofa.TofaClient, "shared_profiles", _guests)
+    monkeypatch.setattr(tofa.TofaClient, "create_sync_key", lambda self, uid: (f"secret-{uid}", f"key-{uid}"))
+    monkeypatch.setattr(tofa.TofaClient, "revoke_sync_key", lambda self, uid, kid: revoked.append((uid, kid)) or True)
+
+    three = [{"key": "p-cen", "username": "cenodude"}, {"key": "p-d1", "username": "duo"}, {"key": "p-d2", "username": "duo"}]
+    res = api.api_provider_sync_users_update("tofa", "default", {"users": three})
+    assert res["ok"] and revoked == []
+    rows = {r["key"]: r for r in res["users"]}
+    assert rows["p-cen"]["shared"] is True and rows["p-cen"]["key_invalid"] is False and "secret" not in json.dumps(res)
+    res = api.api_provider_sync_users_update("tofa", "default", {"users": three[::2]})
+    assert res["ok"] and revoked == []
+    res = api.api_provider_sync_users_update("tofa", "default", {"users": three[:1]})
+    assert res["ok"] and revoked == [("u-two", "key-u-two")]
+    assert set(store["tofa"]["sync_users"]) == {"p-cen"}
+
+    monkeypatch.setattr(tofa.TofaClient, "create_sync_key", _raise_forbidden)
+    revoked.clear()
+    store["tofa"]["sync_users"]["p-cen"]["auth_error"] = "sync_key_invalid"
+    assert api.api_provider_sync_users("tofa", "default")["users"][0]["key_invalid"] is True
+    res = api.api_provider_sync_users_update("tofa", "default", {"users": three[:1]})
+    assert res == {"ok": False, "error": "tofa_sync_key_failed"} and revoked == []
+    monkeypatch.setattr(tofa.TofaClient, "create_sync_key", lambda self, uid: ("secret-new", "k-2"))
+    res = api.api_provider_sync_users_update("tofa", "default", {"users": three[:1]})
+    assert res["ok"] and revoked == [("u-cen", "k-1")]
+    entry = store["tofa"]["sync_users"]["p-cen"]
+    assert entry["sync_key_token"] == "secret-new" and entry["auth_error"] == ""
+
+    res = api.api_provider_sync_users_update("tofa", "default", {"users": []})
+    assert res["ok"] and revoked[-1] == ("u-cen", "k-2") and "sync_users" not in store["tofa"]
+
+
+def test_failed_save_revokes_the_keys_it_created(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.auth import _auth_TOFA as tofa
+
+    store = _shared_cfg()
+    store["tofa"]["sync_users"].pop("p-cen")
+    api = _api(monkeypatch, store)
+    revoked: list[tuple[str, str]] = []
+    monkeypatch.setattr(tofa.TofaClient, "list_profiles", _household)
+    monkeypatch.setattr(tofa.TofaClient, "shared_profiles", _guests)
+    monkeypatch.setattr(tofa.TofaClient, "create_sync_key", lambda self, uid: (f"secret-{uid}", f"key-{uid}"))
+    monkeypatch.setattr(tofa.TofaClient, "revoke_sync_key", lambda self, uid, kid: revoked.append((uid, kid)) or True)
+    monkeypatch.setattr(api, "_max_sync_users_per_connection", lambda cfg=None: 2)
+    res = api.api_provider_sync_users_update("tofa", "default", {"users": [{"key": "p-cen", "username": "a"}, {"key": "p-d1", "username": "b"},
+                                                                           {"key": "p-kid", "username": "Kid"}]})
+    assert res["ok"] is False and res["error"] == "sync_user_limit_reached"
+    assert sorted(revoked) == [("u-cen", "key-u-cen"), ("u-two", "key-u-two")]
+
+
+def test_instance_delete_and_disconnect_revoke_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.auth import _auth_TOFA as tofa
+
+    store = _shared_cfg()
+    store["tofa"]["instances"] = {"TOFA-P01": copy.deepcopy(store["tofa"])}
+    api = _api(monkeypatch, store)
+    monkeypatch.setattr(api, "usage_conflict_response", lambda cfg, provider, inst: None)
+    revoked: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(tofa.TofaClient, "revoke_sync_key", lambda self, uid, kid: revoked.append((self.instance_id, uid, kid)) or True)
+    assert api.api_provider_instances_delete("tofa", "TOFA-P01")["ok"]
+    assert revoked == [("TOFA-P01", "u-cen", "k-1")] and "TOFA-P01" not in store["tofa"]["instances"]
+
+    holder = _store(monkeypatch, store)
+    tofa.TofaClient(holder["cfg"]).disconnect(holder["cfg"])
+    entry = holder["cfg"]["tofa"]["sync_users"]["p-cen"]
+    assert revoked[-1] == ("default", "u-cen", "k-1")
+    assert entry["sync_key_token"] == "" and entry["auth_error"] == "sync_key_invalid"
+    assert holder["cfg"]["tofa"]["access_token"] == ""
+
+
+def test_redaction_masks_sync_keys() -> None:
+    from cw_platform.config_base import _is_sensitive_path, redact_config
+
+    red = redact_config(copy.deepcopy(_shared_cfg()))["tofa"]["sync_users"]["p-cen"]
+    assert red["sync_key_token"] != "tofa_wsk_secret" and red["sync_key_id"] == "k-1"
+    assert _is_sensitive_path(("tofa", "sync_users", "p-cen", "sync_key_token"))
+
+
+def test_health_for_a_shared_user_checks_its_own_account(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync import _mod_TOFA as mod
+    from providers.sync.tofa import _common
+
+    paths: list[str] = []
+
+    def fake(session: Any, method: str, url: str, **kw: Any) -> ResponseStub:
+        path = url.split("/api/v1", 1)[1]
+        paths.append(path)
+        if path == "/users/me":
+            return ResponseStub(200, {"id": "u-cen"})
+        return ResponseStub(403, {"code": "forbidden"})
+
+    monkeypatch.setattr(_common, "request_with_auth", fake)
+    res = mod.TOFAModule({**_shared_cfg(), "_cw_provider_instance": "default~p-cen"}).health()
+    assert res["ok"] is True and paths == ["/users/me"]
+
+
+def test_watcher_routes_shared_user_playback_by_user_id(server: list[dict[str, Any]]) -> None:
+    from providers.scrobble.tofa import watch
+
+    cfg = _shared_cfg()
+    svc = watch.TofaWatchService(dispatcher=Dispatch(True), cfg_provider=lambda: cfg)
+    assert svc._instance_for({"user_id": "u-cen"}, cfg) == "default~p-cen"
+    assert svc._instance_for({"user_id": "u-cen", "profile_id": "p-cen"}, cfg) == "default~p-cen"
+    assert svc._instance_for({"user_id": "u-1"}, cfg) == "default"
+    cfg["tofa"]["sync_users"]["p-cen"]["profile_primary"] = False
+    assert svc._instance_for({"user_id": "u-cen"}, cfg) == ""
+
+
+def _two_profile_cfg() -> dict[str, Any]:
+    cfg = _shared_cfg()
+    users = cfg["tofa"]["sync_users"]
+    users.pop("p-cen")
+    for pid, primary in (("p-d1", True), ("p-d2", False)):
+        users[pid] = {"profile_id": pid, "profile_name": pid, "username": pid, "user": pid, "profile_locked": False, "profile_primary": primary,
+                      "profile_token": "", "auth_error": "", "shared": True, "user_id": "u-two", "sync_key_id": "k-old", "sync_key_token": "old-secret"}
+    return cfg
+
+
+def test_rejected_key_flags_every_profile_that_shares_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.auth import _auth_TOFA as tofa
+
+    holder = _store(monkeypatch, _two_profile_cfg())
+    session = Recorder({("GET", "/users/me"): ResponseStub(401, {"code": "api_key_invalid"})})
+    with pytest.raises(tofa.TofaSyncKeyInvalid):
+        tofa.TofaClient(holder["cfg"], instance_id="default~p-d1", session=session).account()  # type: ignore[arg-type]
+    users = holder["cfg"]["tofa"]["sync_users"]
+    assert users["p-d1"]["auth_error"] == users["p-d2"]["auth_error"] == "sync_key_invalid"
+    assert users["p-kid"].get("auth_error", "") == ""
+
+
+def test_resave_never_reuses_a_key_rejected_on_a_sibling_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.auth import _auth_TOFA as tofa
+
+    store = _two_profile_cfg()
+    store["tofa"]["sync_users"]["p-d1"]["auth_error"] = "sync_key_invalid"
+    api = _api(monkeypatch, store)
+    revoked: list[tuple[str, str]] = []
+    monkeypatch.setattr(tofa.TofaClient, "list_profiles", _household)
+    monkeypatch.setattr(tofa.TofaClient, "shared_profiles", _guests)
+    monkeypatch.setattr(tofa.TofaClient, "create_sync_key", lambda self, uid: ("new-secret", "k-new"))
+    monkeypatch.setattr(tofa.TofaClient, "revoke_sync_key", lambda self, uid, kid: revoked.append((uid, kid)) or True)
+    res = api.api_provider_sync_users_update("tofa", "default", {"users": [{"key": "p-d1", "username": "a"}, {"key": "p-d2", "username": "b"}]})
+    assert res["ok"]
+    users = store["tofa"]["sync_users"]
+    assert users["p-d1"]["sync_key_token"] == users["p-d2"]["sync_key_token"] == "new-secret"
+    assert revoked == [("u-two", "k-old")]
+
+
+def test_unexpected_save_error_still_revokes_new_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.auth import _auth_TOFA as tofa
+
+    store = _shared_cfg()
+    store["tofa"]["sync_users"].pop("p-cen")
+    api = _api(monkeypatch, store)
+    revoked: list[tuple[str, str]] = []
+    monkeypatch.setattr(tofa.TofaClient, "list_profiles", _household)
+    monkeypatch.setattr(tofa.TofaClient, "shared_profiles", _guests)
+    monkeypatch.setattr(tofa.TofaClient, "create_sync_key", lambda self, uid: (f"secret-{uid}", f"key-{uid}"))
+    monkeypatch.setattr(tofa.TofaClient, "revoke_sync_key", lambda self, uid, kid: revoked.append((uid, kid)) or True)
+
+    def disk_full(mutator: Any) -> Any:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(api, "update_config", disk_full)
+    with pytest.raises(OSError):
+        api.api_provider_sync_users_update("tofa", "default", {"users": [{"key": "p-cen", "username": "a"}]})
+    assert revoked == [("u-cen", "key-u-cen")]
