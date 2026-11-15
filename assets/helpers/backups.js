@@ -2,7 +2,7 @@
 /* CrossWatch - Application, tracker and capture backup interface */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
-  const s = { plan: null, draft: null, schedule: {}, backups: [], jobs: [], view: 'backups', choosing: false, page: 0, remotePage: 0, remote: [], section: '', restore: null, message: '', error: false, busy: false, timer: null, opener: null, stamp: '' };
+  const s = { plan: null, draft: null, schedule: {}, backups: [], jobs: [], view: 'backups', choosing: false, page: 0, remotePage: 0, remote: [], section: '', restore: null, message: '', noticeJob: '', error: false, busy: false, timer: null, opener: null, stamp: '' };
   const $ = id => document.getElementById(id);
   const names = { application: 'CrossWatch application', trackers: 'CW trackers', captures: 'Saved captures' };
   const recoverySections = { mappings: 'Mappings and blocks only', anime_rules: 'Custom anime rules only', captures: 'Saved captures only' };
@@ -32,6 +32,9 @@
   const check = (label,checked,fn) => el('label',{class:'br-check'},[el('input',{type:'checkbox',checked,'aria-label':label,on:{change:e=>fn(e.target.checked)}}),el('span',{text:label})]);
   const bytes = n => {const size=Number(n||0);return size<1024?`${size} B`:size<1048576?`${(size/1024).toFixed(1)} KB`:`${(size/1048576).toFixed(1)} MB`;};
   const pageSize = 5;
+  const shortNames = {application:'Application',trackers:'Trackers',captures:'Captures'};
+  const badges = values => el('div',{class:'br-badges'},values.map(value=>el('span',{class:'br-badge',text:value})));
+  const quietButton = (label,fn) => {const n=button(label,fn);n.classList.add('br-quiet');return n;};
   const date = v => v ? new Date(typeof v === 'number' ? v*1000 : v).toLocaleString() : 'Not yet';
   const contents = b => Array.isArray(b.components) ? b.components.map(c=>names[c]||c).join(' + ') : legacy[b.scope] || 'Imported archive';
   function select(options,value,fn) { const n=el('select',{class:'cw-page-input br-input',on:{change:e=>fn(e.target.value)}},options.map(([v,label])=>el('option',{value:v,text:label}))); n.value=String(value); return n; }
@@ -39,7 +42,7 @@
     const r=await fetch(`/api/backups/${path}`,body===undefined?{cache:'no-store'}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const data=await r.json(); if(!r.ok||data.ok===false) throw new Error(data.error||'Backup request failed.'); return data;
   }
-  function message(value,error=false) { s.message=value; s.error=error; const n=$('br-message'); if(n){n.textContent=value;n.hidden=!value;n.classList.toggle('is-error',error);} }
+  function message(value,error=false,jobId='') { s.message=value; s.noticeJob=jobId; s.error=error; const n=$('br-message'); if(n){n.textContent=value;n.hidden=!value;n.classList.toggle('is-error',error);} }
   async function perform(fn) {
     if(s.busy)return;
     const active=document.activeElement,modal=$('cw-backups-modal');s.busy=true;modal?.setAttribute('aria-busy','true');
@@ -52,7 +55,8 @@
     const modal=el('div',{id:'cw-backups-modal',class:'cw-page-backups hidden'});
     modal.append(el('section',{class:'br-dialog',role:'dialog','aria-modal':'true','aria-labelledby':'br-title'},[
       el('header',{class:'br-head'},[el('div',{},[el('h2',{id:'br-title',text:'Backup & Restore'}),text('Protect your application, trackers and saved captures.')]),button('Close',close)]),
-      el('div',{id:'br-body',class:'br-body cw-scrollbars'})]));
+      el('div',{id:'br-tabs',class:'br-tabs',role:'tablist','aria-label':'Backup views'}),
+      el('div',{id:'br-body',class:'br-body cw-scrollbars',role:'tabpanel'})]));
     ['input','change'].forEach(event=>modal.addEventListener(event,e=>e.stopPropagation()));
     modal.addEventListener('keydown',e=>{
       if(e.key==='Escape'){e.stopPropagation();close();}
@@ -65,13 +69,28 @@
     });
     document.body.append(modal);
   }
+  function renderTabs() {
+    const tabs=$('br-tabs'),body=$('br-body');if(!tabs)return;
+    tabs.hidden=!!s.restore;
+    body.setAttribute('aria-labelledby',s.restore?'br-title':`br-tab-${s.view}`);
+    const activate=view=>{s.view=view;s.section='';render();body.scrollTop=0;$(`br-tab-${view}`)?.focus();};
+    tabs.replaceChildren(...[['backups','Backups'],['settings','Settings']].map(([view,label],index)=>el('button',{
+      id:`br-tab-${view}`,type:'button',class:'cw-page-tab br-tab',role:'tab','aria-selected':String(s.view===view),'aria-controls':'br-body',tabindex:s.view===view?'0':'-1',disabled:s.busy||!s.plan,
+      on:{click:()=>activate(view),keydown:e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();activate(e.key==='Home'?'backups':e.key==='End'?'settings':index===0?'settings':'backups');}}
+    },[label])));
+  }
   function selection() {
-    const d=s.draft, summary=d.components.map(key=>key==='trackers'&&d.trackers!==null?`${d.trackers.length} selected tracker${d.trackers.length===1?'':'s'}`:names[key]).join(' \u00b7 ')||'Choose backup contents';
-    const block=el('section',{class:'br-section'},[row([el('div',{class:'br-content-summary'},[title('What to back up'),text(summary)]),button(s.choosing?'Done':'Choose contents',()=>{s.choosing=!s.choosing;render();})])]);
+    const d=s.draft;
+    const selected=Object.keys(names).filter(key=>d.components.includes(key)).map(key=>key==='trackers'?(d.trackers===null?'All trackers':`${d.trackers.length} selected tracker${d.trackers.length===1?'':'s'}`):shortNames[key]);
+    const choose=quietButton(s.choosing?'Done':'Choose contents',()=>{s.choosing=!s.choosing;render();});choose.setAttribute('aria-expanded',String(s.choosing));choose.setAttribute('aria-controls','br-content-options');
+    const create=button('Back up now',()=>perform(async()=>{await savePlan();const result=await api('create',{managed:true});s.choosing=false;s.page=0;render();message('Backup queued. You can close this dialog while it runs.',false,result.job.id);await refreshJobs();}),true);
+    const block=el('section',{class:'cw-page-panel br-plan'},[
+      row([el('div',{class:'br-content-summary'},[title('What to back up'),selected.length?badges(selected):text('Choose backup contents')]),create]),
+      row([el('div',{class:'br-plan-meta'},[el('span',{text:s.schedule.active?'Automatic: '+s.schedule.at:'Automatic backups off'}),el('span',{text:d.encrypt_local?'Encrypted':'Local ZIP'}),el('span',{text:{webdav:'Nextcloud / WebDAV',folder:'Mounted folder'}[d.destination.kind]||'This server only'})]),choose])]);
     if(s.choosing){
-      const options=el('div',{class:'br-content-options'});
+      const options=el('div',{id:'br-content-options',class:'br-content-options'});
       Object.entries(names).forEach(([key,label])=>{
-        const option=el('div',{class:'cw-page-panel br-content-option'},[check(label,d.components.includes(key),yes=>{d.components=yes?[...new Set([...d.components,key])]:d.components.filter(v=>v!==key);render();})]);
+        const option=el('div',{class:'br-content-option'},[check(label,d.components.includes(key),yes=>{d.components=yes?[...new Set([...d.components,key])]:d.components.filter(v=>v!==key);render();})]);
         if(key==='application'){
           option.append(text('Settings, connections, sync state, mappings, blocks and custom anime rules.'));
           if(d.components.includes(key)&&s.plan.key_source==='external')option.append(text('Keep your external configuration key separately.'));
@@ -86,7 +105,6 @@
       });
       block.append(options);
     }
-    block.append(row([text(`${s.schedule.active?'Automatic: '+s.schedule.at:'Automatic backups off'} \u00b7 ${d.encrypt_local?'Encrypted local backups':'Local ZIP backups'}`),button('Back up now',()=>perform(async()=>{await savePlan();await api('create',{managed:true});s.choosing=false;s.page=0;render();message('Backup queued. You can close this dialog while it runs.');await refreshJobs();}),true)]));
     return block;
   }
   function encryptionFields() {
@@ -129,10 +147,14 @@
   function renderStatus() {
     const slot=$('br-status');if(!slot)return;
     const job=s.jobs[0],nodes=[];
-    if(job){nodes.push(title(job.stage==='failed'&&job.local_status==='saved'?'Local backup saved, destination copy failed':stages[job.stage]||job.stage),text(`Local copy: ${job.local_status==='saved'?'Saved '+date(job.local_saved_at):job.local_status}`));
+    slot.dataset.state=job?.stage||'';
+    if(job){
+      const heading=job.stage==='failed'&&job.local_status==='saved'?'Local backup saved, destination copy failed':stages[job.stage]||job.stage;
+      nodes.push(row([el('div',{class:'br-status-heading'},[el('span',{class:'br-status-dot','aria-hidden':'true'}),title(heading)]),text(job.local_status==='saved'?`Saved ${date(job.local_saved_at)}`:`Local copy: ${job.local_status}`)]));
       if(job.remote_status!=='disabled')nodes.push(text(`Destination copy: ${job.remote_status}${job.remote_verified_at?' '+date(job.remote_verified_at):''}`));
       if(job.stage==='uploading')nodes.push(el('progress',{max:Math.max(job.total_bytes||0,1),value:job.bytes||0,'aria-label':'Upload progress'}),text(`${bytes(job.bytes)} of ${bytes(job.total_bytes)}`));
-      if(job.error)nodes.push(text(job.error,'br-error'));if(job.warning)nodes.push(text(job.warning));if(job.stage==='failed')nodes.push(text(job.retry_at?`Automatic retry: ${date(job.retry_at)}`:'Automatic retries stopped. Check the destination before retrying.'),button('Retry',()=>perform(async()=>{await api('retry',{id:job.id});await refreshJobs();})));
+      if(job.error)nodes.push(text(job.error,'br-error'));if(job.warning)nodes.push(text(job.warning));
+      if(job.stage==='failed')nodes.push(row([text(job.retry_at?`Automatic retry: ${date(job.retry_at)}`:'Automatic retries stopped. Check the destination before retrying.'),button('Retry',()=>perform(async()=>{await api('retry',{id:job.id});await refreshJobs();}))]));
     }
     const verified=s.jobs.find(j=>j.remote_status==='verified');if(verified&&verified.id!==job?.id)nodes.push(text(`Last verified destination copy: ${date(verified.remote_verified_at)}`));slot.hidden=!nodes.length;slot.replaceChildren(...nodes);
   }
@@ -147,15 +169,20 @@
     const slot=$('br-history');if(!slot)return;
     const expanded=new Set([...slot.querySelectorAll('details[open]')].map(n=>n.dataset.path));
     slot.replaceChildren();
-    if(!s.backups.length){s.page=0;slot.append(text('No saved backups yet. Create one above or restore from a file.'));return;}
+    if(!s.backups.length){s.page=0;slot.append(el('div',{class:'br-empty'},[title('No backups yet'),text('Create your first backup or restore from a file.')]));return;}
     const pager=pagination(s.backups.length,'page',renderHistory);
     s.backups.slice(s.page*pageSize,(s.page+1)*pageSize).forEach(b=>{
       const job=s.jobs.find(j=>j.path===b.path);
-      const details=el('details',{'data-path':b.path,open:expanded.has(b.path)},[el('summary',{text:'Details'}),el('div',{class:'br-backup-details'},[
+      const details=el('details',{'data-path':b.path,open:expanded.has(b.path)},[el('summary',{},[el('span',{text:`${bytes(b.size)} \u00b7 ${b.encrypted?'Encrypted':'ZIP'} \u00b7 Details`})]),el('div',{class:'br-backup-details'},[
         text(b.path),text(`${b.encrypted?'Encrypted archive':'ZIP archive'} \u00b7 ${job?.remote_status==='verified'?'Destination copy verified':'Local copy'} \u00b7 ${b.trigger==='scheduler'?'Automatic retention':'Kept until deleted'}`),actions([
           button('Download',()=>{window.location.href=`/api/backups/download?path=${encodeURIComponent(b.path)}`;}),
           button('Delete',()=>{if(window.confirm('Delete this local backup? Destination copies are kept separately.'))perform(async()=>{await api('delete',{path:b.path});await refreshList();});})])])]);
-      slot.append(el('article',{class:'br-history-row'},[row([el('div',{class:'br-backup-info'},[el('strong',{text:date(b.created_at||b.mtime)}),text(`${contents(b)} \u00b7 ${bytes(b.size)}`)]),button('Restore',()=>{s.restore={path:b.path,password:'',validation:null,mode:'replace',instance:'',label:'Recovered tracker'};render();})]),details]));
+      const created=b.created_at||b.mtime,when=created?new Date(typeof created==='number'?created*1000:created):null;
+      const labels=Array.isArray(b.components)?Object.keys(names).filter(key=>b.components.includes(key)).map(key=>shortNames[key]):[legacy[b.scope]||'Imported archive'];
+      slot.append(el('article',{class:'br-history-row'},[el('div',{class:'br-history-main'},[
+        el('div',{class:'br-backup-date'},[el('strong',{text:when?when.toLocaleDateString():'Unknown date'}),text(when?when.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'')]),
+        el('div',{class:'br-backup-info'},[badges(labels),details]),
+        button('Restore',()=>{s.restore={path:b.path,password:'',validation:null,mode:'replace',instance:'',label:'Recovered tracker'};render();})])]));
     });
     slot.append(pager);
   }
@@ -190,31 +217,28 @@
   function render() {
     const previous=document.activeElement,focusName=previous?.getAttribute('aria-label')||(previous?.tagName==='BUTTON'?previous.textContent:null);
     queueMicrotask(()=>{if(previous?.isConnected||!focusName)return;[...document.querySelectorAll('#br-body input,#br-body select,#br-body button')].find(n=>(n.getAttribute('aria-label')||n.textContent)===focusName)?.focus({preventScroll:true});});
-    const body=$('br-body');if(!body)return;const msg=el('div',{id:'br-message',class:s.error?'br-message is-error':'br-message',role:'status',hidden:!s.message,text:s.message});
+    const body=$('br-body');if(!body)return;renderTabs();const msg=el('div',{id:'br-message',class:s.error?'br-message is-error':'br-message',role:'status',hidden:!s.message,text:s.message});
     if(!s.plan){body.replaceChildren(msg,text('Loading backup settings...'));return;}if(s.restore){body.replaceChildren(msg,restoreView());return;}
     const dest={webdav:'Nextcloud / WebDAV',folder:'Mounted folder'}[s.plan.destination.kind]||'This server only';
-    const nav=el('nav',{class:'br-actions','aria-label':'Backup views'},[['backups','Backups'],['settings','Settings']].map(([view,label])=>{
-      const n=button(label,()=>{s.view=view;s.section='';render();body.scrollTop=0;});n.setAttribute('aria-pressed',String(s.view===view));return n;
-    }));
-    const section=(name,summary,key,label,form)=>el('section',{class:'br-section'},[row([el('div',{class:'br-content-summary'},[title(name),text(summary)]),button(s.section===key?'Close settings':label,()=>{s.section=s.section===key?'':key;render();})]),...(s.section===key?[form()]:[])]);
+    const section=(name,summary,key,label,form)=>el('section',{class:'br-section br-setting'},[row([el('div',{class:'br-content-summary'},[title(name),text(summary)]),button(s.section===key?'Close settings':label,()=>{s.section=s.section===key?'':key;render();})]),...(s.section===key?[form()]:[])]);
     if(s.view==='settings'){
-      body.replaceChildren(msg,nav,
+      body.replaceChildren(msg,
         section('Automatic backups',s.schedule.active?`At ${s.schedule.at} \u00b7 ${s.schedule.managed?'Uses your backup selections':'Existing schedule: '+(legacy[s.schedule.scope]||s.schedule.scope)}`:'Off','settings','Edit schedule',scheduleForm),
         section('Destination',dest,'destination','Edit destination',destinationForm),
         section('Encryption',s.plan.encrypt_local?'Local backups encrypted':'Local backups saved as ZIP','encryption','Edit encryption',encryptionForm),
         ...(s.plan.destination_notice?[text(s.plan.destination_notice)]:[]));
       return;
     }
-    body.replaceChildren(msg,nav,selection(),el('section',{id:'br-status',class:'cw-page-panel br-status','aria-live':'polite',hidden:true}),
+    body.replaceChildren(msg,selection(),el('section',{id:'br-status',class:'br-status','aria-live':'polite',hidden:true}),
       ...(s.plan.destination_notice?[text(s.plan.destination_notice)]:[]),
-      row([title('Saved backups'),button('Restore from file',()=>{s.section=s.section==='import'?'':'import';render();})]),
+      row([title('Saved backups'),quietButton('Restore from file',()=>{s.section=s.section==='import'?'':'import';render();})]),
       ...(s.plan.destination.kind!=='none'?[actions([button('On this server',()=>{s.section='';render();},s.section!=='remote'),button('At destination',()=>perform(browseRemote),s.section==='remote')])]:[]),
       ...(s.section==='import'?[importView()]:[]),s.section==='remote'?el('div',{id:'br-remote'}):el('div',{id:'br-history'}));renderStatus();renderHistory();renderRemote();
   }
   async function refreshList(){s.backups=(await api('list')).backups||[];renderHistory();}
-  async function refreshJobs(){const result=await api('status');s.jobs=result.jobs||[];renderStatus();const stamp=JSON.stringify(s.jobs.map(j=>[j.id,j.stage,j.local_status,j.remote_status]));if(stamp!==s.stamp){s.stamp=stamp;await refreshList();}if(result.restore&&!s.message)message(result.restore.message,!result.restore.ok);}
+  async function refreshJobs(){const result=await api('status');s.jobs=result.jobs||[];if(s.noticeJob&&s.jobs.some(j=>j.id===s.noticeJob))message('');renderStatus();const stamp=JSON.stringify(s.jobs.map(j=>[j.id,j.stage,j.local_status,j.remote_status]));if(stamp!==s.stamp){s.stamp=stamp;await refreshList();}if(result.restore&&!s.message)message(result.restore.message,!result.restore.ok);}
   async function refresh(){const [p,sch,l]=await Promise.all([api('plan'),api('schedule'),api('list')]);s.plan=p.plan;s.schedule=sch.schedule||{};s.backups=l.backups||[];s.draft={...structuredClone(p.plan),password:'',password_saved:false,active:!!s.schedule.active,at:s.schedule.at||'03:00',days:s.schedule.days?.length?[...s.schedule.days]:[1,2,3,4,5,6,7],max_backups:s.schedule.max_backups||7};render();await refreshJobs();}
-  function open(){shell();s.opener=document.activeElement;s.message='';s.view='backups';s.choosing=false;s.page=0;s.remotePage=0;s.section='';s.restore=null;$('cw-backups-modal').classList.remove('hidden');document.body.classList.add('br-backups-open','cx-modal-open');render();refresh().catch(e=>message(e.message,true));$('cw-backups-modal').querySelector('button')?.focus();clearInterval(s.timer);s.timer=setInterval(()=>refreshJobs().catch(e=>message(e.message,true)),2500);}
+  function open(){shell();s.opener=document.activeElement;s.message='';s.noticeJob='';s.view='backups';s.choosing=false;s.page=0;s.remotePage=0;s.section='';s.restore=null;$('cw-backups-modal').classList.remove('hidden');document.body.classList.add('br-backups-open','cx-modal-open');render();refresh().catch(e=>message(e.message,true));$('cw-backups-modal').querySelector('button')?.focus();clearInterval(s.timer);s.timer=setInterval(()=>refreshJobs().catch(e=>message(e.message,true)),2500);}
   function close(){if(s.busy)return;clearInterval(s.timer);$('cw-backups-modal')?.classList.add('hidden');document.body.classList.remove('br-backups-open','cx-modal-open');s.draft=null;s.plan=null;s.restore=null;s.opener?.focus();}
   window.openBackupRestore=open;(window.CW||={}).Backups={open,close,refresh};
 })();

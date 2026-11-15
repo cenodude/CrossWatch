@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import {pageBackLink} from '../assets/js/page-return.js';
 
 const source=readFileSync(new URL('../assets/js/maintenance/index.js',import.meta.url),'utf8');
-const catalog=source.slice(source.indexOf('const SIMPLE_OPS'),source.indexOf('function injectCSS()'));
+const catalog=source.slice(source.indexOf('const SIMPLE_OPS'),source.indexOf('let activeRoot, syncRoute;'));
 
 test('Maintenance keeps its caller and category, including the old entry point',()=>{
   const modals=readFileSync(new URL('../assets/js/modals.js',import.meta.url),'utf8');

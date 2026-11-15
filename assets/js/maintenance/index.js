@@ -325,41 +325,23 @@ const renderActionRow = op => `<article class="maint-task" data-op="${op.key}" d
 const renderCategory = group => `<details class="maint-group ${group.id === "danger" ? "danger-group" : ""}" data-group="${group.id}"><summary><span class="action-icon">${icon(group.icon)}</span><span class="group-copy"><strong>${group.title}</strong><span>${group.desc}</span></span><span class="group-count"></span><button type="button" class="run-btn group-run-btn" data-run-group="${group.id}" aria-label="${group.id === "archive" ? "Configure" : "Run all tasks in"} ${group.title}">${icon(group.id === "archive" ? "tune" : "play_arrow")}<span>${group.id === "archive" ? "Configure" : "Run all"}</span></button>${icon("expand_more")}</summary><div class="group-tasks">${group.keys.map(key => renderActionRow(OPS_BY_KEY[key])).join("")}</div></details>`;
 let activeRoot, syncRoute;
 
-function injectCSS() {
-  const existing = document.getElementById("cw-maint-css");
-  if (existing?.tagName === "LINK") return Promise.resolve();
-  existing?.remove();
-  const link = document.createElement("link");
-  const cssUrl = new URL("./styles.css", import.meta.url);
-  const version = new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__;
-  if (version) cssUrl.searchParams.set("v", version);
-  link.id = "cw-maint-css";
-  link.rel = "stylesheet";
-  link.href = cssUrl.href;
-  return new Promise((resolve) => {
-    link.addEventListener("load", resolve, { once: true });
-    link.addEventListener("error", resolve, { once: true });
-    document.head.appendChild(link);
-  });
-}
 
 const MaintenancePage = {
   async mount(root) {
     if (!root) return;
     if (activeRoot === root && root.querySelector(".cw-maint")) { syncRoute?.(); return; }
-    await injectCSS();
 
     root.innerHTML = `
-      <div class="cw-maint">
+      <div class="cw-maint cw-page-maint-tools">
         <nav class="maint-breadcrumb" aria-label="Breadcrumb"><a id="cxm-back" href="#main">${icon("arrow_back")}Main</a><span aria-hidden="true">/</span><span>Maintenance</span></nav>
-        <div class="maint-heading"><div><h1>Maintenance tools</h1><p>These tools repair or clean local CrossWatch data without touching provider accounts.</p></div><div class="heading-actions"><button type="button" class="run-btn primary" id="cxm-run-recommended">${icon("play_arrow")}Run safe recommended</button><button type="button" id="cxm-history-toggle" aria-controls="cxm-history" aria-expanded="false">${icon("history")}View history</button></div></div>
+        <div class="maint-heading"><div><h1>Maintenance tools</h1><p>Check and clean local CrossWatch data.</p></div><div class="heading-actions"><button type="button" class="run-btn primary" id="cxm-run-recommended">${icon("play_arrow")}Run quick tasks</button><button type="button" id="cxm-history-toggle" aria-controls="cxm-history" aria-expanded="false">${icon("history")}View history</button></div></div>
         <div class="maint-overview">
-          <div class="overview-card"><span class="overview-icon good">${icon("check_circle")}</span><div><strong>3 recommended</strong><p>Safe to run now</p></div></div>
+          <div class="overview-card"><span class="overview-icon good">${icon("check_circle")}</span><div><strong>3 quick tasks</strong><p>Local checks and cleanup</p></div></div>
           <button type="button" class="overview-card" id="cxm-attention"><span class="overview-icon warning">${icon("warning")}</span><span><strong id="cxm-attention-count">0 need attention</strong><span class="overview-note">Results that need your review</span></span></button>
           <div class="overview-card last-maintenance"><span class="overview-icon">${icon("schedule")}</span><div><strong>Last maintenance</strong><p id="cxm-last-maintenance">No runs recorded yet</p></div><span class="health-note" id="cxm-health-note">Local data only</span></div>
         </div>
         <section class="maint-history" id="cxm-history" aria-labelledby="cxm-history-title" hidden><div class="section-heading"><div><h2 id="cxm-history-title" tabindex="-1">Maintenance history</h2><p>Last 100 runs for this account in this browser.</p></div><button type="button" id="cxm-history-close" aria-label="Close maintenance history">${icon("close")}</button></div><ol id="cxm-history-list"></ol></section>
-        <section class="maint-recommendations" aria-labelledby="cxm-recommended-title"><div class="section-heading"><span class="section-icon">${icon("auto_awesome")}</span><div><h2 id="cxm-recommended-title">Recommended actions</h2><p>Your frequent safe tasks. Suggestions adapt as you use them.</p></div></div><div class="recommended-grid" id="cxm-recommended-cards"></div></section>
+        <section class="maint-recommendations" aria-labelledby="cxm-recommended-title"><div class="section-heading"><span class="section-icon">${icon("tune")}</span><div><h2 id="cxm-recommended-title">Quick tasks</h2><p>Frequently used checks and cleanup.</p></div></div><div class="recommended-grid" id="cxm-recommended-cards"></div></section>
         <div class="maint-filters">
           <label class="maint-search">${icon("search")}<input type="search" id="cxm-search" placeholder="Search maintenance tasks..." aria-label="Search maintenance tasks"></label>
           <select id="cxm-category" aria-label="Category" data-cw-native-select="true"><option value="all">All categories</option>${GROUPS.map(group => `<option value="${group.id}">${group.title}</option>`).join("")}</select>

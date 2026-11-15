@@ -16,7 +16,7 @@ async function fixture(t, theme = '', width = 1100, populated = false, overrides
   t.after(() => assert.deepEqual(errors, []));
   let plan = {components:['application','trackers','captures'],trackers:null,has_password:false,encrypt_local:false,destination:{kind:'none'},remote_keep:30,key_source:'included',rclone_available:true,available_trackers:[{id:'default',label:'Main tracker'},{id:'one',label:'Family tracker'}],...overrides};
   const backup = {path:'2026-11-15/crosswatch-backup-test.cwbackup',created_at:'2026-11-15T12:00:00Z',components:['application','trackers','captures'],size:218000,encrypted:true};
-  let backups = populated ? Array.from({length:typeof populated==='number'?populated:1},(_,i)=>({...backup,path:`saved/crosswatch-backup-${i}.cwbackup`,size:i===0?420:backup.size})) : [];
+  let backups = populated ? Array.from({length:typeof populated==='number'?populated:1},(_,i)=>({...backup,path:`saved/crosswatch-backup-${i}.cwbackup`,size:i===0?420:backup.size,created_at:new Date(Date.UTC(2026,10,15-i,12,0)).toISOString(),...(i%3===1?{components:['application']}:i%3===2?{components:['trackers','captures']}: {})})) : [];
   const manifest = {...backup,trackers:[{id:'default',label:'Main tracker'}]};
   await page.route('**/*', async route => {
     const url = new URL(route.request().url());
@@ -38,7 +38,7 @@ async function fixture(t, theme = '', width = 1100, populated = false, overrides
   await page.goto('http://cw.test/');
   await page.locator('#open').click();
   await page.getByRole('heading',{name:'What to back up'}).waitFor();
-  return {page,writes,empty:async()=>{populated=false;backups=[];await page.evaluate(()=>CW.Backups.refresh());}};
+  return {page,writes,empty:async()=>{populated=false;backups=[];overrides.jobs=[];await page.evaluate(()=>CW.Backups.refresh());}};
 }
 
 test('backs up only selected contents and tracker instances',async t=>{
@@ -105,7 +105,7 @@ test('recovery hides sections absent from the backup',async t=>{
 
 test('unusable rclone is explained in destination settings',async t=>{
   const {page}=await fixture(t,'flat-dark',1100,false,{rclone_available:false,rclone_error:'rclone could not start. Check its installation.'});
-  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByRole('tab',{name:'Settings',exact:true}).click();
   await page.getByRole('button',{name:'Edit destination'}).click();
   await page.getByLabel('Destination',{exact:true}).selectOption('webdav');
   await page.getByText('rclone could not start. Check its installation.',{exact:true}).waitFor();
@@ -113,7 +113,7 @@ test('unusable rclone is explained in destination settings',async t=>{
 
 for(const mountedRoot of ['/backups','/mnt/cw-backups'])test(`mounted folder shows its allowed root ${mountedRoot}`,async t=>{
   const {page}=await fixture(t,'flat-dark',1100,false,{mounted_root:mountedRoot});
-  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByRole('tab',{name:'Settings',exact:true}).click();
   await page.getByRole('button',{name:'Edit destination'}).click();
   await page.getByLabel('Destination',{exact:true}).selectOption('folder');
   assert.equal(await page.getByLabel('Mounted folder inside CW').getAttribute('placeholder'),mountedRoot);
@@ -122,14 +122,20 @@ for(const mountedRoot of ['/backups','/mnt/cw-backups'])test(`mounted folder sho
 
 for(const theme of ['', 'flat-dark', 'flat-light'])for(const width of [1100,390]) {
   test(`backup dialog ${theme||'original'} ${width}`,async t=>{
-    const {page,empty}=await fixture(t,theme,width,12,{jobs:[]});
+    const {page,empty}=await fixture(t,theme,width,12,{jobs:[{id:'latest',stage:'complete',local_status:'saved',local_saved_at:1794744000,remote_status:'disabled'}]});
     const folder=new URL('../build/backup-ui/',import.meta.url);
     await mkdir(folder,{recursive:true});
     const suffix=`${theme||'original'}-${width}`;
     const noOverflow=async()=>assert.equal(await page.locator('.br-dialog').evaluate(n=>n.scrollWidth<=n.clientWidth&&n.querySelector('.br-body').scrollWidth<=n.querySelector('.br-body').clientWidth),true);
     await noOverflow();
+    assert.equal(await page.getByRole('tab',{name:'Backups',exact:true}).getAttribute('aria-selected'),'true');
+    assert.equal(await page.locator('#br-history').evaluate(n=>n.scrollHeight<=n.clientHeight+1),true);
+    assert.equal(await page.locator('.br-head').evaluate(n=>n.querySelector('button').getBoundingClientRect().top<n.querySelector('h2').getBoundingClientRect().bottom),true);
+    const tabStyle=await page.getByRole('tab',{name:'Backups',exact:true}).evaluate(n=>{const s=getComputedStyle(n);return [s.borderRadius,s.borderBottomWidth,s.backgroundColor];});
+    assert.deepEqual(tabStyle,['0px','2px','rgba(0, 0, 0, 0)']);
+    assert.ok(await page.locator('#br-status').evaluate(n=>n.getBoundingClientRect().height<90));
     await page.screenshot({path:new URL(`overview-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
-    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.getByRole('tab',{name:'Settings',exact:true}).click();
     await page.getByRole('button',{name:'Edit destination'}).click();
     await page.getByLabel('Destination',{exact:true}).selectOption('webdav');
     await page.getByLabel('WebDAV URL').fill('https://cloud.example.com/remote.php/dav/files/user/');
@@ -141,14 +147,14 @@ for(const theme of ['', 'flat-dark', 'flat-light'])for(const width of [1100,390]
     await page.screenshot({path:new URL(`destination-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
     assert.equal(await page.locator('#cw-backups-modal').innerText().then(s=>s.includes('\u2014')),false);
     await empty();
-    await page.getByRole('button',{name:'Backups',exact:true}).last().click();
+    await page.getByRole('tab',{name:'Backups',exact:true}).click();
     await page.locator('.br-body').evaluate(n=>n.scrollTop=0);
     await noOverflow();
     await page.screenshot({path:new URL(`empty-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
     await page.getByRole('button',{name:'Choose contents'}).click();
     await noOverflow();
     await page.screenshot({path:new URL(`selection-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
-    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.getByRole('tab',{name:'Settings',exact:true}).click();
     await page.getByRole('button',{name:'Edit schedule'}).click();
     await page.getByText('Days',{exact:true}).click();
     await page.getByLabel('Time',{exact:true}).scrollIntoViewIfNeeded();
@@ -164,7 +170,7 @@ for(const theme of ['', 'flat-dark', 'flat-light'])for(const width of [1100,390]
 
 test('destination choices save WebDAV with a recovery key',async t=>{
   const {page,writes}=await fixture(t,'flat-light',390);
-  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByRole('tab',{name:'Settings',exact:true}).click();
   await page.getByRole('button',{name:'Edit destination'}).click();
   const choice=page.getByLabel('Destination',{exact:true});
   assert.deepEqual(await choice.locator('option').evaluateAll(nodes=>nodes.map(n=>n.value)),['none','webdav','folder']);
@@ -233,7 +239,7 @@ test('content selection survives switching views and local encryption saves inde
   const {page,writes}=await fixture(t,'flat-light',390);
   await page.getByRole('button',{name:'Choose contents'}).click();
   await page.getByLabel('Saved captures',{exact:true}).uncheck();
-  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByRole('tab',{name:'Settings',exact:true}).click();
   await page.getByRole('button',{name:'Edit encryption'}).click();
   await page.getByLabel('Encrypt local backups',{exact:true}).check();
   await page.getByRole('button',{name:'Generate recovery key'}).click();
@@ -243,6 +249,40 @@ test('content selection survives switching views and local encryption saves inde
   const saved=writes.findLast(w=>w.name==='plan').body;
   assert.equal(saved.encrypt_local,true);
   assert.deepEqual(saved.components,['application','trackers']);
-  await page.getByRole('button',{name:'Backups',exact:true}).last().click();
+  await page.getByRole('tab',{name:'Backups',exact:true}).click();
   assert.equal(await page.getByLabel('Saved captures',{exact:true}).isChecked(),false);
+});
+
+
+for(const [stage,heading] of [['queued','Waiting'],['creating','Creating local backup'],['complete','Complete'],['failed','Local backup saved, destination copy failed']])test(`queued notice gives way to ${stage} for the created job`,async t=>{
+  const overrides={jobs:[{id:'older',stage:'complete',local_status:'saved',remote_status:'disabled'}]};
+  const {page}=await fixture(t,'flat-dark',390,false,overrides);
+  await page.getByRole('button',{name:'Back up now',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('#cw-backups-modal').getAttribute('aria-busy')==='false');
+  await page.getByText('Backup queued. You can close this dialog while it runs.',{exact:true}).waitFor();
+  overrides.jobs=[{id:'new',stage,local_status:'saved',remote_status:stage==='failed'?'failed':'disabled',error:stage==='failed'?'Destination unreachable':''}];
+  await page.evaluate(()=>CW.Backups.refresh());
+  assert.equal(await page.locator('#br-message').isVisible(),false);
+  await page.locator('#br-status').getByRole('heading',{name:heading,exact:true}).waitFor();
+  if(stage==='failed')await page.getByText('Destination unreachable',{exact:true}).waitFor();
+});
+
+
+test('underline tabs support keyboard navigation and preserve backup selection',async t=>{
+  const {page}=await fixture(t,'flat-dark',390);
+  await page.getByRole('button',{name:'Choose contents'}).click();
+  await page.getByLabel('Saved captures',{exact:true}).uncheck();
+  await page.getByRole('tab',{name:'Backups',exact:true}).focus();
+  await page.keyboard.press('ArrowRight');
+  const settings=page.getByRole('tab',{name:'Settings',exact:true});
+  assert.equal(await settings.getAttribute('aria-selected'),'true');
+  assert.equal(await settings.evaluate(n=>n===document.activeElement),true);
+  assert.equal(await page.getByRole('tabpanel').getAttribute('aria-labelledby'),'br-tab-settings');
+  await page.keyboard.press('Home');
+  assert.equal(await page.getByRole('tab',{name:'Backups',exact:true}).getAttribute('aria-selected'),'true');
+  assert.equal(await page.getByLabel('Saved captures',{exact:true}).isChecked(),false);
+  await page.keyboard.press('End');
+  assert.equal(await settings.getAttribute('aria-selected'),'true');
+  await page.keyboard.press('ArrowLeft');
+  assert.equal(await page.getByRole('tab',{name:'Backups',exact:true}).evaluate(n=>n===document.activeElement),true);
 });

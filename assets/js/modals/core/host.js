@@ -161,7 +161,7 @@ export class ModalHost {
   }
 
   _clamp() {
-    if (!this.shell) return;
+    if (!this.shell || this.shell.classList.contains('cw-page-dialog')) return;
     requestAnimationFrame(() => {
       if (!this.shell) return;
       const r = this.shell.getBoundingClientRect();

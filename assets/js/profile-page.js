@@ -3817,12 +3817,7 @@
       }
       return label || String(p?.instance_id || "").trim() || "Default";
     };
-    const settingsLabel = (p) => {
-      const id = String(p?.instance_id || "default");
-      if (id === "default") return "Default";
-      if (String(p.provider || "").toLowerCase() === "crosswatch" && /^CW-P\d+$/i.test(id)) return id.toUpperCase();
-      return profileLabel(p);
-    };
+    const settingsLabel = (p) => profileLabel(p);
     const providerOrder = (provider) => {
       const key = String(provider || "").toLowerCase();
       const index = PLAYBACK_PROVIDER_KEYS.indexOf(key);
@@ -4487,8 +4482,8 @@
         .map(([provider, rows]) => {
           const label = visibleProviderLabel(provider) || provider.toUpperCase();
           const logo = providerLogLogo(provider);
-          const pills = rows.map((p) => `<label class="cw-play-pill"><input type="checkbox" data-provider="${esc(p.provider || provider)}" data-instance="${esc(p.instance_id || "default")}"${p.included !== false ? " checked" : ""}><span><span class="material-symbols-rounded" aria-hidden="true">check</span>${esc(settingsLabel(p))}</span></label>`).join("");
-          return `<section class="cw-play-provider"><span class="cw-play-provider-head">${logo ? `<img src="${esc(logo)}" alt="" onerror="this.remove()">` : ""}<strong>${esc(label)}</strong></span><span class="cw-play-provider-pills">${pills}</span></section>`;
+          const pills = rows.map((p) => `<label class="pf-option"><input type="checkbox" data-provider="${esc(p.provider || provider)}" data-instance="${esc(p.instance_id || "default")}"${p.included !== false ? " checked" : ""}><span>${esc(settingsLabel(p))}</span></label>`).join("");
+          return `<section class="pf-provider"><div class="pf-provider-head"><h4>${logo ? `<img src="${esc(logo)}" alt="" onerror="this.remove()">` : ""}${esc(label)}</h4></div><span class="pf-options">${pills}</span></section>`;
         })
         .join("");
       return sections ? `${sections}${hidden}` : `<div class="cw-tl-dialog-note">No connected playback providers were found.</div>${hidden}`;
