@@ -426,6 +426,7 @@ def _normalize_backup_job(j: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": str(j.get("id") or "").strip() or f"backup_job_{_now_ts()}",
         "scope": scope,
+        "managed": _as_bool(j.get("managed"), False),
         "label_template": str(j.get("label_template") or j.get("labelTemplate") or "").strip(),
         "retention_days": _as_int(j.get("retention_days", j.get("retentionDays", j.get("keep_days", 0))), 0, minimum=0),
         "max_backups": _as_int(j.get("max_backups", j.get("maxBackups", j.get("keep_count", 0))), 0, minimum=0),
@@ -1661,6 +1662,7 @@ class SyncScheduler:
                 "backup_job_id": j["id"],
                 "backup": {
                     "scope": j["scope"],
+                    **({"managed": True} if j.get("managed") else {}),
                     "label_template": j.get("label_template") or "",
                     "retention_days": int(j.get("retention_days") or 0),
                     "max_backups": int(j.get("max_backups") or 0),

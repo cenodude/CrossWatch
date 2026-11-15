@@ -64,6 +64,7 @@ docker-compose.override.yml
 /.cw_cache/
 /.cw_databases/
 /.cw_provider/
+/.cw_backups/
 /state/
 /backups/
 /snapshots/
