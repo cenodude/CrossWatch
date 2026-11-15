@@ -67,7 +67,7 @@
       </a>
       <div class="pc-body">
         <div class="pc-head">
-          <div class="pc-status"></div>
+          <div class="pc-state"><div class="pc-status"></div><span class="pc-mobile-route"></span></div>
           <div class="pc-title-actions">
             <div class="pc-nav" hidden>
               <button class="pc-nav-btn pc-prev" type="button" aria-label="Previous stream"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
@@ -78,7 +78,7 @@
           </div>
         </div>
         <div class="pc-routes"><div class="pc-route-list"></div><button class="pc-route-toggle" type="button" aria-expanded="false" aria-haspopup="dialog"></button></div>
-        <div class="pc-mobile-title"></div>
+        <button class="pc-mobile-toggle" type="button" aria-expanded="false"><span class="pc-mobile-title"></span></button>
         <div class="pc-summary"><div class="pc-heading"></div><div class="pc-meta"></div><div class="pc-mobile-rating"><span class="material-symbols-rounded" aria-hidden="true">star</span><span class="pc-mobile-score"></span></div></div>
         <div class="pc-genres"></div>
         <div class="pc-overview-wrap"><div class="pc-overview"></div><button class="pc-overview-more" type="button" aria-expanded="false" hidden>More</button></div>
@@ -86,7 +86,8 @@
           <div class="pc-info-block pc-rating-block"><div class="pc-info-label">TMDB rating</div><div class="pc-info-value"><span class="material-symbols-rounded pc-info-icon" aria-hidden="true">star</span><span class="pc-rating">--</span><span class="pc-rating-scale">/ 10</span></div><div class="pc-rating-votes pc-info-note"></div></div>
           <div class="pc-info-block pc-information-block"><div class="pc-information-rows"></div></div>
         </div>
-        <div class="pc-transport"><div class="pc-status-ring"><span class="material-symbols-rounded pc-status-icon" aria-hidden="true">play_arrow</span></div><div class="pc-progress-wrap"><div class="pc-progress-labels"><span class="pc-progress-pct"></span><span class="pc-progress-time"></span></div><div class="pc-progress-bg" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100"><div class="pc-progress"></div></div></div></div>
+        <div class="pc-transport"><div class="pc-status-ring"><span class="material-symbols-rounded pc-status-icon" aria-hidden="true">play_arrow</span></div><div class="pc-progress-wrap"><div class="pc-progress-labels"><span class="pc-progress-pct"></span><span class="pc-progress-time"></span><span class="pc-mobile-time"></span></div><div class="pc-progress-bg" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100"><div class="pc-progress"></div></div></div></div>
+        <button class="pc-mobile-collapse" type="button">Show less<span class="material-symbols-rounded" aria-hidden="true">expand_less</span></button>
         <div class="pc-actions" hidden><div class="pc-sources"></div><div class="pc-links"></div><button class="pc-trailer" type="button">Watch trailer</button></div>
       </div>
     </div>
@@ -237,14 +238,31 @@
     };
 
     const cinematic = variant === "scrobble";
+    const mobileToggle = q(".pc-mobile-toggle");
+    const setMobileExpanded = (expanded) => {
+      el.classList.toggle("pc-mobile-expanded", expanded);
+      mobileToggle?.setAttribute("aria-expanded", String(expanded));
+      if (expanded) updateOverviewMore();
+      else closeRoutes();
+    };
+    mobileToggle?.addEventListener("click", () => setMobileExpanded(!el.classList.contains("pc-mobile-expanded")));
+    q(".pc-mobile-collapse")?.addEventListener("click", () => {
+      setMobileExpanded(false);
+      mobileToggle.focus();
+    });
     let openMedia = null;
     if (cinematic) {
       el.addEventListener("click", (event) => {
-        if (!openMedia || event.target.closest("button,input,select,textarea,a[href],.pc-routes,.pc-route-menu")) return;
+        if (event.target.closest("button,input,select,textarea,a[href],.pc-routes,.pc-route-menu")) return;
+        if (window.matchMedia("(max-width:760px)").matches && !event.target.closest(".pc-poster-link")) {
+          setMobileExpanded(!el.classList.contains("pc-mobile-expanded"));
+          return;
+        }
+        if (!openMedia) return;
         event.preventDefault();
         openMedia();
       });
-      for (const target of [els.posterLink, q(".pc-mobile-title")]) {
+      for (const target of [els.posterLink]) {
         target.addEventListener("keydown", (event) => {
           if (!openMedia || !["Enter", " "].includes(event.key)) return;
           event.preventDefault();
@@ -310,6 +328,10 @@
     const drawRoutes = () => {
       if (!cinematic) return;
       const ordered = [...routeItems].sort((a, b) => Number(b.id === selectedRoute) - Number(a.id === selectedRoute));
+      const active = ordered[0];
+      const mobileRoute = q(".pc-mobile-route");
+      mobileRoute.textContent = active ? (active.destination ? `${active.source} → ${active.destination}` : active.source) : "";
+      mobileRoute.title = mobileRoute.textContent;
       q(".pc-route-list").replaceChildren(...ordered.slice(0, 2).map(route => routeNode(route)));
       q(".pc-route-options").replaceChildren(...routeItems.map(route => routeNode(route, true)));
       const count = (visible, cls) => {
@@ -456,7 +478,7 @@
         els.posterLink.removeAttribute("href");
         els.posterLink.removeAttribute("target");
         els.posterLink.removeAttribute("rel");
-        for (const target of [els.posterLink, q(".pc-mobile-title")]) {
+        for (const target of [els.posterLink]) {
           target.setAttribute("role", "button");
           target.tabIndex = openMedia ? 0 : -1;
           target.setAttribute("aria-disabled", String(!openMedia));
@@ -540,6 +562,7 @@
       }
       els.progressPct.textContent = progress ? `${Math.round(pct)}% watched` : "";
       els.progressTime.textContent = progress?.remaining || "";
+      if (cinematic) q(".pc-mobile-time").textContent = progress?.elapsedTotal || progress?.remaining || "";
     };
 
     const setNav = (nav) => {
