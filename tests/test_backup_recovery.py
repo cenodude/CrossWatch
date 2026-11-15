@@ -754,8 +754,56 @@ def test_api_plan_job_encrypted_import_and_restore_confirmation(installation, mo
         assert manager.status()["pending_restore"]
 
 
-@pytest.mark.parametrize("endpoint,method", [("plan", "GET"), ("plan", "POST"), ("status", "GET"), ("remote", "GET"), ("remote/download", "POST"), ("destination/test", "POST"), ("restore", "POST"), ("retry", "POST"), ("recovery-key", "POST"), ("cloud/connect", "POST"), ("cloud/continue", "POST")])
+@pytest.mark.parametrize("endpoint,method", [("plan", "GET"), ("plan", "POST"), ("status", "GET"), ("remote", "GET"), ("remote/download", "POST"), ("destination/test", "POST"), ("restore", "POST"), ("retry", "POST"), ("recovery-key", "POST")])
 def test_backup_routes_remain_admin_only(endpoint, method):
     from api.appAuthAPI import non_admin_api_allowed
 
     assert not non_admin_api_allowed("/api/backups/" + endpoint, method)
+
+
+@pytest.mark.parametrize("kind", ["onedrive", "dropbox"])
+def test_removed_destination_plan_continues_local_backups(installation, kind):
+    manager.save_plan(plan())
+    saved = manager.settings()
+    saved["destination"] = {"kind": kind, "connection": "old-account", "folder": "CrossWatch"}
+    manager.write("settings.json", saved)
+    public = manager.plan()
+    assert public["destination"]["kind"] == "none"
+    assert "no longer supported" in public["destination_notice"]
+    assert public["has_password"] and public["encrypt_local"]
+    manager.enqueue()
+    manager.run_job(manager._jobs()[0])
+    job = manager.status()["jobs"][0]
+    assert job["stage"] == "complete" and job["remote_status"] == "disabled"
+    assert backups.validate_backup(job["path"], PASSWORD)["ok"]
+
+
+@pytest.mark.parametrize("kind", ["onedrive", "dropbox"])
+def test_old_destination_job_preserves_local_backup_without_retries(installation, monkeypatch, kind):
+    manager.save_plan(plan(encrypt_local=False))
+    manager.enqueue()
+    rows = manager._jobs()
+    rows[0]["settings"]["destination"] = {"kind": kind, "connection": "old-account"}
+    rows[0]["remote_status"] = "pending"
+    manager.write("jobs.json", rows)
+    retained = []
+    monkeypatch.setattr(manager, "_local_retention", lambda job: retained.append(job["id"]))
+    monkeypatch.setattr(manager.destinations, "upload", lambda *args: pytest.fail("Unsupported upload attempted"))
+    manager.run_job(rows[0])
+    job = manager.status()["jobs"][0]
+    assert job["stage"] == "failed" and job["local_status"] == "saved"
+    assert job["retry_at"] == 0 and "no longer supported" in job["error"]
+    assert retained == [job["id"]]
+    assert backups.validate_backup(job["path"])["ok"]
+
+
+def test_removed_authorization_routes_are_unavailable(installation):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api import backupsAPI
+
+    app = FastAPI()
+    app.include_router(backupsAPI.router)
+    with TestClient(app) as client:
+        for endpoint in ("cloud/connect", "cloud/continue"):
+            assert client.post("/api/backups/" + endpoint, json={}).status_code == 404

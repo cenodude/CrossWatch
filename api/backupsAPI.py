@@ -402,23 +402,3 @@ def api_backup_recovery_key() -> JSONResponse:
     import secrets
 
     return _ok({"key": secrets.token_urlsafe(32)})
-
-
-@router.post("/cloud/connect")
-def api_backup_cloud_connect(body: dict[str, Any] = Body(...)) -> JSONResponse:
-    from services.backup_cloud import begin
-
-    try:
-        return _ok({"connection": begin(str(body.get("kind") or ""))})
-    except Exception as exc:
-        return _err(str(exc) if isinstance(exc, ValueError) else "Could not start the cloud connection.")
-
-
-@router.post("/cloud/continue")
-def api_backup_cloud_continue(body: dict[str, Any] = Body(...)) -> JSONResponse:
-    from services.backup_cloud import advance
-
-    try:
-        return _ok({"connection": advance(str(body.get("id") or ""), str(body.get("answer") or ""))})
-    except Exception as exc:
-        return _err(str(exc) if isinstance(exc, ValueError) else "Could not finish the cloud connection.")

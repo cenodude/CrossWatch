@@ -15,8 +15,8 @@ async function fixture(t, theme = '', width = 1100, populated = false, overrides
   page.on('pageerror', e => errors.push(e.message));
   t.after(() => assert.deepEqual(errors, []));
   let plan = {components:['application','trackers','captures'],trackers:null,has_password:false,encrypt_local:false,destination:{kind:'none'},remote_keep:30,key_source:'included',rclone_available:true,available_trackers:[{id:'default',label:'Main tracker'},{id:'one',label:'Family tracker'}],...overrides};
-  let cloudKind='',cloudStep=0;
   const backup = {path:'2026-11-15/crosswatch-backup-test.cwbackup',created_at:'2026-11-15T12:00:00Z',components:['application','trackers','captures'],size:218000,encrypted:true};
+  let backups = populated ? Array.from({length:typeof populated==='number'?populated:1},(_,i)=>({...backup,path:`saved/crosswatch-backup-${i}.cwbackup`,size:i===0?420:backup.size})) : [];
   const manifest = {...backup,trackers:[{id:'default',label:'Main tracker'}]};
   await page.route('**/*', async route => {
     const url = new URL(route.request().url());
@@ -29,9 +29,8 @@ async function fixture(t, theme = '', width = 1100, populated = false, overrides
       const body = method === 'POST' ? route.request().postDataJSON() : null;
       if(body)writes.push({name,body});
       if(name==='plan'&&body)plan={...plan,...body,has_password:!!body.password||plan.has_password};
-      if(name==='cloud/connect'){cloudKind=body.kind;cloudStep=0;return route.fulfill({json:{ok:true,connection:{id:'cloud-account',kind:cloudKind,status:'connecting',question:'config_token'}}});}
-      if(name==='cloud/continue'){cloudStep++;const question=cloudKind==='onedrive'&&cloudStep<3?(cloudStep===1?'config_driveid':'config_drive_ok'):'';return route.fulfill({json:{ok:true,connection:{id:'cloud-account',kind:cloudKind,status:question?'connecting':'connected',question,choices:[{value:'drive-one',label:'My OneDrive'}]}}});}
-      const data = {plan:{plan},schedule:{schedule:{active:false}},list:{backups:populated?[backup]:[]},status:{jobs:populated?[{id:'job',path:backup.path,stage:'failed',local_status:'saved',remote_status:'failed',error:'Server unreachable',retry_at:1794750000}]:[]},create:{job:{id:'new',stage:'queued'}},validate:{validation:{ok:true,manifest,application_ready:true,...validationOverrides}},restore:{result:{message:'Tracker recovered. No sync pairs were created.'}},'recovery-key':{key:'generated-recovery-key-for-test'}}[name]||{};
+      if(name==='delete')backups=backups.filter(b=>b.path!==body.path);
+      const data = {remote:{backups:overrides.remoteBackups||[]},plan:{plan},schedule:{schedule:{active:false}},list:{backups},status:{jobs:overrides.jobs??(populated?[{id:'job',path:backup.path,stage:'failed',local_status:'saved',remote_status:'failed',error:'Server unreachable',retry_at:1794750000}]:[])},create:{job:{id:'new',stage:'queued'}},validate:{validation:{ok:true,manifest,application_ready:true,...validationOverrides}},restore:{result:{message:'Tracker recovered. No sync pairs were created.'}},'recovery-key':{key:'generated-recovery-key-for-test'}}[name]||{};
       return route.fulfill({json:{ok:true,...data}});
     }
     return route.fulfill({contentType:'text/html',body:`<!doctype html><html${theme?` data-cw-theme="${theme}"`:''}><head><meta name="viewport" content="width=device-width,initial-scale=1">${['themes/tokens','css/base','crosswatch','css/layout','css/components','css/pages','css/page-theme','themes/flat','themes/original-coverage'].map(f=>`<link rel="stylesheet" href="/assets/${f}.css">`).join('')}</head><body><button id="open" onclick="openBackupRestore()">Backups</button><script src="/assets/helpers/backups.js"></script></body></html>`});
@@ -39,11 +38,12 @@ async function fixture(t, theme = '', width = 1100, populated = false, overrides
   await page.goto('http://cw.test/');
   await page.locator('#open').click();
   await page.getByRole('heading',{name:'What to back up'}).waitFor();
-  return {page,writes,empty:async()=>{populated=false;await page.evaluate(()=>CW.Backups.refresh());}};
+  return {page,writes,empty:async()=>{populated=false;backups=[];await page.evaluate(()=>CW.Backups.refresh());}};
 }
 
 test('backs up only selected contents and tracker instances',async t=>{
   const {page,writes}=await fixture(t);
+  await page.getByRole('button',{name:'Choose contents',exact:true}).click();
   await page.getByText('Settings, connections, sync state, mappings, blocks and custom anime rules.',{exact:true}).waitFor();
   await page.getByLabel('CrossWatch application',{exact:true}).uncheck();
   await page.getByLabel('Saved captures',{exact:true}).uncheck();
@@ -103,60 +103,35 @@ test('recovery hides sections absent from the backup',async t=>{
   assert.deepEqual(await page.getByLabel('Restore action').locator('option').evaluateAll(nodes=>nodes.map(n=>n.value)),['new_tracker','anime_rules','replace']);
 });
 
-for(const kind of ['onedrive','dropbox'])test(`${kind} account connection saves only its reference`,async t=>{
-  const {page,writes}=await fixture(t,'flat-light',390);
-  await page.getByRole('button',{name:'Connection settings'}).click();
-  await page.getByLabel('Additional copy',{exact:true}).selectOption(kind);
-  await page.getByRole('button',{name:kind==='onedrive'?'Connect OneDrive':'Connect Dropbox',exact:true}).click();
-  assert.equal(await page.getByLabel('Run on your computer with rclone 1.76.0 or newer').inputValue(),`rclone authorize "${kind}"`);
-  await mkdir(new URL('../build/backup-ui/',import.meta.url),{recursive:true});
-  await page.getByLabel('Authorization result',{exact:true}).scrollIntoViewIfNeeded();
-  await page.screenshot({path:new URL(`../build/backup-ui/cloud-${kind}.png`,import.meta.url).pathname.replace(/^\/([A-Z]:)/,'$1')});
-  await page.getByLabel('Authorization result',{exact:true}).fill('fake-authorization-result');
-  await page.getByRole('button',{name:'Continue connection'}).click();
-  if(kind==='onedrive'){
-    await page.getByLabel('OneDrive account').selectOption('drive-one');
-    await page.getByRole('button',{name:'Use this OneDrive'}).click();
-    await page.getByRole('button',{name:'Confirm OneDrive',exact:true}).click();
-  }
-  await page.getByText('Account authorization saved. Save the destination and test the connection.').waitFor();
-  assert.equal(await page.getByLabel('Authorization result',{exact:true}).count(),0);
-  await page.getByRole('button',{name:'Generate recovery key'}).click();
-  await page.getByLabel('I saved this password or key outside CW').check();
-  await page.getByRole('button',{name:'Save destination',exact:true}).click();
-  await page.getByText('Destination saved. Test the connection before relying on additional copies.').waitFor();
-  const saved=writes.findLast(w=>w.name==='plan').body.destination;
-  assert.equal(saved.kind,kind);
-  assert.equal(saved.connection,'cloud-account');
-  assert.equal(JSON.stringify(saved).includes('fake-authorization-result'),false);
-});
-
 test('unusable rclone is explained in destination settings',async t=>{
   const {page}=await fixture(t,'flat-dark',1100,false,{rclone_available:false,rclone_error:'rclone could not start. Check its installation.'});
-  await page.getByRole('button',{name:'Connection settings'}).click();
-  await page.getByLabel('Additional copy',{exact:true}).selectOption('onedrive');
+  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByRole('button',{name:'Edit destination'}).click();
+  await page.getByLabel('Destination',{exact:true}).selectOption('webdav');
   await page.getByText('rclone could not start. Check its installation.',{exact:true}).waitFor();
 });
 
 for(const mountedRoot of ['/backups','/mnt/cw-backups'])test(`mounted folder shows its allowed root ${mountedRoot}`,async t=>{
   const {page}=await fixture(t,'flat-dark',1100,false,{mounted_root:mountedRoot});
-  await page.getByRole('button',{name:'Connection settings'}).click();
-  await page.getByLabel('Additional copy',{exact:true}).selectOption('folder');
+  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByRole('button',{name:'Edit destination'}).click();
+  await page.getByLabel('Destination',{exact:true}).selectOption('folder');
   assert.equal(await page.getByLabel('Mounted folder inside CW').getAttribute('placeholder'),mountedRoot);
   await page.getByText(`Use ${mountedRoot} or a folder inside it. Mount it into the container, outside /config.`,{exact:true}).waitFor();
 });
 
 for(const theme of ['', 'flat-dark', 'flat-light'])for(const width of [1100,390]) {
   test(`backup dialog ${theme||'original'} ${width}`,async t=>{
-    const {page,empty}=await fixture(t,theme,width,true);
+    const {page,empty}=await fixture(t,theme,width,12,{jobs:[]});
     const folder=new URL('../build/backup-ui/',import.meta.url);
     await mkdir(folder,{recursive:true});
     const suffix=`${theme||'original'}-${width}`;
     const noOverflow=async()=>assert.equal(await page.locator('.br-dialog').evaluate(n=>n.scrollWidth<=n.clientWidth&&n.querySelector('.br-body').scrollWidth<=n.querySelector('.br-body').clientWidth),true);
     await noOverflow();
     await page.screenshot({path:new URL(`overview-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
-    await page.getByRole('button',{name:'Connection settings'}).click();
-    await page.getByLabel('Additional copy',{exact:true}).selectOption('webdav');
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.getByRole('button',{name:'Edit destination'}).click();
+    await page.getByLabel('Destination',{exact:true}).selectOption('webdav');
     await page.getByLabel('WebDAV URL').fill('https://cloud.example.com/remote.php/dav/files/user/');
     await page.getByRole('button',{name:'Generate recovery key'}).click();
     await page.getByLabel('Save this outside CW').waitFor();
@@ -166,15 +141,108 @@ for(const theme of ['', 'flat-dark', 'flat-light'])for(const width of [1100,390]
     await page.screenshot({path:new URL(`destination-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
     assert.equal(await page.locator('#cw-backups-modal').innerText().then(s=>s.includes('\u2014')),false);
     await empty();
-    await page.getByRole('button',{name:'Connection settings'}).click();
+    await page.getByRole('button',{name:'Backups',exact:true}).last().click();
     await page.locator('.br-body').evaluate(n=>n.scrollTop=0);
     await noOverflow();
     await page.screenshot({path:new URL(`empty-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
-    await page.getByRole('button',{name:'Edit settings'}).click();
-    await page.getByText('Days and encryption',{exact:true}).click();
-    await page.getByLabel('Encrypt local backups',{exact:true}).check();
+    await page.getByRole('button',{name:'Choose contents'}).click();
+    await noOverflow();
+    await page.screenshot({path:new URL(`selection-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    await page.getByRole('button',{name:'Edit schedule'}).click();
+    await page.getByText('Days',{exact:true}).click();
     await page.getByLabel('Time',{exact:true}).scrollIntoViewIfNeeded();
     await noOverflow();
     await page.screenshot({path:new URL(`schedule-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
+    await page.getByRole('button',{name:'Edit encryption'}).click();
+    await page.getByLabel('Encrypt local backups',{exact:true}).check();
+    await noOverflow();
+    await page.screenshot({path:new URL(`encryption-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
   });
 }
+
+
+test('destination choices save WebDAV with a recovery key',async t=>{
+  const {page,writes}=await fixture(t,'flat-light',390);
+  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByRole('button',{name:'Edit destination'}).click();
+  const choice=page.getByLabel('Destination',{exact:true});
+  assert.deepEqual(await choice.locator('option').evaluateAll(nodes=>nodes.map(n=>n.value)),['none','webdav','folder']);
+  await choice.selectOption('webdav');
+  await page.getByLabel('WebDAV URL').fill('https://example.com/dav/');
+  await page.getByLabel('Username',{exact:true}).fill('backup-user');
+  await page.getByLabel('App password',{exact:true}).fill('webdav-app-password');
+  await page.getByRole('button',{name:'Generate recovery key'}).click();
+  await page.getByLabel('I saved this password or key outside CW').check();
+  await page.getByRole('button',{name:'Save destination',exact:true}).click();
+  await page.getByText('Destination saved. Test the connection before relying on these copies.').waitFor();
+  const saved=writes.findLast(w=>w.name==='plan').body;
+  assert.equal(saved.destination.kind,'webdav');
+  assert.equal(saved.destination.username,'backup-user');
+  assert.equal(saved.password,'generated-recovery-key-for-test');
+});
+
+test('removed destination notice explains local fallback',async t=>{
+  const notice='The saved destination is no longer supported. Backups are saved locally. Choose Nextcloud / WebDAV or a mounted folder.';
+  const {page}=await fixture(t,'flat-dark',390,false,{destination_notice:notice});
+  await page.getByText(notice,{exact:true}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'At destination'}).count(),0);
+});
+
+
+test('history paginates, restores the selected archive and clamps after deletion',async t=>{
+  const {page,writes}=await fixture(t,'flat-dark',390,11,{jobs:[]});
+  const history=page.locator('#br-history');
+  assert.equal(await history.locator('article').count(),5);
+  assert.equal(await history.getByRole('button',{name:'Previous'}).isDisabled(),true);
+  await history.getByRole('button',{name:'Next'}).click();
+  await history.getByText('6-10 of 11',{exact:true}).waitFor();
+  await history.getByRole('button',{name:'Restore',exact:true}).first().click();
+  await page.getByRole('button',{name:'Check backup'}).click();
+  assert.equal(writes.find(w=>w.name==='validate').body.path,'saved/crosswatch-backup-5.cwbackup');
+  await page.getByRole('button',{name:'Back to backups'}).click();
+  await history.getByText('6-10 of 11',{exact:true}).waitFor();
+  await history.getByRole('button',{name:'Next'}).click();
+  assert.equal(await history.getByRole('button',{name:'Next'}).isDisabled(),true);
+  await history.locator('summary').click();
+  page.once('dialog',dialog=>dialog.accept());
+  await history.getByRole('button',{name:'Delete',exact:true}).click();
+  await history.getByText('6-10 of 10',{exact:true}).waitFor();
+  await page.waitForFunction(()=>document.querySelector('#cw-backups-modal').getAttribute('aria-busy')==='false');
+  assert.equal(await history.getByRole('button',{name:'Next'}).isDisabled(),true);
+  assert.equal(writes.find(w=>w.name==='delete').body.path,'saved/crosswatch-backup-10.cwbackup');
+  assert.equal(await history.locator('article').count(),5);
+});
+
+test('destination history paginates and downloads the selected archive for recovery',async t=>{
+  const remoteBackups=Array.from({length:8},(_,i)=>({path:`install/crosswatch-backup-${i}.cwbackup`,size:1024}));
+  const {page,writes}=await fixture(t,'flat-dark',390,false,{destination:{kind:'webdav'},has_password:true,remoteBackups});
+  await page.route('**/api/backups/remote/download',route=>{writes.push({name:'remote/download',body:route.request().postDataJSON()});return route.fulfill({json:{ok:true,backup:{path:'imported/selected.cwbackup'}}});});
+  await page.getByRole('button',{name:'At destination'}).click();
+  const remote=page.locator('#br-remote');
+  await remote.getByText('1-5 of 8',{exact:true}).waitFor();
+  assert.equal(await remote.getByRole('button',{name:'Previous'}).isDisabled(),true);
+  await remote.getByRole('button',{name:'Next'}).click();
+  assert.equal(await remote.locator('article').count(),3);
+  await remote.getByRole('button',{name:'Download to CW'}).first().click();
+  await page.getByRole('heading',{name:'Review restoration'}).waitFor();
+  assert.equal(writes.find(w=>w.name==='remote/download').body.path,'install/crosswatch-backup-5.cwbackup');
+});
+
+test('content selection survives switching views and local encryption saves independently',async t=>{
+  const {page,writes}=await fixture(t,'flat-light',390);
+  await page.getByRole('button',{name:'Choose contents'}).click();
+  await page.getByLabel('Saved captures',{exact:true}).uncheck();
+  await page.getByRole('button',{name:'Settings',exact:true}).click();
+  await page.getByRole('button',{name:'Edit encryption'}).click();
+  await page.getByLabel('Encrypt local backups',{exact:true}).check();
+  await page.getByRole('button',{name:'Generate recovery key'}).click();
+  await page.getByLabel('I saved this password or key outside CW').check();
+  await page.getByRole('button',{name:'Save encryption'}).click();
+  await page.getByText('Encryption settings saved.').waitFor();
+  const saved=writes.findLast(w=>w.name==='plan').body;
+  assert.equal(saved.encrypt_local,true);
+  assert.deepEqual(saved.components,['application','trackers']);
+  await page.getByRole('button',{name:'Backups',exact:true}).last().click();
+  assert.equal(await page.getByLabel('Saved captures',{exact:true}).isChecked(),false);
+});

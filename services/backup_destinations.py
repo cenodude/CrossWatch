@@ -1,5 +1,5 @@
 # services/backup_destinations.py
-# CrossWatch - Local, WebDAV and cloud backup copies through rclone
+# CrossWatch - Local and WebDAV backup copies through rclone
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -19,6 +19,13 @@ from urllib.parse import urlsplit
 
 _HEALTH_LOCK = threading.Lock()
 _HEALTH: dict[str, Any] = {}
+
+
+SUPPORTED_KINDS = frozenset({"none", "webdav", "folder"})
+
+
+class UnsupportedDestination(ValueError):
+    pass
 
 
 class RcloneUnavailable(ValueError):
@@ -95,17 +102,11 @@ def validate_destination(raw: dict[str, Any], config_dir: Path) -> dict[str, Any
     kind = str(raw.get("kind") or "none")
     if kind == "none":
         return {"kind": "none"}
-    if kind in {"onedrive", "dropbox"}:
-        from services.backup_cloud import connection
-
-        ident = str(raw.get("connection") or "")
-        connection(ident, kind)
-        return {"kind": kind, "connection": ident, "folder": safe_remote_path(str(raw.get("folder") or "CrossWatch"))}
     if kind == "folder":
         target = _mounted_folder(str(raw.get("path") or ""), config_dir)
         return {"kind": kind, "path": str(target)}
     if kind != "webdav":
-        raise ValueError("Choose OneDrive, Dropbox, Nextcloud / WebDAV or a mounted folder.")
+        raise UnsupportedDestination("Choose Nextcloud / WebDAV or a mounted folder.")
     url = str(raw.get("url") or "").strip()
     parsed = urlsplit(url)
     if parsed.scheme not in {"https", "http"} or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
@@ -143,6 +144,8 @@ def _environment(destination: dict[str, Any]) -> dict[str, str]:
 
 
 def remote(destination: dict[str, Any], name: str = "") -> str:
+    if destination["kind"] not in {"webdav", "folder"}:
+        raise UnsupportedDestination("This destination is no longer supported. Choose Nextcloud / WebDAV or a mounted folder.")
     name = safe_remote_path(name) if name else ""
     if destination["kind"] == "folder":
         from services.backups import CONFIG
@@ -153,11 +156,8 @@ def remote(destination: dict[str, Any], name: str = "") -> str:
 
 
 def run(destination: dict[str, Any], args: list[str], progress: Callable[[dict[str, Any]], None] | None = None) -> str:
-    if destination["kind"] in {"onedrive", "dropbox"}:
-        from services.backup_cloud import transfer
-
-        with transfer(destination) as (config, env):
-            return _run(args, progress, config, env)
+    if destination["kind"] not in {"webdav", "folder"}:
+        raise UnsupportedDestination("This destination is no longer supported. Choose Nextcloud / WebDAV or a mounted folder.")
     return _run(args, progress, "NUL" if os.name == "nt" else os.devnull, _environment(destination))
 
 

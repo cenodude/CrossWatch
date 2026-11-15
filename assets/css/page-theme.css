@@ -1739,6 +1739,9 @@ header .tabs #tab-settings .cw-settings-icon { color: var(--cw-theme-muted); fon
 .cw-page-backups .br-check input{accent-color:var(--cw-theme-accent);box-shadow:none}
 .cw-page-backups .br-button{border:1px solid var(--cw-theme-border);border-radius:8px;background:var(--cw-page-control-bg);color:var(--cw-theme-text);font:inherit;font-size:13px;font-weight:500;cursor:pointer;box-shadow:none;letter-spacing:0;text-transform:none}
 .cw-page-backups .br-button:hover:not(:disabled){border-color:var(--cw-theme-accent);background:var(--cw-page-hover-bg)}
+.cw-page-backups .br-button[aria-pressed="true"]{border-color:var(--cw-theme-accent);background:var(--cw-page-hover-bg)}
+.cw-page-backups .br-history-row summary{color:var(--cw-theme-muted);font-size:12px}
+.cw-page-backups .br-history-row strong{font-size:13px;font-weight:600}
 .cw-page-backups .br-button.primary{background:var(--cw-page-primary-bg);border-color:var(--cw-theme-accent);color:var(--cw-page-primary-text)}
 .cw-page-backups .br-button.primary:hover:not(:disabled){background:var(--cw-page-primary-hover)}
 .cw-page-backups :is(button,input,select,summary):focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:3px}

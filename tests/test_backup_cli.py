@@ -149,39 +149,6 @@ def test_destination_actions_use_saved_settings(cli, args, endpoint, body):
     assert transport.calls == [("POST", "/api/backups/" + endpoint, body)]
 
 
-def test_cloud_authorization_steps_and_destination_save(cli, tmp_path, capsys):
-    state, transport = cli
-    transport.routes[("POST", "/api/backups/cloud/connect")] = {"ok": True, "connection": {"id": "conn1", "kind": "dropbox", "status": "connecting", "question": "config_token"}}
-    transport.routes[("POST", "/api/backups/cloud/continue")] = {"ok": True, "connection": {"id": "conn1", "kind": "dropbox", "status": "connected"}}
-    assert run_isolated(state, ["backup", "cloud-connect", "dropbox", "--step"]) == 0
-    secret = tmp_path / "authorization"
-    secret.write_text("private-authorization-result\n")
-    assert run_isolated(state, ["backup", "cloud-continue", "conn1", "--answer-file", str(secret)]) == 0
-    assert transport.calls[-1][2] == {"id": "conn1", "answer": "private-authorization-result"}
-    assert "private-authorization-result" not in capsys.readouterr().out
-    assert run_isolated(state, ["backup", "configure", "--destination", "dropbox", "--connection", "conn1"]) == 0
-    assert transport.calls[-1][2]["destination"] == {"kind": "dropbox", "connection": "conn1"}
-
-
-def test_interactive_onedrive_authorization_hides_token_and_selects_drive(cli, monkeypatch):
-    state, transport = cli
-    state.out = Output("plain")
-    questions = iter([{"question": "config_driveid", "choices": [{"value": "drive1", "label": "Personal"}]},
-                      {"question": "config_drive_ok"}, {"status": "connected"}])
-    transport.routes[("POST", "/api/backups/cloud/connect")] = {"connection": {"id": "conn1", "kind": "onedrive", "status": "connecting", "question": "config_token"}}
-    transport.routes[("POST", "/api/backups/cloud/continue")] = lambda _: {"connection": {"id": "conn1", "kind": "onedrive", "status": "connecting", **next(questions)}}
-    prompts = []
-    answers = iter(["private-token", "drive1"])
-    def prompt(label, **kwargs):
-        prompts.append(kwargs)
-        return next(answers)
-    monkeypatch.setattr(typer, "prompt", prompt)
-    monkeypatch.setattr(typer, "confirm", lambda *args, **kwargs: True)
-    assert run_isolated(state, ["backup", "cloud-connect", "onedrive"]) == 0
-    assert prompts[0]["hide_input"] is True
-    assert [body["answer"] for _, path, body in transport.calls if path.endswith("continue")] == ["private-token", "drive1", "true"]
-
-
 def test_tracker_recovery_uses_password_without_replacement_or_restart(cli, tmp_path):
     state, transport = cli
     transport.routes[("POST", "/api/backups/restore")] = {"ok": True, "result": {"message": "Recovered tracker"}}
@@ -291,3 +258,10 @@ def test_cli_plan_create_and_validate_with_real_backup_api(cli, tmp_path, monkey
         assert (root / "backups" / job["path"]).read_bytes().startswith(crypto.MAGIC)
         assert run_isolated(state, ["backup", "validate", job["path"]]) == 0
     assert "a separate backup password" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("args", [["configure", "--destination", "onedrive"], ["configure", "--destination", "dropbox"], ["cloud-connect", "onedrive"], ["cloud-continue", "old-account"]])
+def test_removed_cloud_options_are_unavailable(cli, args):
+    state, transport = cli
+    assert run_isolated(state, ["backup", *args]) != 0
+    assert not transport.calls
