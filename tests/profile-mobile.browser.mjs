@@ -511,6 +511,34 @@ for(const width of [390,980,1440]) test(`Hub Progress keeps provider actions, fi
   await snapshot(page,`hub-progress-empty-${width}`);
 });
 
+for(const theme of ['original','flat-dark','flat-light'])for(const width of [390,1440])test(`Hub selection stays readable in ${theme} at ${width}px`,async t=>{
+  const {page}=await fixture(t,theme,width,{history:true});
+  await page.locator('[data-profile-tab="history"]').click();
+  const card=page.locator('#profile-panel-history .cw-tl-card').first();
+  await card.waitFor();
+  const background=await card.evaluate(node=>getComputedStyle(node).backgroundColor);
+  const select=card.locator('.cw-tl-select');
+  if(width<=760)assert.ok((await select.boundingBox()).width>=44);
+  await select.click();
+  assert.equal(await select.locator('input').isChecked(),true);
+  await page.mouse.move(0,0);
+  assert.equal(await card.evaluate(node=>getComputedStyle(node).backgroundColor),background);
+  const contrast=await select.evaluate(node=>{
+    const luminance=colour=>colour.match(/[\d.]+/g).slice(0,3).map(Number).map(value=>value/255).map(value=>value<=.04045?value/12.92:((value+.055)/1.055)**2.4).reduce((total,value,index)=>total+value*[.2126,.7152,.0722][index],0);
+    const mark=getComputedStyle(node.querySelector('.material-symbols-rounded'));
+    const background=getComputedStyle(node).backgroundColor;
+    const values=[luminance(mark.webkitTextFillColor),luminance(background==='rgba(0, 0, 0, 0)'?getComputedStyle(node,'::before').backgroundColor:background)].sort((a,b)=>b-a);
+    return (values[0]+.05)/(values[1]+.05);
+  });
+  assert.ok(contrast>=3,`Selected tick contrast: ${contrast}`);
+  await page.keyboard.press('Tab');
+  await select.locator('input').focus();
+  assert.notEqual(await select.evaluate(node=>getComputedStyle(node).outlineStyle),'none');
+  await snapshot(page,`hub-selection-${theme}-${width}`);
+  await page.keyboard.press('Space');
+  assert.equal(await select.locator('input').isChecked(),false);
+});
+
 for(const width of [390,1440]) test(`Hub History preserves filters, provider actions and timeline at ${width}px`,async t=>{
   const {page,state}=await fixture(t,'flat-dark',width,{history:true});
   await page.evaluate(()=>{
