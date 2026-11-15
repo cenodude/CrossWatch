@@ -19,6 +19,9 @@ from cryptography.fernet import Fernet, InvalidToken
 from cw_platform.config_base import _normalize_fernet_key
 from services import backup_manager as manager, backups
 
+_MAPPING_DATABASE = ".cw_databases/crosswatch.sqlite3"
+_ANIME_RULES = ".cw_state/anime_mapping_overrides.json"
+
 
 def _check_config_key(archive: zipfile.ZipFile, manifest: dict[str, Any]) -> None:
     if "config.json" not in archive.namelist():
@@ -53,6 +56,22 @@ def inspect(path: str, password: str = "") -> dict[str, Any]:
         raise ValueError("Backup validation failed: " + "; ".join(validation["errors"][:3]))
     manifest = validation["manifest"]
     with backups.open_archive(path, password) as (_, target), zipfile.ZipFile(target) as archive:
+        members = {row["path"] for row in manifest["files"]}
+        sections = []
+        if _MAPPING_DATABASE in members:
+            from _backup_mapping import has_mappings
+
+            with tempfile.TemporaryDirectory(dir=manager.private_dir()) as folder:
+                db = Path(folder) / "mappings.sqlite3"
+                with archive.open(_MAPPING_DATABASE) as src, db.open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
+                if has_mappings(db):
+                    sections.append("mappings")
+        if _ANIME_RULES in members:
+            sections.append("anime_rules")
+        if any(name.startswith("snapshots/") for name in members):
+            sections.append("captures")
+        validation["available_sections"] = sections
         try:
             _check_config_key(archive, manifest)
             validation["application_ready"] = True
@@ -78,11 +97,15 @@ def inspect(path: str, password: str = "") -> dict[str, Any]:
     return validation
 
 
-def prepare(path: str, password: str = "") -> dict[str, Any]:
+def prepare(path: str, password: str = "", *, mode: str = "replace") -> dict[str, Any]:
+    if mode not in {"replace", "mappings", "anime_rules", "captures"}:
+        raise ValueError("Choose a supported restore action.")
     password = manager.password_for(path, password)
     validation = inspect(path, password)
-    if not validation["application_ready"]:
+    if mode == "replace" and not validation["application_ready"]:
         raise ValueError(validation["application_error"])
+    if mode != "replace" and mode not in validation["available_sections"]:
+        raise ValueError("This backup does not contain the selected data.")
     with manager._LOCK:
         if any(j["stage"] not in {"complete", "failed"} for j in manager._jobs()):
             raise ValueError("Wait for the current backup or transfer to finish before restoring.")
@@ -93,6 +116,12 @@ def prepare(path: str, password: str = "") -> dict[str, Any]:
         try:
             with backups.open_archive(path, password) as (_, target), zipfile.ZipFile(target) as archive:
                 members = [row["path"] for row in validation["manifest"]["files"]]
+                if mode == "mappings":
+                    members = [_MAPPING_DATABASE]
+                elif mode == "anime_rules":
+                    members = [_ANIME_RULES]
+                elif mode == "captures":
+                    members = [name for name in members if name.startswith("snapshots/")]
                 for name in members:
                     backups._resolve_restore_target(name)
                     dest = folder / "new" / name
@@ -130,7 +159,7 @@ def prepare(path: str, password: str = "") -> dict[str, Any]:
                 for name in members:
                     with (folder / "new" / name).open("rb") as handle:
                         hashes[name] = hashlib.file_digest(handle, "sha256").hexdigest()
-                manager.write("pending.json", {"folder": folder.name, "members": members, "hashes": hashes, "stage": "prepared", "path": path})
+                manager.write("pending.json", {"folder": folder.name, "members": members, "hashes": hashes, "stage": "prepared", "path": path, "mode": mode})
         except Exception:
             shutil.rmtree(folder)
             raise

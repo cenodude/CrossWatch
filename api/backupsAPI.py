@@ -154,7 +154,7 @@ def api_backups_restore(body: dict[str, Any] = Body(...)) -> JSONResponse:
             return _ok({"result": recover_tracker(path, str(body.get("instance") or ""), str(body.get("label") or "Recovered tracker"), password)})
         if body.get("confirm") is not True:
             raise ValueError("Confirm replacement of the data contained in this backup.")
-        res = prepare(path, password)
+        res = prepare(path, password, mode=str(body.get("mode") or "replace"))
         if res.get("ok") and restart:
             res["restart_scheduled"] = True
             LOG.info("backup restore requested restart scheduled")

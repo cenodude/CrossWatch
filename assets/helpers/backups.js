@@ -5,6 +5,7 @@
   const s = { plan: null, draft: null, schedule: {}, backups: [], jobs: [], section: '', restore: null, cloud: null, message: '', error: false, busy: false, timer: null, opener: null, stamp: '' };
   const $ = id => document.getElementById(id);
   const names = { application: 'CrossWatch application', trackers: 'CW trackers', captures: 'Saved captures' };
+  const recoverySections = { mappings: 'Mappings and blocks only', anime_rules: 'Custom anime rules only', captures: 'Saved captures only' };
   const legacy = { config_only: 'Settings and connections', app_state: 'Application data, trackers excluded', full: 'Legacy full backup' };
   const stages = { queued: 'Waiting', creating: 'Creating local backup', validating: 'Checking local backup', encrypting: 'Encrypting archive', uploading: 'Uploading additional copy', verifying: 'Verifying additional copy', complete: 'Complete', failed: 'Failed' };
 
@@ -146,11 +147,17 @@
   }
   function restoreView() {
     const r=s.restore;
-    const section=el('section',{},[button('Back to backups',()=>{s.restore=null;render();}),title('Review restoration'),text(r.path),field('Backup password, if encrypted',input(r.password,v=>{r.password=v;},'password',{autocomplete:'off'})),button('Check backup',()=>perform(async()=>{r.validation=(await api('validate',{path:r.path,password:r.password})).validation;r.mode=r.validation.manifest.trackers?.length?'new_tracker':'replace';r.instance=r.validation.manifest.trackers?.[0]?.id||'';render();}))]);
-    if(r.validation){const manifest=r.validation.manifest;section.append(text('Archive checksums and database integrity checked.'),text(contents(manifest)));if(r.validation.application_error)section.append(text(r.validation.application_error,'br-error'));
-      if(manifest.trackers?.length){section.append(field('Restore action',select([['new_tracker','Recover one tracker as a new instance'],['replace','Replace the data in this backup']],r.mode,v=>{r.mode=v;render();})));if(r.mode==='new_tracker')section.append(field('Tracker',select(manifest.trackers.map(t=>[t.id,t.label||t.id]),r.instance,v=>{r.instance=v;})),field('New tracker name',input(r.label,v=>{r.label=v;})),text('No sync pairs are created. Your existing tracker stays in place.'));}
+    const section=el('section',{},[button('Back to backups',()=>{s.restore=null;render();}),title('Review restoration'),text(r.path),field('Backup password, if encrypted',input(r.password,v=>{r.password=v;},'password',{autocomplete:'off'})),button('Check backup',()=>perform(async()=>{r.validation=(await api('validate',{path:r.path,password:r.password})).validation;r.mode=r.validation.manifest.trackers?.length?'new_tracker':r.validation.available_sections?.[0]||'replace';r.instance=r.validation.manifest.trackers?.[0]?.id||'';r.confirm=false;render();}))]);
+    if(r.validation){const manifest=r.validation.manifest;section.append(text('Archive checksums and database integrity checked.'),text(contents(manifest)));
+      const options=(r.validation.available_sections||[]).filter(key=>recoverySections[key]).map(key=>[key,recoverySections[key]]);
+      if(manifest.trackers?.length)options.unshift(['new_tracker','Recover one tracker as a new instance']);
+      options.push(['replace','Replace the data in this backup']);
+      section.append(field('Restore action',select(options,r.mode,v=>{r.mode=v;r.confirm=false;render();})));
+      if(r.mode==='replace'&&r.validation.application_error)section.append(text(r.validation.application_error,'br-error'));
+      if(r.mode==='new_tracker')section.append(field('Tracker',select(manifest.trackers.map(t=>[t.id,t.label||t.id]),r.instance,v=>{r.instance=v;})),field('New tracker name',input(r.label,v=>{r.label=v;})),text('No sync pairs are created. Your existing tracker stays in place.'));
       if(r.mode==='replace')section.append(text('CW saves a safety copy and applies the replacement during restart. Captures are restored as files only. No captured data is sent to providers.'),check('Replace the data contained in this backup',!!r.confirm,v=>{r.confirm=v;}));
-      section.append(button(r.mode==='new_tracker'?'Recover tracker':'Restore and restart',()=>perform(async()=>{if(r.mode==='replace'&&r.validation.application_ready===false)throw new Error(r.validation.application_error);if(r.mode==='replace'&&!r.confirm)throw new Error('Confirm replacement before restoring.');const result=await api('restore',{path:r.path,password:r.password,mode:r.mode,instance:r.instance,label:r.label,confirm:!!r.confirm,restart:true});if(r.mode==='new_tracker'){s.restore=null;render();message(result.result.message);}else message('Restore prepared. CrossWatch is restarting. Reopen CW to see the result.');}),true));}
+      if(recoverySections[r.mode])section.append(text(r.mode==='captures'?'Restores saved capture files and replaces files with the same names.':'Replaces the selected rules with those from this backup.'),text('CW saves a safety copy and restores your selection during restart.'),check('Restore only the selected data',!!r.confirm,v=>{r.confirm=v;}));
+      section.append(button(r.mode==='new_tracker'?'Recover tracker':'Restore and restart',()=>perform(async()=>{if(r.mode==='replace'&&r.validation.application_ready===false)throw new Error(r.validation.application_error);if(r.mode!=='new_tracker'&&!r.confirm)throw new Error('Confirm replacement before restoring.');const result=await api('restore',{path:r.path,password:r.password,mode:r.mode,instance:r.instance,label:r.label,confirm:!!r.confirm,restart:true});if(r.mode==='new_tracker'){s.restore=null;render();message(result.result.message);}else message('Restore prepared. CrossWatch is restarting. Reopen CW to see the result.');}),true));}
     return section;
   }
   function importView() {

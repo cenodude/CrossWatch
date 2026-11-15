@@ -112,6 +112,15 @@ def apply_pending(config: Path | None = None) -> None:
                     if hashlib.file_digest(handle, "sha256").hexdigest() != pending["hashes"][name]:
                         raise ValueError("Staged file changed")
             members = list(pending["members"])
+            if pending.get("mode") == "mappings":
+                from _backup_mapping import merge_mappings
+
+                name = ".cw_databases/crosswatch.sqlite3"
+                if members != [name]:
+                    raise ValueError("Invalid mapping restore selection")
+                merged = folder / "mapping-restore.sqlite3"
+                merge_mappings(folder / "new" / name, target(name), merged)
+                os.replace(merged, folder / "new" / name)
             for name in pending["members"]:
                 if Path(name).suffix in {".db", ".sqlite", ".sqlite3"}:
                     members.extend(name + suffix for suffix in ("-wal", "-shm", "-journal") if name + suffix not in members)

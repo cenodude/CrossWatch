@@ -70,7 +70,9 @@ def mounted_root() -> Path:
 def _contained_path(root: Path, value: str) -> Path:
     normalized = os.path.normcase(os.path.abspath(value))
     boundary = os.path.normcase(str(root))
-    if normalized != boundary and not normalized.startswith(os.path.join(boundary, "")):
+    if normalized == boundary:
+        return root
+    if not normalized.startswith(os.path.join(boundary, "")):
         raise ValueError("Choose a folder inside the configured backup root.")
     target = Path(normalized).resolve()
     if not target.is_relative_to(root):

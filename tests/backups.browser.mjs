@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
 
-async function fixture(t, theme = '', width = 1100, populated = false, overrides = {}) {
+async function fixture(t, theme = '', width = 1100, populated = false, overrides = {}, validationOverrides = {}) {
   const browser = await chromium.launch({headless:true});
   t.after(() => browser.close());
   const page = await browser.newPage({viewport:{width,height:900}});
@@ -31,7 +31,7 @@ async function fixture(t, theme = '', width = 1100, populated = false, overrides
       if(name==='plan'&&body)plan={...plan,...body,has_password:!!body.password||plan.has_password};
       if(name==='cloud/connect'){cloudKind=body.kind;cloudStep=0;return route.fulfill({json:{ok:true,connection:{id:'cloud-account',kind:cloudKind,status:'connecting',question:'config_token'}}});}
       if(name==='cloud/continue'){cloudStep++;const question=cloudKind==='onedrive'&&cloudStep<3?(cloudStep===1?'config_driveid':'config_drive_ok'):'';return route.fulfill({json:{ok:true,connection:{id:'cloud-account',kind:cloudKind,status:question?'connecting':'connected',question,choices:[{value:'drive-one',label:'My OneDrive'}]}}});}
-      const data = {plan:{plan},schedule:{schedule:{active:false}},list:{backups:populated?[backup]:[]},status:{jobs:populated?[{id:'job',path:backup.path,stage:'failed',local_status:'saved',remote_status:'failed',error:'Server unreachable',retry_at:1794750000}]:[]},create:{job:{id:'new',stage:'queued'}},validate:{validation:{ok:true,manifest,application_ready:true}},restore:{result:{message:'Tracker recovered. No sync pairs were created.'}},'recovery-key':{key:'generated-recovery-key-for-test'}}[name]||{};
+      const data = {plan:{plan},schedule:{schedule:{active:false}},list:{backups:populated?[backup]:[]},status:{jobs:populated?[{id:'job',path:backup.path,stage:'failed',local_status:'saved',remote_status:'failed',error:'Server unreachable',retry_at:1794750000}]:[]},create:{job:{id:'new',stage:'queued'}},validate:{validation:{ok:true,manifest,application_ready:true,...validationOverrides}},restore:{result:{message:'Tracker recovered. No sync pairs were created.'}},'recovery-key':{key:'generated-recovery-key-for-test'}}[name]||{};
       return route.fulfill({json:{ok:true,...data}});
     }
     return route.fulfill({contentType:'text/html',body:`<!doctype html><html${theme?` data-cw-theme="${theme}"`:''}><head><meta name="viewport" content="width=device-width,initial-scale=1">${['themes/tokens','css/base','crosswatch','css/layout','css/components','css/pages','css/page-theme','themes/flat','themes/original-coverage'].map(f=>`<link rel="stylesheet" href="/assets/${f}.css">`).join('')}</head><body><button id="open" onclick="openBackupRestore()">Backups</button><script src="/assets/helpers/backups.js"></script></body></html>`});
@@ -73,6 +73,34 @@ test('tracker restore defaults to a new instance and replacement requires confir
   await page.getByRole('button',{name:'Restore and restart'}).click();
   await page.getByText('Restore prepared. CrossWatch is restarting. Reopen CW to see the result.').waitFor();
   assert.equal(writes.at(-1).body.confirm,true);
+});
+
+for(const mode of ['mappings','anime_rules','captures'])test(`${mode} recovery confirms only the selected data`,async t=>{
+  const {page,writes}=await fixture(t,'flat-dark',390,true,{}, {available_sections:['mappings','anime_rules','captures'],application_ready:false,application_error:'Original configuration key required'});
+  await page.getByRole('button',{name:'Restore',exact:true}).click();
+  await page.getByRole('button',{name:'Check backup'}).click();
+  await page.getByLabel('Restore action').selectOption(mode);
+  assert.equal(await page.getByText('Original configuration key required',{exact:true}).count(),0);
+  await page.getByRole('button',{name:'Restore and restart'}).click();
+  await page.getByText('Confirm replacement before restoring.').waitFor();
+  assert.equal(writes.filter(w=>w.name==='restore').length,0);
+  await page.getByLabel('Restore only the selected data',{exact:true}).check();
+  await page.getByLabel('Restore action').selectOption('replace');
+  assert.equal(await page.getByLabel('Replace the data contained in this backup',{exact:true}).isChecked(),false);
+  await page.getByLabel('Restore action').selectOption(mode);
+  await page.getByLabel('Restore only the selected data',{exact:true}).check();
+  await page.getByRole('button',{name:'Restore and restart'}).click();
+  await page.getByText('Restore prepared. CrossWatch is restarting. Reopen CW to see the result.').waitFor();
+  assert.equal(writes.at(-1).body.mode,mode);
+  assert.equal(writes.at(-1).body.confirm,true);
+});
+
+test('recovery hides sections absent from the backup',async t=>{
+  const {page}=await fixture(t,'',1100,true,{}, {available_sections:['anime_rules']});
+  await page.getByRole('button',{name:'Restore',exact:true}).click();
+  await page.getByRole('button',{name:'Check backup'}).click();
+  await page.getByLabel('Restore action').waitFor();
+  assert.deepEqual(await page.getByLabel('Restore action').locator('option').evaluateAll(nodes=>nodes.map(n=>n.value)),['new_tracker','anime_rules','replace']);
 });
 
 for(const kind of ['onedrive','dropbox'])test(`${kind} account connection saves only its reference`,async t=>{

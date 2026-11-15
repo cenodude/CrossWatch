@@ -107,6 +107,9 @@ def backup_validate(
     if validation.get("application_ready") is False:
         state.out.warn(str(validation.get("application_error") or "Application restoration needs the original configuration key."))
     manifest = as_dict(validation.get("manifest"))
+    sections = validation.get("available_sections") or []
+    if sections:
+        state.out.info("Selective recovery (--only): " + ", ".join(str(section) for section in sections))
     state.out.records(_rows(manifest, "trackers"), [("TRACKER", "id"), ("LABEL", "label")], title="Trackers in backup", empty="No trackers in this backup.")
     for key, value in validation.items():
         if key != "ok" and not isinstance(value, (dict, list)):
@@ -121,22 +124,25 @@ def backup_restore(
     password_file: Path | None = typer.Option(None, "--password-file", help="Read the archive password from a local file."),
     ask_password: bool = typer.Option(False, "--ask-password", help="Prompt for the archive password."),
     new_tracker: bool = typer.Option(False, "--new-tracker", help="Recover a tracker into a new instance without sync pairs."),
+    only: str = typer.Option("", "--only", help="Restore only mappings, anime_rules or captures."),
     instance: str = typer.Option("", "--instance", help="Tracker ID recorded in the backup, including default."),
     label: str = typer.Option("Recovered tracker", "--label", help="Label for the recovered tracker."),
 ) -> None:
     """Restore a backup."""
     state: Ctx = ctx.obj
     state.require_service("Restoring a backup")
+    if only and (new_tracker or only not in {"mappings", "anime_rules", "captures"}):
+        raise CLIError("Use --only mappings, anime_rules or captures without --new-tracker.")
     if new_tracker and not instance:
         raise CLIError("Choose --instance from the tracker IDs shown by cw backup validate.")
     if instance and not new_tracker:
         raise CLIError("Use --new-tracker with --instance.")
     if not new_tracker and not yes:
-        state.out.warn("This overwrites current data.")
+        state.out.warn(f"This replaces only the selected {only} data." if only else "This overwrites current data.")
         if not typer.confirm(f"Restore {path}?", default=False):
             raise CLIError("Cancelled", exit_code=0)
     body = {"path": path, "password": read_secret(password_file, ask_password), "confirm": True, "restart": not new_tracker,
-            "mode": "new_tracker" if new_tracker else "replace", "instance": instance, "label": label}
+            "mode": "new_tracker" if new_tracker else only or "replace", "instance": instance, "label": label}
     result = as_dict(state.post("/api/backups/restore", json_body=body))
     if result.get("ok") is False:
         raise CLIError(error_text(result, "Restore rejected"))

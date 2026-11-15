@@ -181,6 +181,148 @@ def test_legacy_scope_handles_external_application_database(installation, tmp_pa
     assert (".cw_databases/crosswatch.sqlite3" in members) == (scope != "config_only")
 
 
+@pytest.fixture
+def selective_installation(installation, tmp_path, monkeypatch):
+    from cw_platform.local_db import db, manual_policy
+
+    root, _ = installation
+    monkeypatch.setenv("CROSSWATCH_DB", str(tmp_path / "external" / "application.db"))
+    db.close_conn()
+    saved = {"version": 1, "providers": {"SIMKL": {"history": {
+        "blocks": ["tmdb:5#show"],
+        "adds": {"items": {"tmdb:77#show": {"type": "show", "ids": {"tmdb": "77"}}}},
+        "mappings": {"tmdb:77#show": {"original_key": "tmdb:5#show", "original": {"type": "show", "ids": {"tmdb": "5"}}}},
+    }}}}
+    manual_policy.save_policy(root, {**saved, "pairs": {"saved-pair": copy.deepcopy(saved)}})
+    expected = manual_policy.load_policy(root)
+    anime = root / ".cw_state" / "anime_mapping_overrides.json"
+    anime.parent.mkdir(exist_ok=True)
+    anime.write_text('{"overrides":[],"updated_at":123}')
+    captures = root / "snapshots"
+    captures.mkdir()
+    (captures / "saved.json").write_text('{"saved":true}')
+    token = "enc:v1:" + Fernet(Fernet.generate_key()).encrypt(b"old-secret").decode()
+    (root / "config.json").write_text(json.dumps({"connection": token}))
+    try:
+        yield root, db, manual_policy, expected, anime, captures
+    finally:
+        db.close_conn()
+
+
+@pytest.mark.parametrize("mode", ["mappings", "anime_rules", "captures"])
+@pytest.mark.parametrize("password", ["", PASSWORD])
+def test_selective_restore_preserves_unselected_and_recent_data(selective_installation, mode, password):
+    root, db, policy, expected, anime, captures = selective_installation
+    source = backups.create_backup(components=["application", "captures"], password=password)
+    info = recovery.inspect(source["path"], password)
+    assert info["available_sections"] == ["mappings", "anime_rules", "captures"]
+    assert not info["application_ready"]
+    policy.save_policy(root, {"version": 1, "providers": {"TRAKT": {"watchlist": {"blocks": ["tmdb:123"]}}}})
+    current_policy = policy.load_policy(root)
+    anime.write_text('{"overrides":[],"updated_at":456}')
+    (captures / "saved.json").write_text('{"saved":false}')
+    (captures / "newer.json").write_text('{"keep":true}')
+    (root / "config.json").write_text('{"connection":"current"}')
+    seed_db(root / ".cw_provider" / "tracker.db", "current tracker")
+    recovery.prepare(source["path"], password, mode=mode)
+    conn = db.get_conn(root)
+    assert conn is not None
+    with conn:
+        conn.execute("CREATE TABLE unrelated_data (value TEXT)")
+        conn.execute("INSERT INTO unrelated_data VALUES ('changed after preparation')")
+        conn.execute("INSERT INTO local_meta(key,value_text,updated_at) VALUES ('keep','current',1)")
+    db.close_conn()
+    apply_pending(root)
+    status = manager.status()["restore"]
+    assert status["ok"]
+    assert policy.load_policy(root) == (expected if mode == "mappings" else current_policy)
+    assert json.loads(anime.read_text())["updated_at"] == (123 if mode == "anime_rules" else 456)
+    assert json.loads((captures / "saved.json").read_text())["saved"] is (mode == "captures")
+    assert (captures / "newer.json").read_text() == '{"keep":true}'
+    assert (root / "config.json").read_text() == '{"connection":"current"}'
+    conn = db.get_conn(root)
+    assert conn is not None
+    assert conn.execute("SELECT value FROM unrelated_data").fetchone()[0] == "changed after preparation"
+    assert conn.execute("SELECT value_text FROM local_meta WHERE key='keep'").fetchone()[0] == "current"
+    with sqlite3.connect(root / ".cw_provider" / "tracker.db") as tracker:
+        assert tracker.execute("SELECT value FROM sample").fetchone()[0] == "current tracker"
+    db.close_conn()
+    assert backups.validate_backup(status["safety_backup"])["ok"]
+    recovery.prepare(status["safety_backup"], mode=mode)
+    apply_pending(root)
+    assert manager.status()["restore"]["ok"]
+    assert policy.load_policy(root) == current_policy
+    assert json.loads(anime.read_text())["updated_at"] == 456
+    assert not json.loads((captures / "saved.json").read_text())["saved"]
+
+
+def test_mapping_restore_can_create_a_missing_database(selective_installation):
+    root, db, policy, expected, _, _ = selective_installation
+    source = backups.create_backup(components=["application"])
+    db.close_conn()
+    db.crosswatch_db_path(root).unlink()
+    recovery.prepare(source["path"], mode="mappings")
+    apply_pending(root)
+    assert manager.status()["restore"]["ok"]
+    assert policy.load_policy(root) == expected
+
+
+def test_mapping_restore_rolls_back_after_replacement(selective_installation, monkeypatch):
+    import _backup_bootstrap as bootstrap
+
+    root, db, policy, _, _, _ = selective_installation
+    source = backups.create_backup(components=["application"])
+    policy.save_policy(root, {"version": 1, "providers": {}})
+    expected = policy.load_policy(root)
+    db.close_conn()
+    recovery.prepare(source["path"], mode="mappings")
+    replace = bootstrap.os.replace
+    failed = False
+
+    def fail_once(src, dst):
+        nonlocal failed
+        if Path(dst).name == "restore-result.json" and not failed:
+            failed = True
+            raise OSError("simulated result write failure")
+        return replace(src, dst)
+
+    monkeypatch.setattr(bootstrap.os, "replace", fail_once)
+    apply_pending(root)
+    assert failed and not manager.status()["restore"]["ok"]
+    assert policy.load_policy(root) == expected
+
+
+@pytest.mark.parametrize("mode", ["mappings", "anime_rules", "captures", "unknown"])
+def test_selective_restore_rejects_missing_or_unknown_selections(installation, mode):
+    source = backups.create_backup(components=["application"])
+    with pytest.raises(ValueError, match="selected data|supported restore action"):
+        recovery.prepare(source["path"], mode=mode)
+    assert not (manager.private_dir() / "pending.json").exists()
+
+
+def test_selective_restore_api_requires_confirmation_and_stages_only_requested_data(selective_installation, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from api import backupsAPI
+
+    _, db, _, _, _, _ = selective_installation
+    source = backups.create_backup(components=["application", "captures"])
+    db.close_conn()
+    app = FastAPI()
+    app.include_router(backupsAPI.router)
+    restarts = []
+    monkeypatch.setattr(backupsAPI, "_restart_soon", lambda: restarts.append(True))
+    with TestClient(app) as client:
+        payload = {"path": source["path"], "mode": "mappings", "restart": True}
+        assert client.post("/api/backups/restore", json=payload).status_code == 400
+        assert not restarts
+        result = client.post("/api/backups/restore", json={**payload, "confirm": True})
+        assert result.status_code == 200 and restarts == [True]
+    pending = manager.read("pending.json", {})
+    assert pending["mode"] == "mappings"
+    assert pending["members"] == [".cw_databases/crosswatch.sqlite3"]
+
+
 def test_password_confirmation_and_public_secret_redaction(installation):
     root, _ = installation
     with pytest.raises(ValueError, match="Confirm"):

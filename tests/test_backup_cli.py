@@ -203,6 +203,22 @@ def test_replacement_restore_requires_confirmation(cli, monkeypatch):
     assert transport.calls[-1][2]["confirm"] and transport.calls[-1][2]["restart"]
 
 
+@pytest.mark.parametrize("section", ["mappings", "anime_rules", "captures"])
+def test_selective_restore_sends_only_requested_section(cli, section):
+    state, transport = cli
+    transport.routes[("POST", "/api/backups/restore")] = {"ok": True, "result": {"restart_scheduled": True}}
+    assert run_isolated(state, ["backup", "restore", "saved.zip", "--only", section, "--yes"]) == 0
+    body = transport.calls[-1][2]
+    assert body["mode"] == section and body["confirm"] and body["restart"]
+
+
+@pytest.mark.parametrize("options", [["--only", "unknown"], ["--only", "mappings", "--new-tracker", "--instance", "default"]])
+def test_selective_restore_rejects_invalid_cli_options(cli, options):
+    state, transport = cli
+    assert run_isolated(state, ["backup", "restore", "saved.zip", *options, "--yes"]) != 0
+    assert not transport.calls
+
+
 def test_validation_reports_missing_config_key_and_tracker_ids(cli, capsys):
     state, transport = cli
     state.out = Output("plain")
