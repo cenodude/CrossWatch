@@ -1039,7 +1039,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "jellyfin": {"access_token", "api_key", "password"},
         "emby": {"access_token", "api_key", "password"},
         "silo": {"access_token", "refresh_token", "profile_token", "_pending_device"},
-        "tofa": {"access_token", "refresh_token", "profile_token", "_pending_device"},
+        "tofa": {"access_token", "refresh_token", "profile_token", "sync_key_token", "_pending_device"},
         "kodi": {"password"},
         "tmdb": {"api_key"},
         "tmdb_sync": {"api_key", "session_id", "_pending_request_token", "read_token", "access_token", "_pending_access_token"},
