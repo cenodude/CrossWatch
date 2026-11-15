@@ -30,9 +30,6 @@ const METRICS = [
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-const CELL = 11;
-const STEP = 14;
-const PAD_L = 32;
 const PAD_T = 20;
 
 const ls = (k, d) => { try { return localStorage.getItem(k) || d; } catch { return d; } };
@@ -82,23 +79,7 @@ async function fjson(url, ms = 20000) {
   } finally { clearTimeout(timer); }
 }
 
-function injectCss() {
-  const existing = document.getElementById("cw-statistics-css");
-  if (existing?.tagName === "LINK") return Promise.resolve();
-  existing?.remove();
-  const link = document.createElement("link");
-  const cssUrl = new URL("./styles.css", import.meta.url);
-  const version = new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__;
-  if (version) cssUrl.searchParams.set("v", version);
-  link.id = "cw-statistics-css";
-  link.rel = "stylesheet";
-  link.href = cssUrl.href;
-  return new Promise((resolve) => {
-    link.addEventListener("load", resolve, { once: true });
-    link.addEventListener("error", resolve, { once: true });
-    document.head.appendChild(link);
-  });
-}
+
 
 function levels(values) {
   const nonZero = values.filter((v) => v > 0).sort((a, b) => a - b);
@@ -140,20 +121,28 @@ function streaks(byIndex, firstIndex, lastIndex) {
 
 export default {
   async mount(root, props = {}) {
-    await injectCss();
 
     const shell = root.closest(".cx-modal-shell");
     if (shell) {
-      shell.classList.add("cw-statistics-shell");
-      shell.style.setProperty("--cxModalW", "980px");
-      shell.style.setProperty("--cxModalMaxW", "980px");
-      shell.style.setProperty("--cxModalMaxH", "88vh");
+      shell.classList.add("cw-page-dialog", "cw-page-statistics");
     }
 
     let alive = true;
+    const narrowViewport = matchMedia("(max-width:600px)");
     let restored = statisticsReturn(props);
-    let range = restored?.range || (RANGES.some((r) => r.value === ls("cw.stats.range", "")) ? ls("cw.stats.range", "12m") : "12m");
+    let range = restored?.range || (RANGES.some((r) => r.value === ls("cw.stats.range", "")) ? ls("cw.stats.range", "12m") : (narrowViewport.matches ? "3m" : "12m"));
     let metric = restored?.metric || (METRICS.some((m) => m.value === ls("cw.stats.metric", "")) ? ls("cw.stats.metric", "changes") : "changes");
+    let instanceLabels = {};
+    const instanceName = (provider, id, explicit) => {
+      const key = String(provider || "").toUpperCase();
+      return instanceLabels[key]?.[id] || explicit || (id === "default" || !id ? "Default" : id);
+    };
+    const loadLabels = async () => {
+      try {
+        const data = await fjson("/api/provider-instances?configured_only=true");
+        instanceLabels = Object.fromEntries(Object.entries(data || {}).filter(([, rows]) => Array.isArray(rows)).map(([provider, rows]) => [provider.toUpperCase(), Object.fromEntries(rows.map(row => [row.id, row.friendly_label || row.display_label || row.label || row.id]))]));
+      } catch { instanceLabels = {}; }
+    };
     let payload = null;
     let byIndex = new Map();
     let selected = Number(props?.day) || null;
@@ -161,31 +150,15 @@ export default {
     let dayState = { index: null, runs: [], loading: false, error: "", filter: "", expanded: new Set() };
 
     root.innerHTML = `
-      <div class="cw-sc">
-        <div class="cx-head">
-          <div class="sc-head-left">
-            <div class="sc-head-icon"><span class="material-symbols-rounded" aria-hidden="true">calendar_month</span></div>
-            <div>
-              <div class="sc-title">Sync activity</div>
-              <div class="sc-sub" id="sc-sub">Every sync run, day by day.</div>
-            </div>
-          </div>
-          <div class="sc-head-right">
-            <div class="sc-seg" id="sc-metric" role="tablist" aria-label="Metric"></div>
-            <div class="sc-seg" id="sc-range" role="tablist" aria-label="Range"></div>
-            <button type="button" class="sc-icon-btn" id="sc-refresh" title="Refresh" aria-label="Refresh"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button>
-            <button type="button" class="sc-icon-btn" id="sc-close" title="Close" aria-label="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
-          </div>
-        </div>
-        <div class="sc-body">
-          <section class="sc-tiles" id="sc-tiles"></section>
+      <div class="cw-sc cw-page-preferences">
+        <header class="pf-head"><div><h2>Sync activity</h2><p id="sc-sub">Every sync run, day by day.</p></div><div class="pf-actions"><button type="button" class="pf-button" id="sc-refresh" aria-label="Refresh activity"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button><button type="button" class="pf-button" id="sc-close">Close</button></div></header>
+        <div class="pf-body sc-body">
           <section class="sc-cal-card">
-            <div class="sc-cal-scroll"><div id="sc-cal" class="sc-cal"></div></div>
-            <div class="sc-cal-foot">
-              <span class="sc-cal-hint" id="sc-cal-hint">Click any day to see its runs.</span>
-              <span class="sc-legend"><span>Less</span><i class="lv0"></i><i class="lv1"></i><i class="lv2"></i><i class="lv3"></i><i class="lv4"></i><span>More</span></span>
-            </div>
+            <div class="sc-controls"><label>Show<select id="sc-metric" class="cw-page-input" data-cw-native-select="true" aria-label="Activity metric"></select></label><label>Period<select id="sc-range" class="cw-page-input" data-cw-native-select="true" aria-label="Activity period"></select></label></div>
+            <div class="sc-cal-layout"><div class="sc-weekdays" aria-hidden="true">${WEEKDAYS.map(day=>`<span>${day}</span>`).join("")}</div><div class="sc-cal-scroll" tabindex="0" aria-label="Activity calendar, scroll to see more weeks"><div id="sc-cal" class="sc-cal"></div></div></div>
+            <div class="sc-cal-foot"><span>Choose a day to see its runs.</span><span class="sc-legend"><span>Less</span><i class="lv0"></i><i class="lv1"></i><i class="lv2"></i><i class="lv3"></i><i class="lv4"></i><span>More</span></span></div>
           </section>
+          <details class="sc-summary"><summary id="sc-summary">Activity summary</summary><div class="sc-tiles" id="sc-tiles"></div></details>
           <section class="sc-day-card" id="sc-day"></section>
         </div>
       </div>`;
@@ -205,17 +178,11 @@ export default {
     const hideTip = () => { tip.hidden = true; };
 
     const renderSegs = () => {
-      Q("#sc-metric", root).innerHTML = METRICS.map((m) => `<button type="button" role="tab" class="sc-seg-btn${m.value === metric ? " on" : ""}" data-m="${m.value}" aria-selected="${m.value === metric}"><span class="material-symbols-rounded" aria-hidden="true">${m.icon}</span>${esc(m.label)}</button>`).join("");
-      Q("#sc-range", root).innerHTML = RANGES.map((r) => `<button type="button" role="tab" class="sc-seg-btn${r.value === range ? " on" : ""}" data-r="${r.value}" aria-selected="${r.value === range}">${esc(r.label)}</button>`).join("");
-      Q("#sc-metric", root).querySelectorAll(".sc-seg-btn").forEach((b) => b.addEventListener("click", () => {
-        if (b.dataset.m === metric) return;
-        metric = b.dataset.m; lset("cw.stats.metric", metric); renderSegs(); renderCalendar(); renderTiles();
-      }));
-      Q("#sc-range", root).querySelectorAll(".sc-seg-btn").forEach((b) => b.addEventListener("click", () => {
-        if (b.dataset.r === range) return;
-        range = b.dataset.r; lset("cw.stats.range", range); renderSegs(); load();
-      }));
+      Q("#sc-metric", root).innerHTML = METRICS.map(m => `<option value="${m.value}" ${m.value === metric ? "selected" : ""}>${esc(m.label)}</option>`).join("");
+      Q("#sc-range", root).innerHTML = RANGES.map(r => `<option value="${r.value}" ${r.value === range ? "selected" : ""}>${({"3m":"3 months","6m":"6 months","12m":"1 year"})[r.value]}</option>`).join("");
     };
+    Q("#sc-metric", root).addEventListener("change", ev => { metric = ev.target.value; lset("cw.stats.metric", metric); renderCalendar(); renderTiles(); });
+    Q("#sc-range", root).addEventListener("change", ev => { range = ev.target.value; lset("cw.stats.range", range); void load(); });
 
     const metricValue = (entry) => {
       if (!entry) return 0;
@@ -227,6 +194,7 @@ export default {
     const renderTiles = () => {
       const host = Q("#sc-tiles", root);
       const totals = payload?.totals || {};
+      Q("#sc-summary", root).textContent = `${fmt(totals.runs)} runs · ${fmt(totals.changes)} changes · ${fmt(totals.failed)} failed`;
       const cfg = RANGES.find((r) => r.value === range) || RANGES[2];
       const todayIdx = dayIndexOf(Date.now());
       const firstIdx = todayIdx - cfg.days + 1;
@@ -249,6 +217,10 @@ export default {
       const lastCol = todayIdx - todayDow;
       const firstCol = lastCol - (cfg.weeks - 1) * 7;
 
+      const narrow = narrowViewport.matches;
+      const PAD_L = narrow ? 0 : 32;
+      const CELL = narrow ? 22 : 15;
+      const STEP = narrow ? 28 : 20;
       const steps = levels([...byIndex.values()].map(metricValue));
       const width = PAD_L + cfg.weeks * STEP + 6;
       const height = PAD_T + 7 * STEP + 4;
@@ -271,12 +243,12 @@ export default {
           const lv = levelOf(value, steps);
           const bad = (entry?.failed || 0) > 0;
           const cls = `sc-cell lv${lv}${bad ? " bad" : ""}${index === selected ? " on" : ""}`;
-          cells.push(`<rect class="${cls}" x="${PAD_L + w * STEP}" y="${PAD_T + d * STEP}" width="${CELL}" height="${CELL}" rx="2" data-d="${index}"></rect>`);
+          cells.push(`<rect class="${cls}" x="${PAD_L + w * STEP}" y="${PAD_T + d * STEP}" width="${CELL}" height="${CELL}" rx="2" data-d="${index}" role="button" tabindex="${index === (selected ?? todayIdx) ? 0 : -1}" aria-label="${esc(fmtDate(index))}: ${fmt(entry?.runs)} runs, ${fmt(value)} ${esc(METRICS.find(m => m.value === metric)?.label.toLowerCase())}${bad ? ", includes failures" : ""}" aria-pressed="${index === selected}"></rect>`);
         }
       }
-      const dayAxis = [0, 2, 4].map((d) => `<text class="sc-ax" x="0" y="${PAD_T + d * STEP + 9}">${WEEKDAYS[d]}</text>`).join("");
+      const dayAxis = (narrow ? [] : [0, 2, 4]).map((d) => `<text class="sc-ax" x="0" y="${PAD_T + d * STEP + 9}">${WEEKDAYS[d]}</text>`).join("");
 
-      host.innerHTML = `<svg class="sc-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="img" aria-label="Sync activity calendar">${monthLabels.join("")}${dayAxis}${cells.join("")}</svg>`;
+      host.innerHTML = `<svg class="sc-svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" role="group" aria-label="Sync activity calendar">${monthLabels.join("")}${dayAxis}${cells.join("")}</svg>`;
 
       host.querySelectorAll(".sc-cell").forEach((cell) => {
         const index = Number(cell.dataset.d);
@@ -295,6 +267,13 @@ export default {
         });
         cell.addEventListener("mouseleave", hideTip);
         cell.addEventListener("click", () => { hideTip(); selectDay(index); });
+        cell.addEventListener("keydown", ev => {
+          if (["Enter", " "].includes(ev.key)) { ev.preventDefault(); hideTip(); void selectDay(index); return; }
+          const delta = {ArrowLeft:-7, ArrowRight:7, ArrowUp:-1, ArrowDown:1}[ev.key];
+          if (!delta) return;
+          const target = host.querySelector(`[data-d="${index + delta}"]`);
+          if (target) { ev.preventDefault(); cell.setAttribute("tabindex", "-1"); target.setAttribute("tabindex", "0"); target.focus(); }
+        });
       });
     };
 
@@ -302,7 +281,7 @@ export default {
       if (!needle) return true;
       const bits = [
         fmtTime(run.started_at), run.status, run.dry_run ? "dry run" : "",
-        ...(run.pair_rows || []).flatMap((p) => [p.pair_key, p.feature, p.src_provider, p.dst_provider, p.src_instance, p.dst_instance]),
+        ...(run.pair_rows || []).flatMap((p) => [p.pair_key, p.feature, p.src_provider, p.dst_provider, p.src_instance, p.dst_instance, instanceName(p.src_provider,p.src_instance,p.src_instance_label), instanceName(p.dst_provider,p.dst_instance,p.dst_instance_label)]),
       ];
       return bits.join(" ").toLowerCase().includes(needle);
     };
@@ -351,7 +330,7 @@ export default {
         const status = run.errors ? "err" : (run.status === "running" ? "run" : "ok");
         const detail = open
           ? `<div class="sc-run-detail">${(run.pair_rows || []).length
-              ? `<table class="sc-tbl"><thead><tr><th>Route</th><th>Feature</th><th>Added</th><th>Removed</th><th>Updated</th><th>Errors</th></tr></thead><tbody>${run.pair_rows.map((p) => `<tr><td>${esc(p.src_provider)} &rarr; ${esc(p.dst_provider)}${p.src_instance !== "default" || p.dst_instance !== "default" ? `<span class="sc-inst">${esc(p.src_instance)} / ${esc(p.dst_instance)}</span>` : ""}</td><td>${esc(p.feature || "-")}</td><td>${fmt(p.added)}</td><td>${fmt(p.removed)}</td><td>${fmt(p.updated)}</td><td>${fmt(p.errors)}</td></tr>`).join("")}</tbody></table>`
+              ? `<div class="sc-route-list">${run.pair_rows.map(p => `<div class="sc-route-row"><div><span>${esc(brand(p.src_provider)?.label || p.src_provider)} &middot; ${esc(instanceName(p.src_provider,p.src_instance,p.src_instance_label))}</span><span class="sc-inst">to ${esc(brand(p.dst_provider)?.label || p.dst_provider)} &middot; ${esc(instanceName(p.dst_provider,p.dst_instance,p.dst_instance_label))}</span></div><span class="sc-chip">${esc(p.feature || "-")}</span><span class="sc-run-counts">${counters(p)}</span></div>`).join("")}</div>`
               : `<div class="sc-day-msg">No recorded changes for this run.</div>`}</div>`
           : "";
         return `
@@ -393,7 +372,7 @@ export default {
     const renderDay = () => {
       const host = Q("#sc-day", root);
       if (dayState.index == null) {
-        host.innerHTML = `<div class="sc-day-empty"><span class="material-symbols-rounded" aria-hidden="true">touch_app</span><div><strong>No day selected</strong><span>Click a square above to list that day's sync runs.</span></div></div>`;
+        host.innerHTML = `<div class="sc-day-empty"><span class="material-symbols-rounded" aria-hidden="true">touch_app</span><div><strong>No day selected</strong><span>Choose a square above to list that day's sync runs.</span></div></div>`;
         return;
       }
       const entry = byIndex.get(dayState.index);
@@ -407,8 +386,8 @@ export default {
             <div class="sc-day-title">${esc(fmtDate(dayState.index))}</div>
             <div class="sc-day-sub">${fmt(runCount)} runs &middot; ${fmt(changeCount)} changes${failCount ? ` &middot; ${fmt(failCount)} with errors` : ""}</div>
           </div>
-          <div class="sc-day-tools">
-            <label class="sc-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input type="search" id="sc-filter" placeholder="Filter runs" value="${esc(dayState.filter)}" autocomplete="off"></label>
+          <div class="sc-day-tools" ${dayState.runs.length > 5 || dayState.filter ? "" : "hidden"}>
+            <label class="sc-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input type="search" id="sc-filter" aria-label="Filter runs" placeholder="Filter runs" value="${esc(dayState.filter)}" autocomplete="off"></label>
           </div>
         </div>
         <div id="sc-run-host"></div>`;
@@ -421,6 +400,7 @@ export default {
     };
 
     const selectDay = async (index) => {
+      const keyboardFocus = document.activeElement?.classList?.contains("sc-cell");
       selected = index;
       dayState = { index, runs: [], loading: true, error: "", filter: "", expanded: new Set() };
       if (restored?.day === index) {
@@ -429,6 +409,7 @@ export default {
       }
       restored = null;
       renderCalendar();
+      if (keyboardFocus) Q(`.sc-cell[data-d="${index}"]`, root)?.focus();
       renderDay();
       const since = index * DAY - TZ;
       try {
@@ -469,6 +450,8 @@ export default {
       if (!alive) return;
       renderTiles();
       renderCalendar();
+      const scroll = Q(".sc-cal-scroll", root);
+      scroll.scrollLeft = scroll.scrollWidth;
 
       if (pendingDay != null) {
         const want = pendingDay;
@@ -489,7 +472,13 @@ export default {
       renderDay();
     };
 
-    const onProfileChange = () => { selected = null; pendingDay = null; dayState = { index: null, runs: [], loading: false, error: "", filter: "", expanded: new Set() }; void load(); };
+    const onProfileChange = async () => { selected = null; pendingDay = null; dayState = { index: null, runs: [], loading: false, error: "", filter: "", expanded: new Set() }; await Promise.all([loadLabels(),load()]); if (alive) renderRuns(); };
+    const onViewportChange = () => {
+      renderCalendar();
+      const scroll = Q(".sc-cal-scroll", root);
+      scroll.scrollLeft = scroll.scrollWidth;
+    };
+    narrowViewport.addEventListener("change", onViewportChange);
     window.addEventListener("cw:overview-profile-changed", onProfileChange);
 
     Q("#sc-close", root).addEventListener("click", () => window.cxCloseModal?.());
@@ -497,13 +486,14 @@ export default {
 
     renderSegs();
     renderDay();
-    await load();
-
     this._cleanup = () => {
       alive = false;
+      narrowViewport.removeEventListener("change", onViewportChange);
       window.removeEventListener("cw:overview-profile-changed", onProfileChange);
       tip.remove();
     };
+    await Promise.all([loadLabels(), load()]);
+    if (alive) renderRuns();
   },
   unmount() {
     try { this._cleanup?.(); } catch {}

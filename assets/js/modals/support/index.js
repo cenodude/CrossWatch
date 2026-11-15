@@ -89,82 +89,60 @@ function elapsedLabel(startedAt) {
   return `${mins}m ${String(rem).padStart(2, "0")}s`;
 }
 
-function injectCSS() {
-  const existing = document.getElementById("cw-support-css");
-  if (existing?.tagName === "LINK") return Promise.resolve();
-  existing?.remove();
-  const link = document.createElement("link");
-  const cssUrl = new URL("./styles.css", import.meta.url);
-  const version = new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__;
-  if (version) cssUrl.searchParams.set("v", version);
-  link.id = "cw-support-css";
-  link.rel = "stylesheet";
-  link.href = cssUrl.href;
-  return new Promise((resolve) => {
-    link.addEventListener("load", resolve, { once: true });
-    link.addEventListener("error", resolve, { once: true });
-    document.head.appendChild(link);
-  });
-}
-
 export default {
   async mount(root) {
     cleanupSupportMount?.();
     cleanupSupportMount = null;
-    await injectCSS();
 
     const shell = root.closest(".cx-modal-shell");
-    shell?.classList.add("cw-support-shell");
+    shell?.classList.add("cw-support-shell", "cw-page-dialog");
 
     root.innerHTML = `
-      <div class="cw-support">
-        <div class="cx-head">
+      <div class="cw-support cw-page-maint-content">
+        <div class="mt-head">
           <div class="sup-head-left">
-            <div class="sup-head-icon"><span class="material-symbols-rounded" aria-hidden="true">support_agent</span></div>
             <div>
-              <div class="sup-title">Support</div>
-              <div class="sup-sub">Export diagnostic data to attach to a bug report. Nothing is changed or removed.</div>
+              <h2 class="sup-title">Support</h2>
+              <div class="sup-sub">Download diagnostic files for a bug report.</div>
             </div>
           </div>
-          <button type="button" class="sup-close" id="sup-close" aria-label="Close">
-            <span class="material-symbols-rounded" aria-hidden="true">close</span>
+          <button type="button" class="cw-page-button mt-button sup-close" id="sup-close" aria-label="Close">
+            Close
           </button>
         </div>
 
-        <div class="sup-body">
+        <div class="mt-body sup-body cw-scrollbars">
           <div class="sup-stats" id="sup-stats" aria-live="polite"></div>
 
           <div class="sup-cards">
-            <section class="sup-card">
+            <section class="cw-page-panel sup-card">
               <div class="sup-card-head">
-                <span class="material-symbols-rounded" aria-hidden="true">description</span>
                 <div>
                   <strong>Export sync state</strong>
-                  <small>Rebuilds state.json from the database so it can be attached to a bug report.</small>
+                  <small>Download state.json for the selected sync pairs.</small>
                 </div>
               </div>
               <label class="sup-field">
                 <span>Scope</span>
-                <select id="sup-state-scope" class="sup-select support-scope"><option value="all">All pairs</option></select>
+                <select id="sup-state-scope" class="cw-page-input sup-select support-scope"><option value="all">All pairs</option></select>
               </label>
               <div class="sup-actions">
-                <button type="button" class="sup-btn primary" id="sup-state-download">
+                <button type="button" class="cw-page-button mt-button sup-btn primary" id="sup-state-download" aria-label="Download sync state">
                   <span class="material-symbols-rounded" aria-hidden="true">download</span><span>Download</span>
                 </button>
               </div>
             </section>
 
-            <section class="sup-card">
+            <section class="cw-page-panel sup-card">
               <div class="sup-card-head">
-                <span class="material-symbols-rounded" aria-hidden="true">folder_zip</span>
                 <div>
                   <strong>Support bundle</strong>
-                  <small>Packs state.json, a redacted config, diagnostics, reports and log tails into one ZIP.</small>
+                  <small>Sync state and selected diagnostics in one ZIP.</small>
                 </div>
               </div>
               <label class="sup-field">
                 <span>Scope</span>
-                <select id="sup-bundle-scope" class="sup-select support-scope"><option value="all">All pairs</option></select>
+                <select id="sup-bundle-scope" class="cw-page-input sup-select support-scope"><option value="all">All pairs</option></select>
               </label>
               <div class="sup-includes">
                 ${SECTIONS.map((s) => `
@@ -174,7 +152,7 @@ export default {
                   </label>`).join("")}
               </div>
               <div class="sup-actions">
-                <button type="button" class="sup-btn primary" id="sup-bundle-download">
+                <button type="button" class="cw-page-button mt-button sup-btn primary" id="sup-bundle-download" aria-label="Download support bundle">
                   <span class="material-symbols-rounded" aria-hidden="true">download</span><span>Download</span>
                 </button>
               </div>

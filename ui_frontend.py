@@ -227,7 +227,7 @@ _SETTINGS_PANE_STARTS: tuple[tuple[str, str], ...] = (
     ("scheduling", '        <section class="cw-settings-pane" data-pane="scheduling">'),
     ("scrobbler", '        <section class="cw-settings-pane" data-pane="scrobbler">'),
     ("app", '        <section class="cw-settings-pane cw-app-settings-pane" data-pane="app">'),
-    ("maintenance", '        <section class="cw-settings-pane" data-pane="maintenance">'),
+    ("maintenance", '        <section class="cw-settings-pane cw-page-maintenance" data-pane="maintenance">'),
 )
 _SETTINGS_LEFT_END = "      </div>\n    </div>\n  </section>\n\n\n</main>"
 _MANAGED_SETTINGS_PANES = (("connections", "providers"), ("pairs", "sync"), ("schedule", "scheduling"), ("scrobbler", "scrobbler"))
@@ -528,24 +528,14 @@ def _profile_playback_panel() -> str:
         </div>
       </form>
     </dialog>
-    <dialog id="profile-playback-providers" class="cw-tl-dialog cw-tl-dialog--wide" aria-labelledby="profile-playback-providers-title">
-      <form method="dialog" class="cw-tl-dialog-body">
-        <div class="cw-tl-dialog-head">
-          <span class="material-symbols-rounded" aria-hidden="true">tune</span>
-          <span><strong id="profile-playback-providers-title">Playback providers</strong><small>Choose which provider profiles show up here</small></span>
+    <dialog id="profile-playback-providers" class="cw-page-playback-settings" aria-labelledby="profile-playback-providers-title">
+      <form method="dialog" class="cw-page-preferences">
+        <header class="pf-head"><div><h2 id="profile-playback-providers-title">Playback providers</h2><p>Choose the instances shown in playback.</p></div><button class="pf-button" type="button" data-playback-dialog-cancel>Close</button></header>
+        <div class="pf-body">
+          <label class="pf-timeout"><span><strong>Provider timeout</strong><small>Skip providers that take longer to respond.</small></span><span class="pf-timeout-value"><input id="profile-playback-timeout" class="cw-page-input" type="number" min="3" max="60" step="1" aria-label="Timeout in seconds"><span>sec</span></span></label>
+          <div id="profile-playback-provider-list" class="pf-provider-list"></div>
         </div>
-        <label class="cw-play-timeout">
-          <span><strong>Slow provider timeout</strong><small>Skip providers that take longer than this</small></span>
-          <span class="cw-play-edit-value"><input id="profile-playback-timeout" type="number" min="3" max="60" step="1" aria-label="Timeout in seconds"><span>sec</span></span>
-        </label>
-        <div id="profile-playback-provider-list" class="cw-play-provider-list"></div>
-        <div id="profile-playback-providers-error" class="cw-tl-dialog-error" role="alert"></div>
-        <div class="cw-tl-dialog-actions">
-          <button class="cw-tl-ghost" type="button" data-playback-settings-reset>Reset</button>
-          <span class="cw-tl-spacer"></span>
-          <button class="cw-tl-ghost" type="button" data-playback-dialog-cancel>Cancel</button>
-          <button class="cw-tl-primary" type="submit">Apply</button>
-        </div>
+        <footer class="pf-footer"><div id="profile-playback-providers-error" class="pf-error" role="alert"></div><div class="pf-actions"><button class="pf-button" type="button" data-playback-settings-reset>Reset</button><button class="pf-button" type="button" data-playback-dialog-cancel>Cancel</button><button class="pf-button primary" type="submit">Apply</button></div></footer>
       </form>
     </dialog>
   </section>"""
@@ -2227,84 +2217,37 @@ __CW_NAV_PROFILE_MENU__
           </div>
         </section>
 
-        <section class="cw-settings-pane" data-pane="maintenance">
-          <div class="cw-settings-pane-head cw-maint-hero">
-            <div>
-              <div class="cw-settings-pane-kicker">Maintenance</div>
-              <h3>Maintenance zone, Debug and Restart</h3>
-              <p>Use these actions to reset CrossWatch states. They are safe but cannot be undone.</p>
+        <section class="cw-settings-pane cw-page-maintenance" data-pane="maintenance">
+          <header class="mt-page-head"><h3>Maintenance</h3><p>Backups, cleanup and diagnostics.</p></header>
+          <div id="sec-troubleshoot" data-accordion="off">
+            <section class="cw-page-panel mt-debug">
+              <div><h4>Debug logging</h4><p>Choose the detail included in logs.</p></div>
+              <label class="mt-field" for="debug"><span>Level</span>
+                <select id="debug" name="debug" class="cw-page-input">
+                  <option value="off">Off</option><option value="on">Standard</option>
+                  <option value="mods">Include provider debug</option><option value="full">Full debug (requires restart)</option>
+                </select>
+              </label>
+            </section>
+            <div class="cw-page-panel mt-tool-list" aria-label="Maintenance actions">
+              <button class="mt-tool" type="button" onclick="openBackupRestore()">
+                <span><strong>Backup & Restore</strong><small>Back up and recover application data, trackers and captures.</small></span><span class="mt-open" aria-hidden="true">Open</span>
+              </button>
+              <button class="mt-tool" type="button" onclick="openMaintenance()">
+                <span><strong>Maintenance tools</strong><small>Check local data, clear caches and reset sync state.</small></span><span class="mt-open" aria-hidden="true">Open</span>
+              </button>
+              <button class="mt-tool" type="button" onclick="openProviderCleanupModal()">
+                <span><strong>Provider cleanup</strong><small>Remove selected data from a provider instance.</small></span><span class="mt-open" aria-hidden="true">Open</span>
+              </button>
+              <button class="mt-tool" type="button" onclick="openSupportModal()">
+                <span><strong>Support</strong><small>Download sync state or a diagnostic bundle.</small></span><span class="mt-open" aria-hidden="true">Open</span>
+              </button>
             </div>
-            <span class="material-symbols-rounded cw-maint-hero-gear" aria-hidden="true">settings</span>
-          </div>
-          <div class="section open cw-settings-section cw-maint-section" id="sec-troubleshoot" data-accordion="off">
-            <div class="head"><span class="chev"></span><strong>Maintenance</strong></div>
-            <div class="body">
-              <div class="cw-maint-layout">
-                <div class="cw-maint-debug-card">
-                  <div class="cw-maint-card-head">
-                    <span class="material-symbols-rounded cw-maint-card-icon" aria-hidden="true">bug_report</span>
-                    <div class="cw-maint-card-copy">
-                      <strong>Debug logging</strong>
-                      <small>Control how much detail CrossWatch writes to the live logs and diagnostics.</small>
-                    </div>
-                  </div>
-                  <div class="cw-maint-debug-field">
-                    <label for="debug">Level</label>
-                    <select id="debug" name="debug">
-                      <option value="off">off</option>
-                      <option value="on">on</option>
-                      <option value="mods">on - including MOD debug - best option for debug</option>
-                      <option value="full">on - full (requires restart) - use with caution</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div class="cw-maint-actions" aria-label="Maintenance actions">
-                  <button class="btn cw-maint-action backup" type="button" onclick="openBackupRestore()">
-                    <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">backup</span>
-                    <span class="cw-maint-action-copy">
-                      <strong>Backup & Restore</strong>
-                      <small>Create archives, validate backups, restore state, or manage schedules.</small>
-                    </span>
-                    <span class="cw-maint-action-cta" aria-hidden="true"><span>Open</span><span class="material-symbols-rounded">arrow_forward</span></span>
-                  </button>
-                  <button class="btn cw-maint-action tools" type="button" onclick="openMaintenance()">
-                    <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">tune</span>
-                    <span class="cw-maint-action-copy">
-                      <strong>Maintenance Tools</strong>
-                      <small>Clean local state, reset counters, and run recovery actions.</small>
-                    </span>
-                    <span class="cw-maint-action-cta" aria-hidden="true"><span>Open</span><span class="material-symbols-rounded">arrow_forward</span></span>
-                  </button>
-                  <button class="btn cw-maint-action provider-cleanup" type="button" onclick="openProviderCleanupModal()">
-                    <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">cleaning_services</span>
-                    <span class="cw-maint-action-copy">
-                      <strong>Provider Cleanup</strong>
-                      <small>Clear provider watchlist, ratings, history, or progress data by profile.</small>
-                    </span>
-                    <span class="cw-maint-action-cta" aria-hidden="true"><span>Open</span><span class="material-symbols-rounded">arrow_forward</span></span>
-                  </button>
-                  <button class="btn cw-maint-action support" type="button" onclick="openSupportModal()">
-                    <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">support_agent</span>
-                    <span class="cw-maint-action-copy">
-                      <strong>Support</strong>
-                      <small>Export state.json and a diagnostic bundle to attach to a bug report.</small>
-                    </span>
-                    <span class="cw-maint-action-cta" aria-hidden="true"><span>Open</span><span class="material-symbols-rounded">arrow_forward</span></span>
-                  </button>
-                  <button class="btn cw-maint-action restart" type="button" onclick="restartCrossWatch()">
-                    <span class="material-symbols-rounded cw-maint-action-icon" aria-hidden="true">restart_alt</span>
-                    <span class="cw-maint-action-copy">
-                      <strong>Restart CrossWatch</strong>
-                      <small>Restart CW container.</small>
-                    </span>
-                    <span class="cw-maint-action-cta" aria-hidden="true"><span>Restart</span><span class="material-symbols-rounded">arrow_forward</span></span>
-                  </button>
-                </div>
-
-                <div id="tb_msg" class="msg ok hidden">Done </div>
-              </div>
+            <div class="mt-restart">
+              <div><h4>Restart CrossWatch</h4><p>Temporarily interrupts access to CW.</p></div>
+              <button class="cw-page-button mt-button mt-danger" type="button" onclick="restartCrossWatch()">Restart</button>
             </div>
+            <div id="tb_msg" class="msg ok hidden">Done</div>
           </div>
         </section>
       </div>

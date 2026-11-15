@@ -110,34 +110,12 @@ function resultLine(key, result) {
   return `${key}: ${bits.join(", ")}`;
 }
 
-function injectCss() {
-  const existing = document.getElementById("cw-provider-cleanup-css");
-  if (existing?.tagName === "LINK") return Promise.resolve();
-  existing?.remove();
-  const link = document.createElement("link");
-  const cssUrl = new URL("./styles.css", import.meta.url);
-  const version = new URL(import.meta.url).searchParams.get("v") || window.__CW_VERSION__;
-  if (version) cssUrl.searchParams.set("v", version);
-  link.id = "cw-provider-cleanup-css";
-  link.rel = "stylesheet";
-  link.href = cssUrl.href;
-  return new Promise((resolve) => {
-    link.addEventListener("load", resolve, { once: true });
-    link.addEventListener("error", resolve, { once: true });
-    document.head.appendChild(link);
-  });
-}
-
 export default {
   async mount(root) {
-    await injectCss();
 
     const shell = root.closest(".cx-modal-shell");
     if (shell) {
-      shell.classList.add("cw-provider-cleanup-shell");
-      shell.style.setProperty("--cxModalW", "860px");
-      shell.style.setProperty("--cxModalMaxW", "860px");
-      shell.style.setProperty("--cxModalMaxH", "720px");
+      shell.classList.add("cw-provider-cleanup-shell", "cw-page-dialog");
     }
 
     let providers = [];
@@ -146,37 +124,34 @@ export default {
     let confirmClearTimer = 0;
 
     root.innerHTML = `
-      <div class="cw-provider-cleanup">
-        <div class="cx-head">
+      <div class="cw-provider-cleanup cw-page-maint-content">
+        <div class="mt-head">
           <div class="cc-head-left">
-            <div class="cc-head-icon"><span class="material-symbols-rounded" aria-hidden="true">cleaning_services</span></div>
             <div>
-              <div class="cc-title">Provider cleanup</div>
-              <div class="cc-sub">Clear provider data by instance without leaving Maintenance.</div>
+              <h2 class="cc-title">Provider cleanup</h2>
+              <div class="cc-sub">Remove selected data from a provider instance.</div>
             </div>
           </div>
-          <button type="button" class="cc-close" id="ccc-close" title="Close" aria-label="Close"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+          <button type="button" class="cw-page-button mt-button cc-close" id="ccc-close" title="Close" aria-label="Close">Close</button>
         </div>
-        <div class="cc-body cw-scrollbars">
-          <section class="cc-target-card">
+        <div class="mt-body cc-body cw-scrollbars">
+          <section class="cw-page-panel cc-target-card">
             <div class="cc-card-head">
-              <span class="material-symbols-rounded" aria-hidden="true">target</span>
               <div>
-                <h3>Provider target</h3>
-                <p>Choose a configured provider and instance, then select which data to clear.</p>
+                <h3>Provider and instance</h3>
               </div>
             </div>
             <div class="cc-target-grid">
               <label>
                 <span>Provider</span>
                 <div class="cc-provider-picker" id="ccc-provider-picker">
-                  <select id="ccc-provider" class="cc-profile-native" data-cw-profile-kind="provider"></select>
+                  <select id="ccc-provider" class="cw-page-input cc-profile-native" data-cw-profile-kind="provider"></select>
                 </div>
               </label>
               <label>
                 <span>Instance</span>
                 <div class="cc-provider-picker" id="ccc-instance-picker">
-                  <select id="ccc-instance" class="cc-profile-native" data-cw-profile-kind="profile"></select>
+                  <select id="ccc-instance" class="cw-page-input cc-profile-native" data-cw-profile-kind="profile"></select>
                 </div>
               </label>
             </div>
@@ -197,25 +172,22 @@ export default {
 
           <section class="cc-feature-card">
             <div class="cc-card-head compact">
-              <span class="material-symbols-rounded" aria-hidden="true">checklist</span>
               <div>
                 <h3>Data to clear</h3>
-                <p>Select the data you want to remove from the selected provider instance.</p>
               </div>
             </div>
             <div class="cc-feature-grid" id="ccc-features">
               ${FEATURES.map((feature) => `
                 <button type="button" class="cc-feature" data-feature="${feature.key}" aria-pressed="false">
-                  <span class="cc-feature-icon material-symbols-rounded" aria-hidden="true">${feature.icon}</span>
+                  <span class="cc-feature-mark" aria-hidden="true"></span>
                   <span class="cc-feature-copy">
                     <strong>${feature.title}</strong>
-                    <small>${feature.desc}</small>
                   </span>
                 </button>
               `).join("")}
             </div>
             <div class="cc-feature-empty hidden" id="ccc-features-empty">
-              No clearable data types are available for this provider profile.
+              No cleanup options are available for this instance.
             </div>
           </section>
 
@@ -225,7 +197,7 @@ export default {
               <div id="ccc-run-warning">This clears data on the selected provider instance.</div>
             </div>
             <div class="cc-actions">
-              <button type="button" class="cc-btn danger cw-danger-confirm" id="ccc-clear-selected">
+              <button type="button" class="cw-page-button mt-button cc-btn mt-danger" id="ccc-clear-selected">
                 <span class="material-symbols-rounded" aria-hidden="true">delete</span>
                 <span>Clear selected data</span>
               </button>
