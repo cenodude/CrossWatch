@@ -14,7 +14,7 @@
 .ie-page p{color:var(--ie-muted)}
 .ie-page button{cursor:pointer}
 .ie-page button:disabled{opacity:var(--cw-disabled-opacity,.4);cursor:default}
-.ie-page input[type=checkbox]{appearance:auto;accent-color:var(--ie-accent);width:17px;height:17px;min-width:17px;margin:0;cursor:pointer}
+.ie-page input[type=checkbox]{width:17px;height:17px;min-width:17px;margin:0;cursor:pointer}
 .ie-page input[type=checkbox]:disabled{opacity:var(--cw-disabled-opacity,.35);cursor:default}
 .ie-page fieldset{border:0;padding:0;margin:0;min-width:0}
 .ie-page fieldset:disabled{opacity:var(--cw-disabled-opacity,.65)}
@@ -68,10 +68,9 @@ html :is(.ie-page .ie-select,.ie-select-menu) .cw-icon-select-label{font-weight:
 .ie-file-info>span:nth-child(2){min-width:0;flex:1;overflow-wrap:anywhere}
 .ie-file-info>span:first-child{color:var(--ie-accent)}
 .ie-file-info small{display:block;color:var(--ie-muted);margin-top:3px}
-.ie-inclusions{display:flex;justify-content:space-between;gap:24px;margin:20px 0 30px;padding:18px 24px}
 .ie-checks{display:flex;flex-wrap:wrap;gap:9px}
-.ie-checks label{display:flex;align-items:center;gap:8px;border:1px solid var(--ie-border);border-radius:6px;padding:7px 10px;font-size:12px;background:var(--ie-panel);cursor:pointer}
-.ie-checks label:has(input:checked){border-color:color-mix(in srgb,var(--ie-accent) 36%,var(--ie-border));background:color-mix(in srgb,var(--ie-accent) 6%,var(--ie-panel))}
+.ie-checks label{display:flex;align-items:center;gap:8px;padding:7px 10px;min-height:38px;font-size:13px;cursor:pointer}
+
 .ie-checks label:has(input:disabled){opacity:var(--cw-disabled-opacity,.4);cursor:default}
 .ie-section-heading,.ie-review-heading{display:flex;align-items:center;justify-content:space-between;gap:16px}
 .ie-section-heading p{font-size:12px;margin-top:7px}

@@ -1300,7 +1300,7 @@
       }
       return `${heading}<article class="trk-play trk-grid-card${selected ? " is-selected" : ""}${state.picked.has(item.key) ? " is-picked" : ""}" data-trk-ref-${refName}="${esc(item.key)}"${recent ? ` data-trk-overview-open="recent:${index}"` : ""} tabindex="0" aria-label="${esc(title)}" aria-selected="${selected}">
         <div class="trk-grid-art"><span class="trk-grid-placeholder" aria-hidden="true">${symbol(shows ? "tv" : typeMeta(item).icon)}</span>${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}
-          ${!recent ? `<input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}">` : ""}
+          ${!recent ? `<label class="trk-grid-select"><input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}"></label>` : ""}
           ${rating != null ? `<span class="cw-media-card-score" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}
           ${date || prominentStatus ? `<div class="trk-grid-labels">${date ? `<span class="trk-grid-date" title="${esc(whenText(date))}">${esc(!recent && timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}${prominentStatus ? `<span class="trk-grid-status">${prominentStatus}</span>` : ""}</div>` : ""}
           ${shows ? progressCell(item, "bar") : !notes && feature === "progress" ? extraCell(item, feature, "bar") : ""}
@@ -4838,7 +4838,7 @@
       }
       const monthEntry = event.target.closest("[data-trk-month],[data-trk-month-open]");
       if (monthEntry) {openMonthlyReview(monthEntry,monthEntry.dataset.trkMonth || ""); return;}
-      if (event.target.closest("[data-trk-pick]")) return;
+      if (event.target.closest("[data-trk-pick],.trk-grid-select")) return;
       if (handlePanelClick(event)) return;
       const calendarAction = event.target.closest("[data-trk-calendar]");
       if (calendarAction) {
