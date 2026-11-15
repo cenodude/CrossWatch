@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
@@ -21,13 +22,13 @@ import zipfile
 from _logging import log as BASE_LOG
 from cw_platform.config_base import CONFIG, _current_version_norm
 
-BackupScope = Literal["config_only", "app_state", "full"]
+BackupScope = Literal["config_only", "app_state", "full", "selected"]
 
 LOG = BASE_LOG.child("BACKUP")
 
 BACKUP_KIND = "crosswatch_backup"
 BACKUP_SCHEMA_VERSION = 1
-BACKUP_SCOPES = {"config_only", "app_state", "full"}
+BACKUP_SCOPES = {"config_only", "app_state", "full", "selected"}
 MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024
 MAX_ZIP_MEMBERS = 100_000
 MANIFEST_NAME = "manifest.json"
@@ -123,7 +124,7 @@ def _rel_from_config(path: Path) -> str:
 
 def _safe_rel_path(raw: Any) -> str:
     text = str(raw or "").strip().replace("\\", "/")
-    if not text:
+    if not text or any(c in text for c in ":\x00"):
         raise ValueError("Path is required")
     posix = PurePosixPath(text)
     parts = [part for part in posix.parts if part not in ("", ".")]
@@ -142,7 +143,7 @@ def _resolve_backup_file(path: str, *, must_exist: bool = True) -> tuple[str, Pa
     parts = [part for part in posix.parts if part not in ("", ".")]
     if posix.is_absolute() or not parts or any(part == ".." for part in parts):
         raise ValueError("Invalid backup path")
-    if Path(parts[-1]).suffix.lower() != ".zip":
+    if Path(parts[-1]).suffix.lower() not in {".zip", ".cwbackup"}:
         raise ValueError("Invalid backup path")
 
     base = _backups_dir().resolve()
@@ -261,6 +262,60 @@ def _snapshot_sqlite(src: Path, dst: Path) -> None:
         source.close()
 
 
+@contextmanager
+def open_archive(path: str, password: str = ""):
+    rel, target = _resolve_backup_file(path)
+    if target.suffix == ".cwbackup":
+        from _backup_crypto import decrypt
+
+        with tempfile.TemporaryDirectory(prefix="cw-decrypt-", dir=_backups_dir()) as folder:
+            plain = Path(folder) / "archive.zip"
+            decrypt(target, plain, password)
+            yield rel, plain
+    else:
+        yield rel, target
+
+
+def selected_files(components: list[str], trackers: list[str] | None = None) -> tuple[list[tuple[str, Path]], list[dict[str, str]]]:
+    from cw_platform.config_base import load_config
+    from cw_platform.tracker_store import tracker_roots
+
+    if not components or set(components) - {"application", "trackers", "captures"}:
+        raise ValueError("Select application, trackers or saved captures.")
+    files: list[tuple[str, Path]] = []
+    instances: list[dict[str, str]] = []
+    if "application" in components:
+        for root in _candidate_roots("app_state"):
+            files.extend((_rel_from_config(p), p) for p in _iter_files_under(root))
+    if "captures" in components:
+        files.extend((_rel_from_config(p), p) for p in _iter_files_under(CONFIG / "snapshots"))
+    if "trackers" in components:
+        cfg = load_config()
+        roots = tracker_roots(cfg, CONFIG)
+        known = {inst for inst, _ in roots}
+        if trackers is not None and (not trackers or set(trackers) - known):
+            raise ValueError("Select an existing tracker.")
+        for inst, root in roots:
+            if trackers is not None and inst not in trackers:
+                continue
+            if not root.is_dir():
+                continue
+            safe = re.sub(r"[^a-zA-Z0-9._-]", "", inst).strip(".")
+            if not safe or safe != inst:
+                raise ValueError("Invalid tracker identifier.")
+            prefix = ".cw_provider" if inst == "default" else f".cw_provider/profiles/{inst}"
+            block = (cfg.get("crosswatch") or {}) if inst == "default" else ((cfg.get("crosswatch") or {}).get("instances") or {}).get(inst, {})
+            instances.append({"id": inst, "root": prefix, "label": str(block.get("label") or inst)})
+            for p in _iter_files_under(root):
+                part = p.relative_to(root)
+                if part.parts[0] == "profiles" or any(p.is_relative_to(other) for other_id, other in roots if other_id != inst and other != root and other.is_relative_to(root)):
+                    continue
+                files.append((f"{prefix}/{part.as_posix()}", p))
+        if not instances and trackers is not None:
+            raise ValueError("No saved tracker data was found.")
+    return files, instances
+
+
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -326,6 +381,11 @@ def create_backup(
     include_reports: bool | None = None,
     include_cache: bool = False,
     trigger: str = "manual",
+    components: list[str] | None = None,
+    trackers: list[str] | None = None,
+    job_id: str = "",
+    app_version: str = "",
+    password: str = "",
 ) -> dict[str, Any]:
     sc = _normalize_scope(scope)
     ts = _utc_now()
@@ -348,17 +408,23 @@ def create_backup(
     members: list[tuple[str, Path]] = []
     sidecars: dict[str, list[tuple[str, Path]]] = {}
     seen: set[str] = set()
-    for root in _candidate_roots(sc, include_snapshots=include_snapshots, include_reports=include_reports, include_cache=include_cache):
-        for file_path in _iter_files_under(root):
-            rel_file = _rel_from_config(file_path)
-            if rel_file in seen:
-                continue
-            seen.add(rel_file)
-            owner = _sqlite_sidecar_owner(rel_file)
-            if owner is not None:
-                sidecars.setdefault(owner, []).append((rel_file, file_path))
-                continue
-            members.append((rel_file, file_path))
+    tracker_entries: list[dict[str, str]] = []
+    if components is not None:
+        sc = "selected"
+        candidates, tracker_entries = selected_files(components, trackers)
+    elif sc == "selected":
+        raise ValueError("Select what to back up.")
+    else:
+        candidates = [(_rel_from_config(p), p) for root in _candidate_roots(sc, include_snapshots=include_snapshots, include_reports=include_reports, include_cache=include_cache) for p in _iter_files_under(root)]
+    for rel_file, file_path in candidates:
+        if rel_file in seen or rel_file == ".cw_master_key" and _is_env_key_configured():
+            continue
+        seen.add(rel_file)
+        owner = _sqlite_sidecar_owner(rel_file)
+        if owner is not None:
+            sidecars.setdefault(owner, []).append((rel_file, file_path))
+            continue
+        members.append((rel_file, file_path))
 
     LOG.debug("backup file selection completed", extra={"scope": sc, "file_count": len(members)})
 
@@ -366,7 +432,6 @@ def create_backup(
     total_size = 0
     snapshot_dir: tempfile.TemporaryDirectory[str] | None = None
     db_snapshots = 0
-    db_snapshot_errors: list[str] = []
     try:
         for idx, (rel_file, src) in enumerate(members):
             if not _is_sqlite_db(rel_file):
@@ -377,17 +442,12 @@ def create_backup(
             try:
                 _snapshot_sqlite(src, dst)
             except Exception as e:
-                db_snapshot_errors.append(f"{rel_file}: {type(e).__name__}")
-                members.extend(sidecars.get(rel_file) or ())
-                continue
+                raise ValueError(f"Could not take a consistent database snapshot: {rel_file}") from e
             members[idx] = (rel_file, dst)
             db_snapshots += 1
 
-        if db_snapshot_errors:
-            LOG.warn(f"backup could not snapshot {len(db_snapshot_errors)} database(s); copied raw files instead")
-            LOG.debug("backup database snapshot errors", extra={"scope": sc, "errors": _safe_log_errors(db_snapshot_errors)})
-
         with zipfile.ZipFile(tmp, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+            os.chmod(tmp, 0o600)
             for rel_file, file_path in members:
                 st = file_path.stat()
                 total_size += int(st.st_size)
@@ -402,12 +462,12 @@ def create_backup(
                 zf.write(file_path, rel_file)
 
             key_included = any(row.get("path") == ".cw_master_key" for row in manifest_files)
-            encrypted = _config_has_encrypted_values()
+            encrypted = any(row["path"] == "config.json" for row in manifest_files) and _config_has_encrypted_values()
             manifest = {
                 "kind": BACKUP_KIND,
                 "schema_version": BACKUP_SCHEMA_VERSION,
                 "created_at": ts.isoformat(),
-                "app_version": _current_version_norm(),
+                "app_version": app_version or _current_version_norm(),
                 "scope": sc,
                 "label": safe_label,
                 "trigger": str(trigger or "manual"),
@@ -419,8 +479,21 @@ def create_backup(
                 "external_key_required": bool(encrypted and not key_included),
                 "env_key_configured": _is_env_key_configured(),
                 "database_snapshots": db_snapshots,
+                "components": components,
+                "trackers": tracker_entries,
+                "job_id": job_id,
             }
             zf.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2, sort_keys=False) + "\n")
+        if password:
+            from _backup_crypto import encrypt
+
+            encrypted_tmp = tmp.with_suffix(tmp.suffix + ".encrypted")
+            encrypt(tmp, encrypted_tmp, password)
+            tmp.unlink()
+            tmp = encrypted_tmp
+            target = target.with_suffix(".cwbackup")
+            rel = _rel_from_backup_root(target)
+            target.with_suffix(".metadata.json").write_text(json.dumps({k: v for k, v in manifest.items() if k != "files"}), encoding="utf-8")
         os.replace(tmp, target)
     except Exception as e:
         try:
@@ -447,7 +520,7 @@ def create_backup(
         "file_count": len(manifest_files),
         "total_size": total_size,
         "master_key_included": any(row.get("path") == ".cw_master_key" for row in manifest_files),
-        "external_key_required": bool(_config_has_encrypted_values() and not any(row.get("path") == ".cw_master_key" for row in manifest_files)),
+        "external_key_required": bool(encrypted and not any(row.get("path") == ".cw_master_key" for row in manifest_files)),
     }
     LOG.success(
         f"backup created scope={sc} trigger={trigger or 'manual'} path={rel} files={result['file_count']} size={result['size']}"
@@ -463,6 +536,7 @@ def create_backup(
             "external_key_required": result["external_key_required"],
         },
     )
+    result.update({"components": components, "trackers": tracker_entries, "trigger": trigger, "job_id": job_id})
     return result
 
 
@@ -487,8 +561,12 @@ def _read_manifest_from_zip(zf: zipfile.ZipFile) -> dict[str, Any]:
     return data
 
 
-def validate_backup(path: str) -> dict[str, Any]:
-    rel, target = _resolve_backup_file(path)
+def validate_backup(path: str, password: str = "") -> dict[str, Any]:
+    with open_archive(path, password) as (rel, target):
+        return _validate_archive(rel, target)
+
+
+def _validate_archive(rel: str, target: Path) -> dict[str, Any]:
     LOG.debug(f"validating backup path={rel}")
     if target.stat().st_size > MAX_ARCHIVE_BYTES:
         LOG.warn(f"backup validation rejected oversized archive path={rel}")
@@ -498,12 +576,21 @@ def validate_backup(path: str) -> dict[str, Any]:
     try:
         with zipfile.ZipFile(target, "r") as zf:
             infos = zf.infolist()
+            if len({info.filename for info in infos}) != len(infos):
+                raise ValueError("Backup archive contains duplicate files")
+            if sum(info.file_size for info in infos) > 8 * MAX_ARCHIVE_BYTES:
+                raise ValueError("Expanded backup is too large")
             if len(infos) > MAX_ZIP_MEMBERS:
                 raise ValueError("Backup archive contains too many files")
             bad = zf.testzip()
             if bad:
                 raise ValueError("Backup archive failed integrity check")
             manifest = _read_manifest_from_zip(zf)
+            if not manifest.get("files"):
+                raise ValueError("The backup has no files")
+            listed = [row.get("path") for row in manifest["files"] if isinstance(row, Mapping)]
+            if len(listed) != len(set(listed)):
+                raise ValueError("Backup manifest contains duplicate files")
             info_by_name = {info.filename: info for info in infos}
             for row in manifest.get("files") or []:
                 if not isinstance(row, Mapping):
@@ -533,6 +620,17 @@ def validate_backup(path: str) -> dict[str, Any]:
                 actual_hash = _sha256_zip_member(zf, member)
                 if actual_hash != expected_hash:
                     errors.append(f"Hash mismatch: {member}")
+                elif _is_sqlite_db(member):
+                    with tempfile.TemporaryDirectory(prefix="cw-check-", dir=_backups_dir()) as folder:
+                        db = Path(folder) / "check.db"
+                        with zf.open(member) as src, db.open("wb") as dst:
+                            shutil.copyfileobj(src, dst)
+                        try:
+                            with closing(sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True)) as conn:
+                                if conn.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                                    errors.append(f"Database integrity check failed: {member}")
+                        except sqlite3.DatabaseError:
+                            errors.append(f"Database integrity check failed: {member}")
     except zipfile.BadZipFile as e:
         LOG.warn(f"backup validation rejected invalid archive path={rel}")
         raise ValueError("Invalid backup archive") from e
@@ -554,7 +652,9 @@ def validate_backup(path: str) -> dict[str, Any]:
 def list_backups() -> list[dict[str, Any]]:
     base = _backups_dir()
     out: list[dict[str, Any]] = []
-    for p in sorted(base.rglob("*.zip")):
+    for p in sorted([*base.rglob("*.zip"), *base.rglob("*.cwbackup")]):
+        if any(part.startswith("cw-") for part in p.relative_to(base).parts[:-1]):
+            continue
         try:
             rel = _rel_from_backup_root(p)
         except Exception:
@@ -562,15 +662,24 @@ def list_backups() -> list[dict[str, Any]]:
         row: dict[str, Any] = {
             "path": rel,
             "size": int(p.stat().st_size),
-            "mtime": int(p.stat().st_mtime),
+            "mtime": p.stat().st_mtime,
             "valid": None,
         }
         try:
-            with zipfile.ZipFile(p, "r") as zf:
-                manifest = _read_manifest_from_zip(zf)
+            if p.suffix == ".cwbackup":
+                manifest = json.loads(p.with_suffix(".metadata.json").read_text(encoding="utf-8"))
+            else:
+                with zipfile.ZipFile(p, "r") as zf:
+                    manifest = _read_manifest_from_zip(zf)
             row.update(
                 {
-                    "valid": True,
+                    "valid": None,
+                    "recognized": True,
+                    "encrypted": p.suffix == ".cwbackup",
+                    "components": manifest.get("components"),
+                    "trackers": manifest.get("trackers") or [],
+                    "trigger": manifest.get("trigger"),
+                    "job_id": manifest.get("job_id"),
                     "created_at": manifest.get("created_at"),
                     "app_version": manifest.get("app_version"),
                     "scope": manifest.get("scope"),
@@ -582,9 +691,10 @@ def list_backups() -> list[dict[str, Any]]:
                 }
             )
         except Exception:
-            row["valid"] = False
+            row["valid"] = None if p.suffix == ".cwbackup" else False
+            row["encrypted"] = p.suffix == ".cwbackup"
         out.append(row)
-    out.sort(key=lambda x: int(x.get("mtime") or 0), reverse=True)
+    out.sort(key=lambda x: float(x.get("mtime") or 0), reverse=True)
     LOG.debug(f"listed backups count={len(out)}")
     return out
 
@@ -593,11 +703,12 @@ def delete_backup(path: str) -> dict[str, Any]:
     rel, target = _resolve_backup_file(path)
     LOG.info(f"deleting backup path={rel}")
     target.unlink()
+    target.with_suffix(".metadata.json").unlink(missing_ok=True)
     LOG.success(f"backup deleted path={rel}")
     return {"ok": True, "deleted": rel}
 
 
-def enforce_backup_retention(*, retention_days: int = 0, max_backups: int = 0, auto_delete_old: bool = False) -> dict[str, Any]:
+def enforce_backup_retention(*, retention_days: int = 0, max_backups: int = 0, auto_delete_old: bool = False, job_id: str | None = None, protected: Iterable[str] = ()) -> dict[str, Any]:
     if not auto_delete_old:
         LOG.debug("backup retention skipped auto_delete_old=false")
         return {"ok": True, "applied": False, "deleted": [], "errors": []}
@@ -605,7 +716,10 @@ def enforce_backup_retention(*, retention_days: int = 0, max_backups: int = 0, a
     keep_days = max(0, int(retention_days or 0))
     keep_count = max(0, int(max_backups or 0))
     LOG.info(f"applying backup retention days={keep_days} max={keep_count}")
-    rows = list_backups()
+    protected_paths = set(protected)
+    rows = [row for row in list_backups() if row.get("trigger") == "scheduler"
+            and (job_id is None or (row.get("job_id") or "") == job_id or job_id == "app-backup-default" and not row.get("job_id"))
+            and not row["path"].startswith("imported/")]
     cutoff = _utc_now() - timedelta(days=keep_days) if keep_days > 0 else None
     to_delete: list[str] = []
     kept: list[dict[str, Any]] = []
@@ -613,7 +727,7 @@ def enforce_backup_retention(*, retention_days: int = 0, max_backups: int = 0, a
     for row in rows:
         path = str(row.get("path") or "")
         created = datetime.fromtimestamp(int(row.get("mtime") or 0), tz=timezone.utc)
-        if cutoff is not None and created < cutoff:
+        if kept and cutoff is not None and created < cutoff:
             to_delete.append(path)
             continue
         kept.append(row)
@@ -629,7 +743,7 @@ def enforce_backup_retention(*, retention_days: int = 0, max_backups: int = 0, a
     errors: list[str] = []
     seen: set[str] = set()
     for rel in to_delete:
-        if not rel or rel in seen:
+        if not rel or rel in seen or rel in protected_paths:
             continue
         seen.add(rel)
         try:
@@ -665,7 +779,7 @@ def restore_backup(path: str, *, create_pre_restore: bool = True) -> dict[str, A
 
     pre_restore = None
     if create_pre_restore:
-        pre_restore = create_backup(scope="app_state", label="pre-restore", trigger="pre_restore")
+        pre_restore = create_backup(scope="full", label="pre-restore", trigger="pre_restore")
         LOG.debug(
             "pre-restore backup created",
             extra={"source": rel, "pre_restore_path": str((pre_restore or {}).get("path") or "")},

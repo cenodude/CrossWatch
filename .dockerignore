@@ -53,6 +53,8 @@ htmlcov/
 **/.cw_state/
 .cw_provider/
 **/.cw_provider/
+.cw_backups/
+**/.cw_backups/
 .cw_master_key
 **/.cw_master_key
 *.db

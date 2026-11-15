@@ -1723,3 +1723,25 @@ header .tabs #tab-settings .cw-settings-icon { color: var(--cw-theme-muted); fon
   html[data-cw-theme="flat-light"] #stats-card :is(.activity-mobile-row,.history-feed-row).ok{background:#edf8f2;border-color:rgba(23,114,69,.24)}
   html[data-cw-theme="flat-light"] #stats-card :is(.activity-mobile-row,.history-feed-row).err{background:#fbebee;border-color:rgba(169,63,77,.25)}
 }
+.cw-page-backups{background:#0009;backdrop-filter:blur(6px);color:var(--cw-theme-text)}
+.cw-page-backups .br-dialog{border:1px solid var(--cw-theme-border);border-radius:16px;background:var(--cw-theme-surface);box-shadow:0 24px 80px #0006}
+.cw-page-backups .br-head{border-bottom:1px solid var(--cw-theme-border)}
+.cw-page-backups h2{font-size:21px;font-weight:600;line-height:1.4;letter-spacing:0}
+.cw-page-backups h3{font-size:15px;font-weight:600;line-height:1.4;letter-spacing:0}
+.cw-page-backups p{font-size:13px;line-height:1.5}
+.cw-page-backups .br-muted{color:var(--cw-theme-muted)}
+.cw-page-backups .br-status{border:1px solid var(--cw-theme-border);border-radius:12px;background:var(--cw-page-panel-bg)}
+.cw-page-backups .br-section,.cw-page-backups .br-history-row{border-bottom:1px solid var(--cw-theme-border)}
+.cw-page-backups label{color:var(--cw-theme-text);font-size:14px;font-weight:400;letter-spacing:0;text-transform:none}
+.cw-page-backups .br-field>span{color:var(--cw-theme-muted);font-size:12px}
+.cw-page-backups .br-input{border:1px solid var(--cw-theme-border);border-radius:8px;background:var(--cw-theme-input);color:var(--cw-theme-text);font:inherit;font-size:14px;box-shadow:none}
+.cw-page-backups .br-check{cursor:pointer}
+.cw-page-backups .br-check input{accent-color:var(--cw-theme-accent);box-shadow:none}
+.cw-page-backups .br-button{border:1px solid var(--cw-theme-border);border-radius:8px;background:var(--cw-page-control-bg);color:var(--cw-theme-text);font:inherit;font-size:13px;font-weight:500;cursor:pointer;box-shadow:none;letter-spacing:0;text-transform:none}
+.cw-page-backups .br-button:hover:not(:disabled){border-color:var(--cw-theme-accent);background:var(--cw-page-hover-bg)}
+.cw-page-backups .br-button.primary{background:var(--cw-page-primary-bg);border-color:var(--cw-theme-accent);color:var(--cw-page-primary-text)}
+.cw-page-backups .br-button.primary:hover:not(:disabled){background:var(--cw-page-primary-hover)}
+.cw-page-backups :is(button,input,select,summary):focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:3px}
+.cw-page-backups .br-message{border:1px solid var(--cw-theme-border);border-radius:8px;background:var(--cw-theme-surface-raised);font-size:13px}
+.cw-page-backups .is-error,.cw-page-backups .br-error{color:var(--cw-theme-danger)}
+.cw-page-backups progress{accent-color:var(--cw-theme-accent)}

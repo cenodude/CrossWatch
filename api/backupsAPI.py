@@ -10,19 +10,15 @@ import os
 import tempfile
 import threading
 
-from fastapi import APIRouter, Body, File, Query, UploadFile
+from fastapi import APIRouter, Body, File, Form, Query, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from _logging import log as BASE_LOG
 from services.backups import (
     MAX_ARCHIVE_BYTES,
     create_backup,
-    delete_backup,
-    enforce_backup_retention,
     list_backups,
-    restore_backup,
     save_uploaded_backup,
-    validate_backup,
     _resolve_backup_file,
 )
 
@@ -82,6 +78,10 @@ def api_backups_list() -> JSONResponse:
 def api_backups_create(body: dict[str, Any] | None = Body(default=None)) -> JSONResponse:
     body = body or {}
     try:
+        if body.get("managed"):
+            from services.backup_manager import enqueue
+
+            return _ok({"job": enqueue()}, status_code=202)
         LOG.debug(
             "manual backup requested",
             extra={
@@ -103,7 +103,7 @@ def api_backups_create(body: dict[str, Any] | None = Body(default=None)) -> JSON
     except Exception as e:
         LOG.warn(f"manual backup request failed: {type(e).__name__}")
         _debug_failure("manual backup", e)
-        return _err("backup_create_failed")
+        return _err(str(e) if isinstance(e, ValueError) else "backup_create_failed")
 
 
 @router.get("/download", response_model=None)
@@ -114,7 +114,7 @@ def api_backups_download(path: str = Query(..., description="Relative path under
         name = Path(rel).name
         return FileResponse(
             str(file_path),
-            media_type="application/zip",
+            media_type="application/octet-stream" if file_path.suffix == ".cwbackup" else "application/zip",
             filename=name,
             headers={
                 "Cache-Control": "no-store",
@@ -132,11 +132,13 @@ def api_backups_validate(body: dict[str, Any] = Body(...)) -> JSONResponse:
     try:
         path = str(body.get("path") or "").strip()
         LOG.debug("backup validate requested")
-        return _ok({"validation": validate_backup(path)})
+        from services.backup_restore import inspect
+
+        return _ok({"validation": inspect(path, str(body.get("password") or ""))})
     except Exception as e:
         LOG.warn(f"backup validate request failed: {type(e).__name__}")
         _debug_failure("backup validate", e)
-        return _err("backup_validate_failed")
+        return _err(str(e) if isinstance(e, ValueError) else "backup_validate_failed")
 
 
 @router.post("/restore")
@@ -145,7 +147,14 @@ def api_backups_restore(body: dict[str, Any] = Body(...)) -> JSONResponse:
         path = str(body.get("path") or "").strip()
         restart = bool(body.get("restart"))
         LOG.info(f"backup restore requested restart={restart}")
-        res = restore_backup(path, create_pre_restore=True)
+        from services.backup_restore import prepare, recover_tracker
+
+        password = str(body.get("password") or "")
+        if body.get("mode") == "new_tracker":
+            return _ok({"result": recover_tracker(path, str(body.get("instance") or ""), str(body.get("label") or "Recovered tracker"), password)})
+        if body.get("confirm") is not True:
+            raise ValueError("Confirm replacement of the data contained in this backup.")
+        res = prepare(path, password)
         if res.get("ok") and restart:
             res["restart_scheduled"] = True
             LOG.info("backup restore requested restart scheduled")
@@ -154,7 +163,7 @@ def api_backups_restore(body: dict[str, Any] = Body(...)) -> JSONResponse:
     except Exception as e:
         LOG.warn(f"backup restore request failed: {type(e).__name__}")
         _debug_failure("backup restore", e)
-        return _err("backup_restore_failed")
+        return _err(str(e) if isinstance(e, ValueError) else "backup_restore_failed")
 
 
 @router.post("/delete")
@@ -162,24 +171,26 @@ def api_backups_delete(body: dict[str, Any] = Body(...)) -> JSONResponse:
     try:
         path = str(body.get("path") or "").strip()
         LOG.debug("backup delete requested")
-        return _ok({"result": delete_backup(path)})
+        from services.backup_manager import delete_local
+
+        return _ok({"result": delete_local(path)})
     except Exception as e:
         LOG.warn(f"backup delete request failed: {type(e).__name__}")
         _debug_failure("backup delete", e)
-        return _err("backup_delete_failed")
+        return _err(str(e) if isinstance(e, ValueError) else "backup_delete_failed")
 
 
 @router.post("/upload")
-async def api_backups_upload(file: UploadFile = File(...)) -> JSONResponse:
+async def api_backups_upload(file: UploadFile = File(...), password: str = Form(default="")) -> JSONResponse:
     suffix = Path(str(file.filename or "")).suffix.lower()
-    if suffix != ".zip":
+    if suffix not in {".zip", ".cwbackup"}:
         LOG.warn("backup upload rejected invalid extension")
         return _err("Invalid backup path")
 
     tmp_name = ""
     try:
         LOG.info("backup upload requested")
-        fd, tmp_name = tempfile.mkstemp(prefix="crosswatch-backup-upload-", suffix=".zip")
+        fd, tmp_name = tempfile.mkstemp(prefix="crosswatch-backup-upload-", suffix=suffix)
         total = 0
         with os.fdopen(fd, "wb") as out:
             while True:
@@ -190,13 +201,32 @@ async def api_backups_upload(file: UploadFile = File(...)) -> JSONResponse:
                 if total > MAX_ARCHIVE_BYTES:
                     raise ValueError("Uploaded backup is too large")
                 out.write(chunk)
-        res = save_uploaded_backup(Path(tmp_name))
+        if suffix == ".cwbackup":
+            from services import backups as service
+            from services.backup_restore import inspect
+            import uuid
+
+            folder = service._backups_dir() / "imported"
+            folder.mkdir(exist_ok=True)
+            target = folder / (uuid.uuid4().hex + suffix)
+            import shutil
+
+            shutil.move(tmp_name, target)
+            rel = service._rel_from_backup_root(target)
+            try:
+                validation = inspect(rel, password if isinstance(password, str) else "")
+                res = {"ok": True, "path": rel, "validation": validation}
+            except Exception:
+                target.unlink(missing_ok=True)
+                raise
+        else:
+            res = save_uploaded_backup(Path(tmp_name))
         tmp_name = ""
         return _ok({"backup": res})
     except Exception as e:
         LOG.warn(f"backup upload request failed: {type(e).__name__}")
         _debug_failure("backup upload", e)
-        return _err("backup_upload_failed")
+        return _err(str(e) if isinstance(e, ValueError) else "backup_upload_failed")
     finally:
         try:
             await file.close()
@@ -222,7 +252,7 @@ def api_backups_schedule_get() -> JSONResponse:
         adv: dict[str, Any] = raw_adv if isinstance(raw_adv, dict) else {}
         raw_jobs = adv.get("backup_jobs") or adv.get("backupJobs")
         jobs = raw_jobs if isinstance(raw_jobs, list) else []
-        job = jobs[0] if isinstance(jobs, list) and jobs and isinstance(jobs[0], dict) else {}
+        job = next((j for j in jobs if isinstance(j, dict) and j.get("id") == "app-backup-default"), {})
         return _ok({"schedule": job, "advanced_enabled": bool(adv.get("enabled"))})
     except Exception as e:
         LOG.warn(f"backup schedule request failed: {type(e).__name__}")
@@ -249,10 +279,11 @@ def api_backups_schedule_post(body: dict[str, Any] = Body(...)) -> JSONResponse:
         job = {
             "id": "app-backup-default",
             "scope": str(body.get("scope") or "app_state"),
+            "managed": bool(body.get("managed")),
             "at": str(body.get("at") or "03:00"),
             "days": body.get("days") if isinstance(body.get("days"), list) else [],
             "label_template": str(body.get("label_template") or "scheduled-{scope}-{date}"),
-            "retention_days": int(body.get("retention_days") or 30),
+            "retention_days": int(body.get("retention_days", 30)),
             "max_backups": int(body.get("max_backups") or 10),
             "auto_delete_old": bool(body.get("auto_delete_old", True)),
             "include_snapshots": bool(body.get("include_snapshots")),
@@ -282,13 +313,112 @@ def api_backups_retention(body: dict[str, Any] | None = Body(default=None)) -> J
     body = body or {}
     try:
         LOG.info("backup retention requested")
-        res = enforce_backup_retention(
+        from services.backup_manager import prune_local
+
+        res = prune_local(
             retention_days=int(body.get("retention_days") or 0),
             max_backups=int(body.get("max_backups") or 0),
             auto_delete_old=True,
         )
-        return _ok({"result": res})
+        return _ok({"ok": res["ok"], "result": res}, status_code=200 if res["ok"] else 400)
     except Exception as e:
         LOG.warn(f"backup retention request failed: {type(e).__name__}")
         _debug_failure("backup retention", e)
         return _err("backup_retention_failed")
+
+
+@router.get("/plan")
+def api_backup_plan() -> JSONResponse:
+    from services.backup_manager import plan
+
+    return _ok({"plan": plan()})
+
+
+@router.post("/plan")
+def api_backup_plan_save(body: dict[str, Any] = Body(...)) -> JSONResponse:
+    from services.backup_manager import save_plan
+
+    try:
+        return _ok({"plan": save_plan(body)})
+    except (ValueError, RuntimeError) as exc:
+        return _err(str(exc))
+
+
+@router.get("/status")
+def api_backup_status() -> JSONResponse:
+    from services.backup_manager import status
+
+    return _ok(status())
+
+
+@router.post("/retry")
+def api_backup_retry(body: dict[str, Any] = Body(...)) -> JSONResponse:
+    from services.backup_manager import retry
+
+    try:
+        retry(str(body.get("id") or ""))
+        return _ok({})
+    except ValueError as exc:
+        return _err(str(exc))
+
+
+@router.post("/destination/test")
+def api_backup_destination_test(body: dict[str, Any] = Body(...)) -> JSONResponse:
+    from services import backup_destinations as dest, backup_manager as manager
+
+    try:
+        raw = body.get("destination") or manager.reveal(manager.settings())["destination"]
+        destination = dest.validate_destination(raw, manager.backups.CONFIG)
+        if destination["kind"] == "none":
+            raise ValueError("Choose a destination to test.")
+        dest.test_connection(destination, manager.private_dir())
+        return _ok({"message": "Connection checked with an upload, download and checksum comparison."})
+    except Exception as exc:
+        return _err(str(exc) if isinstance(exc, ValueError) else "Connection check failed.")
+
+
+@router.get("/remote")
+def api_backup_remote_list() -> JSONResponse:
+    from services.backup_manager import remote_list
+
+    try:
+        return _ok({"backups": remote_list()})
+    except Exception as exc:
+        return _err(str(exc) if isinstance(exc, ValueError) else "Could not list remote backups.")
+
+
+@router.post("/remote/download")
+def api_backup_remote_download(body: dict[str, Any] = Body(...)) -> JSONResponse:
+    from services.backup_manager import download_remote
+
+    try:
+        return _ok({"backup": download_remote(str(body.get("path") or ""))})
+    except Exception as exc:
+        return _err(str(exc) if isinstance(exc, ValueError) else "Could not download this remote backup.")
+
+
+@router.post("/recovery-key")
+def api_backup_recovery_key() -> JSONResponse:
+    import secrets
+
+    return _ok({"key": secrets.token_urlsafe(32)})
+
+
+@router.post("/cloud/connect")
+def api_backup_cloud_connect(body: dict[str, Any] = Body(...)) -> JSONResponse:
+    from services.backup_cloud import begin
+
+    try:
+        return _ok({"connection": begin(str(body.get("kind") or ""))})
+    except Exception as exc:
+        return _err(str(exc) if isinstance(exc, ValueError) else "Could not start the cloud connection.")
+
+
+@router.post("/cloud/continue")
+def api_backup_cloud_continue(body: dict[str, Any] = Body(...)) -> JSONResponse:
+    from services.backup_cloud import advance
+
+    try:
+        return _ok({"connection": advance(str(body.get("id") or ""), str(body.get("answer") or ""))})
+    except Exception as exc:
+        return _err(str(exc) if isinstance(exc, ValueError) else "Could not finish the cloud connection.")

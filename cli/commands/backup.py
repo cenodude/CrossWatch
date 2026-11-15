@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -10,8 +12,9 @@ import typer
 from .._context import Ctx
 from .._errors import CLIError
 from .._util import as_dict, error_text, fmt_ts, rows_from_payload
+from .backup_settings import read_secret, register_settings
 
-backup_app = typer.Typer(help="CrossWatch tracker backups.", no_args_is_help=True)
+backup_app = typer.Typer(help="CrossWatch backups, cloud copies and recovery.", no_args_is_help=True)
 
 
 def _rows(payload: Any, *keys: str) -> list[dict[str, Any]]:
@@ -56,11 +59,16 @@ def backup_list(ctx: typer.Context) -> None:
 def backup_create(
     ctx: typer.Context,
     note: str = typer.Option("", "--note", "-m", help="Label for this backup."),
+    managed: bool = typer.Option(False, "--managed", help="Run the saved backup plan, including encryption and destination copies."),
 ) -> None:
-    """Take a backup now."""
+    """Create a local backup, or use --managed to run the saved backup plan."""
     state: Ctx = ctx.obj
     state.require_service("Taking a backup")
     body: dict[str, Any] = {}
+    if managed:
+        if note.strip():
+            raise CLIError("Managed backups use the saved plan and do not accept --note.")
+        body["managed"] = True
     if note.strip():
         body["label"] = note.strip()
     result = as_dict(state.post("/api/backups/create", json_body=body))
@@ -68,6 +76,10 @@ def backup_create(
         raise CLIError(error_text(result, "Backup rejected"))
     if state.out.json_mode:
         state.out.data(result)
+        return
+    if managed:
+        state.out.success(f"Backup queued: {as_dict(result.get('job')).get('id', '')}")
+        state.out.info("Follow progress with cw backup status --watch.")
         return
     backup = as_dict(result.get("backup"))
     path = str(backup.get("path") or result.get("path") or "")
@@ -78,17 +90,25 @@ def backup_create(
 def backup_validate(
     ctx: typer.Context,
     path: str = typer.Argument(..., help="Backup path from 'cw backup list'."),
+    password_file: Path | None = typer.Option(None, "--password-file", help="Read the archive password from a local file."),
+    ask_password: bool = typer.Option(False, "--ask-password", help="Prompt for the archive password."),
 ) -> None:
     """Check a backup can be restored."""
     state: Ctx = ctx.obj
-    result = as_dict(state.post("/api/backups/validate", json_body={"path": path}))
+    body = {"path": path, "password": read_secret(password_file, ask_password)}
+    result = as_dict(state.post("/api/backups/validate", json_body=body))
+    if result.get("ok") is False:
+        raise CLIError(error_text(result, "Backup is not valid"))
     if state.out.json_mode:
         state.out.data(result)
         return
-    if result.get("ok") is False:
-        raise CLIError(error_text(result, "Backup is not valid"))
     state.out.success("Backup looks valid.")
-    for key, value in result.items():
+    validation = as_dict(result.get("validation"))
+    if validation.get("application_ready") is False:
+        state.out.warn(str(validation.get("application_error") or "Application restoration needs the original configuration key."))
+    manifest = as_dict(validation.get("manifest"))
+    state.out.records(_rows(manifest, "trackers"), [("TRACKER", "id"), ("LABEL", "label")], title="Trackers in backup", empty="No trackers in this backup.")
+    for key, value in validation.items():
         if key != "ok" and not isinstance(value, (dict, list)):
             state.out.info(f"{key}: {value}")
 
@@ -98,21 +118,32 @@ def backup_restore(
     ctx: typer.Context,
     path: str = typer.Argument(..., help="Backup path from 'cw backup list'."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Do not ask for confirmation."),
+    password_file: Path | None = typer.Option(None, "--password-file", help="Read the archive password from a local file."),
+    ask_password: bool = typer.Option(False, "--ask-password", help="Prompt for the archive password."),
+    new_tracker: bool = typer.Option(False, "--new-tracker", help="Recover a tracker into a new instance without sync pairs."),
+    instance: str = typer.Option("", "--instance", help="Tracker ID recorded in the backup, including default."),
+    label: str = typer.Option("Recovered tracker", "--label", help="Label for the recovered tracker."),
 ) -> None:
     """Restore a backup."""
     state: Ctx = ctx.obj
     state.require_service("Restoring a backup")
-    if not yes:
+    if new_tracker and not instance:
+        raise CLIError("Choose --instance from the tracker IDs shown by cw backup validate.")
+    if instance and not new_tracker:
+        raise CLIError("Use --new-tracker with --instance.")
+    if not new_tracker and not yes:
         state.out.warn("This overwrites current data.")
         if not typer.confirm(f"Restore {path}?", default=False):
             raise CLIError("Cancelled", exit_code=0)
-    result = as_dict(state.post("/api/backups/restore", json_body={"path": path}))
+    body = {"path": path, "password": read_secret(password_file, ask_password), "confirm": True, "restart": not new_tracker,
+            "mode": "new_tracker" if new_tracker else "replace", "instance": instance, "label": label}
+    result = as_dict(state.post("/api/backups/restore", json_body=body))
     if result.get("ok") is False:
         raise CLIError(error_text(result, "Restore rejected"))
     if state.out.json_mode:
         state.out.data(result)
         return
-    state.out.success("Backup restored.")
+    state.out.success(str(as_dict(result.get("result")).get("message") or "Tracker recovered.") if new_tracker else "Backup prepared. CrossWatch will restore it during restart.")
 
 
 @backup_app.command("delete")
@@ -138,19 +169,27 @@ def backup_delete(
 @backup_app.command("schedule")
 def backup_schedule(
     ctx: typer.Context,
-    enable: bool = typer.Option(None, "--enable/--disable", help="Turn scheduled backups on or off."),
-    every_hours: int = typer.Option(0, "--every-hours", help="Interval in hours."),
+    enable: bool | None = typer.Option(None, "--enable/--disable", help="Turn scheduled backups on or off."),
+    every_hours: int = typer.Option(0, "--every-hours", hidden=True),
+    at: str = typer.Option("", "--at", help="Backup time as HH:MM in the CW scheduling timezone."),
+    day: list[int] | None = typer.Option(None, "--day", min=1, max=7, help="Repeat for weekdays, Monday=1 through Sunday=7."),
+    keep: int | None = typer.Option(None, "--keep", min=1, help="Number of automatic local backups to keep."),
+    managed: bool | None = typer.Option(None, "--managed/--legacy", help="Use the saved backup plan or the legacy scope."),
 ) -> None:
     """Show or change the backup schedule."""
     state: Ctx = ctx.obj
-    if enable is None and not every_hours:
+    if every_hours:
+        raise CLIError("Backup schedules use a daily time. Use --at HH:MM and optional --day 1 through 7.")
+    if at and not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", at):
+        raise CLIError("Use --at HH:MM, for example 03:00.")
+    if enable is None and not at and not day and keep is None and managed is None:
         payload = state.get("/api/backups/schedule")
         if state.out.json_mode:
             state.out.data(payload)
             return
         block = as_dict(as_dict(payload).get("schedule")) or as_dict(payload)
         state.out.kv(
-            [(key, value) for key, value in block.items() if not isinstance(value, (dict, list))],
+            [(key, value) for key, value in block.items() if not isinstance(value, dict)],
             title="Backup schedule",
         )
         return
@@ -161,8 +200,18 @@ def backup_schedule(
     if enable is not None:
         body["enabled"] = bool(enable)
         body["active"] = bool(enable)
-    if every_hours:
-        body["every_n_hours"] = int(every_hours)
+    if at:
+        body["at"] = at
+    if day:
+        body["days"] = sorted(set(day))
+    if keep is not None:
+        body.update(max_backups=keep, auto_delete_old=True, retention_days=0)
+    if managed is not None:
+        body["managed"] = managed
+    if body.get("managed"):
+        plan = as_dict(as_dict(state.get("/api/backups/plan")).get("plan"))
+        if not plan.get("configured"):
+            raise CLIError("Run cw backup configure before scheduling the saved plan.")
     result = as_dict(state.post("/api/backups/schedule", json_body=body))
     if result.get("ok") is False:
         raise CLIError(error_text(result, "Schedule rejected"))
@@ -175,9 +224,9 @@ def backup_schedule(
 @backup_app.command("retention")
 def backup_retention(
     ctx: typer.Context,
-    keep: int = typer.Argument(..., help="How many backups to keep."),
+    keep: int = typer.Argument(..., min=1, help="How many automatic local backups to keep."),
 ) -> None:
-    """Set how many backups to keep and prune the rest."""
+    """Prune automatic local backups. Manual, imported and safety backups are kept."""
     state: Ctx = ctx.obj
     state.require_service("Changing backup retention")
     result = as_dict(state.post("/api/backups/retention", json_body={"max_backups": int(keep)}))
@@ -186,7 +235,10 @@ def backup_retention(
     if state.out.json_mode:
         state.out.data(result or {"ok": True})
         return
-    state.out.success(f"Keeping {keep} backups.")
+    state.out.success(f"Automatic local backups pruned to {keep}. Active backups remain protected.")
+
+
+register_settings(backup_app)
 
 
 def register(app: typer.Typer) -> None:

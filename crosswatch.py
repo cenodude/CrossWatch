@@ -15,6 +15,8 @@ from urllib.parse import parse_qsl, urlencode, quote
 import sys
 sys.modules.setdefault("crosswatch", sys.modules[__name__])
 import os
+from _backup_bootstrap import apply_pending as _apply_pending_backup
+_apply_pending_backup()
 import re
 import socket
 import threading
@@ -1146,9 +1148,12 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
             _UIHostLogger("SYNC")(f"health alerts worker startup error: {e}", level="ERROR")
         except Exception:
             pass
+    from services import backup_manager
+    backup_manager.start()
     try:
         yield
     finally:
+        backup_manager.stop()
         try:
             from services.tracker_storage_maintenance import stop as _stop_tracker_storage
             from services.tracker_month import stop as _stop_tracker_month
@@ -1421,7 +1426,13 @@ def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
     scheduler_mode = str(p.get("scheduler_mode") or "").strip().lower()
     if backup_job_id or scheduler_mode == "advanced_backup" or backup:
         try:
-            from services.backups import create_backup, enforce_backup_retention, render_backup_label_template
+            if backup.get("managed"):
+                from services.backup_manager import enqueue
+
+                enqueue("scheduler")
+                return True
+            from services.backups import create_backup, render_backup_label_template
+            from services.backup_manager import prune_local
 
             scope = str(backup.get("scope") or "app_state").strip().lower()
             label_template = str(backup.get("label_template") or backup.get("labelTemplate") or "").strip()
@@ -1456,6 +1467,7 @@ def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
                 include_reports=bool(backup.get("include_reports")),
                 include_cache=bool(backup.get("include_cache")),
                 trigger="scheduler",
+                job_id=backup_job_id,
             ) or {}
             _append_log(
                 "SYNC",
@@ -1463,10 +1475,11 @@ def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
             )
             BACKUP_LOG.success(f"scheduled backup completed scope={scope} path={res.get('path') or 'backup created'}")
             if auto_delete_old:
-                cleanup = enforce_backup_retention(
+                cleanup = prune_local(
                     retention_days=retention_days,
                     max_backups=max_backups,
                     auto_delete_old=True,
+                    job_id=backup_job_id,
                 ) or {}
                 deleted = cleanup.get("deleted") or []
                 if deleted:

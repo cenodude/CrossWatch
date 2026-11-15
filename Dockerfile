@@ -14,7 +14,12 @@ RUN rm -rf /src/.venv /src/.vscode /src/.idea || true \
  && find /src -type d -exec chmod 0755 {} + \
  && find /src -type f -exec chmod 0644 {} +
 
+FROM rclone/rclone:latest AS backup-transfer
+
 FROM python:3.13-slim
+
+COPY --from=backup-transfer /usr/local/bin/rclone /usr/local/bin/rclone
+RUN rclone version
 
 LABEL org.opencontainers.image.description="One brain for all your media syncs A single place to configure everything."
 

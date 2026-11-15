@@ -168,6 +168,10 @@ There's also a unified watchlist, a player card showing what's playing, and noti
 
 For Plex, you can import history for removed items into your CW Tracker.
 
+## Backup and recovery
+
+Use **Backup & Restore** to back up CrossWatch, selected CW trackers and saved captures. Save locally, with an optional copy to OneDrive, Dropbox, Nextcloud/WebDAV or a mounted folder. Schedule automatic backups, follow their progress and restore saved data from the same dialog.
+
 ## Running without the web UI
 
 Add `-e CW_CLI_ONLY=1` to the Docker command, or `CW_CLI_ONLY: "1"` under `environment` in Compose. The API, CLI, webhooks and auth callbacks keep working.
