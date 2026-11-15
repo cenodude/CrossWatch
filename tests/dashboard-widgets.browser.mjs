@@ -12,7 +12,7 @@ const profileHTML=execFileSync('python',['-c',"import ui_frontend; print(ui_fron
 const mainSource=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
 const mainHTML=mainSource.slice(mainSource.indexOf('<!doctype html>'),mainSource.indexOf('</html>',mainSource.indexOf('<!doctype html>'))+7);
 
-for(const [profile,width] of [[true,1440],[true,390],[false,1440],[false,390]]) test(`${profile?'Overview':'Main'} shared widgets at ${width}px`,async t=>{
+for(const [profile,width,theme='flat-dark'] of [[true,1440],[true,390],[false,1440],[false,390],[true,390,'original'],[true,390,'flat-light']]) test(`${theme}: ${profile?'Overview':'Main'} shared widgets at ${width}px`,async t=>{
   const browser=await chromium.launch({headless:true});
   t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width,height:1000},hasTouch:width<760});
@@ -20,12 +20,12 @@ for(const [profile,width] of [[true,1440],[true,390],[false,1440],[false,390]]) 
   const errors=[],queries=[];
   page.on('pageerror',error=>errors.push(error.message));
   const state={empty:false};
-  const html=await page.evaluate(({source,profile})=>{
+  const html=await page.evaluate(({source,profile,theme})=>{
     const doc=new DOMParser().parseFromString(source,'text/html');
     doc.querySelectorAll('script').forEach(el=>el.remove());
-    doc.documentElement.dataset.cwTheme='flat-dark';
+    doc.documentElement.dataset.cwTheme=theme;
     doc.documentElement.dataset.tab='main';
-    doc.documentElement.className='cw-theme-dark';
+    doc.documentElement.className=theme==='flat-light'?'cw-theme-light':theme==='original'?'cw-theme-original':'cw-theme-dark';
     const widgets=doc.querySelector('#dashboard-widgets-card');
     const host=doc.createElement('main');
     host.id=profile?'profile-panel-overview':'layout';
@@ -37,7 +37,7 @@ for(const [profile,width] of [[true,1440],[true,390],[false,1440],[false,390]]) 
     style.textContent='body{padding:60px 24px}#profile-panel-overview{display:block}';
     doc.head.append(style);
     return '<!doctype html>'+doc.documentElement.outerHTML;
-  },{source:profile?profileHTML:mainHTML,profile});
+  },{source:profile?profileHTML:mainHTML,profile,theme});
   await page.route('http://widgets.test/**',async route=>{
     const url=new URL(route.request().url());
     if(url.pathname.startsWith('/assets/')) {
@@ -78,6 +78,13 @@ for(const [profile,width] of [[true,1440],[true,390],[false,1440],[false,390]]) 
   const first=page.locator('#recent-history-list [data-cw-widget-item]').first();
   await first.waitFor();
   if(profile) {
+    if(width<760){
+      const count=await page.locator('#recent-history-count-chip').boundingBox();
+      const refresh=await page.locator('#recent-history-refresh').boundingBox();
+      assert.equal(refresh.height,count.height);
+      assert.equal(refresh.width,count.height);
+      assert.equal(await page.locator('#recent-history-refresh').evaluate(el=>getComputedStyle(el,'::after').top),'-8px');
+    }
     for(const id of ['recent-history-list','latest-ratings-grid','recent-scrobble-list','recent-progress-list','recent-playlists-list']) {
       assert.equal(await page.locator(`#${id} .cw-hub-widget-row`).count(),3);
       assert.equal(await page.locator(`#${id} .cw-hub-widget-more`).count(),1);
@@ -114,10 +121,11 @@ for(const [profile,width] of [[true,1440],[true,390],[false,1440],[false,390]]) 
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   if(process.env.CW_WIDGET_SCREENSHOTS){
     await mkdir(process.env.CW_WIDGET_SCREENSHOTS,{recursive:true});
-    await page.screenshot({path:`${process.env.CW_WIDGET_SCREENSHOTS}/${profile?'overview':'main'}-${width}.png`,fullPage:true});
+    await page.screenshot({path:`${process.env.CW_WIDGET_SCREENSHOTS}/${theme}-${profile?'overview':'main'}-${width}.png`,fullPage:true});
   }
   state.empty=true;
   await page.evaluate(()=>window.CW.DashboardWidgets.refresh({force:true}));
   await page.locator('#recent-history-list .cw-dash-empty').waitFor();
+  if(process.env.CW_WIDGET_SCREENSHOTS)await page.screenshot({path:`${process.env.CW_WIDGET_SCREENSHOTS}/${theme}-${profile?'overview':'main'}-${width}-empty.png`,fullPage:true});
   assert.deepEqual(errors,[]);
 });

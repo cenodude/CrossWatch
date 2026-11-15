@@ -1648,8 +1648,12 @@ header .tabs #tab-settings .cw-settings-icon { color: var(--cw-theme-muted); fon
 .cw-page-playing .pc-route-options .pc-route:is(:hover,.is-selected){background:var(--cw-page-selected-bg);border-color:var(--cw-page-selected-border);color:var(--cw-page-selected-text)}
 @media(min-width:761px){.cw-page-playing .pc-body::before{opacity:var(--cw-playing-backdrop-opacity);filter:saturate(.65);-webkit-mask-image:linear-gradient(90deg,transparent,#000 75%);mask-image:linear-gradient(90deg,transparent,#000 75%)}}
 @media(max-width:760px){
-.cw-page-playing{--pc-text:var(--cw-playing-art-text);--pc-muted:var(--cw-playing-art-muted);--pc-accent:var(--cw-playing-art-accent);--pc-good:var(--cw-playing-art-good);--pc-border:var(--cw-playing-art-border);--pc-control:var(--cw-playing-art-control);background:var(--cw-playing-art-bg);border-radius:15px}
-.cw-page-playing .pc-poster-link::after{background:var(--cw-playing-mobile-shade)}
+.cw-page-playing{border-radius:12px}
+.cw-page-playing .pc-poster-link{border-radius:5px}
+.cw-page-playing :is(.pc-mobile-toggle,.pc-mobile-collapse,.pc-close){background:transparent;border:0;color:var(--pc-text)}
+.cw-page-playing .pc-mobile-collapse{color:var(--pc-accent)}
+.cw-page-playing :is(.pc-mobile-route,.pc-mobile-time,.pc-heading){color:var(--pc-muted)}
+.cw-page-playing .pc-status{text-transform:none}
 .cw-page-playing .pc-route-list .pc-route{background:transparent;border:0}
 .cw-page-playing .pc-route-list .pc-route-kind{color:var(--pc-accent)}
 .cw-page-playing .pc-route-list .pc-route[data-kind="webhook"] .pc-route-kind{color:var(--pc-good)}

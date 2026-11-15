@@ -331,7 +331,8 @@
       const remainingStr = formatTime(Math.max(0, totalMs - totalMs * (pct / 100)));
       remaining = remainingStr ? `${remainingStr} left` : "";
     }
-    return { pct, remaining };
+    const elapsedTotal = totalMs > 0 ? `${formatTime(totalMs * pct / 100) || "0:00"} / ${formatTime(totalMs)}` : "";
+    return { pct, remaining, elapsedTotal };
   };
 
   const activeRoutes = () => CARD.streams.flatMap(p => routesFor(p).map(route => ({

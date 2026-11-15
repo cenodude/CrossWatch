@@ -42,11 +42,17 @@ for(const theme of ['original','flat-dark','flat-light'])for(const width of [320
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   assert.equal(await card.evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
   assert.equal(await card.locator('.pc-overview-wrap').isVisible(),width>760);
-  assert.equal(await card.locator('.pc-poster').isVisible(),width>760);
-  const backdrop=card.locator(width<=760?'.pc-poster-link':'.pc-body');
-  assert.match(await backdrop.evaluate(el=>getComputedStyle(el,'::before').backgroundImage),/kind=backdrop/);
-  assert.match(await backdrop.evaluate(el=>getComputedStyle(el,'::before').backgroundImage),/v=2/);
-  if(width<=760)assert.ok(box.height<300,`Mobile height ${box.height}`);
+  assert.equal(await card.locator('.pc-poster').isVisible(),true);
+  if(width>760){
+    assert.match(await card.locator('.pc-body').evaluate(el=>getComputedStyle(el,'::before').backgroundImage),/kind=backdrop/);
+    assert.match(await card.locator('.pc-body').evaluate(el=>getComputedStyle(el,'::before').backgroundImage),/v=2/);
+  }
+  if(width<=760){
+    assert.ok(box.height<185,`Mobile height with stream navigation ${box.height}`);
+    assert.equal(await card.locator('.pc-routes').isVisible(),false);
+    assert.equal(await card.locator('.pc-mobile-toggle').getAttribute('aria-expanded'),'false');
+    assert.match(await card.locator('.pc-mobile-time').textContent(),/\d+:\d+ \/ \d+:\d+/);
+  }
   else {
     assert.ok(box.width<=720,`Desktop width ${box.width}`);
     assert.ok(box.height<280,`Desktop height ${box.height}`);
@@ -57,6 +63,11 @@ for(const theme of ['original','flat-dark','flat-light'])for(const width of [320
     await card.screenshot({path:`${process.env.CW_PLAYING_SCREENSHOTS}/${theme}-${width}.png`});
   }
   if(width<=760){
+    await card.locator('.pc-mobile-toggle').click();
+    assert.equal(await card.locator('.pc-mobile-toggle').getAttribute('aria-expanded'),'true');
+    assert.equal(await card.locator('.pc-stats-bottom').isVisible(),true);
+    assert.equal(await card.locator('.pc-overview-wrap').isVisible(),true);
+    if(process.env.CW_PLAYING_SCREENSHOTS&&width===390)await card.screenshot({path:`${process.env.CW_PLAYING_SCREENSHOTS}/${theme}-${width}-expanded.png`});
     await card.locator('.pc-route-toggle').click();
     if(process.env.CW_PLAYING_SCREENSHOTS&&width===390)await card.screenshot({path:`${process.env.CW_PLAYING_SCREENSHOTS}/${theme}-${width}-routes.png`});
     await card.locator('.pc-route-options .pc-route').nth(1).click();
@@ -91,6 +102,7 @@ for(const width of [390,1440])test(`route selection switches playback and artwor
     window.openedMedia=[];
     CW.ProfileMediaModal={canOpen:()=>true,open:item=>openedMedia.push(item)};
   });
+  if(width<=760)await card.locator('.pc-mobile-toggle').click();
   await card.locator('.pc-route-toggle').click();
   assert.equal(await card.locator('.pc-route-options button').count(),4);
   await card.locator('.pc-route-options button').filter({hasText:'Another stream'}).click();
@@ -110,7 +122,7 @@ for(const width of [390,1440])test(`route selection switches playback and artwor
   const backdrop=await card.evaluate(el=>el.style.getPropertyValue('--pc-backdrop'));
   assert.match(backdrop,/\/movie\/329865\?kind=backdrop/);
   assert.notEqual(backdrop,`url("${await card.locator('.pc-poster').getAttribute('src')}")`);
-  await card.locator(width<=760?'.pc-mobile-title':'.pc-poster-link').click();
+  await card.locator('.pc-poster-link').click();
   assert.deepEqual(await page.evaluate(()=>openedMedia.map(item=>item.title)),['Arrival']);
   const refreshed=page.waitForResponse('**/api/watch/currently_watching');
   await page.evaluate(()=>window.dispatchEvent(new Event('cw:auth-state-changed')));
@@ -128,6 +140,14 @@ for(const width of [390,1440])test(`route selection switches playback and artwor
   assert.equal(await card.locator('.pc-route-options button').count(),1);
   assert.equal(await card.locator('.pc-route-toggle').isVisible(),false);
   assert.equal(await card.evaluate(el=>el.style.getPropertyValue('--pc-backdrop')),'none');
+  if(width<=760){
+    await card.locator('.pc-mobile-collapse').click();
+    assert.ok((await card.boundingBox()).height<=130);
+    assert.equal(await card.locator('.pc-nav').isVisible(),false);
+    assert.equal(await card.locator('.pc-mobile-toggle').evaluate(el=>el===document.activeElement),true);
+    await page.keyboard.press('Enter');
+    assert.equal(await card.locator('.pc-mobile-toggle').getAttribute('aria-expanded'),'true');
+  }
   await page.route('**/api/watch/currently_watching',route=>route.fulfill({json:{streams:[]}}));
   await page.evaluate(()=>window.dispatchEvent(new Event('cw:auth-state-changed')));
   await card.waitFor({state:'hidden'});
@@ -160,7 +180,7 @@ for(const width of [390,1440])test(`playing card opens internal media details at
   });
   await page.addScriptTag({url:'/assets/js/profile-media-modal.js'});
   const card=page.locator('.cw-pc-scrobble');
-  const opener=card.locator(width<=760?'.pc-mobile-title':'.pc-poster-link');
+  const opener=card.locator('.pc-poster-link');
   assert.equal(await card.locator('.pc-poster-link').getAttribute('href'),null);
   await opener.click();
   await page.locator('.cw-mm:not([hidden])').waitFor();
@@ -175,10 +195,10 @@ for(const width of [390,1440])test(`playing card opens internal media details at
   await card.locator('.pc-nav .pc-next').click();
   assert.equal(await page.evaluate(()=>CW.ProfileMediaModal.isOpen()),false);
   assert.equal(await opener.getAttribute('aria-disabled'),'true');
-  await card.locator('.pc-heading').click();
+  await card.locator(width<=760?'.pc-mobile-toggle':'.pc-heading').click();
   assert.equal(await page.evaluate(()=>CW.ProfileMediaModal.isOpen()),false);
   await card.locator('.pc-nav .pc-next').click();
-  await card.locator('.pc-heading').click();
+  await (width<=760?opener:card.locator('.pc-heading')).click();
   await page.locator('.cw-mm:not([hidden])').waitFor();
   assert.match(await page.locator('.cw-mm').textContent(),/Arrival/);
   await page.evaluate(()=>CW.ProfileMediaModal.close());
@@ -199,6 +219,9 @@ test('long titles, route names, missing art and watchlist preview remain usable'
   });
   const card=page.locator('.cw-pc-scrobble');
   assert.equal(await card.locator('.pc-nav').isVisible(),false);
+  assert.ok((await card.boundingBox()).height<=130);
+  await card.locator('.pc-mobile-toggle').click();
+  assert.equal(await card.locator('.pc-mobile-title').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
   assert.equal(await card.locator('.pc-nav .pc-next').isDisabled(),true);
   assert.equal(await card.locator('.pc-route-count-mobile').textContent(),'+4 routes');
   assert.equal(await card.locator('.pc-route-count-desktop').textContent(),'+3 routes');
