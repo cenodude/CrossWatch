@@ -16,6 +16,7 @@ const art = (row, backdrop = false) => {
   const size = backdrop ? "w1280" : "w342", identifier = String(row?.ids?.tmdb || "");
   const cached = [row?.[backdrop ? "backdrop" : "poster"],row?.poster,row?.backdrop].map(imageURL).find(Boolean);
   const query = new URLSearchParams({kind:backdrop ? "backdrop" : "poster",size});
+  if (backdrop) query.set("av",document.documentElement.dataset.cwArt || "t");
   if (row?.title) query.set("title",row.title);
   if (/^\d{4}$/.test(String(row?.year || ""))) query.set("year",row.year);
   const fallback = /^\d+$/.test(identifier) && ["movie","show"].includes(row?.type) ? `/art/tmdb/${row.type === "movie" ? "movie" : "tv"}/${identifier}?${query}` : "";

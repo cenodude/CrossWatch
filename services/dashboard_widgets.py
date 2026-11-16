@@ -458,6 +458,16 @@ def _poster_url(item: Mapping[str, Any], *, size: str = "w342", episode_still: b
     return f"/art/tmdb/{_resolved_art_type(item, tmdb)}/{tmdb}?fallback=2&size={size}"
 
 
+def _art_version() -> str:
+    try:
+        from cw_platform.config_base import load_config
+        from providers.metadata._meta_FANART import art_version
+
+        return art_version(load_config() or {})
+    except Exception:
+        return "t"
+
+
 def _grid_art_url(item: Mapping[str, Any], *, size: str = "w300") -> str:
     still = _episode_still_url(item, size=size)
     if still:
@@ -465,7 +475,7 @@ def _grid_art_url(item: Mapping[str, Any], *, size: str = "w300") -> str:
     tmdb = _tmdb_id(item)
     if tmdb in (None, "", 0, False):
         return ""
-    return f"/art/tmdb/{_resolved_art_type(item, tmdb)}/{tmdb}?fallback=2&kind=backdrop&size={size}"
+    return f"/art/tmdb/{_resolved_art_type(item, tmdb)}/{tmdb}?fallback=2&kind=backdrop&av={_art_version()}&size={size}"
 
 
 def _cover_url(item: Mapping[str, Any], *, size: str = "w342") -> str:

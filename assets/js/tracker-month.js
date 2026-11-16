@@ -31,6 +31,7 @@ function art(row, type = "backdrop", eager = false) {
   const size = type === "poster" ? "w342" : "w1280", identifier = String(row?.ids?.tmdb || "");
   const cached = [row?.[type],row?.[type === "poster" ? "backdrop" : "poster"]].find(url => /^https:\/\/image\.tmdb\.org\/t\/p\//.test(url || ""));
   const query = new URLSearchParams({kind:type,size});
+  if (type !== "poster") query.set("av",document.documentElement.dataset.cwArt || "t");
   if (row?.title) query.set("title",row.title);
   if (/^\d{4}$/.test(String(row?.year || ""))) query.set("year",row.year);
   const mediaType = row?.type === "movie" ? "movie" : "tv";

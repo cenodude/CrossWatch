@@ -609,7 +609,7 @@
     const title = cardTitle(row);
     const art = row.art;
     const episode = row.has_still && row.season != null && row.episode != null;
-    const url = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?fallback=2&size=w500&kind=${episode ? "still" : "backdrop"}${episode ? `&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : ""}` : "";
+    const url = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?fallback=2&av=${document.documentElement.dataset.cwArt || "t"}&size=w500&kind=${episode ? "still" : "backdrop"}${episode ? `&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : ""}` : "";
     const percent = Number.isFinite(row.progress_percent) && row.progress_percent > 0 && row.progress_percent < 100 ? row.progress_percent : null;
     const watched = percent == null ? "" : percent < 1 ? "Less than 1% watched" : `${Math.min(99, Math.round(percent))}% watched`;
     const remaining = percent != null && Number.isFinite(row.remaining_minutes) && row.remaining_minutes > 0 ? row.remaining_minutes : null;
@@ -642,7 +642,7 @@
       const day = `<time datetime="${iso}"><span>${esc(weekday)}</span><strong>${date.getDate()}</strong></time>`;
       const cards = releases.map(({row, index}) => {
         const title = cardTitle(row), art = row.art;
-        const url = art?.tmdb ? `/art/tmdb/tv/${encodeURIComponent(art.tmdb)}?fallback=2&size=w780&kind=${row.has_still ? `still&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : "backdrop"}` : "";
+        const url = art?.tmdb ? `/art/tmdb/tv/${encodeURIComponent(art.tmdb)}?fallback=2&av=${document.documentElement.dataset.cwArt || "t"}&size=w780&kind=${row.has_still ? `still&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : "backdrop"}` : "";
         const label = offset === 0 ? "Today" : row.episode === 1 ? "Season premiere" : offset === 1 ? "Tomorrow" : `In ${offset} days`;
         return `<button type="button" class="trk-calendar-release" data-trk-overview-open="airing:${index}" aria-label="${esc(`${dayText(iso)}: ${title}, ${episodeLabel(row)}`)}">${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-calendar-date">${day}<small>${esc(label)}</small></span><span class="trk-calendar-copy"><strong>${esc(title)}</strong><span>${esc([episodeLabel(row), row.episode_title].filter(Boolean).join(" · "))}</span></span></button>`;
       }).join("");
@@ -1611,7 +1611,7 @@
     const status = statusPill(data?.note ? data.note.status : head.status);
     const episode = record?.type === "episode" && record.title && record.title !== title && !/^S\d+\s*[·-]?\s*E\d+$/i.test(record.title) ? record.title : "";
     const art = head?.art;
-    const logoUrl = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?kind=logo&size=w500` : "";
+    const logoUrl = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?kind=logo&av=${document.documentElement.dataset.cwArt || "t"}&size=w500` : "";
     const signature = JSON.stringify([title, summary, detail, episode, logoUrl, status]);
     if (selection?.dataset.logoSelection === signature) return;
     setSlot("selection", `<div class="trk-hero-selection"><div class="trk-hero-title-line"><span class="trk-hero-heading"><strong title="${esc(title)}">${esc(title)}</strong>${logoUrl ? `<img class="trk-hero-logo" alt="${esc(title)}" hidden>` : ""}</span><div class="trk-hero-details"><span class="trk-hero-meta">${esc(summary)}${detail ? `<span class="trk-hero-meta-extra"> · ${esc(detail)}</span>` : ""}</span>${episode ? `<small title="${esc(episode)}">${esc(episode)}</small>` : ""}${status}</div></div></div>`);
@@ -1632,7 +1632,7 @@
     const item = data?.title || record;
     const art = item?.art;
     const kind = art?.kind === "movie" ? "movie" : "tv";
-    const url = art?.tmdb ? `/art/tmdb/${kind}/${encodeURIComponent(art.tmdb)}?fallback=2&kind=backdrop&size=w1280` : "";
+    const url = art?.tmdb ? `/art/tmdb/${kind}/${encodeURIComponent(art.tmdb)}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280` : "";
     if (image.dataset.url === url) return;
     image.dataset.url = url;
     image.hidden = true;

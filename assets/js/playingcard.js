@@ -149,7 +149,7 @@
     if (!id) return "";
     const resolved = meta?.resolved_type || meta?.type || window.CW?.Meta?.peek(p)?.resolved_type;
     const type = String(resolved || p?.media_type || p?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
-    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?kind=backdrop&size=w1280&v=2${artEvidenceOf(p)}`;
+    return `/art/tmdb/${type}/${encodeURIComponent(String(id))}?kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280&v=2${artEvidenceOf(p)}`;
   };
 
   const SHARED_WATCH_KEY = "__CW_CURRENT_WATCHING_SHARED__";

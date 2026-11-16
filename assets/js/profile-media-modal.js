@@ -28,7 +28,7 @@
   const isMovie = () => kindOf(state.item) === "movie";
   const tmdbImage = (path, size) => (path ? `/art/tmdb/image?fallback=2&path=${encodeURIComponent(path)}&size=${encodeURIComponent(size)}` : "");
   const posterUrl = (item) => `/art/tmdb/${artType(item)}/${encodeURIComponent(tmdbOf(item))}?fallback=2&size=w500`;
-  const backdropUrl = (item) => `/art/tmdb/${artType(item)}/${encodeURIComponent(tmdbOf(item))}?fallback=2&kind=backdrop&size=w1280`;
+  const backdropUrl = (item) => `/art/tmdb/${artType(item)}/${encodeURIComponent(tmdbOf(item))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280`;
   const stillUrl = (season, episode) => `/art/tmdb/tv/${encodeURIComponent(tmdbOf(state.item))}?fallback=2&kind=still&season=${encodeURIComponent(season)}&episode=${encodeURIComponent(episode)}&size=w300`;
   const icon = (name) => `<span class="material-symbols-rounded" aria-hidden="true">${esc(name)}</span>`;
   const plural = (count, word) => `${numberFmt.format(Number(count) || 0)} ${word}${Number(count) === 1 ? "" : "s"}`;
@@ -602,7 +602,7 @@
     return `<div class="cw-mm-top">
       <img class="cw-mm-poster" src="${esc(posterUrl(item))}" alt="" decoding="async" onerror="${placeholder}">
       <div class="cw-mm-heading">
-        <h2 id="cw-mm-title" aria-label="${esc(title)}"><span class="cw-mm-title-text">${esc(title)}</span>${tmdb ? `<img class="cw-mm-title-logo" data-src="/art/tmdb/${artType(item)}/${encodeURIComponent(tmdb)}?kind=logo&size=w500" alt="" hidden>` : ""}</h2>
+        <h2 id="cw-mm-title" aria-label="${esc(title)}"><span class="cw-mm-title-text">${esc(title)}</span>${tmdb ? `<img class="cw-mm-title-logo" data-src="/art/tmdb/${artType(item)}/${encodeURIComponent(tmdb)}?kind=logo&av=${document.documentElement.dataset.cwArt || "t"}&size=w500" alt="" hidden>` : ""}</h2>
         <p class="cw-mm-sub">${esc([year, movie ? "Movie" : "TV Series"].filter(Boolean).join(" • "))}</p>
         <div class="cw-mm-chips">${chips.map((chip) => `<span class="cw-mm-chip">${esc(chip)}</span>`).join("")}${genres.map((genre) => `<span class="cw-mm-chip is-genre">${esc(genre)}</span>`).join("")}</div>
         <div class="cw-mm-actions">${actions()}</div>

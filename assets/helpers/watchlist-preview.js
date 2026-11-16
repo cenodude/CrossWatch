@@ -259,7 +259,7 @@
     if (still) return still;
     const tmdb = tmdbIdOf(item);
     if (!tmdb) return "";
-    return `/art/tmdb/${artTypeOf(item)}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
+    return `/art/tmdb/${artTypeOf(item)}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
   }
 
   function applyWidgetView(view = "") {
@@ -381,7 +381,7 @@
   function backdropUrl(item, meta = null) {
     const tmdb = tmdbIdOf(item, meta);
     if (!tmdb) return "";
-    return `/art/tmdb/${artTypeOf(item, meta)}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&size=w1280&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
+    return `/art/tmdb/${artTypeOf(item, meta)}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
   }
 
   function runtimeLabel(mins) {

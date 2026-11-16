@@ -176,7 +176,7 @@ class MetadataManager:
 
         for name in order:
             prov = self.providers.get(name)
-            if not prov:
+            if not prov or getattr(prov, "art_only", False):
                 continue
 
             try:

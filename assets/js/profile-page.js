@@ -278,7 +278,7 @@
     const id = tmdbId(item);
     if (!id) return "";
     const kind = mediaType(item) ? "tv" : "movie";
-    return `/art/tmdb/${kind}/${encodeURIComponent(id)}?fallback=2&kind=backdrop&size=w1280`;
+    return `/art/tmdb/${kind}/${encodeURIComponent(id)}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280`;
   };
   const backdrop = (item) => {
     const direct = String(item?.backdrop_url || item?.background_url || item?.background || item?.fanart || "").trim();
@@ -296,7 +296,7 @@
     }
     const kind = mediaType(item) ? "tv" : "movie";
     const locale = encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US");
-    return `/art/tmdb/${kind}/${encodeURIComponent(String(id))}?fallback=2&kind=backdrop&size=${encodeURIComponent(size)}&locale=${locale}${watchlistArtEvidence(item)}`;
+    return `/art/tmdb/${kind}/${encodeURIComponent(String(id))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=${encodeURIComponent(size)}&locale=${locale}${watchlistArtEvidence(item)}`;
   };
   const heroBackdrop = (item) => tmdbBackdrop(item) || backdrop(item);
   const relTime = (value) => {
@@ -1047,7 +1047,7 @@
     bindLastWatchedPreview(host);
     const id = item ? tmdbId(item) : "";
     const show = item && (mediaType(item) || isEpisodeItem(item));
-    const url = id ? `/art/tmdb/${show ? "tv" : "movie"}/${encodeURIComponent(id)}?kind=logo&size=w500` : "";
+    const url = id ? `/art/tmdb/${show ? "tv" : "movie"}/${encodeURIComponent(id)}?kind=logo&av=${document.documentElement.dataset.cwArt || "t"}&size=w500` : "";
     if (logo.dataset.url !== url) {
       logo.dataset.url = url;
       logo.hidden = true;

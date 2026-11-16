@@ -2467,13 +2467,14 @@ __CW_ASSET_BLOCK__
 
 def _seed_media_card_style(html: str, user: dict | None = None) -> str:
     from cw_platform.config_base import load_config
+    from providers.metadata._meta_FANART import art_version
 
     cfg = load_config() or {}
     value = (cfg.get("ui") or {}).get("media_card", "full")
     if isinstance(user, dict) and user.get("is_admin") is False:
         value = (user.get("preferences") or {}).get("media_card", value)
     style = "compact" if value == "compact" else "full"
-    return html.replace('<html lang="en"', f'<html lang="en" data-cw-media-card="{style}"', 1)
+    return html.replace('<html lang="en"', f'<html lang="en" data-cw-media-card="{style}" data-cw-art="{art_version(cfg)}"', 1)
 
 
 def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:

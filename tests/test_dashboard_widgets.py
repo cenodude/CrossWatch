@@ -105,9 +105,9 @@ def test_latest_ratings_widget_dedupes_and_sorts_provider_state() -> None:
     assert [item["title"] for item in payload["items"]] == ["Arrival", "Severance"]
     assert payload["items"][0]["rating"] == 9
     assert {source["provider"] for source in payload["items"][0]["sources"]} == {"PLEX", "TRAKT"}
-    assert payload["items"][0]["poster"] == "/art/tmdb/movie/10?fallback=2&kind=backdrop&size=w300"
+    assert payload["items"][0]["poster"] == "/art/tmdb/movie/10?fallback=2&kind=backdrop&av=t&size=w300"
     assert payload["items"][0]["cover"] == "/art/tmdb/movie/10?fallback=2&size=w342"
-    assert payload["items"][1]["poster"] == "/art/tmdb/tv/20?fallback=2&kind=backdrop&size=w300"
+    assert payload["items"][1]["poster"] == "/art/tmdb/tv/20?fallback=2&kind=backdrop&av=t&size=w300"
     assert payload["items"][1]["cover"] == "/art/tmdb/tv/20?fallback=2&size=w342"
 
 
@@ -184,7 +184,7 @@ def test_dashboard_widgets_merge_flattened_provider_rows_across_providers(monkey
     assert {source["provider"] for source in history["items"][0]["sources"]} == set(FLATTENED_PROVIDERS)
     assert ratings["total"] == 1
     assert ratings["items"][0]["title"] == "Heat"
-    assert ratings["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&size=w300"
+    assert ratings["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&av=t&size=w300"
     assert ratings["items"][0]["cover"] == "/art/tmdb/movie/949?fallback=2&size=w342"
     assert {source["provider"] for source in ratings["items"][0]["sources"]} == set(FLATTENED_PROVIDERS)
 
@@ -221,7 +221,7 @@ def test_latest_ratings_widget_handles_nested_provider_movie_rows(provider: str)
     assert payload["items"][0]["title"] == "Heat"
     assert payload["items"][0]["year"] == 1995
     assert payload["items"][0]["tmdb"] == 949
-    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&size=w300"
+    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&av=t&size=w300"
     assert payload["items"][0]["cover"] == "/art/tmdb/movie/949?fallback=2&size=w342"
 
 
@@ -707,7 +707,7 @@ def test_latest_ratings_widget_merges_provider_local_movie_ids_and_inherits_art(
 
     assert payload["total"] == 1
     assert payload["items"][0]["title"] == "Heat"
-    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&size=w300"
+    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&av=t&size=w300"
     assert payload["items"][0]["cover"] == "/art/tmdb/movie/949?fallback=2&size=w342"
     assert {source["provider"] for source in payload["items"][0]["sources"]} == {"SIMKL", "TRAKT"}
 
@@ -895,7 +895,7 @@ def test_latest_ratings_widget_resolves_missing_art_from_metadata(monkeypatch) -
 
     assert payload["total"] == 1
     assert payload["items"][0]["tmdb"] == 949
-    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&size=w300"
+    assert payload["items"][0]["poster"] == "/art/tmdb/movie/949?fallback=2&kind=backdrop&av=t&size=w300"
     assert payload["items"][0]["cover"] == "/art/tmdb/movie/949?fallback=2&size=w342"
     assert fake.calls[0]["entity"] == "movie"
 

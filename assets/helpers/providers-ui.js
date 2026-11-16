@@ -52,9 +52,10 @@
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI", "TRACEARR"] },
   ]);
   const AUTH_GROUP_BY_KEY = Object.freeze(Object.fromEntries(AUTH_GROUPS.flatMap((group) => group.keys.map((key) => [key, group.id]))));
-  const META_GROUP = Object.freeze({ id: "sec-auth-metadata", title: "Metadata", keys: ["TMDB_METADATA", "ANIME_MAPPING"] });
+  const META_GROUP = Object.freeze({ id: "sec-auth-metadata", title: "Metadata", keys: ["TMDB_METADATA", "FANART_METADATA", "ANIME_MAPPING"] });
   const META_ITEMS = Object.freeze({
     TMDB_METADATA: { key: "TMDB_METADATA", label: "TMDb Metadata", logoKey: "TMDB", sectionId: "sec-meta-tmdb", provider: "tmdb" },
+    FANART_METADATA: { key: "FANART_METADATA", label: "Fanart.tv Artwork", icon: "photo_library", sectionId: "sec-meta-fanart", provider: "fanart" },
     ANIME_MAPPING: { key: "ANIME_MAPPING", label: "Anime ID Mapping", icon: "shield", sectionId: "sec-meta-anime-mapping", provider: "anime-mapping" },
   });
 
@@ -376,13 +377,14 @@
     if (!info) return false;
     if (info.key === "TMDB_METADATA") return !!String(cfg?.tmdb?.api_key || cfg?.metadata?.tmdb_api_key || "").trim();
     if (info.key === "ANIME_MAPPING") return !!cfg?.anime_mapping?.enabled;
+    if (info.key === "FANART_METADATA") return cfg?.fanart?.enabled === true;
     return false;
   }
 
   function metadataStatusFor(key, cfg = getCachedConfig()) {
     const info = metadataProviderInfo(key);
     const on = metadataConfigured(key, cfg);
-    if (info?.key === "ANIME_MAPPING") return on ? { text: "Enabled", ok: true } : { text: "Not enabled", ok: false };
+    if (info?.key === "ANIME_MAPPING" || info?.key === "FANART_METADATA") return on ? { text: "Enabled", ok: true } : { text: "Not enabled", ok: false };
     return on ? { text: "Connected", ok: true } : { text: "Not configured", ok: false };
   }
 
@@ -963,6 +965,17 @@
       labels: { "#tmdb_check": "Connect TMDb" },
       actions: [{ row: ".inline", status: "#tmdb_check_msg", buttons: "#tmdb_check", connectedSelector: "#tmdb_api_key", connectedText: "Connected" }]
     },
+    FANART_METADATA: {
+      provider: "fanart", logo: "FANART", help: window.CW.HelpLinks.url("fanart-metadata"), deleteSelector: "#fanart_delete",
+      hideNav: true,
+      tabs: { api: ["image", "Artwork", "Use fanart.tv artwork"] },
+      copy: { api: ["Fanart.tv Artwork", "Logos, backgrounds and disc art from fanart.tv, with TMDb as fallback."] },
+      journey: ["Turn on Fanart.tv", "Use fanart.tv logos and backgrounds, with TMDb as fallback, and disc art for your collection. CrossWatch has its own project key, so no key is needed. A personal key shows new uploads sooner, and right away for fanart.tv VIP members. Posters stay on TMDb.", "167,98,255", "255,120,190", "FANART"],
+      steps: [["1", "Turn on", "Switch on Use fanart.tv"], ["2", "Pick art", "Choose logos and backgrounds"], ["3", "Personal key", "Optional, from your fanart.tv profile"]],
+      introSubs: ["api"],
+      order: [".auth-card"],
+      actions: [{ row: ".inline", status: "#fanart_check_msg", buttons: "#fanart_check" }]
+    },
     ANIME_MAPPING: {
       provider: "anime-mapping", logo: "ANILIST", help: window.CW.HelpLinks.url("anime-mapping"), deleteSelector: "",
       hideNav: true,
@@ -1008,11 +1021,11 @@
     const dialogKicker = root?.querySelector("#cw-auth-dialog-kicker");
     if (dialogTitle) dialogTitle.textContent = data[0];
     if (dialogCopy) dialogCopy.textContent = data[1];
-    if (dialogKicker) dialogKicker.textContent = info?.key === "TMDB_METADATA" || info?.key === "ANIME_MAPPING" ? "Metadata" : "Connection settings";
+    if (dialogKicker) dialogKicker.textContent = META_ITEMS[info?.key] ? "Metadata" : "Connection settings";
   }
 
   function connectionModalSupportsProfiles(info) {
-    return !!info && !["TMDB_METADATA", "ANIME_MAPPING"].includes(info.key);
+    return !!info && !META_ITEMS[info.key];
   }
 
   function connectionModalAllowsCelebration(info) {
@@ -1021,7 +1034,7 @@
 
   function connectionModalConfigured(info, cfg = getCachedConfig()) {
     if (!info) return false;
-    if (info.key === "TMDB_METADATA" || info.key === "ANIME_MAPPING") return metadataConfigured(info.key, cfg);
+    if (META_ITEMS[info.key]) return metadataConfigured(info.key, cfg);
     return configuredProviderKeys(cfg).has(info.key) || statusProviderData(info.key)?.connected === true;
   }
 
@@ -1237,7 +1250,7 @@
   }
 
   function connectionModalCurrentConnected(panel, info, cfg = getCachedConfig()) {
-    if (!info || info.key === "TMDB_METADATA" || info.key === "ANIME_MAPPING") return true;
+    if (!info || META_ITEMS[info.key]) return true;
     if (info.key === "NUVIO") {
       const profileRow = panel?.querySelector("#nuvio_profile_state");
       if (profileRow && !profileRow.classList.contains("hidden") && String(panel?.querySelector("#nuvio_profile_select")?.value || "").trim()) return true;
@@ -2099,6 +2112,7 @@
       try {
         if (info.key === "TMDB_METADATA") window.cwBuildTmdbPanel?.();
         if (info.key === "ANIME_MAPPING") window.cwBuildAnimeMappingPanel?.();
+        if (info.key === "FANART_METADATA") window.cwBuildFanartPanel?.();
         window.cwMetaProviderEnsure?.();
       } catch {}
       section = document.getElementById(info.sectionId);
@@ -2127,6 +2141,9 @@
     }
     if (info.key === "ANIME_MAPPING") {
       try { window.cwAnimeMappingRefreshStatus?.(); } catch {}
+    }
+    if (info.key === "FANART_METADATA") {
+      try { await window.cwRefreshFanartState?.(); } catch {}
     }
     enhanceConnectionModal(section, overlay, info.key);
     if (info.key === "TMDB_METADATA") {

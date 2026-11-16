@@ -786,6 +786,7 @@ DEFAULT_CFG: dict[str, Any] = {
     # --- Meta Providers ------------------------------------------------------
     
     "tmdb": {"api_key": ""},                            # Metadata resolver (TMDb)
+    "fanart": {"enabled": False, "api_key": "", "personal_api_key": "", "logos": "fanart", "backgrounds": "fanart"},  # Artwork (fanart.tv)
 
     # --- Sync / Orchestrator -------------------------------------------------
     "sync": {
@@ -1042,6 +1043,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "tofa": {"access_token", "refresh_token", "profile_token", "sync_key_token", "_pending_device"},
         "kodi": {"password"},
         "tmdb": {"api_key"},
+        "fanart": {"api_key", "personal_api_key"},
         "tmdb_sync": {"api_key", "session_id", "_pending_request_token", "read_token", "access_token", "_pending_access_token"},
         "assistant": {"api_key"},
     }
@@ -1173,6 +1175,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "crosswatch",
     "metadata",
     "tmdb",
+    "fanart",
     "anime_mapping",
     "assistant",
     "sync",

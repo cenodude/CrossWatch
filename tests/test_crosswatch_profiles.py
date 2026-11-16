@@ -2097,7 +2097,7 @@ def test_profile_last_watched_uses_provider_branding_icons() -> None:
     assert 'const art = watchlistPreviewArt(item) || poster(item, "w780");' in js
     helper = js[js.index("const watchlistPreviewArt ="):js.index("const heroBackdrop =")]
     assert "backdrop_url" not in helper and "background_url" not in helper and "fanart" not in helper
-    assert 'return `/art/tmdb/${kind}/${encodeURIComponent(String(id))}?fallback=2&kind=backdrop&size=${encodeURIComponent(size)}&locale=${locale}${watchlistArtEvidence(item)}`;' in js
+    assert 'return `/art/tmdb/${kind}/${encodeURIComponent(String(id))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=${encodeURIComponent(size)}&locale=${locale}${watchlistArtEvidence(item)}`;' in js
     assert "updated ${relTime(when)}" in js
     assert "cw-profile-watchlist-status" in js
     assert "cw-profile-watchlist-sync" in js
