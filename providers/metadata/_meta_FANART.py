@@ -52,6 +52,7 @@ KINDS: dict[str, dict[str, tuple[str, ...]]] = {
 DISC_TYPES = ("bluray", "dvd", "3d")
 _IMDB_RE = re.compile(r"^tt\d{5,12}$")
 _NUM_RE = re.compile(r"^\d{1,10}$")
+_CACHE_NAME_RE = re.compile(r"^[a-z]+_[a-z0-9]+(\.\d+\.\d+\.tmp|\.json)$")
 
 
 def _entity(value: Any) -> str:
@@ -276,12 +277,25 @@ class FanartProvider:
         self._disk_dir = target
         return target
 
+    @staticmethod
+    def _cache_file(target: Path, name: str) -> Path | None:
+        if not _CACHE_NAME_RE.fullmatch(name):
+            return None
+        root = os.path.realpath(target)
+        full = os.path.realpath(os.path.join(root, name))
+        if not full.startswith(root + os.sep):
+            return None
+        return Path(full)
+
     def _disk_read(self, key: str) -> tuple[float, dict[str, Any]] | None:
         target = self._disk_cache_dir()
         if target is None:
             return None
+        path = self._cache_file(target, f"{key}.json")
+        if path is None:
+            return None
         try:
-            record = json.loads((target / f"{key}.json").read_text("utf-8"))
+            record = json.loads(path.read_text("utf-8"))
             data = record.get("data") if isinstance(record, dict) else None
             if not isinstance(data, dict):
                 return None
@@ -293,8 +307,10 @@ class FanartProvider:
         target = self._disk_cache_dir()
         if target is None:
             return
-        path = target / f"{key}.json"
-        tmp = target / f"{key}.{os.getpid()}.{threading.get_ident()}.tmp"
+        path = self._cache_file(target, f"{key}.json")
+        tmp = self._cache_file(target, f"{key}.{os.getpid()}.{threading.get_ident()}.tmp")
+        if path is None or tmp is None:
+            return
         try:
             tmp.write_text(json.dumps({"ts": fetched_at, "data": data}, ensure_ascii=False), encoding="utf-8")
             tmp.replace(path)
