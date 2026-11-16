@@ -2164,6 +2164,10 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                                                        unblocked=lambda items: _filter_manual_block(items, manual_blocks))
                 preview_reset_unwatches(reset_plan, review=review, feature=feature, dst_inst=reset_dst_inst,
                                         src_inst=reset_src_inst, down=reset_down)
+            if continue_watching_requested(feature, fcfg) and not (a_down or b_down or A_suspect or B_suspect):
+                sync_continue_watching_removals(ctx.state_store, src=(a, src_inst, aops, a_cfg),
+                                                dst=(b, dst_inst, bops, b_cfg), two_way=True,
+                                                dry_run=True, emit=emit, fcfg=fcfg, blocked=manual_blocks, review=review)
             return {"cancelled": cancelled, "library_skipped": len(library_skipped_A) + len(library_skipped_B)}
 
     B_eff = {path_native_keys_B.get(key, key): item for key, item in B_eff.items()}
@@ -2746,12 +2750,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         )
 
     if continue_watching_requested(feature, fcfg) and not (cancelled or a_down or b_down or A_suspect or B_suspect):
-        if review is not None:
-            emit("debug", msg="continue_watching.skipped_interactive", a=a, b=b)
-        else:
-            sync_continue_watching_removals(ctx.state_store, src=(a, src_inst, aops, a_cfg),
-                                            dst=(b, dst_inst, bops, b_cfg), two_way=True,
-                                            dry_run=dry_run_flag, emit=emit, fcfg=fcfg, blocked=manual_blocks)
+        sync_continue_watching_removals(ctx.state_store, src=(a, src_inst, aops, a_cfg),
+                                        dst=(b, dst_inst, bops, b_cfg), two_way=True,
+                                        dry_run=dry_run_flag, emit=emit, fcfg=fcfg, blocked=manual_blocks, review=review)
 
     if reset_plan and not (cancelled or a_down or b_down or A_suspect or B_suspect):
         reset_plan.unwatch = reset_plan.settle(add_to_B if reset_plan.server_side == 1 else add_to_A,

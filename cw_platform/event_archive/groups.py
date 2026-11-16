@@ -76,8 +76,9 @@ _AUDIT_STATUS = {
     "audit_2fa_failed": "failed",
     "audit_2fa_required": "informational",
 }
-_PAST = {"add": "added", "remove": "removed", "update": "updated", "tag_dropped": "marked dropped", "rewatch_reset": "marked unwatched"}
-_VERB = {"tag_dropped": "mark dropped", "rewatch_reset": "mark unwatched"}
+_PAST = {"add": "added", "remove": "removed", "update": "updated", "tag_dropped": "marked dropped", "rewatch_reset": "marked unwatched",
+         "hide_continue_watching": "hidden from Continue Watching"}
+_VERB = {"tag_dropped": "mark dropped", "rewatch_reset": "mark unwatched", "hide_continue_watching": "hide from Continue Watching"}
 _SEVERITY = {
     "completed": "success", "resolved": "success", "rated": "success",
     "warning": "warning", "blackboxed": "warning", "unresolved": "warning",
@@ -745,20 +746,17 @@ def correlate(*, conn: sqlite3.Connection | None = None, reset: bool = False) ->
 
 _RUN_SUMMARY_META = "run_route_summary_version"
 _RUN_SUMMARY_VERSION = 2
+_HIDE_SUMMARY_META = "continue_watching_hide_summary_version"
+_HIDE_SUMMARY_VERSION = 1
 
 
-@_serialized
-def refresh_run_summaries(*, conn: sqlite3.Connection | None = None) -> int:
-    c = conn or get_conn()
-    if c is None:
-        return 0
+def _refresh_summaries(c: sqlite3.Connection, meta: str, version: int, where: str, label: str) -> int:
     try:
-        done = c.execute("SELECT value_int FROM local_meta WHERE key=?", (_RUN_SUMMARY_META,)).fetchone()
-        if done is not None and int(done[0] or 0) >= _RUN_SUMMARY_VERSION:
+        done = c.execute("SELECT value_int FROM local_meta WHERE key=?", (meta,)).fetchone()
+        if done is not None and int(done[0] or 0) >= version:
             return 0
         gids = [int(r[0]) for r in c.execute(
-            "SELECT DISTINCT group_id FROM events WHERE group_id IS NOT NULL "
-            "AND event_type IN ('sync_run_started','sync_run_finished')"
+            f"SELECT DISTINCT group_id FROM events WHERE group_id IS NOT NULL AND {where}"
         ).fetchall()]
         now = int(time.time())
         for i in range(0, len(gids), 200):
@@ -770,12 +768,30 @@ def refresh_run_summaries(*, conn: sqlite3.Connection | None = None) -> int:
                 "INSERT INTO local_meta(key,value_int,value_type,updated_at) VALUES(?,?,'int',?) "
                 "ON CONFLICT(key) DO UPDATE SET value_int=excluded.value_int,value_type=excluded.value_type,"
                 "updated_at=excluded.updated_at",
-                (_RUN_SUMMARY_META, _RUN_SUMMARY_VERSION, now),
+                (meta, version, now),
             )
         return len(gids)
     except Exception as exc:
-        _LOG.warning("run summary refresh failed: %s", exc, exc_info=True)
+        _LOG.warning("%s refresh failed: %s", label, exc, exc_info=True)
         return 0
+
+
+@_serialized
+def refresh_run_summaries(*, conn: sqlite3.Connection | None = None) -> int:
+    c = conn or get_conn()
+    if c is None:
+        return 0
+    return _refresh_summaries(c, _RUN_SUMMARY_META, _RUN_SUMMARY_VERSION,
+                              "event_type IN ('sync_run_started','sync_run_finished')", "run summary")
+
+
+@_serialized
+def refresh_hide_summaries(*, conn: sqlite3.Connection | None = None) -> int:
+    c = conn or get_conn()
+    if c is None:
+        return 0
+    return _refresh_summaries(c, _HIDE_SUMMARY_META, _HIDE_SUMMARY_VERSION,
+                              "operation='hide_continue_watching'", "continue watching summary")
 
 
 @_serialized
