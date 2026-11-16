@@ -31,6 +31,7 @@
     tautulli: "crosswatch/settings/connections/others/tautulli",
     tracearr: "crosswatch/settings/connections/others/tracearr",
     "tmdb-metadata": "crosswatch/settings/connections/metadata/tmdb-metadata",
+    "fanart-metadata": "crosswatch/settings/connections/metadata/fanart-tv",
     "anime-mapping": "crosswatch/settings/connections/metadata/anime-id-mapping",
     "connection-instances": "crosswatch/settings/connections/instances",
     "scrobbler-watcher": "crosswatch/settings/scrobbler/watcher",

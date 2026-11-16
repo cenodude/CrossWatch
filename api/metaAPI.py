@@ -27,7 +27,7 @@ from fastapi.responses import (
 )
 from pydantic import BaseModel
 
-from cw_platform.config_base import CONFIG, load_config
+from cw_platform.config_base import CONFIG, load_config, save_config
 from cw_platform.metadata_cache import (
     merge_metadata_cache_payload,
     metadata_cache_path,
@@ -734,6 +734,9 @@ def clear_memory_caches() -> None:
     clear = getattr(_tmdb_provider(), "clear_cache", None)
     if callable(clear):
         clear()
+    clear_fanart = getattr(_fanart_provider(), "clear_cache", None)
+    if callable(clear_fanart):
+        clear_fanart()
     from providers.metadata._meta_TMDB import clear_all_caches
 
     clear_all_caches()
@@ -1175,6 +1178,7 @@ def api_tmdb_art(
     locale: str | None = Query(None),
     title: str | None = Query(None),
     year: int | None = Query(None),
+    av: str | None = Query(None, max_length=16),
 ):
     t = typ.lower()
     if t == "show":
@@ -1204,6 +1208,13 @@ def api_tmdb_art(
         )
 
         art_kind = str(kind or "poster").strip().lower()
+        stale_av = isinstance(av, str) and av != _fanart_art_version()
+        fanart_mode = _fanart_mode(art_kind)
+        fanart_cache: str | None = None
+        if fanart_mode == "fanart":
+            fanart_response, fanart_cache = _fanart_tmdb_override(t, tmdb_id, art_kind, eff_locale, title=title, year=year)
+            if fanart_response is not None:
+                return _no_store_if(fanart_response, stale_av)
         if art_kind in {"still", "episode_still"}:
             if t != "tv" or season is None or episode is None:
                 return PlainTextResponse("Episode still requires tv, season and episode", status_code=400)
@@ -1228,6 +1239,10 @@ def api_tmdb_art(
                 year=year,
             )
         safe_path = _safe_tmdb_art_response_path(base, local_path)
+        if fanart_mode == "tmdb_first" and _is_placeholder_art(safe_path):
+            fanart_response, fanart_cache = _fanart_tmdb_override(t, tmdb_id, art_kind, eff_locale, title=title, year=year)
+            if fanart_response is not None:
+                return _no_store_if(fanart_response, stale_av)
         if art_kind == "logo" and _is_placeholder_art(safe_path):
             return PlainTextResponse("Logo not available", status_code=404, headers={"Cache-Control": "public, max-age=3600"})
         if art_kind == "backdrop" and _is_placeholder_art(safe_path):
@@ -1236,7 +1251,7 @@ def api_tmdb_art(
             safe_path,
             media_type=mime,
             headers={
-                "Cache-Control": "no-store" if _is_placeholder_art(safe_path) else "public, max-age=31536000, immutable"
+                "Cache-Control": "no-store" if stale_av or _is_placeholder_art(safe_path) else (fanart_cache or "public, max-age=31536000, immutable")
             },
         )
     except Exception as e:
@@ -1286,6 +1301,241 @@ def api_tmdb_image(
     except Exception:
         LOG.warning("TMDb image fetch failed")
         return PlainTextResponse("Image not available", status_code=404)
+
+
+_FANART_KINDS = {"disc", "logo", "clearart", "background", "poster", "banner", "thumb", "character", "season_poster", "season_thumb", "season_banner"}
+_FANART_DISC_TYPES = {"bluray", "dvd", "3d"}
+_FANART_URL_RE = re.compile(r"^https://assets\.fanart\.tv/fanart/[A-Za-z0-9/_.-]+\.(png|jpg|jpeg)$", re.IGNORECASE)
+_FANART_MASKS = {"••••••••", "********", "**********"}
+_FANART_TMDB_KINDS = {"logo": ("logos", "logo", False), "backdrop": ("backgrounds", "background", True)}
+_FANART_CACHE_DAY = "public, max-age=86400"
+_FANART_ART_MODES = {"fanart", "tmdb_first", "tmdb"}
+_FANART_CACHE_UNSURE = "public, max-age=3600"
+
+
+def _fanart_provider() -> Any | None:
+    _METADATA, _, _ = _env()
+    providers = getattr(_METADATA, "providers", None)
+    if isinstance(providers, dict):
+        prov = providers.get("FANART")
+        if prov is not None and hasattr(prov, "pick"):
+            return prov
+    try:
+        from providers.metadata._meta_FANART import FanartProvider
+
+        return FanartProvider(load_config, save_config)
+    except Exception:
+        return None
+
+
+def _fanart_art_mode(value: Any) -> str:
+    from providers.metadata._meta_FANART import art_mode
+
+    return art_mode(value)
+
+
+def _fanart_block(cfg: dict[str, Any]) -> dict[str, Any]:
+    block = cfg.get("fanart")
+    return dict(block) if isinstance(block, dict) else {}
+
+
+def _fanart_masked(value: str) -> bool:
+    s = str(value or "").strip()
+    return s in _FANART_MASKS or (len(s) >= 3 and all(ch in {"*", "•"} for ch in s))
+
+
+def _tmdb_tvdb_lookup(tmdb_id: int) -> str:
+    api_key = str(((load_config() or {}).get("tmdb") or {}).get("api_key") or "").strip()
+    if not api_key:
+        raise RuntimeError("TMDb key missing")
+    data = _tmdb_get_json(f"https://api.themoviedb.org/3/tv/{tmdb_id}/external_ids", {"api_key": api_key}, timeout=8)
+    if not isinstance(data, dict):
+        raise RuntimeError("TMDb external ids unavailable")
+    return str(data.get("tvdb_id") or "")
+
+
+def _fanart_ids(prov: Any, t: str, tmdb_id: int, *, tvdb: int | None = None, imdb: str | None = None) -> tuple[dict[str, str], bool]:
+    if t == "movie":
+        ids = {"tmdb": str(tmdb_id)}
+        if imdb:
+            ids["imdb"] = imdb
+        return ids, True
+    if tvdb:
+        return {"tvdb": str(tvdb)}, True
+    tvdb_id, certain = prov.tvdb_for_tmdb(tmdb_id, lambda: _tmdb_tvdb_lookup(tmdb_id))
+    return ({"tvdb": tvdb_id} if tvdb_id else {}), certain
+
+
+def _fanart_file(row: dict[str, Any] | None) -> tuple[str, str] | None:
+    url = str((row or {}).get("url") or "")
+    match = _FANART_URL_RE.fullmatch(url)
+    if not match:
+        return None
+    _, base, _ = _env()
+    cache_root = _cache_subdir(base, "art")
+    extension = ".png" if match.group(1).lower() == "png" else ".jpg"
+    stem = _cache_base_path(cache_root, _safe_cache_digest_stem("fanart", url))
+    dest = _ensure_under_root(cache_root, stem.with_suffix(extension))
+    local_path, mime = _cache_download(url, dest)
+    return _safe_tmdb_art_response_path(base, local_path), mime
+
+
+def _fanart_art_version() -> str:
+    try:
+        from providers.metadata._meta_FANART import art_version
+
+        return art_version(load_config() or {})
+    except Exception:
+        return "t"
+
+
+def _no_store_if(response: FileResponse, stale: bool) -> FileResponse:
+    if stale:
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+def _fanart_mode(art_kind: str) -> str:
+    spec = _FANART_TMDB_KINDS.get(art_kind)
+    prov = _fanart_provider() if spec else None
+    if not spec or prov is None:
+        return "tmdb"
+    try:
+        return str(prov.mode(spec[0]))
+    except Exception:
+        return "tmdb"
+
+
+def _fanart_tmdb_override(
+    t: str,
+    tmdb_id: int,
+    art_kind: str,
+    locale: str | None,
+    *,
+    title: str | None = None,
+    year: int | None = None,
+) -> tuple[FileResponse | None, str | None]:
+    spec = _FANART_TMDB_KINDS.get(art_kind)
+    if not spec:
+        return None, None
+    pref, fanart_kind, textless = spec
+    prov = _fanart_provider()
+    if prov is None or not prov.prefers(pref):
+        return None, None
+    try:
+        requested = "movie" if t == "movie" else "show"
+        resolved = _resolve_entity(requested, tmdb_id, title=title, year=year, locale=locale)
+        entity = "movie" if resolved == "movie" else "tv"
+        ids, ids_certain = _fanart_ids(prov, entity, tmdb_id)
+        if not ids:
+            return None, _FANART_CACHE_DAY if ids_certain else _FANART_CACHE_UNSURE
+        data, certain = prov.lookup(entity, ids)
+        cache = _FANART_CACHE_DAY if ids_certain and certain else _FANART_CACHE_UNSURE
+        row = prov.pick_from(entity, data, fanart_kind, lang=_lang_from_locale(locale) or "", textless=textless)
+        found = _fanart_file(row)
+        if found:
+            path, mime = found
+            return FileResponse(path, media_type=mime, headers={"Cache-Control": cache}), None
+        return None, cache
+    except Exception:
+        LOG.warning("fanart.tv art fetch failed, using TMDb")
+        return None, _FANART_CACHE_UNSURE
+
+
+@router.get("/art/fanart/{typ}/{tmdb_id}", tags=["metadata"])
+def api_fanart_art(
+    typ: str = FPath(...),
+    tmdb_id: int = FPath(..., ge=1),
+    kind: str = Query("logo"),
+    disc: str | None = Query(None),
+    season: int | None = Query(None, ge=0),
+    tvdb: int | None = Query(None, ge=1),
+    imdb: str | None = Query(None, max_length=16),
+    locale: str | None = Query(None),
+):
+    t = str(typ or "").strip().lower()
+    t = "tv" if t in {"tv", "show"} else t
+    art_kind = str(kind or "").strip().lower()
+    disc_type = str(disc or "").strip().lower()
+    if t not in {"movie", "tv"} or art_kind not in _FANART_KINDS or (disc_type and disc_type not in _FANART_DISC_TYPES):
+        return PlainTextResponse("Bad request", status_code=400)
+    missing = {"Cache-Control": "public, max-age=3600"}
+    prov = _fanart_provider()
+    if prov is None or not prov.configured():
+        return PlainTextResponse("fanart.tv is off", status_code=404, headers={"Cache-Control": "no-store"})
+    try:
+        ids, ids_certain = _fanart_ids(prov, t, tmdb_id, tvdb=tvdb, imdb=imdb)
+        if not ids:
+            return PlainTextResponse("Art not available", status_code=404, headers=missing if ids_certain else {"Cache-Control": "no-store"})
+        lang = _lang_from_locale(locale or _cfg_ui_locale()) or ""
+        data, certain = prov.lookup(t, ids)
+        sure = ids_certain and certain
+        row = prov.pick_from(t, data, art_kind, lang=lang, disc_type=disc_type, season=season, textless=art_kind == "background")
+        found = _fanart_file(row)
+        if not found:
+            return PlainTextResponse("Art not available", status_code=404, headers=missing if sure else {"Cache-Control": "no-store"})
+        path, mime = found
+        return FileResponse(path, media_type=mime, headers={"Cache-Control": _FANART_CACHE_DAY if sure else _FANART_CACHE_UNSURE})
+    except Exception:
+        LOG.warning("fanart.tv art fetch failed")
+        return PlainTextResponse("Art not available", status_code=404, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/api/fanart/save", tags=["metadata"])
+def api_fanart_save(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        cfg = load_config() or {}
+        block = _fanart_block(cfg)
+        key = str((payload or {}).get("api_key") or "").strip()
+        personal = str((payload or {}).get("personal_api_key") or "").strip()
+        if _fanart_masked(key):
+            key = str(block.get("api_key") or "").strip()
+        if _fanart_masked(personal):
+            personal = str(block.get("personal_api_key") or "").strip()
+        prov = _fanart_provider()
+        if prov is None:
+            return {"ok": False, "error": "fanart.tv provider unavailable"}
+        ok, error = prov.check_key(key, personal)
+        if not ok:
+            return {"ok": False, "error": error}
+        cfg["fanart"] = {**block, "enabled": True, "api_key": key, "personal_api_key": personal}
+        save_config(cfg)
+        return {"ok": True}
+    except Exception:
+        LOG.warning("fanart.tv key save failed")
+        return {"ok": False, "error": "fanart.tv key save failed"}
+
+
+@router.post("/api/fanart/settings", tags=["metadata"])
+def api_fanart_settings(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    try:
+        cfg = load_config() or {}
+        block = _fanart_block(cfg)
+        if isinstance((payload or {}).get("enabled"), bool):
+            block["enabled"] = payload["enabled"]
+        for name in ("logos", "backgrounds"):
+            value = (payload or {}).get(name)
+            if isinstance(value, bool) or (isinstance(value, str) and value in _FANART_ART_MODES):
+                block[name] = _fanart_art_mode(value)
+        cfg["fanart"] = block
+        save_config(cfg)
+        return {"ok": True, "enabled": block.get("enabled") is True, "logos": _fanart_art_mode(block.get("logos")), "backgrounds": _fanart_art_mode(block.get("backgrounds"))}
+    except Exception:
+        LOG.warning("fanart.tv settings save failed")
+        return {"ok": False, "error": "fanart.tv settings save failed"}
+
+
+@router.post("/api/fanart/disconnect", tags=["metadata"])
+def api_fanart_disconnect() -> dict[str, Any]:
+    try:
+        cfg = load_config() or {}
+        block = _fanart_block(cfg)
+        cfg["fanart"] = {**block, "enabled": False, "api_key": "", "personal_api_key": ""}
+        save_config(cfg)
+        return {"ok": True}
+    except Exception:
+        LOG.warning("fanart.tv key delete failed")
+        return {"ok": False, "error": "fanart.tv key delete failed"}
 
 
 @router.get("/api/metadata/tmdb/season", tags=["metadata"])
