@@ -21,6 +21,7 @@ ROUTE_SINGLE_ACCOUNT_PROVIDERS = {"stremio"}
 ROUTE_PROFILE_NAME_PROVIDERS = {"kodi"}
 ROUTE_SINKS = {"myanimelist", "kitsu", "plex", "jellyfin", "emby", "kodi", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "bingebase", "flicklist", "wetrakr", "anilist", "scrob", "silo", "tofa"}
 ROUTE_MEDIA_SINKS = {"plex", "jellyfin", "emby", "kodi"}
+LIVE_TV_FILTER_PROVIDERS = {"plex", "jellyfin", "emby"}
 ROUTE_RATING_SINKS = {"kitsu", "myanimelist", "trakt", "simkl", "mdblist", "crosswatch", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob", "silo"}
 ROUTE_OPTION_STATES = {"inherit", "on", "off"}
 ROUTE_RATINGS_MODES = {"off", "custom"}
@@ -292,6 +293,8 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
     filters = r.get("filters")
     if not isinstance(filters, dict):
         filters = {}
+    if prov in LIVE_TV_FILTER_PROVIDERS and sink and "ignore_live_tv_dvr" not in filters:
+        filters = {**filters, "ignore_live_tv_dvr": True}
     raw_options = r.get("options")
     options = normalize_route_options(raw_options)
     if prov == "plex" and not route_options_has_watch_key(raw_options, "unresolved_user_fallback"):

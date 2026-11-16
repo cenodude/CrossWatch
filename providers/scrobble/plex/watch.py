@@ -1877,7 +1877,7 @@ class WatchService:
             server_uuid=server_uuid,
             session_key=f"mark:{rk}:{attrs.get('lastViewedAt') or ''}",
             raw={
-                "Metadata": {"ratingKey": str(rk), "librarySectionID": section},
+                "Metadata": {"ratingKey": str(rk), "librarySectionID": section, "guid": attrs.get("guid") or ""},
                 "librarySectionID": section,
                 "_cw_manual_mark": True,
                 "_cw_preserve_stop": True,
