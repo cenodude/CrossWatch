@@ -337,7 +337,7 @@
   function markCurrentPage() {
     const onProfile = window.location.pathname === '/profile';
     const tab = document.querySelector('[data-profile-tab].active')?.dataset.profileTab || window.location.hash.slice(1).split('?')[0] || 'overview';
-    const current = onProfile && ['account','security','preferences'].includes(tab) ? (tab === 'preferences' ? 'preferences' : 'account') : '';
+    const current = onProfile && ['account','security','preferences'].includes(tab) ? 'account' : '';
     menu()?.querySelectorAll('[data-cw-profile-menu-action]').forEach(item => {
       if (item.dataset.cwProfileMenuAction === current) item.setAttribute('aria-current', 'page');
       else item.removeAttribute('aria-current');

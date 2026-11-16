@@ -72,8 +72,8 @@ def test_playback_progress_frontend_is_readonly_for_managed_users():
     js = (ROOT / "assets" / "js" / "profile-page.js").read_text(encoding="utf-8")
 
     assert 'const isManaged = () => doc?.dataset?.cwRole === "user";' in js
-    assert 'const canAct = () => !isManaged() || doc?.dataset?.cwPermWrite === "on";' in js
-    assert "if (!canAct() || !items.length) return;" in js
+    assert 'const canAct = () => !viewingAs() && (!isManaged() || doc?.dataset?.cwPermWrite === "on");' in js
+    assert "if (!canAct() || !items.length || state.pendingAction) return;" in js
 
 
 def test_playback_progress_provider_instances_respect_user_filter():
@@ -290,6 +290,76 @@ def test_same_title_with_different_profile_progress_does_not_group():
     profile = _record(instance_id="P01", progress_percent=22.4)
 
     assert set(_record_group_keys(default)).isdisjoint(_record_group_keys(profile))
+
+
+def test_profile_grouping_merges_nondefault_instances_and_preserves_targets():
+    records = [_record(), _record(provider="trakt", instance_id="P01", instance_label="My Trakt", remote_id="t1")]
+    scopes = playback_service._grouping_scopes({}, records, {"PLEX": ["default"], "TRAKT": ["P01"]})
+    rows = _group_records(records, scopes)
+    assert len(rows) == 1
+    assert {(row["provider"], row["instance_id"]) for row in rows[0]["records"]} == {("plex", "default"), ("trakt", "P01")}
+    assert any(row["instance_label"] == "My Trakt" for row in rows[0]["records"])
+    records[1]["progress_percent"] = 45
+    assert len(_group_records(records, scopes)) == 2
+
+
+def test_all_profiles_grouping_keeps_people_and_shared_instances_separate(monkeypatch):
+    profiles = [
+        {"id": "ann", "instances": {"PLEX": ["default"], "TRAKT": ["P01"], "SIMKL": ["shared"]}},
+        {"id": "bob", "instances": {"PLEX": ["P02"], "SIMKL": ["shared"]}},
+    ]
+    monkeypatch.setattr(playback_service, "list_user_profiles", lambda cfg: profiles)
+    records = [_record(), _record(provider="trakt", instance_id="P01"), _record(instance_id="P02"), _record(provider="simkl", instance_id="shared")]
+    scopes = playback_service._grouping_scopes({}, records, None)
+    rows = _group_records(records, scopes)
+    assert sorted(row.get("provider_count", 1) for row in rows) == [1, 1, 2]
+    for record in records:
+        record["live_session_key"] = "shared-session"
+    assert len(_group_records(records, scopes)) == 3
+
+
+def test_unassigned_nondefault_instances_group_but_distinct_episodes_do_not():
+    records = [_record(instance_id="P01", media_type="episode", canonical_key="tmdb:123#s01e01", season=1, episode=1), _record(provider="trakt", instance_id="P02", media_type="episode", canonical_key="tmdb:123#s01e01", season=1, episode=1)]
+    scopes = playback_service._grouping_scopes({}, records, None)
+    assert len(_group_records(records, scopes)) == 1
+    records[1]["episode"] = 2
+    records[1]["canonical_key"] = "tmdb:123#s01e02"
+    assert len(_group_records(records, scopes)) == 2
+
+
+def test_playback_grouping_settings_preserve_other_profile_exclusions(monkeypatch):
+    cfg = {"playback_progress": {"disabled_profiles": ["plex:other", "trakt:P01"]}}
+    service = PlaybackProgressService()
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+    monkeypatch.setattr(playback_service, "save_config", lambda value: None)
+    monkeypatch.setattr(service, "provider_instances", lambda cfg, user_filter=None: [{"provider": "trakt", "instance_id": "P01"}])
+    monkeypatch.setattr(service, "settings", lambda cfg, user_filter=None: {"grouping": playback_service._grouping_mode(cfg)})
+    result = service.save_settings({"grouping": "separate", "profiles": [{"provider": "trakt", "instance_id": "P01", "included": True}]}, {"TRAKT": ["P01"]})
+    assert result["settings"]["grouping"] == "separate"
+    assert cfg["playback_progress"]["disabled_profiles"] == ["plex:other"]
+    assert service.save_settings({"grouping": "invalid"})["ok"] is False
+    assert playback_service._grouping_mode({}) == "automatic"
+
+
+def test_items_use_grouping_preference_and_keep_excluded_instances_out(monkeypatch):
+    from services.playback_progress.models import PlaybackListResult, PlaybackRecord
+
+    cfg = {"playback_progress": {}}
+    records = [_record(), _record(provider="trakt", instance_id="P01"), _record(provider="simkl", instance_id="P02")]
+    service = PlaybackProgressService()
+    monkeypatch.setattr(playback_service, "load_config", lambda: cfg)
+    monkeypatch.setattr(playback_service, "_overlay_live_streams", lambda *args, **kwargs: None)
+    monkeypatch.setattr(service, "provider_instances", lambda *args, **kwargs: records)
+    monkeypatch.setattr(service, "capabilities", lambda *args, **kwargs: [PlaybackCapabilities(provider=r["provider"], provider_label=r["provider"], instance_id=r["instance_id"], instance_label=r["instance_label"], configured=True, read=True, included=r["provider"] != "simkl") for r in records])
+    monkeypatch.setattr(service, "_list_one", lambda cfg, spec, force: PlaybackListResult(ok=True, provider=spec["provider"], instance_id=spec["instance_id"], items=[PlaybackRecord(**spec)]))
+    grouped = service.items()
+    assert grouped["total"] == 1
+    assert {r["provider"] for r in grouped["items"][0]["records"]} == {"plex", "trakt"}
+    cfg["playback_progress"]["grouping"] = "separate"
+    separate = service.items()
+    assert separate["total"] == 2
+    assert {r["provider"] for r in separate["items"]} == {"plex", "trakt"}
+    assert separate["summary"]["total"] == 2
 
 
 def test_same_episode_profiles_share_only_artwork_metadata():
@@ -701,14 +771,6 @@ def test_playback_progress_uses_crosswatch_profiles(monkeypatch, tmp_path):
     assert all(call["root"].replace("\\", "/") == expected_profile_root for call in cw_ops.removed + cw_ops.added)
     assert cw_ops.added[0]["items"][0]["watched_at"]
     assert cw_ops.added[1]["items"][0]["progress_ms"] == 150000
-
-
-def test_playback_progress_settings_use_short_crosswatch_profile_ids() -> None:
-    js = (ROOT / "assets" / "js" / "profile-page.js").read_text(encoding="utf-8")
-
-    assert 'String(p.provider || "").toLowerCase() === "crosswatch"' in js
-    assert "/^CW-P\\d+$/i.test(id)" in js
-    assert "return id.toUpperCase()" in js
 
 
 class _UnreadPlaybackAdapter(PlaybackProgressAdapter):
@@ -1434,14 +1496,6 @@ def test_user_profile_filter_narrows_the_provider_instances() -> None:
     assert ("plex", "PLEX-P01") in unscoped
     assert ("scrob", "SCROB-P01") in unscoped
     assert scoped == {("plex", "PLEX-P01")}
-
-
-def test_settings_modal_shows_profile_names_without_the_provider() -> None:
-    js = Path("assets/js/profile-page.js").read_text("utf-8")
-    block = js.split("const settingsLabel = (p) =>", 1)[1].split("const providerOrder", 1)[0]
-
-    assert "return profileLabel(p);" in block
-    assert 'if (id === "default") return "Default";' in block
 
 
 def test_show_tmdb_filter_matches_episodes_by_their_show_ids():

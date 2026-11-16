@@ -17,7 +17,7 @@ from cw_platform.config_base import load_config, save_config
 from cw_platform.profile_preferences import display_timezone
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.orchestrator._progress_completion import progress_caps_from_ops, progress_write_completion_policy
-from cw_platform.provider_instances import build_provider_config_view, get_instance_block, get_provider_block, list_instance_ids, normalize_instance_id
+from cw_platform.provider_instances import build_provider_config_view, get_instance_block, get_provider_block, list_instance_ids, normalize_instance_id, list_user_profiles
 
 from .adapters.base import PlaybackProgressAdapter, configured_label
 from .adapters.crosswatch import CrossWatchPlaybackAdapter
@@ -345,12 +345,12 @@ def _overlay_live_streams(
             _apply_live_overlay(item, sorted(candidates, key=_live_rank)[0])
 
 
-def _record_group_keys(item: Mapping[str, Any]) -> list[str]:
+def _record_group_keys(item: Mapping[str, Any], scope: str | None = None) -> list[str]:
     keys: list[str] = []
     if item.get("live_session_key"):
-        keys.append(f"live:{item['live_session_key']}")
+        keys.append(f"live:{item['live_session_key']}:{scope or ''}")
     key = str(item.get("canonical_key") or "").strip().lower()
-    profile = _group_text(normalize_instance_id(item.get("instance_id")))
+    profile = scope if scope is not None else _group_text(normalize_instance_id(item.get("instance_id")))
     if key and not key.startswith("unknown:"):
         keys.append(f"key:{key}:profile:{profile}")
     media_type = _group_text(item.get("media_type"))
@@ -688,11 +688,12 @@ def _combine_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     return primary
 
 
-def _group_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _group_records(records: list[dict[str, Any]], scopes: Mapping[str, str] | None = None) -> list[dict[str, Any]]:
     identity_groups: dict[str, list[dict[str, Any]]] = {}
     aliases: dict[str, str] = {}
     for item in records:
-        keys = _record_group_keys(item)
+        scope = scopes.get(_profile_key(item.get("provider"), item.get("instance_id")), "unassigned") if scopes is not None else None
+        keys = _record_group_keys(item, scope)
         group_key = next((aliases[key] for key in keys if key in aliases), keys[0] if keys else "fallback:unknown")
         identity_groups.setdefault(group_key, []).append(item)
         for key in keys:
@@ -702,6 +703,23 @@ def _group_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for identity_group in identity_groups.values()
         for progress_group in _split_progress_groups(identity_group)
     ]
+
+
+def _grouping_scopes(cfg: Mapping[str, Any], specs: list[dict[str, str]], user_filter: Mapping[str, Any] | None) -> dict[str, str]:
+    memberships: dict[str, list[str]] = {}
+    if not user_filter:
+        for profile in list_user_profiles(cfg):
+            for provider, instances in (profile.get("instances") or {}).items():
+                for instance in instances:
+                    memberships.setdefault(_profile_key(provider, instance), []).append(str(profile["id"]))
+    return {
+        _profile_key(spec["provider"], spec["instance_id"]): "selected" if user_filter else json.dumps(sorted(memberships.get(_profile_key(spec["provider"], spec["instance_id"]), [])))
+        for spec in specs
+    }
+
+
+def _grouping_mode(cfg: Mapping[str, Any]) -> str:
+    return "separate" if _playback_settings(cfg).get("grouping") == "separate" else "automatic"
 
 
 def _paused_month(item: Mapping[str, Any], display_tz: str = "UTC") -> str:
@@ -1254,7 +1272,9 @@ class PlaybackProgressService:
         _share_artwork_metadata(items)
         _overlay_live_streams(items, cfg=cfg, user_filter=user_filter)
         summary_rows = [dict(item) for item in items]
-        summary = _playback_summary(summary_rows if provider_filter else _group_records(summary_rows))
+        grouping = not provider_filter and _grouping_mode(cfg) == "automatic"
+        scopes = _grouping_scopes(cfg, readable_specs, user_filter)
+        summary = _playback_summary(_group_records(summary_rows, scopes) if grouping else summary_rows)
         filtered = self._apply_filters(items, media_type=media_type, progress_min=progress_min, progress_max=progress_max, age=age, rating_min=rating_min, search=search)
         wanted_tmdb = str(tmdb or "").strip()
         if wanted_tmdb:
@@ -1262,8 +1282,8 @@ class PlaybackProgressService:
         wanted_show = str(show_tmdb or "").strip()
         if wanted_show:
             filtered = [item for item in filtered if _matches_show_tmdb(item, wanted_show)]
-        if not provider_filter:
-            filtered = _group_records(filtered)
+        if grouping:
+            filtered = _group_records(filtered, scopes)
         sorted_items = self._sort(filtered, sort)
         page = max(1, int(page or 1))
         page_size = max(1, min(250, int(page_size or 50)))
@@ -1321,15 +1341,18 @@ class PlaybackProgressService:
             )
         return {
             "provider_timeout_seconds": _provider_timeout_seconds(config),
+            "grouping": _grouping_mode(config),
             "disabled_profiles": sorted(disabled),
             "profiles": profiles,
             "refreshed_at": utc_now_iso(),
         }
 
-    def save_settings(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+    def save_settings(self, payload: Mapping[str, Any], user_filter: Mapping[str, Any] | None = None) -> dict[str, Any]:
         cfg = load_config()
-        known = {_profile_key(spec["provider"], spec["instance_id"]) for spec in self.provider_instances(cfg)}
-        disabled: set[str] = set()
+        if payload.get("grouping", "automatic") not in ("automatic", "separate"):
+            return {"ok": False, "message": "Choose Automatic or Separate instances."}
+        known = {_profile_key(spec["provider"], spec["instance_id"]) for spec in self.provider_instances(cfg, user_filter=user_filter)}
+        disabled = _disabled_profiles(cfg) - known
         profiles_value = payload.get("profiles")
         if isinstance(profiles_value, list):
             for item in profiles_value:
@@ -1341,14 +1364,15 @@ class PlaybackProgressService:
         else:
             raw = payload.get("disabled_profiles")
             if isinstance(raw, list):
-                disabled = {_profile_key(*(str(item).split(":", 1) if ":" in str(item) else (item, "default"))) for item in raw}
-                disabled &= known
+                disabled |= {_profile_key(*(str(item).split(":", 1) if ":" in str(item) else (item, "default"))) for item in raw} & known
 
         block = cfg.setdefault("playback_progress", {})
         if not isinstance(block, dict):
             block = {}
             cfg["playback_progress"] = block
         block["disabled_profiles"] = sorted(disabled)
+        if "grouping" in payload:
+            block["grouping"] = payload["grouping"]
         if "provider_timeout_seconds" in payload:
             try:
                 block["provider_timeout_seconds"] = _provider_timeout_seconds({"playback_progress": {"provider_timeout_seconds": payload.get("provider_timeout_seconds")}})
@@ -1361,7 +1385,7 @@ class PlaybackProgressService:
             f"settings saved disabled_profiles={len(disabled)} "
             f"timeout_s={_provider_timeout_seconds(cfg):g}"
         )
-        return {"ok": True, "settings": self.settings(cfg)}
+        return {"ok": True, "settings": self.settings(cfg, user_filter=user_filter)}
 
     def _apply_filters(self, items: list[dict[str, Any]], **filters: Any) -> list[dict[str, Any]]:
         media_type = str(filters.get("media_type") or "").strip().lower()

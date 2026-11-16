@@ -9,6 +9,12 @@ html[data-cw-theme=flat-light]{--cw-disabled-opacity:1;--cw-content-opacity:1;--
 
 /* Shared page components. Original keeps its depth; Flat uses solid surfaces. */
 :root {
+  --cw-feature-watchlist-rgb: 0,255,163;
+  --cw-feature-ratings-rgb: 255,196,0;
+  --cw-feature-history-rgb: 45,226,255;
+  --cw-feature-progress-rgb: 167,139,250;
+  --cw-feature-playlists-rgb: 255,0,229;
+  --cw-feature-collection-rgb: 255,127,80;
   --cw-selection-accent: #a394c8;
   --cw-selection-border: #8573af;
   --cw-selection-control-bg: var(--cw-theme-input);
@@ -25,6 +31,7 @@ html[data-cw-theme=flat-light]{--cw-disabled-opacity:1;--cw-content-opacity:1;--
   --cw-mobile-nav-selected: color-mix(in srgb,var(--cw-theme-accent) 12%,var(--cw-theme-surface));
   --cw-mobile-nav-accent: var(--cw-theme-accent);
 }
+html[data-cw-theme="flat-light"]{--cw-feature-watchlist-rgb:4,138,92;--cw-feature-ratings-rgb:157,105,0;--cw-feature-history-rgb:8,127,158;--cw-feature-progress-rgb:109,77,246;--cw-feature-playlists-rgb:179,0,160;--cw-feature-collection-rgb:178,73,30}
 :root {
   --cw-page-header-bg: radial-gradient(820px 250px at 100% 0%, rgba(112,96,245,.1), transparent 68%), linear-gradient(100deg, #111821, #151d31 48%, #181a38);
   --cw-page-panel-bg: linear-gradient(180deg, rgba(255,255,255,.025), transparent), var(--cw-theme-surface);

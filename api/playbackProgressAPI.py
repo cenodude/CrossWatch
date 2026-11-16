@@ -43,8 +43,8 @@ def api_playback_progress_settings(request: Request = cast(Request, None), user_
 
 
 @router.post("/settings")
-def api_playback_progress_save_settings(payload: dict[str, Any] = Body(...)) -> JSONResponse:
-    result = get_service().save_settings(payload)
+def api_playback_progress_save_settings(payload: dict[str, Any] = Body(...), request: Request = cast(Request, None), user_profile: str = Query("")) -> JSONResponse:
+    result = get_service().save_settings(payload, user_filter=_playback_user_filter(request, user_profile))
     return JSONResponse(result, status_code=200 if result.get("ok") else 400)
 
 

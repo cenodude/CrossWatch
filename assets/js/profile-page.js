@@ -81,6 +81,7 @@
     }
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data?.ok === false) throw new Error(data?.error || (typeof data?.detail === "string" ? data.detail : "") || `HTTP ${res.status}`);
+    if (opt.method && opt.method !== "GET") invalidateLists();
     return data;
   };
   const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
@@ -102,6 +103,46 @@
   const writeCache = (key, payload) => {
     try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), payload })); } catch {}
   };
+  function invalidateLists() {
+    try { sessionStorage.removeItem("cw.hub.lists.v1"); sessionStorage.removeItem("cw.tracker.lists.v1"); } catch {}
+  }
+  const listPaints = new WeakMap();
+  function listSnapshot(url, paint, host) {
+    const scope = profileCacheKey("lists");
+    const key = `${scope}:${url}`;
+    const read = () => {
+      try {
+        const entries = JSON.parse(sessionStorage.getItem("cw.hub.lists.v1") || "[]");
+        return Array.isArray(entries) ? entries.filter(entry => entry?.data && Date.now() - entry.t < 120000).slice(-12) : [];
+      } catch { return []; }
+    };
+    const saved = read().find(entry => entry.key === key);
+    if (!saved && host) listPaints.delete(host);
+    const fingerprint = data => JSON.stringify({...data, refreshed_at:undefined});
+    let signature = saved ? fingerprint(saved.data) : "";
+    const render = data => {
+      const value = fingerprint(data);
+      const previous = host && listPaints.get(host);
+      if (!previous || previous.key !== key || previous.value !== value || previous.content !== host?.innerHTML) paint(data);
+      if (host) listPaints.set(host, {key, value, content:host.innerHTML});
+    };
+    if (saved) render(saved.data);
+    return {
+      restored: !!saved,
+      current: () => scope === profileCacheKey("lists"),
+      update(data) {
+        if (scope !== profileCacheKey("lists")) return;
+        const fresh = fingerprint(data);
+        if (fresh !== signature) render(data);
+        signature = fresh;
+        try {
+          const entries = read().filter(entry => entry.key !== key);
+          entries.push({key, t:Date.now(), data});
+          sessionStorage.setItem("cw.hub.lists.v1", JSON.stringify(entries.slice(-12)));
+        } catch {}
+      },
+    };
+  }
   const profileRouteSegment = (value) => {
     try {
       value = decodeURIComponent(String(value || ""));
@@ -2014,14 +2055,8 @@
   async function loadCollection({ reset = false, month = "", quiet = false } = {}) {
     if (collectionState.loading) return;
     if (reset) collectionState.page = 1;
-    collectionState.items = [];
     const skeletonGrid = $("#profile-collection-grid");
-    if (skeletonGrid && !quiet) {
-      skeletonGrid.dataset.view = collectionState.view === "list" ? "list" : "grid";
-      skeletonGrid.innerHTML = collectionState.view === "list" ? skeleton("collectionRow", 6) : skeleton("collection", 7);
-    }
     collectionState.loading = true;
-    lockCollectionPager();
     const params = new URLSearchParams({
       type: collectionState.type,
       provider: collectionState.provider,
@@ -2031,21 +2066,30 @@
       page_size: String(collectionState.pageSize),
     });
     if (month) params.set("month", month);
-    try {
-      const data = await api(`/api/profile/collection?${params.toString()}`);
-      if (Number(params.get("page_size")) !== collectionState.pageSize) return;
+    const url = `/api/profile/collection?${params.toString()}`;
+    const snapshot = listSnapshot(`${url}&layout=${collectionState.view}`, data => {
       collectionState.items = Array.isArray(data.items) ? data.items : [];
       collectionState.loaded = true;
       renderCollection(data);
       collectionState.months = Array.isArray(data.months) ? data.months : [];
       renderCollectionTimeline();
+    }, skeletonGrid);
+    if (skeletonGrid && !quiet && !snapshot.restored) {
+      skeletonGrid.dataset.view = collectionState.view === "list" ? "list" : "grid";
+      skeletonGrid.innerHTML = collectionState.view === "list" ? skeleton("collectionRow", 6) : skeleton("collection", 7);
+    }
+    if (!snapshot.restored) lockCollectionPager();
+    try {
+      const data = await api(url);
+      if (Number(params.get("page_size")) !== collectionState.pageSize || !snapshot.current()) return;
+      snapshot.update(data);
       if (month) {
         const grid = $("#profile-collection-grid");
         (grid?.querySelector(`[data-timeline-month="${month}"]`) || grid)?.scrollIntoView({ block: "start", behavior: "auto" });
       }
     } catch (e) {
       const grid = $("#profile-collection-grid");
-      if (grid) grid.innerHTML = empty("Collections could not be loaded.");
+      if (grid && !snapshot.restored && snapshot.current()) grid.innerHTML = empty("Collections could not be loaded.");
       renderCollectionPager({ total: collectionState.total, page: collectionState.page, page_size: collectionState.pageSize });
       toast(e.message || "Collections could not be loaded", true);
     } finally {
@@ -2090,7 +2134,7 @@
         if (!item) return;
         const card = action.closest("[data-collection-key]");
         const entries = [{ label: "View media details", icon: "info", run: () => card?.querySelector("[data-profile-poster-key]")?.click() }];
-        if (collectionSelectable() && window.CW?.ItemActions) entries.unshift({ label: "Manage providers", icon: "edit", run: () => window.CW.ItemActions.openMenu({ anchor: action, feature: "collection", item: { ...collectionSelectionEntry(item), tmdb: item.tmdb }, refs: { present: timelineEndpoints(collectionSelectionEntry(item).present), missing: [] }, fillMissing: true, scope: () => [card], onChanged: () => loadCollection({ quiet: true }) }) });
+        if (collectionSelectable() && window.CW?.ItemActions) entries.unshift({ label: "Manage providers", icon: "edit", run: () => window.CW.ItemActions.openMenu({ anchor: action, feature: "collection", item: { ...collectionSelectionEntry(item), tmdb: item.tmdb }, refs: { present: timelineEndpoints(collectionSelectionEntry(item).present), missing: [] }, fillMissing: true, scope: () => [card], onChanged: () => { invalidateLists(); return loadCollection({ quiet: true }); } }) });
         openCardActions(action, entries, {title:item.title});
         return;
       }
@@ -2957,7 +3001,7 @@
       const [provider, ...instance] = String(node.dataset.iaRef || "").split(":");
       const entry = { ...selectionEntry(item), tmdb: item.tmdb };
       const tmdb = String(item.ids?.tmdb || item.tmdb || "");
-      const reload = () => load({ quiet: true });
+      const reload = () => { invalidateLists(); return load({ quiet: true }); };
       const movie = String(item.type || "").toLowerCase() === "movie";
       void actions.openMenu({
         anchor: node.hidden ? node.closest(".cw-provider-strip")?.querySelector("[data-provider-overflow]") || node : node,
@@ -3372,17 +3416,10 @@
       if (reset) state.page = 1;
       const seq = ++state.seq;
       const host = q("list");
-      if (host && !quiet) {
-        timelineImages.release(host);
-        host.dataset.view = state.view;
-        host.innerHTML = `<div class="cw-hist-day-body">${state.view === "list" ? skeleton("collectionRow", 6) : skeleton("historyCard", 8)}</div>`;
-      }
-      q("pages")?.querySelectorAll("button").forEach((btn) => { btn.disabled = true; });
       const params = baseParams();
       if (month) params.set("month", month);
-      try {
-        const data = await api(`${cfg.endpoint}?${params.toString()}`);
-        if (seq !== state.seq) return;
+      const url = `${cfg.endpoint}?${params.toString()}`;
+      const snapshot = listSnapshot(`${url}&layout=${state.view}&timeline=${state.timeline}`, data => {
         state.items = Array.isArray(data.items) ? data.items : [];
         state.total = Number(data.total || 0);
         state.loaded = true;
@@ -3394,6 +3431,17 @@
         paintItems();
         state.months = Array.isArray(data.months) ? data.months : [];
         renderTimeline(state.months);
+      }, host);
+      if (host && !quiet && !snapshot.restored) {
+        timelineImages.release(host);
+        host.dataset.view = state.view;
+        host.innerHTML = `<div class="cw-hist-day-body">${state.view === "list" ? skeleton("collectionRow", 6) : skeleton("historyCard", 8)}</div>`;
+      }
+      if (!snapshot.restored) q("pages")?.querySelectorAll("button").forEach((btn) => { btn.disabled = true; });
+      try {
+        const data = await api(url);
+        if (seq !== state.seq || !snapshot.current()) return;
+        snapshot.update(data);
         if (month) {
           const target = q("list")?.querySelector(`[data-timeline-month="${month}"]`) || q("list");
           target?.scrollIntoView({ block: "start", behavior: "auto" });
@@ -3401,8 +3449,8 @@
           panel()?.scrollIntoView({ block: "start", behavior: "smooth" });
         }
       } catch (e) {
-        if (seq !== state.seq) return;
-        if (host) host.innerHTML = empty(`${meta().title} could not be loaded.`);
+        if (seq !== state.seq || !snapshot.current()) return;
+        if (host && !snapshot.restored) host.innerHTML = empty(`${meta().title} could not be loaded.`);
         renderPager({ total: state.total, page: state.page, page_size: state.pageSize });
         toast(e.message || `${meta().title} could not be loaded`, true);
       }
@@ -3766,6 +3814,7 @@
         const data = await res.json().catch(() => ({}));
         const payload = data && typeof data === "object" ? data : {};
         if (!res.ok) payload.ok = false;
+        if (method !== "GET" && res.ok && payload.ok !== false) invalidateLists();
         return payload;
       } catch (error) {
         return { ok: false, message: String(error?.message || error || "Request failed") };
@@ -4240,39 +4289,56 @@
       state.busy = !background;
       renderSync();
       const host = q("list");
-      if (host && !state.loaded) {
+      const snapshot = listSnapshot(`/api/playback_progress/items?${query({month})}&layout=${state.view}&timeline=${state.timeline}`, data => {
+        state.items = Array.isArray(data.items) ? data.items : [];
+        if (Array.isArray(data.providers)) state.providers = data.providers;
+        state.errors = Array.isArray(data.errors) ? data.errors : [];
+        state.loading = Array.isArray(data.loading) ? data.loading : [];
+        if (data.ok === false && !state.errors.length) {
+          state.errors = [{ provider: "", provider_label: "Playback", message: data.message || data.error || "Request failed.", retryable: true }];
+        }
+        state.failed = data.ok === false;
+        if (data.summary && typeof data.summary === "object") state.summary = data.summary;
+        state.total = Number(data.total || 0);
+        state.page = Number(data.page || state.page) || 1;
+        state.loaded = true;
+        renderMetrics();
+        renderTypes();
+        renderProviders();
+        renderErrors();
+        renderPager();
+        paint();
+        state.months = Array.isArray(data.months) ? data.months : [];
+        renderTimeline();
+        renderSync();
+      }, host);
+      if (host && !state.loaded && !snapshot.restored) {
         timelineImages.release(host);
         host.dataset.view = state.view;
         host.innerHTML = `<div class="cw-hist-day-body">${state.view === "list" ? skeleton("collectionRow", 6) : skeleton("historyCard", 8)}</div>`;
       }
       if (!background) host?.setAttribute("aria-busy", "true");
       const data = await request(`/api/playback_progress/items?${query({ force, month })}&progressive=true`);
-      if (seq !== state.seq) return;
+      if (seq !== state.seq || !snapshot.current()) return;
       state.busy = false;
       host?.removeAttribute("aria-busy");
-      state.items = Array.isArray(data.items) ? data.items : [];
-      if (Array.isArray(data.providers)) state.providers = data.providers;
-      state.errors = Array.isArray(data.errors) ? data.errors : [];
-      state.loading = Array.isArray(data.loading) ? data.loading : [];
-      if (state.loading.length) state.loadingTimer = setTimeout(() => void load({ background: true }), 1500);
-      if (data.ok === false && !state.errors.length) {
-        state.errors = [{ provider: "", provider_label: "Playback", message: data.message || data.error || "Request failed.", retryable: true }];
+      if (data.ok === false && snapshot.restored) {
+        state.failed = true;
+        renderSync();
+        return;
       }
-      state.failed = data.ok === false;
-      if (!state.failed) state.syncedAt = Date.now();
-      if (data.summary && typeof data.summary === "object") state.summary = data.summary;
-      state.total = Number(data.total || 0);
-      state.page = Number(data.page || state.page) || 1;
-      state.loaded = true;
-      renderMetrics();
-      renderTypes();
-      renderProviders();
-      renderErrors();
-      renderPager();
-      paint();
-      state.months = Array.isArray(data.months) ? data.months : [];
-      renderTimeline();
+      if (data.ok === false) {
+        state.errors = [{provider:"", provider_label:"Playback", message:data.message || data.error || "Request failed.", retryable:true}];
+        state.failed = true;
+        if (host) host.innerHTML = empty("Playback could not be loaded.");
+        renderErrors();
+      } else {
+        snapshot.update(data);
+        state.syncedAt = Date.now();
+        state.failed = false;
+      }
       renderSync();
+      if (data.loading?.length) state.loadingTimer = setTimeout(() => void load({ background: true }), 1500);
       if (month) {
         (q("list")?.querySelector(`[data-timeline-month="${month}"]`) || q("list"))?.scrollIntoView({ block: "start", behavior: "auto" });
       } else if (scroll) {
@@ -4464,12 +4530,10 @@
       syncSelection();
     }
 
+    let settingsProfiles = [];
+
     function settingsMarkup(data) {
       const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
-      const hidden = profiles
-        .filter((p) => !(p.configured && p.read))
-        .map((p) => `<input type="checkbox" hidden disabled data-provider="${esc(p.provider || "")}" data-instance="${esc(p.instance_id || "default")}" data-included="${p.included !== false}">`)
-        .join("");
       const groups = new Map();
       profiles.filter((p) => p.configured && p.read).forEach((p) => {
         const key = String(p.provider || "").toLowerCase();
@@ -4486,7 +4550,7 @@
           return `<section class="pf-provider"><div class="pf-provider-head"><h4>${logo ? `<img src="${esc(logo)}" alt="" onerror="this.remove()">` : ""}${esc(label)}</h4></div><span class="pf-options">${pills}</span></section>`;
         })
         .join("");
-      return sections ? `${sections}${hidden}` : `<div class="cw-tl-dialog-note">No connected playback providers were found.</div>${hidden}`;
+      return sections || `<div class="cw-tl-dialog-note">No connected playback providers were found.</div>`;
     }
 
     async function openSettings() {
@@ -4497,16 +4561,30 @@
       const error = q("providers-error");
       if (!dialog?.showModal || !list || !timeout) return;
       if (error) error.textContent = "";
+      const submit = dialog.querySelector('[type="submit"]');
+      submit.disabled = true;
+      settingsProfiles = [];
       list.innerHTML = `<div class="cw-tl-dialog-note">Loading provider profiles...</div>`;
       dialog.showModal();
       const data = await request("/api/playback_progress/settings");
+      if (!dialog.open) return;
+      if (data.ok === false) {
+        list.innerHTML = empty("Playback settings could not be loaded.");
+        return;
+      }
+      settingsProfiles = Array.isArray(data.profiles) ? data.profiles : [];
+      q("grouping").value = data.grouping === "separate" ? "separate" : "automatic";
+      q("grouping").dispatchEvent(new Event("change", {bubbles:true}));
       timeout.value = String(Math.round(Number(data.provider_timeout_seconds || DEFAULT_TIMEOUT)));
       list.innerHTML = settingsMarkup(data);
+      submit.disabled = false;
     }
 
     function resetSettings() {
       const timeout = q("timeout");
       if (timeout) timeout.value = String(DEFAULT_TIMEOUT);
+      q("grouping").value = "automatic";
+      q("grouping").dispatchEvent(new Event("change", {bubbles:true}));
       q("provider-list")?.querySelectorAll("input[type=checkbox][data-provider]").forEach((input) => {
         input.checked = !input.disabled;
         if (input.disabled) input.dataset.included = "false";
@@ -4521,19 +4599,20 @@
         if (error) error.textContent = "Use a timeout between 3 and 60 seconds.";
         return;
       }
-      const profiles = [...(q("provider-list")?.querySelectorAll("input[type=checkbox][data-provider]") || [])].map((input) => ({
+      const profiles = settingsProfiles.filter(p => !(p.configured && p.read)).map(p => ({provider:p.provider, instance_id:p.instance_id, included:p.included !== false})).concat([...(q("provider-list")?.querySelectorAll("input[type=checkbox][data-provider]") || [])].map((input) => ({
         provider: input.dataset.provider,
         instance_id: input.dataset.instance,
         included: input.disabled ? input.dataset.included !== "false" : input.checked,
-      }));
-      const res = await postJson("/api/playback_progress/settings", { profiles, provider_timeout_seconds: seconds });
+      })));
+      const res = await postJson(scopeUrl("/api/playback_progress/settings"), { profiles, provider_timeout_seconds: seconds, grouping:q("grouping")?.value || "automatic" });
       if (!res.ok) {
         if (error) error.textContent = res.message || res.error || "Settings could not be saved.";
         return;
       }
       dialog?.close();
-      toast("Playback providers saved");
+      toast("Playback settings saved");
       state.selected.clear();
+      if ($("#profile-panel-overview")) void loadOverview().catch(() => {});
       await load({ force: true });
     }
 
@@ -4594,7 +4673,7 @@
               progressRows: progressRowsOf(item),
               focusRow: chip.dataset.iaPlay ?? null,
               scope: () => [card],
-              onChanged: () => load({ background: true }),
+              onChanged: () => { invalidateLists(); return load({ background: true }); },
             });
           }
           return;
