@@ -967,12 +967,11 @@
     },
     FANART_METADATA: {
       provider: "fanart", logo: "FANART", help: window.CW.HelpLinks.url("fanart-metadata"), deleteSelector: "#fanart_delete",
-      hideNav: true,
-      tabs: { api: ["image", "Artwork", "Use fanart.tv artwork"] },
-      copy: { api: ["Fanart.tv Artwork", "Logos, backgrounds and disc art from fanart.tv, with TMDb as fallback."] },
-      journey: ["Turn on Fanart.tv", "Use fanart.tv logos and backgrounds, with TMDb as fallback, and disc art for your collection. CrossWatch has its own project key, so no key is needed. A personal key shows new uploads sooner, and right away for fanart.tv VIP members. Posters stay on TMDb.", "167,98,255", "255,120,190", "FANART"],
-      steps: [["1", "Turn on", "Switch on Use fanart.tv"], ["2", "Pick art", "Choose logos and backgrounds"], ["3", "Personal key", "Optional, from your fanart.tv profile"]],
-      introSubs: ["api"],
+      tabs: { api: ["key", "API key", "Connect fanart.tv"], settings: ["tune", "Settings", "Choose logos and backgrounds"] },
+      copy: { api: ["Fanart.tv Artwork", "Logos, backgrounds and disc art from fanart.tv."], settings: ["Fanart.tv Settings", "Choose where logos and backgrounds come from."] },
+      journey: ["Connect Fanart.tv", "Use fanart.tv logos, backgrounds and disc art, with TMDb as fallback. No key is needed because CrossWatch has its own project key. Requires TMDb Metadata.", "167,98,255", "255,120,190", "FANART"],
+      steps: [["1", "Add key", "Optional personal fanart.tv key"], ["2", "Connect fanart.tv", "Validate with CrossWatch"], ["3", "Pick art", "Choose logos and backgrounds"]],
+      introSubs: ["api", "settings"],
       order: [".auth-card"],
       actions: [{ row: ".inline", status: "#fanart_check_msg", buttons: "#fanart_check" }]
     },
@@ -1726,7 +1725,7 @@
   function ensureConnectionModalJourney(panel, info) {
     const data = info?.journey;
     if (!data?.length) return;
-    const icon = info?.key === "TMDB_METADATA" || info?.key === "PUBLICMETADB" ? "key" : info?.key === "ANIME_MAPPING" ? "hub" : "link";
+    const icon = info?.key === "TMDB_METADATA" || info?.key === "FANART_METADATA" || info?.key === "PUBLICMETADB" ? "key" : info?.key === "ANIME_MAPPING" ? "hub" : "link";
     connectionIntroPanels(panel, info).forEach((authPanel) => {
       if (!authPanel) return;
       let node = authPanel.querySelector(":scope > .cw-auth-journey");
@@ -1918,6 +1917,7 @@
       if (info.key === "NUVIO") await window.cwAuth?.nuvio?.saveSelectedProfile?.({ silent: true });
       if (info.key === "SILO") await window.cwAuth?.silo?.saveSelectedProfile?.({ silent: true });
       if (info.key === "TOFA") await window.cwAuth?.tofa?.saveSelectedProfile?.({ silent: true });
+      if (info.key === "FANART_METADATA") await window.cwSaveFanartModal?.();
       const ret = window.saveSettings?.();
       if (ret && typeof ret.then === "function") await ret;
       if (btn) flashConnectionResult(btn, true);
@@ -2142,10 +2142,10 @@
     if (info.key === "ANIME_MAPPING") {
       try { window.cwAnimeMappingRefreshStatus?.(); } catch {}
     }
+    enhanceConnectionModal(section, overlay, info.key);
     if (info.key === "FANART_METADATA") {
       try { await window.cwRefreshFanartState?.(); } catch {}
     }
-    enhanceConnectionModal(section, overlay, info.key);
     if (info.key === "TMDB_METADATA") {
       try { window.cwRefreshTmdbMetadataState?.(); } catch {}
     }
