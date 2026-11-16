@@ -639,6 +639,10 @@ function pairSupportsLibraryOnly(state, src = state?.src, dst = state?.dst, twoW
   if(!src || !dst) return false;
   return providerSupportsLibraryOnly(state, dst, feature) || (twoWay && providerSupportsLibraryOnly(state, src, feature));
 }
+function pairSupportsContinueWatching(state, src = state?.src, dst = state?.dst){
+  if(!src || !dst) return false;
+  return !!byName(state, src)?.capabilities?.continue_watching && !!byName(state, dst)?.capabilities?.continue_watching;
+}
 function libraryOnlyOn(state, opts, feature = "history", src = state?.src, dst = state?.dst, twoWay = isTwoWayMode(state)){
   if(!pairSupportsLibraryOnly(state, src, dst, twoWay, feature)) return false;
   return typeof opts?.library_only === "boolean" ? opts.library_only : true;
@@ -1098,7 +1102,7 @@ function applySubDisable(feature){
     ],
     history: ["#plx-marked-watched", "#plx-cloud-read", "#plx-discover-fallback", "#cx-hs-add", "#cx-hs-remove", "#cx-hs-rewatches", "#cx-hs-specials", "#cx-hs-library-only", "#cx-hs-undated-today", "#cx-hs-all-copies", "#cx-hs-trakt-resets", "#cx-hs-anime-map", "#cx-hs-source-status", "#cx-tr-hs-col", "#cx-tr-hs-col-movies", "#cx-tr-hs-col-shows", "#cx-hs-dropped"],
     playlists:["#cx-pl-add","#cx-pl-remove"],
-    progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-library-only","#cx-pr-anime-map"],
+    progress:["#cx-pr-add","#cx-pr-remove","#cx-pr-min","#cx-pr-delta","#cx-pr-maxp","#cx-pr-replay","#cx-pr-tolerance","#cx-pr-specials","#cx-pr-library-only","#cx-pr-cw-removals","#cx-pr-anime-map"],
     collection:["#cx-co-add","#cx-co-remove","#cx-co-type-all","#cx-co-type-movies","#cx-co-type-shows","#cx-co-type-seasons","#cx-co-type-episodes","#cx-co-media","#cx-co-media-upd"]
   };
   const on=ID(feature==="ratings"?"cx-rt-enable":feature==="watchlist"?"cx-wl-enable":feature==="history"?"cx-hs-enable":feature==="progress"?"cx-pr-enable":feature==="collection"?"cx-co-enable":"cx-pl-enable")?.checked;
@@ -2107,6 +2111,8 @@ left.innerHTML = `
           <label class="switch"><input id="cx-pr-specials" type="checkbox" ${pr.include_specials !== false ? "checked" : ""}><span class="slider"></span></label></div>
         ${pairSupportsLibraryOnly(state, state?.src, state?.dst, isTwoWayMode(state), "progress") ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-pr-library-only" data-tip-id="cx-pr-library-only">Only items in destination library</label>
           <label class="switch"><input id="cx-pr-library-only" type="checkbox" ${libraryOnlyOn(state, pr, "progress") ? "checked" : ""}><span class="slider"></span></label></div>` : ""}
+        ${pairSupportsContinueWatching(state) ? `<div class="opt-row" style="grid-column:1/-1"><label for="cx-pr-cw-removals" data-tip-id="cx-pr-cw-removals">Sync Continue Watching removals <span class="pill">Beta</span></label>
+          <label class="switch"><input id="cx-pr-cw-removals" type="checkbox" ${pr.continue_watching_removals ? "checked" : ""}><span class="slider"></span></label></div>` : ""}
       </div>
       ${prAnime}
       ${progressRecommendation ?`<div class="muted" style="margin-top:10px">${escHTML(progressRecommendation)}</div>` : ""}
@@ -2489,7 +2495,8 @@ function bindChangeHandlers(state,root){
         replay_enabled:!!ID("cx-pr-replay")?.checked,
         timestamp_tolerance_seconds:Number.isFinite(tolerance)?Math.max(0,Math.min(300,tolerance)):30,
         include_specials:ID("cx-pr-specials")?!!ID("cx-pr-specials").checked:prev.include_specials!==false,
-        library_only:ID("cx-pr-library-only")?!!ID("cx-pr-library-only").checked:prev.library_only
+        library_only:ID("cx-pr-library-only")?!!ID("cx-pr-library-only").checked:prev.library_only,
+        continue_watching_removals:ID("cx-pr-cw-removals")?!!ID("cx-pr-cw-removals").checked:!!prev.continue_watching_removals
       });
       state.visited.add("progress");
     }

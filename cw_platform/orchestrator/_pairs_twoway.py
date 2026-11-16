@@ -136,6 +136,7 @@ from ._history_rewatches import (
 from ._history_copies import config_with_history_copies, copy_gap_adds, history_copies_requested, take_copy_gaps
 from ._history_resets import apply_reset_unwatches, load_reset_plan, preview_reset_unwatches
 from ._pair_skips import record_pair_skips
+from ._continue_watching import requested as continue_watching_requested, sync_removals as sync_continue_watching_removals
 from ._pairs_utils import (
     declared_types_for,
     ratings_step_for,
@@ -2743,6 +2744,14 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             target_tokens=lambda: tag_tokens_A or dropped_A or _load_provider_dropped_tokens(aops, a_cfg),
             dry_run=dry_run_flag, emit=emit, review=review, src_inst=dst_inst, dst_inst=src_inst,
         )
+
+    if continue_watching_requested(feature, fcfg) and not (cancelled or a_down or b_down or A_suspect or B_suspect):
+        if review is not None:
+            emit("debug", msg="continue_watching.skipped_interactive", a=a, b=b)
+        else:
+            sync_continue_watching_removals(ctx.state_store, src=(a, src_inst, aops, a_cfg),
+                                            dst=(b, dst_inst, bops, b_cfg), two_way=True,
+                                            dry_run=dry_run_flag, emit=emit, fcfg=fcfg, blocked=manual_blocks)
 
     if reset_plan and not (cancelled or a_down or b_down or A_suspect or B_suspect):
         reset_plan.unwatch = reset_plan.settle(add_to_B if reset_plan.server_side == 1 else add_to_A,

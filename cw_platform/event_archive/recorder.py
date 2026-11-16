@@ -493,6 +493,26 @@ class RunRecorder:
             self._flush()
             return
 
+        if event == "continue_watching:hidden":
+            src, si, dst, di = self._destination_route(f.get("dst"), f.get("destination_instance"))
+            failed = int(f.get("errors") or 0)
+            route = dict(
+                operation="hide_continue_watching", source_provider=src or None, destination_provider=dst or None,
+                source_instance=si or None, destination_instance=di or None,
+            )
+            titles = [str(title) for title in _as_list(f.get("items")) if str(title or "").strip()]
+            self._add(
+                event_type="write_attempted", severity="warn" if failed else "info",
+                reason_code="errors" if failed else None, **route,
+                detail=_fit_titles({"attempted": int(f.get("attempted") or 0), "hidden": int(f.get("confirmed") or 0),
+                                    "failed": failed}, titles),
+            )
+            if failed:
+                self._add(event_type="write_failed", severity="error", reason_code="hide_continue_watching_failed",
+                          reason=str(f.get("error") or "hide_continue_watching_failed"), **route)
+            self._flush()
+            return
+
         if event == "history:rewatch_reset":
             src, si, dst, di = self._destination_route(f.get("dst"), f.get("destination_instance"))
             failed = int(f.get("errors") or 0)
