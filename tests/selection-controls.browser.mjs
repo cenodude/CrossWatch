@@ -88,4 +88,30 @@ for(const theme of ['original','flat-dark','flat-light'])for(const width of [110
   await page.mouse.move(0,0);
   assert.equal(await page.locator('.ie-inclusions').evaluate(node=>node.scrollWidth<=node.clientWidth),true);
   await screenshot('import');
+  await page.evaluate(()=>{
+    document.querySelector('#layout').style.setProperty('display','none','important');
+    document.body.classList.add('cw-profile-page');
+    const controls=document.createElement('section');
+    controls.className='cw-profile-panel';
+    controls.style.cssText='margin:24px;display:grid;gap:24px;--cch-u:1px';
+    controls.innerHTML=`<h2>Checkbox states</h2>
+      <div style="display:flex;gap:18px;flex-wrap:wrap"><label><input id="sample-on" type="checkbox" checked> Checked</label><label><input id="sample-off" type="checkbox"> Unchecked</label><label><input id="sample-mixed" type="checkbox"> Partial</label><label><input type="checkbox" checked disabled> Disabled</label></div>
+      <section id="page-snapshots"><h3>Snapshot table</h3><table class="ss-table"><tbody><tr><td class="ss-col-check"><input id="sample-snapshot" class="ss-chk" type="checkbox" checked aria-label="Select snapshot"></td><td>Selected snapshot</td></tr></tbody></table></section>
+      <section class="cw-page-maint-content"><h3>Provider cleanup</h3><button type="button" class="cc-feature selected" aria-pressed="true"><span class="cc-feature-mark" id="sample-cleanup"></span><span>Watchlist</span></button></section>
+      <section><h3>Media card</h3><div class="cw-tl-card is-selected" style="position:relative;width:220px;height:100px"><label id="sample-media" class="cw-tl-select" style="opacity:1"><input type="checkbox" checked aria-label="Select media"><span class="material-symbols-rounded">check</span></label></div></section>`;
+    document.body.appendChild(controls);
+    document.querySelector('#sample-mixed').indeterminate=true;
+  });
+  const native=await page.locator('#sample-on').evaluate(node=>({background:getComputedStyle(node).backgroundColor,border:getComputedStyle(node).borderTopColor,tick:getComputedStyle(node,'::after').borderBottomColor}));
+  assert.equal(native.background,theme==='flat-light'?'rgb(233, 228, 240)':'rgb(37, 32, 57)');
+  assert.equal(native.tick,theme==='flat-light'?'rgb(85, 67, 104)':'rgb(196, 189, 212)');
+  for(const selector of ['#sample-snapshot','#sample-cleanup']) {
+    assert.deepEqual(await page.locator(selector).evaluate(node=>({background:getComputedStyle(node).backgroundColor,border:getComputedStyle(node).borderTopColor,tick:getComputedStyle(node,'::after').borderBottomColor})),native,selector);
+  }
+  assert.equal(await page.locator('#sample-mixed').evaluate(node=>getComputedStyle(node).backgroundColor),native.background);
+  assert.equal(await page.locator('#sample-mixed').evaluate(node=>getComputedStyle(node,'::after').backgroundColor),native.tick);
+  assert.notEqual(await page.locator('#sample-off').evaluate(node=>getComputedStyle(node).backgroundColor),native.background);
+  assert.equal(await page.locator('#sample-media').evaluate((node,mobile)=>getComputedStyle(node,mobile?'::before':null).backgroundColor,width<760),'rgb(37, 32, 57)');
+  assert.equal(await page.locator('#sample-media').evaluate(node=>getComputedStyle(node).color),'rgb(196, 189, 212)');
+  await screenshot('checkboxes');
 });

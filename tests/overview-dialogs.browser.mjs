@@ -60,14 +60,47 @@ test('insight selection saves instance IDs while showing friendly names',async t
   const {page}=await fixture(t);
   await page.locator('#insights').click();
   await page.getByLabel('Family tracker',{exact:true}).uncheck();
-  await page.getByLabel('History',{exact:true}).uncheck();
-  await page.getByRole('button',{name:'Apply',exact:true}).click();
+  const parent=page.getByRole('checkbox',{name:'CrossWatch',exact:true});
+  assert.equal(await parent.evaluate(node=>node.indeterminate),true);
+  await page.getByRole('button',{name:'History',exact:true}).click();
+  await page.getByRole('button',{name:'Apply changes',exact:true}).click();
   const prefs=await page.evaluate(()=>JSON.parse(localStorage.getItem('insights.settings.v1')));
   assert.deepEqual(prefs.instances.crosswatch,['default','CW-P02']);
   assert.equal(prefs.features.history,false);
   await page.locator('#insights').click();
   assert.equal(await page.getByLabel('Family tracker',{exact:true}).isChecked(),false);
   assert.equal(await page.getByLabel('CW-P02',{exact:true}).isChecked(),true);
+  assert.equal(await page.getByRole('button',{name:'History',exact:true}).getAttribute('aria-pressed'),'false');
+  await parent.focus();
+  await page.keyboard.press('Space');
+  assert.equal(await page.getByLabel('Family tracker',{exact:true}).isChecked(),true);
+  await page.keyboard.press('Space');
+  assert.equal(await page.locator('[data-provider="crosswatch"] input[data-inst]:checked').count(),0);
+  await page.getByRole('button',{name:'Restore defaults',exact:true}).click();
+  assert.equal(await page.getByRole('button',{name:'History',exact:true}).getAttribute('aria-pressed'),'true');
+  assert.equal(await parent.isChecked(),true);
+  assert.equal(await parent.evaluate(node=>node.indeterminate),false);
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('insights.settings.v1')).features.history),false);
+  await page.getByRole('button',{name:'Apply changes',exact:true}).click();
+  const restored=await page.evaluate(()=>JSON.parse(localStorage.getItem('insights.settings.v1')));
+  assert.equal(restored.features.history,true);
+  assert.equal(restored.instances.crosswatch,undefined);
+});
+
+test('insight feature buttons retain keyboard toggles and require one enabled feature',async t=>{
+  const {page}=await fixture(t,'flat-dark',390);
+  await page.locator('#insights').click();
+  const buttons=page.locator('button[data-feat]');
+  await buttons.first().waitFor();
+  for(const button of await buttons.all()) {
+    await button.focus();
+    await page.keyboard.press('Space');
+    assert.equal(await button.getAttribute('aria-pressed'),'false');
+  }
+  await page.getByRole('button',{name:'Apply changes',exact:true}).click();
+  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('insights.settings.v1')));
+  assert.equal(saved.features.watchlist,true);
+  assert.equal(saved.features.history,false);
 });
 
 test('activity prioritises the calendar and preserves event navigation and names',async t=>{
@@ -130,7 +163,12 @@ for(const theme of ['', 'flat-dark','flat-light'])for(const width of [1100,390])
     assert.equal(await dialog.locator('.pf-body').evaluate(n=>n.scrollWidth<=n.clientWidth),true);
     await page.screenshot({path:new URL(`${name}-${theme||'original'}-${width}.png`,folder).pathname.replace(/^\/(?=[A-Za-z]:)/,'')});
   };
-  await page.locator('#insights').click();await page.getByLabel('Family tracker',{exact:true}).waitFor();await capture('insights');
+  await page.locator('#insights').click();await page.getByLabel('Family tracker',{exact:true}).waitFor();
+  await page.getByLabel('Family tracker',{exact:true}).uncheck();
+  await page.getByRole('checkbox',{name:'Plex',exact:true}).uncheck();
+  await page.getByRole('button',{name:'History',exact:true}).click();
+  await page.getByRole('button',{name:'Collections',exact:true}).evaluate(node=>node.disabled=true);
+  await capture('insights');
   await page.getByRole('button',{name:'Close',exact:true}).click();
   await page.locator('#activity').click();await page.locator('.sc-run-head').waitFor();await capture('activity');
   await page.getByRole('button',{name:'Close',exact:true}).click();

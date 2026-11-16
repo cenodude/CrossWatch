@@ -43,10 +43,10 @@ const HTML = `
   <div class="cw-page-preferences">
     <header class="pf-head"><div><h2>Insights settings</h2><p>Choose the features and instances shown in statistics.</p></div><button class="pf-button" id="is-close" type="button">Close</button></header>
     <div class="pf-body">
-      <section class="pf-section"><h3>Features</h3><div class="feature-list" id="is-feat-grid"></div></section>
+      <section class="pf-section"><h3 id="is-feat-heading">Features</h3><div class="feature-list" id="is-feat-grid" role="group" aria-labelledby="is-feat-heading"></div></section>
       <section class="pf-section"><h3>Provider instances <span id="is-head-chip"></span></h3><div id="is-loading" class="pf-note">Loading providers...</div><div class="prov-grid" id="is-prov-grid" style="display:none"></div></section>
     </div>
-    <footer class="pf-footer"><span class="pf-note" id="is-toast" role="status">Changes apply to statistics.</span><div class="pf-actions"><button class="pf-button" id="is-reset" type="button">Reset</button><button class="pf-button primary" id="is-apply" type="button">Apply</button></div></footer>
+    <footer class="pf-footer"><span class="pf-note" id="is-toast" role="status">Changes apply to statistics.</span><div class="pf-actions"><button class="pf-button pf-reset" id="is-reset" type="button">Restore defaults</button><button class="pf-button primary" id="is-apply" type="button">Apply changes</button></div></footer>
   </div>`;
 
 const parseInstanceList = (raw) => {
@@ -79,13 +79,15 @@ const normalizePrefs = (prefs, byProvider = {}) => {
 
 const renderFeatures = (prefs) => FEATS.map((key) => {
   const label = FeatureMeta().label?.(key) || key;
-  return `<label class="pf-option"><input type="checkbox" id="is-feat-${esc(key)}" data-feat="${h(key)}" ${prefs.features?.[key] !== false ? "checked" : ""}><span>${h(label)}</span></label>`;
+  return `<button type="button" class="pf-feature" id="is-feat-${esc(key)}" data-feat="${h(key)}" aria-pressed="${prefs.features?.[key] !== false}">${h(label)}</button>`;
 }).join("");
 
 const renderProviderCard = (provider, all, selected, labels) => {
   const key = String(provider || "").toLowerCase(), picked = new Set(selected), count = all.filter((id) => picked.has(id)).length;
   const label = provLabel(key), logo = ProviderMeta().logoPath?.(key) || "";
-  return `<section class="pf-provider prov-card" data-provider="${h(key)}" data-single="${all.length === 1 ? 1 : 0}"><div class="pf-provider-head"><h4>${logo ? `<img src="${h(logo)}" alt="">` : ""}${h(label)}</h4><div class="prov-tools"><span data-badge>${count}/${all.length}</span><button class="pf-button" type="button" data-all>All</button><button class="pf-button" type="button" data-none>None</button></div></div><div class="pf-options">${all.map((id) => `<label class="pf-option"><input type="checkbox" data-inst="${h(id)}" ${picked.has(id) ? "checked" : ""}><span>${h(labels?.[key]?.[id] || (id === "default" ? "Default" : id))}</span></label>`).join("")}</div></section>`;
+  const single = all.length === 1;
+  const instanceLabel = id => labels?.[key]?.[id] || (id === "default" ? "Default" : id);
+  return `<section class="pf-provider prov-card" data-provider="${h(key)}" data-single="${single ? 1 : 0}"><div class="pf-provider-head"><label class="pf-option"><input type="checkbox" ${single ? `data-inst="${h(all[0])}"` : "data-provider-all"} ${count === all.length ? "checked" : ""}>${logo ? `<img src="${h(logo)}" alt="">` : ""}<strong>${h(label)}</strong></label>${single ? `<span class="pf-provider-count">${h(instanceLabel(all[0]))}</span>` : `<span class="pf-provider-count" data-badge>${count} / ${all.length}</span>`}</div>${single ? "" : `<div class="pf-options">${all.map((id) => `<label class="pf-option"><input type="checkbox" data-inst="${h(id)}" ${picked.has(id) ? "checked" : ""}><span>${h(instanceLabel(id))}</span></label>`).join("")}</div>`}</section>`;
 };
 
 const getAllowedProviders = (cfg = window._cfgCache || {}) => {
@@ -135,13 +137,23 @@ export default {
       if (!card) return;
       const checks = $$('input[data-inst]', card), on = checks.filter((c) => c.checked).length;
       const badge = $('[data-badge]', card);
-      if (badge) badge.textContent = `${on}/${checks.length}`;
+      if (badge) badge.textContent = `${on} / ${checks.length}`;
+      const parent = $('[data-provider-all]', card);
+      if (parent) {
+        parent.checked = on === checks.length;
+        parent.indeterminate = on > 0 && on < checks.length;
+      }
       card.dataset.empty = on ? 0 : 1;
       refreshStats();
     };
 
     $("#is-close", root)?.addEventListener("click", close);
-    $("#is-reset", root)?.addEventListener("click", () => { try { localStorage.removeItem(PREF_KEY); } catch {} changed(); close(); });
+    $("#is-reset", root)?.addEventListener("click", () => {
+      $$("button[data-feat]", root).forEach(button => button.setAttribute("aria-pressed", "true"));
+      $$("input[data-inst]", root).forEach(input => { input.checked = true; });
+      $$(".prov-card", root).forEach(updateCard);
+      setToast("Defaults restored. Apply changes to save.");
+    });
 
     try {
       const { byProvider, labels } = await buildProviders();
@@ -169,27 +181,31 @@ export default {
       refreshStats();
 
       root.addEventListener("click", (ev) => {
-        const btn = ev.target?.closest?.("[data-all],[data-none]");
+        const btn = ev.target?.closest?.("button[data-feat]");
         if (!btn) return;
-        const card = btn.closest(".prov-card");
-        $$('input[data-inst]', card).forEach((c) => { c.checked = btn.hasAttribute("data-all"); });
-        updateCard(card);
+        btn.setAttribute("aria-pressed", String(btn.getAttribute("aria-pressed") !== "true"));
+        setToast("Unsaved changes.");
       });
 
       root.addEventListener("change", (ev) => {
         const t = ev.target;
         if (!(t instanceof Element)) return;
-        if (t.matches('input[data-feat]')) return setToast(""), refreshStats();
+        if (t.matches('input[data-provider-all]')) {
+          const card = t.closest('.prov-card');
+          $$('input[data-inst]', card).forEach(input => { input.checked = t.checked; });
+          updateCard(card);
+        }
         if (t.matches('input[data-inst]')) updateCard(t.closest('.prov-card'));
+        setToast("Unsaved changes.");
       });
 
       $("#is-apply", root)?.addEventListener("click", () => {
         const next = normalizePrefs(loadPrefs(), byProvider);
-        for (const c of $$('input[data-feat]', root)) next.features[c.dataset.feat] = !!c.checked;
+        for (const button of $$('button[data-feat]', root)) next.features[button.dataset.feat] = button.getAttribute("aria-pressed") === "true";
         if (!Object.values(next.features).some(Boolean)) {
           next.features.watchlist = true;
           const fallback = $("#is-feat-watchlist", root);
-          if (fallback) fallback.checked = true;
+          if (fallback) fallback.setAttribute("aria-pressed", "true");
           setToast("At least one feature stays enabled.");
         }
         next.instances = next.instances && typeof next.instances === "object" ? next.instances : {};
