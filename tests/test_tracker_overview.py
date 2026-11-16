@@ -68,6 +68,39 @@ def test_overview_groups_consecutive_episodes_and_keeps_later_rewatches(app):
     assert not meta.calls
 
 
+def test_recent_ratings_follow_the_selected_tracker_instance(app):
+    client, store, cfg, _ = app
+    movie = {"type": "movie", "title": "Movie", "ids": {"tmdb": "9"}, "watched_at": "2026-11-03T12:00:00Z"}
+    unrated = {**movie, "title": "Unrated", "ids": {"tmdb": "10"}}
+    history = {"movie": movie, "unrated": unrated}
+    store.write_state("history", history)
+    store.write_state("ratings", {"movie-rating": {**movie, "rating": 7.5}})
+    cfg["crosswatch"]["instances"] = {"CW-P01": {"label": "Family"}}
+    other = TrackerStore(store.root / "profiles" / "CW-P01")
+    other.write_state("history", history)
+    other.write_state("ratings", {"movie-rating": {**movie, "rating": 6}})
+    for instance, expected in [("default", 7.5), ("CW-P01", 6)]:
+        data = client.get("/api/tracker/overview", params={"provider_instance": instance}).json()
+        ratings = {row["key"]: row["user_rating"] for row in data["recent"]}
+        assert ratings == {"movie": expected, "unrated": None}
+
+
+@pytest.mark.parametrize("episode_rating,expected", [(None, 8), (7.5, 7.5)])
+def test_recent_episode_ratings_prefer_the_episode_then_the_show(app, episode_rating, expected):
+    client, store, _, _ = app
+    watched = episode(number=2)
+    store.write_state("history", {"watched": watched})
+    ratings = {
+        "show": {"type": "show", "title": "Show 1", "ids": {"tmdb": "1"}, "rating": 8},
+        "other-episode": {**episode(number=3), "rating": 3},
+    }
+    if episode_rating is not None:
+        ratings["watched"] = {**watched, "rating": episode_rating}
+    store.write_state("ratings", ratings)
+    data = client.get("/api/tracker/overview").json()
+    assert data["recent"][0]["user_rating"] == expected
+
+
 def test_continue_excludes_completed_dropped_finished_and_stale_progress(app):
     client, store, _, _ = app
     rows = {str(i): {"type": "movie", "title": f"Movie {i}", "ids": {"tmdb": str(i)}, "progress_percent": 50, "progress_at": "2026-11-09T12:00:00Z"} for i in range(1, 6)}

@@ -144,7 +144,7 @@
 
   function openProgressActions(node) {
     const actions = itemActions();
-    const rows = Array.isArray(state.progress) ? state.progress : [];
+    const rows = scopedProgressRows() || [];
     if (!actions || !rows.length) return;
     const movie = isMovie();
     const progressRows = rows.filter((row) => row.record).map((row) => {
@@ -342,7 +342,8 @@
       try {
         const tmdb = tmdbOf(item);
         const movie = kindOf(item) === "movie";
-        const query = movie ? `tmdb=${encodeURIComponent(tmdb)}&page=1&page_size=50` : `show_tmdb=${encodeURIComponent(tmdb)}&page=1&page_size=250`;
+        let query = movie ? `tmdb=${encodeURIComponent(tmdb)}&page=1&page_size=50` : `show_tmdb=${encodeURIComponent(tmdb)}&page=1&page_size=250`;
+        if (state.tracker) query += `&provider=crosswatch&instance_id=${encodeURIComponent(trackerData()?.provider_instance || "default")}`;
         const res = await fetch((window.CW?.ProfileViewAs?.scope || String)(`/api/playback_progress/items?${query}`), { credentials: "same-origin", cache: "no-store" });
         const data = await res.json().catch(() => null);
         const items = Array.isArray(data?.items) ? data.items : [];
@@ -819,6 +820,12 @@
   };
   const episodeCode = (row) => (row.season != null && row.episode != null ? `S${row.season}E${row.episode}` : "Episode");
 
+  function scopedProgressRows() {
+    if (!Array.isArray(state.progress) || !state.tracker) return state.progress;
+    const instance = String(trackerData()?.provider_instance || "default");
+    return state.progress.filter(row => String(row.provider).toLowerCase() === "crosswatch" && String(row.instance || "default") === instance);
+  }
+
   function progressRowsHtml(records, episodes = false) {
     const editable = !!itemActions() && records.some((row) => row.record?.can_mark_watched || row.record?.can_remove_progress);
     const list = records.map((row) => {
@@ -845,7 +852,7 @@
   }
 
   function showResumePoints() {
-    const rows = Array.isArray(state.progress) ? state.progress : [];
+    const rows = scopedProgressRows() || [];
     if (!rows.length) return "";
     const groups = new Map();
     rows.forEach((row) => {
@@ -865,7 +872,7 @@
     const local = trackerData();
     const history = local ? null : state.presence?.synced;
     const scrobble = local ? null : state.presence?.scrobble;
-    const rows = state.progress;
+    const rows = scopedProgressRows();
     const records = Array.isArray(rows) ? [...rows].sort((a, b) => b.pct - a.pct) : [];
     const best = records[0] || null;
     const watched = local ? (local.plays || []).length : Math.max(Number(history?.count) || 0, Number(scrobble?.count) || 0);
@@ -995,7 +1002,7 @@
       counts.set(Number(row.season), (counts.get(Number(row.season)) || 0) + 1);
     }
     const watchedEpisodes = watchedMap();
-    const progress = Array.isArray(state.progress) ? state.progress : [];
+    const progress = scopedProgressRows() || [];
     const shown = seasons.filter((row, index) => index < 3 || Number(row.season) === state.overviewChosenSeason);
     const rows = shown.map((row) => {
       const number = Number(row.season);

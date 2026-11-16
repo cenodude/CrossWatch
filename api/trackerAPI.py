@@ -665,12 +665,7 @@ def tracker_items(
             ratings = {}
             if feature != "ratings":
                 for key, item in rows:
-                    matches = store.related(**_identity_of(item, key), feature="ratings")
-                    candidates = [data for _, _, data in matches if data.get("type") in ("movie", "show", "anime") or (
-                        data.get("type") == item.get("type") and data.get("season") == item.get("season") and data.get("episode") == item.get("episode")
-                    )]
-                    candidates.sort(key=lambda data: (data.get("type") == item.get("type"), str(data.get("rated_at") or "")), reverse=True)
-                    ratings[key] = candidates[0].get("rating") if candidates else None
+                    ratings[key] = _user_rating(store, item, key)
     except TrackerUnreadable:
         return _unreadable()
     items = []
@@ -1414,6 +1409,15 @@ def tracker_shows(
     return {"ok": True, "provider_instance": inst, "total": total, "offset": offset, "shows": shows}
 
 
+def _user_rating(store: TrackerStore, item: Mapping[str, Any], key: str) -> Any:
+    matches = store.related(**_identity_of(item, key), feature="ratings")
+    candidates = [data for _, _, data in matches if data.get("type") in ("movie", "show", "anime") or (
+        data.get("type") == item.get("type") and data.get("season") == item.get("season") and data.get("episode") == item.get("episode")
+    )]
+    candidates.sort(key=lambda data: (data.get("type") == item.get("type"), str(data.get("rated_at") or "")), reverse=True)
+    return candidates[0].get("rating") if candidates else None
+
+
 def _overview_hero(store: TrackerStore, recent: list[dict[str, Any]], continuing: list[dict[str, Any]], instance: str) -> dict[str, Any] | None:
     candidates = list(continuing)
     _, watching = store.notes(status="watching", limit=1)
@@ -1489,7 +1493,7 @@ def tracker_overview(request: Request, provider_instance: str | None = Query("de
                     recent[-1]["plays"] += 1
                     continue
                 previous = group
-                recent.append({**_row(key, item, "history"), "status": (history_notes.get(_title_key(ident)) or {}).get("status"), "ref": {"feature": "history", "key": key}, "plays": 1})
+                recent.append({**_row(key, item, "history"), "user_rating": _user_rating(store, item, key), "status": (history_notes.get(_title_key(ident)) or {}).get("status"), "ref": {"feature": "history", "key": key}, "plays": 1})
             seen = set()
             for key, item in progress:
                 ident = identities[key]
