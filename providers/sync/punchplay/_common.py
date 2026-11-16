@@ -227,7 +227,9 @@ def rate_governor(instance: Any = None, section: Mapping[str, Any] | None = None
 
 
 class PunchPlayError(RuntimeError):
-    pass
+    def __init__(self, *args: object, status_code: int | None = None) -> None:
+        super().__init__(*args)
+        self.status_code = status_code
 
 
 def _dbg(feature: str, msg: str, **fields: Any) -> None:
@@ -563,7 +565,7 @@ def snapshot_pages(adapter: Any, resource: str, *, feature: str, limit: int = PA
         )
         if resp.status_code != 200:
             _warn(feature, "snapshot_failed", resource=resource, status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-            raise PunchPlayError(f"punchplay_{feature}_snapshot_http_{resp.status_code}")
+            raise PunchPlayError(f"punchplay_{feature}_snapshot_http_{resp.status_code}", status_code=resp.status_code)
         data = safe_json(resp)
         if not isinstance(data, Mapping):
             _warn(feature, "snapshot_invalid_response", resource=resource, request_id=request_id_of(resp))

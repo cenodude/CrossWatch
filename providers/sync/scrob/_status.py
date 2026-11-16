@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from cw_platform.status_mapping import Capabilities, Observation, ReadState, Status
 from cw_platform.run_control import raise_if_cancelled
 from providers.sync._status_mapping import NativeStatusAdapter, Record, digest, observation, skipped
-from ._common import cfg_section, paged_get, scrob_request, status_object, status_resume, status_rows
+from ._common import ScrobError, cfg_section, paged_get, scrob_request, status_object, status_resume, status_rows
 from ._watchlist import watchlist_rows
 
 
@@ -159,7 +159,16 @@ class StatusAdapter(NativeStatusAdapter):
             if key in bad:
                 result[key] = skipped(key, media, item, bad[key])
                 continue
-            state = status_object(adapter, f"shows/{item['ids']['tmdb']}") if show else native[key]
+            if show:
+                try:
+                    state = status_object(adapter, f"shows/{item['ids']['tmdb']}")
+                except ScrobError as exc:
+                    if str(exc) != "scrob_status_read_http_404":
+                        raise
+                    result[key] = skipped(key, media, item, "scrob_status_show_not_found")
+                    continue
+            else:
+                state = native[key]
             if show:
                 if (state.get("tmdb_id") != int(item["ids"]["tmdb"]) or type(state.get("id")) is not int or state["id"] <= 0
                         or any(type(state.get(k)) is not bool for k in ("watched", "watch_started", "dropped"))

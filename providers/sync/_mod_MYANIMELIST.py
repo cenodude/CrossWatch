@@ -84,7 +84,7 @@ def transport(session: Any, method: str, url: str, *, max_retries: int = 1, **kw
         with _LOCK:
             delay = max(0.0, _NEXT_REQUEST - time.monotonic())
             if delay > 60:
-                raise RuntimeError("MyAnimeList rate limit cooldown")
+                raise MyAnimeListHTTPError("MyAnimeList rate limit cooldown", 429)
             _sleep_cancellable(delay)
             _NEXT_REQUEST = time.monotonic() + 1.0
             response = session.request(method, url, **kwargs)
@@ -96,6 +96,12 @@ def transport(session: Any, method: str, url: str, *, max_retries: int = 1, **kw
         if delay > 60 or attempt == 2:
             return response
     return response
+
+
+class MyAnimeListHTTPError(RuntimeError):
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class MyAnimeListClient:
@@ -127,7 +133,7 @@ class MyAnimeListClient:
         if method == "DELETE" and response.status_code in (200, 204, 404):
             return {}
         if response.status_code >= 300:
-            raise RuntimeError(f"MyAnimeList HTTP {response.status_code}")
+            raise MyAnimeListHTTPError(f"MyAnimeList HTTP {response.status_code}", response.status_code)
         data = response.json()
         if not isinstance(data, dict):
             raise RuntimeError("MyAnimeList returned an invalid response")

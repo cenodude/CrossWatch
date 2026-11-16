@@ -121,7 +121,7 @@ UA = os.environ.get("CW_ANILIST_UA") or os.environ.get("CW_UA") or http_user_age
 
 
 class ANILISTError(RuntimeError):
-    pass
+    status_code: int | None = None
 
 
 class ANILISTAuthError(ANILISTError):
@@ -260,7 +260,9 @@ class ANILISTClient:
         if r.status_code in (401, 403):
             raise ANILISTAuthError("AniList unauthorized")
         if r.status_code >= 400:
-            raise ANILISTError(f"AniList http:{r.status_code}")
+            error = ANILISTError(f"AniList http:{r.status_code}")
+            error.status_code = r.status_code
+            raise error
 
         errs = j.get("errors")
         if errs and not tolerate_errors:

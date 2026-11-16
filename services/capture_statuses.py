@@ -117,6 +117,7 @@ def restore_statuses(cfg, provider, instance, payload, *, store=None):
     summary = next((data for event, data in reversed(events) if event == 'status_mapping:done'), {})
     errors = [data['reason'] + (': ' + data['title'] if data.get('title') else '')
               for event, data in events if event == 'status_mapping:review']
+    errors += [data['reason'] for event, data in events if event == 'status_mapping:skip' and data.get('reason')]
     return {**totals, 'ok': not errors, 'errors': errors, 'captured': len(records),
             'unchanged': summary.get('unchanged', 0), 'excluded': summary.get('excluded', 0) + len(records) - len(eligible),
             'recovered': summary.get('recovered', 0), 'dry_run': summary.get('dry_run', False)}

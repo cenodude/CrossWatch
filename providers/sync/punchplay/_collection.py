@@ -151,7 +151,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
         resp = punchplay_request(adapter, "GET", URL_COLLECTION, params=params)
         if resp.status_code != 200:
             _warn(FEATURE, "collection_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-            raise PunchPlayError(f"punchplay_collection_http_{resp.status_code}")
+            raise PunchPlayError(f"punchplay_collection_http_{resp.status_code}", status_code=resp.status_code)
         data = safe_json(resp)
         if not isinstance(data, Mapping):
             raise PunchPlayError("punchplay_collection_invalid_response")

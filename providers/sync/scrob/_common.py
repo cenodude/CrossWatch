@@ -57,7 +57,8 @@ _SHOW_TVDB: dict[tuple[str, int], tuple[int | None, float]] = {}
 
 
 class ScrobError(RuntimeError):
-    pass
+    status_code: int | None = None
+    endpoint: str | None = None
 
 
 def _dbg(feature: str, msg: str, **fields: Any) -> None:
@@ -386,8 +387,11 @@ def paged_get(adapter: Any, path: str, *, feature: str, page_size: int, params: 
         query.update({"page": page, "page_size": size})
         resp = scrob_request(adapter, "GET", path, params=query)
         if not ok_status(resp):
-            _warn(feature, "fetch_failed", status=int(resp.status_code), error=error_of(resp), page=page)
-            raise ScrobError(f"scrob_{feature}_http_{int(resp.status_code)}")
+            _warn(feature, "fetch_failed", status=int(resp.status_code), endpoint=str(path or "").strip("/"), page=page)
+            error = ScrobError(f"scrob_{feature}_http_{int(resp.status_code)}")
+            error.status_code = int(resp.status_code)
+            error.endpoint = str(path or "").strip("/")
+            raise error
         data = safe_json(resp)
         if not isinstance(data, Mapping) or not isinstance(data.get("results"), list):
             raise ScrobError(f"scrob_{feature}_invalid_response")
@@ -429,7 +433,10 @@ def status_object(adapter: Any, path: str, **kwargs: Any) -> Mapping[str, Any]:
     raise_if_cancelled()
     response = scrob_request(adapter, "GET", path, **kwargs)
     if not ok_status(response):
-        raise ScrobError(f"scrob_status_read_http_{response.status_code}")
+        error = ScrobError(f"scrob_status_read_http_{response.status_code}")
+        error.status_code = int(response.status_code)
+        error.endpoint = str(path or "").strip("/")
+        raise error
     data = response.json()
     if not isinstance(data, Mapping):
         raise ScrobError("scrob_status_invalid_object")

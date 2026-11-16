@@ -123,6 +123,15 @@ def test_restore_reads_live_destination_only_and_is_repeatable(case):
     assert restore(case)['updated'] == 1
 
 
+def test_flaky_destination_read_does_not_claim_restore(case):
+    case.rows['1'] = record(Status.WATCHING)
+    case.fault = 'read'
+    result = restore(case)
+    assert not result['ok'] and result['updated'] == 0
+    assert result['errors'] == ['The provider did not respond correctly (no response in time). Status mapping retries on the next sync.']
+    assert not case.writes
+
+
 @pytest.mark.parametrize('fault', ['timeout', 'readback'])
 def test_uncertainty_survives_restart_and_another_capture(case, fault):
     case.rows['1'] = record(Status.WATCHING)
