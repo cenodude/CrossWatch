@@ -98,9 +98,10 @@ def apply_retention(*, conn: sqlite3.Connection | None = None, now: int | None =
 
 def _loop() -> None:
     try:
-        from .groups import refresh_run_summaries
+        from .groups import refresh_hide_summaries, refresh_run_summaries
 
         refresh_run_summaries()
+        refresh_hide_summaries()
     except Exception as exc:
         _LOG.warning("run summary refresh failed: %s", exc, exc_info=True)
     if _stop.wait(STARTUP_DELAY):

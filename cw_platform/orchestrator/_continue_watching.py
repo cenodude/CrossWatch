@@ -9,6 +9,8 @@ from typing import Any
 
 from providers.sync import _continue_watching as registry
 
+from ..id_map import canonical_key
+from ..interactive_reads import read_once
 from ..local_db import continue_rows as store
 from ..run_control import cancel_requested
 from ._pairs_utils import filter_manual_block
@@ -17,6 +19,7 @@ from ._specials import is_special, specials_excluded
 
 OPTION = registry.OPTION
 SHOWN = registry.SHOWN
+REVIEW_OPERATION = "hide_continue_watching"
 POSITION_TOLERANCE_MS = 2000
 SHARED_IDS = ("imdb", "tmdb", "tvdb", "trakt", "simkl", "tvmaze", "mal", "anilist", "kitsu", "anidb")
 EVENT_ITEMS = 100
@@ -54,11 +57,14 @@ def _ms(item: Mapping[str, Any]) -> int:
 
 
 def snapshot(view: Mapping[str, Mapping[str, Any]], retry: set[str] | None = None) -> dict[str, Any]:
-    items = {
-        str(key): {"shown": bool(item.get(SHOWN)) or str(key) in (retry or ()), "ms": _ms(item), "at": str(item.get("progress_at") or "")}
-        for key, item in view.items()
-        if isinstance(item, Mapping) and item.get(SHOWN) is not None
-    }
+    items: dict[str, dict[str, Any]] = {}
+    for key, item in view.items():
+        if not isinstance(item, Mapping) or item.get(SHOWN) is None:
+            continue
+        entry: dict[str, Any] = {"shown": bool(item.get(SHOWN)), "ms": _ms(item), "at": str(item.get("progress_at") or "")}
+        if str(key) in (retry or ()):
+            entry["pending"] = True
+        items[str(key)] = entry
     return {"items": items}
 
 
@@ -94,19 +100,20 @@ def row_cutoff(view: Mapping[str, Mapping[str, Any]]) -> float | None:
     return min(newest.values()) if newest else None
 
 
-def detect(prev: Mapping[str, Any] | None, view: Mapping[str, Mapping[str, Any]], skip: set[str] | None = None) -> list[str]:
+def detect(prev: Mapping[str, Any] | None, view: Mapping[str, Mapping[str, Any]]) -> list[str]:
     before = (prev or {}).get("items") if isinstance(prev, Mapping) else None
     if not isinstance(before, Mapping) or not before:
         return []
     oldest = row_cutoff(view)
-    if oldest is None:
-        return []
     out: list[str] = []
     for key, item in view.items():
-        if item.get(SHOWN) is not False or key in (skip or ()):
+        if item.get(SHOWN) is not False:
             continue
         seen = before.get(key)
-        if not isinstance(seen, Mapping) or seen.get("shown") is not True:
+        if not isinstance(seen, Mapping):
+            continue
+        pending = seen.get("pending") is True
+        if not pending and (seen.get("shown") is not True or oldest is None):
             continue
         if abs(_ms(item) - int(seen.get("ms") or 0)) > POSITION_TOLERANCE_MS:
             continue
@@ -114,7 +121,7 @@ def detect(prev: Mapping[str, Any] | None, view: Mapping[str, Mapping[str, Any]]
         if not at or at != str(seen.get("at") or ""):
             continue
         stamp = _epoch(at)
-        if stamp is None or stamp < oldest:
+        if stamp is None or (not pending and oldest is not None and stamp < oldest):
             continue
         out.append(str(key))
     return out
@@ -187,12 +194,24 @@ def _title(item: Mapping[str, Any]) -> str:
     return str(item.get("title") or "")
 
 
-def _read(provider: str, ops: Any, cfg: Mapping[str, Any], emit: Callable[..., Any]) -> dict[str, dict[str, Any]] | None:
+def _read(provider: str, instance: str, ops: Any, cfg: Mapping[str, Any],
+          emit: Callable[..., Any]) -> dict[str, dict[str, Any]] | None:
     try:
-        return provider_call(lambda view: registry.read_view(provider, ops, view), cfg)
+        return provider_call(lambda view: read_once(["continue_watching", provider, instance],
+                                                    lambda: registry.read_view(provider, ops, view)), cfg)
     except Exception as exc:
         emit("debug", msg="continue_watching.read_failed", provider=provider, error=str(exc)[:200])
         return None
+
+
+def _reviewed(review: Any, src: Side, dst: Side,
+              pairs: list[tuple[dict[str, Any], dict[str, Any]]]) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    targets = [target for _source, target in pairs]
+    before = {canonical_key(target): target for target in targets}
+    kept = review.filter("progress", dst[0], dst[1], REVIEW_OPERATION, targets,
+                         source=src[0], source_instance=src[1], before=before)
+    keep = {str(target.get("_cw_key")) for target in kept}
+    return [(source, target) for source, target in pairs if str(target.get("_cw_key")) in keep]
 
 
 def _apply(src: Side, dst: Side, pairs: list[tuple[dict[str, Any], dict[str, Any]]], *, dry_run: bool,
@@ -232,6 +251,7 @@ def sync_removals(
     emit: Callable[..., Any],
     fcfg: Mapping[str, Any] | None = None,
     blocked: set[str] | None = None,
+    review: Any = None,
 ) -> int:
     scope = getattr(state_store, "pair_scope", None)
     base = getattr(state_store, "base_path", None)
@@ -242,38 +262,45 @@ def sync_removals(
         emit("debug", msg="continue_watching.unsupported_pair", src=src[0], dst=dst[0])
         return 0
     views: dict[int, dict[str, dict[str, Any]] | None] = {}
-    for idx, (name, _inst, ops, cfg) in enumerate((src, dst)):
-        views[idx] = _read(name, ops, cfg, emit)
+    for idx, (name, inst, ops, cfg) in enumerate((src, dst)):
+        views[idx] = _read(name, inst, ops, cfg, emit)
     if views[0] is None or views[1] is None:
         return 0
     no_specials = specials_excluded("progress", fcfg)
     sides = (src, dst)
     directions = [(0, 1), (1, 0)] if two_way else [(0, 1)]
     prev = {idx: store.load(base, scope, sides[idx][0], sides[idx][1]) for idx in (0, 1)}
-    hidden_total = 0
-    hidden_by_us: dict[int, set[str]] = {0: set(), 1: set()}
-    retry: dict[int, set[str]] = {0: set(), 1: set()}
+    planned: list[tuple[int, int, list[tuple[dict[str, Any], dict[str, Any]]], list[tuple[dict[str, Any], dict[str, Any]]]]] = []
     for from_idx, to_idx in directions:
-        if cancel_requested():
-            emit("debug", msg="continue_watching.cancelled")
-            return hidden_total
-        removed = detect(prev[from_idx], views[from_idx] or {}, skip=hidden_by_us[from_idx])
+        removed = detect(prev[from_idx], views[from_idx] or {})
         pairs = plan(removed, views[from_idx] or {}, views[to_idx] or {})
         if no_specials:
             pairs = [(s, t) for s, t in pairs if not is_special(s) and not is_special(t)]
         if blocked:
             pairs = [(s, t) for s, t in pairs if filter_manual_block([s], blocked) and filter_manual_block([t], blocked)]
         emit("debug", msg="continue_watching.detected", provider=sides[from_idx][0], removed=len(removed), planned=len(pairs))
-        confirmed = _apply(sides[from_idx], sides[to_idx], pairs, dry_run=dry_run, emit=emit)
-        for key in confirmed:
-            item = (views[to_idx] or {}).get(key)
-            if isinstance(item, dict):
-                item[SHOWN] = False
-        hidden_by_us[to_idx] |= confirmed
+        chosen = _reviewed(review, sides[from_idx], sides[to_idx], pairs) if review is not None and pairs else pairs
+        planned.append((from_idx, to_idx, pairs, chosen))
+    if review is not None and review.preview:
+        return 0
+    hidden_total = 0
+    retry: dict[int, set[str]] = {0: set(), 1: set()}
+    hidden: dict[int, set[str]] = {0: set(), 1: set()}
+    for from_idx, to_idx, pairs, chosen in planned:
+        if cancel_requested():
+            emit("debug", msg="continue_watching.cancelled")
+            return hidden_total
+        confirmed = _apply(sides[from_idx], sides[to_idx], chosen, dry_run=dry_run, emit=emit)
+        hidden[to_idx] |= confirmed
         retry[from_idx] |= {str(s.get("_cw_key")) for s, t in pairs if t["_cw_key"] not in confirmed}
         hidden_total += len(confirmed)
     if dry_run:
         return hidden_total
+    for idx, keys in hidden.items():
+        for key in keys:
+            item = (views[idx] or {}).get(key)
+            if isinstance(item, dict):
+                item[SHOWN] = False
     for idx in (0, 1):
         name, inst = sides[idx][0], sides[idx][1]
         try:

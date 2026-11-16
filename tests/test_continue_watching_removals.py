@@ -8,8 +8,10 @@ from typing import Any
 
 import pytest
 
+from cw_platform.interactive_reads import ReviewReads, use_review_reads
 from cw_platform.local_db import continue_rows as store
 from cw_platform.orchestrator import _continue_watching as cw
+from cw_platform.orchestrator._interactive import InteractivePlan
 from providers.sync import _continue_watching as registry
 
 SHOWN = registry.SHOWN
@@ -64,12 +66,32 @@ def state_store(config_base):
 
 
 def _run(state_store, *, two_way: bool = False, dry_run: bool = False, fcfg: dict[str, Any] | None = None,
-         blocked: set[str] | None = None) -> tuple[int, list[tuple[str, dict[str, Any]]]]:
+         blocked: set[str] | None = None, review: Any = None) -> tuple[int, list[tuple[str, dict[str, Any]]]]:
     events: list[tuple[str, dict[str, Any]]] = []
     hidden = cw.sync_removals(state_store, src=("EMBY", "default", object(), {}), dst=("PLEX", "default", object(), {}),
                               two_way=two_way, dry_run=dry_run, emit=lambda name, **f: events.append((name, f)),
-                              fcfg=fcfg, blocked=blocked)
+                              fcfg=fcfg, blocked=blocked, review=review)
     return hidden, events
+
+
+def _preview(state_store, reads: ReviewReads, **kw: Any) -> InteractivePlan:
+    plan = InteractivePlan(preview=True)
+    with use_review_reads(reads, collecting=True):
+        _run(state_store, dry_run=True, review=plan, **kw)
+    return plan
+
+
+def _apply(state_store, reads: ReviewReads, selected: set[str], **kw: Any) -> int:
+    plan = InteractivePlan(preview=False, selected=selected, record_rows=False)
+    with use_review_reads(reads):
+        return _run(state_store, review=plan, **kw)[0]
+
+
+def _removed_on_emby(servers: Servers, state_store) -> None:
+    servers.views["EMBY"] = {"m1": _movie("1", NEW), "m2": _movie("2", MID)}
+    servers.views["PLEX"] = {"p1": _movie("1", MID)}
+    _run(state_store)
+    servers.views["EMBY"]["m1"][SHOWN] = False
 
 
 def test_first_run_only_takes_a_snapshot(servers, state_store):
@@ -215,6 +237,22 @@ def test_own_hides_are_not_read_back_as_removals_in_the_same_run(servers, state_
     assert [(f["provider"], f["removed"]) for f in detected] == [("EMBY", 1), ("PLEX", 0)]
 
 
+def _removed_on_both_sides(servers: Servers, state_store) -> None:
+    servers.views["EMBY"] = {"m1": _movie("1", MID), "m3": _movie("3", MID), "m5": _movie("5", OLD)}
+    servers.views["PLEX"] = {"p1": _movie("1", OLD), "p3": _movie("3", MID), "p4": _movie("4", NEW)}
+    _run(state_store, two_way=True)
+    servers.views["EMBY"]["m1"][SHOWN] = False
+    servers.views["PLEX"]["p3"][SHOWN] = False
+
+
+def test_two_way_plans_both_directions_from_the_rows_as_read(servers, state_store):
+    _removed_on_both_sides(servers, state_store)
+
+    assert _run(state_store, two_way=True)[0] == 2
+    assert servers.hidden == [("PLEX", ["p1"]), ("EMBY", ["m3"])]
+    assert _run(state_store, two_way=True)[0] == 0
+
+
 def test_old_episodes_behind_a_newer_card_do_not_widen_the_row_age(servers, state_store):
     servers.views["EMBY"] = {"e-old": _episode("9", 1, 1, OLD), "e-new": _episode("9", 1, 2, NEW), "m1": _movie("1", MID)}
     servers.views["PLEX"] = {"p1": _movie("1", OLD)}
@@ -305,6 +343,100 @@ def test_a_failed_read_keeps_the_last_snapshot(servers, state_store):
 
     servers.fail_read = set()
     assert _run(state_store)[0] == 1
+
+
+@pytest.fixture
+def reads():
+    session = ReviewReads()
+    yield session
+    session.close()
+
+
+def test_review_lists_the_hide_without_writing(servers, state_store, reads):
+    _removed_on_emby(servers, state_store)
+    before = store.load(state_store.base_path, state_store.pair_scope, "EMBY", "default")
+
+    plan = _preview(state_store, reads)
+
+    rows = list(plan.rows.values())
+    assert [(r["operation"], r["provider"], r["source"], r["item"]["_cw_key"]) for r in rows] == [
+        ("hide_continue_watching", "PLEX", "EMBY", "p1")]
+    assert rows[0]["before"]["progress_ms"] == 600_000
+    assert servers.hidden == []
+    assert store.load(state_store.base_path, state_store.pair_scope, "EMBY", "default") == before
+
+
+def test_review_applies_selected_hides_from_the_reviewed_rows(servers, state_store, reads):
+    _removed_on_emby(servers, state_store)
+    rows = _preview(state_store, reads).rows
+    servers.fail_read = {"EMBY", "PLEX"}
+
+    assert _apply(state_store, reads, set(rows)) == 1
+    assert servers.hidden == [("PLEX", ["p1"])]
+
+    servers.fail_read = set()
+    assert _run(state_store)[0] == 0
+
+
+def test_review_keeps_deselected_hides_for_later(servers, state_store, reads):
+    _removed_on_emby(servers, state_store)
+    _preview(state_store, reads)
+
+    assert _apply(state_store, reads, set()) == 0
+    assert servers.hidden == []
+
+    assert len(_preview(state_store, ReviewReads()).rows) == 1
+    assert _run(state_store)[0] == 1
+    assert servers.hidden == [("PLEX", ["p1"])]
+
+
+def test_two_way_review_applies_and_keeps_both_directions(servers, state_store, reads):
+    _removed_on_both_sides(servers, state_store)
+    rows = _preview(state_store, reads, two_way=True).rows
+    first = next(rid for rid, row in rows.items() if row["provider"] == "PLEX")
+
+    assert len(rows) == 2
+    assert _apply(state_store, reads, {first}, two_way=True) == 1
+    assert servers.hidden == [("PLEX", ["p1"])]
+
+    assert _run(state_store, two_way=True)[0] == 1
+    assert servers.hidden[-1] == ("EMBY", ["m3"])
+
+
+def test_kept_removals_survive_an_empty_row(servers, state_store, reads):
+    servers.views["EMBY"] = {"m1": _movie("1", MID), "m3": _movie("3", MID), "m5": _movie("5", OLD)}
+    servers.views["PLEX"] = {"p1": _movie("1", OLD), "p3": _movie("3", MID)}
+    _run(state_store, two_way=True)
+    servers.views["EMBY"]["m1"][SHOWN] = False
+    servers.views["PLEX"]["p3"][SHOWN] = False
+    rows = _preview(state_store, reads, two_way=True).rows
+    first = next(rid for rid, row in rows.items() if row["provider"] == "PLEX")
+
+    assert _apply(state_store, reads, {first}, two_way=True) == 1
+    assert not any(item[SHOWN] for item in servers.views["PLEX"].values())
+
+    assert _run(state_store, two_way=True)[0] == 1
+    assert servers.hidden[-1] == ("EMBY", ["m3"])
+
+
+def test_hide_threads_get_new_summaries_and_keep_acknowledgements(tmp_path):
+    from cw_platform.event_archive.db import connect
+    from cw_platform.event_archive.groups import correlate, refresh_hide_summaries
+    from cw_platform.event_archive.recorder import make_event, record_events
+
+    c = connect(tmp_path / "events.db")
+    record_events([make_event(event_type="write_attempted", created_at=1, feature="progress", operation="hide_continue_watching",
+                              source_provider="EMBY", destination_provider="PLEX")], conn=c)
+    correlate(conn=c)
+    with c:
+        c.execute("UPDATE event_groups SET summary='old', acknowledged_at=5, acknowledged_by='me'")
+
+    assert refresh_hide_summaries(conn=c) == 1
+    summary, acked_at, acked_by = c.execute("SELECT summary, acknowledged_at, acknowledged_by FROM event_groups").fetchone()
+    assert "Continue Watching" in summary
+    assert (acked_at, acked_by) == (5, "me")
+    assert refresh_hide_summaries(conn=c) == 0
+    c.close()
 
 
 def test_unsupported_pairs_do_nothing(state_store):

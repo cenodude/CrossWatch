@@ -1892,6 +1892,10 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                 reset_plan.unwatch = reset_plan.settle(planned_adds, alias=_alias_index, find=_find_in_idx,
                                                        unblocked=lambda items: _filter_manual_block(items, manual_blocks))
                 preview_reset_unwatches(reset_plan, review=review, feature=feature, dst_inst=dst_inst, src_inst=src_inst, down=dst_down)
+            if continue_watching_requested(feature, fcfg) and not (src_down or dst_down or src_suspect or dst_suspect):
+                sync_continue_watching_removals(ctx.state_store, src=(src, src_inst, src_ops, src_cfg),
+                                                dst=(dst, dst_inst, dst_ops, dst_cfg), two_way=False,
+                                                dry_run=True, emit=emit, fcfg=fcfg, blocked=manual_blocks, review=review)
             return {"blocked": blocked_total, "manual_excluded": int(manual_blocked),
                     "library_skipped": len(library_skipped), "cancelled": cancelled}
 
@@ -2358,12 +2362,9 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         )
 
     if continue_watching_requested(feature, fcfg) and not (cancelled or src_down or dst_down or src_suspect or dst_suspect):
-        if review is not None:
-            emit("debug", msg="continue_watching.skipped_interactive", src=src, dst=dst)
-        else:
-            sync_continue_watching_removals(ctx.state_store, src=(src, src_inst, src_ops, src_cfg),
-                                            dst=(dst, dst_inst, dst_ops, dst_cfg), two_way=False,
-                                            dry_run=dry_run_flag, emit=emit, fcfg=fcfg, blocked=manual_blocks)
+        sync_continue_watching_removals(ctx.state_store, src=(src, src_inst, src_ops, src_cfg),
+                                        dst=(dst, dst_inst, dst_ops, dst_cfg), two_way=False,
+                                        dry_run=dry_run_flag, emit=emit, fcfg=fcfg, blocked=manual_blocks, review=review)
 
     if reset_plan and not (cancelled or src_down or dst_down or src_suspect or dst_suspect):
         reset_plan.unwatch = reset_plan.settle(adds, alias=_alias_index, find=_find_in_idx,
