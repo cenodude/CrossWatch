@@ -8,6 +8,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+import requests
 
 from cw_platform.orchestrator import _status_mapping as runtime
 from cw_platform.orchestrator._interactive import InteractivePlan
@@ -897,7 +898,7 @@ def test_failed_read_never_writes_or_advances_baseline(sync_case, monkeypatch):
     (RuntimeError("secret"), "RuntimeError"),
     (RuntimeError(" scrob_status_ambiguous_watchlist"), "RuntimeError"),
     (RuntimeError("scrob_status_0123456789abcdef0123456789abcdef"), "RuntimeError"),
-    (RuntimeError("scrob_status_write_http_401"), "scrob_status_write_http_401"),
+    (RuntimeError("scrob_status_write_http_401"), "scrob_status_write_http_401; HTTP 401, login rejected"),
 ])
 def test_failed_read_reports_a_safe_reason(sync_case, monkeypatch, error, shown):
     def failed(self):
@@ -906,6 +907,199 @@ def test_failed_read_reports_a_safe_reason(sync_case, monkeypatch, error, shown)
     assert run(sync_case)["errors"] == 1
     reasons = [value["reason"] for event, value in sync_case.events if event == "status_mapping:review"]
     assert reasons == [f"Status read or planning failed ({shown}). Refresh before retrying."]
+    assert "secret" not in str(sync_case.events)
+
+
+@pytest.mark.parametrize("error", [
+    RuntimeError("scrob_status_read_http_404"),
+    RuntimeError("scrob_status_read_http_503"),
+    RuntimeError("scrob_status_read_http_429"),
+    requests.ReadTimeout("slow"),
+    requests.ConnectionError("down"),
+    requests.HTTPError("GET https://api.example/sync?apikey=secret", response=SimpleNamespace(status_code=502)),
+])
+def test_flaky_read_skips_quietly(sync_case, monkeypatch, error):
+    def failed(self):
+        raise error
+    monkeypatch.setattr(sync_case.adapter, "read", failed)
+    totals = run(sync_case)
+    assert totals["errors"] == 0 and totals["skipped"] == 1
+    assert not [value for event, value in sync_case.events if event == "status_mapping:review"]
+    assert [value["state"] for event, value in sync_case.events if event in ("status_mapping:skip", "status_mapping:done")] == ["skipped"]
+    assert not sync_case.writes and not sync_case.store.path.exists()
+
+
+@pytest.mark.parametrize("error,shown", [
+    (RuntimeError("scrob_status_read_http_404"), "SCROB did not respond correctly (HTTP 404 on shows/12, not found)."),
+    (RuntimeError("scrob_status_http_503"), "SCROB did not respond correctly (HTTP 503 on history, server error)."),
+    (RuntimeError("scrob_status_read_http_429"), "SCROB did not respond correctly (HTTP 429, rate limited)."),
+    (requests.ReadTimeout("slow"), "The provider did not respond correctly (no response in time)."),
+    (requests.ConnectionError("down"), "The provider did not respond correctly (could not connect)."),
+    (requests.HTTPError("GET https://api.example/sync?apikey=secret", response=SimpleNamespace(status_code=503)),
+     "The provider did not respond correctly (HTTP 503, server error)."),
+])
+def test_flaky_read_skip_explains_the_failure(sync_case, monkeypatch, error, shown):
+    if "404" in str(error):
+        error.endpoint = "shows/12"
+    elif "503" in str(error):
+        error.endpoint = "history"
+    def failed(self):
+        raise error
+    monkeypatch.setattr(sync_case.adapter, "read", failed)
+    run(sync_case)
+    reasons = [value["reason"] for event, value in sync_case.events if event == "status_mapping:skip"]
+    assert reasons == [shown + " Status mapping retries on the next sync."]
+
+
+@pytest.mark.parametrize("code,shown", [
+    ("scrob_status_read_http_401", "HTTP 401 on auth/settings, login rejected"),
+    ("scrob_status_read_http_403", "HTTP 403 on auth/settings, access denied"),
+    ("scrob_status_read_http_400", "HTTP 400 on auth/settings, request rejected"),
+])
+def test_read_rejection_still_reports(sync_case, monkeypatch, code, shown):
+    error = RuntimeError(code)
+    error.endpoint = "auth/settings"
+    def failed(self):
+        raise error
+    monkeypatch.setattr(sync_case.adapter, "read", failed)
+    assert run(sync_case)["errors"] == 1
+    reasons = [value["reason"] for event, value in sync_case.events if event == "status_mapping:review"]
+    assert reasons == [f"Status read or planning failed ({code}; {shown}). Refresh before retrying."]
+
+
+def test_http_error_rejection_still_reports(sync_case, monkeypatch):
+    def failed(self):
+        raise requests.HTTPError("GET https://api.example/sync?apikey=secret", response=SimpleNamespace(status_code=401))
+    monkeypatch.setattr(sync_case.adapter, "read", failed)
+    assert run(sync_case)["errors"] == 1
+    reasons = [value["reason"] for event, value in sync_case.events if event == "status_mapping:review"]
+    assert reasons == ["Status read or planning failed (HTTPError; HTTP 401, login rejected). Refresh before retrying."]
+    assert "secret" not in str(sync_case.events)
+
+
+def test_flaky_failure_after_a_queued_proposal_drops_the_pair(sync_case, monkeypatch):
+    case = sync_case
+    case.rows["a"]["2"] = row(Status.DROPPED, "2")
+    case.rows["b"]["2"] = row(Status.WATCHING, "2")
+    original = runtime.plan_status
+    seen = []
+    def flaky(*args, **kwargs):
+        if kwargs["item"] not in seen:
+            seen.append(kwargs["item"])
+        if len(seen) > 1:
+            raise requests.ReadTimeout("slow")
+        return original(*args, **kwargs)
+    monkeypatch.setattr(runtime, "plan_status", flaky)
+    totals = run(case)
+    assert totals["skipped"] == 1 and totals["errors"] == 0 and totals["updated"] == 0
+    assert not case.writes
+    assert [value["state"] for event, value in case.events if event in ("status_mapping:skip", "status_mapping:done")] == ["skipped"]
+
+
+def _provider_errors():
+    from providers.auth._auth_FLOPPY import FloppyRequestError
+    from providers.sync._mod_ANILIST import ANILISTError
+    from providers.sync._mod_MYANIMELIST import MyAnimeListHTTPError
+    from providers.sync._mod_PUBLICMETADB import PUBLICMETADBError
+    from providers.sync.punchplay._common import PunchPlayError
+    from providers.sync.wetrakr._common import WeTrakrSyncError
+    anilist = ANILISTError("AniList http:503")
+    anilist.status_code = 503
+    punchplay = PunchPlayError("punchplay_history_snapshot_http_503")
+    punchplay.status_code = 503
+    publicmetadb = PUBLICMETADBError("publicmetadb_read_http_503:/api/external/watched")
+    publicmetadb.status_code = 503
+    publicmetadb.endpoint = "api/external/watched"
+    try:
+        try:
+            raise requests.ConnectionError("down")
+        except requests.ConnectionError as exc:
+            raise WeTrakrSyncError("request_failed") from exc
+    except WeTrakrSyncError as exc:
+        wetrakr_transport = exc
+    return {
+        "anilist": anilist, "myanimelist": MyAnimeListHTTPError("MyAnimeList HTTP 503", 503), "punchplay": punchplay,
+        "publicmetadb": publicmetadb, "wetrakr": WeTrakrSyncError("request_rejected", status=503),
+        "wetrakr_transport": wetrakr_transport,
+        "floppy": FloppyRequestError("Floppy request failed (503)", reason="http_503", status_code=503),
+    }
+
+
+@pytest.mark.parametrize("name", ["anilist", "myanimelist", "punchplay", "publicmetadb", "wetrakr", "wetrakr_transport", "floppy"])
+def test_provider_read_errors_skip_quietly(sync_case, monkeypatch, name):
+    error = _provider_errors()[name]
+    def failed(self):
+        raise error
+    monkeypatch.setattr(sync_case.adapter, "read", failed)
+    totals = run(sync_case)
+    assert totals["errors"] == 0 and totals["skipped"] == 1
+    reasons = [value["reason"] for event, value in sync_case.events if event == "status_mapping:skip"]
+    detail = "could not connect" if name == "wetrakr_transport" else "HTTP 503 on api/external/watched, server error" if name == "publicmetadb" else "HTTP 503, server error"
+    assert reasons == [f"The provider did not respond correctly ({detail}). Status mapping retries on the next sync."]
+
+
+def test_provider_rejection_keeps_the_notice(sync_case, monkeypatch):
+    from providers.auth._auth_FLOPPY import FloppyRequestError
+    def failed(self):
+        raise FloppyRequestError("Floppy request failed (403)", reason="http_403", status_code=403)
+    monkeypatch.setattr(sync_case.adapter, "read", failed)
+    assert run(sync_case)["errors"] == 1
+    reasons = [value["reason"] for event, value in sync_case.events if event == "status_mapping:review"]
+    assert reasons == ["Status read or planning failed (FloppyRequestError; HTTP 403, access denied). Refresh before retrying."]
+
+
+def test_handled_earlier_error_is_not_used(sync_case, monkeypatch):
+    def failed(self):
+        try:
+            raise requests.ConnectionError("down")
+        except requests.ConnectionError:
+            raise RuntimeError("scrob_status_invalid_rows")
+    monkeypatch.setattr(sync_case.adapter, "read", failed)
+    assert run(sync_case)["errors"] == 1
+
+
+def test_kitsu_client_error_carries_status(monkeypatch):
+    from providers.sync import _mod_KITSU
+    monkeypatch.setattr(_mod_KITSU, "request_with_auth", lambda *args, **kwargs: SimpleNamespace(status_code=503))
+    with pytest.raises(_mod_KITSU.KitsuHTTPError) as caught:
+        _mod_KITSU.KitsuClient({}, "default").request("GET", "/library-entries")
+    assert caught.value.status_code == 503 and runtime._transient_read_failure(caught.value)
+
+
+def test_punchplay_watchlist_read_error_carries_status(monkeypatch):
+    from providers.sync.punchplay import _watchlist
+    monkeypatch.setattr(_watchlist, "punchplay_request", lambda *args, **kwargs: SimpleNamespace(status_code=503, headers={}, json=lambda: {}, text=""))
+    monkeypatch.setattr(_watchlist, "_warn", lambda *args, **kwargs: None)
+    with pytest.raises(_watchlist.PunchPlayError) as caught:
+        _watchlist.watchlist_ids(SimpleNamespace())
+    assert caught.value.status_code == 503 and runtime._transient_read_failure(caught.value)
+
+
+def test_myanimelist_cooldown_counts_as_rate_limit(monkeypatch):
+    from providers.sync import _mod_MYANIMELIST
+    monkeypatch.setattr(_mod_MYANIMELIST, "_NEXT_REQUEST", _mod_MYANIMELIST.time.monotonic() + 600)
+    with pytest.raises(_mod_MYANIMELIST.MyAnimeListHTTPError) as caught:
+        _mod_MYANIMELIST.transport(SimpleNamespace(), "GET", "https://api.example/anime")
+    assert caught.value.status_code == 429 and runtime._transient_read_failure(caught.value)
+    assert runtime._failure_detail(caught.value) == "HTTP 429, rate limited"
+
+
+def test_trakt_pagination_error_carries_status():
+    from providers.sync.trakt._common import TraktPager, TraktPaginationError
+    with pytest.raises(TraktPaginationError) as caught:
+        TraktPager("status", check_cancel=False).read(SimpleNamespace(status_code=502), 1)
+    assert caught.value.status_code == 502 and runtime._transient_read_failure(caught.value)
+
+
+def test_unsafe_endpoint_is_not_shown(sync_case, monkeypatch):
+    error = RuntimeError("scrob_status_read_http_401")
+    error.endpoint = "lists?apikey=secret"
+    def failed(self):
+        raise error
+    monkeypatch.setattr(sync_case.adapter, "read", failed)
+    run(sync_case)
+    reasons = [value["reason"] for event, value in sync_case.events if event == "status_mapping:review"]
+    assert reasons == ["Status read or planning failed (scrob_status_read_http_401; HTTP 401, login rejected). Refresh before retrying."]
     assert "secret" not in str(sync_case.events)
 
 

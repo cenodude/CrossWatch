@@ -7,6 +7,8 @@ import re
 from dataclasses import asdict, replace
 from uuid import uuid4
 
+import requests
+
 from cw_platform.interactive_reads import read_once, use_review_reads
 from cw_platform.provider_instances import build_provider_config_view, normalize_instance_id
 from cw_platform.run_control import raise_if_cancelled
@@ -99,6 +101,63 @@ def publish_status(ctx, pair, event, **values):
     if review is not None:
         review.status_mappings = [row for row in review.status_mappings if row["pair_id"] != summary["pair_id"]] + [summary]
     ctx.emit("status_mapping:" + event, **summary)
+
+
+_TRANSPORT_ERRORS = (requests.Timeout, requests.ConnectionError, TimeoutError, ConnectionError)
+
+
+def _causes(exc):
+    seen = set()
+    while isinstance(exc, BaseException) and id(exc) not in seen:
+        seen.add(id(exc))
+        yield exc
+        exc = exc.__cause__
+
+
+def _http_status(exc):
+    for error in _causes(exc):
+        status = getattr(error, "status_code", None)
+        if type(status) is int and 100 <= status <= 599:
+            return status
+        if isinstance(error, requests.HTTPError):
+            status = getattr(error.response, "status_code", None)
+            if type(status) is int:
+                return status
+        match = re.fullmatch(r"[a-z]{2,20}_status(?:_[a-z]{2,20}){0,5}_http_(\d{3})", str(error))
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _transport_error(exc):
+    return next((error for error in _causes(exc) if isinstance(error, _TRANSPORT_ERRORS)), None)
+
+
+def _transient_read_failure(exc):
+    if _transport_error(exc) is not None:
+        return True
+    status = _http_status(exc)
+    if status is None or re.search(r"_status_write_http_\d{3}$", str(exc)):
+        return False
+    return status in (404, 408, 429) or 500 <= status <= 599
+
+
+_HTTP_HINTS = {400: "request rejected", 401: "login rejected", 403: "access denied", 404: "not found", 408: "request timed out", 429: "rate limited"}
+
+
+def _failure_detail(exc):
+    transport = _transport_error(exc)
+    if isinstance(transport, (requests.Timeout, TimeoutError)):
+        return "no response in time"
+    if transport is not None:
+        return "could not connect"
+    code = _http_status(exc)
+    if code is None:
+        return ""
+    hint = _HTTP_HINTS.get(code) or ("server error" if code >= 500 else "")
+    endpoint = next((value for value in (getattr(error, "endpoint", None) for error in _causes(exc)) if isinstance(value, str)), None)
+    where = f" on {endpoint}" if isinstance(endpoint, str) and re.fullmatch(r"[a-z][a-z0-9/_-]{0,80}", endpoint) else ""
+    return f"HTTP {code}{where}" + (f", {hint}" if hint else "")
 
 
 def report_skipped(ctx, pair, reason):
@@ -327,8 +386,20 @@ def _run_status_mappings(ctx, pairs, cfg, health_map, *, store, adapter_override
                 proposals.append((pair, config, item, a, b, decision, state))
         except Exception as exc:
             code = str(exc)
+            if _transient_read_failure(exc):
+                totals["skipped"] += 1
+                summaries.pop(pair.get("id"), None)
+                proposals[:] = [proposal for proposal in proposals if proposal[0] is not pair]
+                prefix = re.match(r"([a-z]{2,20})_status_", code)
+                provider = prefix.group(1).upper() if prefix else "The provider"
+                skip = f"{provider} did not respond correctly ({_failure_detail(exc)}). Status mapping retries on the next sync."
+                publish_status(ctx, pair, "skip", state="skipped", reason=skip)
+                if callable(getattr(ctx, "emit_info", None)):
+                    ctx.emit_info(f"[!] Status mapping skipped for {pair.get('source')} and {pair.get('target')}: {skip}")
+                continue
             reason = code if re.fullmatch(r"[a-z]{2,20}_status(?:_[a-z]{2,20}){1,5}(?:_http_\d{3})?", code) else type(exc).__name__
-            report(pair, f"Status read or planning failed ({reason}). Refresh before retrying.", error=True)
+            detail = _failure_detail(exc)
+            report(pair, f"Status read or planning failed ({reason}{'; ' + detail if detail else ''}). Refresh before retrying.", error=True)
 
     before_reads = _FreshReads(adapters)
     written = []

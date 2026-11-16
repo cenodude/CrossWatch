@@ -54,6 +54,12 @@ def get_manifest() -> dict[str, Any]:
             "bidirectional": True, "features": supported_features(), "capabilities": capabilities(), "requires": []}
 
 
+class KitsuHTTPError(RuntimeError):
+    def __init__(self, message: str, status_code: int) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 class KitsuClient:
     def __init__(self, cfg: Mapping[str, Any], instance_id: str):
         self.cfg = cfg
@@ -68,7 +74,7 @@ class KitsuClient:
         if response.status_code == 401:
             raise auth.KitsuAuthError("Kitsu reconnect required")
         if response.status_code >= 300:
-            raise RuntimeError(f"Kitsu HTTP {response.status_code}")
+            raise KitsuHTTPError(f"Kitsu HTTP {response.status_code}", response.status_code)
         if response.status_code == 204:
             return {}
         data = response.json()

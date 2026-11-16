@@ -170,7 +170,7 @@ def _index_from_library(adapter: Any) -> dict[str, dict[str, Any]]:
     resp = punchplay_request(adapter, "GET", URL_RATINGS)
     if resp.status_code != 200:
         _warn(FEATURE, "ratings_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-        raise PunchPlayError(f"punchplay_ratings_http_{resp.status_code}")
+        raise PunchPlayError(f"punchplay_ratings_http_{resp.status_code}", status_code=resp.status_code)
     data = safe_json(resp)
     if not isinstance(data, Mapping):
         raise PunchPlayError("punchplay_ratings_invalid_response")

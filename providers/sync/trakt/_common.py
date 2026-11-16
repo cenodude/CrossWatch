@@ -21,7 +21,7 @@ from .._log import log as cw_log
 
 
 class TraktPaginationError(RuntimeError):
-    pass
+    status_code: int | None = None
 
 
 class TraktPager:
@@ -32,7 +32,10 @@ class TraktPager:
 
     def _fail(self, reason: str, page: int, **fields: Any) -> NoReturn:
         cw_log("TRAKT", self.feature, "warn", "pagination_incomplete", reason=reason, page=page, **fields)
-        raise TraktPaginationError(f"Trakt {self.feature} pagination incomplete: {reason} on page {page}")
+        error = TraktPaginationError(f"Trakt {self.feature} pagination incomplete: {reason} on page {page}")
+        status = fields.get("status")
+        error.status_code = status if type(status) is int else None
+        raise error
 
     def read(self, response: Any, page: int, *, bucket: str | None = None) -> list[Any]:
         if self.check_cancel:

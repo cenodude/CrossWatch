@@ -292,7 +292,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     resp = punchplay_request(adapter, "GET", URL_IN_PROGRESS)
     if resp.status_code != 200:
         _warn(FEATURE, "in_progress_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-        raise PunchPlayError(f"punchplay_progress_http_{resp.status_code}")
+        raise PunchPlayError(f"punchplay_progress_http_{resp.status_code}", status_code=resp.status_code)
     else:
         data = safe_json(resp)
         rows: list[Mapping[str, Any]] = []

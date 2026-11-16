@@ -307,7 +307,8 @@ def test_runtime_readback_and_pending_writes(server, config_base, tmp_path, mode
         server.shows[1]["dropped"] = False
         server.data["history/dropped"]["shows"] = []
         assert run_status_mappings(ctx, [pair], cfg, {}, store=store)["updated"] == 1
-        assert tracker.note("show:tmdb:1")["status"] == "watching"
+        note = tracker.note("show:tmdb:1")
+        assert note is not None and note["status"] == "watching"
 
 
 def _skipped(rows):
@@ -325,3 +326,27 @@ def test_inconsistent_show_state_skips_only_that_show(server, case, code):
     assert list(skipped.values()) == [code]
     assert len(rows) > len(skipped)
     assert not server.writes
+
+def test_missing_show_skips_only_that_show(server):
+    server.hook = lambda method, path, kwargs: response({"detail": "TMDB Show not found"}, 404) if path == "shows/1" else None
+    rows = server.adapter.read()
+    assert _skipped(rows) == {"show:1": "scrob_status_show_not_found"}
+    assert len(rows) > 1
+    assert not server.writes
+
+
+def test_paged_read_error_hides_the_response_body(server, monkeypatch):
+    warnings = []
+    monkeypatch.setattr(_common, "_warn", lambda *args, **kwargs: warnings.append((args, kwargs)))
+    server.hook = lambda method, path, kwargs: response({"detail": "https://api.themoviedb.org/3/tv/1?api_key=fake_secret"}, 503) if path == "history" else None
+    with pytest.raises(RuntimeError, match="scrob_status_http_503") as caught:
+        server.adapter.read()
+    assert caught.value.status_code == 503 and caught.value.endpoint == "history"
+    assert warnings and "fake_secret" not in str(warnings)
+
+
+def test_show_lookup_server_error_still_fails(server):
+    server.hook = lambda method, path, kwargs: response({}, 500) if path == "shows/1" else None
+    with pytest.raises(RuntimeError, match="scrob_status_read_http_500") as caught:
+        server.adapter.read()
+    assert caught.value.endpoint == "shows/1"

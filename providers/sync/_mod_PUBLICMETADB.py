@@ -160,7 +160,8 @@ class PUBLICMETADBConfig:
 
 
 class PUBLICMETADBError(RuntimeError):
-    pass
+    status_code: int | None = None
+    endpoint: str | None = None
 
 
 class PUBLICMETADBAuthError(PUBLICMETADBError):
@@ -239,7 +240,10 @@ class PUBLICMETADBClient:
     def read_json(self, path: str, **kw: Any) -> Any:
         r = self.get(path, **kw)
         if not (200 <= r.status_code < 300):
-            raise PUBLICMETADBError(f"publicmetadb_read_http_{r.status_code}:{path}")
+            error = PUBLICMETADBError(f"publicmetadb_read_http_{r.status_code}:{path}")
+            error.status_code = r.status_code
+            error.endpoint = str(path or "").strip("/")
+            raise error
         try:
             data = r.json()
         except Exception as exc:

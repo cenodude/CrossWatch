@@ -136,7 +136,7 @@ def watchlist_ids(adapter: Any) -> list[dict[str, Any]]:
         resp = punchplay_request(adapter, "GET", URL_LISTS, params=params)
         if resp.status_code != 200:
             _warn(FEATURE, "lists_fetch_failed", status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-            raise PunchPlayError(f"punchplay_watchlist_lists_http_{resp.status_code}")
+            raise PunchPlayError(f"punchplay_watchlist_lists_http_{resp.status_code}", status_code=resp.status_code)
         data = safe_json(resp)
         if not isinstance(data, Mapping):
             raise PunchPlayError("punchplay_watchlist_lists_invalid_response")
@@ -180,7 +180,7 @@ def _index_list_detail(adapter: Any, list_id: Any, collected: dict[str, dict[str
     resp = punchplay_request(adapter, "GET", URL_LIST_DETAILS.format(list_id=list_id))
     if resp.status_code != 200:
         _warn(FEATURE, "details_fetch_failed", list_id=list_id, status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-        raise PunchPlayError(f"punchplay_watchlist_details_http_{resp.status_code}")
+        raise PunchPlayError(f"punchplay_watchlist_details_http_{resp.status_code}", status_code=resp.status_code)
     data = safe_json(resp)
     if not isinstance(data, Mapping):
         raise PunchPlayError("punchplay_watchlist_details_invalid_response")
@@ -202,7 +202,7 @@ def _index_dynamic_items(adapter: Any, list_id: Any, collected: dict[str, dict[s
         )
         if resp.status_code != 200:
             _warn(FEATURE, "items_fetch_failed", list_id=list_id, status=resp.status_code, error=error_of(resp), request_id=request_id_of(resp))
-            raise PunchPlayError(f"punchplay_watchlist_items_http_{resp.status_code}")
+            raise PunchPlayError(f"punchplay_watchlist_items_http_{resp.status_code}", status_code=resp.status_code)
         data = safe_json(resp)
         if not isinstance(data, Mapping):
             raise PunchPlayError("punchplay_watchlist_items_invalid_response")
