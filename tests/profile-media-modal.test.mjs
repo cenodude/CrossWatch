@@ -14,7 +14,7 @@ function modal(presence = null, type = "movie", ItemActions = undefined) {
     navigator: { language: "en-US" },
     document: { documentElement: { dataset: {} } },
   };
-  vm.runInNewContext(source.replace("  (window.CW ||= {}).ProfileMediaModal =", "  window.testModal = { state, actions, openItemActions, movieProgressBox, overviewTab, episodesTab, seasonProgress, upNext, episodeSlot, livesCard, episodeDetail, showResumePoints };\n  (window.CW ||= {}).ProfileMediaModal ="), context);
+  vm.runInNewContext(source.replace("  (window.CW ||= {}).ProfileMediaModal =", "  window.testModal = { state, actions, openItemActions, openProgressActions, movieProgressBox, overviewTab, episodesTab, seasonProgress, upNext, episodeSlot, livesCard, episodeDetail, showResumePoints };\n  (window.CW ||= {}).ProfileMediaModal ="), context);
   const api = context.window.testModal;
   api.window = context.window;
   Object.assign(api.state, { item: { type, tmdb: "123" }, presence, progress: [] });
@@ -253,13 +253,13 @@ function deferred() {
   return {promise, resolve};
 }
 
-function loadingModal() {
+function loadingModal(playback = false) {
   const metas = [], requests = [], body = {innerHTML:"",scrollTop:0,querySelector:()=>null}, panel = {innerHTML:"",contains:()=>false};
   const root = {hidden:true,classList:{toggle(){}},addEventListener(){},querySelector:selector => selector === ".cw-mm-body" ? body : selector === ".cw-mm-panel" ? panel : selector === "[data-mm-status-picker][open]" ? null : {style:{},focus(){}},querySelectorAll:()=>[]};
   const context = {
     window:{addEventListener(){},requestAnimationFrame:callback=>queueMicrotask(callback),CW:{Meta:{get:() => {const d=deferred();metas.push(d);return d.promise;}},ProfileDateTime:{format:date=>date.toISOString()}}},
     navigator:{language:"en-US"},
-    document:{createElement:()=>root,body:{appendChild(){}},addEventListener(){},documentElement:{dataset:{cwPermPlayback:"off"},classList:{add(){},remove(){}}}},
+    document:{createElement:()=>root,body:{appendChild(){}},addEventListener(){},documentElement:{dataset:{cwPermPlayback:playback ? "on" : "off"},classList:{add(){},remove(){}}}},
     fetch:url=>{const d=deferred();requests.push({url,...d});return d.promise;},
   };
   vm.runInNewContext(source.replace("  (window.CW ||= {}).ProfileMediaModal =", "  patchContent = (host, html) => { host.innerHTML = html; };\n  window.testExtra = { loadCollection, openPerson, onClick, state, scheduleRender };\n  (window.CW ||= {}).ProfileMediaModal ="),context);
@@ -454,34 +454,87 @@ test("resume points group providers by episode and keep account actions and prog
   assert.equal((html.match(/data-mm-progress/g)||[]).length,1);
 });
 
-test("Tracker resume points and season previews include provider progress", () => {
+test("Tracker resume points and season previews only include the selected CrossWatch instance", () => {
   const api=show({});
   api.state.progress=[
     {provider:"CROSSWATCH",label:"CrossWatch",instance:"family",instanceLabel:"Family",season:1,episode:2,pct:35},
     {provider:"PUBLICMETADB",instance:"default",season:1,episode:2,pct:66},
+    {provider:"crosswatch",instance:"default",season:1,episode:2,pct:80},
   ];
   api.state.tracker={label:"Family",data:{provider_instance:"family",plays:[],progress:[]}};
   const html=api.showResumePoints();
   assert.match(html,/CrossWatch · Family/);
-  assert.match(html,/PUBLICMETADB/);
+  assert.doesNotMatch(html,/PUBLICMETADB/);
   assert.match(html,/35%/);
-  assert.match(html,/66%/);
+  assert.doesNotMatch(html,/66%|80%/);
   assert.equal((html.match(/class="cw-mm-resume-episode"/g)||[]).length,1);
   api.state.overviewSeason=1;
+  assert.match(api.seasonProgress(),/35% watched/);
   api.state.progress=api.state.progress.slice(1);
-  assert.match(api.seasonProgress(),/66% watched/);
+  assert.doesNotMatch(api.seasonProgress(),/66% watched|80% watched/);
+  assert.equal(api.showResumePoints(),"");
   api.state.progress=[];
   assert.equal(api.showResumePoints(),"");
   assert.doesNotMatch(api.seasonProgress(),/In progress/);
 });
 
-test("Tracker movie progress includes providers alongside local watch history", () => {
+test("Tracker movie progress only includes its default CrossWatch instance alongside local watch history", () => {
   const api=modal({});
-  api.state.progress=[{provider:"PUBLICMETADB",instance:"default",pct:66}];
+  api.state.progress=[{provider:"PUBLICMETADB",instance:"default",pct:66},{provider:"crosswatch",instance:"default",pct:35},{provider:"CROSSWATCH",instance:"family",pct:80}];
   api.state.tracker={data:{plays:[{date:"2026-11-13T12:00:00Z"}],progress:[]}};
-  assert.match(api.movieProgressBox(),/PUBLICMETADB/);
-  assert.match(api.movieProgressBox(),/66%/);
+  assert.doesNotMatch(api.movieProgressBox(),/PUBLICMETADB|66%|80%/);
+  assert.match(api.movieProgressBox(),/35%/);
   assert.match(api.movieProgressBox(),/Watched once/);
+});
+
+test("Tracker progress actions only target the selected CrossWatch instance", () => {
+  let menu;
+  const api = modal({}, "movie", {canWrite:()=>true,openMenu:options=>{menu=options;}});
+  api.state.tracker = {data:{provider_instance:"family"}};
+  api.state.progress = [
+    {rid:"cw",provider:"crosswatch",instance:"family",record:{can_remove_progress:true}},
+    {rid:"other-cw",provider:"crosswatch",instance:"default",record:{can_remove_progress:true}},
+    {rid:"plex",provider:"plex",instance:"family",record:{can_remove_progress:true}},
+  ];
+  api.openProgressActions({dataset:{iaPlay:"cw"}});
+  assert.equal(menu.progressRows.length, 1);
+  assert.equal(menu.progressRows[0].rid, "cw");
+  assert.equal(menu.progressRows[0].instance, "family");
+  assert.equal(menu.focusRow, "cw");
+});
+
+for (const type of ["movie", "show"]) for (const instance of [null, "default", "CW-P01"]) test(`Tracker ${type} progress requests are scoped to ${instance || "implicit default"}`, async () => {
+  const f = loadingModal(true);
+  const data = {provider_instance:instance,plays:[],ratings:[],watchlist:[],collection:[]};
+  const opening = f.api.open({type,tmdb:"1",title:"Example"},{tracker:{data}});
+  const progress = f.requests.find(request => request.url.includes("/playback_progress/items?"));
+  const query = new URL(progress.url, "http://localhost").searchParams;
+  assert.equal(query.get("provider"), "crosswatch");
+  assert.equal(query.get("instance_id"), instance || "default");
+  assert.equal(query.get(type === "movie" ? "tmdb" : "show_tmdb"), "1");
+  progress.resolve(response({items:[]}));
+  f.metas[0].resolve({});
+  f.requests.find(request => request !== progress).resolve(response({ok:true}));
+  await opening;
+});
+
+test("media cards outside the tracker keep progress from all providers", async () => {
+  const f = loadingModal(true);
+  const opening = f.api.open({type:"movie",tmdb:"1",title:"Example"});
+  const progress = f.requests.find(request => request.url.includes("/playback_progress/items?"));
+  const query = new URL(progress.url, "http://localhost").searchParams;
+  assert.equal(query.has("provider"), false);
+  assert.equal(query.has("instance_id"), false);
+  progress.resolve(response({items:[{media_type:"movie",records:[
+    {provider:"plex",instance_id:"family",ids:{tmdb:"1"},progress_percent:35},
+    {provider:"crosswatch",instance_id:"default",ids:{tmdb:"1"},progress_percent:66},
+  ]}]}));
+  f.metas[0].resolve({});
+  f.requests.find(request => request !== progress).resolve(response({ok:true}));
+  await opening;
+  await tick();
+  assert.match(f.body.innerHTML,/35%/);
+  assert.match(f.body.innerHTML,/66%/);
 });
 
 test("opened from the tracker the card shows that instance's plays and hands actions back", async () => {
