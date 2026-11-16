@@ -530,12 +530,13 @@ def _profile_playback_panel() -> str:
     </dialog>
     <dialog id="profile-playback-providers" class="cw-page-playback-settings" aria-labelledby="profile-playback-providers-title">
       <form method="dialog" class="cw-page-preferences">
-        <header class="pf-head"><div><h2 id="profile-playback-providers-title">Playback providers</h2><p>Choose the instances shown in playback.</p></div><button class="pf-button" type="button" data-playback-dialog-cancel>Close</button></header>
+        <header class="pf-head"><div><h2 id="profile-playback-providers-title">Playback settings</h2><p>Choose the instances shown in playback.</p></div><button class="pf-button" type="button" data-playback-dialog-cancel>Close</button></header>
         <div class="pf-body">
-          <label class="pf-timeout"><span><strong>Provider timeout</strong><small>Skip providers that take longer to respond.</small></span><span class="pf-timeout-value"><input id="profile-playback-timeout" class="cw-page-input" type="number" min="3" max="60" step="1" aria-label="Timeout in seconds"><span>sec</span></span></label>
-          <div id="profile-playback-provider-list" class="pf-provider-list"></div>
+          <label class="pf-grouping"><span><strong>Group matching playback</strong><small id="profile-playback-grouping-help">Matching media in the same profile, with similar progress.</small></span><select id="profile-playback-grouping" class="cw-page-input" aria-describedby="profile-playback-grouping-help"><option value="automatic">Automatic</option><option value="separate">Separate instances</option></select></label>
+          <section class="pf-section"><h3>Included instances</h3><div id="profile-playback-provider-list" class="pf-provider-list"></div></section>
+          <details class="pf-advanced"><summary>Advanced</summary><label class="pf-timeout"><span><strong>Provider timeout</strong><small>Skip providers that take longer to respond.</small></span><span class="pf-timeout-value"><input id="profile-playback-timeout" class="cw-page-input" type="number" min="3" max="60" step="1" aria-label="Timeout in seconds"><span>sec</span></span></label></details>
         </div>
-        <footer class="pf-footer"><div id="profile-playback-providers-error" class="pf-error" role="alert"></div><div class="pf-actions"><button class="pf-button" type="button" data-playback-settings-reset>Reset</button><button class="pf-button" type="button" data-playback-dialog-cancel>Cancel</button><button class="pf-button primary" type="submit">Apply</button></div></footer>
+        <footer class="pf-footer"><div id="profile-playback-providers-error" class="pf-error" role="alert"></div><button class="pf-button pf-reset" type="button" data-playback-settings-reset>Reset defaults</button><div class="pf-actions"><button class="pf-button" type="button" data-playback-dialog-cancel>Cancel</button><button class="pf-button primary" type="submit">Apply</button></div></footer>
       </form>
     </dialog>
   </section>"""
@@ -578,13 +579,9 @@ def _profile_menu_items(user: dict | None = None) -> str:
     user = user or {}
     name = html_lib.escape(str(user.get("display_name") or user.get("label") or user.get("username") or "Profile"))
     username = html_lib.escape(str(user.get("username") or ""))
-    preferences = ""
-    if user.get("is_admin") or _managed_user_permissions(user).get("write"):
-        preferences = '<button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="preferences"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">tune</span><span>Preferences</span></button>'
     return f"""<div class="cw-account-identity"><strong>{name}</strong><span>@{username}</span></div>
         <div data-cw-account-panel="main">
           <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="account"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">person</span><span>My profile</span></button>
-          {preferences}
           <button class="cw-menu-item" type="button" role="menuitem" data-cw-account-view="help"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help &amp; About</span></button>
           <div class="cw-menu-sep" role="separator"></div>
           <button class="cw-menu-item danger" type="button" role="menuitem" data-cw-profile-menu-action="logout"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">logout</span><span>Log out</span></button>

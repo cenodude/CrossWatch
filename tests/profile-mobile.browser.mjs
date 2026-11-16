@@ -111,6 +111,41 @@ async function snapshot(page,name) {
   await page.locator('.cw-profile-panel.active').screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/${name}.png`});
 }
 
+for(const width of [390,1440]) test(`Hub list cache restores pages and keeps unchanged artwork at ${width}px`,async t=>{
+  const {page,state}=await fixture(t,'flat-dark',width,{history:true,library:true,playback:true});
+  for(const tab of ['history','watchlist','ratings','collection','playback']) {
+    await page.evaluate(tab=>{history.replaceState(null,'',`#${tab}`);},tab);
+    await page.locator(`[data-profile-tab="${tab}"]`).click();
+    const card=page.locator(`#profile-panel-${tab} .cw-hist-card, #profile-panel-${tab} .cw-collection-card, #profile-panel-${tab} .cw-play-card`).first();
+    await card.waitFor();
+    await page.waitForFunction(()=>JSON.parse(sessionStorage.getItem('cw.hub.lists.v1')||'[]').length>0);
+    let release;
+    const gate=new Promise(resolve=>{release=resolve;});
+    t.after(()=>release());
+    const path=tab==='playback'?'/api/playback_progress/items':`/api/profile/${tab}`;
+    state.gates.set(path,gate);
+    await page.reload({waitUntil:'domcontentloaded'});
+    await card.waitFor();
+    await card.evaluate(el=>window.cachedListCard=el);
+    const response=page.waitForResponse(r=>new URL(r.url()).pathname===path);
+    state.gates.delete(path);release();await response;
+    await page.waitForFunction(()=>!document.querySelector('[aria-busy="true"]'));
+    assert.equal(await card.evaluate(el=>window.cachedListCard===el),true,tab);
+  }
+});
+
+for(const theme of ['original','flat-dark','flat-light']) test(`Hub feature navigation uses sync colors in ${theme}`,async t=>{
+  const {page}=await fixture(t,theme,390);
+  for(const [tab,feature] of [['watchlist','watchlist'],['history','history'],['ratings','ratings'],['playback','progress'],['collection','collection']]) {
+    await page.locator(`[data-profile-tab="${tab}"]`).click();
+    assert.equal(await page.locator(`[data-profile-tab="${tab}"]`).evaluate((el,feature)=>{
+      const probe=document.createElement('span');probe.style.color=`rgb(var(--cw-feature-${feature}-rgb))`;document.body.append(probe);
+      const expected=getComputedStyle(probe).color;probe.remove();return getComputedStyle(el).borderBottomColor===expected;
+    },feature),true,tab);
+  }
+  assert.equal(await page.locator('[data-cw-profile-menu-action="preferences"]').count(),0);
+});
+
 for(const width of [390,1440]) test(`Hub restores cached cards before profile and provider requests at ${width}px`,async t=>{
   const {page,state}=await fixture(t,'flat-dark',width,{activity:true});
   await page.locator('#profile-progress .cw-cw-card[data-profile-poster-key]').first().waitFor();

@@ -264,6 +264,9 @@
       err.code = data?.error || detail;
       throw err;
     }
+    if (body !== undefined) {
+      try { sessionStorage.removeItem("cw.tracker.lists.v1"); sessionStorage.removeItem("cw.hub.lists.v1"); } catch {}
+    }
     return data;
   }
 
@@ -788,6 +791,31 @@
 
   const OVERVIEW_STORE_KEY = "cw.tracker.overview.v1";
   const OVERVIEW_CACHE_TTL = 10 * 60 * 1000;
+  const listCacheKey = () => JSON.stringify([overviewCacheKey(), state.view, state.q, state.media, state.sort, state.noteStatus, state.noteTag, state.hideDropped, state.duplicates, state.cleanFeature, state.healthFilter, state.offset, pageSize(), timelineOn(), state.month]);
+
+  function savedLists() {
+    try {
+      const entries = JSON.parse(sessionStorage.getItem("cw.tracker.lists.v1") || "[]");
+      return Array.isArray(entries) ? entries.filter(entry => entry?.data && Date.now() - entry.t < 120000).slice(-16) : [];
+    } catch { return []; }
+  }
+
+  function restoreList() {
+    if (["overview", "cleanup"].includes(state.view)) return false;
+    const saved = savedLists().find(entry => entry.key === listCacheKey());
+    if (!saved) return false;
+    Object.assign(state, saved.data);
+    return true;
+  }
+
+  function rememberList(key) {
+    if (["overview", "cleanup"].includes(state.view) || key !== listCacheKey() || state.error || Math.max(state.items.length, state.shows.length, state.noteRows.length) > 250) return;
+    try {
+      const entries = savedLists().filter(entry => entry.key !== key);
+      entries.push({key, t:Date.now(), data:{items:state.items, shows:state.shows, noteRows:state.noteRows, total:state.total}});
+      sessionStorage.setItem("cw.tracker.lists.v1", JSON.stringify(entries.slice(-16)));
+    } catch {}
+  }
 
   function savedOverviews() {
     try {
@@ -2198,15 +2226,16 @@
   async function loadMain(append = false) {
     stopOverview();
     const id = ++state.request;
+    const cacheKey = listCacheKey();
+    const restored = !append && restoreList();
+    let loaded = false;
     state.loading = true;
     state.error = "";
     if (!append) {
-      state.items = [];
-      state.shows = [];
-      state.noteRows = [];
+      if (!restored) { state.items = []; state.shows = []; state.noteRows = []; }
       if (state.view === "overview") state.overview = overviewCache.get(overviewCacheKey()) || (state.overview?.scope === overviewCacheKey() ? state.overview : null);
     }
-    renderSlots(false);
+    renderSlots(true);
     try {
       if (state.view === "overview") {
         const controller = overviewController = new AbortController();
@@ -2260,14 +2289,14 @@
         state.items = append ? state.items.concat(rows) : rows;
         state.total = Number(data.total || 0);
       }
+      loaded = true;
     } catch (err) {
       if (id !== state.request || err.name === "AbortError") return;
-      state.items = [];
-      state.shows = [];
-      state.noteRows = [];
-      state.error = errorText(err);
+      if (restored) toast.show(errorText(err), {tone:"bad"});
+      else { state.items = []; state.shows = []; state.noteRows = []; state.error = errorText(err); }
     } finally {
       if (id === state.request) {
+        if (!append && loaded) rememberList(cacheKey);
         state.loading = false;
         void loadListHero();
         renderSlots(true);
@@ -2435,7 +2464,6 @@
     loadMonths();
     state.picked.clear();
     saveView();
-    renderSlots(true);
     loadMain();
   }
 
@@ -5270,6 +5298,7 @@
       state.scrollTop = 0;
     }
     if (state.view === "overview" && !state.overview) restoreOverview();
+    if (state.view !== "overview") restoreList();
     render();
     updateHeroSelection();
     updateHeroBackdrop();

@@ -122,6 +122,30 @@ async function choose(page, selector, value) {
   await page.locator(`.cw-icon-select-menu:not(.hidden) [data-value="${value}"]`).click();
 }
 
+for(const theme of ['original','flat-dark','flat-light']) test(`Tracker list cache and sync feature colors in ${theme}`,async t=>{
+  const {page}=await fixture(t,theme,{width:390});
+  for(const [view,feature] of [['watchlist','watchlist'],['history','history'],['ratings','ratings'],['progress','progress'],['collection','collection']]) {
+    await page.locator(`.trk-tabs [data-trk-view="${view}"]`).click();
+    await page.waitForFunction(view=>document.querySelector(`.trk-tabs [data-trk-view="${view}"]`)?.classList.contains('active'),view);
+    await page.waitForFunction(({view,feature})=>{
+      const el=document.querySelector(`.trk-tabs [data-trk-view="${view}"]`);
+      const probe=document.createElement('span');probe.style.color=`rgb(var(--cw-feature-${feature}-rgb))`;document.body.append(probe);
+      const expected=getComputedStyle(probe).color;probe.remove();return getComputedStyle(el).borderBottomColor===expected;
+    },{view,feature});
+  }
+  await page.locator('.trk-tabs [data-trk-view="history"]').click();
+  await page.locator('[data-trk-layout="grid"]').click();
+  await page.locator('.trk-grid-card').first().waitFor();
+  await page.locator('.trk-tabs [data-trk-view="overview"]').click();
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});t.after(()=>release());
+  await page.route('**/api/tracker/items?**',async route=>{await gate;await route.fulfill({json:{items:rows,total:rows.length}});});
+  await page.locator('.trk-tabs [data-trk-view="history"]').click();
+  await page.locator('.trk-grid-card').first().waitFor();
+  assert.equal(await page.getByText('Loading your history...',{exact:true}).count(),0);
+  release();
+});
+
 for (const width of [390,1440]) test(`Tracker restores its overview before slow summary requests at ${width}px`, async t => {
   const {page,boot,requests} = await fixture(t, "flat-dark", {width,playback:true});
   await page.waitForFunction(() => JSON.parse(sessionStorage.getItem("cw.tracker.overview.v1") || "[]").length > 0);

@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
-import {chromium} from 'playwright';
+import {chromium,webkit} from 'playwright';
 
 async function openPlayback(page) {
   if(page.viewportSize().width<=760)await page.getByRole('button',{name:'Filters and display options',exact:true}).click();
@@ -12,7 +12,7 @@ async function openPlayback(page) {
 }
 
 async function fixture(t,theme='',width=1100,empty=false) {
-  const browser=await chromium.launch({headless:true});
+  const browser=await (process.env.CW_OVERVIEW_BROWSER==='webkit'?webkit:chromium).launch({headless:true});
   t.after(()=>browser.close());
   const page=await browser.newPage({viewport:{width,height:820}});
   page.setDefaultTimeout(10000);
@@ -35,7 +35,7 @@ async function fixture(t,theme='',width=1100,empty=false) {
       if(url.pathname==='/api/provider-instances')data=instances;
       if(url.pathname==='/api/events/calendar')data={ok:true,days:empty?[]:Array.from({length:63},(_,i)=>({d:today-62+i,runs:i%3===0?0:3,changes:i%3===0?0:i*7,failed:i===60?1:0})),totals:{runs:126,changes:8000,failed:1,active_days:42,added:7900,removed:100}};
       if(url.pathname==='/api/events/calendar/day')data={ok:true,runs:empty?[]:[{run_id:'test-run',started_at:Date.now()/1000,duration:3,added:3,changes:3,pair_rows:[{src_provider:'CROSSWATCH',src_instance:'CW-P01',dst_provider:'SIMKL',dst_instance:'SIMKL-P01',feature:'history',added:3}]}]};
-      if(url.pathname==='/api/playback_progress/settings')data={ok:true,provider_timeout_seconds:12,profiles:empty?[]:[{provider:'crosswatch',instance_id:'default',instance_label:'CrossWatch Default',configured:true,read:true,included:true},{provider:'crosswatch',instance_id:'CW-P01',instance_label:'CrossWatch Family tracker',configured:true,read:true,included:true},{provider:'crosswatch',instance_id:'CW-P02',instance_label:'CrossWatch CW-P02',configured:true,read:true,included:false},{provider:'simkl',instance_id:'SIMKL-P01',instance_label:'SIMKL Anime account',configured:true,read:true,included:true},{provider:'plex',instance_id:'default',instance_label:'Plex Living room',configured:true,read:true,included:true}]};
+      if(url.pathname==='/api/playback_progress/settings')data={ok:true,grouping:'separate',provider_timeout_seconds:12,profiles:empty?[]:[{provider:'crosswatch',instance_id:'default',instance_label:'CrossWatch Default',configured:true,read:true,included:true},{provider:'crosswatch',instance_id:'CW-P01',instance_label:'CrossWatch Family tracker',configured:true,read:true,included:true},{provider:'crosswatch',instance_id:'CW-P02',instance_label:'CrossWatch CW-P02',configured:true,read:true,included:false},{provider:'simkl',instance_id:'SIMKL-P01',instance_label:'SIMKL Anime account',configured:true,read:true,included:true},{provider:'plex',instance_id:'default',instance_label:'Plex Living room',configured:true,read:true,included:true},{provider:'emby',instance_id:'default',configured:false,read:false,included:false}]};
       if(url.pathname==='/api/profile')data={user:{username:'admin',role:'admin'}};
       return route.fulfill({json:data});
     }
@@ -102,14 +102,22 @@ test('activity prioritises the calendar and preserves event navigation and names
 test('playback provider preferences retain friendly names and save stable IDs',async t=>{
   const {page,writes}=await fixture(t);
   await openPlayback(page);
+  await page.getByLabel('Family tracker',{exact:true}).waitFor();
+  assert.equal((await page.locator('#profile-playback-grouping + .cw-icon-select button').first().innerText()).trim(),'Separate instances');
+  assert.equal(await page.locator('#profile-playback-provider-list input').count(),5);
   await page.getByLabel('Family tracker',{exact:true}).uncheck();
   assert.equal(await page.getByLabel('CW-P02',{exact:true}).isChecked(),false);
   await page.getByLabel('Living room',{exact:true}).waitFor();
+  await page.locator('#profile-playback-grouping + .cw-icon-select button').first().click();
+  await page.locator('.cw-icon-select-item[data-value="separate"]').click();
+  await page.getByText('Advanced',{exact:true}).click();
   await page.getByLabel('Timeout in seconds',{exact:true}).fill('18');
   await page.getByRole('button',{name:'Apply',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('#profile-playback-providers').open);
   const saved=writes.find(w=>w.path==='/api/playback_progress/settings');
   assert.equal(saved.body.provider_timeout_seconds,18);
+  assert.equal(saved.body.grouping,'separate');
+  assert.equal(saved.body.profiles.find(p=>p.provider==='emby').included,false);
   assert.equal(saved.body.profiles.find(p=>p.instance_id==='CW-P01').included,false);
 });
 
