@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
 from typing import Any
 
+import pytest
+
 from api.scrobblerManagementAPI import _normalize_filters
-from providers.scrobble.media_filters import media_filter_ignore_reason
+from providers.scrobble.emby.watch import EmbyWatchService
+from providers.scrobble.jellyfin.watch import JellyfinWatchService
+from providers.scrobble.plex.watch import WatchService as PlexWatchService
+from providers.scrobble.routes import normalize_route
+from providers.scrobble.media_filters import event_ignore_reason, media_filter_ignore_reason
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent
 
 
@@ -198,3 +205,108 @@ def test_normalize_filters_accepts_media_ignore_fields() -> None:
         "ignored_editions": ["Trailer"],
         "ignored_marker_files": [".comingsoon"],
     }
+
+
+def _live_cfg(enabled: bool) -> dict[str, Any]:
+    return {"scrobble": {"watch": {"filters": {"ignore_live_tv_dvr": enabled}}}}
+
+
+@pytest.mark.parametrize("item_type", ["TvChannel", "Program"])
+def test_jellyfin_emby_live_tv_is_ignored_when_enabled(item_type: str) -> None:
+    ev = _event({"NowPlayingItem": {"Type": item_type, "Name": "BBC One"}})
+
+    assert event_ignore_reason(ev, _live_cfg(True)) == "live_tv"
+    assert event_ignore_reason(ev, _live_cfg(False)) is None
+    assert event_ignore_reason(ev, {}) is None
+
+
+@pytest.mark.parametrize("item_type", ["Movie", "Episode"])
+def test_jellyfin_emby_movies_and_episodes_are_not_live_tv(item_type: str) -> None:
+    ev = _event({"NowPlayingItem": {"Type": item_type, "Name": "Soldier's Bones"}})
+
+    assert event_ignore_reason(ev, _live_cfg(True)) is None
+
+
+@pytest.mark.parametrize("provider", ["plex", "jellyfin", "emby"])
+def test_normalize_filters_keeps_live_tv_for_media_servers(provider: str) -> None:
+    assert _normalize_filters({"ignore_live_tv_dvr": True}, provider) == {"ignore_live_tv_dvr": True}
+
+
+def test_normalize_filters_drops_live_tv_for_other_sources() -> None:
+    assert _normalize_filters({"ignore_live_tv_dvr": True}, "kodi") == {}
+
+
+def test_plex_live_tv_guid_is_ignored_when_enabled() -> None:
+    ev = _event({"Metadata": {"guid": "tv.plex.xmltv://episode/abc", "Guid": [{"id": "tmdb://1"}]}})
+
+    assert event_ignore_reason(ev, _live_cfg(True)) == "live_tv"
+    assert event_ignore_reason(ev, _live_cfg(False)) is None
+
+
+def test_plex_library_guid_is_not_live_tv() -> None:
+    ev = _event({"Metadata": {"guid": "plex://movie/5d776", "Guid": [{"id": "tmdb://1"}]}})
+
+    assert event_ignore_reason(ev, _live_cfg(True)) is None
+
+
+def test_live_tv_guid_text_outside_guid_fields_is_not_live_tv() -> None:
+    ev = _event({
+        "Metadata": {
+            "guid": "plex://movie/5d776",
+            "title": "tv.plex.xmltv",
+            "summary": "recorded from tv.plex.xmltv",
+            "Media": [{"Part": [{"file": "/data/tv.plex.xmltv/movie.mkv"}]}],
+        },
+        "NowPlayingItem": {"Type": "Movie", "Path": "/data/tv.plex.xmltv/movie.mkv"},
+    })
+
+    assert event_ignore_reason(ev, _live_cfg(True)) is None
+
+
+def test_plex_manual_mark_keeps_live_tv_guid() -> None:
+    watcher = object.__new__(PlexWatchService)
+    watcher._event_with_session_identity = lambda ev, ident: ev
+    watcher._enrich_event_with_plex = lambda ev: ev
+    el = ET.Element("Video", {"type": "movie", "ratingKey": "42", "title": "Recorded", "guid": "tv.plex.xmltv://movie/abc"})
+
+    ev = watcher._manual_mark_event(el, {}, "server")
+
+    assert ev is not None
+    assert event_ignore_reason(ev, _live_cfg(True)) == "live_tv"
+
+
+@pytest.mark.parametrize("provider", ["plex", "jellyfin", "emby"])
+def test_media_server_routes_ignore_live_tv_by_default(provider: str) -> None:
+    route = normalize_route({"provider": provider, "sink": "trakt", "filters": {}}, "R1")
+
+    assert route["filters"]["ignore_live_tv_dvr"] is True
+
+
+def test_route_keeps_live_tv_opt_out() -> None:
+    route = normalize_route({"provider": "plex", "sink": "trakt", "filters": {"ignore_live_tv_dvr": False}}, "R1")
+
+    assert route["filters"]["ignore_live_tv_dvr"] is False
+
+
+def test_live_tv_default_skips_other_sources_and_the_shared_watcher() -> None:
+    assert "ignore_live_tv_dvr" not in normalize_route({"provider": "kodi", "sink": "trakt"}, "R1")["filters"]
+    assert "ignore_live_tv_dvr" not in normalize_route({"provider": "jellyfin", "sink": ""}, "R1")["filters"]
+
+
+@pytest.mark.parametrize("service", [JellyfinWatchService, EmbyWatchService])
+def test_synthetic_stop_keeps_live_tv_type_for_mixed_routes(service: type) -> None:
+    watcher = object.__new__(service)
+    watcher._last_emit = {}
+    watcher._poll = 10
+    watcher._server_id = "server"
+    sent: list[ScrobbleEvent] = []
+    watcher._emit = lambda ev, _cfg: sent.append(ev)
+    start = _event({"NowPlayingItem": {"Type": "TvChannel", "Name": "BBC One"}})
+    memo = {"meta": watcher._meta_from_event(start), "p": 40, "ts": 0, "state": "playing"}
+
+    watcher._emit_synthetic_stop("sess", memo, {}, 100.0, None)
+
+    assert len(sent) == 1
+    assert sent[0].raw["NowPlayingItem"] == {}
+    assert event_ignore_reason(sent[0], _live_cfg(True)) == "live_tv"
+    assert event_ignore_reason(sent[0], _live_cfg(False)) is None

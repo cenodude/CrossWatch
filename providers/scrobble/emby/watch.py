@@ -744,8 +744,10 @@ class EmbyWatchService(MediaServerMarkPoller):
             return None
 
     def _meta_from_event(self, ev: ScrobbleEvent) -> dict[str, Any]:
+        item = (ev.raw or {}).get("NowPlayingItem") if isinstance(ev.raw, Mapping) else None
         return {
             "media_type": ev.media_type,
+            "item_type": str((item.get("Type") if isinstance(item, Mapping) else None) or ""),
             "ids": dict(ev.ids or {}),
             "title": ev.title,
             "year": ev.year,
@@ -917,6 +919,7 @@ class EmbyWatchService(MediaServerMarkPoller):
             "PlayState": {},
             "_cw_preserve_stop": preserve_stop,
             "_cw_stop_src": "poll-disappear",
+            "_cw_item_type": meta.get("item_type") or "",
         }
         mt_raw = str(meta.get("media_type") or "").strip().lower()
         mt: MediaType = "episode" if mt_raw == "episode" else "movie"

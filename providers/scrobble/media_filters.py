@@ -218,11 +218,51 @@ def _event_is_special(event: Any) -> bool:
         return False
 
 
+_LIVE_TV_ITEM_TYPES = frozenset({"tvchannel", "program"})
+_PLEX_LIVE_TV_GUID = "tv.plex.xmltv"
+
+
+def _iter_strings(value: Any) -> Any:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, Mapping):
+        for v in value.values():
+            yield from _iter_strings(v)
+    elif isinstance(value, (list, tuple, set)):
+        for v in value:
+            yield from _iter_strings(v)
+
+
+def _iter_guid_strings(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        for k, v in value.items():
+            if str(k).lower().endswith("guid"):
+                yield from _iter_strings(v)
+            else:
+                yield from _iter_guid_strings(v)
+    elif isinstance(value, (list, tuple, set)):
+        for v in value:
+            yield from _iter_guid_strings(v)
+
+
+def _event_is_live_tv(event: Any) -> bool:
+    raw = getattr(event, "raw", None)
+    if not isinstance(raw, Mapping):
+        return False
+    item = raw.get("NowPlayingItem")
+    item_type = item.get("Type") if isinstance(item, Mapping) else None
+    if str(item_type or raw.get("_cw_item_type") or "").strip().lower() in _LIVE_TV_ITEM_TYPES:
+        return True
+    return any(_PLEX_LIVE_TV_GUID in s.lower() for s in _iter_guid_strings(raw))
+
+
 def event_ignore_reason(event: Any, cfg: Mapping[str, Any] | None) -> str | None:
     cfg_map = cfg if isinstance(cfg, Mapping) else {}
     filt = (((cfg_map.get("scrobble") or {}).get("watch") or {}).get("filters") or {})
     if not isinstance(filt, Mapping):
         return None
+    if bool(filt.get("ignore_live_tv_dvr")) and _event_is_live_tv(event):
+        return "live_tv"
     if bool(filt.get("ignore_specials")) and _event_is_special(event):
         return "specials"
     return media_filter_ignore_reason(filt, getattr(event, "raw", None), title=getattr(event, "title", None))

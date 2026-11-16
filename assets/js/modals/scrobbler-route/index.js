@@ -469,7 +469,8 @@ function filtersPanel(r, f) {
     isStremio ? "" : `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">movie_filter</span><span><strong>Ignore Agregarr placeholder trailers</strong><small>Skip files marked as Trailer editions or stored beside .comingsoon markers.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-agregarr" ${f.ignore_agregarr_trailers ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
     `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">star</span><span><strong>Ignore specials (Season 0)</strong><small>Skip scrobbles for Season 0 / specials episodes.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-ignore-specials" ${f.ignore_specials ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`,
   ];
-  if (isPlex) toggles.push(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>Ignore Plex Live TV &amp; DVR</strong><small>Skip scrobbles from live channels and DVR recordings.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
+  if (isPlex) toggles.push(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>Ignore Plex Live TV &amp; DVR</strong><small>Skip scrobbles from live channels and DVR recordings.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr !== false ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
+  if (r.provider === "jellyfin" || r.provider === "emby") toggles.push(`<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">live_tv</span><span><strong>Ignore Live TV</strong><small>Skip scrobbles from live TV channels and programs.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-live" ${f.ignore_live_tv_dvr !== false ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>`);
   return `
     <section class="scrm-panel ${activeTab === "filters" ? "active" : ""}" data-panel="filters">
       <div class="scrm-journey scrm-journey-compact">
@@ -818,7 +819,7 @@ function collect() {
     ignored_filename_patterns: split(root.querySelector("#scr-ignore-patterns")?.value),
     ignored_editions: split(root.querySelector("#scr-ignore-editions")?.value),
   };
-  if (provider === "plex") filters.ignore_live_tv_dvr = !!root.querySelector("#scr-live")?.checked;
+  if (provider === "plex" || provider === "jellyfin" || provider === "emby") filters.ignore_live_tv_dvr = !!root.querySelector("#scr-live")?.checked;
   const scrobble = {};
   const watched = root.querySelector("#scr-watched")?.value;
   const force = root.querySelector("#scr-force")?.value;
