@@ -665,6 +665,10 @@ def apply_schema(conn: sqlite3.Connection) -> int:
             pair_scope TEXT NOT NULL, feature TEXT NOT NULL, state_json TEXT NOT NULL, updated_at INTEGER NOT NULL,
             PRIMARY KEY(pair_scope,feature)
         )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS pair_continue_rows (
+            pair_scope TEXT NOT NULL, provider TEXT NOT NULL, instance TEXT NOT NULL, state_json TEXT NOT NULL,
+            updated_at INTEGER NOT NULL, PRIMARY KEY(pair_scope,provider,instance)
+        )""")
         conn.execute(_CREATE_MANUAL_POLICY_BLOCKS)
         conn.execute(_CREATE_MANUAL_POLICY_ADD_ITEMS)
         _ensure_column(conn, "manual_policy_add_items", "collected_at", "TEXT")

@@ -48,6 +48,7 @@ export const HELP_TEXT = {
   "cx-pr-replay": "Replay watched items\nUnwatch the target, then apply resume progress.",
   "cx-pr-tolerance": "Timestamp tolerance\nProtect targets newer by more than this many seconds.",
   "cx-pr-specials": "Progress: Specials (Season 0)\nInclude Season 0 / specials episodes. Disable to skip them on both sides of this pair.",
+  "cx-pr-cw-removals": "Sync Continue Watching removals (Beta)\nWhen you remove a title from Continue Watching on Emby, Plex, Tofa or Silo, hide it on the other server too. The resume position is kept.\nCrossWatch spots a removal when a title leaves the row while its position stays the same, so the first run only takes a snapshot. A title is not hidden when the other side has newer progress. Undoing a removal is not synced.\nTofa and Silo hide a whole show, Emby hides the show's card, Plex hides the episode.",
   "cx-pr-library-only": "Progress: Only items in destination library\nSkip resume positions for movies and episodes that are not in the media server library.\nTitles the server already has a position for are always synced.\nMatches on IDs only, so titles stored under a different ID are skipped too.",
   "cx-hs-specials": "History: Specials (Season 0)\nInclude Season 0 / specials episodes. Disable to skip them on both sides of this pair.",
   "cx-hs-library-only": "History: Only items in destination library\nSkip movies and episodes that are not in the media server library.\nMatches on IDs only, so titles stored under a different ID are skipped too.",

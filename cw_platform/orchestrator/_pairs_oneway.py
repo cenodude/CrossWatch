@@ -316,6 +316,7 @@ from ._history_rewatches import (
 from ._history_copies import config_with_history_copies, copy_gap_adds, history_copies_requested, take_copy_gaps
 from ._history_resets import apply_reset_unwatches, load_reset_plan, preview_reset_unwatches
 from ._pair_skips import record_pair_skips
+from ._continue_watching import requested as continue_watching_requested, sync_removals as sync_continue_watching_removals
 
 # Blackbox imports
 from ._blackbox import load_blackbox_keys, record_attempts, record_success
@@ -2355,6 +2356,14 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
             target_tokens=lambda: dst_dropped_tokens or _load_provider_dropped_tokens(dst_ops, dst_cfg),
             dry_run=dry_run_flag, emit=emit, review=review, src_inst=src_inst, dst_inst=dst_inst,
         )
+
+    if continue_watching_requested(feature, fcfg) and not (cancelled or src_down or dst_down or src_suspect or dst_suspect):
+        if review is not None:
+            emit("debug", msg="continue_watching.skipped_interactive", src=src, dst=dst)
+        else:
+            sync_continue_watching_removals(ctx.state_store, src=(src, src_inst, src_ops, src_cfg),
+                                            dst=(dst, dst_inst, dst_ops, dst_cfg), two_way=False,
+                                            dry_run=dry_run_flag, emit=emit, fcfg=fcfg, blocked=manual_blocks)
 
     if reset_plan and not (cancelled or src_down or dst_down or src_suspect or dst_suspect):
         reset_plan.unwatch = reset_plan.settle(adds, alias=_alias_index, find=_find_in_idx,

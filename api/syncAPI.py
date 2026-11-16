@@ -118,6 +118,7 @@ def _normalize_progress_block(v: dict | bool | None) -> dict:
     d["propagate_timestamp_updates"] = coerce_bool(
         d.get("propagate_timestamp_updates", d.get("propagateTimestampUpdates", False))
     )
+    d["continue_watching_removals"] = coerce_bool(d.get("continue_watching_removals", False))
 
     # Strip legacy keys if present.
     for kk in ("minSeconds", "deltaSeconds", "maxPercent", "enabled"):
@@ -2325,6 +2326,10 @@ def api_sync_providers(request: Request = cast(Request, None)) -> JSONResponse:
         status_caps = provider_caps(mf["name"])
         if status_caps:
             mf["capabilities"]["status_mapping"] = status_caps
+        from providers.sync._continue_watching import provider_caps as continue_watching_caps
+        cw_caps = continue_watching_caps(mf["name"])
+        if cw_caps:
+            mf["capabilities"]["continue_watching"] = cw_caps
         if mf["name"] in seen:
             continue
         seen.add(mf["name"])
