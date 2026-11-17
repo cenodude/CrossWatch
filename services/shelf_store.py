@@ -10,7 +10,7 @@ import re
 import tempfile
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,8 +32,11 @@ _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 _LOGO_RE = re.compile(r"^/[A-Za-z0-9_-]{4,64}\.(jpg|jpeg|png)$", re.IGNORECASE)
 MAX_PRICE = 10_000_000
 
+_OWNER_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
+ADMIN_OWNER = "administrator"
+
 _LOCK = threading.RLock()
-_STATE: dict[str, Any] = {"root": None, "items": None, "summaries": None, "settings": {}}
+_STATES: dict[str, dict[str, Any]] = {}
 
 
 class ShelfError(ValueError):
@@ -44,17 +47,13 @@ _PUBLIC_ERRORS = {
     text: text
     for text in (
         "Invalid TMDb id", "Invalid copy", "Choose a format for each copy", "Invalid status",
-        f"A title can have up to {MAX_COPIES} copies", "Invalid currency", "Invalid shelf entry",
+        f"A title can have up to {MAX_COPIES} copies", "Invalid currency", "Invalid shelf entry", "Invalid shelf owner",
     )
 }
 
 
 def public_error(error: Exception) -> str:
     return _PUBLIC_ERRORS.get(str(error), "Invalid request")
-
-
-def _path() -> Path:
-    return CONFIG_BASE() / ".cw_state" / "shelf.json"
 
 
 def _now() -> str:
@@ -77,6 +76,14 @@ def _text(value: Any, limit: int, multiline: bool = False) -> str:
     if multiline:
         return "\n".join(" ".join(line.split()) for line in raw.strip().splitlines())[:limit].strip()
     return " ".join(raw.split())[:limit]
+
+
+def _valid_date(value: str) -> bool:
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
 
 
 def _int(value: Any, low: int, high: int) -> int | None:
@@ -130,7 +137,7 @@ def clean_copy(raw: Any, *, strict: bool = True) -> dict[str, Any] | None:
         if service_id and service_name:
             out["service"] = {"id": service_id, "name": service_name, **({"logo": logo} if _LOGO_RE.fullmatch(logo) else {})}
     purchased = str(raw.get("purchased") or "").strip()
-    if _DATE_RE.fullmatch(purchased):
+    if _DATE_RE.fullmatch(purchased) and _valid_date(purchased):
         out["purchased"] = purchased
     added = str(raw.get("added_at") or "").strip()
     out["added_at"] = added[:20] if added else _now()
@@ -181,36 +188,64 @@ def _clean_entry(key: str, raw: Any, *, strict: bool) -> dict[str, Any] | None:
     return entry
 
 
-def _load() -> dict[str, dict[str, Any]]:
-    path = _path()
-    with _LOCK:
-        if _STATE["items"] is not None and _STATE["root"] == path:
-            return _STATE["items"]
-        try:
-            data = json.loads(path.read_text("utf-8"))
-        except Exception:
-            data = {}
-        raw = data.get("items") if isinstance(data, dict) else None
-        items: dict[str, dict[str, Any]] = {}
-        for key, row in (raw if isinstance(raw, dict) else {}).items():
-            if not _KEY_RE.fullmatch(str(key)):
-                continue
-            entry = _clean_entry(str(key), row, strict=False)
-            if entry:
-                items[str(key)] = entry
-        raw_settings = data.get("settings") if isinstance(data, dict) else None
-        currency = str((raw_settings or {}).get("currency") or "") if isinstance(raw_settings, dict) else ""
-        _STATE.update(root=path, items=items, summaries=None, settings={"currency": currency} if _CURRENCY_RE.fullmatch(currency) else {})
-        return items
+def _owner(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if _OWNER_RE.fullmatch(text):
+        return text
+    raise ShelfError("Invalid shelf owner")
 
 
-def _save(items: dict[str, dict[str, Any]]) -> None:
-    path = _path()
+def _path(owner: str) -> Path:
+    return CONFIG_BASE() / ".cw_state" / "shelf" / f"{_owner(owner)}.json"
+
+
+def _migrate_legacy(owner: str, path: Path) -> None:
+    if owner != ADMIN_OWNER or path.exists():
+        return
+    legacy = CONFIG_BASE() / ".cw_state" / "shelf.json"
+    if not legacy.is_file():
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(legacy, path)
+    except Exception:
+        pass
+
+
+def _state(owner: str) -> dict[str, Any]:
+    path = _path(owner)
+    cached = _STATES.get(str(path))
+    if cached is not None:
+        return cached
+    _migrate_legacy(_owner(owner), path)
+    try:
+        data = json.loads(path.read_text("utf-8"))
+    except Exception:
+        data = {}
+    raw = data.get("items") if isinstance(data, dict) else None
+    items: dict[str, dict[str, Any]] = {}
+    for key, row in (raw if isinstance(raw, dict) else {}).items():
+        if not _KEY_RE.fullmatch(str(key)):
+            continue
+        entry = _clean_entry(str(key), row, strict=False)
+        if entry:
+            items[str(key)] = entry
+    raw_settings = data.get("settings") if isinstance(data, dict) else None
+    code = str((raw_settings or {}).get("currency") or "") if isinstance(raw_settings, dict) else ""
+    state = {"path": path, "items": items, "summaries": None, "settings": {"currency": code} if _CURRENCY_RE.fullmatch(code) else {}}
+    if len(_STATES) > 64:
+        _STATES.clear()
+    _STATES[str(path)] = state
+    return state
+
+
+def _save(state: dict[str, Any], items: dict[str, dict[str, Any]]) -> None:
+    path: Path = state["path"]
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=".shelf.json.", suffix=".tmp", dir=str(path.parent))
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump({"version": 1, "items": items, "settings": _STATE.get("settings") or {}}, f, ensure_ascii=False, indent=2, sort_keys=True)
+            json.dump({"version": 1, "items": items, "settings": state.get("settings") or {}}, f, ensure_ascii=False, indent=2, sort_keys=True)
         os.replace(tmp_name, path)
     finally:
         try:
@@ -218,12 +253,13 @@ def _save(items: dict[str, dict[str, Any]]) -> None:
                 os.unlink(tmp_name)
         except Exception:
             pass
-    _STATE.update(root=path, items=items, summaries=None)
+    state["items"] = items
+    state["summaries"] = None
 
 
 def clear_memory() -> None:
     with _LOCK:
-        _STATE.update(root=None, items=None, summaries=None, settings={})
+        _STATES.clear()
 
 
 def summary(entry: dict[str, Any]) -> dict[str, Any]:
@@ -245,6 +281,9 @@ def summary(entry: dict[str, Any]) -> dict[str, Any]:
     packaging = next((row.get("packaging") for row in copies if row.get("packaging") == "steelbook"), None)
     if packaging:
         out["packaging"] = packaging
+    edition = next((row.get("edition") for row in copies if row.get("edition")), None)
+    if edition:
+        out["edition"] = edition
     if any(row.get("lent_to") for row in copies):
         out["lent"] = True
     service = next((row["service"] for row in copies if row.get("format") == "digital" and isinstance(row.get("service"), dict)), None)
@@ -259,49 +298,62 @@ def summary(entry: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def currency() -> str:
+def clean_copies(raw: Any) -> list[dict[str, Any]]:
+    rows = raw if isinstance(raw, list) else []
+    if len(rows) > MAX_COPIES:
+        raise ShelfError(f"A title can have up to {MAX_COPIES} copies")
+    copies = [row for row in (clean_copy(item, strict=True) for item in rows) if row]
+    seen: set[str] = set()
+    for row in copies:
+        while row["id"] in seen:
+            row["id"] = uuid.uuid4().hex[:12]
+        seen.add(row["id"])
+    return copies
+
+
+def currency(owner: Any) -> str:
     with _LOCK:
-        _load()
-        return str((_STATE.get("settings") or {}).get("currency") or "")
+        return str((_state(owner).get("settings") or {}).get("currency") or "")
 
 
-def set_currency(code: Any) -> str:
+def set_currency(owner: Any, code: Any) -> str:
     value = str(code or "").strip().upper()
     if value and not _CURRENCY_RE.fullmatch(value):
         raise ShelfError("Invalid currency")
     with _LOCK:
-        items = _load()
-        _STATE["settings"] = {"currency": value} if value else {}
-        _save(items)
+        state = _state(owner)
+        state["settings"] = {"currency": value} if value else {}
+        _save(state, state["items"])
     return value
 
 
-def entries() -> dict[str, dict[str, Any]]:
+def entries(owner: Any) -> dict[str, dict[str, Any]]:
     with _LOCK:
-        return _load()
+        return _state(owner)["items"]
 
 
-def summaries() -> dict[str, dict[str, Any]]:
+def summaries(owner: Any) -> dict[str, dict[str, Any]]:
     with _LOCK:
-        items = _load()
-        if _STATE["summaries"] is None:
-            _STATE["summaries"] = {key: summary(entry) for key, entry in items.items()}
-        return dict(_STATE["summaries"])
+        state = _state(owner)
+        if state["summaries"] is None:
+            state["summaries"] = {key: summary(entry) for key, entry in state["items"].items()}
+        return dict(state["summaries"])
 
 
-def get(entity: Any, tmdb_id: Any) -> dict[str, Any] | None:
+def get(owner: Any, entity: Any, tmdb_id: Any) -> dict[str, Any] | None:
     key = title_key(entity, tmdb_id)
     with _LOCK:
-        entry = _load().get(key)
+        entry = _state(owner)["items"].get(key)
         return copy.deepcopy(entry) if entry else None
 
 
-def put(entity: Any, tmdb_id: Any, payload: dict[str, Any]) -> dict[str, Any]:
+def put(owner: Any, entity: Any, tmdb_id: Any, payload: dict[str, Any]) -> dict[str, Any]:
     key = title_key(entity, tmdb_id)
     if not isinstance(payload, dict):
         raise ShelfError("Invalid shelf entry")
     with _LOCK:
-        items = copy.deepcopy(_load())
+        state = _state(owner)
+        items = copy.deepcopy(state["items"])
         previous = items.get(key) or {}
         merged = {**payload, "added_at": previous.get("added_at") or _now(), "updated_at": _now()}
         if not str(payload.get("title") or "").strip() and previous.get("title"):
@@ -315,15 +367,16 @@ def put(entity: Any, tmdb_id: Any, payload: dict[str, Any]) -> dict[str, Any]:
         if entry is None:
             raise ShelfError("Invalid shelf entry")
         items[key] = entry
-        _save(items)
+        _save(state, items)
         return copy.deepcopy(entry)
 
 
-def remove(entity: Any, tmdb_id: Any) -> bool:
+def remove(owner: Any, entity: Any, tmdb_id: Any) -> bool:
     key = title_key(entity, tmdb_id)
     with _LOCK:
-        items = copy.deepcopy(_load())
+        state = _state(owner)
+        items = copy.deepcopy(state["items"])
         if items.pop(key, None) is None:
             return False
-        _save(items)
+        _save(state, items)
         return True

@@ -1303,7 +1303,6 @@
     const rows = recent ? recentRows : shows ? state.shows : notes ? state.noteRows : state.items;
     if (!rows.length) return shows ? renderShows() : notes ? renderTitles() : renderList();
     const feature = recent ? "history" : listFeature();
-    if (feature === "collection") void window.CW?.Shelf?.load?.();
     let previousDay = "";
     const cards = rows.map((item, index) => {
       const refName = shows ? "show" : notes ? "note" : "key";
@@ -1312,7 +1311,8 @@
       const card = canCard(cardItem(item, shows || isChild(item) || item.type === "show"));
       const art = item.art || (item.ids?.tmdb ? {kind: item.type === "movie" ? "movie" : "tv", tmdb: item.ids.tmdb} : null);
       const url = artUrl({...item, art}, "w500");
-      const shelfInfo = feature === "collection" && !shows && !notes && art?.tmdb ? window.CW?.Shelf?.peek?.(art.kind, art.tmdb) : null;
+      const copies = Array.isArray(item.copies) ? item.copies : [];
+      const mediaPill = feature === "collection" && !shows && !notes ? window.CW?.Shelf?.pill?.({ format: copies[0]?.format || item.format || "", media: item.media_info || {}, copies: copies.length, service: copies[0]?.service }) || "" : "";
       const stillSeason = art?.season ?? item.season;
       const stillEpisode = art?.episode ?? item.episode;
       const image = url ? `${url}&kind=${isChild(item) && stillSeason != null && stillEpisode != null ? `still&season=${encodeURIComponent(stillSeason)}&episode=${encodeURIComponent(stillEpisode)}` : "backdrop"}` : "";
@@ -1328,8 +1328,8 @@
         const day = dayLabel(date);
         if (day !== previousDay) { heading = `<h3 class="trk-grid-day">${esc(day)}</h3>`; previousDay = day; }
       }
-      return `${heading}<article class="trk-play trk-grid-card${selected ? " is-selected" : ""}${state.picked.has(item.key) ? " is-picked" : ""}${shelfInfo ? " has-shelf" : ""}" data-trk-ref-${refName}="${esc(item.key)}"${recent ? ` data-trk-overview-open="recent:${index}"` : ""} tabindex="0" aria-label="${esc(title)}" aria-selected="${selected}">
-        <div class="trk-grid-art"><span class="trk-grid-placeholder" aria-hidden="true">${symbol(shows ? "tv" : typeMeta(item).icon)}</span>${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}${shelfInfo ? window.CW.Shelf.band(shelfInfo, { type: art.kind === "movie" ? "movie" : "tv", id: art.tmdb }) : ""}
+      return `${heading}<article class="trk-play trk-grid-card${selected ? " is-selected" : ""}${state.picked.has(item.key) ? " is-picked" : ""}" data-trk-ref-${refName}="${esc(item.key)}"${recent ? ` data-trk-overview-open="recent:${index}"` : ""} tabindex="0" aria-label="${esc(title)}" aria-selected="${selected}">
+        <div class="trk-grid-art"><span class="trk-grid-placeholder" aria-hidden="true">${symbol(shows ? "tv" : typeMeta(item).icon)}</span>${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}${mediaPill ? `<span class="trk-grid-pill">${mediaPill}</span>` : ""}
           ${!recent ? `<label class="trk-grid-select"><input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}"></label>` : ""}
           ${rating != null ? `<span class="cw-media-card-score" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}
           ${date || prominentStatus ? `<div class="trk-grid-labels">${date ? `<span class="trk-grid-date" title="${esc(whenText(date))}">${esc(!recent && timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}${prominentStatus ? `<span class="trk-grid-status">${prominentStatus}</span>` : ""}</div>` : ""}
@@ -1366,10 +1366,64 @@
       entries.push({icon:"edit", label, disabled, run:() => openSheet("edit", {item:row, feature})});
     }
     if (feature !== "ratings") entries.push({icon:"star", label:"Rate", disabled, run:() => selectRef(ref, {action:"rate"})});
+    if (!ref.show && !ref.note && feature === "history") entries.push({icon:"album", label:"Add to collection", disabled, run:() => addRowToCollection(row)});
+    if (!ref.show && !ref.note && feature === "collection") entries.push({icon:"album", label:copyLabel(row), disabled, run:() => openCopies(row)});
     entries.push({icon:ref.feature === "history" ? "replay" : "check", label:ref.feature === "history" ? "Log a rewatch" : "Log a watch", attrs:' data-trk-watch-label', disabled, run:() => cardQuickAction(button, "log", row, ref)});
     entries.push({icon:"do_not_disturb_on", label:"Mark as dropped", disabled:disabled || row.status === "dropped", run:() => cardQuickAction(button, "drop", row, ref)});
     const menu = window.CW.CardActions.open(button, entries, {title:cardTitle(row),subtitle:[episodeLabel(row),row.episode_title].filter(Boolean).join(" · ")});
     void updateWatchLabel(menu, row, ref);
+  }
+
+  function copyLabel(row) {
+    const count = Array.isArray(row?.copies) ? row.copies.length : 0;
+    return count ? `Copies (${count})` : "Add copy";
+  }
+
+  function loadShelfEditor() {
+    if (window.CW?.ShelfEditor) return Promise.resolve(window.CW.ShelfEditor);
+    shelfEditorLoad ||= new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = `/assets/js/shelf-editor.js${trackerAssetVersion ? `?v=${encodeURIComponent(trackerAssetVersion)}` : ""}`;
+      script.onload = () => (window.CW?.ShelfEditor ? resolve(window.CW.ShelfEditor) : reject(new Error("missing")));
+      script.onerror = () => { shelfEditorLoad = null; reject(new Error("load failed")); };
+      document.head.appendChild(script);
+    });
+    return shelfEditorLoad;
+  }
+
+  async function openCopies(row) {
+    let editor = null;
+    try { editor = await loadShelfEditor(); } catch { editor = null; }
+    if (!editor || !row?.key) return;
+    const art = row.art || {};
+    const child = isChild(row);
+    const tmdb = art.tmdb || (child ? row.show_ids?.tmdb : row.ids?.tmdb) || "";
+    editor.open({
+      type: art.kind === "movie" || row.type === "movie" ? "movie" : "tv",
+      id: tmdb || row.key,
+      title: cardTitle(row),
+      canEdit: window.CW?.AuthState?.read?.()?.permissions?.write !== false,
+      tracker: { instance: state.instance, key: row.key, item: row },
+      start: Array.isArray(row.copies) && row.copies.length ? null : "new",
+      onSaved: () => { void refresh(); },
+    });
+  }
+
+  async function addRowToCollection(row) {
+    const child = isChild(row);
+    const art = row.art || {};
+    const ids = { ...((child ? row.show_ids : row.ids) || {}) };
+    if (art.tmdb) ids.tmdb = art.tmdb;
+    const item = { type: child || row.type === "show" ? "show" : "movie", title: child ? row.series_title || row.title : row.title, year: child ? row.series_year : row.year, ids };
+    try {
+      const data = await getJSON("/api/tracker/add", { feature: "collection", provider_instance: state.instance, item });
+      toast.show(`Added ${item.title} to your collection`, { undo: data?.batch ? () => undo(data.batch) : null });
+      await refresh();
+      if (data?.key) void openCopies({ ...item, key: data.key, art: { ...art, kind: item.type === "movie" ? "movie" : "tv" }, copies: [] });
+    } catch (err) {
+      if (err?.code === "already_there") toast.show(`${item.title} is already in your collection`);
+      else toast.show(writeError(err), { tone: "bad" });
+    }
   }
 
   async function cardQuickAction(button, action, row, ref) {
@@ -1842,7 +1896,7 @@
     const add = (feature, r, label, when) => rows.push({ feature, r, label, when });
     for (const r of data.ratings) add("ratings", r, `Rated ${r.rating ?? "?"}/10`, r.date);
     for (const r of data.watchlist) add("watchlist", r, "On your watchlist", r.date);
-    for (const r of data.collection) add("collection", r, "In your collection", r.date);
+    for (const r of data.collection) add("collection", r, Array.isArray(r.copies) && r.copies.length ? `In your collection · ${plural(r.copies.length, "copy", "copies")}` : "In your collection", r.date);
     for (const r of data.progress) add("progress", r, `${Math.round(Number(r.progress_percent) || 0)}% watched`, r.date);
     if (!rows.length) return "";
     const limit = 8;
@@ -1850,7 +1904,7 @@
       const f = featureOf(feature);
       const ep = data.show && isChild(r) ? episodeLabel(r) : "";
       const ref = esc(`${feature}|${r.key}`);
-      return `<li class="trk-play-row"><span class="trk-play-when">${symbol(f.icon)}${esc(label)}${ep ? ` · ${esc(ep)}` : ""}${when ? `<small>${esc(dateText(when))}</small>` : ""}</span><span class="trk-play-actions"><button type="button" class="trk-icon" data-trk-rec-edit="${ref}" title="Edit" aria-label="Edit ${esc(f.label.toLowerCase())} entry">${icon("edit")}</button><button type="button" class="trk-icon is-danger" data-trk-rec-delete="${ref}" title="Remove" aria-label="Remove from ${esc(f.label.toLowerCase())}">${icon("delete")}</button></span></li>`;
+      return `<li class="trk-play-row"><span class="trk-play-when">${symbol(f.icon)}${esc(label)}${ep ? ` · ${esc(ep)}` : ""}${when ? `<small>${esc(dateText(when))}</small>` : ""}</span><span class="trk-play-actions">${feature === "collection" ? `<button type="button" class="trk-icon" data-trk-rec-copies="${ref}" title="${esc(copyLabel(r))}" aria-label="${esc(copyLabel(r))}">${icon("album")}</button>` : ""}<button type="button" class="trk-icon" data-trk-rec-edit="${ref}" title="Edit" aria-label="Edit ${esc(f.label.toLowerCase())} entry">${icon("edit")}</button><button type="button" class="trk-icon is-danger" data-trk-rec-delete="${ref}" title="Remove" aria-label="Remove from ${esc(f.label.toLowerCase())}">${icon("delete")}</button></span></li>`;
     }).join("");
     const more = rows.length > limit ? `<li class="trk-sub">${esc(plural(rows.length - limit, "more entry", "more entries"))}</li>` : "";
     return `<div class="trk-section"><div class="trk-section-title">In your lists</div><ul class="trk-play-list trk-record-list">${items}${more}</ul></div>`;
@@ -2654,6 +2708,8 @@
     return Array.from(new Set([...BASE_IDS, ...present]));
   }
 
+  const trackerAssetVersion = (() => { try { return new URL(document.currentScript?.src || location.href).searchParams.get("v") || ""; } catch { return ""; } })();
+  let shelfEditorLoad = null;
   const MEDIA_RES = { uhd_4k: "4K", hd_1080p: "1080p", hd_1080i: "1080i", hd_720p: "720p", sd_576p: "576p", sd_576i: "576i", sd_480p: "480p", sd_480i: "480i" };
   const MEDIA_HDR = { dolby_vision: "Dolby Vision", hdr10_plus: "HDR10+", hdr10: "HDR10", hlg: "HLG" };
   const MEDIA_AUDIO = { dolby_atmos: "Dolby Atmos", dolby_digital_plus_atmos: "Dolby Digital Plus Atmos", dolby_truehd: "Dolby TrueHD", dolby_digital_plus: "Dolby Digital Plus", dolby_digital: "Dolby Digital", dolby_prologic: "Dolby Pro Logic", dts_x: "DTS:X", dts_ma: "DTS-HD MA", dts_hr: "DTS-HD HRA", dts: "DTS", auro_3d: "Auro-3D", lpcm: "LPCM", flac: "FLAC", aac: "AAC", mp3: "MP3", mp2: "MP2", ogg: "Ogg", ogg_opus: "Opus", wma: "WMA" };
@@ -2662,11 +2718,10 @@
 
   function mediaEditor(item) {
     const media = item.media_info || {};
-    const options = (map, value) => `<option value="">Not set</option>${Object.entries(map).map(([key, label]) => `<option value="${esc(key)}"${key === value ? " selected" : ""}>${esc(label)}</option>`).join("")}`;
-    const select = (name, label, map, value) => `<label class="trk-field"><span>${esc(label)}</span><select class="cw-select" data-trk-media="${name}">${options(map, value || "")}</select></label>`;
-    const shelf = item.art?.tmdb ? window.CW?.Shelf?.peek?.(item.art.kind, item.art.tmdb) : null;
-    const shelfFormat = (shelf?.formats || []).find((fmt) => MEDIA_FORMATS[fmt]) || "";
-    const suggest = shelfFormat && shelfFormat !== item.format ? `<button type="button" class="cw-btn trk-media-shelf" data-trk-media-shelf="${esc(shelfFormat)}">${icon("shelves")}<span>Use shelf format: ${esc(MEDIA_FORMATS[shelfFormat])}</span></button>` : "";
+    const options = (map, value) => `<option value="">Not set</option>${value && !map[value] ? `<option value="${esc(value)}" selected>${esc(value)}</option>` : ""}${Object.entries(map).map(([key, label]) => `<option value="${esc(key)}"${key === value ? " selected" : ""}>${esc(label)}</option>`).join("")}`;
+    const select = (name, label, map, value) => `<label class="trk-field"><span>${esc(label)}</span><select class="cw-select" data-trk-mi="${name}">${options(map, value || "")}</select></label>`;
+    const copyFormat = (Array.isArray(item.copies) ? item.copies : []).map((row) => row?.format).find((fmt) => MEDIA_FORMATS[fmt]) || "";
+    const suggest = copyFormat && copyFormat !== item.format ? `<button type="button" class="cw-btn trk-media-shelf" data-trk-media-shelf="${esc(copyFormat)}">${icon("album")}<span>Use copy format: ${esc(MEDIA_FORMATS[copyFormat])}</span></button>` : "";
     return `<details class="trk-identity trk-media"${item.media_manual ? " open" : ""}>
           <summary>${icon("album")}<span>Media info</span><small>${item.media_manual ? "Set by you. Sync keeps your values." : "From sync. Change a value to set your own."}</small></summary>
           <div class="trk-identity-body">
@@ -2676,19 +2731,19 @@
               ${select("hdr", "HDR", MEDIA_HDR, media.hdr)}
               ${select("audio", "Audio", MEDIA_AUDIO, media.audio)}
               ${select("audio_channels", "Channels", Object.fromEntries(MEDIA_CHANNELS.map((value) => [value, value])), media.audio_channels)}
-              <label class="trk-field trk-media-check"><input type="checkbox" class="cw-checkbox" data-trk-media="is_3d"${media.is_3d ? " checked" : ""}><span>3D</span></label>
+              <label class="trk-field trk-media-check"><input type="checkbox" class="cw-checkbox" data-trk-mi="is_3d"${media.is_3d ? " checked" : ""}><span>3D</span></label>
             </div>
             ${suggest}
-            ${item.media_manual ? `<label class="trk-field trk-media-check"><input type="checkbox" class="cw-checkbox" data-trk-media="reset"><span>Use synced values again</span></label>` : ""}
+            ${item.media_manual ? `<label class="trk-field trk-media-check"><input type="checkbox" class="cw-checkbox" data-trk-mi="reset"><span>Use synced values again</span></label>` : ""}
           </div>
         </details>`;
   }
 
   function mediaChanges(form, item) {
-    if (!form.querySelector('[data-trk-media="format"]')) return undefined;
-    if (form.querySelector('[data-trk-media="reset"]')?.checked) return null;
-    const get = (name) => form.querySelector(`[data-trk-media="${name}"]`)?.value || "";
-    const next = { format: get("format"), resolution: get("resolution"), hdr: get("hdr"), audio: get("audio"), audio_channels: get("audio_channels"), is_3d: !!form.querySelector('[data-trk-media="is_3d"]')?.checked };
+    if (!form.querySelector('[data-trk-mi="format"]')) return undefined;
+    if (form.querySelector('[data-trk-mi="reset"]')?.checked) return null;
+    const get = (name) => form.querySelector(`[data-trk-mi="${name}"]`)?.value || "";
+    const next = { format: get("format"), resolution: get("resolution"), hdr: get("hdr"), audio: get("audio"), audio_channels: get("audio_channels"), is_3d: !!form.querySelector('[data-trk-mi="is_3d"]')?.checked };
     const before = item.media_info || {};
     const same = next.format === (item.format || "") && ["resolution", "hdr", "audio", "audio_channels"].every((key) => next[key] === (before[key] || "")) && next.is_3d === !!before.is_3d;
     return same ? undefined : next;
@@ -4482,6 +4537,13 @@
       if (record) openSheet("edit", { item: record, feature: record.feature || "history" });
       return true;
     }
+    const recCopies = event.target.closest("[data-trk-rec-copies]");
+    if (recCopies) {
+      const [feature, ...rest] = recCopies.dataset.trkRecCopies.split("|");
+      const record = findRecord(rest.join("|"), feature);
+      if (record) void openCopies({ ...record, art: record.art || state.title?.title?.art || {} });
+      return true;
+    }
     const recEdit = event.target.closest("[data-trk-rec-edit]");
     if (recEdit) {
       const [feature, ...rest] = recEdit.dataset.trkRecEdit.split("|");
@@ -5288,12 +5350,9 @@
     document.addEventListener("click", (event) => {
       const button = event.target?.closest?.("[data-trk-media-shelf]");
       if (!button) return;
-      const select = button.closest("form")?.querySelector('[data-trk-media="format"]');
+      const select = button.closest("form")?.querySelector('[data-trk-mi="format"]');
       if (select) select.value = button.dataset.trkMediaShelf;
       button.remove();
-    });
-    window.addEventListener("cw:shelf-changed", () => {
-      if (state.view === "collection" && state.layouts?.[state.view] === "grid" && state.root && !state.root.classList.contains("hidden")) render();
     });
   }
 

@@ -290,37 +290,29 @@
     return /^\/[A-Za-z0-9_-]{4,64}\.(jpg|jpeg|png)$/i.test(String(path || "")) ? `/art/tmdb/image?path=${encodeURIComponent(path)}&size=${size}` : "";
   }
 
-  function shelfDisc(type, id, format) {
-    const url = shelfDiscUrl(type, id, format);
-    return url ? `<img class="cw-shelf-disc" data-shelf-disc="${url}" alt="" hidden>` : "";
-  }
+  const PILL_FORMATS = { "4k_bluray": "uhd-bluray.svg", bluray: "bluray.svg", dvd: "dvd.svg" };
+  const PILL_HDR = { dolby_vision: ["dolby-vision.svg", "Dolby Vision"], hdr10_plus: ["hdr10-plus.svg", "HDR10+"], hdr10: ["hdr10.svg", "HDR10"] };
+  const PILL_ATMOS = new Set(["dolby_atmos", "dolby_digital_plus_atmos"]);
 
-  function shelfBand(info, { type = "", id = "", flash = false } = {}) {
-    if (!info) return "";
-    const count = Number(info.copies) || 0;
-    const format = (Array.isArray(info.formats) ? info.formats : [])[0] || "";
-    const logo = format === "digital" ? shelfLogoUrl(info.service?.logo, "w45") : "";
-    const mark = logo ? `<img class="cw-shelf-service" src="${shelfEsc(logo)}" alt="" loading="lazy" decoding="async">` : `<span class="material-symbols-rounded" aria-hidden="true">${format === "digital" ? "cloud" : "album"}</span>`;
-    const text = format === "digital" && info.service?.name && (info.formats || []).length === 1 ? info.service.name : shelfLabel(info);
-    const band = count ? `<span class="cw-shelf-band" data-format="${shelfEsc(format)}">${mark}<span>${shelfEsc(text)}</span>${count > 1 ? `<b>×${count}</b>` : ""}</span>` : "";
-    const status = info.status && (info.status !== "owned" || !count) ? `<span class="cw-shelf-status" data-status="${shelfEsc(info.status)}">${shelfEsc(SHELF_STATUSES[info.status] || info.status)}</span>` : "";
-    const lent = info.lent ? `<span class="cw-shelf-lent" title="Lent out" aria-label="Lent out"><span class="material-symbols-rounded" aria-hidden="true">handshake</span></span>` : "";
-    const server = info.on_server ? `<span class="cw-shelf-lent" title="Also on your media server" aria-label="Also on your media server"><span class="material-symbols-rounded" aria-hidden="true">dns</span></span>` : "";
-    return `<span class="cw-shelf-tags${flash ? " is-flash" : ""}">${band}${status}${lent}${server}</span>${shelfDisc(type === "movie" ? "movie" : "tv", id, format)}`;
+  function shelfPill({ format = "", media = {}, copies = 0, service = null } = {}) {
+    const info = media && typeof media === "object" ? media : {};
+    const logo = (file, alt, extra = "") => `<img class="cw-media-pill-logo${extra}" src="/assets/img/quality/${file}" alt="${shelfEsc(alt)}" loading="lazy" decoding="async">`;
+    const parts = [];
+    if (PILL_FORMATS[format]) parts.push(logo(PILL_FORMATS[format], SHELF_FORMATS[format], " is-format"));
+    else if (format === "digital" && service?.name) {
+      const src = shelfLogoUrl(service.logo, "w45");
+      parts.push(`${src ? `<img class="cw-media-pill-service" src="${shelfEsc(src)}" alt="" loading="lazy" decoding="async">` : ""}<span class="cw-media-pill-text">${shelfEsc(service.name)}</span>`);
+    } else if (format) parts.push(`<span class="cw-media-pill-text">${shelfEsc(SHELF_FORMATS[format] || format)}</span>`);
+    else if (info.resolution === "uhd_4k") parts.push(logo("4k-uhd.svg", "4K", " is-format"));
+    const hdr = PILL_HDR[info.hdr];
+    if (hdr) parts.push(logo(hdr[0], hdr[1]));
+    if (PILL_ATMOS.has(info.audio)) parts.push(logo("dolby-atmos.svg", "Dolby Atmos"));
+    if (Number(copies) > 1) parts.push(`<span class="cw-media-pill-text">×${Number(copies)}</span>`);
+    return parts.length ? `<span class="cw-media-pill">${parts.join("")}</span>` : "";
   }
-
-  document.addEventListener("pointerover", (event) => {
-    const img = event.target?.closest?.(".has-shelf")?.querySelector?.("img[data-shelf-disc]");
-    if (!img) return;
-    const src = img.dataset.shelfDisc;
-    img.removeAttribute("data-shelf-disc");
-    img.onload = () => { img.hidden = false; };
-    img.onerror = () => img.remove();
-    img.src = src;
-  }, { passive: true });
 
   window.CW.Shelf = {
-    load: shelfLoad, peek: shelfPeek, set: shelfSet, band: shelfBand, label: shelfLabel, money: shelfMoney, discUrl: shelfDiscUrl, logoUrl: shelfLogoUrl, formats: SHELF_FORMATS, statuses: SHELF_STATUSES,
+    load: shelfLoad, peek: shelfPeek, set: shelfSet, pill: shelfPill, label: shelfLabel, money: shelfMoney, discUrl: shelfDiscUrl, logoUrl: shelfLogoUrl, formats: SHELF_FORMATS, statuses: SHELF_STATUSES,
     currency: () => shelfIndex.currency,
     setCurrency: (value) => { shelfIndex.currency = String(value || ""); window.dispatchEvent(new CustomEvent("cw:shelf-changed", { detail: { currency: shelfIndex.currency } })); },
   };

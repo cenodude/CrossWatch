@@ -1436,12 +1436,10 @@
     search: "",
     sort: "collected_at",
     shelf: COLLECTION_SHELF_MODES.includes(collectionPrefs.shelf) ? collectionPrefs.shelf : "synced",
-    display: ["case", "shelf"].includes(collectionPrefs.display) ? collectionPrefs.display : "poster",
+    display: collectionPrefs.display === "shelf" ? "shelf" : "poster",
     shelfStats: null,
     shelfFilter: "",
     shelfLocations: [],
-    shelfAnimated: false,
-    flashKey: "",
     items: [],
     total: 0,
     pageCount: 1,
@@ -1554,26 +1552,23 @@
     const when = added ? relTime(added) : "";
     const art = poster(item, "w342");
     const providerStrip = collectionProviderStrip(item);
-    const meta = [kind, episode || year, when, collectionLibrarySummary(item)].filter(Boolean).join(" · ");
-    const quality = collectionQuality(item);
-    const ariaTitle = quality?.label ? `${title}, ${quality.label}` : title;
     const shelfInfo = item?.shelf && typeof item.shelf === "object" ? item.shelf : null;
-    const shelfType = mediaType(item) ? "tv" : "movie";
-    const shelfHtml = shelfInfo ? window.CW?.Shelf?.band?.(shelfInfo, { type: shelfType, id: tmdbId(item), flash: collectionState.flashKey === `${shelfType}:${tmdbId(item)}` }) || "" : "";
-    const caseView = !!shelfInfo && collectionState.display === "case" && collectionState.shelf !== "synced";
-    const caseAttrs = caseView ? ` data-shelf-format="${esc((shelfInfo.formats || [])[0] || "other")}" data-shelf-pack="${esc(shelfInfo.packaging || "")}"` : "";
-    const inner = `<span class="cw-collection-poster${quality ? " has-quality" : ""}">
+    const shelfStatus = shelfInfo?.status && shelfInfo.status !== "owned" ? window.CW?.Shelf?.statuses?.[shelfInfo.status] || shelfInfo.status : "";
+    const meta = [kind, episode || year, shelfStatus, shelfInfo?.edition, when, collectionLibrarySummary(item)].filter(Boolean).join(" · ");
+    const shelfPill = shelfInfo ? window.CW?.Shelf?.pill?.({ format: (shelfInfo.formats || [])[0] || "", media: item?.media_info || {}, copies: Number(shelfInfo.copies) || 0, service: shelfInfo.service }) || "" : "";
+    const quality = shelfPill ? null : collectionQuality(item);
+    const ariaTitle = quality?.label ? `${title}, ${quality.label}` : title;
+    const inner = `<span class="cw-collection-poster${quality || shelfPill ? " has-quality" : ""}">
         <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
-        <span class="cw-collection-badge"><span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>${esc(kind)}</span>
-        ${quality ? quality.html : ""}
-        ${shelfHtml}
+        <span class="cw-collection-badge" title="${esc(kind)}"><span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span></span>
+        ${shelfPill || (quality ? quality.html : "")}
       </span>
       <span class="cw-collection-info">
         <strong class="cw-collection-name">${esc(title)}</strong>
         <span class="cw-collection-meta">${esc(meta)}</span>
       </span>`;
     const selectKey = String(item?.key || key);
-    return `<article class="cw-collection-card cw-tl-card${collectionState.selected.has(selectKey) ? " is-selected" : ""}${shelfInfo ? " has-shelf" : ""}${caseView ? " is-case" : ""}" data-collection-key="${esc(selectKey)}"${caseAttrs}>
+    return `<article class="cw-collection-card cw-tl-card${collectionState.selected.has(selectKey) ? " is-selected" : ""}${shelfInfo?.status === "wishlist" ? " is-wishlist" : ""}" data-collection-key="${esc(selectKey)}">
       <button class="cw-collection-open" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(ariaTitle)}">${inner}</button>
       ${collectionSelectable() && !item?.shelf_only ? collectionSelectBox(selectKey) : ""}
       <span class="cw-collection-card-foot"><span class="cw-collection-sources">${providerStrip}</span>${cardActionsButton(`data-collection-actions="${esc(selectKey)}"`, `Actions for ${title}`)}</span>
@@ -1741,10 +1736,9 @@
   function collectionShelfPill(item) {
     const info = item?.shelf && typeof item.shelf === "object" ? item.shelf : null;
     if (!info) return "";
-    const copies = Number(info.copies) || 0;
-    const label = `${window.CW?.Shelf?.label?.(info) || "On shelf"}${copies > 1 ? ` ×${copies}` : ""}`;
-    const status = info.status && info.status !== "owned" ? ` · ${window.CW?.Shelf?.statuses?.[info.status] || info.status}` : "";
-    return `<span class="cw-collection-pill cw-collection-pill--shelf" data-format="${esc((info.formats || [])[0] || "")}" title="On your shelf"><span class="material-symbols-rounded" aria-hidden="true">shelves</span>${esc(label + status)}</span>`;
+    const pill = window.CW?.Shelf?.pill?.({ format: (info.formats || [])[0] || "", copies: Number(info.copies) || 0, service: info.service }) || "";
+    const status = info.status && info.status !== "owned" ? `<span class="cw-collection-pill">${esc(window.CW?.Shelf?.statuses?.[info.status] || info.status)}</span>` : "";
+    return `${pill}${status}`;
   }
 
   function collectionListRow(item, index) {
@@ -1964,7 +1958,7 @@
   function renderShelfFilter() {
     const select = $("#profile-collection-shelf-filter");
     if (!select) return;
-    const hide = collectionState.shelf === "synced";
+    const hide = collectionState.shelf === "synced" || collectionState.shelf === "not_on_shelf";
     const formats = window.CW?.Shelf?.formats || {};
     const present = Object.keys(collectionState.shelfStats?.formats || {});
     const wanted = collectionState.shelfFilter;
@@ -2027,32 +2021,68 @@
     host.innerHTML = values.map(([label, value]) => `<span class="cw-hub-records-stat"><strong>${esc(numberFmt.format(Number(value) || 0))}</strong><span>${esc(label)}</span></span>`).join("");
   }
 
+  function collectionPageSize() {
+    return shelfViewOn() ? 120 : collectionState.pageSize;
+  }
+
   function shelfViewOn() {
     return collectionState.display === "shelf" && collectionState.shelf !== "synced" && collectionState.view !== "list";
+  }
+
+  function shelfBars(title, rows, tone) {
+    const max = Math.max(1, ...rows.map(([, count]) => count));
+    const body = rows.length
+      ? rows.map(([label, count]) => `<div class="cw-shelf-bar"><span>${esc(label)}</span><span class="cw-shelf-bar-track"><span class="cw-shelf-bar-fill" data-tone="${tone}" style="width:${Math.max(4, Math.round(count / max * 100))}%"></span></span><b>${esc(numberFmt.format(count))}</b></div>`).join("")
+      : `<p class="cw-shelf-bars-empty">Nothing to show yet.</p>`;
+    return `<div class="cw-shelf-panel"><h3>${esc(title)}</h3>${body}</div>`;
   }
 
   function shelfStatsHtml() {
     const stats = collectionState.shelfStats;
     if (!stats || !stats.titles) return "";
-    const labels = window.CW?.Shelf?.formats || {};
-    const chips = [`<span class="cw-shelf-stat"><b>${esc(numberFmt.format(stats.titles))}</b><small>${stats.titles === 1 ? "title" : "titles"}</small></span>`, `<span class="cw-shelf-stat"><b>${esc(numberFmt.format(stats.copies))}</b><small>${stats.copies === 1 ? "copy" : "copies"}</small></span>`];
-    Object.entries(stats.formats || {}).sort((a, b) => b[1] - a[1]).forEach(([fmt, count]) => chips.push(`<span class="cw-shelf-stat" data-format="${esc(fmt)}"><b>${esc(numberFmt.format(count))}</b><small>${esc(labels[fmt] || fmt)}</small></span>`));
-    if (stats.lent) chips.push(`<span class="cw-shelf-stat is-lent"><span class="material-symbols-rounded" aria-hidden="true">handshake</span><b>${esc(numberFmt.format(stats.lent))}</b><small>lent out</small></span>`);
-    if (Number(stats.spent) > 0) chips.push(`<span class="cw-shelf-stat is-spent"><span class="material-symbols-rounded" aria-hidden="true">payments</span><b>${esc(window.CW?.Shelf?.money?.(stats.spent, stats.currency || "") || stats.spent)}</b><small>spent</small></span>`);
-    return `<div class="cw-shelf-stats">${chips.join("")}</div>`;
+    const formats = window.CW?.Shelf?.formats || {};
+    const status = stats.status || {};
+    const statusLine = [["owned", "owned"], ["ordered", "ordered"], ["wishlist", "wishlist"]].filter(([key]) => status[key]).map(([key, label]) => `${numberFmt.format(status[key])} ${label}`).join(", ");
+    const spent = Number(stats.spent) > 0 ? window.CW?.Shelf?.money?.(stats.spent, stats.currency || "") || String(stats.spent) : "–";
+    const pct = stats.titles ? Math.round((Number(stats.uhd) || 0) / stats.titles * 100) : 0;
+    const tile = (label, value, sub) => `<div class="cw-shelf-tile"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(sub)}</small></div>`;
+    const byCount = (obj) => Object.entries(obj || {}).sort((a, b) => b[1] - a[1]);
+    const formatRows = byCount(stats.formats).map(([key, count]) => [formats[key] || key, count]);
+    const decadeRows = Object.entries(stats.decades || {}).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 6);
+    return `<section class="cw-shelf-dash" aria-label="Shelf stats">
+      <div class="cw-shelf-tiles">
+        ${tile("Titles", numberFmt.format(stats.titles), statusLine)}
+        ${tile("Copies", numberFmt.format(stats.copies), stats.lent ? `${numberFmt.format(stats.lent)} lent out` : "None lent out")}
+        ${tile("Spent", spent, stats.currency ? stats.currency : "Set a currency in the copy form")}
+        ${tile("4K UHD", `${pct}%`, `${numberFmt.format(Number(stats.uhd) || 0)} of ${numberFmt.format(stats.titles)} titles`)}
+      </div>
+      <div class="cw-shelf-panels">
+        ${shelfBars("By format", formatRows, "format")}
+        ${shelfBars("Picture and sound", byCount(stats.picture), "quality")}
+        ${shelfBars("By decade", decadeRows, "quality")}
+      </div>
+    </section>`;
   }
 
-  function shelfCase(item, index) {
+  function shelfItem(item) {
     const info = item?.shelf || {};
     const title = titleOf(item);
-    const format = (info.formats || [])[0] || "other";
-    const copies = Number(info.copies) || 0;
-    const statusLabel = window.CW?.Shelf?.statuses?.[info.status] || "";
-    const label = [title, window.CW?.Shelf?.label?.(info), copies > 1 ? `${copies} copies` : "", info.status && info.status !== "owned" ? statusLabel : ""].filter(Boolean).join(", ");
-    return `<button type="button" class="cw-shelf-case" data-profile-poster-key="${esc(storePosterItem(item))}" data-shelf-format="${esc(format)}" data-shelf-pack="${esc(info.packaging || "")}" data-status="${esc(info.status || "owned")}" style="--i:${Math.min(index, 25)}" aria-label="${esc(label)}" title="${esc(title)}">
-      <span class="cw-shelf-spine"><span class="cw-shelf-spine-title">${esc(title)}</span><span class="cw-shelf-spine-mark">${esc(window.CW?.Shelf?.formats?.[format] || statusLabel)}</span></span>
-      <span class="cw-shelf-pop"><img src="${esc(poster(item, "w185"))}" alt="" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'"></span>
-    </button>`;
+    const type = mediaType(item) ? "tv" : "movie";
+    const format = (info.formats || [])[0] || "";
+    const disc = window.CW?.Shelf?.discUrl?.(type, tmdbId(item), format) || "";
+    const statusLabel = info.status && info.status !== "owned" ? window.CW?.Shelf?.statuses?.[info.status] || info.status : "";
+    const pill = window.CW?.Shelf?.pill?.({ format, media: item?.media_info || {}, copies: Number(info.copies) || 0, service: info.service }) || "";
+    const note = [info.edition, info.lent ? "Lent out" : ""].filter(Boolean).join(" · ");
+    const label = [title, window.CW?.Shelf?.label?.(info), statusLabel].filter(Boolean).join(", ");
+    return `<div class="cw-shelfv-item${disc ? " has-disc" : ""}${info.status === "wishlist" ? " is-wishlist" : ""}">
+      <button type="button" class="cw-shelfv-art" data-profile-poster-key="${esc(storePosterItem(item))}" aria-label="${esc(label)}">
+        ${disc ? `<img class="cw-shelfv-disc" src="${esc(disc)}" alt="" loading="lazy" decoding="async" onerror="this.remove();this.closest('.cw-shelfv-item')?.classList.remove('has-disc')">` : ""}
+        <img class="cw-shelfv-cover" src="${esc(poster(item, "w342"))}" alt="" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
+        ${statusLabel ? `<span class="cw-shelfv-status" data-status="${esc(info.status)}">${esc(statusLabel)}</span>` : ""}
+      </button>
+      <span class="cw-shelfv-base" aria-hidden="true"></span>
+      <span class="cw-shelfv-cap"><strong title="${esc(title)}">${esc(title)}</strong><span>${pill}${note ? `<small>${esc(note)}</small>` : ""}</span></span>
+    </div>`;
   }
 
   function shelfViewHtml() {
@@ -2063,14 +2093,23 @@
       groups.get(name).push(item);
     }
     const ordered = [...groups.entries()].sort(([a], [b]) => (!a ? 1 : !b ? -1 : a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })));
-    const animate = !collectionState.shelfAnimated;
-    collectionState.shelfAnimated = true;
-    let index = 0;
-    const rows = ordered.map(([name, items]) => `<section class="cw-shelf-row">
-        <h3 class="cw-shelf-row-head"><span class="material-symbols-rounded" aria-hidden="true">shelves</span><span>${esc(name || "No shelf set")}</span><small>${esc(`${numberFmt.format(items.length)} ${items.length === 1 ? "title" : "titles"}`)}</small></h3>
-        <div class="cw-shelf-rack">${items.map((item) => shelfCase(item, index++)).join("")}</div>
-      </section>`).join("");
-    return `${shelfStatsHtml()}<div class="cw-shelf-view${animate ? " is-entering" : ""}">${rows}</div>`;
+    const rows = ordered.map(([name, items]) => {
+      const copies = items.reduce((sum, item) => sum + (Number(item?.shelf?.copies) || 0), 0);
+      const summary = [`${numberFmt.format(items.length)} ${items.length === 1 ? "title" : "titles"}`, `${numberFmt.format(copies)} ${copies === 1 ? "copy" : "copies"}`].join(" · ");
+      return `<section class="cw-shelfv-row">
+        <header class="cw-shelfv-head"><h3>${esc(name || "No shelf set")}</h3><span>${esc(summary)}</span></header>
+        <div class="cw-shelfv-rack">${items.map(shelfItem).join("")}</div>
+      </section>`;
+    }).join("");
+    return `<div class="cw-shelfv">${rows}</div>`;
+  }
+
+  function renderShelfStats() {
+    const host = $("#profile-collection-shelfstats");
+    if (!host) return;
+    const html = collectionState.shelf !== "synced" ? shelfStatsHtml() : "";
+    host.hidden = !html;
+    host.innerHTML = html;
   }
 
   function paintCollectionItems() {
@@ -2082,7 +2121,6 @@
       grid.dataset.view = "shelf";
       grid.classList.remove("is-grouped");
       grid.innerHTML = shelfViewHtml();
-      collectionState.flashKey = "";
       syncCollectionSelection();
       return;
     }
@@ -2124,7 +2162,6 @@
         <div class="cw-collection-day-body">${group.items.map(collectionCard).join("")}</div>
       </section>`).join("");
     }
-    collectionState.flashKey = "";
     syncCollectionSelection();
   }
 
@@ -2149,7 +2186,7 @@
       btn.hidden = collectionState.shelf === "synced" || collectionState.view === "list";
       btn.classList.toggle("active", on);
       btn.setAttribute("aria-pressed", String(on));
-      btn.title = on ? "Show posters" : mode === "shelf" ? "Show shelf view" : "Show cases";
+      btn.title = on ? "Show posters" : "Show shelf view";
       btn.setAttribute("aria-label", btn.title);
     });
     const shelfSelect = $("#profile-collection-shelf");
@@ -2172,6 +2209,7 @@
     collectionState.shelfStats = data.shelf_stats && typeof data.shelf_stats === "object" ? data.shelf_stats : null;
     collectionState.shelfLocations = Array.isArray(data.shelf_locations) ? data.shelf_locations : [];
     renderShelfFilter();
+    renderShelfStats();
     renderCollectionMetrics(data);
     renderCollectionTypeChips(data.counts || {});
     renderCollectionProviders(data.providers || []);
@@ -2239,7 +2277,7 @@
       search: collectionState.search,
       sort: collectionState.sort,
       page: String(collectionState.page),
-      page_size: String(collectionState.pageSize),
+      page_size: String(collectionPageSize()),
     });
     if (collectionState.shelf !== "synced") params.set("shelf", collectionState.shelf);
     if (collectionState.shelf !== "synced" && collectionState.shelfFilter) params.set("shelf_filter", collectionState.shelfFilter);
@@ -2259,7 +2297,7 @@
     if (!snapshot.restored) lockCollectionPager();
     try {
       const data = await api(url);
-      if (Number(params.get("page_size")) !== collectionState.pageSize || !snapshot.current()) return;
+      if (Number(params.get("page_size")) !== collectionPageSize() || !snapshot.current()) return;
       snapshot.update(data);
       if (month) {
         const grid = $("#profile-collection-grid");
@@ -2272,7 +2310,7 @@
       toast(e.message || "Collections could not be loaded", true);
     } finally {
       collectionState.loading = false;
-      if (Number(params.get("page_size")) !== collectionState.pageSize) {
+      if (Number(params.get("page_size")) !== collectionPageSize()) {
         collectionState.loaded = false;
         if ($("#profile-panel-collection")?.classList.contains("active")) void loadCollection({reset:true});
       }
@@ -2324,10 +2362,12 @@
       const displayBtn = event.target?.closest?.("[data-collection-display]");
       if (displayBtn) {
         const mode = displayBtn.dataset.collectionDisplay;
+        const before = collectionPageSize();
         collectionState.display = collectionState.display === mode ? "poster" : mode;
         saveCollectionPrefs();
         syncCollectionViewButtons();
-        paintCollectionItems();
+        if (collectionPageSize() !== before) void loadCollection({ reset: true });
+        else paintCollectionItems();
         return;
       }
       if (event.target?.closest?.("[data-collection-timeline]")) {
@@ -2401,7 +2441,6 @@
     renderShelfFilter();
     window.addEventListener("cw:shelf-changed", (event) => {
       if (event.detail?.loaded || !collectionState.loaded) return;
-      if (event.detail?.id) collectionState.flashKey = `${event.detail.type === "movie" ? "movie" : "tv"}:${event.detail.id}`;
       collectionState.loaded = false;
       if ($("#profile-panel-collection")?.classList.contains("active")) void loadCollection({ quiet: true });
     });
@@ -4575,7 +4614,7 @@
       const panel = q("filters-panel");
       const btn = q("filters-btn");
       if (!panel || !btn) return;
-      if (panel.closest(".cw-hub-mobile-sheet")) return;
+      if (panel.closest(".cw-hub-mobile-sheet,.cw-hub-filterpop")) return;
       const open = typeof force === "boolean" ? force : panel.hidden;
       panel.hidden = !open;
       btn.setAttribute("aria-expanded", String(open));
@@ -5641,6 +5680,17 @@
       trigger.setAttribute("aria-haspopup", "dialog");
       trigger.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">tune</span><span hidden></span>';
       toolbar.append(trigger);
+      const pop = document.createElement("div");
+      pop.className = "cw-hub-filterpop";
+      pop.id = `profile-${key}-filterpop`;
+      pop.hidden = true;
+      pop.setAttribute("role", "group");
+      pop.setAttribute("aria-label", "Filters");
+      toolbar.after(pop);
+      const tail = document.createElement("div");
+      tail.className = "cw-hub-records-tail";
+      panel.querySelectorAll(".cw-hub-records-controls > .cw-hub-records-views, .cw-hub-records-controls > [data-timeline-refresh], .cw-hub-records-controls > [data-collection-refresh], .cw-hub-records-controls > [data-playback-open-settings], .cw-hub-records-controls > [data-playback-retry]").forEach((node) => tail.append(node));
+      toolbar.append(tail);
       const dialog = document.createElement("dialog");
       dialog.className = "cw-hub-mobile-sheet";
       dialog.id = `profile-${key}-mobile-tools`;
@@ -5651,11 +5701,13 @@
       const body = dialog.querySelector(".cw-hub-mobile-sheet-body");
       const moved = [];
       let enabled = false;
+      let mode = "";
       let signature = "";
-      const defaults = { coverage: "all", sort: key === "collection" ? "collected_at" : "last_updated" };
+      const holder = () => (mode === "desktop" ? pop : body);
+      const defaults = { coverage: "all", sort: key === "collection" ? "collected_at" : "last_updated", shelf: "synced" };
       const selectedFilters = () => {
         const entries = [];
-        body.querySelectorAll("select").forEach((select) => {
+        holder().querySelectorAll("select").forEach((select) => {
           if (select.closest("[hidden]")) return;
           const field = select.id.replace(`profile-${key}-`, "");
           const fallback = defaults[field] || "";
@@ -5665,25 +5717,25 @@
             select.dispatchEvent(new Event("change", { bubbles: true }));
           } });
         });
-        const types = [...body.querySelectorAll(typeSelector)];
+        const types = [...holder().querySelectorAll(typeSelector)];
         const active = types.find((button) => button.getAttribute("aria-pressed") === "true");
         if (active && active !== types[0]) entries.push({ label: active.querySelector("span:not(.material-symbols-rounded)")?.textContent || active.textContent, clear: () => types[0]?.click() });
-        const rating = body.querySelector('[data-timeline-rating]:not([data-timeline-rating=""])[aria-pressed="true"]');
+        const rating = holder().querySelector('[data-timeline-rating]:not([data-timeline-rating=""])[aria-pressed="true"]');
         if (rating) entries.push({ label: `${rating.dataset.timelineRating}/10`, clear: () => rating.click() });
         return entries;
       };
       const sync = () => {
-        if (!enabled) return;
+        if (!mode) return;
         if (dialog.open && !panel.classList.contains("active")) dialog.close();
         const stats = [...metrics?.querySelectorAll(".cw-hub-records-stat") || []];
         const stat = key === "collection" ? stats.at(-1) : stats[0];
         const text = stat ? `${stat.querySelector("strong")?.textContent || "0"} ${stat.querySelector("span")?.textContent.toLowerCase() || "items"}` : "";
         if (total.textContent !== text) total.textContent = text;
         source.value = panel.dataset.source || sources[0]?.dataset.timelineSource || "";
-        const coverage = body.querySelector(".cw-hub-records-filters");
+        const coverage = holder().querySelector(".cw-hub-records-filters");
         if (coverage && coverage.hidden !== (panel.dataset.coverage !== "on")) coverage.hidden = panel.dataset.coverage !== "on";
         const entries = selectedFilters();
-        const status = body.querySelector(".cw-play-status");
+        const status = panel.querySelector(".cw-play-status");
         const warning = status?.dataset.issues;
         const next = JSON.stringify([entries.map((entry) => entry.label), warning]);
         if (signature !== next) {
@@ -5723,6 +5775,12 @@
       const close = () => { if (dialog.open) dialog.close(); };
       trigger.addEventListener("click", () => {
         window.CW?.IconSelect?.closeAll?.();
+        if (mode === "desktop") {
+          pop.hidden = !pop.hidden;
+          trigger.setAttribute("aria-expanded", String(!pop.hidden));
+          sync();
+          return;
+        }
         relocateMenus(dialog);
         sync();
         dialog.showModal();
@@ -5745,30 +5803,55 @@
       panel.addEventListener("change", sync);
       const observer = new MutationObserver(sync);
       observer.observe(body, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-pressed", "data-issues", "hidden"] });
+      observer.observe(pop, { childList: true, subtree: true, attributes: true, attributeFilter: ["aria-pressed", "hidden"] });
+      pop.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape" || mode !== "desktop") return;
+        pop.hidden = true;
+        trigger.setAttribute("aria-expanded", "false");
+        trigger.focus();
+      });
       observer.observe(panel, { attributes: true, attributeFilter: ["data-source", "data-coverage", "class"] });
+      const moveInto = (selectors, destination) => selectors.forEach((selector) => {
+        const node = panel.querySelector(selector);
+        if (!node || destination.contains(node)) return;
+        const marker = document.createTextNode("");
+        node.before(marker);
+        moved.push({ node, marker });
+        destination.append(node);
+      });
       const adapt = () => {
-        if (enabled === narrow.matches) return;
-        enabled = narrow.matches;
+        const next = narrow.matches ? "mobile" : "desktop";
+        if (mode === next) return;
+        close();
+        relocateMenus(document.body);
+        moved.splice(0).forEach(({ node, marker }) => marker.replaceWith(node));
+        pop.hidden = true;
+        panel.querySelectorAll(".cw-hub-records-filters,.cw-play-filterpanel").forEach((node) => { node.hidden = true; });
+        panel.querySelectorAll("[data-timeline-filters-toggle],[data-playback-filters-toggle]").forEach((button) => button.setAttribute("aria-expanded", "false"));
+        mode = next;
+        enabled = mode === "mobile";
         panel.classList.toggle("has-mobile-tools", enabled);
+        panel.classList.toggle("has-desktop-tools", !enabled);
         if (enabled) {
-          [".cw-hub-records-chips", ".cw-hist-scores", ".cw-hub-records-controls", ".cw-hub-records-filters", ".cw-hub-records-tiles", ".cw-hub-progress-summary", ".cw-play-status"].forEach((selector) => {
-            const node = panel.querySelector(selector);
-            if (!node) return;
-            const marker = document.createTextNode("");
-            node.before(marker);
-            moved.push({ node, marker });
-            body.append(node);
-          });
-          const filters = body.querySelector(".cw-play-filterpanel");
-          if (filters) filters.hidden = false;
-          sync();
+          trigger.firstElementChild.textContent = "tune";
+          trigger.setAttribute("aria-label", "Filters and display options");
+          trigger.setAttribute("aria-haspopup", "dialog");
+          trigger.setAttribute("aria-controls", dialog.id);
+          trigger.removeAttribute("aria-expanded");
+          toolbar.append(trigger);
+          moveInto([".cw-hub-records-chips", ".cw-hist-scores", ".cw-hub-records-controls", ".cw-hub-records-tail", ".cw-hub-records-filters", ".cw-hub-records-tiles", ".cw-hub-progress-summary", ".cw-play-status"], body);
         } else {
-          close();
-          relocateMenus(document.body);
-          moved.splice(0).forEach(({ node, marker }) => marker.replaceWith(node));
-          panel.querySelectorAll(".cw-hub-records-filters,.cw-play-filterpanel").forEach((node) => { node.hidden = true; });
-          panel.querySelectorAll("[data-timeline-filters-toggle],[data-playback-filters-toggle]").forEach((button) => button.setAttribute("aria-expanded", "false"));
+          trigger.firstElementChild.textContent = "filter_list";
+          trigger.setAttribute("aria-label", "Filters");
+          trigger.removeAttribute("aria-haspopup");
+          trigger.setAttribute("aria-controls", pop.id);
+          trigger.setAttribute("aria-expanded", "false");
+          (panel.querySelector(".cw-hub-records-search") || toolbar).append(trigger);
+          moveInto([".cw-hist-scores", ".cw-hub-records-chips", ".cw-hub-records-controls", ".cw-hub-records-filters"], pop);
         }
+        const filters = holder().querySelector(".cw-play-filterpanel");
+        if (filters) filters.hidden = false;
+        sync();
       };
       narrow.addEventListener("change", adapt);
       adapt();

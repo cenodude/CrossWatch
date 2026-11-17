@@ -36,10 +36,16 @@ def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
             break
     if obj.get("media_manual") is True:
         item["media_manual"] = True
+    copies = obj.get("copies")
+    if isinstance(copies, list) and copies:
+        item["copies"] = [dict(row) for row in copies if isinstance(row, Mapping)]
     return item
 
 
 def _keep_manual_media(existing: Mapping[str, Any], accepted: dict[str, Any]) -> dict[str, Any]:
+    copies = existing.get("copies")
+    if isinstance(copies, list) and copies:
+        accepted["copies"] = [dict(row) for row in copies if isinstance(row, Mapping)]
     if existing.get("media_manual") is not True:
         return accepted
     for field in ("format", "media_info"):
