@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import quote
 
 import requests
 from fastapi import APIRouter, Body, Path as FPath, Query, Request
@@ -41,6 +42,7 @@ from cw_platform.metadata_cache import (
     write_resolution_index,
 )
 from cw_platform.orchestrator._state_store import StateStore
+from services import artwork_choices as _artwork
 
 try:
     from _logging import log as cw_log
@@ -737,6 +739,8 @@ def clear_memory_caches() -> None:
     clear_fanart = getattr(_fanart_provider(), "clear_cache", None)
     if callable(clear_fanart):
         clear_fanart()
+    _ARTWORK_OPTIONS.clear()
+    _artwork.clear_memory()
     from providers.metadata._meta_TMDB import clear_all_caches
 
     clear_all_caches()
@@ -1179,6 +1183,7 @@ def api_tmdb_art(
     title: str | None = Query(None),
     year: int | None = Query(None),
     av: str | None = Query(None, max_length=16),
+    ov: str | None = Query(None, max_length=16),
 ):
     t = typ.lower()
     if t == "show":
@@ -1208,7 +1213,14 @@ def api_tmdb_art(
         )
 
         art_kind = str(kind or "poster").strip().lower()
-        stale_av = isinstance(av, str) and av != _fanart_art_version()
+        rev = _artwork.revision(t, tmdb_id) if art_kind in _artwork.KINDS else ""
+        stale_ov = isinstance(ov, str) and ov != rev
+        if rev:
+            chosen = _artwork_choice_file(t, tmdb_id, art_kind, size_tag, base)
+            if chosen is not None:
+                cache = "no-store" if stale_ov else ("public, max-age=31536000, immutable" if ov == rev else "no-cache")
+                return FileResponse(chosen[0], media_type=chosen[1], headers={"Cache-Control": cache})
+        stale_av = (isinstance(av, str) and av != _fanart_art_version()) or stale_ov
         fanart_mode = _fanart_mode(art_kind)
         fanart_cache: str | None = None
         if fanart_mode == "fanart":
@@ -1380,6 +1392,176 @@ def _fanart_file(row: dict[str, Any] | None) -> tuple[str, str] | None:
     return _safe_tmdb_art_response_path(base, local_path), mime
 
 
+def _artwork_choice_file(t: str, tmdb_id: int, art_kind: str, size_tag: str, base: Path) -> tuple[str, str] | None:
+    row = _artwork.choice(t, tmdb_id, art_kind)
+    if not row:
+        return None
+    if row.get("missing") and time.time() - int(row.get("missing_at") or 0) < 86400:
+        return None
+    found: tuple[str, str] | None = None
+    if row.get("source") == "tmdb":
+        try:
+            local_path, mime = get_tmdb_image_file(str(row.get("ref") or ""), size_tag, base)
+            found = (_safe_tmdb_art_response_path(base, local_path), mime)
+        except Exception:
+            found = None
+    if found is None:
+        pinned = _artwork.pin_file(t, tmdb_id, art_kind) or _artwork.repin(t, tmdb_id, art_kind)
+        if pinned:
+            found = (str(pinned[0]), pinned[1])
+    _artwork.mark_missing(t, tmdb_id, art_kind, found is None)
+    return found
+
+
+_ARTWORK_FANART_KINDS = {"poster": "poster", "backdrop": "background", "logo": "logo"}
+_ARTWORK_TMDB_FIELDS = {"poster": "posters", "backdrop": "backdrops", "logo": "logos"}
+_ARTWORK_THUMB_SIZES = {"poster": "w185", "backdrop": "w300", "logo": "w185"}
+_ARTWORK_OPTIONS_TTL = 600.0
+_ARTWORK_OPTIONS: dict[tuple[str, int], tuple[float, dict[str, list[dict[str, Any]]]]] = {}
+
+
+def _artwork_type(typ: str) -> str | None:
+    t = str(typ or "").strip().lower()
+    return "movie" if t == "movie" else "tv" if t in {"tv", "show"} else None
+
+
+def _artwork_tmdb_options(api_key: str, t: str, tmdb_id: int) -> dict[str, list[dict[str, Any]]]:
+    key = (t, tmdb_id)
+    now = time.time()
+    cached = _ARTWORK_OPTIONS.get(key)
+    if cached and now - cached[0] < _ARTWORK_OPTIONS_TTL:
+        return cached[1]
+    data = _tmdb_get_json(f"https://api.themoviedb.org/3/{t}/{tmdb_id}/images", {"api_key": api_key}, timeout=12)
+    if not isinstance(data, dict):
+        raise RuntimeError("TMDb images unavailable")
+    out: dict[str, list[dict[str, Any]]] = {}
+    for kind, field in _ARTWORK_TMDB_FIELDS.items():
+        rows: list[dict[str, Any]] = []
+        for img in data.get(field) or []:
+            if not isinstance(img, dict):
+                continue
+            ref = str(img.get("file_path") or "")
+            if ref.lower().endswith(".svg"):
+                ref = ref[:-4] + ".png"
+            if not _artwork.TMDB_PATH_RE.fullmatch(ref):
+                continue
+            rows.append({
+                "source": "tmdb",
+                "ref": ref,
+                "lang": str(img.get("iso_639_1") or "").lower(),
+                "width": int(img.get("width") or 0),
+                "height": int(img.get("height") or 0),
+                "score": round(float(img.get("vote_average") or 0), 1),
+                "thumb": f"/art/tmdb/image?path={quote(ref, safe='/')}&size={_ARTWORK_THUMB_SIZES[kind]}",
+            })
+        out[kind] = rows
+    if len(_ARTWORK_OPTIONS) > 256:
+        _ARTWORK_OPTIONS.clear()
+    _ARTWORK_OPTIONS[key] = (now, out)
+    return out
+
+
+def _artwork_fanart_options(t: str, tmdb_id: int, kind: str) -> list[dict[str, Any]]:
+    prov = _fanart_provider()
+    if prov is None or not prov.configured():
+        return []
+    ids, _ = _fanart_ids(prov, t, tmdb_id)
+    if not ids:
+        return []
+    data, _ = prov.lookup(t, ids)
+    rows = prov.images_from(t, data).get(_ARTWORK_FANART_KINDS[kind]) or []
+    out: list[dict[str, Any]] = []
+    for row in sorted(rows, key=lambda r: -int(r.get("likes") or 0)):
+        url = str(row.get("url") or "")
+        if not _artwork.FANART_URL_RE.fullmatch(url):
+            continue
+        out.append({
+            "source": "fanart",
+            "ref": url,
+            "lang": str(row.get("lang") or "").lower(),
+            "likes": int(row.get("likes") or 0),
+            "thumb": f"/api/artwork/fanart-thumb?u={quote(url, safe='')}",
+        })
+    return out
+
+
+@router.get("/api/artwork/fanart-thumb", tags=["metadata"])
+def api_artwork_fanart_thumb(u: str = Query(..., max_length=300)):
+    if not _artwork.FANART_URL_RE.fullmatch(u):
+        return PlainTextResponse("Invalid image", status_code=400)
+    try:
+        found = _fanart_file({"url": u})
+        if not found:
+            return PlainTextResponse("Invalid image", status_code=400)
+        return FileResponse(found[0], media_type=found[1], headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    except Exception:
+        LOG.warning("fanart.tv thumbnail fetch failed")
+        return PlainTextResponse("Image not available", status_code=404)
+
+
+@router.get("/api/artwork/{typ}/{tmdb_id}", tags=["metadata"])
+def api_artwork_options(typ: str = FPath(...), tmdb_id: int = FPath(..., ge=1), kind: str = Query("poster")) -> JSONResponse:
+    t = _artwork_type(typ)
+    art_kind = str(kind or "").strip().lower()
+    if t is None or art_kind not in _artwork.KINDS:
+        return JSONResponse({"ok": False, "error": "Invalid request"}, status_code=400)
+    api_key = str(((load_config() or {}).get("tmdb") or {}).get("api_key") or "").strip()
+    if not api_key:
+        return JSONResponse({"ok": False, "error": "Connect TMDb Metadata first."}, status_code=404)
+    options: list[dict[str, Any]] = []
+    errors: list[str] = []
+    try:
+        options.extend(_artwork_tmdb_options(api_key, t, tmdb_id).get(art_kind) or [])
+    except Exception:
+        errors.append("TMDb artwork could not be loaded.")
+    try:
+        options.extend(_artwork_fanart_options(t, tmdb_id, art_kind))
+    except Exception:
+        errors.append("fanart.tv artwork could not be loaded.")
+    prov = _fanart_provider()
+    current = _artwork.choices(t, tmdb_id).get(art_kind)
+    return JSONResponse({
+        "ok": True,
+        "kind": art_kind,
+        "options": options,
+        "current": {k: current[k] for k in ("source", "ref", "missing") if k in current} if current else None,
+        "rev": _artwork.revision(t, tmdb_id),
+        "fanart": bool(prov is not None and prov.configured()),
+        "errors": errors,
+    })
+
+
+@router.post("/api/artwork/{typ}/{tmdb_id}", tags=["metadata"])
+def api_artwork_choose(typ: str = FPath(...), tmdb_id: int = FPath(..., ge=1), payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    t = _artwork_type(typ)
+    if t is None:
+        return JSONResponse({"ok": False, "error": "Invalid request"}, status_code=400)
+    body = payload if isinstance(payload, dict) else {}
+    try:
+        rev = _artwork.set_choice(t, tmdb_id, str(body.get("kind") or ""), str(body.get("source") or ""), str(body.get("ref") or ""), lang=str(body.get("lang") or ""))
+    except _artwork.ArtworkChoiceError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    except Exception:
+        LOG.warning("artwork choice save failed")
+        return JSONResponse({"ok": False, "error": "The image could not be downloaded."}, status_code=502)
+    return JSONResponse({"ok": True, "rev": rev})
+
+
+@router.delete("/api/artwork/{typ}/{tmdb_id}", tags=["metadata"])
+def api_artwork_reset(typ: str = FPath(...), tmdb_id: int = FPath(..., ge=1), kind: str | None = Query(None)) -> JSONResponse:
+    t = _artwork_type(typ)
+    if t is None:
+        return JSONResponse({"ok": False, "error": "Invalid request"}, status_code=400)
+    try:
+        rev = _artwork.reset(t, tmdb_id, str(kind).strip().lower() if kind else None)
+    except _artwork.ArtworkChoiceError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    except Exception:
+        LOG.warning("artwork choice reset failed")
+        return JSONResponse({"ok": False, "error": "Reset failed"}, status_code=500)
+    return JSONResponse({"ok": True, "rev": rev})
+
+
 def _fanart_art_version() -> str:
     try:
         from providers.metadata._meta_FANART import art_version
@@ -1517,6 +1699,8 @@ def api_fanart_settings(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
             value = (payload or {}).get(name)
             if isinstance(value, bool) or (isinstance(value, str) and value in _FANART_ART_MODES):
                 block[name] = _fanart_art_mode(value)
+        if (payload or {}).get("nudge_dismissed") is True:
+            block["nudge_dismissed"] = True
         cfg["fanart"] = block
         save_config(cfg)
         return {"ok": True, "enabled": block.get("enabled") is True, "logos": _fanart_art_mode(block.get("logos")), "backgrounds": _fanart_art_mode(block.get("backgrounds"))}

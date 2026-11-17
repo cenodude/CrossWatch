@@ -24,19 +24,24 @@ for (const [theme, [attributes, sheet]] of Object.entries(themes)) {
       const errors = [];
       page.on("pageerror", error => errors.push(error.message));
       t.after(() => assert.deepEqual(errors, []));
-      let summary = {running: false, finished_at: (now - 12 * 60_000) / 1000};
+      const summary = {running: false, finished_at: (now - 12 * 60_000) / 1000};
+      const summaryRequests = [];
+      page.on("request", request => {
+        if (new URL(request.url()).pathname === "/api/run/summary") summaryRequests.push(request.url());
+      });
+      t.after(() => assert.deepEqual(summaryRequests, []));
       await page.addInitScript(fixed => { Date.now = () => fixed; }, now);
       await page.route("https://scheduler-tooltip.test/**", async route => {
         const path = new URL(route.request().url()).pathname;
         if (path.startsWith("/assets/")) return route.fulfill({contentType: path.endsWith(".woff2") ? "font/woff2" : path.endsWith(".css") ? "text/css" : "text/javascript; charset=utf-8", body: await readFile(new URL(".." + path, import.meta.url))});
-        if (path === "/api/run/summary") return route.fulfill({status: summary ? 200 : 503, json: summary || {error: "unavailable"}});
         if (path === "/api/health") return route.fulfill({json: {ok: true, status: "ok"}});
         return route.fulfill({contentType: "text/html", body: `<!doctype html><html ${attributes}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${["fonts/material-symbols-rounded.css", "themes/tokens.css", "css/base.css", "crosswatch.css", "css/layout.css", "css/components.css", "css/pages.css", "css/page-theme.css", "ui-shell.css", sheet].map(name => `<link rel="stylesheet" href="/assets/${name}">`).join("")}</head><body style="padding:180px 16px 16px">
           <section id="ops-card"><div class="action-row"></div></section>
           <script>
             const cfg={scheduling:{enabled:true,mode:'hourly'}};
             window.schedulerStatus={config:cfg.scheduling,next_run_at:${now / 1000 + 3600},last_run_at:${now / 1000 - 1},last_backup_job_id:'backup'};
-            window.CW={API:{Config:{load:async()=>cfg},Pairs:{list:async()=>[]},Scheduling:{status:async()=>window.schedulerStatus}}};
+            window.runSummary=${JSON.stringify(summary)};
+            window.CW={getRunSummary:()=>window.runSummary,API:{Config:{load:async()=>cfg},Pairs:{list:async()=>[]},Scheduling:{status:async()=>window.schedulerStatus}}};
           </script><script src="/assets/helpers/touch-help.js"></script><script src="/assets/js/schedulerbanner.js"></script>
         </body></html>`});
       });
@@ -54,14 +59,14 @@ for (const [theme, [attributes, sheet]] of Object.entries(themes)) {
           }
         }
         const lastRun=page.locator('#cw-mobile-last-schedule time');
-        assert.equal(await lastRun.textContent(),'Just now');
+        assert.equal(await lastRun.textContent(),'12 minutes ago');
         await page.evaluate(fixed=>{
           schedulerStatus.last_run_at=fixed/1000-600;
           schedulerStatus.profiles={family:{last_run_at:fixed/1000-120,last_run_ok:false}};
           document.dispatchEvent(new Event('scheduling-status-refresh'));
         },now);
-        await page.waitForFunction(()=>document.querySelector('#cw-mobile-last-schedule time')?.textContent==='2 minutes ago \u00b7 Failed');
-        assert.equal(await lastRun.getAttribute('datetime'),new Date(now-120_000).toISOString());
+        assert.equal(await lastRun.textContent(),'12 minutes ago');
+        assert.equal(await lastRun.getAttribute('datetime'),new Date(now-12*60_000).toISOString());
         await mkdir('.pytest_tmp/scheduler-tooltip',{recursive:true});
         await page.screenshot({path:`.pytest_tmp/scheduler-tooltip/${theme}-${width}.png`});
         await page.evaluate(()=>{
@@ -69,34 +74,42 @@ for (const [theme, [attributes, sheet]] of Object.entries(themes)) {
           schedulerStatus.profiles={};
           document.dispatchEvent(new Event('scheduling-status-refresh'));
         });
-        await page.waitForFunction(()=>document.querySelector('#cw-mobile-last-schedule time')?.textContent==='No runs yet');
-        assert.equal(await lastRun.getAttribute('datetime'),null);
-        return;
+        assert.equal(await lastRun.textContent(),'12 minutes ago');
       }
-      assert.equal(await page.locator('#cw-mobile-last-schedule').isVisible(),false);
-      if (width < 800) await chip.tap();
-      else await chip.focus();
-      const tip = page.locator(width < 800 ? "#cw-touch-help" : "#chip-sched .cw-hub-tip");
-      await page.waitForFunction(selector => getComputedStyle(document.querySelector(selector)).opacity === "1", width < 800 ? "#cw-touch-help" : "#chip-sched .cw-hub-tip");
-      assert.match(await tip.textContent(), /Last sync: 12 minutes ago/);
-      const box = await tip.boundingBox();
-      assert.ok(box.x >= 0 && box.x + box.width <= width);
-      await mkdir(".pytest_tmp/scheduler-tooltip", {recursive: true});
-      await page.evaluate(() => document.fonts.ready);
-      await page.screenshot({path: `.pytest_tmp/scheduler-tooltip/${theme}-${width}.png`});
-      if (width < 800) await page.getByRole("button", {name: "Close", exact: true}).click();
+      if (width > 760) {
+        assert.equal(await page.locator('#cw-mobile-last-schedule').isVisible(),false);
+        await chip.focus();
+        const tip = page.locator("#chip-sched .cw-hub-tip");
+        await page.waitForFunction(() => getComputedStyle(document.querySelector("#chip-sched .cw-hub-tip")).opacity === "1");
+        assert.match(await tip.textContent(), /Last sync: 12 minutes ago/);
+        const box = await tip.boundingBox();
+        assert.ok(box.x >= 0 && box.x + box.width <= width);
+        await mkdir(".pytest_tmp/scheduler-tooltip", {recursive: true});
+        await page.evaluate(() => document.fonts.ready);
+        await page.screenshot({path: `.pytest_tmp/scheduler-tooltip/${theme}-${width}.png`});
+      }
 
       for (const [value, expected] of [
         [{running: true, started_at: "2026-11-07T17:18:00Z"}, "Sync started: 2 minutes ago"],
         [{running: false, finished_at: now - 10_000}, "Last sync: Just now"],
+        [{running: false, finished_at: now - 120_000, exit_code: 1}, "Last sync: 2 minutes ago \u00b7 Failed"],
+        [{running: true, started_at: (now - 120_000) / 1000, exit_code: 1}, "Sync started: 2 minutes ago"],
         [{running: false}, "Last sync: No runs recorded"],
         [{finished_at: "invalid"}, "Last sync: No runs recorded"],
         [null, "Last sync: Unavailable"],
       ]) {
-        summary = value;
-        await page.evaluate(() => document.dispatchEvent(new Event("scheduling-status-refresh")));
+        await page.evaluate(value => {
+          window.runSummary = value;
+          window.dispatchEvent(new CustomEvent("cw:run-summary-changed"));
+        }, value);
         await page.waitForFunction(text => document.querySelector("#chip-sched")?.dataset.tip?.includes(text), expected);
-        assert.equal(await chip.isVisible(), true);
+        assert.equal(await chip.isVisible(), width > 760);
+        const [label, text] = expected.split(": ");
+        assert.equal(await page.locator(".cw-mobile-last-schedule-copy > span").textContent(), label);
+        assert.equal(await page.locator("#cw-mobile-last-schedule time").textContent(), text);
+        if (!value?.started_at && (!value?.finished_at || value.finished_at === "invalid")) {
+          assert.equal(await page.locator("#cw-mobile-last-schedule time").getAttribute("datetime"), null);
+        }
       }
     });
   }

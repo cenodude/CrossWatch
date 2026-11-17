@@ -135,22 +135,28 @@ test("default view displays its part of a mixed run and hides unattributed repor
   await page.evaluate(() => {
     document.body.insertAdjacentHTML("beforeend", '<div id="ux-progress"></div><div id="ux-lanes"></div><div id="ux-spotlight"></div>');
     window.EventSource = class extends EventTarget { readyState = 1; close() {} };
+    window.sharedSummaries = [];
+    window.addEventListener("cw:run-summary-changed", () => window.sharedSummaries.push(window.CW.getRunSummary()));
   });
   for (const path of ["assets/js/syncbar.js","assets/js/run-summary-stream.js","assets/js/main.js"]) {
     await page.addScriptTag({content:await readFile(new URL(`../${path}`, import.meta.url), "utf8")});
   }
   await page.evaluate(() => window.UX.refresh());
   await page.waitForFunction(() => document.querySelector("#ux-lanes").textContent.includes("Other person's movie"));
+  assert.equal(await page.evaluate(() => window.CW.getRunSummary().run_id), "mixed");
   await page.evaluate(() => { window.oldSummaryStream = window.esSum; });
   await page.locator("#cw-view-as-select").selectOption(scope);
   assert.equal((await page.locator("#ux-lanes").textContent()).includes("Other person's movie"), false);
   await page.waitForFunction(() => document.querySelector("#ux-lanes").textContent.includes("Admin movie"));
+  assert.equal(await page.evaluate(() => window.sharedSummaries.includes(null)), true);
+  assert.equal(await page.evaluate(() => window.CW.getRunSummary().summary_scope), scope);
   await page.evaluate(() => {
     window.oldSummaryStream.onmessage({data:JSON.stringify({run_id:"stale",running:false,exit_code:1,features:{watchlist:{added:99,spotlight_add:[{title:"Other person's movie"}]}}})});
     window.oldSummaryStream.dispatchEvent(new MessageEvent("run:error", {data:"{}"}));
   });
   assert.equal((await page.locator("#ux-lanes").textContent()).includes("Other person's movie"), false);
   assert.equal(await page.evaluate(() => window.syncBar.isRunning()), true);
+  assert.equal(await page.evaluate(() => window.CW.getRunSummary().run_id), "mixed");
   own = {...own,pair_scope_ids:[],features:{}};
   await page.evaluate(() => window.UX.refresh());
   await page.waitForFunction(() => !document.querySelector("#ux-lanes").textContent.includes("Admin movie"));
@@ -161,6 +167,9 @@ test("default view displays its part of a mixed run and hides unattributed repor
   await page.waitForFunction(() => document.querySelector("#ux-lanes").textContent.includes("Item details are unavailable"));
   await page.locator("#cw-view-as-select").selectOption("");
   await page.waitForFunction(() => document.querySelector("#ux-lanes").textContent.includes("Unscoped movie"));
+  await page.evaluate(() => window.esSum.onmessage({data:JSON.stringify({run_id:"streamed",running:true,started_at:1793989800,features:{}})}));
+  assert.equal(await page.evaluate(() => window.CW.getRunSummary().run_id), "streamed");
+  assert.equal(await page.evaluate(() => window.sharedSummaries.at(-1).started_at), 1793989800);
 });
 
 test("named users see their sync results and a neutral legacy fallback", async t => {

@@ -1223,7 +1223,7 @@
     const isEpisode = String(item?.type || "").toLowerCase() === "episode";
     const title = item?.title && !isEpisode ? `&title=${encodeURIComponent(String(item.title))}` : "";
     const year = item?.year && !isEpisode ? `&year=${encodeURIComponent(String(item.year))}` : "";
-    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?fallback=2&size=${encodeURIComponent(size)}${title}${year}`;
+    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?fallback=2&size=${encodeURIComponent(size)}${title}${year}${window.CW?.ArtChoice?.param?.(kind, tmdb) || ""}`;
   }
 
   function coverPoster(item, size = "w342") {
@@ -1234,7 +1234,7 @@
     const kind = String(item?.art_type || item?.type || "").toLowerCase() === "movie" ? "movie" : "tv";
     const title = item?.title ? `&title=${encodeURIComponent(String(item.title))}` : "";
     const year = item?.year ? `&year=${encodeURIComponent(String(item.year))}` : "";
-    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?fallback=2&size=${encodeURIComponent(size)}${title}${year}`;
+    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?fallback=2&size=${encodeURIComponent(size)}${title}${year}${window.CW?.ArtChoice?.param?.(kind, tmdb) || ""}`;
   }
 
   function backdropPoster(item, meta = null, size = "w1280") {
@@ -1244,7 +1244,7 @@
     const kind = resolved ? (resolved === "movie" ? "movie" : "tv") : (String(item?.art_type || item?.type || "").toLowerCase() === "movie" ? "movie" : "tv");
     const title = item?.title ? `&title=${encodeURIComponent(String(item.title))}` : "";
     const year = item?.year ? `&year=${encodeURIComponent(String(item.year))}` : "";
-    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${title}${year}`;
+    return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${title}${year}${window.CW?.ArtChoice?.param?.(kind, tmdb) || ""}`;
   }
 
   function tmdbLink(item) {

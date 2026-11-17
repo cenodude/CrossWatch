@@ -324,7 +324,7 @@
     if (!art?.tmdb) return "";
     const title = item.series_title || item.title;
     const year = item.type === "movie" ? item.year : item.series_year || item.year;
-    return `/art/tmdb/${art.kind}/${encodeURIComponent(art.tmdb)}?fallback=2&size=${size}${title ? `&title=${encodeURIComponent(title)}` : ""}${year ? `&year=${encodeURIComponent(year)}` : ""}`;
+    return `/art/tmdb/${art.kind}/${encodeURIComponent(art.tmdb)}?fallback=2&size=${size}${title ? `&title=${encodeURIComponent(title)}` : ""}${year ? `&year=${encodeURIComponent(year)}` : ""}${window.CW?.ArtChoice?.param?.(art.kind, art.tmdb) || ""}`;
   }
 
   const isChild = (item) => item?.type === "episode" || item?.type === "season";
@@ -609,7 +609,7 @@
     const title = cardTitle(row);
     const art = row.art;
     const episode = row.has_still && row.season != null && row.episode != null;
-    const url = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?fallback=2&av=${document.documentElement.dataset.cwArt || "t"}&size=w500&kind=${episode ? "still" : "backdrop"}${episode ? `&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : ""}` : "";
+    const url = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?fallback=2&av=${document.documentElement.dataset.cwArt || "t"}&size=w500&kind=${episode ? "still" : "backdrop"}${episode ? `&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : window.CW?.ArtChoice?.param?.(art.kind, art.tmdb) || ""}` : "";
     const percent = Number.isFinite(row.progress_percent) && row.progress_percent > 0 && row.progress_percent < 100 ? row.progress_percent : null;
     const watched = percent == null ? "" : percent < 1 ? "Less than 1% watched" : `${Math.min(99, Math.round(percent))}% watched`;
     const remaining = percent != null && Number.isFinite(row.remaining_minutes) && row.remaining_minutes > 0 ? row.remaining_minutes : null;
@@ -1611,7 +1611,7 @@
     const status = statusPill(data?.note ? data.note.status : head.status);
     const episode = record?.type === "episode" && record.title && record.title !== title && !/^S\d+\s*[·-]?\s*E\d+$/i.test(record.title) ? record.title : "";
     const art = head?.art;
-    const logoUrl = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?kind=logo&av=${document.documentElement.dataset.cwArt || "t"}&size=w500` : "";
+    const logoUrl = art?.tmdb ? `/art/tmdb/${art.kind === "movie" ? "movie" : "tv"}/${encodeURIComponent(art.tmdb)}?kind=logo&av=${document.documentElement.dataset.cwArt || "t"}&size=w500${window.CW?.ArtChoice?.param?.(art.kind, art.tmdb) || ""}` : "";
     const signature = JSON.stringify([title, summary, detail, episode, logoUrl, status]);
     if (selection?.dataset.logoSelection === signature) return;
     setSlot("selection", `<div class="trk-hero-selection"><div class="trk-hero-title-line"><span class="trk-hero-heading"><strong title="${esc(title)}">${esc(title)}</strong>${logoUrl ? `<img class="trk-hero-logo" alt="${esc(title)}" hidden>` : ""}</span><div class="trk-hero-details"><span class="trk-hero-meta">${esc(summary)}${detail ? `<span class="trk-hero-meta-extra"> · ${esc(detail)}</span>` : ""}</span>${episode ? `<small title="${esc(episode)}">${esc(episode)}</small>` : ""}${status}</div></div></div>`);
@@ -1632,7 +1632,7 @@
     const item = data?.title || record;
     const art = item?.art;
     const kind = art?.kind === "movie" ? "movie" : "tv";
-    const url = art?.tmdb ? `/art/tmdb/${kind}/${encodeURIComponent(art.tmdb)}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280` : "";
+    const url = art?.tmdb ? `/art/tmdb/${kind}/${encodeURIComponent(art.tmdb)}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280${window.CW?.ArtChoice?.param?.(kind, art.tmdb) || ""}` : "";
     if (image.dataset.url === url) return;
     image.dataset.url = url;
     image.hidden = true;
@@ -3123,7 +3123,7 @@
     } else {
       const coverKind = picked.type === "movie" ? "movie" : "tv";
       const coverId = picked.tmdb || picked.ids?.tmdb;
-      const coverUrl = coverId ? `/art/tmdb/${coverKind}/${encodeURIComponent(coverId)}?fallback=2&kind=poster&size=w154` : "";
+      const coverUrl = coverId ? `/art/tmdb/${coverKind}/${encodeURIComponent(coverId)}?fallback=2&kind=poster&size=w154${window.CW?.ArtChoice?.param?.(coverKind, coverId) || ""}` : "";
       const cover = `<span class="trk-match-poster" data-trk-log-cover="${coverKind}">${coverUrl ? `<img src="${esc(coverUrl)}" alt="" decoding="async">` : symbol(coverKind)}</span>`;
       const targets = [["history", "Watched", "history"], ["watchlist", "Watchlist", "bookmark"], ["collection", "Collection", "video_library"]]
         .map(([id, label, ic]) => `<button type="button" class="cw-filter-chip${log.target === id ? " active" : ""}" data-trk-log-target="${id}" aria-pressed="${log.target === id}">${symbol(ic, "cw-type-icon")}<span>${esc(label)}</span></button>`).join("");

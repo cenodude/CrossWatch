@@ -190,4 +190,38 @@
   }
 
   (window.CW ||= {}).Meta = { key: keyOf, kind: kindOf, tmdbId: tmdbOf, isEpisode, get, peek, has, batch, invalidate };
+
+  const chosenArt = new Map(String(document.documentElement.dataset.cwArtOv || "").split(" ").filter(Boolean).map((part) => part.split("=")).filter((part) => part.length === 2 && part[1]));
+  const artKey = (type, id) => `${String(type || "").toLowerCase() === "movie" ? "movie" : "tv"}:${String(id || "").trim()}`;
+  const ART_URL_RE = /\/art\/tmdb\/(movie|tv|show)\/(\d+)\?[^"')\s]*/g;
+
+  function artParam(type, id) {
+    const rev = chosenArt.get(artKey(type, id));
+    return rev ? `&ov=${encodeURIComponent(rev)}` : "";
+  }
+
+  function rewriteArt(text, key, rev) {
+    return String(text || "").replace(ART_URL_RE, (url, type, id) => {
+      if (artKey(type, id) !== key || /[?&]kind=(still|episode_still)\b/.test(url)) return url;
+      const clean = url.replace(/&ov=[^&]*/g, "");
+      return rev ? `${clean}&ov=${encodeURIComponent(rev)}` : clean;
+    });
+  }
+
+  function setArtChoice(type, id, rev) {
+    const key = artKey(type, id);
+    if (rev) chosenArt.set(key, String(rev));
+    else chosenArt.delete(key);
+    document.querySelectorAll('img[src*="/art/tmdb/"], img[data-src*="/art/tmdb/"], [style*="/art/tmdb/"]').forEach((node) => {
+      ["src", "data-src", "style"].forEach((attr) => {
+        const value = node.getAttribute(attr);
+        if (!value || !value.includes("/art/tmdb/")) return;
+        const next = rewriteArt(value, key, rev);
+        if (next !== value) node.setAttribute(attr, next);
+      });
+    });
+    window.dispatchEvent(new CustomEvent("cw:art-choice", { detail: { type, id: String(id), rev: rev || "" } }));
+  }
+
+  window.CW.ArtChoice = { param: artParam, set: setArtChoice };
 })();

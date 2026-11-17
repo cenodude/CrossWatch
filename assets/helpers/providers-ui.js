@@ -560,6 +560,36 @@
       });
   }
 
+  function fanartNudgeHtml(cfg) {
+    if (settingsScope() || !metadataConfigured("TMDB_METADATA", cfg)) return "";
+    if (cfg?.fanart?.enabled === true || cfg?.fanart?.nudge_dismissed === true) return "";
+    return `<div class="cw-auth-nudge">
+        <button type="button" class="cw-auth-service-card cw-auth-add-card" data-cw-meta-open="FANART_METADATA">
+          <span class="cw-auth-add-mark"><span class="material-symbols-rounded" aria-hidden="true">auto_awesome</span></span>
+          <span class="cw-auth-service-copy">
+            <strong>Try fanart.tv</strong>
+            <small>Better logos and backgrounds. Optional, no key needed.</small>
+          </span>
+          <span class="material-symbols-rounded cw-auth-chevron" aria-hidden="true">arrow_forward</span>
+        </button>
+        <button type="button" class="cw-auth-nudge-dismiss" data-cw-fanart-nudge-dismiss title="Hide this suggestion" aria-label="Hide this suggestion"><span class="material-symbols-rounded" aria-hidden="true">close</span></button>
+      </div>`;
+  }
+
+  async function dismissFanartNudge() {
+    try {
+      const r = await fetch("/api/fanart/settings", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", credentials: "same-origin", body: JSON.stringify({ nudge_dismissed: true }) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || !data?.ok) return;
+    } catch {
+      return;
+    }
+    const cfg = getCachedConfig();
+    cfg.fanart = { ...(cfg.fanart || {}), nudge_dismissed: true };
+    const slot = document.getElementById("auth-providers");
+    if (slot) renderAuthCards(slot, cfg);
+  }
+
   function renderAuthCards(slot, cfg = getCachedConfig(), refreshProfiles = false) {
     const { shell } = ensureAuthShell(slot);
     const configured = configuredProviderKeys(cfg);
@@ -651,7 +681,8 @@
       </section>`;
     const serviceSections = sections.map((section) => {
       const addCard = section.cards.length < section.total ? renderAddCard(section) : "";
-      const cards = `${[...section.cards].sort((a, b) => String(a.label || "").localeCompare(String(b.label || ""), undefined, { sensitivity: "base", numeric: true })).map(renderCard).join("")}${addCard}`;
+      const nudge = section.id === META_GROUP.id ? fanartNudgeHtml(cfg) : "";
+      const cards = `${[...section.cards].sort((a, b) => String(a.label || "").localeCompare(String(b.label || ""), undefined, { sensitivity: "base", numeric: true })).map(renderCard).join("")}${nudge}${addCard}`;
       return `<section class="cw-auth-service-section" data-cw-auth-group="${section.id}">
         <div class="cw-auth-service-head">
           <h4>${section.title}</h4>
@@ -2214,6 +2245,11 @@
         overlay.dataset.cwPickerCategory = category.dataset.cwPickerCategory;
         renderAuthPicker(overlay, getCachedConfig(), overlay.dataset.cwPickerMode);
         overlay.querySelector(".cw-auth-picker-results").scrollTop = 0;
+        return;
+      }
+      if (target?.closest?.("[data-cw-fanart-nudge-dismiss]")) {
+        event.preventDefault();
+        void dismissFanartNudge();
         return;
       }
       const emptyAdd = target?.closest?.("[data-cw-auth-empty-add]");

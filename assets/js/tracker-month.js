@@ -35,8 +35,10 @@ function art(row, type = "backdrop", eager = false) {
   if (row?.title) query.set("title",row.title);
   if (/^\d{4}$/.test(String(row?.year || ""))) query.set("year",row.year);
   const mediaType = row?.type === "movie" ? "movie" : "tv";
+  const chosen = new URLSearchParams((window.CW?.ArtChoice?.param?.(mediaType, identifier) || "").slice(1)).get("ov");
+  if (chosen) query.set("ov",chosen);
   const fallback = /^\d+$/.test(identifier) && ["movie","show"].includes(row?.type) ? `/art/tmdb/${mediaType}/${identifier}?${query}` : "";
-  const url = cached ? cached.replace(/\/t\/p\/[^/]+\//, `/t/p/${size}/`) : fallback;
+  const url = cached && !chosen ? cached.replace(/\/t\/p\/[^/]+\//, `/t/p/${size}/`) : fallback;
   if (!url) return emptyArt(mediaType);
   return `<img src="${esc(url)}" data-mr-art-type="${mediaType}"${cached && fallback ? ` data-mr-art-fallback="${esc(fallback)}"` : ""} alt="" loading="${eager ? "eager" : "lazy"}" decoding="async"${eager ? ' fetchpriority="high"' : ""}>`;
 }

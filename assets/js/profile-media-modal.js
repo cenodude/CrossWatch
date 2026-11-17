@@ -27,12 +27,16 @@
   const artType = (item) => (kindOf(item) === "movie" ? "movie" : "tv");
   const isMovie = () => kindOf(state.item) === "movie";
   const tmdbImage = (path, size) => (path ? `/art/tmdb/image?fallback=2&path=${encodeURIComponent(path)}&size=${encodeURIComponent(size)}` : "");
-  const posterUrl = (item) => `/art/tmdb/${artType(item)}/${encodeURIComponent(tmdbOf(item))}?fallback=2&size=w500`;
-  const backdropUrl = (item) => `/art/tmdb/${artType(item)}/${encodeURIComponent(tmdbOf(item))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280`;
+  const artChoice = (item) => window.CW?.ArtChoice?.param?.(artType(item), tmdbOf(item)) || "";
+  const posterUrl = (item) => `/art/tmdb/${artType(item)}/${encodeURIComponent(tmdbOf(item))}?fallback=2&size=w500${artChoice(item)}`;
+  const backdropUrl = (item) => `/art/tmdb/${artType(item)}/${encodeURIComponent(tmdbOf(item))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280${artChoice(item)}`;
   const stillUrl = (season, episode) => `/art/tmdb/tv/${encodeURIComponent(tmdbOf(state.item))}?fallback=2&kind=still&season=${encodeURIComponent(season)}&episode=${encodeURIComponent(episode)}&size=w300`;
   const icon = (name) => `<span class="material-symbols-rounded" aria-hidden="true">${esc(name)}</span>`;
   const plural = (count, word) => `${numberFmt.format(Number(count) || 0)} ${word}${Number(count) === 1 ? "" : "s"}`;
   const placeholder = "this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'";
+  const assetVersion = (() => { try { return new URL(document.currentScript?.src || location.href).searchParams.get("v") || ""; } catch { return ""; } })();
+  const canChangeArt = () => document.documentElement.dataset.cwRole !== "user" && document.documentElement.dataset.cwViewAs !== "1";
+  let artPickerLoad = null;
 
   function fmtIso(value) {
     const raw = String(value || "").trim();
@@ -298,6 +302,12 @@
     }, true);
     document.addEventListener("keydown", (event) => {
       if (root.hidden || event.key !== "Escape") return;
+      if (window.CW?.ArtworkPicker?.isOpen?.()) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        window.CW.ArtworkPicker.close();
+        return;
+      }
       if (document.getElementById("cw-trailer")?.classList.contains("show")) return;
       const statusMenu = root.querySelector("[data-mm-status-picker][open]");
       if (statusMenu) {
@@ -396,6 +406,7 @@
   async function open(item, options = {}) {
     if (!canOpen(item)) return false;
     ensure();
+    window.CW?.ArtworkPicker?.close?.();
     const host = options.host || document.body;
     if (root.parentNode !== host) host.appendChild(root);
     state.host = options.host || null;
@@ -473,6 +484,7 @@
   }
 
   function close() {
+    window.CW?.ArtworkPicker?.close?.();
     if (!root || root.hidden) return;
     state.seq += 1;
     root.hidden = true;
@@ -602,7 +614,7 @@
     return `<div class="cw-mm-top">
       <img class="cw-mm-poster" src="${esc(posterUrl(item))}" alt="" decoding="async" onerror="${placeholder}">
       <div class="cw-mm-heading">
-        <h2 id="cw-mm-title" aria-label="${esc(title)}"><span class="cw-mm-title-text">${esc(title)}</span>${tmdb ? `<img class="cw-mm-title-logo" data-src="/art/tmdb/${artType(item)}/${encodeURIComponent(tmdb)}?kind=logo&av=${document.documentElement.dataset.cwArt || "t"}&size=w500" alt="" hidden>` : ""}</h2>
+        <h2 id="cw-mm-title" aria-label="${esc(title)}"><span class="cw-mm-title-text">${esc(title)}</span>${tmdb ? `<img class="cw-mm-title-logo" data-src="/art/tmdb/${artType(item)}/${encodeURIComponent(tmdb)}?kind=logo&av=${document.documentElement.dataset.cwArt || "t"}&size=w500${artChoice(item)}" alt="" hidden>` : ""}</h2>
         <p class="cw-mm-sub">${esc([year, movie ? "Movie" : "TV Series"].filter(Boolean).join(" • "))}</p>
         <div class="cw-mm-chips">${chips.map((chip) => `<span class="cw-mm-chip">${esc(chip)}</span>`).join("")}${genres.map((genre) => `<span class="cw-mm-chip is-genre">${esc(genre)}</span>`).join("")}</div>
         <div class="cw-mm-actions">${actions()}</div>
@@ -619,6 +631,7 @@
     if (window.CW?.Trailer?.has?.(meta)) out.push(`<button class="cw-mm-btn" type="button" data-mm-trailer>${icon("play_arrow")}Watch trailer</button>`);
     out.push(`<a class="cw-mm-btn" href="https://www.themoviedb.org/${artType(item)}/${encodeURIComponent(tmdb)}" target="_blank" rel="noopener">TMDB</a>`);
     if (imdb) out.push(`<a class="cw-mm-btn" href="https://www.imdb.com/title/${encodeURIComponent(imdb)}/" target="_blank" rel="noopener">IMDb</a>`);
+    if (tmdb && canChangeArt()) out.push(`<button type="button" class="cw-mm-btn" data-mm-artwork title="Change poster, logo or background" aria-haspopup="dialog">${icon("image")}Artwork</button>`);
     if (removable()) out.push(`<button type="button" class="cw-mm-btn is-danger" data-mm-clear-all aria-haspopup="dialog" title="Remove from everything" aria-label="Remove from everything">${icon("delete")}Remove</button>`);
     const score = Number(meta?.detail?.vote_average) || (Number(meta?.score) || 0) / 10;
     if (score > 0) {
@@ -1273,6 +1286,29 @@
     return `<section class="cw-person-view">${back}<div class="cw-person-heading">${person.profile_path ? `<img src="${esc(tmdbImage(person.profile_path, "w185"))}" alt="">` : `<span class="cw-mm-initials">${esc(initialsOf(person.name))}</span>`}<div><small>CAST &amp; FILMOGRAPHY</small><h2 id="cw-mm-title" tabindex="-1">${esc(person.name)}</h2></div></div>${person.biography ? `<details class="cw-person-bio"><summary>About ${esc(person.name)}</summary><p>${esc(person.biography)}</p></details>` : ""}<h3>Also appears in</h3><div class="cw-person-films">${(person.credits || []).filter(row => String(row.id) !== tmdbOf(state.item) || row.type !== kindOf(state.item)).map(row => `<button type="button" data-mm-credit="${esc(row.type)}:${esc(row.id)}"><img src="${esc(tmdbImage(row.poster_path, "w92") || "/assets/img/placeholder_poster.svg?v=2")}" alt="" loading="lazy" onerror="${placeholder}"><span><strong>${esc(row.title)}</strong><small>${esc([String(row.date || "").slice(0, 4), row.type === "movie" ? "Movie" : "Series", row.character].filter(Boolean).join(" · "))}</small></span>${icon("chevron_right")}</button>`).join("") || empty("No other credits available.")}</div></section>`;
   }
 
+  function loadArtPicker() {
+    if (window.CW?.ArtworkPicker) return Promise.resolve(window.CW.ArtworkPicker);
+    artPickerLoad ||= new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = `/assets/js/artwork-picker.js${assetVersion ? `?v=${encodeURIComponent(assetVersion)}` : ""}`;
+      script.onload = () => (window.CW?.ArtworkPicker ? resolve(window.CW.ArtworkPicker) : reject(new Error("missing")));
+      script.onerror = () => { artPickerLoad = null; reject(new Error("load failed")); };
+      document.head.appendChild(script);
+    });
+    return artPickerLoad;
+  }
+
+  async function openArtwork() {
+    const item = state.item;
+    const tmdb = tmdbOf(item);
+    if (!tmdb) return;
+    try {
+      const picker = await loadArtPicker();
+      if (root.hidden || state.item !== item) return;
+      picker.open({ type: artType(item), id: tmdb, title: state.meta?.title || item?.title || "", host: root });
+    } catch {}
+  }
+
   function onClick(event) {
     const target = event.target;
     const actionNode = target?.closest?.("[data-ia-chip],[data-ia-cover]");
@@ -1283,6 +1319,10 @@
     const clearAll = target?.closest?.("[data-mm-clear-all]");
     if (clearAll) {
       openEverything(clearAll);
+      return;
+    }
+    if (target?.closest?.("[data-mm-artwork]")) {
+      void openArtwork();
       return;
     }
     if (target?.closest?.("[data-mm-person-back]")) {

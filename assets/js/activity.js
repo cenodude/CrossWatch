@@ -155,7 +155,7 @@
     const meta = window.CW?.Meta;
     const tmdb = meta?.tmdbId(item);
     const kind = meta?.kind(item) === "movie" ? "movie" : "tv";
-    const poster = /^\d+$/.test(tmdb || "") ? `/art/tmdb/${kind}/${tmdb}?fallback=2&size=w185` : "";
+    const poster = /^\d+$/.test(tmdb || "") ? `/art/tmdb/${kind}/${tmdb}?fallback=2&size=w185${window.CW?.ArtChoice?.param?.(kind, tmdb) || ""}` : "";
     const thumbnail = poster
       ? `<picture><source media="(max-width:760px)" srcset="${esc(poster)}"><img src="/assets/img/placeholder_poster.svg?v=2" alt="" loading="lazy" decoding="async"></picture>`
       : `<span class="material-symbols-rounded" aria-hidden="true">${kind === "movie" ? "movie" : "tv"}</span>`;
