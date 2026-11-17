@@ -1357,15 +1357,15 @@
     const kind = shelf.caseKind?.(format, first.packaging || "") || "plain";
     const cover = shelf.caseHtml?.({format, packaging: first.packaging || "", poster}) || `<span class="cw-case" data-case="plain"><img class="cw-case-art" src="${esc(poster)}" alt=""></span>`;
     const title = cardTitle(item);
-    const pill = shelf.pill?.({format, media: item.media_info || {}, copies: copies.length, service: first.service}) || "";
-    const note = [first.edition, copies.some((row) => row?.lent_to) ? "Lent out" : ""].filter(Boolean).join(" · ");
+    const pill = shelf.pill?.({format, media: item.media_info || {}, service: first.service}) || "";
+    const note = [isChild(item) ? item.series_year : item.year, first.edition, copies.length > 1 ? `${copies.length} copies` : "", copies.some((row) => row?.lent_to) ? "Lent out" : ""].filter(Boolean).join(" · ");
     return `<div class="cw-shelfv-item trk-play${disc ? " has-disc" : ""}" data-case="${esc(kind)}" data-trk-shelf-pop="${index}" data-trk-ref-key="${esc(item.key)}">
       <button type="button" class="cw-shelfv-art" data-trk-card-open data-trk-card-index="${index}" data-trk-card-recent="false" aria-label="${esc(title)}">
         ${disc ? `<img class="cw-shelfv-disc" src="${esc(disc)}" alt="" loading="lazy" decoding="async" onerror="this.closest('.cw-shelfv-item')?.classList.remove('has-disc');this.remove()">` : ""}
         ${cover}
       </button>
       <span class="cw-shelfv-base" aria-hidden="true"></span>
-      <span class="cw-shelfv-cap"><strong title="${esc(title)}">${esc(title)}</strong><span>${pill}${note ? `<small>${esc(note)}</small>` : ""}</span></span>
+      <span class="cw-shelfv-cap"><strong title="${esc(title)}">${esc(title)}</strong>${note ? `<small>${esc(note)}</small>` : ""}${pill ? `<span>${pill}</span>` : ""}</span>
     </div>`;
   }
 
@@ -1403,16 +1403,20 @@
       groups.get(name).push([item, index]);
     });
     const ordered = [...groups.entries()].sort(([a], [b]) => (!a ? 1 : !b ? -1 : a.localeCompare(b, undefined, {numeric: true, sensitivity: "base"})));
-    const rows = ordered.map(([name, list]) => {
+    const rows = ordered.map(([name, list], rowIndex) => {
       const copies = list.reduce((sum, [item]) => sum + (Array.isArray(item.copies) ? item.copies.length : 0), 0);
       return `<section class="cw-shelfv-row">
-        <div class="cw-shelfv-head">${icon("shelves")}<h3>${esc(name || "No shelf set")}</h3><span>${esc([plural(list.length, "title", "titles"), plural(copies, "copy", "copies")].join(" · "))}</span></div>
+        <div class="cw-shelfv-head">${icon("shelves")}<h3>${esc(name || "No shelf set")}</h3><span>${esc([plural(list.length, "title", "titles"), plural(copies, "copy", "copies")].join(" · "))}</span>${rowIndex === 0 ? window.CW?.Shelf?.casesSwitch?.() || "" : ""}</div>
         <div class="cw-shelfv-rack">${list.map(([item, index]) => trackerShelfItem(item, index)).join("")}</div>
       </section>`;
     }).join("");
     void window.CW?.Shelf?.load?.();
     return `<div class="cw-shelfv trk-shelfv">${rows}</div>${pager()}`;
   }
+
+  window.addEventListener("cw:shelf-cases", () => {
+    if (state.root && state.view === "collection" && state.layouts.collection === "shelf") setSlot("main", renderMain());
+  });
 
   function wireTrackerShelfPop(host) {
     if (!host || host.dataset.trkShelfPop) return;

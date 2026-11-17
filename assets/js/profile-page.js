@@ -2072,8 +2072,9 @@
     const shelf = window.CW?.Shelf || {};
     const disc = shelf.discUrl?.(type, tmdbId(item), format) || "";
     const statusLabel = info.status && info.status !== "owned" ? shelf.statuses?.[info.status] || info.status : "";
-    const pill = shelf.pill?.({ format, media: item?.media_info || {}, copies: Number(info.copies) || 0, service: info.service }) || "";
-    const note = [info.edition, info.lent ? "Lent out" : ""].filter(Boolean).join(" · ");
+    const pill = shelf.pill?.({ format, media: item?.media_info || {}, service: info.service }) || "";
+    const copyCount = Number(info.copies) || 0;
+    const note = [yearOf(item), info.edition, copyCount > 1 ? `${copyCount} copies` : "", info.lent ? "Lent out" : ""].filter(Boolean).join(" · ");
     const label = [title, shelf.label?.(info), statusLabel].filter(Boolean).join(", ");
     const kind = shelf.caseKind?.(format, info.packaging) || "plain";
     const cover = shelf.caseHtml?.({ format, packaging: info.packaging, poster: poster(item, "w342") }) || `<span class="cw-case" data-case="plain"><img class="cw-case-art" src="${esc(poster(item, "w342"))}" alt=""></span>`;
@@ -2084,7 +2085,7 @@
         ${statusLabel ? `<span class="cw-shelfv-status" data-status="${esc(info.status)}">${esc(statusLabel)}</span>` : ""}
       </button>
       <span class="cw-shelfv-base" aria-hidden="true"></span>
-      <span class="cw-shelfv-cap"><strong title="${esc(title)}">${esc(title)}</strong><span>${pill}${note ? `<small>${esc(note)}</small>` : ""}</span></span>
+      <span class="cw-shelfv-cap"><strong title="${esc(title)}">${esc(title)}</strong>${note ? `<small>${esc(note)}</small>` : ""}${pill ? `<span>${pill}</span>` : ""}</span>
     </div>`;
   }
 
@@ -2096,11 +2097,11 @@
       groups.get(name).push(item);
     }
     const ordered = [...groups.entries()].sort(([a], [b]) => (!a ? 1 : !b ? -1 : a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })));
-    const rows = ordered.map(([name, items]) => {
+    const rows = ordered.map(([name, items], rowIndex) => {
       const copies = items.reduce((sum, item) => sum + (Number(item?.shelf?.copies) || 0), 0);
       const summary = [`${numberFmt.format(items.length)} ${items.length === 1 ? "title" : "titles"}`, `${numberFmt.format(copies)} ${copies === 1 ? "copy" : "copies"}`].join(" · ");
       return `<section class="cw-shelfv-row">
-        <div class="cw-shelfv-head"><span class="material-symbols-rounded" aria-hidden="true">shelves</span><h3>${esc(name || "No shelf set")}</h3><span>${esc(summary)}</span></div>
+        <div class="cw-shelfv-head"><span class="material-symbols-rounded" aria-hidden="true">shelves</span><h3>${esc(name || "No shelf set")}</h3><span>${esc(summary)}</span>${rowIndex === 0 ? window.CW?.Shelf?.casesSwitch?.() || "" : ""}</div>
         <div class="cw-shelfv-rack">${items.map(shelfItem).join("")}</div>
       </section>`;
     }).join("");
@@ -2510,6 +2511,9 @@
       void loadCollection({ reset: true });
     });
     renderShelfFilter();
+    window.addEventListener("cw:shelf-cases", () => {
+      if (shelfViewOn()) paintCollectionItems();
+    });
     window.addEventListener("cw:shelf-changed", (event) => {
       if (event.detail?.loaded || !collectionState.loaded) return;
       collectionState.loaded = false;

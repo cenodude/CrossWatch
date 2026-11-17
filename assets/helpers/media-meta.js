@@ -314,7 +314,28 @@
   const CASE_FORMATS = { "4k_bluray": "uhd", bluray: "bluray", dvd: "dvd", hd_dvd: "dvd", vcd: "dvd", vhs: "dvd", betamax: "dvd", laserdisc: "dvd" };
   const CASE_LOGOS = { bluray: "bluray.svg", uhd: "uhd-bluray.svg" };
 
+  const SHELF_CASES_KEY = "cw.shelf.cases";
+
+  function shelfCasesOn() {
+    try { return window.localStorage?.getItem(SHELF_CASES_KEY) !== "off"; } catch { return true; }
+  }
+
+  function shelfSetCases(on) {
+    try { window.localStorage?.setItem(SHELF_CASES_KEY, on ? "on" : "off"); } catch {}
+    window.dispatchEvent(new CustomEvent("cw:shelf-cases", { detail: { on: !!on } }));
+  }
+
+  function shelfCasesSwitch() {
+    return `<button type="button" class="cw-shelfv-cases" role="switch" aria-checked="${shelfCasesOn()}" title="Show disc cases around the posters" data-shelf-cases><span>Cases</span><span class="cw-shelfv-cases-ui" aria-hidden="true"></span></button>`;
+  }
+
+  document.addEventListener("click", (event) => {
+    const button = event.target?.closest?.("[data-shelf-cases]");
+    if (button) shelfSetCases(button.getAttribute("aria-checked") !== "true");
+  });
+
   function shelfCaseKind(format = "", packaging = "") {
+    if (!shelfCasesOn()) return "plain";
     if (packaging === "steelbook" && format !== "digital") return "steelbook";
     return CASE_FORMATS[format] || "plain";
   }
@@ -367,7 +388,7 @@
   }
 
   window.CW.Shelf = {
-    load: shelfLoad, peek: shelfPeek, set: shelfSet, pill: shelfPill, caseHtml: shelfCase, caseKind: shelfCaseKind, date: shelfDate, popShow: shelfPopShow, popHide: shelfPopHide, label: shelfLabel, money: shelfMoney, discUrl: shelfDiscUrl, logoUrl: shelfLogoUrl, formats: SHELF_FORMATS, statuses: SHELF_STATUSES,
+    load: shelfLoad, peek: shelfPeek, set: shelfSet, pill: shelfPill, caseHtml: shelfCase, caseKind: shelfCaseKind, casesOn: shelfCasesOn, setCases: shelfSetCases, casesSwitch: shelfCasesSwitch, date: shelfDate, popShow: shelfPopShow, popHide: shelfPopHide, label: shelfLabel, money: shelfMoney, discUrl: shelfDiscUrl, logoUrl: shelfLogoUrl, formats: SHELF_FORMATS, statuses: SHELF_STATUSES,
     currency: () => shelfIndex.currency,
     setCurrency: (value) => { shelfIndex.currency = String(value || ""); window.dispatchEvent(new CustomEvent("cw:shelf-changed", { detail: { currency: shelfIndex.currency } })); },
   };

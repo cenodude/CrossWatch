@@ -126,6 +126,7 @@
       <datalist id="cw-shelf-editions">${EDITIONS.map((name) => `<option value="${esc(name)}"></option>`).join("")}</datalist>
       <p class="cw-mm-art-note is-error" data-shelf-form-error hidden></p>
       <div class="cw-shelf-form-actions">
+        <button type="button" class="cw-shelf-link is-danger" data-shelf-form-delete>${icon("delete")}Remove copy</button>
         <button type="button" class="cw-mm-btn" data-shelf-cancel>Cancel</button>
         <button type="submit" class="cw-mm-btn is-primary">Save</button>
       </div>
@@ -339,6 +340,20 @@
     const quick = target?.closest?.("[data-shelf-quick]");
     if (quick) { addCopy(quick.dataset.shelfQuick); return; }
     if (target?.closest?.("[data-shelf-cancel]")) { state.editing = null; state.draft = null; render(); return; }
+    const formDelete = target?.closest?.("[data-shelf-form-delete]");
+    if (formDelete && !state.busy) {
+      if (!formDelete.classList.contains("is-confirming")) {
+        formDelete.classList.add("is-confirming");
+        formDelete.lastChild.textContent = "Click again to remove";
+        return;
+      }
+      const copies = [...(state.entry?.copies || [])];
+      copies.splice(state.editing, 1);
+      state.editing = null;
+      state.draft = null;
+      void save({ status: state.entry?.status || "owned", copies });
+      return;
+    }
     if (target?.closest?.("[data-shelf-remove]")) {
       if (!state.confirmRemove) {
         state.confirmRemove = true;
