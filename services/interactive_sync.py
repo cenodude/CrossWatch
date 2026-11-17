@@ -173,7 +173,7 @@ def refresh(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, r
     store = ReviewStore()
     try:
         plan, summary = build(session, cfg, choices, store=store, collecting=reread)
-        _finish_review(session, cfg, version, plan, summary, store, corrections=corrections)
+        _finish_review(session, cfg, version, plan, summary, store, corrections=corrections, select_new=reread)
     except Exception:
         if session.store is not store:
             store.close()
@@ -187,10 +187,10 @@ def refresh(session: Session, cfg: dict[str, Any], choices: dict[str, str], *, r
         apply(session, cfg, set())
 
 
-def _finish_review(session, cfg, version, plan, summary, store, *, corrections=()):
+def _finish_review(session, cfg, version, plan, summary, store, *, corrections=(), select_new=False):
     session.progress.set_stage("finalizing", "Preparing pages and preserving selections")
     ready = bool(summary.get("ok")) or bool(plan.completed_features and plan.failed_features and not summary.get("cancelled"))
-    store.finish(session.store)
+    store.finish(session.store, select_new=select_new)
     if ready:
         store.select_corrected(corrections)
     with LOCK:

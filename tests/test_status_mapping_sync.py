@@ -86,6 +86,37 @@ def test_status_writes_share_one_preflight_and_one_readback_per_side(sync_case, 
     assert reads == {"a": 3, "b": 3}
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("included", [False, True])
+def test_unmatched_status_notices_follow_enabled_direction_rules(sync_case, reverse, included):
+    case = sync_case
+    if reverse:
+        case.pair["mode"] = "two-way"
+        case.pair["status_mapping"]["directions"]["b_to_a"] = {"shows": deepcopy(case.rules)}
+    direction = "b_to_a" if reverse else "a_to_b"
+    case.pair["status_mapping"]["directions"][direction]["shows"]["watching"]["include"] = included
+    case.rows["b" if reverse else "a"]["2"] = row(Status.WATCHING, "2")
+    case.ctx.interactive = InteractivePlan()
+    run(case)
+    read = next(value for event, value in case.events if event == "status_mapping:read")
+    assert read["unmatched"] == int(included)
+    notices = [notice for notice in case.ctx.interactive.notices if "no unique matching" in notice["detail"]]
+    assert len(notices) == int(included)
+
+
+def test_completed_destination_is_preserved_without_a_repeated_notice(sync_case):
+    case = sync_case
+    case.rows["b"]["1"] = row(Status.COMPLETED)
+    case.ctx.interactive = InteractivePlan()
+    for preview in (True, False):
+        case.ctx.interactive = InteractivePlan(preview=preview)
+        assert run(case) == dict(updated=0, unresolved=0, errors=0, skipped=0)
+        summary = case.ctx.interactive.status_mappings[0]
+        assert summary["state"] == "complete" and summary["excluded"] == 1
+        assert not case.ctx.interactive.notices
+    assert not case.writes and case.rows["b"]["1"].observation.status == Status.COMPLETED
+
+
 def test_chained_pair_does_not_forward_a_status_changed_earlier_in_the_batch(sync_case):
     case = sync_case
     case.rows["c"] = {"1": row(Status.ON_HOLD)}
