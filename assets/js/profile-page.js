@@ -85,6 +85,7 @@
     return data;
   };
   const OVERVIEW_CACHE_TTL_MS = 10 * 60 * 1000;
+  const SNAPSHOT_RETENTION_MS = 24 * 60 * 60 * 1000;
   const profileCacheKey = (name) => {
     const shell = $(".cw-profile-shell");
     const auth = window.CW?.AuthState?.read?.();
@@ -113,7 +114,7 @@
     const read = () => {
       try {
         const entries = JSON.parse(sessionStorage.getItem("cw.hub.lists.v1") || "[]");
-        return Array.isArray(entries) ? entries.filter(entry => entry?.data && Date.now() - entry.t < 120000).slice(-12) : [];
+        return Array.isArray(entries) ? entries.filter(entry => entry?.data && Date.now() - entry.t < SNAPSHOT_RETENTION_MS).slice(-12) : [];
       } catch { return []; }
     };
     const saved = read().find(entry => entry.key === key);
@@ -1299,6 +1300,9 @@
   let overviewPayload = null;
   let overviewPagingDirty = false;
   let overviewRequest = 0;
+  let overviewLoadingTimer = null;
+  let overviewProgressResume = null;
+  let overviewStartedAt = 0;
   let overviewHeroSignature = "";
 
   function renderOverview(payload = {}) {
@@ -1326,9 +1330,12 @@
   }
 
   async function loadOverview() {
+    clearTimeout(overviewLoadingTimer);
+    overviewStartedAt = Date.now();
+    overviewProgressResume = null;
     const request = ++overviewRequest;
     const cacheKey = profileCacheKey(mobilePaging.matches ? "overview.mobile" : "overview");
-    const cached = readCache(cacheKey);
+    const cached = readCache(cacheKey, SNAPSHOT_RETENTION_MS);
     if (cached) renderOverview(cached);
     else paintOverviewSkeletons();
     const next = { ...cached };
@@ -1357,9 +1364,31 @@
       api("/api/insights?limit_samples=0&history=0&runtime=0&include_events=0").then(value => update("insights", value)),
       api("/api/status").then(value => update("status", value)),
       api("/api/profile/collection?page=1&page_size=1").then(value => update("collection", {counts:value?.counts || {}, total:Number(value?.total) || 0})),
-      api(`/api/playback_progress/items?page=1&page_size=${mobilePaging.matches ? 3 : 8}`).then(value => update("progress", value || {items:[]})),
+      refreshOverviewProgress(current, update),
     ]);
     if (current()) renderOverview({...next, widgets:next.widgets || {}, wall:next.wall || {items:[]}});
+  }
+
+  async function refreshOverviewProgress(current, update) {
+    const value = await api(`/api/playback_progress/items?page=1&page_size=${mobilePaging.matches ? 3 : 8}&progressive=true`);
+    if (!current()) return;
+    update("progress", value || {items:[]});
+    overviewProgressResume = value?.loading?.length ? () => {
+      if (current() && !document.hidden && $("#profile-panel-overview")?.classList.contains("active")) {
+        overviewProgressResume = null;
+        void refreshOverviewProgress(current, update).catch(() => {});
+      }
+    } : null;
+    if (overviewProgressResume) overviewLoadingTimer = setTimeout(() => overviewProgressResume?.(), 1500);
+  }
+
+  async function loadHeroPreview() {
+    const key = profileCacheKey(mobilePaging.matches ? "overview.mobile" : "overview");
+    const cached = readCache(key, SNAPSHOT_RETENTION_MS);
+    if (cached?.widgets) renderHero(cached.widgets.recent_scrobble?.items || [], cached.widgets.recent_history?.items || []);
+    const widgets = await api("/api/dashboard/widgets?include=history,scrobble&history_limit=1&scrobble_limit=1");
+    if (key !== profileCacheKey(mobilePaging.matches ? "overview.mobile" : "overview") || $("#profile-panel-overview")?.classList.contains("active")) return;
+    renderHero(widgets.recent_scrobble?.items || [], widgets.recent_history?.items || []);
   }
 
   mobilePaging.addEventListener("change", () => {
@@ -4830,11 +4859,12 @@
       document.querySelectorAll(".cw-profile-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `profile-panel-${key}`));
       document.body.dataset.profileView = key;
       if (mobilePaging.matches && tabs) tabs.scrollLeft = Math.max(0, btn.offsetLeft - tabs.offsetLeft - 12);
-      if (key === "overview" && overviewPagingDirty) {
+      if (key === "overview" && (!overviewPayload || overviewPagingDirty || Date.now() - overviewStartedAt >= 60000)) {
         overviewPagingDirty = false;
         void loadOverview().catch(() => {});
         void loadProfileActivity({preserve:true}).catch(() => {});
       }
+      if (key === "overview" && overviewProgressResume) { clearTimeout(overviewLoadingTimer); overviewProgressResume(); }
       if (key === "collection" && !collectionState.loaded) void loadCollection({ reset: true });
       if (key === "history") historyPanel.open(opts);
       if (key === "ratings") ratingsPanel.open(opts);
@@ -4857,7 +4887,7 @@
       if (key) selectTab(key, { fromHash: true });
     });
     const initial = tabFromHash();
-    if (initial) selectTab(initial, { fromHash: true });
+    selectTab(initial || "overview", { fromHash: true });
   }
 
   function wireAvatar() {
@@ -5589,17 +5619,19 @@
     nowTimer = setInterval(() => {
       if (document.visibilityState === "visible") refreshNowPlaying();
     }, 15000);
-    const [overviewResult, activityResult] = await Promise.allSettled([
-      loadOverview(),
-      loadProfileActivity(),
-    ]);
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      void refreshNowPlaying();
+      if (!$("#profile-panel-overview")?.classList.contains("active")) return;
+      if (Date.now() - overviewStartedAt >= 60000) {
+        void loadOverview().catch(() => {});
+        void loadProfileActivity({preserve:true}).catch(() => {});
+      } else if (overviewProgressResume) { clearTimeout(overviewLoadingTimer); overviewProgressResume(); }
+    });
+    void refreshNowPlaying();
+    if (!$("#profile-panel-overview")?.classList.contains("active")) void loadHeroPreview().catch(() => {});
     void refreshPlexStatus();
     void refreshOidcStatus();
-    if (overviewResult.status === "rejected") toast(overviewResult.reason?.message || "Profile overview could not be loaded", true);
-    if (activityResult.status === "rejected") {
-      const host = $("#profile-activity");
-      if (host) host.innerHTML = empty("Recent activity could not be loaded.");
-    }
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });

@@ -818,7 +818,7 @@
       esSummary = null;
       window.esSum = null;
     },
-    pullSummary: () => { pullSummary().then(renderAll); },
+    pullSummary: () => pullSummary().then(renderAll),
   });
 
   window.openLogStream = function openLogStream() {
@@ -875,6 +875,11 @@
   });
 
   async function tick() {
+    if (document.hidden) {
+      clearTimeout(tick._t);
+      tick._t = setTimeout(tick, 6000);
+      return;
+    }
     if (authSetupPending()) {
       try { esSummary?.close?.(); } catch {}
       esSummary = null;

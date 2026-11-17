@@ -119,6 +119,11 @@ for(const width of [390,1440]) test(`Hub list cache restores pages and keeps unc
     const card=page.locator(`#profile-panel-${tab} .cw-hist-card, #profile-panel-${tab} .cw-collection-card, #profile-panel-${tab} .cw-play-card`).first();
     await card.waitFor();
     await page.waitForFunction(()=>JSON.parse(sessionStorage.getItem('cw.hub.lists.v1')||'[]').length>0);
+    await page.evaluate(()=>{
+      const key='cw.hub.lists.v1',entries=JSON.parse(sessionStorage.getItem(key));
+      entries.forEach(entry=>{entry.t=Date.now()-15*60*1000;});
+      sessionStorage.setItem(key,JSON.stringify(entries));
+    });
     let release;
     const gate=new Promise(resolve=>{release=resolve;});
     t.after(()=>release());
@@ -150,6 +155,11 @@ for(const width of [390,1440]) test(`Hub restores cached cards before profile an
   const {page,state}=await fixture(t,'flat-dark',width,{activity:true});
   await page.locator('#profile-progress .cw-cw-card[data-profile-poster-key]').first().waitFor();
   await page.waitForFunction(()=>Object.keys(localStorage).some(key=>key.includes('.overview') && JSON.parse(localStorage.getItem(key)).payload.progress));
+  await page.evaluate(()=>{
+    for(const key of Object.keys(localStorage).filter(key=>key.includes('.overview'))) {
+      const entry=JSON.parse(localStorage.getItem(key));entry.t=Date.now()-15*60*1000;localStorage.setItem(key,JSON.stringify(entry));
+    }
+  });
   let release;
   const gate=new Promise(resolve=>{release=resolve;});
   t.after(()=>release());
@@ -1090,4 +1100,32 @@ test('Hub shows observed live destinations without inventing resume actions', as
   await page.locator('.cw-card-action-menu [data-playback-action="update_progress"]').click();
   await page.locator('#profile-playback-edit[open]').waitFor();
   assert.match(await page.locator('#profile-playback-edit-sub').innerText(),/1 provider record/);
+});
+
+
+test('Hub direct history navigation loads only the selected list and hero preview',async t=>{
+  const {page,state}=await fixture(t,'flat-dark',390,{history:true});
+  state.queries=[];
+  await page.goto('https://profile-mobile.test/profile?direct=1#history');
+  await page.locator('#profile-panel-history .cw-hist-card').first().waitFor();
+  await page.waitForFunction(()=>document.querySelector('#profile-display-name').textContent==='Mobile preview');
+  const paths=state.queries.map(query=>query.path);
+  for(const path of ['/api/state/wall','/api/playback_progress/items','/api/insights','/api/profile/collection','/api/events/feed']) assert.equal(paths.includes(path),false,path);
+  assert.ok(state.queries.some(query=>query.path==='/api/dashboard/widgets' && query.params.include==='history,scrobble'));
+});
+
+test('Hub overview polls unfinished provider reads without replacing cached cards',async t=>{
+  const {page}=await fixture(t,'flat-dark',390);
+  await page.locator('#profile-progress [data-profile-poster-key]').first().waitFor();
+  let reads=0;
+  await page.route('**/api/playback_progress/items?**',async route=>{
+    assert.equal(new URL(route.request().url()).searchParams.get('progressive'),'true');
+    reads++;
+    await route.fulfill({json:{items:items.slice(0,1),loading:reads===1?[{provider:'PLEX',instance_id:'default'}]:[]}});
+  });
+  await page.reload({waitUntil:'domcontentloaded'});
+  await page.waitForFunction(()=>document.querySelectorAll('#profile-progress [data-profile-poster-key]').length===1);
+  await page.evaluate(()=>{window.progressCard=document.querySelector('#profile-progress [data-profile-poster-key]');});
+  await page.waitForResponse(response=>new URL(response.url()).pathname==='/api/playback_progress/items' && reads>=2);
+  assert.equal(await page.evaluate(()=>window.progressCard===document.querySelector('#profile-progress [data-profile-poster-key]')),true);
 });

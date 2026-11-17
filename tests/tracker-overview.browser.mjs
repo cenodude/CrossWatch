@@ -149,6 +149,11 @@ for(const theme of ['original','flat-dark','flat-light']) test(`Tracker list cac
 for (const width of [390,1440]) test(`Tracker restores its overview before slow summary requests at ${width}px`, async t => {
   const {page,boot,requests} = await fixture(t, "flat-dark", {width,playback:true});
   await page.waitForFunction(() => JSON.parse(sessionStorage.getItem("cw.tracker.overview.v1") || "[]").length > 0);
+  await page.evaluate(()=>{
+    const key='cw.tracker.overview.v1',entries=JSON.parse(sessionStorage.getItem(key));
+    entries.forEach(entry=>{entry.t=Date.now()-15*60*1000;});
+    sessionStorage.setItem(key,JSON.stringify(entries));
+  });
   let release, started;
   const gate = new Promise(resolve => { release = resolve; });
   const pending = new Promise(resolve => { started = resolve; });
@@ -178,7 +183,7 @@ for (const invalidation of ['account','profile','permissions','instance','expire
     const key = 'cw.tracker.overview.v1';
     if (invalidation === 'expired') {
       const entries = JSON.parse(sessionStorage.getItem(key));
-      entries.forEach(entry => { entry.t = Date.now() - 11 * 60 * 1000; });
+      entries.forEach(entry => { entry.t = Date.now() - 25 * 60 * 60 * 1000; });
       sessionStorage.setItem(key,JSON.stringify(entries));
     }
     if (invalidation === 'corrupt') sessionStorage.setItem(key,'invalid json');
@@ -1614,4 +1619,17 @@ test('Tracker Overview prioritizes live playback while Escape closes dialogs and
   await recent.locator('[data-trk-card-menu]').click();
   await page.keyboard.press('Escape');
   assert.equal(await banner.isVisible(),true);
+});
+
+
+test('Tracker overview does not wait for slow statistics on a cold load',async t=>{
+  const {page,boot}=await fixture(t,'flat-dark',{width:390});
+  await page.evaluate(()=>sessionStorage.clear());
+  let release;
+  const gate=new Promise(resolve=>{release=resolve;});t.after(()=>release());
+  await page.route('**/api/tracker/stats?**',async route=>{await gate;await route.fallback();});
+  await page.reload();
+  await boot({wait:false});
+  await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
+  release();
 });

@@ -66,7 +66,7 @@
   };
   let mainRefreshStarted = false;
   const AUTO_STATUS = false;
-  const STATUS_MIN_INTERVAL = 24 * 60 * 60 * 1000;
+  const STATUS_MIN_INTERVAL = 60 * 1000;
   const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
   const UPDATE_CHECK_RETRY_MS = 5 * 60 * 1000;
   const PAIRS_CACHE_KEY = "cw.pairs.v1";
@@ -747,38 +747,48 @@
     }));
   }
 
+  let statusRequest = null;
+  let statusScope = "";
   async function refreshStatus(force = false, verify = force) {
     if (authSetupPending()) return UI.status;
+    const scope = pairsCacheScope();
+    if (!force && statusRequest && statusScope === scope) return statusRequest;
     const now = Date.now();
-    if (!force && state.lastStatusMs && (now - state.lastStatusMs) < STATUS_MIN_INTERVAL) return UI.status;
-    state.lastStatusMs = now;
-
-    try {
-      const [, payload] = await Promise.all([
-        refreshPairedProviders(force ? 0 : 5000),
-        typeof API.Status?.get === "function"
-          ? API.Status.get(!!force, !!verify)
-          : requestJSON(verify ? "/api/status?fresh=1" : "/api/status", {}, 15000),
-      ]);
-      state.appDebug = !!payload?.debug;
-      const providers = extractProviderStatus(payload);
-      renderConnectorStatus(providers, { stale: false });
-      saveStatusCache(providers);
+    if (!force && statusScope === scope && state.lastStatusMs && (now - state.lastStatusMs) < STATUS_MIN_INTERVAL) return UI.status;
+    statusScope = scope;
+    const pending = (async () => {
       try {
-        const configuredProviders = [...getConfiguredProviders()].filter((key) => Object.prototype.hasOwnProperty.call(providers, key));
-        const detail = { payload, providers, configuredProviders };
-        window.__CW_PROVIDER_STATUS__ = detail;
-        document.dispatchEvent(new CustomEvent("cw-status-updated", { detail }));
-      } catch {}
-      UI.status = buildStatusUIState(payload, providers);
-      recomputeRunDisabled();
-      applyStatusSideEffects();
-      return UI.status;
-    } catch (e) {
-      if (String(e?.message || e || "").includes("auth setup pending")) return UI.status;
-      console.warn("refreshStatus failed", e);
-      return UI.status;
-    }
+        const [, payload] = await Promise.all([
+          refreshPairedProviders(force ? 0 : 5000),
+          typeof API.Status?.get === "function"
+            ? API.Status.get(!!force, !!verify)
+            : requestJSON(verify ? "/api/status?fresh=1" : "/api/status", {}, 15000),
+        ]);
+        if (scope !== pairsCacheScope()) return UI.status;
+        state.lastStatusMs = Date.now();
+        state.appDebug = !!payload?.debug;
+        const providers = extractProviderStatus(payload);
+        renderConnectorStatus(providers, { stale: false });
+        saveStatusCache(providers);
+        try {
+          const configuredProviders = [...getConfiguredProviders()].filter((key) => Object.prototype.hasOwnProperty.call(providers, key));
+          const detail = { payload, providers, configuredProviders };
+          window.__CW_PROVIDER_STATUS__ = detail;
+          document.dispatchEvent(new CustomEvent("cw-status-updated", { detail }));
+        } catch {}
+        UI.status = buildStatusUIState(payload, providers);
+        recomputeRunDisabled();
+        applyStatusSideEffects();
+        return UI.status;
+      } catch (e) {
+        if (String(e?.message || e || "").includes("auth setup pending")) return UI.status;
+        console.warn("refreshStatus failed", e);
+        return UI.status;
+      }
+    })();
+    statusRequest = pending;
+    try { return await pending; }
+    finally { if (statusRequest === pending) statusRequest = null; }
   }
 
   async function manualRefreshStatus() {
@@ -917,7 +927,6 @@
     if (authSetupPending()) return;
     mainRefreshStarted = true;
     enforceMainLayout();
-    state.lastStatusMs = 0;
     if (!window.esSum) queueSafe(() => window.openSummaryStream?.());
     if (!window.esLogs) queueSafe(() => window.openLogStream?.());
 

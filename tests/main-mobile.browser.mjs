@@ -35,6 +35,8 @@ for (const width of [390,320,1440]) test(`Main sync activity fits at ${width}px`
     doc.head.append(style);
     return '<!doctype html>'+doc.documentElement.outerHTML;
   },html);
+  const now=Date.now();
+  await page.clock.setFixedTime(now);
   let empty=false;
   const artRequests=[];
   const providers=['crosswatch','PLEX','MDBLIST','SIMKL','TRAKT'];
@@ -54,7 +56,7 @@ for (const width of [390,320,1440]) test(`Main sync activity fits at ${width}px`
       let json={ok:true};
       if(url.pathname==='/api/config') json={ui:{show_recent_activity:true},pairs:[]};
       if(url.pathname==='/api/activity/recent'||url.pathname==='/api/activity/history') json={ok:true,items:empty?[]:recent,total:empty?0:recent.length};
-      if(url.pathname==='/api/insights') json={features:Object.fromEntries(['watchlist','history','ratings','progress','playlists','collection'].map(feature=>[feature,{now:5,week:2,month:3,added:2,removed:0,providers:Object.fromEntries(providers.map((p,i)=>[p,i===1?10000:5])),providers_active:Object.fromEntries(providers.map(p=>[p,true])),providers_mse:Object.fromEntries(providers.map(p=>[p,{movies:5}]))}])),history:empty?[]:[0,1,2].map(i=>({finished_at:new Date(Date.now()-i*3600000).toISOString(),duration_sec:7.9,exit_code:i===2?1:0,result:i===2?'FAILED':'OK',features:{watchlist:{added:i===1?16:0,removed:0}}}))};
+      if(url.pathname==='/api/insights') json={features:Object.fromEntries(['watchlist','history','ratings','progress','playlists','collection'].map(feature=>[feature,{now:5,week:2,month:3,added:2,removed:0,providers:Object.fromEntries(providers.map((p,i)=>[p,i===1?10000:5])),providers_active:Object.fromEntries(providers.map(p=>[p,true])),providers_mse:Object.fromEntries(providers.map(p=>[p,{movies:5}]))}])),history:empty?[]:[0,1,2].map(i=>({finished_at:new Date(now-i*3600000).toISOString(),duration_sec:7.9,exit_code:i===2?1:0,result:i===2?'FAILED':'OK',features:{watchlist:{added:i===1?16:0,removed:0}}}))};
       return route.fulfill({json});
     }
     return route.fulfill({contentType:'text/html',body});
@@ -70,6 +72,14 @@ for (const width of [390,320,1440]) test(`Main sync activity fits at ${width}px`
   assert.equal(await page.locator('#recent-activity .activity-item').count(),3);
   assert.equal(await page.locator('#sync-history .history-item').count(),3);
   assert.equal(await page.locator('#recent-activity .activity-badge.err').textContent(),'failed');
+  await page.evaluate(async()=>{
+    window.activityRow=document.querySelector('#recent-activity .activity-item');
+    window.historyRow=document.querySelector('#sync-history .history-item');
+    await Promise.all([refreshInsights(),refreshInsights(),refreshRecentActivity(),refreshRecentActivity()]);
+  });
+  assert.equal(await page.evaluate(()=>window.activityRow===document.querySelector('#recent-activity .activity-item')),true);
+  assert.equal(await page.evaluate(()=>window.historyRow===document.querySelector('#sync-history .history-item')),true);
+
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   if(width<760){
     const tiles=await page.locator('#stat-providers .tile').evaluateAll(nodes=>nodes.map(el=>({x:el.offsetLeft,y:el.offsetTop,h:el.offsetHeight})));

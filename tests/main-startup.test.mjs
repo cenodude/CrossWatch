@@ -86,7 +86,7 @@ function setup({ authPending = false } = {}) {
     };
   };
   const classList = { add() {}, remove() {}, toggle() {}, contains() { return false; } };
-  const historyList = { innerHTML: "", dataset: {}, querySelector() { return this; } };
+  const historyList = { innerHTML: "", children: [], dataset: {}, querySelector() { return this; } };
   const document = {
     ...eventTarget(), readyState: "loading", documentElement: { dataset: {}, classList },
     body: { dataset: {} },
@@ -230,13 +230,14 @@ test("startup resumes after auth setup and ignores the later load refresh", asyn
   assert.deepEqual(app.requests, before);
 });
 
-test("returning from another page still refreshes Main", async () => {
+test("returning to Main shares pending status and insights requests", async () => {
   const app = setup();
   void app.window.showTab("main");
   await app.advance(180);
-  await app.window.showTab("watchlist");
+  await app.window.showTab("playlists");
   void app.window.showTab("main");
   await app.advance(180);
   assert.equal(app.calls.filter(call => call === "preview").length, 2);
-  assert.equal(app.requests.filter(url => url.includes("history=60")).length, 2);
+  assert.equal(app.requests.filter(url => url.includes("history=60")).length, 1);
+  assert.equal(app.requests.filter(url => url === "status").length, 1);
 });
