@@ -36,6 +36,7 @@
   const placeholder = "this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'";
   const assetVersion = (() => { try { return new URL(document.currentScript?.src || location.href).searchParams.get("v") || ""; } catch { return ""; } })();
   const canChangeArt = () => document.documentElement.dataset.cwRole !== "user" && document.documentElement.dataset.cwViewAs !== "1";
+  const canEditShelf = () => document.documentElement.dataset.cwViewAs !== "1" && (document.documentElement.dataset.cwRole !== "user" || document.documentElement.dataset.cwPermWrite === "on");
   const lazyScripts = new Map();
 
   function fmtIso(value) {
@@ -326,8 +327,10 @@
     window.addEventListener("cw:manual-watched-saved", () => {
       if (!root.hidden && !personView) void refreshPresence();
     });
-    window.addEventListener("cw:shelf-changed", () => {
-      if (!root.hidden && !personView && state.item) void scheduleRender();
+    window.addEventListener("cw:shelf-changed", (event) => {
+      if (root.hidden || personView || !state.item) return;
+      if (event.detail?.loaded || event.detail?.id) void loadCollectionInfo(state.item, state.seq);
+      void scheduleRender();
     });
     return root;
   }
@@ -444,6 +447,8 @@
       seasonEpisodesExpanded: false,
       episode: null,
       progress: null,
+      collection: null,
+      collectionCopy: 0,
     });
     if (root.hidden) state.lastFocus = document.activeElement;
     root.querySelectorAll("details[open]").forEach((details) => { details.open = false; });
@@ -466,6 +471,7 @@
         if (seq !== state.seq || root.hidden) return;
         state.presence = presence;
         state.presenceLoading = false;
+        void (window.CW?.Shelf?.load?.() || Promise.resolve()).then(() => loadCollectionInfo(item, seq));
         if (!isMovie()) {
           const latest = watchedEpisodes().sort((a, b) => Number(b.season) - Number(a.season) || Number(b.episode) - Number(a.episode))[0];
           if (latest) void loadSeason(latest.season);
@@ -574,7 +580,7 @@
       patchContent(body, episodeDetail());
       return;
     }
-    patchContent(body, `${tagline()}${top()}${livesCard()}${tabs()}<div class="cw-mm-panel" role="tabpanel">${panel()}</div>`);
+    patchContent(body, `${tagline()}${top()}${livesCard()}${collectionSection()}${tabs()}<div class="cw-mm-panel" role="tabpanel">${panel()}</div>`);
     const logo = body.querySelector(".cw-mm-title-logo");
     const label = body.querySelector(".cw-mm-title-text");
     if (logo && label && logo.getAttribute("src") !== logo.dataset.src) {
@@ -639,11 +645,9 @@
     out.push(`<a class="cw-mm-btn" href="https://www.themoviedb.org/${artType(item)}/${encodeURIComponent(tmdb)}" target="_blank" rel="noopener">TMDB</a>`);
     if (imdb) out.push(`<a class="cw-mm-btn" href="https://www.imdb.com/title/${encodeURIComponent(imdb)}/" target="_blank" rel="noopener">IMDb</a>`);
     if (tmdb && canChangeArt()) out.push(`<button type="button" class="cw-mm-btn" data-mm-artwork title="Change poster, logo or background" aria-haspopup="dialog">${icon("image")}Artwork</button>`);
-    const shelfInfo = tmdb ? window.CW?.Shelf?.peek?.(artType(item), tmdb) : null;
-    if (tmdb && (canChangeArt() || shelfInfo)) {
-      const copies = Number(shelfInfo?.copies) || 0;
-      const label = shelfInfo ? `${window.CW.Shelf.label(shelfInfo)}${copies > 1 ? ` ×${copies}` : ""}` : "Add to shelf";
-      out.push(`<button type="button" class="cw-mm-btn${shelfInfo ? " is-on-shelf" : ""}" data-mm-shelf title="Your copies of this title" aria-haspopup="dialog">${icon("shelves")}${esc(label)}</button>`);
+    const onShelf = tmdb ? window.CW?.Shelf?.peek?.(artType(item), tmdb) : null;
+    if (tmdb && canEditShelf() && !onShelf && !collectionAdds()) {
+      out.push(`<button type="button" class="cw-mm-btn" data-mm-shelf title="Your copies of this title" aria-haspopup="dialog">${icon("shelves")}Add to shelf</button>`);
     }
     if (removable()) out.push(`<button type="button" class="cw-mm-btn is-danger" data-mm-clear-all aria-haspopup="dialog" title="Remove from everything" aria-label="Remove from everything">${icon("delete")}Remove</button>`);
     const score = Number(meta?.detail?.vote_average) || (Number(meta?.score) || 0) / 10;
@@ -671,6 +675,91 @@
     if (key === "synced" && !isMovie() && Array.isArray(entry.episodes)) return plural(entry.episodes.length, "episode");
     if (key === "synced") return plural(entry.count, "play");
     return `${have} of ${total}`;
+  }
+
+  const COLL_PACKAGING = { keep_case: "Keep case", steelbook: "Steelbook", digipak: "Digipak", mediabook: "Mediabook", slipcover: "Slipcover", box_set: "Box set", other: "Other" };
+  const COLL_CONDITIONS = { mint: "Mint", like_new: "Like new", good: "Good", fair: "Fair", poor: "Poor" };
+  const COLL_RES = { uhd_4k: "4K", hd_1080p: "1080p", hd_1080i: "1080i", hd_720p: "720p", sd_576p: "576p", sd_576i: "576i", sd_480p: "480p", sd_480i: "480i" };
+  const COLL_HDR = { dolby_vision: "Dolby Vision", hdr10_plus: "HDR10+", hdr10: "HDR10", hlg: "HLG" };
+  const COLL_AUDIO = { dolby_atmos: "Dolby Atmos", dolby_digital_plus_atmos: "Dolby Digital Plus Atmos", dolby_truehd: "Dolby TrueHD", dolby_digital_plus: "Dolby Digital Plus", dolby_digital: "Dolby Digital", dts_x: "DTS:X", dts_ma: "DTS-HD MA", dts_hr: "DTS-HD HRA", dts: "DTS", lpcm: "LPCM", flac: "FLAC", aac: "AAC" };
+
+  function inCollection() {
+    return (state.presence?.collection?.present || []).length > 0;
+  }
+
+  function collectionAdds() {
+    const info = state.collection;
+    return Boolean(info && (info.entry || info.synced) && info.canEdit && canEditShelf());
+  }
+
+  async function loadCollectionInfo(item, seq) {
+    const tmdb = tmdbOf(item);
+    const onShelf = tmdb ? window.CW?.Shelf?.peek?.(artType(item), tmdb) : null;
+    if (!tmdb || (!onShelf && !inCollection())) {
+      state.collection = null;
+      return;
+    }
+    try {
+      const res = await fetch(`/api/profile/shelf/${artType(item)}/${encodeURIComponent(tmdb)}`, { credentials: "same-origin", cache: "no-store" });
+      const data = await res.json().catch(() => null);
+      if (seq !== state.seq || state.item !== item) return;
+      state.collection = res.ok && data?.ok ? { entry: data.entry || null, synced: data.synced || null, canEdit: data.can_edit === true } : null;
+    } catch {
+      if (seq !== state.seq) return;
+      state.collection = null;
+    }
+    void scheduleRender();
+  }
+
+  function collectionRows(rows) {
+    const shown = rows.filter(([, value]) => value !== "" && value != null);
+    return shown.length ? shown.map(([label, value]) => `<div class="cw-mm-coll-row"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("") : "";
+  }
+
+  function collectionDate(value) {
+    const parts = String(value || "").split("-").map(Number);
+    if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return "";
+    return dateFmt.format(new Date(parts[0], parts[1] - 1, parts[2]));
+  }
+
+  function collectionSection() {
+    const info = state.collection;
+    if (!info || (!info.entry && !info.synced)) return "";
+    const copies = info.entry?.copies || [];
+    const index = Math.min(Math.max(0, Number(state.collectionCopy) || 0), Math.max(0, copies.length - 1));
+    const copy = copies[index] || null;
+    const media = info.synced?.media_info || {};
+    const format = copy?.format || info.synced?.format || "";
+    const shelf = window.CW?.Shelf || {};
+    const tmdb = tmdbOf(state.item);
+    const disc = shelf.discUrl?.(artType(state.item), tmdb, format) || "";
+    const plate = copy?.packaging === "steelbook" ? "Steelbook" : copy?.edition || "";
+    const status = info.entry ? shelf.statuses?.[info.entry.status] || "Owned" : "In your collection";
+    const statusLine = [status, copies.length ? `${copies.length} ${copies.length === 1 ? "copy" : "copies"}` : ""].filter(Boolean).join(" · ");
+    const pill = shelf.pill?.({ format, media, service: copy?.service }) || "";
+    const tabs = copies.length > 1 ? `<div class="cw-mm-coll-tabs" role="tablist" aria-label="Copies">${copies.map((row, i) => `<button type="button" role="tab" aria-selected="${i === index}" class="cw-mm-coll-tab${i === index ? " is-active" : ""}" data-mm-coll-copy="${i}">${esc([shelf.formats?.[row.format] || row.format, row.edition || COLL_PACKAGING[row.packaging]].filter(Boolean).join(" · "))}</button>`).join("")}</div>` : "";
+    const scope = state.item && !isMovie() ? [["Season", copy?.season != null ? `Season ${copy.season}` : ""], ["Volume", copy?.volume || ""]] : [];
+    const groups = [
+      ["Picture and sound", collectionRows([["Format", shelf.formats?.[format] || ""], ["Resolution", COLL_RES[media.resolution] || ""], ["HDR", COLL_HDR[media.hdr] || ""], ["Audio", [COLL_AUDIO[media.audio], media.audio_channels].filter(Boolean).join(" ")]])],
+      ["Edition", copy ? collectionRows([["Edition", copy.edition || ""], ["Packaging", COLL_PACKAGING[copy.packaging] || ""], ["Region", copy.region || ""], ["Discs", copy.discs || ""], ...scope]) : ""],
+      ["Purchase", copy ? collectionRows([["Acquired", collectionDate(copy.purchased)], ["Store", copy.store || ""], ["Price", copy.price != null ? shelf.money?.(copy.price) || String(copy.price) : ""], ["Service", copy.service?.name || ""]]) : ""],
+      ["Shelf", copy ? collectionRows([["Location", copy.shelf || ""], ["Condition", COLL_CONDITIONS[copy.condition] || ""], ["Lent to", copy.lent_to || ""]]) : ""],
+    ].filter(([, rows]) => rows);
+    const actions = collectionAdds()
+      ? `${copy ? `<button type="button" class="cw-mm-btn" data-mm-coll-edit="${index}">${icon("edit")}Edit copy</button>` : ""}<button type="button" class="cw-mm-btn" data-mm-coll-add>${icon("add")}${info.entry ? "Add copy" : "Add to shelf"}</button>`
+      : "";
+    return `<section class="cw-mm-coll" aria-label="Collection">
+      <div class="cw-mm-coll-art${disc ? " has-disc" : ""}">
+        ${disc ? `<img class="cw-mm-coll-disc" src="${esc(disc)}" alt="" loading="lazy" decoding="async" onerror="this.closest('.cw-mm-coll-art')?.classList.remove('has-disc');this.remove()">` : ""}
+        <figure class="cw-mm-coll-case"><img src="${esc(posterUrl(state.item))}" alt="" decoding="async" onerror="${placeholder}">${plate ? `<figcaption${copy?.packaging === "steelbook" ? ' class="is-steel"' : ""}>${esc(plate)}</figcaption>` : ""}</figure>
+      </div>
+      <div class="cw-mm-coll-main">
+        <div class="cw-mm-coll-head"><h3>Collection</h3><span>${esc(statusLine)}</span>${pill}</div>
+        ${tabs}
+        ${groups.length ? `<div class="cw-mm-coll-grid">${groups.map(([title, rows]) => `<dl class="cw-mm-coll-group"><span>${esc(title)}</span>${rows}</dl>`).join("")}</div>` : ""}
+        ${actions ? `<div class="cw-mm-coll-actions">${actions}</div>` : ""}
+      </div>
+    </section>`;
   }
 
   function livesCard() {
@@ -1315,7 +1404,7 @@
 
   const loadArtPicker = () => lazyScript("artwork-picker.js", "ArtworkPicker");
 
-  async function openShelf() {
+  async function openShelf(start = null) {
     const item = state.item;
     const tmdb = tmdbOf(item);
     if (!tmdb) return;
@@ -1323,7 +1412,7 @@
       const editor = await lazyScript("shelf-editor.js", "ShelfEditor");
       if (root.hidden || state.item !== item) return;
       const ids = { ...(item?.ids || {}), ...(state.meta?.ids || {}), tmdb };
-      editor.open({ type: artType(item), id: tmdb, title: state.meta?.title || item?.title || "", year: state.meta?.year || item?.year || "", ids, canEdit: canChangeArt(), host: root });
+      editor.open({ type: artType(item), id: tmdb, title: state.meta?.title || item?.title || "", year: state.meta?.year || item?.year || "", ids, canEdit: canEditShelf(), host: root, start });
     } catch {}
   }
 
@@ -1356,6 +1445,21 @@
     }
     if (target?.closest?.("[data-mm-shelf]")) {
       void openShelf();
+      return;
+    }
+    const collTab = target?.closest?.("[data-mm-coll-copy]");
+    if (collTab) {
+      state.collectionCopy = Number(collTab.dataset.mmCollCopy) || 0;
+      void scheduleRender();
+      return;
+    }
+    const collEdit = target?.closest?.("[data-mm-coll-edit]");
+    if (collEdit) {
+      void openShelf(Number(collEdit.dataset.mmCollEdit));
+      return;
+    }
+    if (target?.closest?.("[data-mm-coll-add]")) {
+      void openShelf("new");
       return;
     }
     if (target?.closest?.("[data-mm-person-back]")) {

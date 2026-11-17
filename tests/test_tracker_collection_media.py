@@ -16,8 +16,11 @@ def test_edit_sets_manual_media_and_reset_clears_it() -> None:
     assert out["format"] == "4k_bluray" and out["media_manual"] is True
     assert out["media_info"] == {"resolution": "uhd_4k", "hdr": "dolby_vision", "audio": "dolby_atmos", "audio_channels": "7.1", "is_3d": True}
 
-    cleared = trackerAPI._edited("collection", out, {"media": {"format": "", "resolution": ""}})
-    assert "format" not in cleared and "media_info" not in cleared and cleared["media_manual"] is True
+    cleared = trackerAPI._edited("collection", out, {"media": {"format": "", "resolution": "", "is_3d": False}})
+    assert not {"format", "media_info", "media_manual"} & set(cleared)
+
+    only_3d = trackerAPI._edited("collection", ITEM, {"media": {"is_3d": True}})
+    assert only_3d["media_info"] == {"is_3d": True} and only_3d["media_manual"] is True and "format" not in only_3d
 
     reset = trackerAPI._edited("collection", out, {"media": None})
     assert not {"format", "media_info", "media_manual"} & set(reset)
@@ -61,3 +64,20 @@ def test_sync_keeps_manual_media() -> None:
 
     synced = _collection._keep_manual_media(_collection._accepted(ITEM), incoming())
     assert synced["format"] == "dvd" and "media_manual" not in synced
+
+
+def test_tracker_copies_are_validated_and_kept_by_sync() -> None:
+    out = trackerAPI._edited("collection", ITEM, {"copies": [{"format": "4k_bluray", "edition": "Steelbook", "price": "19,99"}]})
+    assert out["copies"][0]["format"] == "4k_bluray" and out["copies"][0]["price"] == 19.99
+    assert trackerAPI._row("movie:438631", out, "collection")["copies"][0]["edition"] == "Steelbook"
+    cleared = trackerAPI._edited("collection", out, {"copies": []})
+    assert "copies" not in cleared
+    with pytest.raises(ValueError):
+        trackerAPI._edited("collection", ITEM, {"copies": [{"format": "betacam"}]})
+    with pytest.raises(ValueError):
+        trackerAPI._edited("history", ITEM, {"copies": []})
+
+    existing = _collection._accepted(out)
+    assert existing["copies"][0]["edition"] == "Steelbook"
+    synced = _collection._keep_manual_media(existing, _collection._accepted({**ITEM, "format": "dvd"}))
+    assert synced["copies"] == existing["copies"] and synced["format"] == "dvd"

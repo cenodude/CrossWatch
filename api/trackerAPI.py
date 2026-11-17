@@ -186,6 +186,9 @@ def _row_media(data: Mapping[str, Any], feature: str | None) -> dict[str, Any]:
         out["media_info"] = dict(data["media_info"])
     if data.get("media_manual") is True:
         out["media_manual"] = True
+    copies = data.get("copies")
+    if isinstance(copies, list) and copies:
+        out["copies"] = [dict(row) for row in copies if isinstance(row, Mapping)]
     return out
 
 
@@ -298,6 +301,19 @@ def _id_map(current: Any, changes: Any) -> dict[str, Any]:
     return out
 
 
+def _edited_copies(out: dict[str, Any], value: Any) -> None:
+    from services.shelf_store import ShelfError, clean_copies
+
+    try:
+        copies = clean_copies(value)
+    except ShelfError as exc:
+        raise ValueError("invalid_copies") from exc
+    if copies:
+        out["copies"] = copies
+    else:
+        out.pop("copies", None)
+
+
 def _edited_media(out: dict[str, Any], value: Any) -> None:
     from cw_platform.collection_media import AUDIOS, CHANNELS, FORMATS, HDRS, RESOLUTIONS
 
@@ -320,6 +336,10 @@ def _edited_media(out: dict[str, Any], value: Any) -> None:
         info[key] = text
     if value.get("is_3d") is True:
         info["is_3d"] = True
+    if not fmt and not info:
+        for field in ("media_manual", "format", "media_info"):
+            out.pop(field, None)
+        return
     if fmt:
         out["format"] = fmt
     else:
@@ -373,6 +393,10 @@ def _edited(feature: str, item: Mapping[str, Any], changes: Mapping[str, Any]) -
             if feature != "collection":
                 raise ValueError("invalid_media")
             _edited_media(out, value)
+        elif field == "copies":
+            if feature != "collection":
+                raise ValueError("invalid_copies")
+            _edited_copies(out, value)
         elif field == "title":
             title = str(value or "").strip()
             if not title or len(title) > 300:

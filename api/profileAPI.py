@@ -695,24 +695,49 @@ def _shelf_only_item(key: str, entry: dict[str, Any], info: dict[str, Any]) -> d
     return item
 
 
-def _shelf_stats(items: list[dict[str, Any]]) -> dict[str, Any]:
-    stats: dict[str, Any] = {"titles": 0, "copies": 0, "formats": {}, "lent": 0, "spent": 0.0}
+_HDR_STATS = {"dolby_vision": "Dolby Vision", "hdr10_plus": "HDR10+", "hdr10": "HDR10", "hlg": "HLG"}
+_ATMOS = {"dolby_atmos", "dolby_digital_plus_atmos"}
+
+
+def _shelf_stats(items: list[dict[str, Any]], owner: str) -> dict[str, Any]:
+    stats: dict[str, Any] = {
+        "titles": 0, "copies": 0, "formats": {}, "lent": 0, "spent": 0.0, "status": {}, "uhd": 0,
+        "picture": {}, "decades": {},
+    }
     for item in items:
         info = item.get("shelf")
         if not isinstance(info, dict):
             continue
         stats["titles"] += 1
         stats["copies"] += int(info.get("copies") or 0)
+        status = str(info.get("status") or "owned")
+        stats["status"][status] = stats["status"].get(status, 0) + 1
         for fmt, count in (info.get("per_format") or {}).items():
             stats["formats"][fmt] = stats["formats"].get(fmt, 0) + int(count or 0)
         if info.get("lent"):
             stats["lent"] += 1
         stats["spent"] += float(info.get("spent") or 0)
+        media_raw = item.get("media_info")
+        media: dict[str, Any] = media_raw if isinstance(media_raw, dict) else {}
+        if "4k_bluray" in (info.get("formats") or []) or media.get("resolution") == "uhd_4k":
+            stats["uhd"] += 1
+        hdr = _HDR_STATS.get(str(media.get("hdr") or ""))
+        if hdr:
+            stats["picture"][hdr] = stats["picture"].get(hdr, 0) + 1
+        if str(media.get("audio") or "") in _ATMOS:
+            stats["picture"]["Dolby Atmos"] = stats["picture"].get("Dolby Atmos", 0) + 1
+        try:
+            year = int(str(item.get("year") or "")[:4])
+        except ValueError:
+            year = 0
+        if year >= 1900:
+            decade = f"{year // 10 * 10}s"
+            stats["decades"][decade] = stats["decades"].get(decade, 0) + 1
     stats["spent"] = round(stats["spent"], 2)
     try:
         from services import shelf_store
 
-        stats["currency"] = shelf_store.currency()
+        stats["currency"] = shelf_store.currency(owner)
     except Exception:
         stats["currency"] = ""
     return stats
@@ -760,12 +785,12 @@ def _shelf_filter(items: list[dict[str, Any]], mode: str, watched: Any = None) -
     return items
 
 
-def _apply_shelf(items: list[dict[str, Any]], mode: str) -> list[dict[str, Any]]:
+def _apply_shelf(items: list[dict[str, Any]], mode: str, owner: str) -> list[dict[str, Any]]:
     try:
         from services import shelf_store
 
-        stored = shelf_store.entries()
-        infos = shelf_store.summaries() if stored else {}
+        stored = shelf_store.entries(owner)
+        infos = shelf_store.summaries(owner) if stored else {}
     except Exception:
         stored, infos = {}, {}
     if not stored:
@@ -803,16 +828,18 @@ def build_profile_collection_payload(
     shelf: str = "synced",
     watched: Any = None,
     shelf_filter: str = "",
+    shelf_owner: str = "administrator",
 ) -> dict[str, Any]:
     items, counts, provider_counts = _collection_index(state, cfg, profile_id, cache_key)
     shelf_mode = str(shelf or "synced").strip().lower()
     if shelf_mode not in SHELF_MODES:
         shelf_mode = "synced"
-    items = _shelf_filter(_apply_shelf(items, _SHELF_BASE.get(shelf_mode, shelf_mode)), shelf_mode, watched)
+    items = _shelf_filter(_apply_shelf(items, _SHELF_BASE.get(shelf_mode, shelf_mode), shelf_owner), shelf_mode, watched)
     shelf_locations: list[str] = []
     if shelf_mode != "synced":
         shelf_locations = sorted({name for item in items for name in ((item.get("shelf") or {}).get("shelves") or [])}, key=str.lower)
-        items = _shelf_narrow(items, shelf_filter)
+        if shelf_mode != "not_on_shelf":
+            items = _shelf_narrow(items, shelf_filter)
         counts, provider_counts = _collection_counts(items)
     wanted_type = str(media_type or "all").strip().lower()
     if wanted_type not in {"", "all"}:
@@ -896,7 +923,7 @@ def build_profile_collection_payload(
         "shelf": shelf_mode,
     }
     if shelf_mode != "synced":
-        payload["shelf_stats"] = _shelf_stats(items)
+        payload["shelf_stats"] = _shelf_stats(items, shelf_owner)
         payload["shelf_locations"] = shelf_locations
         payload["shelf_filter"] = str(shelf_filter or "")
     if include_keys:
@@ -968,6 +995,7 @@ def api_profile_collection(
         shelf=shelf,
         watched=watched,
         shelf_filter=shelf_filter,
+        shelf_owner=_shelf_owner(ctx),
     )
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 
@@ -977,15 +1005,31 @@ def _shelf_entity(typ: str) -> str | None:
     return "movie" if t == "movie" else "tv" if t in {"tv", "show"} else None
 
 
-def _shelf_admin(request: Request) -> JSONResponse | None:
+def _shelf_owner(ctx: Any) -> str:
+    if ctx[2] == ADMIN_USER_ID:
+        return ADMIN_USER_ID
+    return re.sub(r"[^a-z0-9_-]", "-", _normalize_app_user_id(ctx[2]))[:64] or "unknown"
+
+
+def _shelf_can_write(ctx: Any) -> bool:
+    if ctx[2] == ADMIN_USER_ID:
+        return True
+    for source in (ctx[3], ctx[4]):
+        perms = source.get("permissions") if isinstance(source, dict) else None
+        if isinstance(perms, dict) and perms.get("write"):
+            return True
+    return False
+
+
+def _shelf_writer(request: Request) -> tuple[str, JSONResponse | None]:
     if not _origin_allowed(request):
-        return _origin_blocked_response()
+        return "", _origin_blocked_response()
     ctx = _profile_context(request)
     if isinstance(ctx, JSONResponse):
-        return ctx
-    if ctx[2] != ADMIN_USER_ID:
-        return _json_error("Only the administrator can change the shelf", 403)
-    return None
+        return "", ctx
+    if not _shelf_can_write(ctx):
+        return "", _json_error("You can not change your shelf", 403)
+    return _shelf_owner(ctx), None
 
 
 def _shelf_synced_media(cfg: dict[str, Any], token: str, entity: str, tmdb_id: int) -> dict[str, Any] | None:
@@ -1017,7 +1061,8 @@ def api_profile_shelf_index(request: Request) -> JSONResponse:
     ctx = _profile_context(request)
     if isinstance(ctx, JSONResponse):
         return ctx
-    items = shelf_store.summaries()
+    owner = _shelf_owner(ctx)
+    items = shelf_store.summaries(owner)
     if items:
         try:
             profile_id = effective_user_profile_id(ctx[0], ctx[5], "")
@@ -1028,18 +1073,18 @@ def api_profile_shelf_index(request: Request) -> JSONResponse:
                     items[key] = {**items[key], "on_server": True}
         except Exception:
             pass
-    return JSONResponse({"ok": True, "items": items, "currency": shelf_store.currency()}, headers={"Cache-Control": "no-store"})
+    return JSONResponse({"ok": True, "items": items, "currency": shelf_store.currency(owner), "can_edit": _shelf_can_write(ctx)}, headers={"Cache-Control": "no-store"})
 
 
 @router.put("/shelf/settings")
 def api_profile_shelf_settings(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResponse:
     from services import shelf_store
 
-    blocked = _shelf_admin(request)
+    owner, blocked = _shelf_writer(request)
     if blocked is not None:
         return blocked
     try:
-        value = shelf_store.set_currency((payload or {}).get("currency"))
+        value = shelf_store.set_currency(owner, (payload or {}).get("currency"))
     except shelf_store.ShelfError as e:
         return _json_error(shelf_store.public_error(e), 400)
     return JSONResponse({"ok": True, "currency": value})
@@ -1055,8 +1100,8 @@ def api_profile_shelf_entry(request: Request, typ: str, tmdb_id: int) -> JSONRes
     entity = _shelf_entity(typ)
     if entity is None or tmdb_id < 1:
         return _json_error("Invalid title", 400)
-    entry = shelf_store.get(entity, tmdb_id)
-    payload: dict[str, Any] = {"ok": True, "entry": entry, "can_edit": ctx[2] == ADMIN_USER_ID}
+    entry = shelf_store.get(_shelf_owner(ctx), entity, tmdb_id)
+    payload: dict[str, Any] = {"ok": True, "entry": entry, "can_edit": _shelf_can_write(ctx)}
     synced = _shelf_synced_media(ctx[0], ctx[5], entity, tmdb_id)
     if synced:
         payload["synced"] = synced
@@ -1067,14 +1112,14 @@ def api_profile_shelf_entry(request: Request, typ: str, tmdb_id: int) -> JSONRes
 def api_profile_shelf_save(request: Request, typ: str, tmdb_id: int, payload: dict[str, Any] = Body(...)) -> JSONResponse:
     from services import shelf_store
 
-    blocked = _shelf_admin(request)
+    owner, blocked = _shelf_writer(request)
     if blocked is not None:
         return blocked
     entity = _shelf_entity(typ)
     if entity is None or tmdb_id < 1:
         return _json_error("Invalid title", 400)
     try:
-        entry = shelf_store.put(entity, tmdb_id, payload if isinstance(payload, dict) else {})
+        entry = shelf_store.put(owner, entity, tmdb_id, payload if isinstance(payload, dict) else {})
     except shelf_store.ShelfError as e:
         return _json_error(shelf_store.public_error(e), 400)
     return JSONResponse({"ok": True, "entry": entry, "summary": shelf_store.summary(entry)})
@@ -1084,13 +1129,13 @@ def api_profile_shelf_save(request: Request, typ: str, tmdb_id: int, payload: di
 def api_profile_shelf_remove(request: Request, typ: str, tmdb_id: int) -> JSONResponse:
     from services import shelf_store
 
-    blocked = _shelf_admin(request)
+    owner, blocked = _shelf_writer(request)
     if blocked is not None:
         return blocked
     entity = _shelf_entity(typ)
     if entity is None or tmdb_id < 1:
         return _json_error("Invalid title", 400)
-    return JSONResponse({"ok": True, "removed": shelf_store.remove(entity, tmdb_id)})
+    return JSONResponse({"ok": True, "removed": shelf_store.remove(owner, entity, tmdb_id)})
 
 
 def _feature_state(feature: str, include_sync_users: bool = True) -> dict[str, Any]:

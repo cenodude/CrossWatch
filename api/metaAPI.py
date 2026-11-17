@@ -1435,8 +1435,18 @@ def api_watch_providers(media: str = Query("movie", alias="type"), region: str |
     data = _tmdb_get_json(f"https://api.themoviedb.org/3/watch/providers/{t}", {"api_key": api_key, "watch_region": reg}, timeout=12)
     if not isinstance(data, dict):
         return JSONResponse({"ok": False, "error": "TMDb services could not be loaded."}, status_code=502)
+    def _priority(row: dict[str, Any]) -> int:
+        for value in ((row.get("display_priorities") or {}).get(reg) if isinstance(row.get("display_priorities"), dict) else None, row.get("display_priority")):
+            if value is None:
+                continue
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                continue
+        return 999
+
     rows = [row for row in data.get("results") or [] if isinstance(row, dict)]
-    rows.sort(key=lambda row: (int((row.get("display_priorities") or {}).get(reg) or row.get("display_priority") or 999), str(row.get("provider_name") or "").lower()))
+    rows.sort(key=lambda row: (_priority(row), str(row.get("provider_name") or "").lower()))
     out: list[dict[str, Any]] = []
     for row in rows[:120]:
         try:
