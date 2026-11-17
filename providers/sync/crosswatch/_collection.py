@@ -34,7 +34,21 @@ def _accepted(obj: Mapping[str, Any]) -> dict[str, Any]:
         if isinstance(value, str) and value.strip():
             item["collected_at"] = value.strip()
             break
+    if obj.get("media_manual") is True:
+        item["media_manual"] = True
     return item
+
+
+def _keep_manual_media(existing: Mapping[str, Any], accepted: dict[str, Any]) -> dict[str, Any]:
+    if existing.get("media_manual") is not True:
+        return accepted
+    for field in ("format", "media_info"):
+        if existing.get(field) not in (None, "", {}):
+            accepted[field] = existing[field]
+        else:
+            accepted.pop(field, None)
+    accepted["media_manual"] = True
+    return accepted
 
 
 def _load_state(adapter: Any) -> dict[str, Any]:
@@ -168,6 +182,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
             accepted = merge_tracker_identity(existing, accepted)
             if existing.get("collected_at") and not accepted.get("collected_at"):
                 accepted["collected_at"] = existing.get("collected_at")
+            accepted = _keep_manual_media(existing, accepted)
         if existing != accepted:
             cur[key] = accepted
             changed += 1

@@ -36,7 +36,7 @@
   const placeholder = "this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'";
   const assetVersion = (() => { try { return new URL(document.currentScript?.src || location.href).searchParams.get("v") || ""; } catch { return ""; } })();
   const canChangeArt = () => document.documentElement.dataset.cwRole !== "user" && document.documentElement.dataset.cwViewAs !== "1";
-  let artPickerLoad = null;
+  const lazyScripts = new Map();
 
   function fmtIso(value) {
     const raw = String(value || "").trim();
@@ -302,10 +302,11 @@
     }, true);
     document.addEventListener("keydown", (event) => {
       if (root.hidden || event.key !== "Escape") return;
-      if (window.CW?.ArtworkPicker?.isOpen?.()) {
+      const overlay = ["ArtworkPicker", "ShelfEditor"].map((name) => window.CW?.[name]).find((tool) => tool?.isOpen?.());
+      if (overlay) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        window.CW.ArtworkPicker.close();
+        overlay.close();
         return;
       }
       if (document.getElementById("cw-trailer")?.classList.contains("show")) return;
@@ -324,6 +325,9 @@
     }, true);
     window.addEventListener("cw:manual-watched-saved", () => {
       if (!root.hidden && !personView) void refreshPresence();
+    });
+    window.addEventListener("cw:shelf-changed", () => {
+      if (!root.hidden && !personView && state.item) void scheduleRender();
     });
     return root;
   }
@@ -407,6 +411,8 @@
     if (!canOpen(item)) return false;
     ensure();
     window.CW?.ArtworkPicker?.close?.();
+    window.CW?.ShelfEditor?.close?.();
+    void window.CW?.Shelf?.load?.();
     const host = options.host || document.body;
     if (root.parentNode !== host) host.appendChild(root);
     state.host = options.host || null;
@@ -485,6 +491,7 @@
 
   function close() {
     window.CW?.ArtworkPicker?.close?.();
+    window.CW?.ShelfEditor?.close?.();
     if (!root || root.hidden) return;
     state.seq += 1;
     root.hidden = true;
@@ -632,6 +639,12 @@
     out.push(`<a class="cw-mm-btn" href="https://www.themoviedb.org/${artType(item)}/${encodeURIComponent(tmdb)}" target="_blank" rel="noopener">TMDB</a>`);
     if (imdb) out.push(`<a class="cw-mm-btn" href="https://www.imdb.com/title/${encodeURIComponent(imdb)}/" target="_blank" rel="noopener">IMDb</a>`);
     if (tmdb && canChangeArt()) out.push(`<button type="button" class="cw-mm-btn" data-mm-artwork title="Change poster, logo or background" aria-haspopup="dialog">${icon("image")}Artwork</button>`);
+    const shelfInfo = tmdb ? window.CW?.Shelf?.peek?.(artType(item), tmdb) : null;
+    if (tmdb && (canChangeArt() || shelfInfo)) {
+      const copies = Number(shelfInfo?.copies) || 0;
+      const label = shelfInfo ? `${window.CW.Shelf.label(shelfInfo)}${copies > 1 ? ` ×${copies}` : ""}` : "Add to shelf";
+      out.push(`<button type="button" class="cw-mm-btn${shelfInfo ? " is-on-shelf" : ""}" data-mm-shelf title="Your copies of this title" aria-haspopup="dialog">${icon("shelves")}${esc(label)}</button>`);
+    }
     if (removable()) out.push(`<button type="button" class="cw-mm-btn is-danger" data-mm-clear-all aria-haspopup="dialog" title="Remove from everything" aria-label="Remove from everything">${icon("delete")}Remove</button>`);
     const score = Number(meta?.detail?.vote_average) || (Number(meta?.score) || 0) / 10;
     if (score > 0) {
@@ -1286,16 +1299,32 @@
     return `<section class="cw-person-view">${back}<div class="cw-person-heading">${person.profile_path ? `<img src="${esc(tmdbImage(person.profile_path, "w185"))}" alt="">` : `<span class="cw-mm-initials">${esc(initialsOf(person.name))}</span>`}<div><small>CAST &amp; FILMOGRAPHY</small><h2 id="cw-mm-title" tabindex="-1">${esc(person.name)}</h2></div></div>${person.biography ? `<details class="cw-person-bio"><summary>About ${esc(person.name)}</summary><p>${esc(person.biography)}</p></details>` : ""}<h3>Also appears in</h3><div class="cw-person-films">${(person.credits || []).filter(row => String(row.id) !== tmdbOf(state.item) || row.type !== kindOf(state.item)).map(row => `<button type="button" data-mm-credit="${esc(row.type)}:${esc(row.id)}"><img src="${esc(tmdbImage(row.poster_path, "w92") || "/assets/img/placeholder_poster.svg?v=2")}" alt="" loading="lazy" onerror="${placeholder}"><span><strong>${esc(row.title)}</strong><small>${esc([String(row.date || "").slice(0, 4), row.type === "movie" ? "Movie" : "Series", row.character].filter(Boolean).join(" · "))}</small></span>${icon("chevron_right")}</button>`).join("") || empty("No other credits available.")}</div></section>`;
   }
 
-  function loadArtPicker() {
-    if (window.CW?.ArtworkPicker) return Promise.resolve(window.CW.ArtworkPicker);
-    artPickerLoad ||= new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = `/assets/js/artwork-picker.js${assetVersion ? `?v=${encodeURIComponent(assetVersion)}` : ""}`;
-      script.onload = () => (window.CW?.ArtworkPicker ? resolve(window.CW.ArtworkPicker) : reject(new Error("missing")));
-      script.onerror = () => { artPickerLoad = null; reject(new Error("load failed")); };
-      document.head.appendChild(script);
-    });
-    return artPickerLoad;
+  function lazyScript(file, name) {
+    if (window.CW?.[name]) return Promise.resolve(window.CW[name]);
+    if (!lazyScripts.has(file)) {
+      lazyScripts.set(file, new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.src = `/assets/js/${file}${assetVersion ? `?v=${encodeURIComponent(assetVersion)}` : ""}`;
+        script.onload = () => (window.CW?.[name] ? resolve(window.CW[name]) : reject(new Error("missing")));
+        script.onerror = () => { lazyScripts.delete(file); reject(new Error("load failed")); };
+        document.head.appendChild(script);
+      }));
+    }
+    return lazyScripts.get(file);
+  }
+
+  const loadArtPicker = () => lazyScript("artwork-picker.js", "ArtworkPicker");
+
+  async function openShelf() {
+    const item = state.item;
+    const tmdb = tmdbOf(item);
+    if (!tmdb) return;
+    try {
+      const editor = await lazyScript("shelf-editor.js", "ShelfEditor");
+      if (root.hidden || state.item !== item) return;
+      const ids = { ...(item?.ids || {}), ...(state.meta?.ids || {}), tmdb };
+      editor.open({ type: artType(item), id: tmdb, title: state.meta?.title || item?.title || "", year: state.meta?.year || item?.year || "", ids, canEdit: canChangeArt(), host: root });
+    } catch {}
   }
 
   async function openArtwork() {
@@ -1323,6 +1352,10 @@
     }
     if (target?.closest?.("[data-mm-artwork]")) {
       void openArtwork();
+      return;
+    }
+    if (target?.closest?.("[data-mm-shelf]")) {
+      void openShelf();
       return;
     }
     if (target?.closest?.("[data-mm-person-back]")) {

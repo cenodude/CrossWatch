@@ -2885,6 +2885,15 @@ def get_profile_html(user: dict | None = None) -> str:
       </label>
       <div class="cw-hub-records-chips" id="profile-collection-types" aria-label="Collection type filters"></div>
       <div class="cw-hub-records-controls">
+        <select id="profile-collection-shelf" aria-label="Collection source">
+          <option value="synced">Synced</option>
+          <option value="shelf">My shelf</option>
+          <option value="all">Synced and shelf</option>
+          <option value="unwatched">Shelf: never watched</option>
+          <option value="not_on_server">Shelf: not on a server</option>
+          <option value="not_on_shelf">Server: not on shelf</option>
+        </select>
+        <select id="profile-collection-shelf-filter" aria-label="Shelf filter" hidden><option value="">Whole shelf</option></select>
         <select id="profile-collection-provider" aria-label="Provider filter"><option value="">All providers</option></select>
         <select id="profile-collection-sort" aria-label="Collection sort">
           <option value="collected_at">Recently added</option>
@@ -2893,8 +2902,12 @@ def get_profile_html(user: dict | None = None) -> str:
           <option value="title_desc">Title Z-A</option>
           <option value="year_desc">Year: newest</option>
           <option value="year_asc">Year: oldest</option>
+          <option value="price_desc">Price: highest</option>
+          <option value="purchased_desc">Bought: newest</option>
         </select>
         <div class="cw-hub-records-views" role="group" aria-label="View mode">
+          <button class="cw-view-case" type="button" data-collection-display="case" title="Show cases" aria-label="Show cases" aria-pressed="false" hidden><span class="material-symbols-rounded" aria-hidden="true">album</span></button>
+          <button class="cw-view-shelf" type="button" data-collection-display="shelf" title="Show shelf view" aria-label="Show shelf view" aria-pressed="false" hidden><span class="material-symbols-rounded" aria-hidden="true">shelves</span></button>
           <button class="cw-view-timeline" type="button" data-collection-timeline title="Show timeline" aria-label="Show timeline" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">timeline</span></button>
           <button class="active" type="button" data-collection-view="grid" title="Grid view" aria-label="Grid view" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
           <button type="button" data-collection-view="list" title="List view" aria-label="List view" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>

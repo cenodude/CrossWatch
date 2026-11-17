@@ -224,4 +224,104 @@
   }
 
   window.CW.ArtChoice = { param: artParam, set: setArtChoice };
+
+  const SHELF_FORMATS = { "4k_bluray": "4K UHD", bluray: "Blu-ray", hd_dvd: "HD DVD", dvd: "DVD", digital: "Digital", vcd: "VCD", vhs: "VHS", betamax: "Betamax", laserdisc: "LaserDisc" };
+  const SHELF_STATUSES = { owned: "Owned", ordered: "Ordered", wishlist: "Wishlist" };
+  const SHELF_DISCS = { "4k_bluray": "bluray", bluray: "bluray", dvd: "dvd" };
+  const shelfIndex = { data: null, promise: null, currency: "" };
+  const shelfEsc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+
+  function shelfLoad(force = false) {
+    if (shelfIndex.promise && !force) return shelfIndex.promise;
+    shelfIndex.promise = fetch("/api/profile/shelf", { cache: "no-store", credentials: "same-origin" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        shelfIndex.data = data?.items && typeof data.items === "object" ? data.items : {};
+        shelfIndex.currency = typeof data?.currency === "string" ? data.currency : "";
+        window.dispatchEvent(new CustomEvent("cw:shelf-changed", { detail: { loaded: true } }));
+        return shelfIndex.data;
+      })
+      .catch(() => {
+        shelfIndex.data ||= {};
+        return shelfIndex.data;
+      });
+    return shelfIndex.promise;
+  }
+
+  function shelfPeek(type, id) {
+    return shelfIndex.data?.[artKey(type, id)] || null;
+  }
+
+  function shelfSet(type, id, info) {
+    shelfIndex.data ||= {};
+    const key = artKey(type, id);
+    if (info) shelfIndex.data[key] = info;
+    else delete shelfIndex.data[key];
+    window.dispatchEvent(new CustomEvent("cw:shelf-changed", { detail: { type, id: String(id), info: info || null } }));
+  }
+
+  function shelfMoney(value, currency = shelfIndex.currency) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return "";
+    try {
+      return currency
+        ? new Intl.NumberFormat(window.__CW_LOCALE || undefined, { style: "currency", currency }).format(amount)
+        : new Intl.NumberFormat(window.__CW_LOCALE || undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(amount);
+    } catch {
+      return amount.toFixed(2);
+    }
+  }
+
+  function shelfLabel(info) {
+    if (!info) return "";
+    const formats = Array.isArray(info.formats) ? info.formats : [];
+    const first = SHELF_FORMATS[formats[0]] || "";
+    if (first) return formats.length > 1 ? `${first} +${formats.length - 1}` : first;
+    return SHELF_STATUSES[info.status] || "On shelf";
+  }
+
+  function shelfDiscUrl(type, id, format) {
+    const disc = SHELF_DISCS[format];
+    if (!disc || type !== "movie" || !/^\d+$/.test(String(id || "")) || !String(document.documentElement.dataset.cwArt || "").startsWith("f")) return "";
+    return `/art/fanart/movie/${encodeURIComponent(String(id))}?kind=disc&disc=${disc}`;
+  }
+
+  function shelfLogoUrl(path, size = "w92") {
+    return /^\/[A-Za-z0-9_-]{4,64}\.(jpg|jpeg|png)$/i.test(String(path || "")) ? `/art/tmdb/image?path=${encodeURIComponent(path)}&size=${size}` : "";
+  }
+
+  function shelfDisc(type, id, format) {
+    const url = shelfDiscUrl(type, id, format);
+    return url ? `<img class="cw-shelf-disc" data-shelf-disc="${url}" alt="" hidden>` : "";
+  }
+
+  function shelfBand(info, { type = "", id = "", flash = false } = {}) {
+    if (!info) return "";
+    const count = Number(info.copies) || 0;
+    const format = (Array.isArray(info.formats) ? info.formats : [])[0] || "";
+    const logo = format === "digital" ? shelfLogoUrl(info.service?.logo, "w45") : "";
+    const mark = logo ? `<img class="cw-shelf-service" src="${shelfEsc(logo)}" alt="" loading="lazy" decoding="async">` : `<span class="material-symbols-rounded" aria-hidden="true">${format === "digital" ? "cloud" : "album"}</span>`;
+    const text = format === "digital" && info.service?.name && (info.formats || []).length === 1 ? info.service.name : shelfLabel(info);
+    const band = count ? `<span class="cw-shelf-band" data-format="${shelfEsc(format)}">${mark}<span>${shelfEsc(text)}</span>${count > 1 ? `<b>×${count}</b>` : ""}</span>` : "";
+    const status = info.status && (info.status !== "owned" || !count) ? `<span class="cw-shelf-status" data-status="${shelfEsc(info.status)}">${shelfEsc(SHELF_STATUSES[info.status] || info.status)}</span>` : "";
+    const lent = info.lent ? `<span class="cw-shelf-lent" title="Lent out" aria-label="Lent out"><span class="material-symbols-rounded" aria-hidden="true">handshake</span></span>` : "";
+    const server = info.on_server ? `<span class="cw-shelf-lent" title="Also on your media server" aria-label="Also on your media server"><span class="material-symbols-rounded" aria-hidden="true">dns</span></span>` : "";
+    return `<span class="cw-shelf-tags${flash ? " is-flash" : ""}">${band}${status}${lent}${server}</span>${shelfDisc(type === "movie" ? "movie" : "tv", id, format)}`;
+  }
+
+  document.addEventListener("pointerover", (event) => {
+    const img = event.target?.closest?.(".has-shelf")?.querySelector?.("img[data-shelf-disc]");
+    if (!img) return;
+    const src = img.dataset.shelfDisc;
+    img.removeAttribute("data-shelf-disc");
+    img.onload = () => { img.hidden = false; };
+    img.onerror = () => img.remove();
+    img.src = src;
+  }, { passive: true });
+
+  window.CW.Shelf = {
+    load: shelfLoad, peek: shelfPeek, set: shelfSet, band: shelfBand, label: shelfLabel, money: shelfMoney, discUrl: shelfDiscUrl, logoUrl: shelfLogoUrl, formats: SHELF_FORMATS, statuses: SHELF_STATUSES,
+    currency: () => shelfIndex.currency,
+    setCurrency: (value) => { shelfIndex.currency = String(value || ""); window.dispatchEvent(new CustomEvent("cw:shelf-changed", { detail: { currency: shelfIndex.currency } })); },
+  };
 })();

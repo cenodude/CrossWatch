@@ -20,6 +20,10 @@ from cw_platform.status_mapping_store import StatusStore, decode_item, decode_ob
 from providers.sync._status_mapping import NativeStatusAdapter, adapter_class
 
 
+class _SkippedStatusRead(RuntimeError):
+    pass
+
+
 def _read_status(adapter):
     for attempt in range(2):
         adapter.unidentified = []
@@ -28,6 +32,15 @@ def _read_status(adapter):
         except RuntimeError as exc:
             if attempt or not str(exc).endswith("_snapshot_changed"):
                 raise
+
+
+def _read_status_for_plan(adapter):
+    try:
+        return _read_status(adapter)
+    except Exception as exc:
+        if not _transient_read_failure(exc):
+            raise
+        return _SkippedStatusRead(_read_skip_reason(exc))
 
 
 def _skipped_code(record):
@@ -160,6 +173,12 @@ def _failure_detail(exc):
     return f"HTTP {code}{where}" + (f", {hint}" if hint else "")
 
 
+def _read_skip_reason(exc):
+    prefix = re.match(r"([a-z]{2,20})_status_", str(exc))
+    provider = prefix.group(1).upper() if prefix else "The provider"
+    return f"{provider} did not respond correctly ({_failure_detail(exc)}). Status mapping retries on the next sync."
+
+
 def report_skipped(ctx, pair, reason):
     history = (pair.get("features") or {}).get("history") or {}
     if pair.get("status_mapping") or isinstance(history, dict) and history.get("use_source_status"):
@@ -267,7 +286,9 @@ def _run_status_mappings(ctx, pairs, cfg, health_map, *, store, adapter_override
                     if instances:
                         view[endpoint.provider] = {**view[endpoint.provider], "instances": instances}
                     adapter = (adapter_overrides or {}).get(endpoint) or cls(view)
-                    read = read_once(["status_mapping", asdict(endpoint)], lambda adapter=adapter: _read_status(adapter), scoped=False)
+                    read = read_once(["status_mapping", asdict(endpoint)], lambda adapter=adapter: _read_status_for_plan(adapter), scoped=False)
+                    if isinstance(read, _SkippedStatusRead):
+                        raise read
                     snapshots[endpoint], unidentified[endpoint] = read if isinstance(read, tuple) else (read, [])
                     adapters[endpoint] = adapter
             left, right = dict(snapshots[scope.a]), dict(snapshots[scope.b])
@@ -386,13 +407,11 @@ def _run_status_mappings(ctx, pairs, cfg, health_map, *, store, adapter_override
                 proposals.append((pair, config, item, a, b, decision, state))
         except Exception as exc:
             code = str(exc)
-            if _transient_read_failure(exc):
+            if isinstance(exc, _SkippedStatusRead) or _transient_read_failure(exc):
                 totals["skipped"] += 1
                 summaries.pop(pair.get("id"), None)
                 proposals[:] = [proposal for proposal in proposals if proposal[0] is not pair]
-                prefix = re.match(r"([a-z]{2,20})_status_", code)
-                provider = prefix.group(1).upper() if prefix else "The provider"
-                skip = f"{provider} did not respond correctly ({_failure_detail(exc)}). Status mapping retries on the next sync."
+                skip = str(exc) if isinstance(exc, _SkippedStatusRead) else _read_skip_reason(exc)
                 publish_status(ctx, pair, "skip", state="skipped", reason=skip)
                 if callable(getattr(ctx, "emit_info", None)):
                     ctx.emit_info(f"[!] Status mapping skipped for {pair.get('source')} and {pair.get('target')}: {skip}")

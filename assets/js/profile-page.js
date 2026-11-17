@@ -1403,6 +1403,13 @@
 
   const COLLECTION_PREFS_KEY = "cw.profile.collection";
   const COLLECTION_PAGE_SIZES = [24, 48, 72, 96];
+  const COLLECTION_SHELF_MODES = ["synced", "shelf", "all", "unwatched", "not_on_server", "not_on_shelf"];
+  const COLLECTION_SHELF_EMPTY = {
+    shelf: "Nothing on your shelf yet. Open a title and choose Add to shelf.",
+    unwatched: "Every title on your shelf has been watched.",
+    not_on_server: "Every title on your shelf is also on a media server.",
+    not_on_shelf: "Every title on your media servers is also on your shelf.",
+  };
 
   function readCollectionPrefs() {
     try {
@@ -1428,6 +1435,13 @@
     provider: "",
     search: "",
     sort: "collected_at",
+    shelf: COLLECTION_SHELF_MODES.includes(collectionPrefs.shelf) ? collectionPrefs.shelf : "synced",
+    display: ["case", "shelf"].includes(collectionPrefs.display) ? collectionPrefs.display : "poster",
+    shelfStats: null,
+    shelfFilter: "",
+    shelfLocations: [],
+    shelfAnimated: false,
+    flashKey: "",
     items: [],
     total: 0,
     pageCount: 1,
@@ -1439,7 +1453,7 @@
 
   function saveCollectionPrefs() {
     try {
-      window.localStorage?.setItem(COLLECTION_PREFS_KEY, JSON.stringify({ view: collectionState.view, pageSize: collectionState.desktopPageSize, mobilePageSize: collectionState.mobilePageSize, cols: collectionState.cols, timeline: collectionState.timeline, zoom: collectionState.zoom }));
+      window.localStorage?.setItem(COLLECTION_PREFS_KEY, JSON.stringify({ view: collectionState.view, pageSize: collectionState.desktopPageSize, mobilePageSize: collectionState.mobilePageSize, cols: collectionState.cols, timeline: collectionState.timeline, zoom: collectionState.zoom, shelf: collectionState.shelf, display: collectionState.display }));
     } catch {}
   }
 
@@ -1543,19 +1557,25 @@
     const meta = [kind, episode || year, when, collectionLibrarySummary(item)].filter(Boolean).join(" · ");
     const quality = collectionQuality(item);
     const ariaTitle = quality?.label ? `${title}, ${quality.label}` : title;
+    const shelfInfo = item?.shelf && typeof item.shelf === "object" ? item.shelf : null;
+    const shelfType = mediaType(item) ? "tv" : "movie";
+    const shelfHtml = shelfInfo ? window.CW?.Shelf?.band?.(shelfInfo, { type: shelfType, id: tmdbId(item), flash: collectionState.flashKey === `${shelfType}:${tmdbId(item)}` }) || "" : "";
+    const caseView = !!shelfInfo && collectionState.display === "case" && collectionState.shelf !== "synced";
+    const caseAttrs = caseView ? ` data-shelf-format="${esc((shelfInfo.formats || [])[0] || "other")}" data-shelf-pack="${esc(shelfInfo.packaging || "")}"` : "";
     const inner = `<span class="cw-collection-poster${quality ? " has-quality" : ""}">
         <img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
         <span class="cw-collection-badge"><span class="material-symbols-rounded" aria-hidden="true">${esc(icon)}</span>${esc(kind)}</span>
         ${quality ? quality.html : ""}
+        ${shelfHtml}
       </span>
       <span class="cw-collection-info">
         <strong class="cw-collection-name">${esc(title)}</strong>
         <span class="cw-collection-meta">${esc(meta)}</span>
       </span>`;
     const selectKey = String(item?.key || key);
-    return `<article class="cw-collection-card cw-tl-card${collectionState.selected.has(selectKey) ? " is-selected" : ""}" data-collection-key="${esc(selectKey)}">
+    return `<article class="cw-collection-card cw-tl-card${collectionState.selected.has(selectKey) ? " is-selected" : ""}${shelfInfo ? " has-shelf" : ""}${caseView ? " is-case" : ""}" data-collection-key="${esc(selectKey)}"${caseAttrs}>
       <button class="cw-collection-open" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(ariaTitle)}">${inner}</button>
-      ${collectionSelectable() ? collectionSelectBox(selectKey) : ""}
+      ${collectionSelectable() && !item?.shelf_only ? collectionSelectBox(selectKey) : ""}
       <span class="cw-collection-card-foot"><span class="cw-collection-sources">${providerStrip}</span>${cardActionsButton(`data-collection-actions="${esc(selectKey)}"`, `Actions for ${title}`)}</span>
     </article>`;
   }
@@ -1718,6 +1738,15 @@
     return list.map((g) => (typeof g === "string" ? g : (g?.name || g?.title || ""))).map((g) => String(g).trim()).filter(Boolean).slice(0, 3).join(", ");
   };
 
+  function collectionShelfPill(item) {
+    const info = item?.shelf && typeof item.shelf === "object" ? item.shelf : null;
+    if (!info) return "";
+    const copies = Number(info.copies) || 0;
+    const label = `${window.CW?.Shelf?.label?.(info) || "On shelf"}${copies > 1 ? ` ×${copies}` : ""}`;
+    const status = info.status && info.status !== "owned" ? ` · ${window.CW?.Shelf?.statuses?.[info.status] || info.status}` : "";
+    return `<span class="cw-collection-pill cw-collection-pill--shelf" data-format="${esc((info.formats || [])[0] || "")}" title="On your shelf"><span class="material-symbols-rounded" aria-hidden="true">shelves</span>${esc(label + status)}</span>`;
+  }
+
   function collectionListRow(item, index) {
     const key = storePosterItem(item);
     const [icon, kind] = collectionKind(item);
@@ -1734,9 +1763,10 @@
     const selectKey = String(item?.key || key);
     const img = `<img src="${esc(art)}" alt="" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">`;
     const cells = `<span class="cw-collection-cell cw-collection-cell--title">
-        ${collectionSelectable() ? collectionSelectBox(selectKey) : ""}
+        ${collectionSelectable() && !item?.shelf_only ? collectionSelectBox(selectKey) : ""}
         <strong>${esc(title)}</strong>
         ${stamp ? `<span class="cw-collection-pill">${esc(stamp)}</span>` : ""}
+        ${collectionShelfPill(item)}
       </span>
       <span class="cw-collection-cell cw-collection-cell--rel">${esc(release || "—")}</span>
       <span class="cw-collection-cell cw-collection-cell--genre">${esc(genres || "—")}</span>
@@ -1917,9 +1947,54 @@
     });
   }
 
+  function enhanceCollectionShelfSelect(select = $("#profile-collection-shelf")) {
+    if (!select || typeof window.CW?.IconSelect?.enhance !== "function") return;
+    const shelfIcons = { synced: "sync", shelf: "shelves", all: "library_books", unwatched: "visibility_off", not_on_server: "cloud_off", not_on_shelf: "dns" };
+    window.CW.IconSelect.enhance(select, {
+      className: "cw-profile-collection-select",
+      menuClassName: "cw-profile-collection-menu",
+      menuMinWidth: 220,
+      getOptionData: (value, option) => ({
+        label: option?.textContent?.trim() || "Synced",
+        icons: [{ symbol: shelfIcons[value] || "sync" }],
+      }),
+    });
+  }
+
+  function renderShelfFilter() {
+    const select = $("#profile-collection-shelf-filter");
+    if (!select) return;
+    const hide = collectionState.shelf === "synced";
+    const formats = window.CW?.Shelf?.formats || {};
+    const present = Object.keys(collectionState.shelfStats?.formats || {});
+    const wanted = collectionState.shelfFilter;
+    const formatKeys = [...new Set([...Object.keys(formats).filter((key) => present.includes(key)), ...(wanted.startsWith("format:") ? [wanted.slice(7)] : [])])];
+    const locations = [...new Set([...collectionState.shelfLocations, ...(wanted.startsWith("location:") ? [wanted.slice(9)] : [])])];
+    const options = [["", "Whole shelf"], ["lent", "Lent out"], ["price", "No price yet"], ...formatKeys.map((key) => [`format:${key}`, formats[key] || key]), ...locations.map((name) => [`location:${name}`, `Shelf: ${name}`])];
+    select.innerHTML = options.map(([value, label]) => `<option value="${esc(value)}"${value === wanted ? " selected" : ""}>${esc(label)}</option>`).join("");
+    select.value = wanted;
+    select.hidden = hide;
+    if (typeof window.CW?.IconSelect?.enhance === "function") {
+      const icons = { lent: "handshake", price: "money_off" };
+      window.CW.IconSelect.enhance(select, {
+        className: "cw-profile-collection-select",
+        menuClassName: "cw-profile-collection-menu",
+        menuMinWidth: 220,
+        getOptionData: (value, option) => ({
+          label: option?.textContent?.trim() || "Whole shelf",
+          icons: [{ symbol: icons[value] || (String(value).startsWith("format:") ? "album" : String(value).startsWith("location:") ? "shelves" : "filter_alt") }],
+        }),
+      });
+    }
+    const wrap = select.nextElementSibling;
+    if (wrap?.classList?.contains("cw-icon-select")) wrap.style.display = hide ? "none" : "";
+  }
+
   function enhanceCollectionSortSelect(select = $("#profile-collection-sort")) {
     if (!select || typeof window.CW?.IconSelect?.enhance !== "function") return;
     const sortIcons = {
+      price_desc: "payments",
+      purchased_desc: "shopping_bag",
       collected_at: "schedule",
       collected_at_asc: "history",
       title: "sort_by_alpha",
@@ -1952,14 +2027,68 @@
     host.innerHTML = values.map(([label, value]) => `<span class="cw-hub-records-stat"><strong>${esc(numberFmt.format(Number(value) || 0))}</strong><span>${esc(label)}</span></span>`).join("");
   }
 
+  function shelfViewOn() {
+    return collectionState.display === "shelf" && collectionState.shelf !== "synced" && collectionState.view !== "list";
+  }
+
+  function shelfStatsHtml() {
+    const stats = collectionState.shelfStats;
+    if (!stats || !stats.titles) return "";
+    const labels = window.CW?.Shelf?.formats || {};
+    const chips = [`<span class="cw-shelf-stat"><b>${esc(numberFmt.format(stats.titles))}</b><small>${stats.titles === 1 ? "title" : "titles"}</small></span>`, `<span class="cw-shelf-stat"><b>${esc(numberFmt.format(stats.copies))}</b><small>${stats.copies === 1 ? "copy" : "copies"}</small></span>`];
+    Object.entries(stats.formats || {}).sort((a, b) => b[1] - a[1]).forEach(([fmt, count]) => chips.push(`<span class="cw-shelf-stat" data-format="${esc(fmt)}"><b>${esc(numberFmt.format(count))}</b><small>${esc(labels[fmt] || fmt)}</small></span>`));
+    if (stats.lent) chips.push(`<span class="cw-shelf-stat is-lent"><span class="material-symbols-rounded" aria-hidden="true">handshake</span><b>${esc(numberFmt.format(stats.lent))}</b><small>lent out</small></span>`);
+    if (Number(stats.spent) > 0) chips.push(`<span class="cw-shelf-stat is-spent"><span class="material-symbols-rounded" aria-hidden="true">payments</span><b>${esc(window.CW?.Shelf?.money?.(stats.spent, stats.currency || "") || stats.spent)}</b><small>spent</small></span>`);
+    return `<div class="cw-shelf-stats">${chips.join("")}</div>`;
+  }
+
+  function shelfCase(item, index) {
+    const info = item?.shelf || {};
+    const title = titleOf(item);
+    const format = (info.formats || [])[0] || "other";
+    const copies = Number(info.copies) || 0;
+    const statusLabel = window.CW?.Shelf?.statuses?.[info.status] || "";
+    const label = [title, window.CW?.Shelf?.label?.(info), copies > 1 ? `${copies} copies` : "", info.status && info.status !== "owned" ? statusLabel : ""].filter(Boolean).join(", ");
+    return `<button type="button" class="cw-shelf-case" data-profile-poster-key="${esc(storePosterItem(item))}" data-shelf-format="${esc(format)}" data-shelf-pack="${esc(info.packaging || "")}" data-status="${esc(info.status || "owned")}" style="--i:${Math.min(index, 25)}" aria-label="${esc(label)}" title="${esc(title)}">
+      <span class="cw-shelf-spine"><span class="cw-shelf-spine-title">${esc(title)}</span><span class="cw-shelf-spine-mark">${esc(window.CW?.Shelf?.formats?.[format] || statusLabel)}</span></span>
+      <span class="cw-shelf-pop"><img src="${esc(poster(item, "w185"))}" alt="" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'"></span>
+    </button>`;
+  }
+
+  function shelfViewHtml() {
+    const groups = new Map();
+    for (const item of collectionState.items) {
+      const name = String(item?.shelf?.shelves?.[0] || "").trim();
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(item);
+    }
+    const ordered = [...groups.entries()].sort(([a], [b]) => (!a ? 1 : !b ? -1 : a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })));
+    const animate = !collectionState.shelfAnimated;
+    collectionState.shelfAnimated = true;
+    let index = 0;
+    const rows = ordered.map(([name, items]) => `<section class="cw-shelf-row">
+        <h3 class="cw-shelf-row-head"><span class="material-symbols-rounded" aria-hidden="true">shelves</span><span>${esc(name || "No shelf set")}</span><small>${esc(`${numberFmt.format(items.length)} ${items.length === 1 ? "title" : "titles"}`)}</small></h3>
+        <div class="cw-shelf-rack">${items.map((item) => shelfCase(item, index++)).join("")}</div>
+      </section>`).join("");
+    return `${shelfStatsHtml()}<div class="cw-shelf-view${animate ? " is-entering" : ""}">${rows}</div>`;
+  }
+
   function paintCollectionItems() {
     const grid = $("#profile-collection-grid");
     if (!grid) return;
     const list = collectionState.view === "list";
     grid.dataset.view = list ? "list" : "grid";
+    if (collectionState.items.length && shelfViewOn()) {
+      grid.dataset.view = "shelf";
+      grid.classList.remove("is-grouped");
+      grid.innerHTML = shelfViewHtml();
+      collectionState.flashKey = "";
+      syncCollectionSelection();
+      return;
+    }
     grid.classList.remove("is-grouped");
     if (!collectionState.items.length) {
-      grid.innerHTML = empty("No collection items match this view.");
+      grid.innerHTML = empty(!collectionState.search && COLLECTION_SHELF_EMPTY[collectionState.shelf] || "No collection items match this view.");
       syncCollectionSelection();
       return;
     }
@@ -1995,6 +2124,7 @@
         <div class="cw-collection-day-body">${group.items.map(collectionCard).join("")}</div>
       </section>`).join("");
     }
+    collectionState.flashKey = "";
     syncCollectionSelection();
   }
 
@@ -2013,6 +2143,20 @@
       btn.classList.toggle("active", active);
       btn.setAttribute("aria-pressed", String(active));
     });
+    document.querySelectorAll("[data-collection-display]").forEach((btn) => {
+      const mode = btn.dataset.collectionDisplay;
+      const on = collectionState.display === mode;
+      btn.hidden = collectionState.shelf === "synced" || collectionState.view === "list";
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-pressed", String(on));
+      btn.title = on ? "Show posters" : mode === "shelf" ? "Show shelf view" : "Show cases";
+      btn.setAttribute("aria-label", btn.title);
+    });
+    const shelfSelect = $("#profile-collection-shelf");
+    if (shelfSelect && shelfSelect.value !== collectionState.shelf) {
+      shelfSelect.value = collectionState.shelf;
+      enhanceCollectionShelfSelect(shelfSelect);
+    }
     document.querySelectorAll("[data-collection-timeline]").forEach((btn) => {
       btn.classList.toggle("active", collectionState.timeline);
       btn.setAttribute("aria-pressed", String(collectionState.timeline));
@@ -2025,6 +2169,9 @@
     const grid = $("#profile-collection-grid");
     if (!grid) return;
     collectionState.total = Number(data.total || 0);
+    collectionState.shelfStats = data.shelf_stats && typeof data.shelf_stats === "object" ? data.shelf_stats : null;
+    collectionState.shelfLocations = Array.isArray(data.shelf_locations) ? data.shelf_locations : [];
+    renderShelfFilter();
     renderCollectionMetrics(data);
     renderCollectionTypeChips(data.counts || {});
     renderCollectionProviders(data.providers || []);
@@ -2094,6 +2241,8 @@
       page: String(collectionState.page),
       page_size: String(collectionState.pageSize),
     });
+    if (collectionState.shelf !== "synced") params.set("shelf", collectionState.shelf);
+    if (collectionState.shelf !== "synced" && collectionState.shelfFilter) params.set("shelf_filter", collectionState.shelfFilter);
     if (month) params.set("month", month);
     const url = `/api/profile/collection?${params.toString()}`;
     const snapshot = listSnapshot(`${url}&layout=${collectionState.view}`, data => {
@@ -2163,13 +2312,22 @@
         if (!item) return;
         const card = action.closest("[data-collection-key]");
         const entries = [{ label: "View media details", icon: "info", run: () => card?.querySelector("[data-profile-poster-key]")?.click() }];
-        if (collectionSelectable() && window.CW?.ItemActions) entries.unshift({ label: "Manage providers", icon: "edit", run: () => window.CW.ItemActions.openMenu({ anchor: action, feature: "collection", item: { ...collectionSelectionEntry(item), tmdb: item.tmdb }, refs: { present: timelineEndpoints(collectionSelectionEntry(item).present), missing: [] }, fillMissing: true, scope: () => [card], onChanged: () => { invalidateLists(); return loadCollection({ quiet: true }); } }) });
+        if (collectionSelectable() && !item.shelf_only && window.CW?.ItemActions) entries.unshift({ label: "Manage providers", icon: "edit", run: () => window.CW.ItemActions.openMenu({ anchor: action, feature: "collection", item: { ...collectionSelectionEntry(item), tmdb: item.tmdb }, refs: { present: timelineEndpoints(collectionSelectionEntry(item).present), missing: [] }, fillMissing: true, scope: () => [card], onChanged: () => { invalidateLists(); return loadCollection({ quiet: true }); } }) });
         openCardActions(action, entries, {title:item.title});
         return;
       }
       const pick = event.target?.closest?.("[data-collection-select]");
       if (pick) {
         void selectCollection(pick.dataset.collectionSelect);
+        return;
+      }
+      const displayBtn = event.target?.closest?.("[data-collection-display]");
+      if (displayBtn) {
+        const mode = displayBtn.dataset.collectionDisplay;
+        collectionState.display = collectionState.display === mode ? "poster" : mode;
+        saveCollectionPrefs();
+        syncCollectionViewButtons();
+        paintCollectionItems();
         return;
       }
       if (event.target?.closest?.("[data-collection-timeline]")) {
@@ -2223,6 +2381,30 @@
     });
     enhanceCollectionProviderSelect();
     enhanceCollectionSortSelect();
+    const shelfSelect = $("#profile-collection-shelf");
+    if (shelfSelect) {
+      shelfSelect.value = collectionState.shelf;
+      enhanceCollectionShelfSelect(shelfSelect);
+      shelfSelect.addEventListener("change", (event) => {
+        collectionState.shelf = COLLECTION_SHELF_MODES.includes(event.target?.value) ? event.target.value : "synced";
+        collectionState.shelfFilter = "";
+        collectionState.selected.clear();
+        saveCollectionPrefs();
+        syncCollectionViewButtons();
+        void loadCollection({ reset: true });
+      });
+    }
+    $("#profile-collection-shelf-filter")?.addEventListener("change", (event) => {
+      collectionState.shelfFilter = String(event.target?.value || "");
+      void loadCollection({ reset: true });
+    });
+    renderShelfFilter();
+    window.addEventListener("cw:shelf-changed", (event) => {
+      if (event.detail?.loaded || !collectionState.loaded) return;
+      if (event.detail?.id) collectionState.flashKey = `${event.detail.type === "movie" ? "movie" : "tv"}:${event.detail.id}`;
+      collectionState.loaded = false;
+      if ($("#profile-panel-collection")?.classList.contains("active")) void loadCollection({ quiet: true });
+    });
     $("#profile-collection-types")?.addEventListener("click", (event) => {
       const btn = event.target?.closest?.("[data-collection-type]");
       if (!btn) return;

@@ -1303,6 +1303,7 @@
     const rows = recent ? recentRows : shows ? state.shows : notes ? state.noteRows : state.items;
     if (!rows.length) return shows ? renderShows() : notes ? renderTitles() : renderList();
     const feature = recent ? "history" : listFeature();
+    if (feature === "collection") void window.CW?.Shelf?.load?.();
     let previousDay = "";
     const cards = rows.map((item, index) => {
       const refName = shows ? "show" : notes ? "note" : "key";
@@ -1311,6 +1312,7 @@
       const card = canCard(cardItem(item, shows || isChild(item) || item.type === "show"));
       const art = item.art || (item.ids?.tmdb ? {kind: item.type === "movie" ? "movie" : "tv", tmdb: item.ids.tmdb} : null);
       const url = artUrl({...item, art}, "w500");
+      const shelfInfo = feature === "collection" && !shows && !notes && art?.tmdb ? window.CW?.Shelf?.peek?.(art.kind, art.tmdb) : null;
       const stillSeason = art?.season ?? item.season;
       const stillEpisode = art?.episode ?? item.episode;
       const image = url ? `${url}&kind=${isChild(item) && stillSeason != null && stillEpisode != null ? `still&season=${encodeURIComponent(stillSeason)}&episode=${encodeURIComponent(stillEpisode)}` : "backdrop"}` : "";
@@ -1326,8 +1328,8 @@
         const day = dayLabel(date);
         if (day !== previousDay) { heading = `<h3 class="trk-grid-day">${esc(day)}</h3>`; previousDay = day; }
       }
-      return `${heading}<article class="trk-play trk-grid-card${selected ? " is-selected" : ""}${state.picked.has(item.key) ? " is-picked" : ""}" data-trk-ref-${refName}="${esc(item.key)}"${recent ? ` data-trk-overview-open="recent:${index}"` : ""} tabindex="0" aria-label="${esc(title)}" aria-selected="${selected}">
-        <div class="trk-grid-art"><span class="trk-grid-placeholder" aria-hidden="true">${symbol(shows ? "tv" : typeMeta(item).icon)}</span>${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}
+      return `${heading}<article class="trk-play trk-grid-card${selected ? " is-selected" : ""}${state.picked.has(item.key) ? " is-picked" : ""}${shelfInfo ? " has-shelf" : ""}" data-trk-ref-${refName}="${esc(item.key)}"${recent ? ` data-trk-overview-open="recent:${index}"` : ""} tabindex="0" aria-label="${esc(title)}" aria-selected="${selected}">
+        <div class="trk-grid-art"><span class="trk-grid-placeholder" aria-hidden="true">${symbol(shows ? "tv" : typeMeta(item).icon)}</span>${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}${shelfInfo ? window.CW.Shelf.band(shelfInfo, { type: art.kind === "movie" ? "movie" : "tv", id: art.tmdb }) : ""}
           ${!recent ? `<label class="trk-grid-select"><input type="checkbox" class="cw-checkbox trk-grid-pick" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(title)}"></label>` : ""}
           ${rating != null ? `<span class="cw-media-card-score" aria-label="Your rating: ${esc(rating)} out of 10"><span>${esc(rating)}</span></span>` : ""}
           ${date || prominentStatus ? `<div class="trk-grid-labels">${date ? `<span class="trk-grid-date" title="${esc(whenText(date))}">${esc(!recent && timelineOn() ? timeText(date) : whenText(date))}</span>` : ""}${prominentStatus ? `<span class="trk-grid-status">${prominentStatus}</span>` : ""}</div>` : ""}
@@ -2652,6 +2654,46 @@
     return Array.from(new Set([...BASE_IDS, ...present]));
   }
 
+  const MEDIA_RES = { uhd_4k: "4K", hd_1080p: "1080p", hd_1080i: "1080i", hd_720p: "720p", sd_576p: "576p", sd_576i: "576i", sd_480p: "480p", sd_480i: "480i" };
+  const MEDIA_HDR = { dolby_vision: "Dolby Vision", hdr10_plus: "HDR10+", hdr10: "HDR10", hlg: "HLG" };
+  const MEDIA_AUDIO = { dolby_atmos: "Dolby Atmos", dolby_digital_plus_atmos: "Dolby Digital Plus Atmos", dolby_truehd: "Dolby TrueHD", dolby_digital_plus: "Dolby Digital Plus", dolby_digital: "Dolby Digital", dolby_prologic: "Dolby Pro Logic", dts_x: "DTS:X", dts_ma: "DTS-HD MA", dts_hr: "DTS-HD HRA", dts: "DTS", auro_3d: "Auro-3D", lpcm: "LPCM", flac: "FLAC", aac: "AAC", mp3: "MP3", mp2: "MP2", ogg: "Ogg", ogg_opus: "Opus", wma: "WMA" };
+  const MEDIA_CHANNELS = ["1.0", "2.0", "2.1", "3.0", "3.1", "4.0", "4.1", "5.0", "5.1", "5.1.2", "5.1.4", "6.1", "7.1", "7.1.2", "7.1.4", "9.1", "10.1"];
+  const MEDIA_FORMATS = { "4k_bluray": "4K UHD", bluray: "Blu-ray", hd_dvd: "HD DVD", dvd: "DVD", digital: "Digital", vcd: "VCD", vhs: "VHS", betamax: "Betamax", laserdisc: "LaserDisc" };
+
+  function mediaEditor(item) {
+    const media = item.media_info || {};
+    const options = (map, value) => `<option value="">Not set</option>${Object.entries(map).map(([key, label]) => `<option value="${esc(key)}"${key === value ? " selected" : ""}>${esc(label)}</option>`).join("")}`;
+    const select = (name, label, map, value) => `<label class="trk-field"><span>${esc(label)}</span><select class="cw-select" data-trk-media="${name}">${options(map, value || "")}</select></label>`;
+    const shelf = item.art?.tmdb ? window.CW?.Shelf?.peek?.(item.art.kind, item.art.tmdb) : null;
+    const shelfFormat = (shelf?.formats || []).find((fmt) => MEDIA_FORMATS[fmt]) || "";
+    const suggest = shelfFormat && shelfFormat !== item.format ? `<button type="button" class="cw-btn trk-media-shelf" data-trk-media-shelf="${esc(shelfFormat)}">${icon("shelves")}<span>Use shelf format: ${esc(MEDIA_FORMATS[shelfFormat])}</span></button>` : "";
+    return `<details class="trk-identity trk-media"${item.media_manual ? " open" : ""}>
+          <summary>${icon("album")}<span>Media info</span><small>${item.media_manual ? "Set by you. Sync keeps your values." : "From sync. Change a value to set your own."}</small></summary>
+          <div class="trk-identity-body">
+            <div class="trk-fields">
+              ${select("format", "Format", MEDIA_FORMATS, item.format)}
+              ${select("resolution", "Resolution", MEDIA_RES, media.resolution)}
+              ${select("hdr", "HDR", MEDIA_HDR, media.hdr)}
+              ${select("audio", "Audio", MEDIA_AUDIO, media.audio)}
+              ${select("audio_channels", "Channels", Object.fromEntries(MEDIA_CHANNELS.map((value) => [value, value])), media.audio_channels)}
+              <label class="trk-field trk-media-check"><input type="checkbox" class="cw-checkbox" data-trk-media="is_3d"${media.is_3d ? " checked" : ""}><span>3D</span></label>
+            </div>
+            ${suggest}
+            ${item.media_manual ? `<label class="trk-field trk-media-check"><input type="checkbox" class="cw-checkbox" data-trk-media="reset"><span>Use synced values again</span></label>` : ""}
+          </div>
+        </details>`;
+  }
+
+  function mediaChanges(form, item) {
+    if (!form.querySelector('[data-trk-media="format"]')) return undefined;
+    if (form.querySelector('[data-trk-media="reset"]')?.checked) return null;
+    const get = (name) => form.querySelector(`[data-trk-media="${name}"]`)?.value || "";
+    const next = { format: get("format"), resolution: get("resolution"), hdr: get("hdr"), audio: get("audio"), audio_channels: get("audio_channels"), is_3d: !!form.querySelector('[data-trk-media="is_3d"]')?.checked };
+    const before = item.media_info || {};
+    const same = next.format === (item.format || "") && ["resolution", "hdr", "audio", "audio_channels"].every((key) => next[key] === (before[key] || "")) && next.is_3d === !!before.is_3d;
+    return same ? undefined : next;
+  }
+
   function renderEdit() {
     const item = sheet.item;
     const f = featureOf(sheet.feature);
@@ -2683,6 +2725,7 @@
             <div class="trk-fields">${idInputs("ids", item.ids, idList(item.ids))}</div>
           </div>
         </details>
+        ${sheet.feature === "collection" ? mediaEditor(item) : ""}
         ${sheet.error ? `<p class="trk-error" role="alert">${icon("error")}<span>${esc(sheet.error)}</span></p>` : ""}
         <footer class="trk-sheet-foot">
           <button type="button" class="cw-btn" data-trk-sheet="close">Cancel</button>
@@ -3728,6 +3771,10 @@
         if (now !== before) diff[name] = now;
       });
       if (Object.keys(diff).length) changes[group] = diff;
+    }
+    if (sheet.feature === "collection") {
+      const media = mediaChanges(form, item);
+      if (media !== undefined) changes.media = media;
     }
     return changes;
   }
@@ -5237,6 +5284,16 @@
     document.addEventListener("visibilitychange", checkOverview);
     window.addEventListener("cw:tracker-migrated", () => {
       if (state.moving) refresh();
+    });
+    document.addEventListener("click", (event) => {
+      const button = event.target?.closest?.("[data-trk-media-shelf]");
+      if (!button) return;
+      const select = button.closest("form")?.querySelector('[data-trk-media="format"]');
+      if (select) select.value = button.dataset.trkMediaShelf;
+      button.remove();
+    });
+    window.addEventListener("cw:shelf-changed", () => {
+      if (state.view === "collection" && state.layouts?.[state.view] === "grid" && state.root && !state.root.classList.contains("hidden")) render();
     });
   }
 

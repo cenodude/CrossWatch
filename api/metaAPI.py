@@ -1413,6 +1413,46 @@ def _artwork_choice_file(t: str, tmdb_id: int, art_kind: str, size_tag: str, bas
     return found
 
 
+_WATCH_PROVIDERS: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
+_REGION_RE = re.compile(r"^[A-Z]{2}$")
+
+
+@router.get("/api/metadata/watch-providers", tags=["metadata"])
+def api_watch_providers(media: str = Query("movie", alias="type"), region: str | None = Query(None, max_length=2)) -> JSONResponse:
+    api_key = str(((load_config() or {}).get("tmdb") or {}).get("api_key") or "").strip()
+    if not api_key:
+        return JSONResponse({"ok": False, "error": "Connect TMDb Metadata first."}, status_code=404)
+    t = "tv" if str(media or "").strip().lower() in {"tv", "show"} else "movie"
+    locale = str(_cfg_ui_locale() or "")
+    guess = locale.replace("_", "-").split("-")[-1].upper() if "-" in locale or "_" in locale else ""
+    reg = str(region or guess or "US").upper()
+    if not _REGION_RE.fullmatch(reg):
+        reg = "US"
+    now = time.time()
+    hit = _WATCH_PROVIDERS.get((t, reg))
+    if hit and now - hit[0] < 86400:
+        return JSONResponse({"ok": True, "region": reg, "providers": hit[1]})
+    data = _tmdb_get_json(f"https://api.themoviedb.org/3/watch/providers/{t}", {"api_key": api_key, "watch_region": reg}, timeout=12)
+    if not isinstance(data, dict):
+        return JSONResponse({"ok": False, "error": "TMDb services could not be loaded."}, status_code=502)
+    rows = [row for row in data.get("results") or [] if isinstance(row, dict)]
+    rows.sort(key=lambda row: (int((row.get("display_priorities") or {}).get(reg) or row.get("display_priority") or 999), str(row.get("provider_name") or "").lower()))
+    out: list[dict[str, Any]] = []
+    for row in rows[:120]:
+        try:
+            provider_id = int(row.get("provider_id") or 0)
+        except Exception:
+            continue
+        name = str(row.get("provider_name") or "").strip()[:80]
+        logo = str(row.get("logo_path") or "")
+        if provider_id > 0 and name:
+            out.append({"id": provider_id, "name": name, **({"logo": logo} if _TMDB_IMAGE_PATH_RE.fullmatch(logo) else {})})
+    if len(_WATCH_PROVIDERS) > 32:
+        _WATCH_PROVIDERS.clear()
+    _WATCH_PROVIDERS[(t, reg)] = (now, out)
+    return JSONResponse({"ok": True, "region": reg, "providers": out})
+
+
 _ARTWORK_FANART_KINDS = {"poster": "poster", "backdrop": "background", "logo": "logo"}
 _ARTWORK_TMDB_FIELDS = {"poster": "posters", "backdrop": "backdrops", "logo": "logos"}
 _ARTWORK_THUMB_SIZES = {"poster": "w185", "backdrop": "w300", "logo": "w185"}
