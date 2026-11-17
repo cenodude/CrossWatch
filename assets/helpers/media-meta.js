@@ -376,7 +376,9 @@
     }
     shelfPopState.anchor = anchor;
     const pop = shelfPopState.node;
-    pop.innerHTML = html;
+    const art = (target || anchor).querySelector?.(".cw-case-art");
+    const poster = art?.currentSrc || art?.src || "";
+    pop.innerHTML = `${poster ? `<span class="cw-shelfv-pop-bg" aria-hidden="true"><img src="${shelfEsc(poster)}" alt="" decoding="async"></span>` : ""}${html}`;
     const rect = (target || anchor).getBoundingClientRect();
     const width = pop.offsetWidth || 260;
     const height = pop.offsetHeight || 200;

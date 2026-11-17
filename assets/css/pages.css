@@ -1163,6 +1163,10 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 .cw-shelfv-item.is-wishlist .cw-case{opacity:.55}
 .cw-shelfv-pop{position:fixed;z-index:60;display:flex;flex-direction:column;align-items:flex-start;gap:4px;width:260px;max-width:calc(100vw - 24px);padding:14px 16px;box-sizing:border-box;pointer-events:none;opacity:0;transform:translateY(4px);transition:opacity .15s ease,transform .15s ease}
 .cw-shelfv-pop.is-open{opacity:1;transform:none}
+.cw-shelfv-pop{overflow:hidden;isolation:isolate}
+.cw-shelfv-pop-bg{position:absolute;inset:0;z-index:-1;overflow:hidden;pointer-events:none}
+.cw-shelfv-pop-bg img{position:absolute;top:-40px;left:-40px;width:calc(100% + 80px);height:calc(100% + 80px);object-fit:cover}
+.cw-shelfv-pop-bg::after{content:"";position:absolute;inset:0}
 .cw-shelfv-pop h4{margin:0;font-size:14.5px;font-weight:700;line-height:1.3}
 .cw-shelfv-pop-sub{font-size:12px}
 .cw-shelfv-pop .cw-media-pill{margin-top:8px}
