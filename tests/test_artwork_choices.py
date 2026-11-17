@@ -209,6 +209,48 @@ def test_choose_and_reset_endpoints(store) -> None:
     assert metaAPI.api_artwork_reset("book", 1399, None).status_code == 400
 
 
+DISC_URL = "https://assets.fanart.tv/fanart/movies/603/moviedisc/bd.png"
+
+
+def test_disc_choice_is_fanart_and_movie_only(store) -> None:
+    with pytest.raises(artwork_choices.ArtworkChoiceError):
+        artwork_choices.set_choice("movie", 603, "disc", "tmdb", "/abcd1234.png")
+    with pytest.raises(artwork_choices.ArtworkChoiceError):
+        artwork_choices.set_choice("tv", 1399, "disc", "fanart", DISC_URL)
+    rev = artwork_choices.set_choice("movie", 603, "disc", "fanart", DISC_URL)
+    assert rev and artwork_choices.pin_file("movie", 603, "disc")[0].name == "movie_603_disc.png"
+    assert artwork_choices.reset("movie", 603, "disc") == ""
+    assert artwork_choices.pin_file("movie", 603, "disc") is None
+
+
+def test_fanart_disc_route_serves_chosen_disc(store, tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(metaAPI, "_env", lambda: (None, tmp_path / "cache", lambda: {}))
+    monkeypatch.setattr(metaAPI, "_fanart_provider", lambda: None)
+    args = {"typ": "movie", "tmdb_id": 603, "kind": "disc", "disc": "bluray", "season": None, "tvdb": None, "imdb": None, "locale": None}
+    assert metaAPI.api_fanart_art(**args, ov=None).status_code == 404
+    rev = artwork_choices.set_choice("movie", 603, "disc", "fanart", DISC_URL)
+    fresh = metaAPI.api_fanart_art(**args, ov=rev)
+    assert Path(fresh.path).read_bytes() == b"img" and "immutable" in fresh.headers["cache-control"]
+    assert metaAPI.api_fanart_art(**{**args, "disc": "dvd"}, ov="old").headers["cache-control"] == "no-cache"
+
+
+def test_disc_options_come_from_fanart_only(store, monkeypatch) -> None:
+    metaAPI._ARTWORK_OPTIONS.clear()
+    monkeypatch.setattr(metaAPI, "load_config", lambda: {"tmdb": {"api_key": "t"}})
+    calls: list[str] = []
+    monkeypatch.setattr(metaAPI, "_tmdb_get_json", lambda url, params=None, **kw: (calls.append(url), {})[1])
+    fanart = SimpleNamespace(
+        configured=lambda: True,
+        lookup=lambda t, ids: ({"x": 1}, True),
+        images_from=lambda t, data: {"disc": [{"url": DISC_URL, "lang": "en", "likes": 2, "disc_type": "bluray"}]},
+    )
+    monkeypatch.setattr(metaAPI, "_fanart_provider", lambda: fanart)
+    monkeypatch.setattr(metaAPI, "_fanart_ids", lambda prov, t, tmdb_id, **kw: ({"tmdb": str(tmdb_id)}, True))
+    res = json.loads(metaAPI.api_artwork_options("movie", 603, "disc").body)
+    assert [(o["source"], o["disc_type"]) for o in res["options"]] == [("fanart", "bluray")] and calls == []
+    assert metaAPI.api_artwork_options("tv", 1399, "disc").status_code == 400
+
+
 def test_page_and_widget_urls_carry_choice_version(store, monkeypatch) -> None:
     import ui_frontend
     from services import dashboard_widgets

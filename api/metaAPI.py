@@ -1463,7 +1463,7 @@ def api_watch_providers(media: str = Query("movie", alias="type"), region: str |
     return JSONResponse({"ok": True, "region": reg, "providers": out})
 
 
-_ARTWORK_FANART_KINDS = {"poster": "poster", "backdrop": "background", "logo": "logo"}
+_ARTWORK_FANART_KINDS = {"poster": "poster", "backdrop": "background", "logo": "logo", "disc": "disc"}
 _ARTWORK_TMDB_FIELDS = {"poster": "posters", "backdrop": "backdrops", "logo": "logos"}
 _ARTWORK_THUMB_SIZES = {"poster": "w185", "backdrop": "w300", "logo": "w185"}
 _ARTWORK_OPTIONS_TTL = 600.0
@@ -1525,13 +1525,17 @@ def _artwork_fanart_options(t: str, tmdb_id: int, kind: str) -> list[dict[str, A
         url = str(row.get("url") or "")
         if not _artwork.FANART_URL_RE.fullmatch(url):
             continue
-        out.append({
+        option: dict[str, Any] = {
             "source": "fanart",
             "ref": url,
             "lang": str(row.get("lang") or "").lower(),
             "likes": int(row.get("likes") or 0),
             "thumb": f"/api/artwork/fanart-thumb?u={quote(url, safe='')}",
-        })
+        }
+        disc_type = str(row.get("disc_type") or "").lower()
+        if kind == "disc" and disc_type in _FANART_DISC_TYPES:
+            option["disc_type"] = disc_type
+        out.append(option)
     return out
 
 
@@ -1553,17 +1557,18 @@ def api_artwork_fanart_thumb(u: str = Query(..., max_length=300)):
 def api_artwork_options(typ: str = FPath(...), tmdb_id: int = FPath(..., ge=1), kind: str = Query("poster")) -> JSONResponse:
     t = _artwork_type(typ)
     art_kind = str(kind or "").strip().lower()
-    if t is None or art_kind not in _artwork.KINDS:
+    if t is None or art_kind not in _artwork.KINDS or (art_kind == "disc" and t != "movie"):
         return JSONResponse({"ok": False, "error": "Invalid request"}, status_code=400)
     api_key = str(((load_config() or {}).get("tmdb") or {}).get("api_key") or "").strip()
     if not api_key:
         return JSONResponse({"ok": False, "error": "Connect TMDb Metadata first."}, status_code=404)
     options: list[dict[str, Any]] = []
     errors: list[str] = []
-    try:
-        options.extend(_artwork_tmdb_options(api_key, t, tmdb_id).get(art_kind) or [])
-    except Exception:
-        errors.append("TMDb artwork could not be loaded.")
+    if art_kind != "disc":
+        try:
+            options.extend(_artwork_tmdb_options(api_key, t, tmdb_id).get(art_kind) or [])
+        except Exception:
+            errors.append("TMDb artwork could not be loaded.")
     try:
         options.extend(_artwork_fanart_options(t, tmdb_id, art_kind))
     except Exception:
@@ -1684,6 +1689,7 @@ def api_fanart_art(
     tvdb: int | None = Query(None, ge=1),
     imdb: str | None = Query(None, max_length=16),
     locale: str | None = Query(None),
+    ov: str | None = Query(None, max_length=16),
 ):
     t = str(typ or "").strip().lower()
     t = "tv" if t in {"tv", "show"} else t
@@ -1691,6 +1697,13 @@ def api_fanart_art(
     disc_type = str(disc or "").strip().lower()
     if t not in {"movie", "tv"} or art_kind not in _FANART_KINDS or (disc_type and disc_type not in _FANART_DISC_TYPES):
         return PlainTextResponse("Bad request", status_code=400)
+    if art_kind == "disc" and t == "movie" and _artwork.choice(t, tmdb_id, "disc"):
+        rev = _artwork.revision(t, tmdb_id)
+        _, base, _ = _env()
+        chosen = _artwork_choice_file(t, tmdb_id, "disc", "", base)
+        if chosen is not None:
+            cache = "public, max-age=31536000, immutable" if ov and ov == rev else "no-cache"
+            return FileResponse(chosen[0], media_type=chosen[1], headers={"Cache-Control": cache})
     missing = {"Cache-Control": "public, max-age=3600"}
     prov = _fanart_provider()
     if prov is None or not prov.configured():
