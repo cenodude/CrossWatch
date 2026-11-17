@@ -1,16 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 270 342">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 270 405">
 <defs>
 <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#f7f9fb"/><stop offset=".2" stop-color="#9ea6b0"/><stop offset=".45" stop-color="#f1f4f7"/><stop offset=".7" stop-color="#7c848e"/><stop offset=".88" stop-color="#e3e7ec"/><stop offset="1" stop-color="#8d959f"/></linearGradient>
 <linearGradient id="sheen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".18"/><stop offset=".2" stop-color="#fff" stop-opacity=".04"/><stop offset=".55" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff" stop-opacity=".07"/></linearGradient>
 <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity=".15"/><stop offset="1" stop-color="#fff" stop-opacity=".4"/></linearGradient>
 <pattern id="brush" width="3" height="12" patternUnits="userSpaceOnUse"><rect width="1" height="12" fill="#fff" fill-opacity=".02"/><rect x="2" width="1" height="12" fill="#000" fill-opacity=".02"/></pattern>
 </defs>
-<rect x="4" y="4" width="262" height="334" rx="11" fill="url(#brush)"/>
-<rect x="0" y="0" width="270" height="342" rx="14" fill="url(#sheen)"/>
-<rect x="1.6" y="1.6" width="266.8" height="338.8" rx="12.6" fill="none" stroke="url(#metal)" stroke-width="3.2"/>
-<rect x="3.9" y="3.9" width="262.2" height="334.2" rx="10.6" fill="none" stroke="#000" stroke-opacity=".5" stroke-width="1.4"/>
-<rect x="5.2" y="5.2" width="259.6" height="331.6" rx="9.6" fill="none" stroke="url(#edge)" stroke-width=".9"/>
-<rect x="22" y="3.5" width="1.6" height="335" fill="#000" fill-opacity=".55"/>
-<rect x="23.6" y="3.5" width="1.1" height="335" fill="#fff" fill-opacity=".28"/>
-<rect x="20.6" y="3.5" width=".9" height="335" fill="#fff" fill-opacity=".12"/>
+<rect x="4" y="4" width="262" height="397" rx="11" fill="url(#brush)"/>
+<rect x="0" y="0" width="270" height="405" rx="14" fill="url(#sheen)"/>
+<rect x="1.6" y="1.6" width="266.8" height="401.8" rx="12.6" fill="none" stroke="url(#metal)" stroke-width="3.2"/>
+<rect x="3.9" y="3.9" width="262.2" height="397.2" rx="10.6" fill="none" stroke="#000" stroke-opacity=".5" stroke-width="1.4"/>
+<rect x="5.2" y="5.2" width="259.6" height="394.6" rx="9.6" fill="none" stroke="url(#edge)" stroke-width=".9"/>
+<rect x="22" y="3.5" width="1.6" height="398" fill="#000" fill-opacity=".55"/>
+<rect x="23.6" y="3.5" width="1.1" height="398" fill="#fff" fill-opacity=".28"/>
+<rect x="20.6" y="3.5" width=".9" height="398" fill="#fff" fill-opacity=".12"/>
 </svg>

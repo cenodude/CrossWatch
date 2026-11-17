@@ -311,7 +311,7 @@
     return parts.length ? `<span class="cw-media-pill">${parts.join("")}</span>` : "";
   }
 
-  const CASE_FORMATS = { "4k_bluray": "uhd", bluray: "bluray", dvd: "dvd", hd_dvd: "dvd" };
+  const CASE_FORMATS = { "4k_bluray": "uhd", bluray: "bluray", dvd: "dvd", hd_dvd: "dvd", vcd: "dvd", vhs: "dvd", betamax: "dvd", laserdisc: "dvd" };
   const CASE_LOGOS = { bluray: "bluray.svg", uhd: "uhd-bluray.svg" };
 
   function shelfCaseKind(format = "", packaging = "") {

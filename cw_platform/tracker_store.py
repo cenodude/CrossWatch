@@ -1328,11 +1328,14 @@ class TrackerStore(TrackerAutomation):
         status: str = "",
         tag: str = "",
         duplicates: bool = False,
+        copies: bool = False,
     ) -> tuple[int, list[tuple[str, Any]]]:
         where, args = self._filters(feature, text=text, media=media, attention=attention, health=health, duplicates=duplicates)
         note_where, note_args = self._note_filters(status=status, tag=tag)
         where.extend(note_where)
         args.extend(note_args)
+        if copies:
+            where.append("json_array_length(data, '$.copies') > 0")
         if until:
             where.append("when_at < ?")
             args.append(until)

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 270 342">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 270 409">
 <defs>
 <linearGradient id="shell" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#062a6b"/><stop offset="0.07" stop-color="#1c52b2"/><stop offset="0.5" stop-color="#2a68cf"/><stop offset="0.93" stop-color="#1c52b2"/><stop offset="1" stop-color="#0c3580"/></linearGradient>
 <linearGradient id="band" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#4a8ff2"/><stop offset="0.5" stop-color="#2366d6"/><stop offset="1" stop-color="#0f46aa"/></linearGradient>
@@ -8,15 +8,15 @@
 <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset=".5" stop-color="#fff" stop-opacity=".12"/><stop offset="1" stop-color="#fff" stop-opacity=".3"/></linearGradient>
 <pattern id="ridges" width="12" height="7" patternUnits="userSpaceOnUse"><rect width="12" height="3" fill="#fff" fill-opacity=".13"/><rect y="3" width="12" height="1" fill="#000" fill-opacity=".25"/></pattern>
 </defs>
-<path fill="url(#shell)" fill-rule="evenodd" d="M10 0H260A10 10 0 0 1 270 10V332A10 10 0 0 1 260 342H10A10 10 0 0 1 0 332V10A10 10 0 0 1 10 0ZM21 40V336H263V40Z"/>
+<path fill="url(#shell)" fill-rule="evenodd" d="M10 0H260A10 10 0 0 1 270 10V399A10 10 0 0 1 260 409H10A10 10 0 0 1 0 399V10A10 10 0 0 1 10 0ZM21 40V403H263V40Z"/>
 <rect x="21" y="6" width="242" height="34" rx="2" fill="url(#band)"/><rect x="21" y="6" width="242" height="1" fill="#fff" fill-opacity=".22"/><rect x="21" y="39" width="242" height="1" fill="#000" fill-opacity=".4"/>
-<path fill="url(#hinge)" d="M10 0H19V342H10A10 10 0 0 1 0 332V10A10 10 0 0 1 10 0Z"/>
-<rect x="4" y="14" width="11" height="314" rx="2" fill="url(#ridges)"/>
-<rect x="19" y="0" width="1.4" height="342" fill="#000" fill-opacity=".55"/>
-<rect x="20.4" y="0" width="1" height="342" fill="#fff" fill-opacity=".2"/>
-<rect x="263" y="143.6" width="7" height="54.7" rx="2" fill="#000" fill-opacity=".22"/>
-<rect x="21" y="6" width="242" height="330" fill="url(#gloss)"/>
-<rect x="150" y="6" width="38" height="330" fill="url(#streak)" transform="skewX(-14)"/>
-<rect x="21.5" y="40.5" width="241" height="295" fill="none" stroke="#fff" stroke-opacity=".1"/>
-<rect x=".75" y=".75" width="268.5" height="340.5" rx="9.4" fill="none" stroke="url(#rim)" stroke-width="1.5"/>
+<path fill="url(#hinge)" d="M10 0H19V409H10A10 10 0 0 1 0 399V10A10 10 0 0 1 10 0Z"/>
+<rect x="4" y="14" width="11" height="381" rx="2" fill="url(#ridges)"/>
+<rect x="19" y="0" width="1.4" height="409" fill="#000" fill-opacity=".55"/>
+<rect x="20.4" y="0" width="1" height="409" fill="#fff" fill-opacity=".2"/>
+<rect x="263" y="171.8" width="7" height="65.4" rx="2" fill="#000" fill-opacity=".22"/>
+<rect x="21" y="6" width="242" height="397" fill="url(#gloss)"/>
+<rect x="150" y="6" width="38" height="397" fill="url(#streak)" transform="skewX(-14)"/>
+<rect x="21.5" y="40.5" width="241" height="362" fill="none" stroke="#fff" stroke-opacity=".1"/>
+<rect x=".75" y=".75" width="268.5" height="407.5" rx="9.4" fill="none" stroke="url(#rim)" stroke-width="1.5"/>
 </svg>
