@@ -1,8 +1,9 @@
 /* assets/js/artwork-picker.js */
-/* CrossWatch - per-title artwork picker for posters, logos and backgrounds */
+/* CrossWatch - per-title artwork picker for posters, logos, backgrounds and discs */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
-  const KINDS = [["poster", "Posters"], ["logo", "Logos"], ["backdrop", "Backgrounds"]];
+  const KINDS = [["poster", "Posters"], ["logo", "Logos"], ["backdrop", "Backgrounds"], ["disc", "Discs"]];
+  const DISC_TYPES = { bluray: "Blu-ray", dvd: "DVD", "3d": "3D" };
   const PAGE = 18;
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
   const icon = (name) => `<span class="material-symbols-rounded" aria-hidden="true">${esc(name)}</span>`;
@@ -22,7 +23,7 @@
 
   function filtered(data) {
     const rows = Array.isArray(data?.options) ? data.options : [];
-    return state.source === "all" ? rows : rows.filter((row) => row.source === state.source);
+    return state.source === "all" || state.kind === "disc" ? rows : rows.filter((row) => row.source === state.source);
   }
 
   function isCurrent(data, row) {
@@ -30,7 +31,7 @@
   }
 
   function optionHtml(data, row, index) {
-    const meta = [sourceLabel(row.source), langLabel(row.lang)];
+    const meta = row.disc_type ? [DISC_TYPES[row.disc_type] || "Disc", sourceLabel(row.source)] : [sourceLabel(row.source), langLabel(row.lang)];
     if (row.source === "fanart" && row.likes) meta.push(`${row.likes} likes`);
     if (row.source === "tmdb" && row.width) meta.push(`${row.width}×${row.height}`);
     const active = isCurrent(data, row);
@@ -60,14 +61,16 @@
     if (!state.node) return;
     const data = current();
     const hasFanart = !!data?.fanart;
+    const fanartOn = [...state.data.values()].some((row) => row?.fanart);
     state.node.querySelectorAll("[data-art-kind]").forEach((btn) => {
+      if (btn.dataset.artKind === "disc") btn.hidden = state.type !== "movie" || !fanartOn;
       const on = btn.dataset.artKind === state.kind;
       btn.classList.toggle("is-active", on);
       btn.setAttribute("aria-selected", on ? "true" : "false");
     });
     const sources = state.node.querySelector(".cw-mm-art-sources");
     if (sources) {
-      sources.hidden = !hasFanart;
+      sources.hidden = !hasFanart || state.kind === "disc";
       sources.querySelectorAll("[data-art-source]").forEach((btn) => btn.classList.toggle("is-active", btn.dataset.artSource === state.source));
     }
     const reset = state.node.querySelector("[data-art-reset]");
@@ -191,7 +194,7 @@
           <button type="button" class="cw-mm-art-close" data-art-close aria-label="Close">${icon("close")}</button>
         </header>
         <div class="cw-mm-art-bar">
-          <div class="cw-mm-art-kinds" role="tablist">${KINDS.map(([kind, label]) => `<button type="button" class="cw-mm-art-pill" role="tab" data-art-kind="${kind}">${label}</button>`).join("")}</div>
+          <div class="cw-mm-art-kinds" role="tablist">${KINDS.map(([kind, label]) => `<button type="button" class="cw-mm-art-pill" role="tab" data-art-kind="${kind}"${kind === "disc" ? " hidden" : ""}>${label}</button>`).join("")}</div>
           <div class="cw-mm-art-sources" hidden>${[["all", "All"], ["tmdb", "TMDb"], ["fanart", "fanart.tv"]].map(([source, label]) => `<button type="button" class="cw-mm-art-pill" data-art-source="${source}">${label}</button>`).join("")}</div>
         </div>
         <div class="cw-mm-art-body"></div>

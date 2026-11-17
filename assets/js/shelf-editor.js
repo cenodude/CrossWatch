@@ -122,7 +122,7 @@
     const open = state.editing === index;
     const logo = row.format === "digital" ? shelf().logoUrl?.(row.service?.logo) || "" : "";
     const disc = logo ? "" : shelf().discUrl?.(state.type, state.id, row.format) || "";
-    const art = logo ? `<img class="is-logo" src="${esc(logo)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : disc ? `<img class="is-disc" src="${esc(disc)}" alt="" loading="lazy" decoding="async" onerror="this.remove()">` : "";
+    const art = logo ? `<img class="is-logo" src="${esc(logo)}" alt="" loading="lazy" decoding="async" onerror="this.parentNode.classList.remove('has-art');this.remove()">` : disc ? `<img class="is-disc" src="${esc(disc)}" alt="" loading="lazy" decoding="async" onerror="this.parentNode.classList.remove('has-art');this.remove()">` : "";
     const tools = state.canEdit && !open ? `<div class="cw-shelf-copy-tools">
         <button type="button" class="cw-shelf-link" data-shelf-edit="${index}">Details</button>
         <button type="button" class="cw-shelf-icon${state.confirmDelete === index ? " is-confirming" : ""}" data-shelf-delete="${index}" aria-label="${state.confirmDelete === index ? "Click again to remove this copy" : "Remove this copy"}" title="${state.confirmDelete === index ? "Click again to remove this copy" : "Remove this copy"}">${icon(state.confirmDelete === index ? "delete_forever" : "delete")}</button>

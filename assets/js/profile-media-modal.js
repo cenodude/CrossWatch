@@ -733,7 +733,8 @@
     const shelf = window.CW?.Shelf || {};
     const tmdb = tmdbOf(state.item);
     const disc = shelf.discUrl?.(artType(state.item), tmdb, format) || "";
-    const plate = copy?.packaging === "steelbook" ? "Steelbook" : copy?.edition || "";
+    const caseKind = shelf.caseKind?.(format, copy?.packaging || "") || "plain";
+    const cover = shelf.caseHtml?.({ format, packaging: copy?.packaging || "", poster: posterUrl(state.item) }) || `<span class="cw-case" data-case="plain"><img class="cw-case-art" src="${esc(posterUrl(state.item))}" alt=""></span>`;
     const status = info.entry ? shelf.statuses?.[info.entry.status] || "Owned" : "In your collection";
     const statusLine = [status, copies.length ? `${copies.length} ${copies.length === 1 ? "copy" : "copies"}` : ""].filter(Boolean).join(" · ");
     const pill = shelf.pill?.({ format, media, service: copy?.service }) || "";
@@ -749,9 +750,9 @@
       ? `${copy ? `<button type="button" class="cw-mm-btn" data-mm-coll-edit="${index}">${icon("edit")}Edit copy</button>` : ""}<button type="button" class="cw-mm-btn" data-mm-coll-add>${icon("add")}${info.entry ? "Add copy" : "Add to shelf"}</button>`
       : "";
     return `<section class="cw-mm-coll" aria-label="Collection">
-      <div class="cw-mm-coll-art${disc ? " has-disc" : ""}">
+      <div class="cw-mm-coll-art${disc ? " has-disc" : ""}" data-case="${esc(caseKind)}">
         ${disc ? `<img class="cw-mm-coll-disc" src="${esc(disc)}" alt="" loading="lazy" decoding="async" onerror="this.closest('.cw-mm-coll-art')?.classList.remove('has-disc');this.remove()">` : ""}
-        <figure class="cw-mm-coll-case"><img src="${esc(posterUrl(state.item))}" alt="" decoding="async" onerror="${placeholder}">${plate ? `<figcaption${copy?.packaging === "steelbook" ? ' class="is-steel"' : ""}>${esc(plate)}</figcaption>` : ""}</figure>
+        ${cover}
       </div>
       <div class="cw-mm-coll-main">
         <div class="cw-mm-coll-head"><h3>Collection</h3><span>${esc(statusLine)}</span>${pill}</div>

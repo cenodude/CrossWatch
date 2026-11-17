@@ -18,14 +18,14 @@ import requests
 
 from cw_platform.config_base import CONFIG_BASE
 
-KINDS = ("poster", "backdrop", "logo")
+KINDS = ("poster", "backdrop", "logo", "disc")
 SOURCES = ("tmdb", "fanart")
-PIN_SIZES = {"poster": "w780", "backdrop": "w1280", "logo": "w500"}
+PIN_SIZES = {"poster": "w780", "backdrop": "w1280", "logo": "w500", "disc": "w500"}
 MAX_PIN_BYTES = 25 * 1024 * 1024
 
 TMDB_PATH_RE = re.compile(r"^/[A-Za-z0-9_-]{4,64}\.(jpg|jpeg|png)$", re.IGNORECASE)
 FANART_URL_RE = re.compile(r"^https://assets\.fanart\.tv/fanart/[A-Za-z0-9/_.-]+\.(png|jpg|jpeg)$", re.IGNORECASE)
-_PIN_NAME_RE = re.compile(r"^(movie|tv)_\d{1,10}_(poster|backdrop|logo)\.(jpg|png)$")
+_PIN_NAME_RE = re.compile(r"^(movie|tv)_\d{1,10}_(poster|backdrop|logo|disc)\.(jpg|png)$")
 _KEY_RE = re.compile(r"^(movie|tv):(\d{1,10})$")
 _LANG_RE = re.compile(r"^[a-z]{2}$")
 
@@ -78,7 +78,7 @@ def _clean_choice(kind: str, raw: Any) -> dict[str, Any] | None:
         return None
     if source == "fanart" and not FANART_URL_RE.fullmatch(ref):
         return None
-    if source not in SOURCES:
+    if source not in SOURCES or (kind == "disc" and source != "fanart"):
         return None
     lang = str(raw.get("lang") or "").strip().lower()
     out: dict[str, Any] = {"source": source, "ref": ref, "lang": lang if _LANG_RE.fullmatch(lang) else ""}
@@ -276,6 +276,8 @@ def set_choice(entity: Any, tmdb_id: Any, kind: str, source: str, ref: str, *, l
     if source not in SOURCES:
         raise ArtworkChoiceError("Invalid artwork source")
     ent, tid = _entity(entity), _tmdb_id(tmdb_id)
+    if kind == "disc" and ent != "movie":
+        raise ArtworkChoiceError("Invalid artwork kind")
     row = _clean_choice(kind, {"source": source, "ref": ref, "lang": lang, "set_at": int(time.time())})
     if row is None:
         raise ArtworkChoiceError("Invalid image reference")

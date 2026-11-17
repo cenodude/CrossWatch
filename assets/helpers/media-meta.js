@@ -193,7 +193,7 @@
 
   const chosenArt = new Map(String(document.documentElement.dataset.cwArtOv || "").split(" ").filter(Boolean).map((part) => part.split("=")).filter((part) => part.length === 2 && part[1]));
   const artKey = (type, id) => `${String(type || "").toLowerCase() === "movie" ? "movie" : "tv"}:${String(id || "").trim()}`;
-  const ART_URL_RE = /\/art\/tmdb\/(movie|tv|show)\/(\d+)\?[^"')\s]*/g;
+  const ART_URL_RE = /\/art\/(?:tmdb|fanart)\/(movie|tv|show)\/(\d+)\?[^"')\s]*/g;
 
   function artParam(type, id) {
     const rev = chosenArt.get(artKey(type, id));
@@ -212,10 +212,10 @@
     const key = artKey(type, id);
     if (rev) chosenArt.set(key, String(rev));
     else chosenArt.delete(key);
-    document.querySelectorAll('img[src*="/art/tmdb/"], img[data-src*="/art/tmdb/"], [style*="/art/tmdb/"]').forEach((node) => {
+    document.querySelectorAll('img[src*="/art/tmdb/"], img[data-src*="/art/tmdb/"], [style*="/art/tmdb/"], img[src*="/art/fanart/"]').forEach((node) => {
       ["src", "data-src", "style"].forEach((attr) => {
         const value = node.getAttribute(attr);
-        if (!value || !value.includes("/art/tmdb/")) return;
+        if (!value || !(value.includes("/art/tmdb/") || value.includes("/art/fanart/"))) return;
         const next = rewriteArt(value, key, rev);
         if (next !== value) node.setAttribute(attr, next);
       });
@@ -283,7 +283,7 @@
   function shelfDiscUrl(type, id, format) {
     const disc = SHELF_DISCS[format];
     if (!disc || type !== "movie" || !/^\d+$/.test(String(id || "")) || !String(document.documentElement.dataset.cwArt || "").startsWith("f")) return "";
-    return `/art/fanart/movie/${encodeURIComponent(String(id))}?kind=disc&disc=${disc}`;
+    return `/art/fanart/movie/${encodeURIComponent(String(id))}?kind=disc&disc=${disc}${artParam("movie", id)}`;
   }
 
   function shelfLogoUrl(path, size = "w92") {
@@ -296,14 +296,14 @@
 
   function shelfPill({ format = "", media = {}, copies = 0, service = null } = {}) {
     const info = media && typeof media === "object" ? media : {};
-    const logo = (file, alt, extra = "") => `<img class="cw-media-pill-logo${extra}" src="/assets/img/quality/${file}" alt="${shelfEsc(alt)}" loading="lazy" decoding="async">`;
+    const logo = (file, alt) => `<img class="cw-media-pill-logo is-${file.replace(".svg", "")}" src="/assets/img/quality/${file}" alt="${shelfEsc(alt)}" loading="lazy" decoding="async">`;
     const parts = [];
-    if (PILL_FORMATS[format]) parts.push(logo(PILL_FORMATS[format], SHELF_FORMATS[format], " is-format"));
+    if (PILL_FORMATS[format]) parts.push(logo(PILL_FORMATS[format], SHELF_FORMATS[format]));
     else if (format === "digital" && service?.name) {
       const src = shelfLogoUrl(service.logo, "w45");
       parts.push(`${src ? `<img class="cw-media-pill-service" src="${shelfEsc(src)}" alt="" loading="lazy" decoding="async">` : ""}<span class="cw-media-pill-text">${shelfEsc(service.name)}</span>`);
     } else if (format) parts.push(`<span class="cw-media-pill-text">${shelfEsc(SHELF_FORMATS[format] || format)}</span>`);
-    else if (info.resolution === "uhd_4k") parts.push(logo("4k-uhd.svg", "4K", " is-format"));
+    else if (info.resolution === "uhd_4k") parts.push(logo("4k-uhd.svg", "4K"));
     const hdr = PILL_HDR[info.hdr];
     if (hdr) parts.push(logo(hdr[0], hdr[1]));
     if (PILL_ATMOS.has(info.audio)) parts.push(logo("dolby-atmos.svg", "Dolby Atmos"));
@@ -311,8 +311,63 @@
     return parts.length ? `<span class="cw-media-pill">${parts.join("")}</span>` : "";
   }
 
+  const CASE_FORMATS = { "4k_bluray": "uhd", bluray: "bluray", dvd: "dvd", hd_dvd: "dvd" };
+  const CASE_LOGOS = { bluray: "bluray.svg", uhd: "uhd-bluray.svg" };
+
+  function shelfCaseKind(format = "", packaging = "") {
+    if (packaging === "steelbook" && format !== "digital") return "steelbook";
+    return CASE_FORMATS[format] || "plain";
+  }
+
+  function shelfCase({ format = "", packaging = "", poster = "" } = {}) {
+    const kind = shelfCaseKind(format, packaging);
+    const art = `<img class="cw-case-art" src="${shelfEsc(poster)}" alt="" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">`;
+    if (kind === "plain") return `<span class="cw-case" data-case="plain">${art}</span>`;
+    const logo = CASE_LOGOS[kind];
+    return `<span class="cw-case" data-case="${kind}">${art}<img class="cw-case-frame" src="/assets/img/cases/${kind}.svg" alt="" decoding="async">${logo ? `<img class="cw-case-logo" src="/assets/img/quality/${logo}" alt="" decoding="async">` : ""}${kind === "steelbook" ? '<span class="cw-case-sheen" aria-hidden="true"></span>' : ""}</span>`;
+  }
+
+  const shelfPopState = { node: null, anchor: null };
+
+  function shelfDate(value) {
+    const parts = String(value || "").split("-").map(Number);
+    if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return "";
+    try {
+      return new Date(parts[0], parts[1] - 1, parts[2]).toLocaleDateString(window.__CW_LOCALE || undefined, { day: "numeric", month: "short", year: "numeric" });
+    } catch {
+      return "";
+    }
+  }
+
+  function shelfPopHide() {
+    shelfPopState.anchor = null;
+    shelfPopState.node?.classList.remove("is-open");
+  }
+
+  function shelfPopShow(anchor, html, target = anchor) {
+    if (!anchor || !html || shelfPopState.anchor === anchor) return;
+    if (!shelfPopState.node) {
+      shelfPopState.node = document.createElement("div");
+      shelfPopState.node.className = "cw-shelfv-pop";
+      shelfPopState.node.setAttribute("aria-hidden", "true");
+      document.body.appendChild(shelfPopState.node);
+      window.addEventListener("scroll", shelfPopHide, { passive: true, capture: true });
+    }
+    shelfPopState.anchor = anchor;
+    const pop = shelfPopState.node;
+    pop.innerHTML = html;
+    const rect = (target || anchor).getBoundingClientRect();
+    const width = pop.offsetWidth || 260;
+    const height = pop.offsetHeight || 200;
+    const left = window.innerWidth - rect.right - 16 >= width ? rect.right + 12 : Math.max(12, rect.left - width - 12);
+    const top = Math.min(Math.max(12, rect.top), window.innerHeight - height - 12);
+    pop.style.left = `${Math.round(left)}px`;
+    pop.style.top = `${Math.round(top)}px`;
+    pop.classList.add("is-open");
+  }
+
   window.CW.Shelf = {
-    load: shelfLoad, peek: shelfPeek, set: shelfSet, pill: shelfPill, label: shelfLabel, money: shelfMoney, discUrl: shelfDiscUrl, logoUrl: shelfLogoUrl, formats: SHELF_FORMATS, statuses: SHELF_STATUSES,
+    load: shelfLoad, peek: shelfPeek, set: shelfSet, pill: shelfPill, caseHtml: shelfCase, caseKind: shelfCaseKind, date: shelfDate, popShow: shelfPopShow, popHide: shelfPopHide, label: shelfLabel, money: shelfMoney, discUrl: shelfDiscUrl, logoUrl: shelfLogoUrl, formats: SHELF_FORMATS, statuses: SHELF_STATUSES,
     currency: () => shelfIndex.currency,
     setCurrency: (value) => { shelfIndex.currency = String(value || ""); window.dispatchEvent(new CustomEvent("cw:shelf-changed", { detail: { currency: shelfIndex.currency } })); },
   };

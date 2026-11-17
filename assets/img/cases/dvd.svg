@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 270 380">
+<defs>
+<linearGradient id="shell" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#030304"/><stop offset="0.07" stop-color="#141518"/><stop offset="0.5" stop-color="#1e2024"/><stop offset="0.93" stop-color="#141518"/><stop offset="1" stop-color="#08090a"/></linearGradient>
+<linearGradient id="band" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#000"/><stop offset="1" stop-color="#000"/></linearGradient>
+<linearGradient id="hinge" x1="0" x2="1" y1="0" y2="0"><stop offset="0" stop-color="#000"/><stop offset="0.45" stop-color="#1b1d21"/><stop offset="0.8" stop-color="#0b0c0e"/><stop offset="1" stop-color="#020203"/></linearGradient>
+<linearGradient id="gloss" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".2"/><stop offset=".22" stop-color="#fff" stop-opacity=".06"/><stop offset=".36" stop-color="#fff" stop-opacity="0"/><stop offset=".78" stop-color="#fff" stop-opacity="0"/><stop offset="1" stop-color="#fff" stop-opacity=".1"/></linearGradient>
+<linearGradient id="streak" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset=".5" stop-color="#fff" stop-opacity=".09"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+<linearGradient id="rim" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".45"/><stop offset=".5" stop-color="#fff" stop-opacity=".12"/><stop offset="1" stop-color="#fff" stop-opacity=".3"/></linearGradient>
+<pattern id="ridges" width="12" height="7" patternUnits="userSpaceOnUse"><rect width="12" height="3" fill="#fff" fill-opacity=".13"/><rect y="3" width="12" height="1" fill="#000" fill-opacity=".25"/></pattern>
+</defs>
+<path fill="url(#shell)" fill-rule="evenodd" d="M10 0H260A10 10 0 0 1 270 10V370A10 10 0 0 1 260 380H10A10 10 0 0 1 0 370V10A10 10 0 0 1 10 0ZM21 6V374H263V6Z"/>
+
+<path fill="url(#hinge)" d="M10 0H19V380H10A10 10 0 0 1 0 370V10A10 10 0 0 1 10 0Z"/>
+<rect x="4" y="14" width="11" height="352" rx="2" fill="url(#ridges)"/>
+<rect x="19" y="0" width="1.4" height="380" fill="#000" fill-opacity=".55"/>
+<rect x="20.4" y="0" width="1" height="380" fill="#fff" fill-opacity=".2"/>
+<rect x="263" y="159.6" width="7" height="60.8" rx="2" fill="#000" fill-opacity=".22"/>
+<rect x="21" y="6" width="242" height="368" fill="url(#gloss)"/>
+<rect x="150" y="6" width="38" height="368" fill="url(#streak)" transform="skewX(-14)"/>
+<rect x="21.5" y="6.5" width="241" height="367" fill="none" stroke="#fff" stroke-opacity=".1"/>
+<rect x=".75" y=".75" width="268.5" height="378.5" rx="9.4" fill="none" stroke="url(#rim)" stroke-width="1.5"/>
+</svg>

@@ -1437,6 +1437,7 @@
     sort: "collected_at",
     shelf: COLLECTION_SHELF_MODES.includes(collectionPrefs.shelf) ? collectionPrefs.shelf : "synced",
     display: collectionPrefs.display === "shelf" ? "shelf" : "poster",
+    statsOpen: collectionPrefs.statsOpen === true,
     shelfStats: null,
     shelfFilter: "",
     shelfLocations: [],
@@ -1451,7 +1452,7 @@
 
   function saveCollectionPrefs() {
     try {
-      window.localStorage?.setItem(COLLECTION_PREFS_KEY, JSON.stringify({ view: collectionState.view, pageSize: collectionState.desktopPageSize, mobilePageSize: collectionState.mobilePageSize, cols: collectionState.cols, timeline: collectionState.timeline, zoom: collectionState.zoom, shelf: collectionState.shelf, display: collectionState.display }));
+      window.localStorage?.setItem(COLLECTION_PREFS_KEY, JSON.stringify({ view: collectionState.view, pageSize: collectionState.desktopPageSize, mobilePageSize: collectionState.mobilePageSize, cols: collectionState.cols, timeline: collectionState.timeline, zoom: collectionState.zoom, shelf: collectionState.shelf, display: collectionState.display, statsOpen: collectionState.statsOpen }));
     } catch {}
   }
 
@@ -2029,39 +2030,38 @@
     return collectionState.display === "shelf" && collectionState.shelf !== "synced" && collectionState.view !== "list";
   }
 
-  function shelfBars(title, rows, tone) {
-    const max = Math.max(1, ...rows.map(([, count]) => count));
-    const body = rows.length
-      ? rows.map(([label, count]) => `<div class="cw-shelf-bar"><span>${esc(label)}</span><span class="cw-shelf-bar-track"><span class="cw-shelf-bar-fill" data-tone="${tone}" style="width:${Math.max(4, Math.round(count / max * 100))}%"></span></span><b>${esc(numberFmt.format(count))}</b></div>`).join("")
-      : `<p class="cw-shelf-bars-empty">Nothing to show yet.</p>`;
-    return `<div class="cw-shelf-panel"><h3>${esc(title)}</h3>${body}</div>`;
-  }
-
   function shelfStatsHtml() {
     const stats = collectionState.shelfStats;
     if (!stats || !stats.titles) return "";
     const formats = window.CW?.Shelf?.formats || {};
     const status = stats.status || {};
-    const statusLine = [["owned", "owned"], ["ordered", "ordered"], ["wishlist", "wishlist"]].filter(([key]) => status[key]).map(([key, label]) => `${numberFmt.format(status[key])} ${label}`).join(", ");
-    const spent = Number(stats.spent) > 0 ? window.CW?.Shelf?.money?.(stats.spent, stats.currency || "") || String(stats.spent) : "–";
-    const pct = stats.titles ? Math.round((Number(stats.uhd) || 0) / stats.titles * 100) : 0;
-    const tile = (label, value, sub) => `<div class="cw-shelf-tile"><span>${esc(label)}</span><strong>${esc(value)}</strong><small>${esc(sub)}</small></div>`;
     const byCount = (obj) => Object.entries(obj || {}).sort((a, b) => b[1] - a[1]);
-    const formatRows = byCount(stats.formats).map(([key, count]) => [formats[key] || key, count]);
-    const decadeRows = Object.entries(stats.decades || {}).sort((a, b) => b[0].localeCompare(a[0])).slice(0, 6);
-    return `<section class="cw-shelf-dash" aria-label="Shelf stats">
-      <div class="cw-shelf-tiles">
-        ${tile("Titles", numberFmt.format(stats.titles), statusLine)}
-        ${tile("Copies", numberFmt.format(stats.copies), stats.lent ? `${numberFmt.format(stats.lent)} lent out` : "None lent out")}
-        ${tile("Spent", spent, stats.currency ? stats.currency : "Set a currency in the copy form")}
-        ${tile("4K UHD", `${pct}%`, `${numberFmt.format(Number(stats.uhd) || 0)} of ${numberFmt.format(stats.titles)} titles`)}
+    const spent = Number(stats.spent) > 0 ? window.CW?.Shelf?.money?.(stats.spent, stats.currency || "") || String(stats.spent) : "";
+    const pct = Math.round((Number(stats.uhd) || 0) / stats.titles * 100);
+    const facts = [
+      [numberFmt.format(stats.titles), stats.titles === 1 ? "title" : "titles"],
+      [numberFmt.format(stats.copies), stats.copies === 1 ? "copy" : "copies"],
+      ...(spent ? [[spent, "spent"]] : []),
+      [`${pct}%`, "in 4K"],
+    ];
+    const mix = byCount(stats.formats).map(([key, count]) => [formats[key] || key, count]);
+    const list = (rows) => rows.map(([label, count]) => `${label} ${numberFmt.format(count)}`).join(" · ");
+    const statusText = [["owned", "owned"], ["ordered", "ordered"], ["wishlist", "on the wishlist"]].filter(([key]) => status[key]).map(([key, label]) => `${numberFmt.format(status[key])} ${label}`).join(", ");
+    const details = [
+      ["Picture and sound", list(byCount(stats.picture))],
+      ["Decades", list(Object.entries(stats.decades || {}).sort((a, b) => b[0].localeCompare(a[0])))],
+      ["Status", statusText],
+      ["Lent out", stats.lent ? `${numberFmt.format(stats.lent)} ${stats.lent === 1 ? "title" : "titles"}` : "Nothing"],
+    ].filter(([, value]) => value);
+    const note = spent && !stats.currency ? `<p class="cw-shelf-sum-note">Prices show without a currency. Pick one in the details of any copy.</p>` : "";
+    return `<details class="cw-shelf-sum"${collectionState.statsOpen ? " open" : ""}>
+      <summary><span class="material-symbols-rounded" aria-hidden="true">shelves</span><span class="cw-shelf-sum-facts">${facts.map(([value, label]) => `<span><b>${esc(value)}</b> ${esc(label)}</span>`).join("")}</span><span class="cw-shelf-sum-toggle"><span>${collectionState.statsOpen ? "Hide" : "More"}</span><span class="material-symbols-rounded" aria-hidden="true">expand_more</span></span></summary>
+      <div class="cw-shelf-sum-body">
+        ${mix.length ? `<div class="cw-shelf-mix" aria-label="Formats"><div class="cw-shelf-mix-bar">${mix.map(([label, count], i) => `<span data-i="${Math.min(i, 5)}" style="flex:${count}" title="${esc(`${label} ${count}`)}"></span>`).join("")}</div><div class="cw-shelf-mix-key">${mix.map(([label, count], i) => `<span data-i="${Math.min(i, 5)}">${esc(label)} <b>${esc(numberFmt.format(count))}</b></span>`).join("")}</div></div>` : ""}
+        ${details.length ? `<dl class="cw-shelf-sum-list">${details.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl>` : ""}
+        ${note}
       </div>
-      <div class="cw-shelf-panels">
-        ${shelfBars("By format", formatRows, "format")}
-        ${shelfBars("Picture and sound", byCount(stats.picture), "quality")}
-        ${shelfBars("By decade", decadeRows, "quality")}
-      </div>
-    </section>`;
+    </details>`;
   }
 
   function shelfItem(item) {
@@ -2069,15 +2069,18 @@
     const title = titleOf(item);
     const type = mediaType(item) ? "tv" : "movie";
     const format = (info.formats || [])[0] || "";
-    const disc = window.CW?.Shelf?.discUrl?.(type, tmdbId(item), format) || "";
-    const statusLabel = info.status && info.status !== "owned" ? window.CW?.Shelf?.statuses?.[info.status] || info.status : "";
-    const pill = window.CW?.Shelf?.pill?.({ format, media: item?.media_info || {}, copies: Number(info.copies) || 0, service: info.service }) || "";
+    const shelf = window.CW?.Shelf || {};
+    const disc = shelf.discUrl?.(type, tmdbId(item), format) || "";
+    const statusLabel = info.status && info.status !== "owned" ? shelf.statuses?.[info.status] || info.status : "";
+    const pill = shelf.pill?.({ format, media: item?.media_info || {}, copies: Number(info.copies) || 0, service: info.service }) || "";
     const note = [info.edition, info.lent ? "Lent out" : ""].filter(Boolean).join(" · ");
-    const label = [title, window.CW?.Shelf?.label?.(info), statusLabel].filter(Boolean).join(", ");
-    return `<div class="cw-shelfv-item${disc ? " has-disc" : ""}${info.status === "wishlist" ? " is-wishlist" : ""}">
+    const label = [title, shelf.label?.(info), statusLabel].filter(Boolean).join(", ");
+    const kind = shelf.caseKind?.(format, info.packaging) || "plain";
+    const cover = shelf.caseHtml?.({ format, packaging: info.packaging, poster: poster(item, "w342") }) || `<span class="cw-case" data-case="plain"><img class="cw-case-art" src="${esc(poster(item, "w342"))}" alt=""></span>`;
+    return `<div class="cw-shelfv-item${disc ? " has-disc" : ""}${info.status === "wishlist" ? " is-wishlist" : ""}" data-case="${esc(kind)}" data-shelf-pop="${collectionState.items.indexOf(item)}">
       <button type="button" class="cw-shelfv-art" data-profile-poster-key="${esc(storePosterItem(item))}" aria-label="${esc(label)}">
-        ${disc ? `<img class="cw-shelfv-disc" src="${esc(disc)}" alt="" loading="lazy" decoding="async" onerror="this.remove();this.closest('.cw-shelfv-item')?.classList.remove('has-disc')">` : ""}
-        <img class="cw-shelfv-cover" src="${esc(poster(item, "w342"))}" alt="" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
+        ${disc ? `<img class="cw-shelfv-disc" src="${esc(disc)}" alt="" loading="lazy" decoding="async" onerror="this.closest('.cw-shelfv-item')?.classList.remove('has-disc');this.remove()">` : ""}
+        ${cover}
         ${statusLabel ? `<span class="cw-shelfv-status" data-status="${esc(info.status)}">${esc(statusLabel)}</span>` : ""}
       </button>
       <span class="cw-shelfv-base" aria-hidden="true"></span>
@@ -2097,11 +2100,62 @@
       const copies = items.reduce((sum, item) => sum + (Number(item?.shelf?.copies) || 0), 0);
       const summary = [`${numberFmt.format(items.length)} ${items.length === 1 ? "title" : "titles"}`, `${numberFmt.format(copies)} ${copies === 1 ? "copy" : "copies"}`].join(" · ");
       return `<section class="cw-shelfv-row">
-        <header class="cw-shelfv-head"><h3>${esc(name || "No shelf set")}</h3><span>${esc(summary)}</span></header>
+        <header class="cw-shelfv-head"><span class="material-symbols-rounded" aria-hidden="true">shelves</span><h3>${esc(name || "No shelf set")}</h3><span>${esc(summary)}</span></header>
         <div class="cw-shelfv-rack">${items.map(shelfItem).join("")}</div>
       </section>`;
     }).join("");
     return `<div class="cw-shelfv">${rows}</div>`;
+  }
+
+  function shelfPopHtml(item) {
+    const info = item?.shelf || {};
+    const shelf = window.CW?.Shelf || {};
+    const formats = shelf.formats || {};
+    const perFormat = Object.entries(info.per_format || {}).map(([key, count]) => `${count > 1 ? `${count}× ` : ""}${formats[key] || key}`).join(", ");
+    const copies = Number(info.copies) || 0;
+    const edition = [info.edition, info.packaging === "steelbook" && String(info.edition || "").toLowerCase() !== "steelbook" ? "Steelbook" : ""].filter(Boolean).join(" · ");
+    const bought = [shelf.date?.(info.purchased) || "", Number(info.spent) > 0 ? shelf.money?.(info.spent) || "" : ""].filter(Boolean).join(" · ");
+    const rows = [
+      ["Copies", copies ? `${numberFmt.format(copies)} · ${perFormat}` : ""],
+      ["Edition", edition],
+      ["Bought", bought],
+      ["Shelf", (info.shelves || []).join(", ")],
+      ["Status", info.status && info.status !== "owned" ? shelf.statuses?.[info.status] || info.status : ""],
+      ["Lent out", info.lent ? "Yes" : ""],
+    ].filter(([, value]) => value);
+    const sub = [yearOf(item), mediaType(item) ? "Show" : "Movie"].filter(Boolean).join(" · ");
+    const pill = shelf.pill?.({ format: (info.formats || [])[0] || "", media: item?.media_info || {}, service: info.service }) || "";
+    return `<h4>${esc(titleOf(item))}</h4><span class="cw-shelfv-pop-sub">${esc(sub)}</span>${pill}${rows.length ? `<dl>${rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join("")}</dl>` : ""}<span class="cw-shelfv-pop-hint">Click for all details</span>`;
+  }
+
+  function hideShelfPop() {
+    window.CW?.Shelf?.popHide?.();
+  }
+
+  function showShelfPop(itemNode) {
+    const item = collectionState.items[Number(itemNode?.dataset.shelfPop)];
+    if (item) window.CW?.Shelf?.popShow?.(itemNode, shelfPopHtml(item), itemNode.querySelector(".cw-shelfv-art") || itemNode);
+  }
+
+  function wireShelfPop() {
+    const grid = $("#profile-collection-grid");
+    if (!grid || grid.dataset.shelfPopWired) return;
+    grid.dataset.shelfPopWired = "1";
+    grid.addEventListener("pointerover", (event) => {
+      if (event.pointerType && event.pointerType !== "mouse") return;
+      const itemNode = event.target?.closest?.(".cw-shelfv-item[data-shelf-pop]");
+      if (itemNode) showShelfPop(itemNode);
+    });
+    grid.addEventListener("pointerout", (event) => {
+      const itemNode = event.target?.closest?.(".cw-shelfv-item[data-shelf-pop]");
+      if (itemNode && !itemNode.contains(event.relatedTarget)) hideShelfPop();
+    });
+    grid.addEventListener("focusin", (event) => {
+      const itemNode = event.target?.closest?.(".cw-shelfv-item[data-shelf-pop]");
+      if (itemNode) showShelfPop(itemNode);
+    });
+    grid.addEventListener("focusout", hideShelfPop);
+    grid.addEventListener("click", hideShelfPop);
   }
 
   function renderShelfStats() {
@@ -2110,6 +2164,12 @@
     const html = collectionState.shelf !== "synced" ? shelfStatsHtml() : "";
     host.hidden = !html;
     host.innerHTML = html;
+    host.querySelector(".cw-shelf-sum")?.addEventListener("toggle", (event) => {
+      collectionState.statsOpen = event.target.open;
+      const label = event.target.querySelector(".cw-shelf-sum-toggle>span:first-child");
+      if (label) label.textContent = event.target.open ? "Hide" : "More";
+      saveCollectionPrefs();
+    });
   }
 
   function paintCollectionItems() {
@@ -2120,6 +2180,8 @@
     if (collectionState.items.length && shelfViewOn()) {
       grid.dataset.view = "shelf";
       grid.classList.remove("is-grouped");
+      hideShelfPop();
+      wireShelfPop();
       grid.innerHTML = shelfViewHtml();
       syncCollectionSelection();
       return;
@@ -2181,12 +2243,11 @@
       btn.setAttribute("aria-pressed", String(active));
     });
     document.querySelectorAll("[data-collection-display]").forEach((btn) => {
-      const mode = btn.dataset.collectionDisplay;
-      const on = collectionState.display === mode;
-      btn.hidden = collectionState.shelf === "synced" || collectionState.view === "list";
+      const on = shelfViewOn();
+      btn.hidden = false;
       btn.classList.toggle("active", on);
       btn.setAttribute("aria-pressed", String(on));
-      btn.title = on ? "Show posters" : "Show shelf view";
+      btn.title = on ? "Back to your collection" : "Show my shelf";
       btn.setAttribute("aria-label", btn.title);
     });
     const shelfSelect = $("#profile-collection-shelf");
@@ -2361,12 +2422,22 @@
       }
       const displayBtn = event.target?.closest?.("[data-collection-display]");
       if (displayBtn) {
-        const mode = displayBtn.dataset.collectionDisplay;
-        const before = collectionPageSize();
-        collectionState.display = collectionState.display === mode ? "poster" : mode;
+        const before = { size: collectionPageSize(), shelf: collectionState.shelf };
+        if (shelfViewOn()) {
+          collectionState.display = "poster";
+          if (collectionState.shelf === "shelf") collectionState.shelf = "synced";
+        } else {
+          collectionState.display = "shelf";
+          collectionState.view = "grid";
+          if (collectionState.shelf === "synced") collectionState.shelf = "shelf";
+        }
+        if (collectionState.shelf !== before.shelf) {
+          collectionState.shelfFilter = "";
+          collectionState.selected.clear();
+        }
         saveCollectionPrefs();
         syncCollectionViewButtons();
-        if (collectionPageSize() !== before) void loadCollection({ reset: true });
+        if (collectionPageSize() !== before.size || collectionState.shelf !== before.shelf) void loadCollection({ reset: true });
         else paintCollectionItems();
         return;
       }

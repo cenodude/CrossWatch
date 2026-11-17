@@ -2906,7 +2906,7 @@ def get_profile_html(user: dict | None = None) -> str:
           <option value="purchased_desc">Bought: newest</option>
         </select>
         <div class="cw-hub-records-views" role="group" aria-label="View mode">
-          <button class="cw-view-shelf" type="button" data-collection-display="shelf" title="Show shelf view" aria-label="Show shelf view" aria-pressed="false" hidden><span class="material-symbols-rounded" aria-hidden="true">shelves</span></button>
+          <button class="cw-view-shelf" type="button" data-collection-display="shelf" title="Show my shelf" aria-label="Show my shelf" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">shelves</span></button>
           <button class="cw-view-timeline" type="button" data-collection-timeline title="Show timeline" aria-label="Show timeline" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">timeline</span></button>
           <button class="active" type="button" data-collection-view="grid" title="Grid view" aria-label="Grid view" aria-pressed="true"><span class="material-symbols-rounded" aria-hidden="true">grid_view</span></button>
           <button type="button" data-collection-view="list" title="List view" aria-label="List view" aria-pressed="false"><span class="material-symbols-rounded" aria-hidden="true">view_list</span></button>
