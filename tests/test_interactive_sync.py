@@ -316,11 +316,12 @@ def test_explicit_refresh_explains_selection_loss_without_an_apply_read(config_b
         for row in list(src.index.values())[:1151]:
             row["title"] += " changed"
         svc.refresh(session, cfg, {})
+        assert session.store.counts["selected"] == 1431
         svc.apply(session, cfg, selected)
         assert len(reads) == 2
         assert session.status == "review"
         assert session.public()["counts"]["changes"] == 1431
-        assert session.public()["counts"]["selected"] == 280
+        assert session.public()["counts"]["selected"] == 1431
         result = session.public()["apply_review"]
         assert {k: result[k] for k in ("requested", "retained", "needs_review", "applied")} == dict(requested=1431, retained=280, needs_review=1151, applied=0)
         assert session.message.startswith("Nothing was applied.")

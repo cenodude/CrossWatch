@@ -16,7 +16,7 @@ test("status conflicts show actual labels and default to leaving both sides unch
   const update = {id:"status-2",result:"update",operation:"update",feature:"history",provider:"SIMKL",selectable:true,
     item:{title:"Other",type:"show",watch_status:"dropped",_cw_status_mapping:{from:"watching",to:"dropped"}},
     before:{watch_status:"watching",_cw_status_mapping:true}};
-  const context = {host:{contains:()=>false,innerHTML:""},document:{activeElement:null},window:{},
+  const context = {host:{contains:()=>false,querySelector:()=>null,innerHTML:""},document:{activeElement:null},window:{},
     session:{status:"review",pair:{source:"ANILIST",target:"SIMKL"},counts:{changes:1,selected:0,conflicts:1},features:["history"]},
     pageData:{total:2,items:[row,update]},page:0,PAGE_SIZE:100,pageLoading:false,downloadOpen:false,downloading:false,
     query:"",feature:"",result:"",labels:{update:"Update"},pending:()=>false,origin:()=>["main","Main"],aiButton:()=>"",
@@ -424,7 +424,7 @@ test("failed plans identify partial progress proposals and expose failure detail
     + source.slice(source.indexOf("  function closeButtonHTML()"), source.indexOf("  function reportHTML()")) + source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
   const rows = [1,2].map(id => ({id:String(id), key:`movie:${id}`, item:{type:"movie",title:`Movie ${id}`},
     feature:"progress", operation:"add", result:"add", provider:"FLOPPY", instance:"default", selectable:true}));
-  const context = {host:{contains:()=>false,innerHTML:""},document:{activeElement:null},window:{},
+  const context = {host:{contains:()=>false,querySelector:()=>null,innerHTML:""},document:{activeElement:null},window:{},
     session:{status:"error",pair:{source:"WETRAKR",target:"FLOPPY"},counts:{changes:2,selected:0,attention:0,conflicts:0},
       features:["progress"],notices:[{event:"feature:error",feature:"history",provider:"WETRAKR",side:"source",route:"WETRAKR to FLOPPY",reason:"feature:error",
         detail:"Provider <diagnostic>",error:"History <failure>"}]},
@@ -440,7 +440,7 @@ test("failed plans identify partial progress proposals and expose failure detail
   assert.match(html, /<strong>2<\/strong><span>Partial proposals/);
   assert.match(html, /Unknown<\/strong><span>Item checks incomplete/);
   assert.doesNotMatch(html, /Need attention/);
-  assert.match(html, /<section id="is-notices" class="is-notices" aria-label="Failure notices and sync protections"><strong>Failure notices and sync protections \(1\)<\/strong><p>/);
+  assert.match(html, /<section id="is-notices" class="is-notices" aria-label="Failure notices and sync protections"><div class="cw-page-notice-heading"><strong>Failure notices and sync protections \(1\)<\/strong>/);
   assert.match(html, /history \/ WETRAKR \(source\)/);
   assert.doesNotMatch(html, /history \/ FLOPPY/);
   assert.match(html, /Planning failed for history from WETRAKR \(source\)\. Those features have no proposals in this plan/);
@@ -478,8 +478,8 @@ test("failed plans identify partial progress proposals and expose failure detail
   context.session.status = "review";
   context.session.notices = [{reason:"Existing notice"}];
   vm.runInContext("render();", context);
-  assert.doesNotMatch(context.host.innerHTML, /Partial plan:|Item checks incomplete|toggle-notices/);
-  assert.match(context.host.innerHTML, /Sync protections and provider notices \(1\)<\/strong><p><strong><\/strong> Existing notice<\/p>/);
+  assert.doesNotMatch(context.host.innerHTML, /Partial plan:|Item checks incomplete/);
+  assert.match(context.host.innerHTML, /Sync protections and provider notices \(1\)<\/strong>/);
   assert.match(context.host.innerHTML, /<strong>0<\/strong><span>Need attention/);
   context.session.status = "error";
   context.session.report = {outcome:"failed"};
@@ -488,7 +488,7 @@ test("failed plans identify partial progress proposals and expose failure detail
   assert.doesNotMatch(context.host.innerHTML, /Partial plan:/);
 });
 
-test("notices stay visible and the status mapping count links to them", () => {
+test("routine notices start collapsed and the status mapping count links to them", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
   const fn = source.slice(source.indexOf("  const noticeSubject"), source.indexOf("  function aiQuestion()"))
     + source.slice(source.indexOf("  function statusMappingHTML("), source.indexOf("  const duration ="));
@@ -497,13 +497,13 @@ test("notices stay visible and the status mapping count links to them", () => {
     esc:value=>String(value ?? ""), endpoint:p=>p};
   vm.createContext(context);
   vm.runInContext(fn + "globalThis.collapsed = noticesHTML(false, false); globalThis.summary = statusMappingHTML([{src:'WETRAKR',dst:'SCROB',matched:4,unresolved:2,state:'attention'}]);", context);
-  assert.equal((context.collapsed.match(/<p>/g) || []).length, 3);
-  assert.match(context.collapsed, /data-action="toggle-notices" aria-expanded="false">Show all 8 notices<\/button>/);
+  assert.equal((context.collapsed.match(/<p>/g) || []).length, 0);
+  assert.match(context.collapsed, /data-action="toggle-notices" aria-expanded="false">Show 8 notices<\/button>/);
   assert.match(context.summary, /<button class="is-link" data-action="show-notices">2 review notices<\/button>/);
   vm.runInContext("noticesExpanded = true; globalThis.expanded = noticesHTML(false, false); session.notices = session.notices.slice(0, 5); noticesExpanded = null; globalThis.few = noticesHTML(false, false);", context);
   assert.equal((context.expanded.match(/<p>/g) || []).length, 8);
-  assert.match(context.expanded, /aria-expanded="true">Show fewer<\/button>/);
-  assert.equal((context.few.match(/<p>/g) || []).length, 5);
+  assert.match(context.expanded, /aria-expanded="true">Hide notices<\/button>/);
+  assert.equal((context.few.match(/<p>/g) || []).length, 0);
   vm.runInContext("session.notices = []; globalThis.none = noticesHTML(false, false); globalThis.plain = statusMappingHTML([{src:'A',dst:'B',matched:1,unresolved:2}]);", context);
   assert.equal(context.none, "");
   assert.match(context.plain, /2 review notices/);
@@ -552,7 +552,7 @@ test("completion report distinguishes cloud outcomes and escapes titles", () => 
 test("Tracker import reviews use the shared selection controls without permanent mapping edits", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
   const fn = source.slice(source.indexOf("  function closeButtonHTML()"), source.indexOf("  function reportHTML()")) + source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
-  const context = {host:{contains:()=>false,innerHTML:""},document:{activeElement:null},window:{},
+  const context = {host:{contains:()=>false,querySelector:()=>null,innerHTML:""},document:{activeElement:null},window:{},
     session:{tracker_import:true,status:"review",pair:{source:"TRAKT",target:"CROSSWATCH"},counts:{changes:1,selected:1},features:["history"]},
     pageData:{total:1,items:[{id:"one",key:"tmdb:949",item:{type:"movie",title:"Heat"},feature:"history",operation:"add",result:"add",provider:"CROSSWATCH",selectable:true,selected:true}]},
     page:0,PAGE_SIZE:75,pageLoading:false,downloadOpen:false,query:"",feature:"",result:"",labels:{add:"Add"},pending:()=>false,
@@ -575,7 +575,7 @@ test("Tracker import reviews use the shared selection controls without permanent
 test("Review footer explains the one-time dry run confirmation", () => {
   const source = readFileSync(new URL("../assets/js/interactive-sync.js", import.meta.url), "utf8");
   const fn = source.slice(source.indexOf("  function closeButtonHTML()"), source.indexOf("  function reportHTML()")) + source.slice(source.indexOf("  function render()"), source.indexOf("  async function action("));
-  const context = {host:{contains:()=>false,innerHTML:""},document:{activeElement:null},window:{},
+  const context = {host:{contains:()=>false,querySelector:()=>null,innerHTML:""},document:{activeElement:null},window:{},
     session:{dry_run:true,status:"review",pair:{source:"WETRAKR",target:"FLOPPY"},counts:{changes:1,selected:1},features:["history"]},
     pageData:{total:1,items:[{id:"one",key:"tmdb:949",item:{type:"movie",title:"Heat"},feature:"history",operation:"add",result:"add",provider:"FLOPPY",selectable:true,selected:true}]},
     page:0,PAGE_SIZE:75,pageLoading:false,downloadOpen:false,query:"",feature:"",result:"",labels:{add:"Add"},pending:()=>false,

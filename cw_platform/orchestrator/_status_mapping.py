@@ -47,6 +47,13 @@ def _skipped_code(record):
     return record.raw.get("_cw_skipped") if isinstance(record.raw, dict) else None
 
 
+def _status_included(config, record, direction):
+    if record.observation.status is None:
+        return True
+    rule = config.rule(direction, record.media, record.observation.status)
+    return rule is not None and rule.include
+
+
 class _FreshReads:
     def __init__(self, adapters):
         self.adapters = adapters
@@ -309,8 +316,10 @@ def _run_status_mappings(ctx, pairs, cfg, health_map, *, store, adapter_override
                     report(pair, f"{len(unidentified[endpoint])} {endpoint.provider.upper()} status entries without a usable ID were skipped ({unidentified[endpoint][0]}).")
             matched = list(matched_records(left, right, allow_mapping=allow_mapping))
             paired = {id(record) for match in matched for record in match}
-            missing = sum(1 for side in ((left, right) if scope.two_way else (left,)) for record in side.values()
+            source_sides = ((left, Direction.FORWARD), (right, Direction.REVERSE)) if scope.two_way else ((left, Direction.FORWARD),)
+            missing = sum(1 for side, direction in source_sides for record in side.values()
                           if id(record) not in paired and record.observation.state != ReadState.ABSENT and not _skipped_code(record)
+                          and _status_included(config, record, direction)
                           and not (record.observation.state == ReadState.UNKNOWN and record.observation.native_status in UNTRACKED_STATES))
             summary.update(source_count=len(snapshots[scope.a]), destination_count=len(snapshots[scope.b]), matched=len(matched), unmatched=missing)
             publish_status(ctx, pair, "read", **summary)
@@ -399,6 +408,8 @@ def _run_status_mappings(ctx, pairs, cfg, health_map, *, store, adapter_override
                     elif decision.reason == "rewatch_state_preserved":
                         rewatching = scope.a if decision.direction == Direction.REVERSE else scope.b
                         report(pair, f"Skipped, being rewatched on {rewatching.provider.upper()}, status left unchanged", item=a.item)
+                    elif decision.reason == "completed_destination_preserved" and not pending:
+                        summary["excluded"] += 1
                     elif decision.reason not in {"excluded", "source_absent", "watchlist_managed", "caught_up"}:
                         report(pair, decision.reason.replace("_", " "), item=a.item)
                     else:

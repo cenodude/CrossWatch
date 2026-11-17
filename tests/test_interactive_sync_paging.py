@@ -42,7 +42,8 @@ def test_fifty_thousand_rows_have_bounded_responses_and_server_selection(api_cli
     assert len(response.content) < 2000
     captured = []
 
-    def launch(current, task, cfg, chosen, **kwargs):
+    def launch(current, task, cfg, chosen, confirm_dry_run, **kwargs):
+        assert not confirm_dry_run
         captured.append(chosen)
 
     monkeypatch.setattr(api, "launch", launch)
@@ -150,6 +151,25 @@ def test_recheck_diagnostics_identify_changed_fields_without_item_payloads():
         assert "Movie 1" not in json.dumps(details)
         assert "watched_at" not in json.dumps(details)
         assert old.selected_ids()
+    finally:
+        old.close()
+        new.close()
+
+
+def test_full_refresh_selects_new_changes_and_keeps_existing_deselections():
+    old, new = ReviewStore(), ReviewStore()
+    try:
+        before = InteractivePlan(rows=old.rows, copy_rows=False)
+        before.filter("history", "DST", "default", "add", [item(1), item(2)])
+        old.finish()
+        old.select(False, q="Movie 2")
+        after = InteractivePlan(rows=new.rows, copy_rows=False)
+        after.filter("history", "DST", "default", "add", [item(1), item(2), item(3)])
+        new.rows["retry"] = dict(id="retry", feature="history", result="unresolved", selectable=True, item=item(4))
+        new.rows["blocked"] = dict(id="blocked", feature="history", result="blocked", selectable=False, item=item(5))
+        new.finish(old, select_new=True)
+        selected = {row["item"]["title"] for row in new.page()["items"] if row["selected"]}
+        assert selected == {"Movie 1", "Movie 3"}
     finally:
         old.close()
         new.close()

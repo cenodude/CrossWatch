@@ -99,7 +99,7 @@ class ReviewStore:
             self.db.execute("INSERT INTO review(id,kind,feature,result,selectable,selected,search,payload) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,search=excluded.search",
                             (key, kind, value["feature"], result, selectable, selectable and result != "unresolved", search.casefold(), payload))
 
-    def finish(self, previous=None):
+    def finish(self, previous=None, *, select_new=False):
         with self.lock:
             self.db.commit()
             if previous is not None:
@@ -107,7 +107,7 @@ class ReviewStore:
                     previous.db.commit()
                 self.db.execute("ATTACH DATABASE ? AS previous", (str(previous.path),))
                 try:
-                    self.db.execute("UPDATE review SET selected=selectable AND EXISTS(SELECT 1 FROM previous.review old WHERE old.id=review.id AND old.selected=1)")
+                    self.db.execute("UPDATE review SET selected=selectable AND COALESCE((SELECT old.selected FROM previous.review old WHERE old.id=review.id), selected AND ?)", (select_new,))
                     self.db.commit()
                 finally:
                     self.db.execute("DETACH DATABASE previous")
