@@ -704,7 +704,7 @@ html[data-cw-theme="flat-light"] :is(.cw-shelfv-cap,.cw-mm-coll-head,.cw-shelfv-
 .cw-shelf-mix-bar>span[data-i="5"],.cw-shelf-mix-key>span[data-i="5"]::before{background:color-mix(in srgb,var(--cw-theme-text) 16%,var(--cw-theme-surface))}
 .cw-shelfv-status{border:1px solid #f0a43a;border-radius:999px;background:rgba(7,8,12,.85);color:#fff}
 .cw-shelfv-status[data-status="wishlist"]{border-color:#8b74ff}
-.cw-shelfv-art:focus-visible{border-radius:8px;outline:2px solid var(--cw-theme-accent);outline-offset:4px}
+.cw-shelfv-art:focus-visible{border-radius:8px;outline:2px solid var(--cw-theme-accent);outline-offset:-2px}
 .cw-case{--case-color:#1265cb}
 .cw-case:is([data-case="uhd"],[data-case="dvd"]){--case-color:#17191d}
 .cw-case[data-case="steelbook"]{--case-color:#a4aeba}

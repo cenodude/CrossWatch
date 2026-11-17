@@ -395,6 +395,7 @@
       shelfPopState.node.setAttribute("aria-hidden", "true");
       document.body.appendChild(shelfPopState.node);
       window.addEventListener("scroll", shelfPopHide, { passive: true, capture: true });
+      window.addEventListener("resize", shelfPopHide, { passive: true });
     }
     shelfPopState.anchor = anchor;
     const pop = shelfPopState.node;
@@ -402,10 +403,13 @@
     const poster = art?.currentSrc || art?.src || "";
     pop.innerHTML = `${poster ? `<span class="cw-shelfv-pop-bg" aria-hidden="true"><img src="${shelfEsc(poster)}" alt="" decoding="async"></span>` : ""}${html}`;
     const rect = (target || anchor).getBoundingClientRect();
-    const width = pop.offsetWidth || 260;
+    const width = pop.offsetWidth || 220;
     const height = pop.offsetHeight || 200;
-    const left = window.innerWidth - rect.right - 16 >= width ? rect.right + 12 : Math.max(12, rect.left - width - 12);
-    const top = Math.min(Math.max(12, rect.top), window.innerHeight - height - 12);
+    const base = anchor.querySelector?.(".cw-shelfv-base")?.getBoundingClientRect();
+    const left = Math.max(12, Math.min(rect.left + (rect.width - width) / 2, window.innerWidth - width - 12));
+    const above = rect.top - height - 12;
+    const below = Math.max(rect.bottom, base?.bottom || 0) + 12;
+    const top = Math.max(12, Math.min(above >= 12 ? above : below, window.innerHeight - height - 12));
     pop.style.left = `${Math.round(left)}px`;
     pop.style.top = `${Math.round(top)}px`;
     pop.classList.add("is-open");

@@ -12,11 +12,13 @@ const items = formats.map((format,index) => ({key:`movie:${index + 1}`,type:"mov
 const poster = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="600"><defs><linearGradient id="g" x2="0" y2="1"><stop stop-color="#1c6792"/><stop offset="1" stop-color="#da973d"/></linearGradient></defs><rect width="400" height="600" fill="url(#g)"/><circle cx="200" cy="280" r="130" fill="#e9ae68"/><path d="M0 600L200 300L400 600" fill="#273654"/><text x="200" y="90" fill="white" font-size="38" text-anchor="middle" font-family="sans-serif">CROSSWATCH</text></svg>';
 const disc = '<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><defs><mask id="m"><circle cx="200" cy="200" r="196" fill="white"/><circle cx="200" cy="200" r="25" fill="black"/></mask></defs><g mask="url(#m)"><circle cx="200" cy="200" r="196" fill="#b75851" stroke="#d4d9e3" stroke-width="6"/><path d="M0 0H400V210L0 380" fill="#244f82"/><circle cx="200" cy="200" r="48" fill="#bcc5d2"/><text x="200" y="95" text-anchor="middle" fill="white" font-size="32" font-family="sans-serif">DISC ART</text></g></svg>';
 
-async function fixture(t,view,theme) {
+async function fixture(t,view,theme,entries=items) {
   const browser = await (process.env.CW_SHELF_BROWSER === "firefox" ? firefox : chromium).launch({headless:true});
   t.after(() => browser.close());
   const page = await browser.newPage({viewport:{width:1440,height:1050},reducedMotion:"reduce",locale:"en-US"});
   page.setDefaultTimeout(8000);
+  const requests = [];
+  page.on("request",request => requests.push(request.url()));
   const errors = [];
   page.on("pageerror",error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors,[]));
@@ -60,18 +62,18 @@ async function fixture(t,view,theme) {
       return route.fulfill({contentType:"image/svg+xml",body:poster});
     }
     if (!path.startsWith("/api/")) return route.fulfill({contentType:"text/html",body:html});
-    const list = controls.empty ? [] : items;
+    const list = controls.empty ? [] : entries;
     let json = {ok:true,items:[]};
     if (path === "/api/profile/shelf") json = {items:Object.fromEntries(list.map(item => [`movie:${item.tmdb}`,item.shelf]))};
     if (path === "/api/profile/collection") json = {items:list,total:list.length,page:1,pages:1,page_size:24,counts:{all:list.length,movie:list.length},providers:[],months:[]};
     if (path.startsWith("/api/profile/shelf/movie/")) {
-      const item = items.find(item => item.tmdb === path.split("/").pop()) || items[0];
+      const item = entries.find(item => item.tmdb === path.split("/").pop()) || entries[0];
       json = {ok:true,can_edit:true,entry:{status:item.shelf.status,copies:[{format:item.shelf.formats[0],packaging:item.shelf.packaging,store:"Collection",shelf:"Movie night"}]}};
     }
     if (path === "/api/profile/title") json = {ok:true,plays:[],collection:{present:[],missing:[]}};
     if (path === "/api/tracker/summary") json = {provider_instance:"default",instances:[{id:"default",label:"Default"}],counts:{collection:list.length},notes:{total:0,statuses:{},tags:[]}};
     if (path === "/api/tracker/items") json = {items:list,total:list.length};
-    if (path === "/api/tracker/title") json = {title:items.find(item => item.key === url.searchParams.get("key")) || items[0],plays:[],ratings:[],watchlist:[],collection:[],progress:[],attention:[],seasons:[]};
+    if (path === "/api/tracker/title") json = {title:entries.find(item => item.key === url.searchParams.get("key")) || entries[0],plays:[],ratings:[],watchlist:[],collection:[],progress:[],attention:[],seasons:[]};
     return route.fulfill({json});
   });
   await page.goto(`https://shelf.test/${view === "hub" ? "profile#collection" : "#tracker"}`);
@@ -98,19 +100,20 @@ async function fixture(t,view,theme) {
       api.wireCollection();
       api.wirePosterOverlay();
       api.paintCollectionItems();
-    },items);
+    },entries);
   } else {
     await page.addScriptTag({url:"/assets/js/tracker.js"});
     await page.evaluate(() => window.TrackerPage.mount(document.querySelector("#page-tracker")));
   }
   await page.locator(".cw-shelfv-item").first().waitFor();
   await page.evaluate(() => document.fonts.ready);
-  return {page,controls};
+  return {page,controls,requests};
 }
 
 async function snapshot(page,name,selector=".cw-shelfv") {
   if (!process.env.CW_SHELF_SCREENSHOTS) return;
   await mkdir(process.env.CW_SHELF_SCREENSHOTS,{recursive:true});
+  if (!selector) return page.screenshot({path:`${process.env.CW_SHELF_SCREENSHOTS}/${name}.png`});
   const viewport = page.viewportSize();
   const bounds = await page.locator(selector).boundingBox();
   if (bounds.height > viewport.height - 160) await page.setViewportSize({...viewport,height:Math.ceil(bounds.height + 160)});
@@ -143,21 +146,28 @@ for (const view of ["hub","tracker"]) for (const theme of ["original","flat-dark
     assert.equal(await page.locator(".cw-shelfv-item").count(),formats.length);
     const kinds = await page.locator(".cw-shelfv-item").evaluateAll(nodes => nodes.map(node => node.dataset.case));
     assert.deepEqual(kinds,["bluray","uhd","steelbook","dvd","plain","dvd","dvd","dvd","dvd","dvd"]);
-    for (const width of [1440,790,390,320]) {
+    for (const width of [1440,1150,790,390,320]) {
       await resize(page,width);
       await page.waitForFunction(() => document.querySelectorAll(".cw-shelfv-item").length === 10);
       await page.locator(".cw-shelfv").scrollIntoViewIfNeeded();
       const layout = await page.locator(".cw-shelfv-item").evaluateAll(nodes => nodes.map(node => {
         const rect = selector => {const r=node.querySelector(selector).getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width};};
-        return {base:rect(".cw-shelfv-base"),caption:rect(".cw-shelfv-cap strong"),art:rect(".cw-shelfv-art"),case:rect(".cw-case"),filter:getComputedStyle(node.querySelector(".cw-case")).filter};
+        return {base:rect(".cw-shelfv-base"),caption:rect(".cw-shelfv-cap strong"),badge:rect(".cw-shelfv-cap>span"),note:rect(".cw-shelfv-cap small"),art:rect(".cw-shelfv-art"),case:rect(".cw-case"),filter:getComputedStyle(node.querySelector(".cw-case")).filter};
       }));
       for (let i=0;i<layout.length;i++) {
         assert.equal(layout[i].filter,"none");
         assert.ok(layout[i].caption.y >= layout[i].base.bottom + 8);
         assert.ok(layout[i].case.bottom <= layout[i].base.y + 3);
+        if (width >= 1150) {
+          assert.ok(layout[i].badge.x >= layout[i].caption.right + 11);
+          assert.ok(Math.abs((layout[i].badge.y + layout[i].badge.bottom) / 2 - (layout[i].caption.y + layout[i].caption.bottom) / 2) < 1);
+          assert.ok(layout[i].note.y >= Math.max(layout[i].caption.bottom,layout[i].badge.bottom) + 3);
+        }
         if (i && Math.abs(layout[i].base.y-layout[i-1].base.y)<1) assert.ok(Math.abs(layout[i].base.x-layout[i-1].base.right)<1);
       }
       if (width <= 600) assert.equal(layout.filter(item => Math.abs(item.base.y-layout[0].base.y)<1).length,3);
+      const rack = await page.locator(".cw-shelfv-rack").first().boundingBox();
+      assert.ok(layout.at(-1).base.right >= rack.x + rack.width - 1);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),true);
       await snapshot(page,`${view}-${theme}-${width}`);
     }
@@ -165,6 +175,12 @@ for (const view of ["hub","tracker"]) for (const theme of ["original","flat-dark
     const button = page.locator(".cw-shelfv-art").first();
     await button.focus();
     await page.locator(".cw-shelfv-pop.is-open").waitFor();
+    const popup = await page.locator(".cw-shelfv-pop").boundingBox();
+    const coverBounds = await button.boundingBox();
+    assert.ok(popup.width <= 220);
+    assert.ok(popup.y + popup.height <= coverBounds.y || popup.y >= coverBounds.y + coverBounds.height);
+    assert.ok(Math.abs(popup.x + popup.width / 2 - coverBounds.x - coverBounds.width / 2) <= 1);
+    await snapshot(page,`${view}-${theme}-info`,null);
     assert.equal(await button.evaluate(node => getComputedStyle(node).outlineStyle),"solid");
     assert.equal(await button.locator(".cw-shelf-disc img").first().evaluate(node => getComputedStyle(node).animationName),"none");
     const caseArt = await button.locator(".cw-case-art").first().getAttribute("src");
@@ -211,10 +227,18 @@ for (const view of ["hub","tracker"]) for (const theme of ["original","flat-dark
 test("disc failure, artwork changes and reduced motion retain a usable shelf",async t => {
   const {page,controls} = await fixture(t,"hub","original");
   const art = page.locator(".cw-shelfv-art").first();
+  const tilt = () => art.locator(".cw-shelf-disc").first().evaluate(node => new DOMMatrixReadOnly(getComputedStyle(node).transform).m13);
+  const restingTilt = await tilt();
+  assert.ok(Math.abs(restingTilt) > .55);
   await page.emulateMedia({reducedMotion:"no-preference"});
   await art.hover();
+  await page.waitForFunction(() => Math.abs(new DOMMatrixReadOnly(getComputedStyle(document.querySelector(".cw-shelf-disc")).transform).m13) < .001);
+  assert.ok(Math.abs(await tilt()) < .001);
+  assert.ok(Math.abs(await art.locator(".cw-case").first().evaluate(node => new DOMMatrixReadOnly(getComputedStyle(node).transform).m13)) < .001);
   assert.equal(await art.locator(".cw-shelf-disc img").first().evaluate(node => getComputedStyle(node).animationPlayState),"running");
+  await snapshot(page,"hub-original-hover",null);
   await page.emulateMedia({reducedMotion:"reduce"});
+  assert.equal(await tilt(),restingTilt);
   assert.equal(await art.locator(".cw-shelf-disc img").first().evaluate(node => getComputedStyle(node).animationName),"none");
   controls.failDisc = true;
   await page.evaluate(() => window.CW.ArtChoice.set("movie","1","new-art"));
@@ -224,3 +248,38 @@ test("disc failure, artwork changes and reduced motion retain a usable shelf",as
   await art.press("Enter");
   await page.locator(".cw-mm-coll-art .cw-case").waitFor();
 });
+
+for (const [view,count] of [["hub",120],["tracker",200]]) {
+  test(`${view}: large shelves defer artwork and avoid idle animation work`,async t => {
+    const entries = Array.from({length:count},(_,index) => ({...items[0],key:`movie:${index + 1}`,tmdb:String(index + 1),ids:{tmdb:String(index + 1)},art:{kind:"movie",tmdb:String(index + 1)}}));
+    const {page,requests} = await fixture(t,view,"original",entries);
+    await page.emulateMedia({reducedMotion:"no-preference"});
+    await page.waitForTimeout(500);
+    const idle = await page.locator(".cw-shelfv").evaluate(node => ({
+      items:node.querySelectorAll(".cw-shelfv-item").length,
+      animations:node.getAnimations({subtree:true}).length,
+      loadedPosters:[...node.querySelectorAll(".cw-shelfv-art>.cw-shelf-scene .cw-case-art")].filter(image => image.complete && image.naturalWidth).length,
+      reflectionHeight:node.querySelector(".cw-shelf-reflection").getBoundingClientRect().height,
+    }));
+    const artRequests = requests.filter(url => url.includes("/art/"));
+    t.diagnostic(JSON.stringify({view,...idle,artRequests:artRequests.length,uniqueArtRequests:new Set(artRequests).size}));
+    assert.equal(idle.items,count);
+    assert.equal(idle.animations,0);
+    assert.ok(idle.loadedPosters > 0 && idle.loadedPosters < count);
+    assert.ok(idle.reflectionHeight <= 36);
+    assert.equal(artRequests.length,new Set(artRequests).size);
+    const shelf = page.locator(".cw-shelfv");
+    const spins = () => shelf.evaluate(node => node.getAnimations({subtree:true}).filter(animation => animation.animationName === "cwDiscSpin").length);
+    await page.locator(".cw-shelfv-art").first().hover();
+    assert.equal(await spins(),2);
+    await page.mouse.move(0,0);
+    assert.equal(await spins(),0);
+    const lastPoster = page.locator(".cw-shelfv-art>.cw-shelf-scene .cw-case-art").last();
+    await lastPoster.scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => {
+      const image = [...document.querySelectorAll(".cw-shelfv-art>.cw-shelf-scene .cw-case-art")].at(-1);
+      return image.complete && image.naturalWidth > 0;
+    });
+    assert.ok(requests.some(url => url.includes(`/movie/${count}?`) && !url.includes("kind=disc")));
+  });
+}
