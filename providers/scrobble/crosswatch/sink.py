@@ -16,7 +16,7 @@ from providers.sync._mod_CROSSWATCH import OPS as CROSSWATCH_OPS
 from services.activity import record_scrobble_event
 from cw_platform.event_archive import record_watch
 from services.playback_progress.models import utc_now_iso
-from providers.scrobble.routes import progress_step
+from providers.scrobble.routes import progress_step, rewatch_window_hours
 
 try:
     from _logging import log as BASE_LOG
@@ -92,6 +92,13 @@ def _progress_step(cfg: Mapping[str, Any]) -> float:
         return progress_step(value)
     except Exception:
         return progress_step(None)
+
+
+def _rewatch_policy(cfg: Mapping[str, Any]) -> tuple[bool, int]:
+    watch = ((cfg.get("scrobble") or {}).get("watch") or {}) if isinstance(cfg, Mapping) else {}
+    options = ((watch.get("route_options") or {}).get("watch") or {}) if isinstance(watch, Mapping) else {}
+    hours = rewatch_window_hours(options.get("crosswatch_rewatch_window_hours"))
+    return options.get("crosswatch_rewatches") is True, hours
 
 
 def _slug(value: Any) -> str:
@@ -308,9 +315,17 @@ class CrossWatchSink(ScrobbleSink):
             if self._completed.get(media_key, -1.0) >= watched_at:
                 return {"ok": True, "log_status": "skipped", "reason": "session_completed"}
             item["watched_at"] = utc_now_iso()
-            history = CROSSWATCH_OPS.add(view, [item], feature="history", dry_run=False) or {}
+            rewatches, window = _rewatch_policy(cfg)
+            history_view = {**view, "_cw_history_rewatches": True, "_cw_history_rewatch_window": window * 3600} if rewatches else view
+            history = CROSSWATCH_OPS.add(history_view, [item], feature="history", dry_run=False) or {}
+            merged = rewatches and bool(history.get("window_merged"))
             cleanup = CROSSWATCH_OPS.remove(view, [item], feature="progress", dry_run=False) or {}
             ok = bool(history.get("ok")) and bool(cleanup.get("ok"))
+            if ok and merged:
+                self._completed[media_key] = progress
+                record_watch(ev, action="stop", source_provider=src, source_instance=src_inst, destination_provider="crosswatch", destination_instance=self._instance_id, status="skipped", progress=progress, reason="rewatch_window")
+                _log(f"rewatch merged into a play within {window}h media='{ev.title or '?'}'", "INFO")
+                return {"ok": True, "log_status": "skipped", "reason": "rewatch_window", "rewatch_window_hours": window}
             if ok:
                 self._completed[media_key] = progress
                 record_watch(ev, action="stop", source_provider=src, source_instance=src_inst, destination_provider="crosswatch", destination_instance=self._instance_id, progress=progress)

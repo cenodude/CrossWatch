@@ -661,6 +661,8 @@ function optionsPanel(r) {
       ${manualMarks}
       ${animeMapping}
       ${r.sink === "simkl" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>Track rewatches</strong><small>Allow repeat watches on this route. Requires SIMKL Pro or VIP. SIMKL applies a 48-hour gap per movie or episode. Your watched threshold still applies, with a minimum of 80%.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-simkl-rewatches" ${r.options.watch?.simkl_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>` : ""}
+      ${r.sink === "crosswatch" ? `<label class="scrm-toggle-row"><span class="scrm-toggle-copy"><span class="material-symbols-rounded">replay</span><span><strong>Track rewatches</strong><small>Save every completed watch as its own play. When off, a new watch replaces the latest play of that title.</small></span></span><span class="scrm-switch"><input type="checkbox" id="scr-cw-rewatches" ${r.options.watch?.crosswatch_rewatches === true ? "checked" : ""}><span class="scrm-switch-track"></span></span></label>
+      <div class="scrm-fields two">${field("Rewatch window (h)", `<input class="input" id="scr-cw-rewatch-window" type="number" min="1" max="168" value="${esc(r.options.watch?.crosswatch_rewatch_window_hours ?? "")}" placeholder="12">`, "", "Hours from 1 to 168. A watch of the same movie or episode within this window counts as the same play. Only used when Track rewatches is on.")}</div>` : ""}
     </section>
   `;
 }
@@ -842,6 +844,11 @@ function collect() {
   if (manualMarksEl && ["plex", "jellyfin", "emby", "silo", "tofa"].includes(provider)) watch.manual_marks = !!manualMarksEl.checked;
   if (["crosswatch", "simkl"].includes(String(root.querySelector("#scr-sink")?.value || draft.sink || "").toLowerCase())) watch.anime_mapping = !!root.querySelector("#scr-anime-mapping")?.checked;
   if (String(root.querySelector("#scr-sink")?.value || draft.sink || "").toLowerCase() === "simkl") watch.simkl_rewatches = !!root.querySelector("#scr-simkl-rewatches")?.checked;
+  if (String(root.querySelector("#scr-sink")?.value || draft.sink || "").toLowerCase() === "crosswatch") {
+    watch.crosswatch_rewatches = !!root.querySelector("#scr-cw-rewatches")?.checked;
+    const rewatchWindow = root.querySelector("#scr-cw-rewatch-window")?.value ?? "";
+    if (rewatchWindow !== "") watch.crosswatch_rewatch_window_hours = Number(rewatchWindow);
+  }
   const ratingsMode = root.querySelector("#scr-ratings-mode")?.value || "off";
   const sinkValue = String(sinkEl?.value || draft.sink || "").toLowerCase();
   const previousDestination = draft?.options?.destination || {};

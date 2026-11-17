@@ -10,6 +10,7 @@ import os
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
+from cw_platform.local_db import get_conn
 from cw_platform.run_control import consume_queue_stop_requested_at
 from services.scheduler_webhooks import (
     DEFAULT_WEBHOOKS,
@@ -793,7 +794,6 @@ class SyncScheduler:
 
         self._adv_last_key: dict[str, str] = {}
         self._adv_seed_key: str = ""
-        self._adv_seed_day: str = ""
         self._last_logged_next: int = 0
         self._last_logged_webhook_state: str = ""
         self._event_last_run_at: dict[str, int] = {}
@@ -804,6 +804,47 @@ class SyncScheduler:
         self._std_cfg_key: str = ""
         self._prof_next: dict[str, tuple[int, str]] = {}
         self._prof_status: dict[str, dict[str, Any]] = {}
+        self._restore_last_runs()
+
+    def _restore_last_runs(self) -> None:
+        try:
+            conn = get_conn()
+            if conn is None:
+                return
+            row = conn.execute("SELECT value_text FROM local_meta WHERE key='scheduler_last_runs'").fetchone()
+            if row is None:
+                return
+            saved = json.loads(row["value_text"])
+            if not isinstance(saved, dict):
+                return
+            for scope, value in saved.items():
+                if not isinstance(value, dict) or type(value.get("last_run_at")) is not int or value["last_run_at"] <= 0:
+                    continue
+                if type(value.get("last_run_ok")) is not bool:
+                    continue
+                record = {"last_run_at": value["last_run_at"], "last_run_ok": value["last_run_ok"]}
+                if scope == "":
+                    self._status.update(record)
+                    self._status["last_error"] = value.get("last_error") if isinstance(value.get("last_error"), str) else ""
+                else:
+                    self._prof_status[scope] = record
+        except Exception as exc:
+            self._log(f"could not restore scheduler run history ({type(exc).__name__})", level="WARN")
+
+    def _save_last_runs(self) -> None:
+        try:
+            conn = get_conn()
+            if conn is None:
+                return
+            saved = {"": {key: self._status[key] for key in ("last_run_at", "last_run_ok", "last_error")}, **self._prof_status}
+            with conn:
+                conn.execute(
+                    "INSERT INTO local_meta(key,value_text,value_type,updated_at) VALUES('scheduler_last_runs',?,'text',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value_text=excluded.value_text,updated_at=excluded.updated_at",
+                    (json.dumps(saved, separators=(",", ":")), time.time_ns()),
+                )
+        except Exception as exc:
+            self._log(f"could not save scheduler run history ({type(exc).__name__})", level="WARN")
 
     def _log(self, msg: str, *, level: str = "INFO") -> None:
         if not self.log_fn:
@@ -924,7 +965,7 @@ class SyncScheduler:
         current = now.replace(microsecond=0)
         today = base.date().isoformat()
         sig = self._adv_signature(sch)
-        if self._adv_seed_key == sig and self._adv_seed_day == today:
+        if self._adv_seed_key == sig:
             return
 
         for job in _iter_adv_jobs(sch):
@@ -952,7 +993,6 @@ class SyncScheduler:
             self._adv_last_key[job["id"]] = f"{today}@{job.get('at')}"
 
         self._adv_seed_key = sig
-        self._adv_seed_day = today
 
     def set_enabled(self, enabled: bool) -> None:
         s = self._get_sched_cfg()
@@ -1135,6 +1175,7 @@ class SyncScheduler:
                 self._status["last_run_ok"] = ok
                 self._status["last_run_at"] = _now_ts()
                 self._status["last_error"] = err
+                self._save_last_runs()
         return ok
 
     def handle_event(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1222,6 +1263,7 @@ class SyncScheduler:
                 self._status["last_rule_id"] = str(rule.get("id") or "")
                 self._status["last_event_source"] = str(event.get("source") or "")
                 self._status["last_event_name"] = str(event.get("event") or "")
+                self._save_last_runs()
 
             if not ok:
                 skipped.append({"rule_id": str(rule.get("id") or ""), "reason": "run_failed"})
@@ -1511,6 +1553,7 @@ class SyncScheduler:
                 self._status["last_rule_id"] = ""
                 self._status["last_event_source"] = ""
                 self._status["last_event_name"] = ""
+                self._save_last_runs()
 
             self._adv_last_key[j["id"]] = f"{today}@{j.get('at')}"
             executed.add(j["id"])
@@ -1574,6 +1617,7 @@ class SyncScheduler:
                     self._status["last_rule_id"] = ""
                     self._status["last_event_source"] = ""
                     self._status["last_event_name"] = ""
+                    self._save_last_runs()
 
                 if not ok:
                     break
@@ -1629,6 +1673,7 @@ class SyncScheduler:
                 self._status["last_rule_id"] = ""
                 self._status["last_event_source"] = ""
                 self._status["last_event_name"] = ""
+                self._save_last_runs()
 
             self._adv_last_key[j["id"]] = f"{today}@{j.get('at')}"
         for due_at, pending_job in due_backup:
@@ -1698,6 +1743,7 @@ class SyncScheduler:
                 self._status["last_rule_id"] = ""
                 self._status["last_event_source"] = ""
                 self._status["last_event_name"] = ""
+                self._save_last_runs()
 
             self._adv_last_key[j["id"]] = occurrence_key
         if queue_cancelled():
@@ -1738,6 +1784,7 @@ class SyncScheduler:
             self._status["last_rule_id"] = ""
             self._status["last_event_source"] = ""
             self._status["last_event_name"] = ""
+            self._save_last_runs()
         self._log("standard: run ok" if ok else "standard: run failed", level="INFO" if ok else "ERROR")
         return ok
 
@@ -1765,7 +1812,6 @@ class SyncScheduler:
                         self._std_dispatched_pairs.clear()
                         self._std_cancelled = False
                         self._adv_seed_key = ""
-                        self._adv_seed_day = ""
                     self._sleep_or_poke(1.0)
                     continue
 
@@ -1914,6 +1960,7 @@ class SyncScheduler:
                 self._notify_sync_start_rejected(payload, "profile run failed")
             with self._lock:
                 self._prof_status[pid] = {"last_run_at": _now_ts(), "last_run_ok": ok}
+                self._save_last_runs()
             self._log(f"profile {pid}: run ok" if ok else f"profile {pid}: run failed", level="INFO" if ok else "ERROR")
             return True
         return False

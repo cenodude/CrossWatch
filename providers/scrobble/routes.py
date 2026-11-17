@@ -48,11 +48,24 @@ ROUTE_WATCH_POLICY_RANGES = {
     "suppress_start_at": (0, 100),
     "poll_seconds": (5, 60),
     "idle_poll_seconds": (5, 120),
+    "crosswatch_rewatch_window_hours": (1, 168),
 }
+REWATCH_WINDOW_HOURS = 12
 ROUTE_POLL_KEYS = ("poll_seconds", "idle_poll_seconds")
 ROUTE_POLL_PROVIDERS = {"emby", "jellyfin", "kodi", "scrob", "silo"}
-ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback", "anime_mapping", "simkl_rewatches", "plexkodiconnect_support", "manual_marks"}
-ROUTE_WATCH_STRICT_BOOLEAN_KEYS = {"simkl_rewatches", "plexkodiconnect_support"}
+ROUTE_WATCH_BOOLEAN_KEYS = {"unresolved_user_fallback", "anime_mapping", "simkl_rewatches", "crosswatch_rewatches", "plexkodiconnect_support", "manual_marks"}
+ROUTE_WATCH_STRICT_BOOLEAN_KEYS = {"simkl_rewatches", "crosswatch_rewatches", "plexkodiconnect_support"}
+
+
+def rewatch_window_hours(value: Any) -> int:
+    low, high = ROUTE_WATCH_POLICY_RANGES["crosswatch_rewatch_window_hours"]
+    if isinstance(value, bool):
+        return REWATCH_WINDOW_HOURS
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return REWATCH_WINDOW_HOURS
+    return number if low <= number <= high else REWATCH_WINDOW_HOURS
 
 
 def same_scrobble_endpoint(provider: Any, provider_instance: Any, sink: Any, sink_instance: Any) -> bool:

@@ -62,6 +62,48 @@ def adapter(config_base):
                            cfg=SimpleNamespace(base_path=config_base / "tracker"))
 
 
+
+def test_rewatch_window_matches_equivalent_anime_coordinates(adapter):
+    adapter.config.update(_cw_history_rewatches=True, _cw_history_rewatch_window=12 * 3600)
+    _history.add(adapter, [episode("tvdb", 1, "2026-10-07T00:00:00Z")])
+    _history.add(adapter, [episode("tmdb", 1, "2026-10-07T01:00:00Z")])
+    assert adapter._cw_history_window_merged == 1
+    assert len(_history.build_index(adapter)) == 1
+    _history.add(adapter, [episode("tmdb", 1, "2026-10-07T13:00:00Z")])
+    assert adapter._cw_history_window_merged == 0
+    assert len(_history.build_index(adapter)) == 2
+
+
+def test_rewatch_window_keeps_another_show_whose_episode_id_matches_a_show_id(adapter):
+    adapter.config.update(_cw_history_rewatches=True, _cw_history_rewatch_window=12 * 3600)
+    _history.add(adapter, [episode("tmdb", 1, "2026-10-07T00:00:00Z")])
+    other = {"type": "episode", "show_ids": {"tmdb": "40"}, "ids": {"tmdb": "30"}, "season": 1, "episode": 1,
+             "watched": True, "watched_at": "2026-10-07T01:00:00Z"}
+    _history.add(adapter, [other])
+    assert adapter._cw_history_window_merged == 0
+    assert len(_history.build_index(adapter)) == 2
+
+
+def test_numbering_change_without_rewatches_keeps_the_oldest_watch(adapter):
+    adapter.config["_cw_history_rewatches"] = True
+    for at in ("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"):
+        _history.add(adapter, [episode("tmdb", 1, at)])
+    adapter.config.pop("_cw_history_rewatches")
+    _history.add(adapter, [episode("tvdb", 1, "2026-03-01T00:00:00Z")])
+    _history.add(adapter, [episode("tmdb", 1, "2026-04-01T00:00:00Z")])
+    adapter.config["_cw_history_rewatches"] = True
+    assert sorted(row["watched_at"] for row in _history.build_index(adapter).values()) == [
+        "2026-01-01T00:00:00Z", "2026-04-01T00:00:00Z"]
+
+
+def test_rewatch_window_does_not_copy_numbering_onto_other_show_ids(adapter):
+    adapter.config.update(_cw_history_rewatches=True, _cw_history_rewatch_window=12 * 3600)
+    first = {"type": "episode", "show_ids": {"tvdb": "10"}, "season": 1, "episode": 1, "watched": True, "watched_at": "2026-10-07T00:00:00Z"}
+    _history.add(adapter, [first])
+    _history.add(adapter, [{**episode("tmdb", 1, "2026-10-07T01:00:00Z"), "show_ids": {"tvdb": "10", "tmdb": "30"}}])
+    assert adapter._cw_history_window_merged == 0
+    assert len(_history.build_index(adapter)) == 2
+
 @pytest.mark.parametrize("reverse", [False, True])
 @pytest.mark.parametrize("separate_batches", [False, True])
 def test_cw_stores_equivalent_coordinates_once(adapter, reverse, separate_batches):

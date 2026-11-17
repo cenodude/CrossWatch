@@ -180,6 +180,131 @@ def test_crosswatch_sink_retries_progress_after_a_failed_write(monkeypatch, tmp_
     assert [call["items"][0]["progress_percent"] for call in ops.added] == [10.0, 25.0, 25.0]
 
 
+def test_crosswatch_sink_completion_keeps_saved_rewatches(monkeypatch, tmp_path: Path) -> None:
+    from cw_platform.tracker_store import TrackerStore
+    from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
+
+    cfg = {
+        "crosswatch": {"root_dir": str(tmp_path / "cw_provider"), "instances": {"CW-P01": {"label": "Desk", "connected": True}}},
+        "scrobble": {"watch": {"route_provider": "kodi", "route_sink": "crosswatch", "route_sink_instance": "CW-P01"},
+                     "trakt": {"watched_at": 90, "progress_step": 15}},
+    }
+    monkeypatch.setattr(crosswatch_sink, "_tmdb_enrich", lambda *_args, **_kwargs: {"ids": {"tmdb": "124800"}})
+    monkeypatch.setattr(crosswatch_sink, "record_watch", lambda *args, **kwargs: None)
+    monkeypatch.setattr(crosswatch_sink, "record_scrobble_event", lambda *args, **kwargs: None)
+    sink = CrossWatchSink(cfg_provider=lambda: cfg, instance_id="CW-P01")
+    view = sink._config_view(cfg)
+    heat = {"type": "movie", "title": "Heat", "ids": {"tmdb": "949"}}
+    plays = [{**heat, "watched_at": "2026-01-01T00:00:00Z"}, {**heat, "watched_at": "2026-02-01T00:00:00Z"}]
+    CROSSWATCHModule({**view, "_cw_history_rewatches": True}).add("history", plays)
+
+    sink.send(_episode_event("start", 50.0))
+    sink.send(_episode_event("stop", 95.0))
+    sink.send(_episode_event("stop", 95.0))
+
+    stored = TrackerStore(Path(view["crosswatch"]["root_dir"])).read_current("history")["items"].values()
+    assert sorted(item["watched_at"] for item in stored if item["ids"].get("tmdb") == "949") == [
+        "2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z"]
+    assert len([item for item in stored if item["ids"].get("tvdb") == "9621656"]) == 1
+
+
+def _tracker_sink(monkeypatch, tmp_path: Path, watch_options: dict[str, Any]) -> tuple[Any, Path, list[dict[str, Any]]]:
+    from dataclasses import replace
+
+    cfg = {
+        "crosswatch": {"root_dir": str(tmp_path / "cw_provider"), "instances": {"CW-P01": {"label": "Desk", "connected": True}}},
+        "scrobble": {"watch": {"route_provider": "kodi", "route_sink": "crosswatch", "route_sink_instance": "CW-P01",
+                               "route_options": {"watch": watch_options}},
+                     "trakt": {"watched_at": 90, "progress_step": 15}},
+    }
+    clock = ["2026-03-01T20:00:00Z"]
+    events: list[dict[str, Any]] = []
+    monkeypatch.setattr(crosswatch_sink, "_tmdb_enrich", lambda *_args, **_kwargs: {"ids": {"tmdb": "124800"}})
+    monkeypatch.setattr(crosswatch_sink, "record_watch", lambda *args, **kwargs: events.append({"kind": "watch", **kwargs}))
+    monkeypatch.setattr(crosswatch_sink, "record_scrobble_event", lambda *args, **kwargs: events.append({"kind": "activity", **kwargs}))
+    monkeypatch.setattr(crosswatch_sink, "utc_now_iso", lambda: clock[0])
+    sink = CrossWatchSink(cfg_provider=lambda: cfg, instance_id="CW-P01")
+    root = Path(sink._config_view(cfg)["crosswatch"]["root_dir"])
+
+    def watch(at: str, session: str, number: int = 7) -> Any:
+        clock[0] = at
+        return sink.send(replace(_episode_event("stop", 95.0), session_key=session, number=number, ids={"tvdb_episode": f"96216{number:02d}"}))
+
+    return watch, root, events
+
+
+def _episode_plays(root: Path, number: int = 7) -> list[str]:
+    from cw_platform.tracker_store import TrackerStore
+
+    stored = TrackerStore(root).read_current("history")["items"].values()
+    return sorted(item["watched_at"] for item in stored if item.get("episode") == number)
+
+
+def test_crosswatch_sink_without_rewatches_replaces_the_latest_play(monkeypatch, tmp_path: Path) -> None:
+    watch, root, _ = _tracker_sink(monkeypatch, tmp_path, {})
+    watch("2026-03-01T20:00:00Z", "s1")
+    watch("2026-03-05T20:00:00Z", "s2")
+
+    assert _episode_plays(root) == ["2026-03-05T20:00:00Z"]
+
+
+def test_crosswatch_sink_rewatches_merge_inside_the_window(monkeypatch, tmp_path: Path) -> None:
+    watch, root, events = _tracker_sink(monkeypatch, tmp_path, {"crosswatch_rewatches": True})
+    watch("2026-03-01T20:00:00Z", "s1")
+    events.clear()
+    assert watch("2026-03-01T21:30:00Z", "s2") == {"ok": True, "log_status": "skipped", "reason": "rewatch_window", "rewatch_window_hours": 12}
+    assert [(event["kind"], event.get("status"), event.get("reason")) for event in events] == [("watch", "skipped", "rewatch_window")]
+    watch("2026-03-01T21:40:00Z", "s3", number=8)
+    watch("2026-03-02T09:00:00Z", "s4")
+
+    assert _episode_plays(root) == ["2026-03-01T20:00:00Z", "2026-03-02T09:00:00Z"]
+    assert _episode_plays(root, 8) == ["2026-03-01T21:40:00Z"]
+    assert [event["kind"] for event in events[1:]] == ["watch", "activity", "watch", "activity"]
+
+
+def test_crosswatch_sink_same_second_completion_is_merged(monkeypatch, tmp_path: Path) -> None:
+    watch, root, events = _tracker_sink(monkeypatch, tmp_path, {"crosswatch_rewatches": True})
+    watch("2026-03-01T20:00:00Z", "s1")
+    events.clear()
+
+    assert watch("2026-03-01T20:00:00Z", "s2")["reason"] == "rewatch_window"
+    assert [(event["kind"], event.get("status")) for event in events] == [("watch", "skipped")]
+    assert _episode_plays(root) == ["2026-03-01T20:00:00Z"]
+
+
+def test_crosswatch_sink_rewatch_window_is_configurable(monkeypatch, tmp_path: Path) -> None:
+    watch, root, _ = _tracker_sink(monkeypatch, tmp_path, {"crosswatch_rewatches": True, "crosswatch_rewatch_window_hours": 48})
+    watch("2026-03-01T20:00:00Z", "s1")
+    watch("2026-03-02T20:00:00Z", "s2")
+    watch("2026-03-04T20:00:00Z", "s3")
+
+    assert _episode_plays(root) == ["2026-03-01T20:00:00Z", "2026-03-04T20:00:00Z"]
+
+
+def test_crosswatch_rewatch_options_are_normalized() -> None:
+    from providers.scrobble.routes import normalize_route_options
+
+    watch = normalize_route_options({"watch": {"crosswatch_rewatches": "true", "crosswatch_rewatch_window_hours": 500}})["watch"]
+    assert watch == {"crosswatch_rewatches": False}
+    watch = normalize_route_options({"watch": {"crosswatch_rewatches": True, "crosswatch_rewatch_window_hours": "24"}})["watch"]
+    assert watch == {"crosswatch_rewatches": True, "crosswatch_rewatch_window_hours": 24}
+
+
+def test_crosswatch_rewatch_webhook_settings_reach_the_sink() -> None:
+    from api.scrobblerManagementAPI import _normalize_webhook_settings
+    from providers.webhooks.dispatch import _route_cfg
+
+    cfg: dict[str, Any] = {"scrobble": {}}
+    settings = _normalize_webhook_settings(cfg, "plex", {"sinks": ["crosswatch"], "crosswatch_rewatches": True, "crosswatch_rewatch_window_hours": 6})
+    assert settings["crosswatch_rewatches"] is True and settings["crosswatch_rewatch_window_hours"] == 6
+    assert _normalize_webhook_settings(cfg, "plex", {"sinks": ["simkl"], "crosswatch_rewatches": True})["crosswatch_rewatches"] is False
+    cfg["scrobble"]["webhook"] = {"profiles": {"plex": {"P01": settings}}}
+
+    watch = crosswatch_sink._rewatch_policy(_route_cfg(cfg, "plex", "P01", "crosswatch", "default"))
+    assert watch == (True, 6)
+    assert crosswatch_sink._rewatch_policy(_route_cfg(cfg, "plex", "P02", "crosswatch", "default")) == (False, 12)
+
+
 def test_scrobbler_route_modal_lists_crosswatch_sink() -> None:
     text = (ROOT / "assets" / "js" / "modals" / "scrobbler-route" / "index.js").read_text("utf-8")
     scrobbler = (ROOT / "assets" / "js" / "scrobbler.js").read_text("utf-8")
