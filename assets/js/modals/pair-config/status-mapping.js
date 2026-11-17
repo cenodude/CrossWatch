@@ -85,7 +85,7 @@ export function mountStatusMapping(host, state) {
     const targetName = meta(state, reverse ? state.src : state.dst).label || (reverse ? state.src : state.dst);
     host.innerHTML = `<section class="cw-status-mapping cw-page-status-mapping" data-enabled="${active}" aria-labelledby="cx-status-title">
       <div class="cw-status-heading">
-        <h3 id="cx-status-title"><span class="material-symbols-rounded" aria-hidden="true">tune</span>Status mapping</h3>
+        <h3 id="cx-status-title"><span class="material-symbols-rounded" aria-hidden="true">tune</span>Status mapping <span class="pill">Beta</span></h3>
         <label class="cw-status-toggle"><span>${active ? "On" : "Off"}</span><input type="checkbox" class="cw-checkbox" data-status-optin aria-label="Enable status syncing" ${active ? "checked" : ""}><span class="cw-status-track" aria-hidden="true"></span></label>
       </div>
       <details class="cw-status-editor" ${expanded ? "open" : ""}>

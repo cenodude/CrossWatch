@@ -661,9 +661,10 @@ dialog.eg-dialog{font-size:14px;line-height:1.45;background:var(--is-surface);co
 .cw-shelf-icon:hover{background:rgba(255,255,255,.06);color:#ff9a9a}
 .cw-shelf-icon.is-confirming{background:rgba(255,90,90,.16);color:#ff9a9a}
 .cw-shelf-copy{border:1px solid var(--mm-line);border-radius:12px;background:var(--mm-panel)}
-.cw-shelf-copy.is-open{border-color:rgba(var(--mm-accent),.5)}
 .cw-shelf-copy-text strong{color:var(--mm-text)}
-.cw-shelf-copy-text span,.cw-shelf-field>span,.cw-shelf-group legend,.cw-shelf-quick-hint{color:var(--mm-muted)}
+.cw-shelf-copy-text span,.cw-shelf-field>span,.cw-shelf-group legend,.cw-shelf-quick-hint,.cw-shelf-fold>summary{color:var(--mm-muted)}
+.cw-shelf-fold>summary:hover,.cw-shelf-fold-sum{color:var(--mm-text)}
+.cw-shelf-fold>summary:focus-visible{border-radius:6px;outline:2px solid rgba(var(--mm-accent),.7);outline-offset:2px}
 .cw-shelf-form{border-top:1px solid var(--mm-line)}
 .cw-shelf-quick-label{color:var(--mm-text)}
 .cw-shelf-quick-btn,.cw-shelf-quick-more{border:1px solid var(--mm-line);border-radius:10px;background:rgba(255,255,255,.04);color:var(--mm-text)}
