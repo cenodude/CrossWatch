@@ -2474,7 +2474,13 @@ def _seed_media_card_style(html: str, user: dict | None = None) -> str:
     if isinstance(user, dict) and user.get("is_admin") is False:
         value = (user.get("preferences") or {}).get("media_card", value)
     style = "compact" if value == "compact" else "full"
-    return html.replace('<html lang="en"', f'<html lang="en" data-cw-media-card="{style}" data-cw-art="{art_version(cfg)}"', 1)
+    try:
+        from services.artwork_choices import revisions
+
+        chosen = " ".join(f"{key}={rev}" for key, rev in sorted(revisions().items()))
+    except Exception:
+        chosen = ""
+    return html.replace('<html lang="en"', f'<html lang="en" data-cw-media-card="{style}" data-cw-art="{art_version(cfg)}" data-cw-art-ov="{html_lib.escape(chosen, quote=True)}"', 1)
 
 
 def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:

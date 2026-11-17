@@ -626,6 +626,21 @@ dialog.eg-dialog{font-size:14px;line-height:1.45;background:var(--is-surface);co
 .cw-mm-hero-art{background-size:cover;background-position:center 22%}
 .cw-mm-hero::after{background:linear-gradient(90deg,rgba(11,14,22,.96),rgba(11,14,22,.74) 40%,rgba(11,14,22,.18) 76%,rgba(11,14,22,.5)),linear-gradient(0deg,var(--mm-bg),rgba(11,14,22,.2) 55%,rgba(11,14,22,.5))}
 .cw-mm-close{border:1px solid rgba(255,255,255,.2);border-radius:50%;background:rgba(10,12,18,.6);color:#fff;cursor:pointer;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+.cw-mm-art{background:rgba(4,6,12,.66);backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+.cw-mm-art-panel{border:1px solid var(--mm-line);border-radius:18px;background:var(--mm-bg);color:var(--mm-text);box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.cw-mm-art-head p,.cw-mm-art-foot small,.cw-mm-art-tag,.cw-mm-art-note{color:var(--mm-muted)}
+.cw-mm-art-note.is-error{color:#ff9a9a}
+.cw-mm-art-foot{border-top:1px solid var(--mm-line)}
+.cw-mm-art-close{border:1px solid var(--mm-line);border-radius:10px;background:transparent;color:var(--mm-text)}
+.cw-mm-art-close:hover,.cw-mm-art-pill:hover{background:rgba(255,255,255,.08)}
+.cw-mm-art-pill{border:1px solid var(--mm-line);border-radius:999px;background:transparent;color:var(--mm-text)}
+.cw-mm-art-pill.is-active{border-color:rgb(var(--mm-accent));background:rgba(var(--mm-accent),.22)}
+.cw-mm-art-opt{border:1px solid var(--mm-line);border-radius:12px;background:var(--mm-panel);color:var(--mm-text)}
+.cw-mm-art-opt:hover{border-color:rgba(var(--mm-accent),.6)}
+.cw-mm-art-opt.is-current{border-color:rgb(var(--mm-accent));box-shadow:0 0 0 2px rgba(var(--mm-accent),.35)}
+.cw-mm-art-opt img{border-radius:8px;background:rgba(255,255,255,.04)}
+.cw-mm-art-grid[data-kind="logo"] .cw-mm-art-opt img{background:repeating-conic-gradient(rgba(255,255,255,.07) 0 25%,transparent 0 50%) 0 0/16px 16px}
+.cw-mm-art-check{border-radius:50%;background:rgb(var(--mm-accent));color:#fff}
 .cw-mm-close:hover{background:rgba(255,255,255,.14)}
 .cw-mm-tagline{color:rgba(255,255,255,.74);font-size:12px;letter-spacing:.24em;line-height:1.6;text-align:right;text-transform:uppercase}
 .cw-mm-poster{border:1px solid rgba(255,255,255,.14);border-radius:16px;background:#111624;box-shadow:0 24px 50px rgba(0,0,0,.55)}

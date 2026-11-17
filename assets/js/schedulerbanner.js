@@ -37,7 +37,7 @@
     chipNav={pairs:{target:"pairs",label:"Open sync pair settings"},sched:{target:"scheduling",label:"Open scheduler settings"},watch:{target:"watcher",label:"Open watcher settings"},hook:{target:"webhook",label:"Open webhook settings"},health:{target:"maintenance",label:"Open Maintenance tools"}},
     S={cfg:null,pairs:{total:0,active:0},sched:{enabled:false,running:false,next:0,advanced:false,captures:0,webhooks:false,webhookLabel:"",warning:false,warnings:[]},evt:{enabled:false,count:0},watch:{...blank(),alive:false},hook:blank(),system:{health:{known:false,ok:false,status:"checking"}},timers:{sched:null,scrob:null,health:null,wait:null,rotate:null},debounce:null,last:{watcher:"",webhook:""}};
   const SHARED_WATCH_KEY="__CW_CURRENT_WATCHING_SHARED__",SHARED_WATCH_TTL_MS=3000,WATCHER_UNAVAILABLE_GRACE_MS=35000;
-  let scrobPollSeq=0, lastSync=null;
+  let scrobPollSeq=0;
   const isManaged=()=>document.documentElement?.dataset?.cwRole==="user";
 
   if (!$("#sched-banner-css")) {
@@ -207,15 +207,22 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     return seconds<60?"Just now":new Intl.RelativeTimeFormat(undefined,{numeric:"auto"}).format(-amount,unit);
   }
 
-  function lastSyncTip(summary, now=Date.now()) {
-    if (!summary) return "Last sync: Unavailable";
+  function lastSyncState(summary, now=Date.now()) {
     const running=!!summary.running, raw=running?(summary.started_at||summary.raw_started_ts):(summary.finished_at||summary.started_at||summary.raw_started_ts);
-    if (!raw) return "Last sync: No runs recorded";
     const number=Number(raw), date=new Date(Number.isFinite(number)?(number<1e12?number*1000:number):raw);
-    if (!Number.isFinite(date.getTime())||date.getTime()<=0) return "Last sync: No runs recorded";
-    const relative=runAge(date,now),
-      exact=date.toLocaleString([],{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",timeZoneName:"short"});
-    return `${running?"Sync started":"Last sync"}: ${relative}\n${exact}`;
+    const valid=!!raw&&Number.isFinite(date.getTime())&&date.getTime()>0,
+      failed=valid&&!running&&summary.exit_code!=null&&summary.exit_code!==0;
+    return {label:running?"Sync started":"Last sync",date:valid?date:null,failed,text:valid?`${runAge(date,now)}${failed?" \u00b7 Failed":""}`:"No runs recorded"};
+  }
+
+  function sharedLastSync(){
+    const summary=CW().getRunSummary?.();
+    return summary?lastSyncState(summary):{label:"Last sync",date:null,failed:false,text:"Unavailable"};
+  }
+
+  function lastSyncTip(state) {
+    const exact=state.date?.toLocaleString([],{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",timeZoneName:"short"});
+    return `${state.label}: ${state.text}${exact?`\n${exact}`:""}`;
   }
 
   const sourceLabel=(src)=>{
@@ -357,7 +364,7 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     aria?(el.chip.dataset.tip=aria,el.chip.setAttribute("aria-label",aria)):(el.chip.removeAttribute("data-tip"),el.chip.removeAttribute("aria-label"));
   }
 
-  function renderMobileSchedule(){
+  function renderMobileSchedule(state){
     const row=$("#ops-card .action-row");
     if (!row) return;
     let line=$("#cw-mobile-last-schedule");
@@ -365,17 +372,17 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
       line=document.createElement("div");
       line.id="cw-mobile-last-schedule";
       line.className="cw-mobile-last-schedule";
-      line.innerHTML='<span class="material-symbols-rounded" aria-hidden="true">schedule</span><span class="cw-mobile-last-schedule-copy"><span>Last scheduled run</span><time></time></span>';
+      line.innerHTML='<span class="material-symbols-rounded" aria-hidden="true">schedule</span><span class="cw-mobile-last-schedule-copy"><span>Last sync</span><time></time></span>';
       row.insertAdjacentElement("afterend",line);
     }
     line.hidden=isManaged()||!S.sched.enabled;
-    const date=new Date(Number(S.sched.lastAt||0)*1000), valid=Number.isFinite(date.getTime())&&date.getTime()>0;
-    const failed=valid&&S.sched.lastOk===false;
+    const {date,failed}=state;
+    $(".cw-mobile-last-schedule-copy > span",line).textContent=state.label;
     line.classList.toggle("is-failed",failed);
     $(".material-symbols-rounded",line).textContent=failed?"error_outline":"schedule";
     const time=$("time",line);
-    time.textContent=valid?`${runAge(date)}${failed?" \u00b7 Failed":""}`:"No runs yet";
-    if (valid) {
+    time.textContent=state.text;
+    if (date) {
       time.dateTime=date.toISOString();
       time.title=date.toLocaleString();
     } else {
@@ -387,7 +394,8 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
   function render(){
     const host=ensureBanner();
     if (!host) return;
-    renderMobileSchedule();
+    const lastSync=sharedLastSync();
+    renderMobileSchedule(lastSync);
     const E=k=>{const chip=$(`#chip-${k}`,host);return {chip,icon:chip?$(".service-icon",chip):null,value:$(`#${k}-value`,host),meta:$(`#${k}-meta`,host),badges:$(`#${k}-badges`,host),tip:chip?$(".cw-hub-tip",chip):null,progress:["watch","hook"].includes(k)&&chip?$(".watch-progress",chip):null,progressValue:["watch","hook"].includes(k)?$(`#${k}-progress-value`,host):null};},
       pairs=E("pairs"), sched=E("sched"), watch=E("watch"), hook=E("hook"), health=E("health"),
       managed=isManaged(),
@@ -500,17 +508,10 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     clear("sched");
     if (document.hidden) return scheduleSched();
     try {
-      const [st, summary]=await Promise.all([
-        API().Scheduling.status(force),
-        fetch("/api/run/summary",{cache:"no-store"}).then(r=>{if(!r.ok) throw new Error("Sync history unavailable");return r.json();}).catch(()=>null)
-      ]), sc=st?.config||S.cfg?.scheduling||{};
-      lastSync=summary;
+      const st=await API().Scheduling.status(force), sc=st?.config||S.cfg?.scheduling||{};
       const adv=advancedOn(sc), captures=adv?activeCaptureJobs(sc):0, events=adv?activeEventRules(sc):0, wh=webhookState(sc);
       const warnings=(Array.isArray(st?.scheduling_warnings)?st.scheduling_warnings:(Array.isArray(st?.warnings)?st.warnings:[])).map(x=>String(x||"").trim()).filter(Boolean);
       S.sched={enabled:schedulingOn(sc),standard:!!sc.enabled&&sc.mode!=="disabled",advanced:adv,running:!!st?.running,next:+(st?.next_run_at||st?.next_run||0)||0,captures:captures,webhooks:!!wh.active,webhookLabel:wh.label||"",warning:!!st?.warning||warnings.length>0,warnings};
-      const latest=[st,...Object.values(st?.profiles||{})].filter(row=>Number.isFinite(Number(row?.last_run_at))&&Number(row.last_run_at)>0).sort((a,b)=>Number(b.last_run_at)-Number(a.last_run_at))[0];
-      S.sched.lastAt=Number(latest?.last_run_at)||0;
-      S.sched.lastOk=latest?.last_run_ok;
       S.evt={enabled:adv&&events>0,count:events};
     } catch { S.sched={enabled:false,running:false,next:0,advanced:false,captures:0,webhooks:false,webhookLabel:"",warning:false,warnings:[]}; S.evt={enabled:false,count:0}; }
     render();
@@ -644,6 +645,7 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     window.addEventListener("cx:pairs:changed",refreshPairs);
     document.addEventListener("cx-state-change",refreshPairs);
     window.addEventListener("auth-changed",()=>queueRefresh(true));
+    window.addEventListener("cw:run-summary-changed",render);
     document.addEventListener("scheduling-status-refresh",()=>!isManaged()&&pollSched(true));
     document.addEventListener("watcher-status-refresh",()=>pollScrob(true));
     document.addEventListener("tab-changed",e=>["main","settings"].includes(e?.detail?.id)&&queueRefresh(false));

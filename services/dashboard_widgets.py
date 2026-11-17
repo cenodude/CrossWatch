@@ -455,7 +455,8 @@ def _poster_url(item: Mapping[str, Any], *, size: str = "w342", episode_still: b
     tmdb = _tmdb_id(item)
     if tmdb in (None, "", 0, False):
         return ""
-    return f"/art/tmdb/{_resolved_art_type(item, tmdb)}/{tmdb}?fallback=2&size={size}"
+    kind = _resolved_art_type(item, tmdb)
+    return f"/art/tmdb/{kind}/{tmdb}?fallback=2&size={size}{_art_choice(kind, tmdb)}"
 
 
 def _art_version() -> str:
@@ -468,6 +469,16 @@ def _art_version() -> str:
         return "t"
 
 
+def _art_choice(kind: str, tmdb: Any) -> str:
+    try:
+        from services.artwork_choices import revision
+
+        rev = revision(kind, tmdb)
+    except Exception:
+        rev = ""
+    return f"&ov={rev}" if rev else ""
+
+
 def _grid_art_url(item: Mapping[str, Any], *, size: str = "w300") -> str:
     still = _episode_still_url(item, size=size)
     if still:
@@ -475,7 +486,8 @@ def _grid_art_url(item: Mapping[str, Any], *, size: str = "w300") -> str:
     tmdb = _tmdb_id(item)
     if tmdb in (None, "", 0, False):
         return ""
-    return f"/art/tmdb/{_resolved_art_type(item, tmdb)}/{tmdb}?fallback=2&kind=backdrop&av={_art_version()}&size={size}"
+    kind = _resolved_art_type(item, tmdb)
+    return f"/art/tmdb/{kind}/{tmdb}?fallback=2&kind=backdrop&av={_art_version()}&size={size}{_art_choice(kind, tmdb)}"
 
 
 def _cover_url(item: Mapping[str, Any], *, size: str = "w342") -> str:

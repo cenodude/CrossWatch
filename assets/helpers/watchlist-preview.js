@@ -220,7 +220,7 @@
     const tmdb = item?.tmdb;
     if (!tmdb) return null;
     const kind = isTV(item.type || item.entity || item.media_type) ? "tv" : "movie";
-    return `/art/tmdb/${kind}/${tmdb}?fallback=2&size=${encodeURIComponent(size)}${artEvidenceOf(item)}`;
+    return `/art/tmdb/${kind}/${tmdb}?fallback=2&size=${encodeURIComponent(size)}${artEvidenceOf(item)}${window.CW?.ArtChoice?.param?.(kind, tmdb) || ""}`;
   }
 
   function asNumber(value) {
@@ -259,7 +259,7 @@
     if (still) return still;
     const tmdb = tmdbIdOf(item);
     if (!tmdb) return "";
-    return `/art/tmdb/${artTypeOf(item)}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
+    return `/art/tmdb/${artTypeOf(item)}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=${encodeURIComponent(size)}&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}${window.CW?.ArtChoice?.param?.(artTypeOf(item), tmdb) || ""}`;
   }
 
   function applyWidgetView(view = "") {
@@ -381,7 +381,7 @@
   function backdropUrl(item, meta = null) {
     const tmdb = tmdbIdOf(item, meta);
     if (!tmdb) return "";
-    return `/art/tmdb/${artTypeOf(item, meta)}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}`;
+    return `/art/tmdb/${artTypeOf(item, meta)}/${encodeURIComponent(String(tmdb))}?fallback=2&kind=backdrop&av=${document.documentElement.dataset.cwArt || "t"}&size=w1280&locale=${encodeURIComponent(window.__CW_LOCALE || navigator.language || "en-US")}${artEvidenceOf(item)}${window.CW?.ArtChoice?.param?.(artTypeOf(item, meta), tmdb) || ""}`;
   }
 
   function runtimeLabel(mins) {

@@ -19,8 +19,10 @@ const art = (row, backdrop = false) => {
   if (backdrop) query.set("av",document.documentElement.dataset.cwArt || "t");
   if (row?.title) query.set("title",row.title);
   if (/^\d{4}$/.test(String(row?.year || ""))) query.set("year",row.year);
+  const chosen = new URLSearchParams((window.CW?.ArtChoice?.param?.(row?.type, identifier) || "").slice(1)).get("ov");
+  if (chosen) query.set("ov",chosen);
   const fallback = /^\d+$/.test(identifier) && ["movie","show"].includes(row?.type) ? `/art/tmdb/${row.type === "movie" ? "movie" : "tv"}/${identifier}?${query}` : "";
-  const url = cached ? cached.replace(/\/t\/p\/[^/]+\//, `/t/p/${size}/`) : fallback;
+  const url = cached && !chosen ? cached.replace(/\/t\/p\/[^/]+\//, `/t/p/${size}/`) : fallback;
   return url ? `<img src="${esc(url)}"${cached && fallback ? ` data-wr-art-fallback="${esc(fallback)}"` : ""} alt="" loading="lazy" decoding="async">` : emptyArt;
 };
 function profile() {
