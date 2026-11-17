@@ -30,12 +30,13 @@ const COLLECTION_TYPES = {
   FLOPPY: ["movies", "shows", "seasons", "episodes"],
   SCROB: ["movies", "shows", "seasons", "episodes"],
   FLICKLIST: ["movies", "shows", "seasons", "episodes"],
+  WETRAKR: ["movies", "episodes"],
 };
 const COLLECTION_WRITE_TYPES = {
   FLOPPY: ["movies", "episodes"],
 };
-const COLLECTION_SOURCES = new Set(["PLEX", "EMBY", "JELLYFIN", "SILO", "TOFA", "KODI", "TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST"]);
-const COLLECTION_TARGETS = new Set(["TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST"]);
+const COLLECTION_SOURCES = new Set(["PLEX", "EMBY", "JELLYFIN", "SILO", "TOFA", "KODI", "TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST", "WETRAKR"]);
+const COLLECTION_TARGETS = new Set(["TRAKT", "MDBLIST", "CROSSWATCH", "PUNCHPLAY", "FLOPPY", "SCROB", "FLICKLIST", "WETRAKR"]);
 const COLLECTION_ORDER = ["movies", "shows", "seasons", "episodes"];
 
 function providerKey(value) {
