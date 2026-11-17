@@ -597,7 +597,19 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     },30000);
   }
 
+  let refreshPending=null, lastRefresh=0;
   async function refresh(forceCfg=false){
+    if (refreshPending) {
+      await refreshPending;
+      if (!forceCfg) return;
+    }
+    const pending=refreshState(forceCfg);
+    refreshPending=pending;
+    try { await pending; lastRefresh=Date.now(); }
+    finally { if(refreshPending===pending) refreshPending=null; }
+  }
+
+  async function refreshState(forceCfg=false){
     stop();
     [S.cfg]=await Promise.all([readConfig(forceCfg),pollPairs(forceCfg),pollHealth()]);
     if ((isManaged()||!schedulingOn(S.cfg?.scheduling)) && !S.cfg?.scrobble?.enabled) {
@@ -621,12 +633,13 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
   }
 
   const refreshPairs=()=>pollPairs(true).then(render).catch(()=>{});
+  const resume=()=>{if(!document.hidden&&Date.now()-lastRefresh>=15000) queueRefresh(false);};
 
   function boot(){
     if (window.__SCHED_BANNER_STARTED__) return;
     window.__SCHED_BANNER_STARTED__=true;
     queueRefresh(true);
-    document.addEventListener("visibilitychange",()=>!document.hidden&&queueRefresh(false),{passive:true});
+    document.addEventListener("visibilitychange",resume,{passive:true});
     document.addEventListener("config-saved",()=>queueRefresh(true));
     window.addEventListener("cx:pairs:changed",refreshPairs);
     document.addEventListener("cx-state-change",refreshPairs);
@@ -634,7 +647,7 @@ html.cw-theme-original #ops-card{--hub-service-good:#57b58a;--hub-service-bad:#e
     document.addEventListener("scheduling-status-refresh",()=>!isManaged()&&pollSched(true));
     document.addEventListener("watcher-status-refresh",()=>pollScrob(true));
     document.addEventListener("tab-changed",e=>["main","settings"].includes(e?.detail?.id)&&queueRefresh(false));
-    window.addEventListener("focus",()=>queueRefresh(false));
+    window.addEventListener("focus",resume);
     window.refreshSchedulingBanner=queueRefresh;
     S.timers.visual=setInterval(()=>{
       if (document.hidden) return;

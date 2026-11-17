@@ -10,7 +10,7 @@ import {readFileSync} from 'node:fs';
 const source = readFileSync(new URL('../assets/js/insights.js', import.meta.url), 'utf8');
 test('history renders markup in feature labels and results as text', () => {
   const payload = '<img src=x onerror="alert(1)">';
-  const list = {innerHTML:''};
+  const list = {innerHTML:'',children:[]};
   const wrap = {dataset:{listInit:'1'}};
   const context = {
     $: selector => selector === '.list' ? list : wrap,

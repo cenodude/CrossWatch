@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import threading
+import time
 
 from services.playback_progress.adapters.base import PlaybackProgressAdapter
-from services.playback_progress.models import PlaybackCapabilities, PlaybackListResult
+from services.playback_progress.models import PlaybackCapabilities, PlaybackListResult, PlaybackRecord
 from services.playback_progress.service import PlaybackProgressService
 import services.playback_progress.service as playback_service
 
@@ -73,3 +74,43 @@ def test_non_progressive_list_waits_for_provider(monkeypatch):
     result = service.items(provider="jellyfin", force_refresh=True)
     assert result["loading"] == []
     assert [row["error_code"] for row in result["errors"]] == ["provider_unavailable"]
+
+
+def test_progressive_refresh_keeps_previous_items_while_provider_is_loading(monkeypatch):
+    service, adapter = _service(monkeypatch)
+    record = PlaybackRecord("jellyfin", "Jellyfin", "default", "Default", "movie-1", "tmdb:1", "movie", title="Cached movie", ids={"tmdb": "1"}, progress_percent=40)
+    key = service._cache_key("jellyfin", "default", adapter)
+    service._cache[key] = {"ts": time.time() - 300, "result": PlaybackListResult(True, "jellyfin", "default", items=[record])}
+    try:
+        result = service.items(provider="jellyfin", progressive=True)
+        assert [item["title"] for item in result["items"]] == ["Cached movie"]
+        assert [row["provider"] for row in result["loading"]] == ["jellyfin"]
+        assert result["errors"] == []
+        again = service.items(provider="jellyfin", progressive=True)
+        assert [item["title"] for item in again["items"]] == ["Cached movie"]
+        adapter.release.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            done = service.items(provider="jellyfin", progressive=True)
+            if not done["loading"]:
+                break
+        assert done["loading"] == []
+        assert done["items"] == []
+        assert done["errors"][0]["error_code"] == "provider_unavailable"
+        assert adapter.calls == 1
+    finally:
+        adapter.release.set()
+
+
+def test_progressive_refresh_does_not_restore_invalidated_or_expired_items(monkeypatch):
+    service, adapter = _service(monkeypatch)
+    record = PlaybackRecord("jellyfin", "Jellyfin", "default", "Default", "movie-1", "tmdb:1", "movie", title="Old movie", progress_percent=40)
+    key = service._cache_key("jellyfin", "default", adapter)
+    try:
+        service._cache[key] = {"ts": time.time() - 90000, "result": PlaybackListResult(True, "jellyfin", "default", items=[record])}
+        assert service.items(provider="jellyfin", progressive=True)["items"] == []
+        service._cache[key]["ts"] = time.time() - 300
+        service.invalidate("jellyfin", "default")
+        assert service._cached_result({"provider": "jellyfin", "instance_id": "default"}) is None
+    finally:
+        adapter.release.set()

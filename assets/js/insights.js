@@ -41,11 +41,17 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   const fmtDur = v => { if (v == null) return "—"; const n = parseFloat(String(v).replace(/[^\d.]/g, "")); return Number.isFinite(n) ? `${n.toFixed(1)}s` : "—"; };
   const asNum = (v, fb = 0) => Number.isFinite(+v) ? +v : fb;
   const tickUrl = url => `${url}${url.includes("?") ? "&" : "?"}_ts=${Date.now()}`;
-  const fetchJSON = async url => {
+  const pendingReads = new Map();
+  const fetchJSON = url => {
     if (authSetupPending()) throw new Error("auth setup pending");
-    const res = await fetch(tickUrl(url), { credentials: "same-origin", cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
-    return res.json();
+    const key = `${_scopeRevision}:${url}`;
+    if (pendingReads.has(key)) return pendingReads.get(key);
+    const pending = fetch(tickUrl(url), { credentials: "same-origin", cache: "no-store" }).then(res => {
+      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      return res.json();
+    }).finally(() => pendingReads.delete(key));
+    pendingReads.set(key, pending);
+    return pending;
   };
   const postOK = async url => {
     const res = await fetch(url, { method: "POST", credentials: "same-origin" });
@@ -114,6 +120,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   let _feature = clampFeature(localStorage.getItem("insights.feature"));
   let _lastStatsFetch = 0, _cwSnapModal = null, _lastInsightsData = null, _fullInsightsTimer = 0, _configuredProvidersCache = null, _tilesFeature = null, _tileShellFeature = null, _bootScheduled = false, _tilesPainted = false;
   let _scopeRevision = 0;
+  let _lastFullInsightsAt = 0;
   const numberAnimations = new WeakMap();
 
   function syncPrefs(instancesByProvider = {}) {
@@ -597,8 +604,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       .filter(row => !profile?.filter || !Object.keys(profile.filter || {}).length || profile.matchesEndpoint(row?.source, row?.source_instance) || profile.matchesEndpoint(row?.target, row?.target_instance))
       .filter(row => display.mode !== "hours" || ((rowTs(row) || 0) >= display.sinceMs))
       .slice(0, display.limit);
-    if (!rows.length) return void (list.innerHTML = `<div class="history-item"><div class="history-meta muted">${display.mode === "hours" ? `No runs in the last ${display.hours} hours` : "No runs for this feature"}</div></div>`);
-    list.innerHTML = rows.map(row => {
+    const html = rows.length ? rows.map(row => {
       const t = totalsFor(_feature, row), cls = typeof row?.exit_code === "number" && row.exit_code !== 0 ? "err" : String(row?.result || "").toUpperCase() === "EQUAL" || t.sum === 0 ? "ok" : "warn";
       const stamp = rowTs(row);
       const elapsed = Math.max(0, Math.floor((Date.now() - stamp) / 60000));
@@ -606,7 +612,16 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       const changes = [[t.a, "added"], [t.r, "removed"], [t.u, "updated"]].filter(([count]) => count).map(([count, label]) => `${count} ${label}`).join(" \u00b7 ");
       const mobile = `<div class="history-mobile"><span class="history-mobile-icon material-symbols-rounded" aria-hidden="true">${cls === "err" ? "error" : "check_circle"}</span><div class="history-mobile-copy"><div class="history-mobile-title">${esc(featureLabel(_feature))} ${cls === "err" ? "needs attention" : "synced"}</div><div class="history-mobile-result">${esc(changes || (cls === "err" ? "Sync failed" : "No changes"))}</div><div class="history-mobile-detail">${esc(when)}${when ? " \u00b7 " : ""}${esc(fmtDur(row?.duration_sec))}</div></div></div>`;
       return `<div class="history-item ${cls} history-feed-row">${mobile}<div class="history-main"><div class="history-meta"><span class="history-time">${esc(fmtWhen(row))}</span><span class="badge ${cls}">${esc(row?.result || "—")}${typeof row?.exit_code === "number" ? ` · ${row.exit_code}` : ""}</span></div><div class="history-sub">${esc(featureLabel(_feature))} • ${esc(fmtDur(row?.duration_sec))}</div></div><div class="history-badges"><span class="badge add">+${t.a}</span><span class="badge del">-${t.r}</span>${t.u ? `<span class="badge micro">~${t.u}</span>` : ""}</div></div>`;
-    }).join("");
+    }).join("") : `<div class="history-item"><div class="history-meta muted">${display.mode === "hours" ? `No runs in the last ${display.hours} hours` : "No runs for this feature"}</div></div>`;
+    if (!list.children.length) { list.innerHTML = html; return; }
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const previous = [...list.children], next = [...template.content.children];
+    for (let index = 0; index < Math.max(previous.length, next.length); index++) {
+      if (!next[index]) previous[index].remove();
+      else if (!previous[index]) list.append(next[index]);
+      else if (!previous[index].isEqualNode(next[index])) previous[index].replaceWith(next[index]);
+    }
   }
 
   function renderTopStats({ now = 0, week = 0, month = 0, added = 0, removed = 0, weekRemoved = 0 }) {
@@ -673,6 +688,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       const data = await fetchJSON(`/api/insights?limit_samples=60&history=60${profileParam}${force ? `&t=${Date.now()}` : ""}`);
       if (revision !== _scopeRevision || profile !== overviewProfileId()) return;
       await renderFromData(data, false, force);
+      if (revision === _scopeRevision) _lastFullInsightsAt = Date.now();
     }
     catch (e) {
       if (String(e?.message || e || "").includes("auth setup pending")) return;
@@ -701,6 +717,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
 
   function refreshInsightsFastThenFull(force = false) {
     if (authSetupPending()) return;
+    if (!force && _lastFullInsightsAt && Date.now() - _lastFullInsightsAt < 30000) return;
     try { refreshStats(force); } catch {}
     clearTimeout(_fullInsightsTimer);
     _fullInsightsTimer = setTimeout(() => {
@@ -712,6 +729,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   function clearInsightsState(clearAll = false) {
     _scopeRevision++;
     _lastStatsFetch = 0;
+    _lastFullInsightsAt = 0;
     try { localStorage.removeItem(tilesCacheKey()); } catch {}
     if (clearAll) {
       try {

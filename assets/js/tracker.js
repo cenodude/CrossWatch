@@ -790,13 +790,13 @@
   };
 
   const OVERVIEW_STORE_KEY = "cw.tracker.overview.v1";
-  const OVERVIEW_CACHE_TTL = 10 * 60 * 1000;
+  const OVERVIEW_CACHE_TTL = 24 * 60 * 60 * 1000;
   const listCacheKey = () => JSON.stringify([overviewCacheKey(), state.view, state.q, state.media, state.sort, state.noteStatus, state.noteTag, state.hideDropped, state.duplicates, state.cleanFeature, state.healthFilter, state.offset, pageSize(), timelineOn(), state.month]);
 
   function savedLists() {
     try {
       const entries = JSON.parse(sessionStorage.getItem("cw.tracker.lists.v1") || "[]");
-      return Array.isArray(entries) ? entries.filter(entry => entry?.data && Date.now() - entry.t < 120000).slice(-16) : [];
+      return Array.isArray(entries) ? entries.filter(entry => entry?.data && Date.now() - entry.t < OVERVIEW_CACHE_TTL).slice(-16) : [];
     } catch { return []; }
   }
 
@@ -2197,10 +2197,7 @@
 
   async function loadSummary() {
     const id = ++summaryRequest;
-    const [data, stats] = await Promise.all([
-      getJSON(`/api/tracker/summary?${inst()}`),
-      getJSON(`/api/tracker/stats?${inst()}`).catch(() => null),
-    ]);
+    const data = await getJSON(`/api/tracker/summary?${inst()}`);
     if (id !== summaryRequest) throw Object.assign(new Error("stale"), { code: "stale" });
     state.instances = Array.isArray(data.instances) ? data.instances : [];
     state.instance = data.provider_instance || "default";
@@ -2213,7 +2210,13 @@
     state.notes = data.notes || { total: 0, statuses: {}, tags: [] };
     state.noteFields = Array.isArray(data.note_fields) ? data.note_fields : [];
     state.tmdbKey = data.tmdb_key !== false;
-    state.stats = stats;
+    const scope = overviewCacheKey();
+    void getJSON(`/api/tracker/stats?${inst()}`).then(stats => {
+      if (id !== summaryRequest || scope !== overviewCacheKey()) return;
+      state.stats = stats;
+      setSlot("hero", renderHero());
+      rememberOverview();
+    }).catch(() => {});
     if (state.fromLink) {
       state.fromLink = false;
       if (!Number(healthOf().attention || 0)) {
