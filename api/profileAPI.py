@@ -1041,7 +1041,7 @@ def api_profile_shelf_settings(request: Request, payload: dict[str, Any] = Body(
     try:
         value = shelf_store.set_currency((payload or {}).get("currency"))
     except shelf_store.ShelfError as e:
-        return _json_error(str(e), 400)
+        return _json_error(shelf_store.public_error(e), 400)
     return JSONResponse({"ok": True, "currency": value})
 
 
@@ -1076,7 +1076,7 @@ def api_profile_shelf_save(request: Request, typ: str, tmdb_id: int, payload: di
     try:
         entry = shelf_store.put(entity, tmdb_id, payload if isinstance(payload, dict) else {})
     except shelf_store.ShelfError as e:
-        return _json_error(str(e), 400)
+        return _json_error(shelf_store.public_error(e), 400)
     return JSONResponse({"ok": True, "entry": entry, "summary": shelf_store.summary(entry)})
 
 

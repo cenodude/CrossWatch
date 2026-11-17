@@ -277,3 +277,13 @@ def test_watch_providers_are_cached_per_region(monkeypatch) -> None:
     assert len(calls) == 1 and calls[0]["watch_region"] == "NL"
     assert json.loads(metaAPI.api_watch_providers("show", "zz").body)["region"] == "ZZ"
     assert json.loads(metaAPI.api_watch_providers("movie", "1x").body)["region"] == "US"
+
+
+def test_errors_only_return_known_messages() -> None:
+    from services import artwork_choices
+
+    assert shelf_store.public_error(shelf_store.ShelfError("Invalid currency")) == "Invalid currency"
+    assert shelf_store.public_error(shelf_store.ShelfError(f"A title can have up to {shelf_store.MAX_COPIES} copies")).startswith("A title can have")
+    assert shelf_store.public_error(RuntimeError("C:\secret\path")) == "Invalid request"
+    assert artwork_choices.public_error(artwork_choices.ArtworkChoiceError("Image too large")) == "Image too large"
+    assert artwork_choices.public_error(ValueError("Traceback (most recent call last)")) == "Invalid request"

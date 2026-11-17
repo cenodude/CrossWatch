@@ -37,6 +37,19 @@ class ArtworkChoiceError(ValueError):
     pass
 
 
+_PUBLIC_ERRORS = {
+    text: text
+    for text in (
+        "Invalid TMDb id", "Invalid image reference", "Invalid pin path", "Not an image", "Image too large",
+        "Empty image", "Invalid artwork kind", "Invalid artwork source",
+    )
+}
+
+
+def public_error(error: Exception) -> str:
+    return _PUBLIC_ERRORS.get(str(error), "Invalid request")
+
+
 def _root() -> Path:
     return CONFIG_BASE() / ".cw_state" / "artwork"
 

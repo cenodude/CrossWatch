@@ -1580,7 +1580,7 @@ def api_artwork_choose(typ: str = FPath(...), tmdb_id: int = FPath(..., ge=1), p
     try:
         rev = _artwork.set_choice(t, tmdb_id, str(body.get("kind") or ""), str(body.get("source") or ""), str(body.get("ref") or ""), lang=str(body.get("lang") or ""))
     except _artwork.ArtworkChoiceError as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        return JSONResponse({"ok": False, "error": _artwork.public_error(e)}, status_code=400)
     except Exception:
         LOG.warning("artwork choice save failed")
         return JSONResponse({"ok": False, "error": "The image could not be downloaded."}, status_code=502)
@@ -1595,7 +1595,7 @@ def api_artwork_reset(typ: str = FPath(...), tmdb_id: int = FPath(..., ge=1), ki
     try:
         rev = _artwork.reset(t, tmdb_id, str(kind).strip().lower() if kind else None)
     except _artwork.ArtworkChoiceError as e:
-        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        return JSONResponse({"ok": False, "error": _artwork.public_error(e)}, status_code=400)
     except Exception:
         LOG.warning("artwork choice reset failed")
         return JSONResponse({"ok": False, "error": "Reset failed"}, status_code=500)

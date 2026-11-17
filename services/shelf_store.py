@@ -40,6 +40,19 @@ class ShelfError(ValueError):
     pass
 
 
+_PUBLIC_ERRORS = {
+    text: text
+    for text in (
+        "Invalid TMDb id", "Invalid copy", "Choose a format for each copy", "Invalid status",
+        f"A title can have up to {MAX_COPIES} copies", "Invalid currency", "Invalid shelf entry",
+    )
+}
+
+
+def public_error(error: Exception) -> str:
+    return _PUBLIC_ERRORS.get(str(error), "Invalid request")
+
+
 def _path() -> Path:
     return CONFIG_BASE() / ".cw_state" / "shelf.json"
 
