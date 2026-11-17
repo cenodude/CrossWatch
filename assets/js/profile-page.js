@@ -2080,8 +2080,7 @@
     const cover = shelf.caseHtml?.({ format, packaging: info.packaging, poster: poster(item, "w342") }) || `<span class="cw-case" data-case="plain"><img class="cw-case-art" src="${esc(poster(item, "w342"))}" alt=""></span>`;
     return `<div class="cw-shelfv-item${disc ? " has-disc" : ""}${info.status === "wishlist" ? " is-wishlist" : ""}" data-case="${esc(kind)}" data-shelf-pop="${collectionState.items.indexOf(item)}">
       <button type="button" class="cw-shelfv-art" data-profile-poster-key="${esc(storePosterItem(item))}" aria-label="${esc(label)}">
-        ${disc ? `<img class="cw-shelfv-disc" src="${esc(disc)}" alt="" loading="lazy" decoding="async" onerror="this.closest('.cw-shelfv-item')?.classList.remove('has-disc');this.remove()">` : ""}
-        ${cover}
+        ${shelf.sceneHtml?.({ cover, disc, reflection: true }) || cover}
         ${statusLabel ? `<span class="cw-shelfv-status" data-status="${esc(info.status)}">${esc(statusLabel)}</span>` : ""}
       </button>
       <span class="cw-shelfv-base" aria-hidden="true"></span>
@@ -2109,24 +2108,8 @@
   }
 
   function shelfPopHtml(item) {
-    const info = item?.shelf || {};
-    const shelf = window.CW?.Shelf || {};
-    const formats = shelf.formats || {};
-    const perFormat = Object.entries(info.per_format || {}).map(([key, count]) => `${count > 1 ? `${count}× ` : ""}${formats[key] || key}`).join(", ");
-    const copies = Number(info.copies) || 0;
-    const edition = [info.edition, info.packaging === "steelbook" && String(info.edition || "").toLowerCase() !== "steelbook" ? "Steelbook" : ""].filter(Boolean).join(" · ");
-    const bought = [shelf.date?.(info.purchased) || "", Number(info.spent) > 0 ? shelf.money?.(info.spent) || "" : ""].filter(Boolean).join(" · ");
-    const rows = [
-      ["Copies", copies ? `${numberFmt.format(copies)} · ${perFormat}` : ""],
-      ["Edition", edition],
-      ["Bought", bought],
-      ["Shelf", (info.shelves || []).join(", ")],
-      ["Status", info.status && info.status !== "owned" ? shelf.statuses?.[info.status] || info.status : ""],
-      ["Lent out", info.lent ? "Yes" : ""],
-    ].filter(([, value]) => value);
     const sub = [yearOf(item), mediaType(item) ? "Show" : "Movie"].filter(Boolean).join(" · ");
-    const pill = shelf.pill?.({ format: (info.formats || [])[0] || "", media: item?.media_info || {}, service: info.service }) || "";
-    return `<h4>${esc(titleOf(item))}</h4><span class="cw-shelfv-pop-sub">${esc(sub)}</span>${pill}${rows.length ? `<dl>${rows.map(([label, value]) => `<dt>${esc(label)}</dt><dd>${esc(value)}</dd>`).join("")}</dl>` : ""}<span class="cw-shelfv-pop-hint">Click for all details</span>`;
+    return window.CW?.Shelf?.popHtml?.({ title: titleOf(item), sub, info: item?.shelf || {}, media: item?.media_info || {} }) || "";
   }
 
   function hideShelfPop() {

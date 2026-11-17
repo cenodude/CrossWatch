@@ -84,11 +84,12 @@ def test_tracker_copies_are_validated_and_kept_by_sync() -> None:
     assert synced["copies"] == existing["copies"] and synced["format"] == "dvd"
 
 
-def test_collection_query_can_return_only_titles_with_copies(tmp_path) -> None:
+def test_collection_query_can_return_only_titles_on_the_shelf(tmp_path) -> None:
     store = TrackerStore(tmp_path)
-    owned = {**ITEM, "copies": [{"id": "a1", "format": "bluray"}]}
+    show = {"type": "show", "title": "Severance", "year": 2022, "ids": {"tmdb": "95396"}}
     other = {**ITEM, "title": "Arrival", "ids": {"tmdb": "329865"}}
-    store.write_state("collection", {"movie:438631": owned, "movie:329865": other})
-    total, rows = store.query("collection", copies=True)
-    assert total == 1 and [key for key, _ in rows] == ["movie:438631"]
-    assert store.query("collection")[0] == 2
+    store.write_state("collection", {"movie:438631": ITEM, "movie:329865": other, "show:95396": show})
+    total, rows = store.query("collection", shelf=["movie:438631", "tv:95396", "movie:bad", "tv:438631"])
+    assert total == 2 and sorted(key for key, _ in rows) == ["movie:438631", "show:95396"]
+    assert store.query("collection", shelf=[])[0] == 0
+    assert store.query("collection")[0] == 3

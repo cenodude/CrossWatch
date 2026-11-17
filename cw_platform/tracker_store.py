@@ -1328,14 +1328,16 @@ class TrackerStore(TrackerAutomation):
         status: str = "",
         tag: str = "",
         duplicates: bool = False,
-        copies: bool = False,
+        shelf: Iterable[str] | None = None,
     ) -> tuple[int, list[tuple[str, Any]]]:
         where, args = self._filters(feature, text=text, media=media, attention=attention, health=health, duplicates=duplicates)
         note_where, note_args = self._note_filters(status=status, tag=tag)
         where.extend(note_where)
         args.extend(note_args)
-        if copies:
-            where.append("json_array_length(data, '$.copies') > 0")
+        if shelf is not None:
+            shelf_where, shelf_args = self._shelf_filter(shelf)
+            where.append(shelf_where)
+            args.extend(shelf_args)
         if until:
             where.append("when_at < ?")
             args.append(until)
@@ -1395,6 +1397,28 @@ class TrackerStore(TrackerAutomation):
             where.append(f"EXISTS (SELECT 1 FROM note_tags nt WHERE nt.title_key=({key}) AND nt.tag=?)")
             args.append(tag)
         return where, args
+
+    @staticmethod
+    def _shelf_filter(keys: Iterable[str]) -> tuple[str, list[Any]]:
+        movies: set[str] = set()
+        shows: set[str] = set()
+        for key in keys:
+            entity, _, tmdb = str(key or "").partition(":")
+            if not tmdb.isdigit():
+                continue
+            if entity == "movie":
+                movies.add(tmdb)
+            elif entity == "tv":
+                shows.add(tmdb)
+        parts: list[str] = []
+        args: list[Any] = []
+        if movies:
+            parts.append(f"(kind='movie' AND tmdb IN ({', '.join('?' for _ in movies)}))")
+            args.extend(sorted(movies))
+        if shows:
+            parts.append(f"(kind IN ('show', 'anime') AND tmdb IN ({', '.join('?' for _ in shows)}))")
+            args.extend(sorted(shows))
+        return (f"({' OR '.join(parts)})" if parts else "0"), args
 
     @staticmethod
     def _filters(feature: str, *, text: str = "", media: str = "", attention: bool = False, health: str = "", duplicates: bool = False) -> tuple[list[str], list[Any]]:

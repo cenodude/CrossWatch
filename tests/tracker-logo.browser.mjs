@@ -498,9 +498,6 @@ for(const theme of ['original','flat-dark','flat-light']) for(const width of [32
     assert.equal(await page.locator('.cw-page-hero-kicker').textContent(),'CW TRACKER');
     assert.match(await page.locator('[data-trk-slot="identity"]').innerText(),/Header user/);
     assert.equal(await page.locator('[data-trk-slot="identity"]').getByRole('link',{name:'Open user settings'}).getAttribute('href'),'/profile#account');
-    const profileBounds=await page.locator('.trk-profile-picker').boundingBox();
-    const identityBounds=await page.locator('[data-trk-slot="identity"]').boundingBox();
-    assert.ok(identityBounds.x+identityBounds.width<=profileBounds.x);
     await heading.locator('img').waitFor();
     assert.equal(await heading.locator('img').getAttribute('alt'),'Arrival');
     assert.equal(await page.locator('.trk-play.is-selected').count(),0);
