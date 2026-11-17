@@ -329,25 +329,127 @@ def combine_media(entries: Iterable[tuple[Any, Any]]) -> tuple[str, dict[str, An
     return fmt, best
 
 
-def media_update(src: Mapping[str, Any], dst: Mapping[str, Any]) -> dict[str, Any] | None:
+COPY_PACKAGING = ("keep_case", "steelbook", "digipak", "mediabook", "slipcover", "box_set", "other")
+COPY_CONDITIONS = ("mint", "like_new", "good", "fair", "poor")
+COPY_REGIONS = ("A", "B", "C", "FREE", "0", "1", "2", "3", "4", "5", "6", "7", "8")
+_COPY_PACKAGING_SHARED = {"digipak": "other"}
+COPY_PRIVATE_FIELDS = ("price", "store", "shelf", "notes", "lent_to")
+
+
+def copy_regions(value: Any) -> list[str]:
+    raw = value if isinstance(value, list) else re.split(r"[\s,;/|]+", _text(value))
+    out: list[str] = []
+    for part in raw:
+        token = _text(part).upper()
+        if token in COPY_REGIONS and token not in out:
+            out.append(token)
+    return out
+
+
+def copy_media(copy: Mapping[str, Any]) -> dict[str, Any]:
+    out: dict[str, Any] = {key: value for key, normalize in _NORMALIZERS.items() if (value := normalize(copy.get(key)))}
+    if normalize_3d(copy.get("is_3d")) is True:
+        out["is_3d"] = True
+    return out
+
+
+def item_copies(item: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    raw = item.get("copies")
+    return [row for row in raw if isinstance(row, Mapping)] if isinstance(raw, list) else []
+
+
+def _copy_signature(copy: Mapping[str, Any]) -> tuple[Any, ...]:
+    fmt = normalize_format(copy.get("format"))
+    media = copy_media(copy)
+    if fmt == "4k_bluray":
+        media.setdefault("resolution", "uhd_4k")
+    packaging = _text(copy.get("packaging")).lower()
+    try:
+        discs = min(99, max(0, int(copy.get("discs") or 0)))
+    except (TypeError, ValueError):
+        discs = 0
+    return (
+        _folded_format(fmt, media),
+        tuple(sorted(media.items())),
+        _text(copy.get("edition"))[:80],
+        _COPY_PACKAGING_SHARED.get(packaging, packaging),
+        _text(copy.get("condition")).lower(),
+        tuple(sorted(copy_regions(copy.get("region")))),
+        discs,
+    )
+
+
+def copies_signature(copies: Iterable[Mapping[str, Any]]) -> dict[str, tuple[Any, ...]]:
+    return {str(copy.get("id") or ""): _copy_signature(copy) for copy in copies}
+
+
+def _detail_value(field: str, value: Any) -> Any:
+    if field == "price":
+        try:
+            return round(float(value), 2) if value is not None and not isinstance(value, bool) else None
+        except (TypeError, ValueError):
+            return None
+    return " ".join(_text(value).split()) or None
+
+
+def _details_differ(src: Mapping[str, Any], dst: Mapping[str, Any], fields: tuple[str, ...]) -> bool:
+    for field in fields:
+        value = _detail_value(field, src.get(field))
+        if value is not None and value != _detail_value(field, dst.get(field)):
+            return True
+    return False
+
+
+def copies_differ(src: list[Mapping[str, Any]], dst: list[Mapping[str, Any]], *, private: bool = False) -> bool:
+    src_sig, dst_sig = copies_signature(src), copies_signature(dst)
+    if any(dst_sig.get(key) != value for key, value in src_sig.items()):
+        return True
+    fields = ("purchased", *COPY_PRIVATE_FIELDS) if private else ("purchased",)
+    by_id = {str(copy.get("id") or ""): copy for copy in dst}
+    if any(_details_differ(copy, by_id.get(str(copy.get("id") or "")) or {}, fields) for copy in src):
+        return True
+    sources = {str(copy.get("source") or "crosswatch") for copy in src}
+    return any(str(copy.get("id") or "") not in src_sig and copy.get("source") in sources for copy in dst)
+
+
+def same_copy_value(field: str, left: Any, right: Any) -> bool:
+    if field == "packaging":
+        left, right = (_COPY_PACKAGING_SHARED.get(_text(v).lower(), _text(v).lower()) for v in (left, right))
+    elif field == "region":
+        return sorted(copy_regions(left)) == sorted(copy_regions(right))
+    elif field == "edition":
+        return _text(left)[:80] == _text(right)[:80]
+    return left == right
+
+
+def media_update(src: Mapping[str, Any], dst: Mapping[str, Any], *, copies: bool = False, private: bool = False) -> dict[str, Any] | None:
     src_media, dst_media = item_media(src), item_media(dst)
     src_known, dst_known = _known_media(src_media), _known_media(dst_media)
     src_fmt, dst_fmt = normalize_format(src.get("format")), normalize_format(dst.get("format"))
     if src_fmt == "4k_bluray":
         src_known.setdefault("resolution", "uhd_4k")
-    dst_folded = _folded_format(dst_fmt, dst_known)
-    if dst_folded in _PHYSICAL_FORMATS and _folded_format(src_fmt, src_known) not in _PHYSICAL_FORMATS:
+    src_copies = item_copies(src) if copies else []
+    copies_changed = bool(src_copies) and copies_differ(src_copies, item_copies(dst), private=private)
+    if src_copies and not copies_changed:
         return None
-    changed = {key: value for key, value in src_known.items() if dst_known.get(key) != value}
+    dst_folded = _folded_format(dst_fmt, dst_known)
+    guarded = dst_folded in _PHYSICAL_FORMATS and _folded_format(src_fmt, src_known) not in _PHYSICAL_FORMATS
+    if guarded and not copies_changed:
+        return None
+    changed = {} if guarded else {key: value for key, value in src_known.items() if dst_known.get(key) != value}
     merged_fmt = src_fmt or dst_fmt
-    format_changed = _folded_format(merged_fmt, {**dst_known, **changed}) != dst_folded
-    if not changed and not format_changed:
+    format_changed = not guarded and _folded_format(merged_fmt, {**dst_known, **changed}) != dst_folded
+    if not changed and not format_changed and not copies_changed:
         return None
     out = dict(dst)
     out["_cw_media_update"] = True
-    out["media_info"] = {**dst_media, **changed}
+    if not guarded:
+        out["media_info"] = {**dst_media, **changed}
     if format_changed:
         out["format"] = merged_fmt
+    if copies_changed:
+        out["_cw_copies_before"] = [dict(row) for row in item_copies(dst)]
+        out["copies"] = [dict(row) for row in src_copies]
     return out
 
 

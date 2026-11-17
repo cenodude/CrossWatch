@@ -2028,7 +2028,8 @@ left.innerHTML = `
     const co = getOpts(state, "collection");
     const hasType=t=>Array.isArray(co.types)&&co.types.includes(t);
     const mediaRead=["plex","emby","jellyfin","silo","tofa"].some(p=>same(state.src,p));
-    const mediaUpdates=["trakt","floppy","crosswatch","flicklist","mdblist"].some(p=>same(state.dst,p));
+    const mediaUpdates=["trakt","floppy","crosswatch","flicklist","mdblist","wetrakr"].some(p=>same(state.dst,p));
+    const copyDetails=same(state.dst,"wetrakr")||(isTwoWayMode(state)&&same(state.src,"wetrakr"));
     left.innerHTML = `<div class="panel-title">Collections | Basics</div>
       <div class="opt-row">
         <label for="cx-co-enable">Enable</label>
@@ -2053,7 +2054,7 @@ left.innerHTML = `
         <div class="opt-row"><label for="cx-co-type-seasons">Seasons</label><label class="switch"><input id="cx-co-type-seasons" type="checkbox" ${hasType("seasons")?"checked":""}><span class="slider"></span></label></div>
         <div class="opt-row"><label for="cx-co-type-episodes">Episodes</label><label class="switch"><input id="cx-co-type-episodes" type="checkbox" ${hasType("episodes")?"checked":""}><span class="slider"></span></label></div>
       </div>
-      ${mediaRead||mediaUpdates ? `<div class="panel-title small">Media info</div>` : ""}
+      ${mediaRead||mediaUpdates||copyDetails ? `<div class="panel-title small">Media info</div>` : ""}
       ${mediaRead ? `<div class="opt-row">
         <label for="cx-co-media" data-tip-id="cx-co-media">Read from media server</label>
         <label class="switch"><input id="cx-co-media" type="checkbox" ${co.media_info ? "checked" : ""}><span class="slider"></span></label>
@@ -2061,6 +2062,10 @@ left.innerHTML = `
       ${mediaUpdates ? `<div class="opt-row">
         <label for="cx-co-media-upd" data-tip-id="cx-co-media-upd">Update existing items</label>
         <label class="switch"><input id="cx-co-media-upd" type="checkbox" ${co.media_updates ? "checked" : ""}><span class="slider"></span></label>
+      </div>` : ""}
+      ${copyDetails ? `<div class="opt-row">
+        <label for="cx-co-copy-details" data-tip-id="cx-co-copy-details">Send private copy details</label>
+        <label class="switch"><input id="cx-co-copy-details" type="checkbox" ${co.copy_details ? "checked" : ""}><span class="slider"></span></label>
       </div>` : ""}`;
     applySubDisable("collection");
     applyCollectionTypeRules(state);
@@ -2521,6 +2526,7 @@ function bindChangeHandlers(state,root){
         remove:!!ID("cx-co-remove")?.checked,
         media_info:ID("cx-co-media")?!!ID("cx-co-media").checked:!!prev.media_info,
         media_updates:ID("cx-co-media-upd")?!!ID("cx-co-media-upd").checked:!!prev.media_updates,
+        copy_details:ID("cx-co-copy-details")?!!ID("cx-co-copy-details").checked:!!prev.copy_details,
         types
       });
       syncCollectionModeLock(state);

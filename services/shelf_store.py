@@ -14,7 +14,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from cw_platform.collection_media import FORMATS
+from cw_platform.collection_media import FORMATS, copy_media
 from cw_platform.config_base import CONFIG_BASE
 
 STATUSES = ("owned", "ordered", "wishlist")
@@ -30,6 +30,8 @@ _ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,40}$")
 _TEXT_LIMITS = {"edition": 80, "region": 12, "volume": 40, "shelf": 60, "lent_to": 80, "store": 80, "notes": 500}
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 _LOGO_RE = re.compile(r"^/[A-Za-z0-9_-]{4,64}\.(jpg|jpeg|png)$", re.IGNORECASE)
+_SOURCE_RE = re.compile(r"^[a-z0-9_]{1,24}$")
+_REF_RE = re.compile(r"^[A-Za-z0-9:_-]{1,40}$")
 MAX_PRICE = 10_000_000
 
 _OWNER_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
@@ -139,6 +141,13 @@ def clean_copy(raw: Any, *, strict: bool = True) -> dict[str, Any] | None:
     purchased = str(raw.get("purchased") or "").strip()
     if _DATE_RE.fullmatch(purchased) and _valid_date(purchased):
         out["purchased"] = purchased
+    out.update(copy_media(raw))
+    source = str(raw.get("source") or "").strip().lower()
+    ref = str(raw.get("ref") or "").strip()
+    if _SOURCE_RE.fullmatch(source):
+        out["source"] = source
+        if _REF_RE.fullmatch(ref):
+            out["ref"] = ref
     added = str(raw.get("added_at") or "").strip()
     out["added_at"] = added[:20] if added else _now()
     return out

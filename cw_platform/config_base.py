@@ -1607,7 +1607,7 @@ def _normalize_collection_feature(val: dict[str, Any]) -> dict[str, Any]:
     v["enable"] = bool(v.get("enable", False))
     v["add"] = bool(v.get("add", False))
     v["remove"] = bool(v.get("remove", False))
-    for flag in ("media_info", "media_updates"):
+    for flag in ("media_info", "media_updates", "copy_details"):
         if flag in v:
             v[flag] = bool(v.get(flag))
 

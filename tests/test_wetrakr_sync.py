@@ -658,7 +658,7 @@ def test_sync_discovery_exposes_profile_only_watchlist_history_and_rewatches(env
     data = json.loads(syncAPI.api_sync_providers().body)
     assert len(data) == 1
     assert data[0]["configured"]
-    assert {feature for feature, enabled in data[0]["features"].items() if enabled} == {"watchlist", "history", "ratings", "progress", "playlists"}
+    assert {feature for feature, enabled in data[0]["features"].items() if enabled} == {"watchlist", "history", "ratings", "progress", "playlists", "collection"}
     assert data[0]["capabilities"]["history"]["rewatches"] == {"read": True, "write": True}
     assert not env.server.calls
 

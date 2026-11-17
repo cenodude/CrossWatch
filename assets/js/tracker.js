@@ -1406,7 +1406,7 @@
     const rows = ordered.map(([name, list]) => {
       const copies = list.reduce((sum, [item]) => sum + (Array.isArray(item.copies) ? item.copies.length : 0), 0);
       return `<section class="cw-shelfv-row">
-        <header class="cw-shelfv-head">${icon("shelves")}<h3>${esc(name || "No shelf set")}</h3><span>${esc([plural(list.length, "title", "titles"), plural(copies, "copy", "copies")].join(" · "))}</span></header>
+        <div class="cw-shelfv-head">${icon("shelves")}<h3>${esc(name || "No shelf set")}</h3><span>${esc([plural(list.length, "title", "titles"), plural(copies, "copy", "copies")].join(" · "))}</span></div>
         <div class="cw-shelfv-rack">${list.map(([item, index]) => trackerShelfItem(item, index)).join("")}</div>
       </section>`;
     }).join("");

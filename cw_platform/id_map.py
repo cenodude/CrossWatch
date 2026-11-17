@@ -424,6 +424,7 @@ def minimal(item: Mapping[str, Any]) -> dict[str, Any]:
         "collected_at",
         "format",
         "media_info",
+        "copies",
         "media_paths",
     ):
         if opt in item:

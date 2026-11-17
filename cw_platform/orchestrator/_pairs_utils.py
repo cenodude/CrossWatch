@@ -121,6 +121,21 @@ def collection_media_updates_for(ops) -> bool:
         return False
 
 
+def collection_copies_for(ops) -> bool:
+    try:
+        return (ops.capabilities().get("collection") or {}).get("copies") is True
+    except Exception:
+        return False
+
+
+def collection_copy_details_for(ops, fcfg: Mapping[str, Any] | None) -> bool:
+    try:
+        mode = (ops.capabilities().get("collection") or {}).get("copy_details")
+    except Exception:
+        return False
+    return mode is True or (mode == "option" and bool((fcfg or {}).get("copy_details")))
+
+
 def supports_feature(ops, feature: str) -> bool:
     try:
         feats = (ops.capabilities() or {}).get("features", {})

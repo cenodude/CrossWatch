@@ -111,6 +111,12 @@ def _config_with_pair_feature_options(
     feature: str,
 ) -> dict[str, Any]:
     feature_key = str(feature or "").strip().lower()
+    if feature_key == "collection" and any(str(p or "").upper().strip() == "WETRAKR" for p in providers):
+        cfg = copy.deepcopy(cfg)
+        block = cfg.get("wetrakr")
+        if isinstance(block, dict):
+            current = block.get("collection")
+            block["collection"] = {**(current if isinstance(current, dict) else {}), "copy_details": coerce_bool((fcfg or {}).get("copy_details", False))}
     overrides: dict[str, list[str]] = {}
     provider_keys: list[str] = []
     for provider in providers:

@@ -285,6 +285,8 @@ from ._pairs_utils import (
     ratings_step_for,
     ratings_zero_for,
     collection_media_updates_for,
+    collection_copies_for,
+    collection_copy_details_for,
     declared_types_for,
     config_with_pair_libraries as _config_with_pair_libraries,
     _supports_feature,
@@ -1649,11 +1651,13 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         adds = list(adds) + gap_adds
 
     if feature == "collection" and bool((fcfg or {}).get("media_updates")) and collection_media_updates_for(dst_ops):
+        copies_ok = collection_copies_for(dst_ops)
+        details_ok = copies_ok and collection_copy_details_for(dst_ops, fcfg)
         for sv in (src_idx or {}).values():
-            if not isinstance(sv, Mapping) or not (sv.get("media_info") or sv.get("format")):
+            if not isinstance(sv, Mapping) or not (sv.get("media_info") or sv.get("format") or (copies_ok and sv.get("copies"))):
                 continue
             dv = _find_in_idx(dst_full, dst_alias, sv)
-            upd = _collection_media_update(sv, dv) if dv else None
+            upd = _collection_media_update(sv, dv, copies=copies_ok, private=details_ok) if dv else None
             if upd:
                 updates.append(upd)
         if updates:

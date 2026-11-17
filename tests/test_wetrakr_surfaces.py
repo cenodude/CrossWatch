@@ -34,10 +34,10 @@ def test_profile_only_discovery_and_cleanup_capabilities(surfaces):
     provider = next(row for row in snapshots.snapshot_manifest(surfaces.cfg) if row["id"] == "WETRAKR")
     assert provider["configured"] and provider["label"] == "WeTrakr"
     assert {row["id"] for row in provider["instances"] if row["configured"]} == {"P01"}
-    expected = {"watchlist", "history", "ratings", "progress"}
+    expected = {"watchlist", "history", "ratings", "progress", "collection"}
     assert {key for key, value in provider["features"].items() if value} == expected
     assert {key for key, value in provider["cleanup_features"].items() if value} == expected
-    for feature in (*expected, "collection"):
+    for feature in expected:
         targets = [row for row in editorAPI._editor_send_targets(surfaces.cfg, feature) if row["provider"] == "WETRAKR"]
         assert [row["instance"] for row in targets] == (["P01"] if feature in expected else [])
 
@@ -83,17 +83,16 @@ def test_editor_send_capture_and_cleanup(surfaces, feature, media):
     assert len(surfaces.adapter.build_index(feature, force_refresh=True)) == 1
 
 
-def test_cleanup_removes_all_plays_and_skips_collections(surfaces):
+def test_cleanup_removes_all_plays(surfaces):
     from services import snapshots
 
     for media in (MOVIE, EPISODE):
         for stamp in (WHEN, LATER):
             surfaces.server.play(media, stamp)
-    result = snapshots.clear_provider_features("WETRAKR", ["history", "collection"],
+    result = snapshots.clear_provider_features("WETRAKR", ["history"],
         instance_id="P01", cfg=surfaces.cfg)
     assert result["ok"], result
     assert not surfaces.server.history
-    assert result["results"]["collection"]["skipped"]
     assert any(path == "/sync/tracking/remove/all" for _, path, _ in surfaces.server.calls)
 
 
