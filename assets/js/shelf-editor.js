@@ -17,7 +17,7 @@
   const shelf = () => window.CW?.Shelf || {};
   const formats = () => shelf().formats || {};
   const statuses = () => shelf().statuses || { owned: "Owned", ordered: "Ordered", wishlist: "Wishlist" };
-  const state = { node: null, type: "", id: "", title: "", year: "", ids: {}, entry: null, synced: null, services: null, servicesLoading: false, draft: null, confirmRemove: false, confirmDelete: null, canEdit: false, loading: true, error: "", editing: null, busy: false, lastFocus: null, seq: 0, tracker: null, start: null, onSaved: null };
+  const state = { node: null, type: "", id: "", title: "", year: "", ids: {}, entry: null, synced: null, services: null, servicesLoading: false, draft: null, groups: {}, confirmRemove: false, confirmDelete: null, canEdit: false, loading: true, error: "", editing: null, busy: false, lastFocus: null, seq: 0, tracker: null, start: null, onSaved: null };
 
   const endpoint = () => `/api/profile/shelf/${encodeURIComponent(state.type)}/${encodeURIComponent(state.id)}`;
   const options = (map, value, blank = "") => `${blank ? `<option value="">${esc(blank)}</option>` : ""}${Object.entries(map).map(([key, label]) => `<option value="${esc(key)}"${key === value ? " selected" : ""}>${esc(label)}</option>`).join("")}`;
@@ -89,6 +89,11 @@
     return `<label class="cw-shelf-field${wide ? " is-wide" : ""}"><span>${esc(label)}</span>${control}</label>`;
   }
 
+  function foldGroup(key, label, values) {
+    const summary = values.filter(Boolean).join(" · ");
+    return `<details class="cw-shelf-group cw-shelf-fold" data-shelf-group="${esc(key)}"${state.groups[key] ? " open" : ""}><summary><span class="cw-shelf-fold-label">${esc(label)}</span>${summary ? `<span class="cw-shelf-fold-sum">${esc(summary)}</span>` : ""}${icon("expand_more")}</summary>`;
+  }
+
   function detailsForm(row) {
     const digital = row.format === "digital";
     const tv = state.type === "tv";
@@ -112,16 +117,16 @@
         ${field("Channels", `<select name="audio_channels">${options(CHANNELS, row.audio_channels, "Not set")}</select>`)}
         ${field("3D", `<select name="is_3d"><option value="">No</option><option value="true"${row.is_3d ? " selected" : ""}>Yes</option></select>`)}
       </div></fieldset>
-      <fieldset class="cw-shelf-group"><legend>Purchase</legend><div class="cw-shelf-grid">
+      ${foldGroup("purchase", "Purchase", [shelf().date?.(row.purchased) || row.purchased, row.price != null && row.price !== "" ? shelf().money?.(row.price) || String(row.price) : "", row.store])}<div class="cw-shelf-grid">
         ${field("Date", `<input name="purchased" type="date" value="${esc(row.purchased || "")}">`)}
         ${field("Price", `<span class="cw-shelf-price"><input name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(row.price ?? "")}"><select data-shelf-currency aria-label="Currency for all prices">${currencies.map((code) => `<option value="${esc(code)}"${code === currency ? " selected" : ""}>${esc(code || "–")}</option>`).join("")}</select></span>`)}
         ${field("Store", `<input name="store" maxlength="80" value="${esc(row.store || "")}" placeholder="Amazon">`)}
-      </div></fieldset>
-      <fieldset class="cw-shelf-group"><legend>Where</legend><div class="cw-shelf-grid">
+      </div></details>
+      ${foldGroup("where", "Where", [row.shelf, CONDITIONS[row.condition] || "", row.lent_to ? `Lent to ${row.lent_to}` : ""])}<div class="cw-shelf-grid">
         ${field("Shelf", `<input name="shelf" maxlength="60" value="${esc(row.shelf || "")}" placeholder="Living room A">`)}
         ${field("Condition", `<select name="condition">${options(CONDITIONS, row.condition, "Not set")}</select>`)}
         ${field("Lent to", `<input name="lent_to" maxlength="80" value="${esc(row.lent_to || "")}" placeholder="Nobody">`)}
-      </div></fieldset>
+      </div></details>
       ${field("Notes", `<textarea name="notes" maxlength="500" rows="2">${esc(row.notes || "")}</textarea>`, true)}
       <datalist id="cw-shelf-editions">${EDITIONS.map((name) => `<option value="${esc(name)}"></option>`).join("")}</datalist>
       <p class="cw-mm-art-note is-error" data-shelf-form-error hidden></p>
@@ -284,6 +289,16 @@
     }
   }
 
+  function deleteCopy(index) {
+    const copies = [...(state.entry?.copies || [])];
+    copies.splice(index, 1);
+    state.editing = null;
+    state.draft = null;
+    const status = state.entry?.status || "owned";
+    if (!copies.length && !state.tracker && status === "owned") { void removeTitle(); return; }
+    void save({ status, copies });
+  }
+
   function addCopy(format) {
     if (!format || state.busy) return;
     const copies = [...(state.entry?.copies || []), { format }];
@@ -347,11 +362,7 @@
         formDelete.lastChild.textContent = "Click again to remove";
         return;
       }
-      const copies = [...(state.entry?.copies || [])];
-      copies.splice(state.editing, 1);
-      state.editing = null;
-      state.draft = null;
-      void save({ status: state.entry?.status || "owned", copies });
+      deleteCopy(state.editing);
       return;
     }
     if (target?.closest?.("[data-shelf-remove]")) {
@@ -374,9 +385,7 @@
         return;
       }
       state.confirmDelete = null;
-      const copies = [...(state.entry?.copies || [])];
-      copies.splice(index, 1);
-      void save({ status: state.entry?.status || "owned", copies });
+      deleteCopy(index);
       return;
     }
     if (state.confirmRemove || state.confirmDelete !== null) {
@@ -441,7 +450,7 @@
       type: type === "movie" ? "movie" : "tv", id: String(id), title: String(title || ""), year: year || "", ids: ids && typeof ids === "object" ? ids : {},
       entry: trackerMode ? { status: "owned", copies: Array.isArray(trackerItem.copies) ? trackerItem.copies : [] } : null,
       synced: trackerMode && (trackerItem.format || trackerItem.media_info) ? { format: trackerItem.format || "", media_info: trackerItem.media_info || {}, providers: [] } : null,
-      draft: null, confirmRemove: false, confirmDelete: null, canEdit: !!canEdit, loading: true, error: "", editing: null, busy: false, lastFocus: document.activeElement,
+      draft: null, groups: {}, confirmRemove: false, confirmDelete: null, canEdit: !!canEdit, loading: true, error: "", editing: null, busy: false, lastFocus: document.activeElement,
       tracker: trackerMode, start, onSaved: typeof onSaved === "function" ? onSaved : null,
     });
     void shelf().load?.();
@@ -464,6 +473,10 @@
     node.addEventListener("submit", onSubmit);
     node.addEventListener("change", onChange);
     node.addEventListener("keydown", onKey);
+    node.addEventListener("toggle", (event) => {
+      const key = event.target?.dataset?.shelfGroup;
+      if (key) state.groups[key] = event.target.open;
+    }, true);
     host.appendChild(node);
     state.node = node;
     render();
