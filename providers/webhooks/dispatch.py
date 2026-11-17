@@ -16,6 +16,7 @@ from providers.scrobble.media_filters import event_ignore_reason, log_media_filt
 from providers.scrobble.scrobble import ScrobbleAction, ScrobbleEvent, _event_identity
 from providers.scrobble.routes import (
     ROUTE_MEDIA_SINKS,
+    rewatch_window_hours,
     same_scrobble_endpoint,
     sync_user_endpoints_supported,
     sync_user_match_for_account,
@@ -203,6 +204,10 @@ def _route_cfg(cfg: dict[str, Any], provider: str, provider_instance: str, sink:
         watch["route_options"] = {"watch": {"anime_mapping": _anime_mapping_enabled(wh, sink)}}
     if sink == "simkl":
         watch["route_options"]["watch"]["simkl_rewatches"] = wh.get("simkl_rewatches") is True
+    if sink == "crosswatch":
+        options = watch.setdefault("route_options", {}).setdefault("watch", {})
+        options["crosswatch_rewatches"] = wh.get("crosswatch_rewatches") is True
+        options["crosswatch_rewatch_window_hours"] = rewatch_window_hours(wh.get("crosswatch_rewatch_window_hours"))
     if sink in ROUTE_MEDIA_SINKS:
         libraries = wh.get("destination_libraries")
         copies = wh.get("update_all_copies")

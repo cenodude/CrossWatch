@@ -359,10 +359,10 @@ function _parseLogParts(raw, fallbackProvider = "") {
     text = text.slice(match[0].length);
   }
 
-  const timeMatch = text.match(/(?:^|\s)(\d{2}:\d{2}:\d{2})(?:[.,]\d+)?(?=\s|$)/);
+  const timeMatch = text.match(/^(\d{2}:\d{2}:\d{2})(?:[.,]\d+)?(?=\s|$)/);
   if (timeMatch) {
     time ||= timeMatch[1];
-    text = `${text.slice(0, timeMatch.index)} ${text.slice((timeMatch.index || 0) + timeMatch[0].length)}`.trim();
+    text = text.slice(timeMatch[0].length).trim();
   }
 
   if (provider) {

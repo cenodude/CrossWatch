@@ -1545,17 +1545,20 @@ function cwBuildFanartPanel() {
       <div class="cw-subpanels">
         <div class="cw-subpanel active" data-sub="api">
           <div class="auth-card">
-            <div class="auth-card-notes" id="fanart_hint">Images are provided by <a href="https://fanart.tv" target="_blank" rel="noopener noreferrer">fanart.tv</a>. CrossWatch has its own fanart.tv project key, so a personal key is optional. A personal key shows new uploads after 2 days instead of 7, and right away for fanart.tv VIP members.</div>
+            <div class="auth-card-notes" id="fanart_hint">Images are provided by <a href="https://fanart.tv" target="_blank" rel="noopener noreferrer">fanart.tv</a>. No keys are required. Leave both fields empty and just click Connect fanart.tv to use the CrossWatch project key.</div>
             <div class="auth-card-notes" id="fanart_tmdb_hint" hidden>Connect TMDb Metadata first. fanart.tv art is loaded through TMDb Metadata.</div>
             <div class="auth-card-fields">
-              <div class="field">
-                <div class="muted" style="margin-bottom:6px;">Personal API key (optional)</div>
-                <input id="fanart_personal_api_key" type="text" placeholder="From your fanart.tv profile" autocomplete="off">
+              <div style="display:flex;gap:14px;flex-wrap:wrap">
+                <div class="field" style="flex:1 1 220px;min-width:0">
+                  <div class="muted" style="margin-bottom:6px;">Personal API key (not required)</div>
+                  <input id="fanart_personal_api_key" type="text" placeholder="Optional, from your fanart.tv profile" autocomplete="off">
+                </div>
+                <div class="field" style="flex:1 1 220px;min-width:0">
+                  <div class="muted" style="margin-bottom:6px;">Project API key (not required)</div>
+                  <input id="fanart_api_key" type="text" placeholder="Optional, replaces the CrossWatch key" autocomplete="off">
+                </div>
               </div>
-              <div class="field">
-                <div class="muted" style="margin-bottom:6px;">Own project API key (optional)</div>
-                <input id="fanart_api_key" type="text" placeholder="Replaces the CrossWatch project key" autocomplete="off">
-              </div>
+              <div class="auth-card-notes">A personal key shows new fanart.tv uploads after 2 days instead of 7, and right away for fanart.tv VIP members. Only add a project key if you have your own fanart.tv project.</div>
               <div class="inline" style="display:flex;margin-top:10px;gap:10px;align-items:center;justify-content:flex-start">
                 <button type="button" class="btn good" id="fanart_check">Connect fanart.tv</button>
                 <button type="button" class="btn danger" id="fanart_delete" hidden>Delete</button>

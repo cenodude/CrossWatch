@@ -59,6 +59,38 @@ def simulate(monkeypatch, cfg, *, advance=None, on_run=None, finish=None):
     return runs, states, worker
 
 
+@pytest.mark.parametrize("kind", ["jobs", "workflows", "capture_jobs", "backup_jobs"])
+def test_midnight_run_is_not_skipped_at_day_rollover(monkeypatch, kind):
+    cfg = config()
+    cfg["scheduling"]["enabled"] = False
+    midnight_jobs = {
+        "jobs": {"id": "job", "pair_id": "a", "at": "00:00"},
+        "workflows": {"id": "workflow", "mode": "every_n_hours", "every_n_hours": 3,
+                      "steps": [{"id": "step", "pair_id": "a"}]},
+        "capture_jobs": {"id": "capture", "provider": "TRAKT", "feature": "history", "at": "00:00"},
+        "backup_jobs": {"id": "backup", "at": "00:00"},
+    }
+    cfg["scheduling"]["advanced"] = {"enabled": True, kind: [midnight_jobs[kind]]}
+    now = datetime(2026, 3, 15, 23, 59, 35)
+    monkeypatch.setattr(scheduling, "_as_now_in_tz", lambda _tz=None: now)
+    monkeypatch.setattr(scheduling, "_now_ts", lambda: int(now.timestamp()))
+    runs = []
+    worker = scheduling.SyncScheduler(lambda: cfg, lambda _: None, lambda payload: runs.append(payload) or True)
+    sch = cfg["scheduling"]
+    worker._adv_seed_past_due_today(sch, None)
+    assert worker._adv_run_due(sch, None) is False
+    assert runs == []
+
+    for day in (16, 17):
+        now = datetime(2026, 3, day, 0, 0, 6)
+        worker._adv_seed_past_due_today(sch, None)
+        assert worker._adv_run_due(sch, None) is True
+        assert len(runs) == day - 15
+        worker._adv_seed_past_due_today(sch, None)
+        assert worker._adv_run_due(sch, None) is False
+        assert len(runs) == day - 15
+
+
 @pytest.mark.parametrize("kind", ["jobs", "workflows"])
 @pytest.mark.parametrize("success", [False, True])
 def test_overlapping_plans_skip_accepted_advanced_dispatches(monkeypatch, kind, success):

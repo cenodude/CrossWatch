@@ -24,6 +24,7 @@ from providers.scrobble.routes import (
     normalize_route,
     normalize_route_options,
     normalize_routes,
+    rewatch_window_hours,
     sync_user_endpoints_supported,
     route_needs_account_filter,
     same_scrobble_endpoint,
@@ -85,6 +86,8 @@ WEBHOOK_SETTING_KEYS = {
     "anime_mapping_crosswatch",
     "anime_mapping_simkl",
     "simkl_rewatches",
+    "crosswatch_rewatches",
+    "crosswatch_rewatch_window_hours",
     "destination_libraries",
     "update_all_copies",
     "match_users",
@@ -368,6 +371,10 @@ def _normalize_webhook_settings(cfg: Mapping[str, Any], provider: str, body: Map
     selected_sinks = [str(s or "").strip().lower() for s in (out.get("sinks") or _as_list(body.get("sinks")) or current_sinks)]
     if "simkl_rewatches" in body:
         out["simkl_rewatches"] = body.get("simkl_rewatches") is True and "simkl" in selected_sinks
+    if "crosswatch_rewatches" in body:
+        out["crosswatch_rewatches"] = body.get("crosswatch_rewatches") is True and "crosswatch" in selected_sinks
+    if "crosswatch_rewatch_window_hours" in body and "crosswatch" in selected_sinks:
+        out["crosswatch_rewatch_window_hours"] = rewatch_window_hours(body.get("crosswatch_rewatch_window_hours"))
     if "match_users" in body:
         raw_on = body.get("match_users")
         if not isinstance(raw_on, Mapping):
@@ -964,6 +971,9 @@ def api_profile_webhook_save(request: Request, payload: dict[str, Any] = Body(..
                 node.pop(f"anime_mapping_{prev_sink}", None)
             if prev_sink == "simkl" and prev_sink not in sinks_now:
                 node.pop("simkl_rewatches", None)
+            if prev_sink == "crosswatch" and prev_sink not in sinks_now:
+                node.pop("crosswatch_rewatches", None)
+                node.pop("crosswatch_rewatch_window_hours", None)
             if prev_sink and prev_sink not in sinks_now:
                 for key in ("destination_libraries", "update_all_copies", "match_users", "user_matches"):
                     if isinstance(node.get(key), dict):

@@ -397,7 +397,11 @@ class CROSSWATCHModule:
             cnt, unresolved = self._guarded(feature, lambda: mod.add(self, lst))
             _info(feature, "write_done", op="add", ok=len(unresolved) == 0, applied=int(cnt), unresolved=len(unresolved), dur_ms=int((time.perf_counter() - started) * 1000))
             confirmed_keys = _confirmed_keys(_crosswatch_key_of, lst, unresolved)
-            return {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+            result = {"ok": True, "count": int(cnt), "unresolved": unresolved, "confirmed_keys": confirmed_keys}
+            merged = int(getattr(self, "_cw_history_window_merged", 0) or 0) if feature == "history" else 0
+            if merged:
+                result["window_merged"] = merged
+            return result
         except Exception as e:
             _error(feature, "write_failed", op="add", error=str(e))
             return {"ok": False, "error": str(e)}

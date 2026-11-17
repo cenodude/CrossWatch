@@ -27,3 +27,25 @@ test('watcher replay uses the captured UTC timestamp converted to local time', (
 test('existing timestamped lines keep their time', () => {
   assert.equal(context._parseLogParts('[23:49:33] [SCROBBLE] DEBUG accepted stop').time, '23:49:33');
 });
+
+test('scheduled times stay in the message when a log timestamp is present', () => {
+  const parsed = context._parseLogParts('[00:10:00] [SYNC] INFO [SCHED] next run scheduled at 2026-11-17 03:03:50 CET');
+  assert.equal(parsed.time, '00:10:00');
+  assert.equal(parsed.message, '[SCHED] next run scheduled at 2026-11-17 03:03:50 CET');
+});
+
+test('scheduled times are not mistaken for missing log timestamps', () => {
+  const sandbox = vm.createContext({_watchLogKnownTags: () => ['SYNC']});
+  vm.runInContext(parser, sandbox);
+  sandbox._logTimeNow = () => '00:10:00';
+  const parsed = sandbox._parseLogParts('[SYNC] INFO [SCHED] next run scheduled at 2026-11-17 03:03:50 CET');
+  assert.equal(parsed.time, '00:10:00');
+  assert.equal(parsed.message, '[SCHED] next run scheduled at 2026-11-17 03:03:50 CET');
+});
+
+test('bare leading timestamps remain supported without removing message times', () => {
+  const parsed = context._parseLogParts('23:49:33.123 INFO retry at 23:50:00', 'SYNC');
+  assert.equal(parsed.time, '23:49:33');
+  assert.equal(parsed.level, 'INFO');
+  assert.equal(parsed.message, 'retry at 23:50:00');
+});

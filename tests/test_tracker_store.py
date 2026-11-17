@@ -401,6 +401,116 @@ def test_legacy_history_list_keeps_every_watch_for_rewatch_mode(tmp_path, rewatc
     assert len(adapter.build_index("history")) == count
 
 
+def test_a_write_without_rewatches_only_replaces_the_latest_watch(tmp_path):
+    from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
+
+    cfg = {"CrossWatch": {"connected": True, "enabled": True, "root_dir": str(tmp_path)}}
+    heat = {"type": "movie", "title": "Heat", "ids": {"tmdb": "949"}}
+    arrival = {"type": "movie", "title": "Arrival", "ids": {"tmdb": "329865"}}
+    watches = [{**heat, "watched_at": "2026-01-01T00:00:00Z"}, {**heat, "watched_at": "2026-02-01T00:00:00Z"}]
+    CROSSWATCHModule({**cfg, "_cw_history_rewatches": True}).add("history", watches)
+    adapter = CROSSWATCHModule(cfg)
+
+    adapter.add("history", [{**arrival, "watched_at": "2026-03-01T00:00:00Z"}])
+    adapter.add("history", [{**heat, "watched_at": "2026-04-01T00:00:00Z"}])
+    adapter.add("history", [{**heat, "watched_at": "2026-04-01T00:00:00Z"}])
+    adapter.add("history", [{**heat, "watched_at": "2025-12-01T00:00:00Z"}])
+
+    stored = TrackerStore(tmp_path).read_current("history")["items"].values()
+    assert sorted((item["ids"]["tmdb"], item["watched_at"]) for item in stored) == [
+        ("329865", "2026-03-01T00:00:00Z"),
+        ("949", "2026-01-01T00:00:00Z"),
+        ("949", "2026-04-01T00:00:00Z"),
+    ]
+    assert len(adapter.build_index("history")) == 2
+
+
+@pytest.mark.parametrize("newest_key", ["tmdb:949", "tmdb:949@1775001600"])
+def test_a_read_without_rewatches_returns_the_newest_watch(tmp_path, newest_key):
+    from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
+
+    heat = {"type": "movie", "title": "Heat", "ids": {"tmdb": "949"}}
+    TrackerStore(tmp_path).write_state("history", {
+        "tmdb:949@1767225600": {**heat, "watched_at": "2026-01-01T00:00:00Z"},
+        newest_key: {**heat, "watched_at": "2026-04-01T00:00:00Z"},
+        "tmdb:949@1769904000": {**heat, "watched_at": "2026-02-01T00:00:00Z"},
+    })
+    adapter = CROSSWATCHModule({"CrossWatch": {"connected": True, "enabled": True, "root_dir": str(tmp_path)}})
+    assert [item["watched_at"] for item in adapter.build_index("history").values()] == ["2026-04-01T00:00:00Z"]
+
+
+def test_concurrent_completions_inside_the_rewatch_window_store_one_watch(tmp_path):
+    import threading
+
+    from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
+
+    cfg = {"CrossWatch": {"connected": True, "enabled": True, "root_dir": str(tmp_path)},
+           "_cw_history_rewatches": True, "_cw_history_rewatch_window": 12 * 3600}
+    heat = {"type": "movie", "title": "Heat", "ids": {"tmdb": "949"}}
+    gate = threading.Barrier(2)
+    results: list[dict] = []
+
+    def complete(at):
+        adapter = CROSSWATCHModule(cfg)
+        gate.wait()
+        results.append(adapter.add("history", [{**heat, "watched_at": at}]))
+
+    workers = [threading.Thread(target=complete, args=(at,)) for at in ("2026-03-01T20:00:00Z", "2026-03-01T20:00:01Z")]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(10)
+    assert len(TrackerStore(tmp_path).read_current("history")["items"]) == 1
+    assert sorted(bool(result.get("window_merged")) for result in results) == [False, True]
+
+
+def test_rewatch_window_matches_any_shared_id(tmp_path):
+    from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
+
+    adapter = CROSSWATCHModule({"CrossWatch": {"connected": True, "enabled": True, "root_dir": str(tmp_path)},
+                                "_cw_history_rewatches": True, "_cw_history_rewatch_window": 12 * 3600})
+    heat = {"type": "movie", "title": "Heat", "ids": {"imdb": "tt0113277"}}
+    adapter.add("history", [{**heat, "watched_at": "2026-03-01T20:00:00Z"}])
+    result = adapter.add("history", [{**heat, "ids": {"imdb": "tt0113277", "tmdb": "949"}, "watched_at": "2026-03-01T21:00:00Z"}])
+    assert result.get("window_merged") == 1
+    assert len(TrackerStore(tmp_path).read_current("history")["items"]) == 1
+
+
+def test_rewatch_window_keeps_other_episodes_with_show_level_ids(tmp_path):
+    from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
+
+    adapter = CROSSWATCHModule({"CrossWatch": {"connected": True, "enabled": True, "root_dir": str(tmp_path)},
+                                "_cw_history_rewatches": True, "_cw_history_rewatch_window": 12 * 3600})
+    for number, at in ((1, "2026-03-01T20:00:00Z"), (2, "2026-03-01T21:00:00Z")):
+        result = adapter.add("history", [{"type": "episode", "ids": {"tmdb": "30"}, "season": 1, "episode": number, "watched_at": at}])
+        assert not result.get("window_merged")
+    assert len(TrackerStore(tmp_path).read_current("history")["items"]) == 2
+
+
+def _window_adapter(tmp_path):
+    from providers.sync._mod_CROSSWATCH import CROSSWATCHModule
+
+    return CROSSWATCHModule({"CrossWatch": {"connected": True, "enabled": True, "root_dir": str(tmp_path)},
+                             "_cw_history_rewatches": True, "_cw_history_rewatch_window": 12 * 3600})
+
+
+def test_rewatch_window_ignores_server_local_ids(tmp_path):
+    adapter = _window_adapter(tmp_path)
+    adapter.add("history", [{"type": "movie", "title": "Heat", "ids": {"plex": "123", "tmdb": "949"}, "watched_at": "2026-03-01T20:00:00Z"}])
+    result = adapter.add("history", [{"type": "movie", "title": "Arrival", "ids": {"plex": "123", "tmdb": "329865"}, "watched_at": "2026-03-01T21:00:00Z"}])
+    assert not result.get("window_merged")
+    assert len(TrackerStore(tmp_path).read_current("history")["items"]) == 2
+
+
+def test_rewatch_window_keeps_episode_ids_apart_from_show_ids(tmp_path):
+    adapter = _window_adapter(tmp_path)
+    adapter.add("history", [{"type": "episode", "ids": {"tmdb": "30"}, "season": 1, "episode": 1, "watched_at": "2026-03-01T20:00:00Z"}])
+    result = adapter.add("history", [{"type": "episode", "show_ids": {"tmdb": "30"}, "ids": {"tmdb": "555"}, "season": 1, "episode": 1,
+                                      "watched_at": "2026-03-01T21:00:00Z"}])
+    assert not result.get("window_merged")
+    assert len(TrackerStore(tmp_path).read_current("history")["items"]) == 2
+
+
 def test_a_tracker_edit_waits_for_an_adapter_write_instead_of_being_undone_by_it(tmp_path, monkeypatch):
     import threading
     import time
