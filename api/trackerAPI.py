@@ -172,7 +172,21 @@ def _row(key: str, item: Any, feature: str | None = None) -> dict[str, Any]:
         "ids": dict(_map(data.get("ids"))),
         "show_ids": dict(_map(data.get("show_ids"))),
         "art": _art(data),
+        **_row_media(data, feature),
     }
+
+
+def _row_media(data: Mapping[str, Any], feature: str | None) -> dict[str, Any]:
+    if feature != "collection":
+        return {}
+    out: dict[str, Any] = {}
+    if data.get("format"):
+        out["format"] = str(data["format"])
+    if isinstance(data.get("media_info"), Mapping) and data["media_info"]:
+        out["media_info"] = dict(data["media_info"])
+    if data.get("media_manual") is True:
+        out["media_manual"] = True
+    return out
 
 
 def _error(code: str, status: int, **extra: Any) -> JSONResponse:
@@ -284,6 +298,39 @@ def _id_map(current: Any, changes: Any) -> dict[str, Any]:
     return out
 
 
+def _edited_media(out: dict[str, Any], value: Any) -> None:
+    from cw_platform.collection_media import AUDIOS, CHANNELS, FORMATS, HDRS, RESOLUTIONS
+
+    if value is None:
+        for field in ("media_manual", "format", "media_info"):
+            out.pop(field, None)
+        return
+    if not isinstance(value, Mapping):
+        raise ValueError("invalid_media")
+    fmt = str(value.get("format") or "").strip().lower()
+    if fmt and fmt not in FORMATS:
+        raise ValueError("invalid_media")
+    info: dict[str, Any] = {}
+    for key, allowed in (("resolution", RESOLUTIONS), ("hdr", HDRS), ("audio", AUDIOS), ("audio_channels", CHANNELS)):
+        text = str(value.get(key) or "").strip().lower()
+        if not text:
+            continue
+        if text not in allowed:
+            raise ValueError("invalid_media")
+        info[key] = text
+    if value.get("is_3d") is True:
+        info["is_3d"] = True
+    if fmt:
+        out["format"] = fmt
+    else:
+        out.pop("format", None)
+    if info:
+        out["media_info"] = info
+    else:
+        out.pop("media_info", None)
+    out["media_manual"] = True
+
+
 def _edited(feature: str, item: Mapping[str, Any], changes: Mapping[str, Any]) -> dict[str, Any]:
     out = dict(item)
     typ = str(item.get("type") or "").lower()
@@ -322,6 +369,10 @@ def _edited(feature: str, item: Mapping[str, Any], changes: Mapping[str, Any]) -
                 out["show_ids"] = show_ids
             else:
                 out.pop("show_ids", None)
+        elif field == "media":
+            if feature != "collection":
+                raise ValueError("invalid_media")
+            _edited_media(out, value)
         elif field == "title":
             title = str(value or "").strip()
             if not title or len(title) > 300:

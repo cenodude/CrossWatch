@@ -73,6 +73,31 @@ html.cw-theme-light body.cw-profile-page #profile-panel-collection{--cch-line:rg
 .cw-collection-badge .material-symbols-rounded{font-size:calc(13 * var(--cch-u))}
 .cw-collection-poster.has-quality::after{content:"";position:absolute;left:0;right:0;bottom:0;height:42%;z-index:1;background:linear-gradient(to top,rgba(4,6,10,.74),rgba(4,6,10,0));pointer-events:none}
 .cw-collection-quality{position:absolute;left:calc(8 * var(--cch-u));bottom:calc(8 * var(--cch-u));z-index:2;display:inline-flex;align-items:center;max-width:calc(100% - 16 * var(--cch-u));height:calc(22 * var(--cch-u));padding:0 calc(2 * var(--cch-u));overflow:hidden;border:1px solid rgba(255,255,255,.09);border-radius:calc(7 * var(--cch-u));background:rgba(8,10,15,.72);color:#f1f4f9;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
+.cw-collection-poster .cw-shelf-tags{left:calc(8 * var(--cch-u));bottom:calc(8 * var(--cch-u))}
+.cw-collection-poster.has-quality .cw-shelf-tags{bottom:calc(36 * var(--cch-u))}
+.cw-collection-card.is-case .cw-collection-poster{padding:11% 5% 5%;box-sizing:border-box;border-radius:calc(7 * var(--cch-u));background:linear-gradient(#2b2e35,#121419);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),0 10px 24px rgba(0,0,0,.45)}
+.cw-collection-card.is-case .cw-collection-poster>img{border-radius:calc(2 * var(--cch-u));box-shadow:0 0 0 1px rgba(0,0,0,.4)}
+.cw-collection-card.is-case .cw-collection-poster::before{content:"";position:absolute;top:0;left:0;right:0;z-index:2;display:flex;align-items:center;justify-content:center;height:11%;color:#fff;font-size:calc(10 * var(--cch-u));font-weight:900;letter-spacing:.12em;text-transform:uppercase}
+.cw-collection-card.is-case[data-shelf-format="bluray"] .cw-collection-poster{background:linear-gradient(#2a74d6,#0f3f86)}
+.cw-collection-card.is-case[data-shelf-format="4k_bluray"] .cw-collection-poster{background:linear-gradient(#1d1f23,#050506)}
+.cw-collection-card.is-case[data-shelf-format="hd_dvd"] .cw-collection-poster{background:linear-gradient(#b23434,#6b1212)}
+.cw-collection-card.is-case[data-shelf-pack="steelbook"] .cw-collection-poster{background:linear-gradient(135deg,#8d969f,#e4e8ec 35%,#757d86 62%,#cdd3d9)}
+.cw-collection-card.is-case[data-shelf-format="4k_bluray"] .cw-collection-poster::before{content:"4K Ultra HD"}
+.cw-collection-card.is-case[data-shelf-format="bluray"] .cw-collection-poster::before{content:"Blu-ray"}
+.cw-collection-card.is-case[data-shelf-format="dvd"] .cw-collection-poster::before{content:"DVD"}
+.cw-collection-card.is-case[data-shelf-format="hd_dvd"] .cw-collection-poster::before{content:"HD DVD"}
+.cw-collection-card.is-case[data-shelf-format="vhs"] .cw-collection-poster::before{content:"VHS"}
+.cw-collection-card.is-case[data-shelf-format="vcd"] .cw-collection-poster::before{content:"VCD"}
+.cw-collection-card.is-case[data-shelf-format="betamax"] .cw-collection-poster::before{content:"Betamax"}
+.cw-collection-card.is-case[data-shelf-format="laserdisc"] .cw-collection-poster::before{content:"LaserDisc"}
+.cw-collection-card.is-case[data-shelf-format="digital"] .cw-collection-poster::before{content:"Digital"}
+.cw-collection-card.is-case[data-shelf-pack="steelbook"] .cw-collection-poster::before{color:#1b1e22}
+.cw-collection-card.is-case .cw-collection-badge{top:calc(11% + 6 * var(--cch-u))}
+.cw-collection-card.is-case .cw-collection-poster{transition:transform .28s cubic-bezier(.2,.8,.2,1),box-shadow .28s ease}
+.cw-collection-card.is-case:is(:hover,:focus-within) .cw-collection-poster{transform:perspective(900px) rotateY(-9deg) translateY(calc(-4 * var(--cch-u)));box-shadow:inset 0 0 0 1px rgba(255,255,255,.14),14px 18px 30px rgba(0,0,0,.5)}
+.cw-collection-card.is-case[data-shelf-pack="steelbook"] .cw-collection-poster::after{content:"";position:absolute;inset:0;z-index:3;background:linear-gradient(105deg,transparent 35%,rgba(255,255,255,.3) 50%,transparent 65%);transform:translateX(-130%);transition:transform .8s ease;pointer-events:none}
+.cw-collection-card.is-case[data-shelf-pack="steelbook"]:hover .cw-collection-poster::after{transform:translateX(130%)}
+@media(prefers-reduced-motion:reduce){.cw-collection-card.is-case .cw-collection-poster,.cw-collection-card.is-case .cw-collection-poster::after{transition:none}.cw-collection-card.is-case:is(:hover,:focus-within) .cw-collection-poster{transform:none}}
 .cw-collection-quality .material-symbols-rounded{padding-left:calc(5 * var(--cch-u));font-size:calc(13 * var(--cch-u))}
 .cw-collection-quality-seg{display:inline-flex;align-items:center;height:calc(13 * var(--cch-u));padding:0 calc(7 * var(--cch-u));font-size:calc(10 * var(--cch-u));font-weight:800;line-height:1;letter-spacing:.07em;white-space:nowrap}
 .cw-collection-quality-seg+.cw-collection-quality-seg{border-left:1px solid rgba(255,255,255,.18)}

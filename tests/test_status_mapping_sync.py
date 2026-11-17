@@ -929,6 +929,114 @@ def test_flaky_read_skips_quietly(sync_case, monkeypatch, error):
     assert not sync_case.writes and not sync_case.store.path.exists()
 
 
+@pytest.mark.parametrize("endpoint", ["a", "b"])
+@pytest.mark.parametrize("error", [
+    RuntimeError("scrob_status_read_http_404"),
+    RuntimeError("scrob_status_read_http_429"),
+    requests.ReadTimeout("GET https://api.example/history?apikey=secret timed out"),
+])
+def test_skipped_status_read_survives_review_and_apply_until_refresh(sync_case, monkeypatch, endpoint, error):
+    from cw_platform.interactive_reads import ReviewReads, use_review_reads
+
+    case = sync_case
+    original = case.adapter.read
+    calls = []
+    error.unpicklable = lambda: None
+
+    def failing(self):
+        calls.append(self.cfg["endpoint"])
+        if self.cfg["endpoint"] == endpoint:
+            raise error
+        return original(self)
+
+    monkeypatch.setattr(case.adapter, "read", failing)
+    reads = ReviewReads()
+    try:
+        case.ctx.interactive = InteractivePlan()
+        with use_review_reads(reads, collecting=True):
+            assert run(case) == dict(updated=0, unresolved=0, errors=0, skipped=1)
+        reason = case.ctx.interactive.status_mappings[0]["reason"]
+        calls_after_preview = list(calls)
+        monkeypatch.setattr(case.adapter, "read", lambda self: pytest.fail("Apply must preserve the reviewed skip"))
+        for preview in (True, False):
+            case.ctx.interactive = InteractivePlan(preview=preview, allowed_features={"history"})
+            with use_review_reads(reads):
+                assert run(case) == dict(updated=0, unresolved=0, errors=0, skipped=1)
+            assert case.ctx.interactive.status_mappings[0]["reason"] == reason
+            assert not case.ctx.interactive.notices and not case.ctx.interactive.failed_features
+        assert calls == calls_after_preview
+        assert not case.writes and not case.store.path.exists()
+        assert "secret" not in str(case.events)
+        assert all(b"secret" not in value for (value,) in reads.db.execute("SELECT value FROM inputs"))
+    finally:
+        reads.close()
+
+    monkeypatch.setattr(case.adapter, "read", original)
+    reads = ReviewReads()
+    try:
+        case.ctx.interactive = InteractivePlan()
+        with use_review_reads(reads, collecting=True):
+            assert run(case)["errors"] == 0
+        selected = set(case.ctx.interactive.rows)
+        assert len(selected) == 1
+        case.ctx.interactive = InteractivePlan(preview=False, selected=selected)
+        with use_review_reads(reads):
+            assert run(case)["updated"] == 1
+        assert case.writes == [("b", "1", Status.DROPPED)]
+    finally:
+        reads.close()
+
+
+def test_skipped_status_read_does_not_block_session_apply(sync_case, monkeypatch):
+    from api import syncAPI
+    from cw_platform.interactive_reads import use_review_reads
+    from services import interactive_sync as svc
+
+    case = sync_case
+    calls, executions = [], []
+
+    def failed(self):
+        calls.append(self.cfg["endpoint"])
+        raise RuntimeError("scrob_status_read_http_404")
+
+    class StatusPlan:
+        def __init__(self, cfg, *, on_progress=None, interactive):
+            self.plan = interactive
+
+        def run(self, **kwargs):
+            self.plan.completed_features.add("history")
+            self.plan.filter("history", "B", "default", "add",
+                             [{"type": "movie", "ids": {"tmdb": "2"}, "title": "History proposal"}], source="A")
+            case.ctx.interactive = self.plan
+            with use_review_reads(self.plan.reads, collecting=self.plan.collecting):
+                result = run(case)
+            return dict(ok=not result["errors"], errors=result["errors"], pairs=1)
+
+    def execute(*args, interactive, **kwargs):
+        executions.append(interactive)
+        interactive.result = StatusPlan({}, interactive=interactive).run()
+
+    monkeypatch.setattr(case.adapter, "read", failed)
+    monkeypatch.setattr(svc, "Orchestrator", StatusPlan)
+    monkeypatch.setattr(svc, "mapping_version", lambda cfg=None: "test")
+    monkeypatch.setattr(syncAPI, "_run_pairs_thread_entry", execute)
+    session = svc.Session(pair_id=case.pair["id"], owner="local", pair=case.pair)
+    try:
+        svc.refresh(session, {}, {}, complete_empty=False)
+        assert session.status == "review" and session.summary["ok"]
+        assert session.plan.status_mappings[0]["state"] == "skipped"
+        selected = session.store.selected_ids()
+        assert len(selected) == 1
+        svc.apply(session, {}, selected)
+        assert session.status == "complete" and session.summary["ok"]
+        assert len(executions) == 1 and executions[0].seen == selected
+        assert executions[0].status_mappings[0]["state"] == "skipped"
+        assert not executions[0].notices and not case.writes
+        assert calls == ["a"]
+    finally:
+        session.close()
+
+
 @pytest.mark.parametrize("error,shown", [
     (RuntimeError("scrob_status_read_http_404"), "SCROB did not respond correctly (HTTP 404 on shows/12, not found)."),
     (RuntimeError("scrob_status_http_503"), "SCROB did not respond correctly (HTTP 503 on history, server error)."),
