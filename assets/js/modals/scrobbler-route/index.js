@@ -901,6 +901,7 @@ async function save(regenerate = false) {
   busy(true);
   try {
     const body = collect();
+    if (props.mode === "create") delete body.id;
     if (regenerate) body.regenerate_ratings_webhook = true;
     const data = props.mode === "create"
       ? await request("/api/scrobbler/routes", "POST", body)
