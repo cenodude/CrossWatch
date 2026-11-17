@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from api import trackerAPI
+from cw_platform.tracker_store import TrackerStore
 from providers.sync.crosswatch import _collection
 
 ITEM = {"type": "movie", "title": "Dune", "year": 2021, "ids": {"tmdb": "438631"}, "format": "bluray", "media_info": {"resolution": "hd_1080p"}}
@@ -81,3 +82,13 @@ def test_tracker_copies_are_validated_and_kept_by_sync() -> None:
     assert existing["copies"][0]["edition"] == "Steelbook"
     synced = _collection._keep_manual_media(existing, _collection._accepted({**ITEM, "format": "dvd"}))
     assert synced["copies"] == existing["copies"] and synced["format"] == "dvd"
+
+
+def test_collection_query_can_return_only_titles_with_copies(tmp_path) -> None:
+    store = TrackerStore(tmp_path)
+    owned = {**ITEM, "copies": [{"id": "a1", "format": "bluray"}]}
+    other = {**ITEM, "title": "Arrival", "ids": {"tmdb": "329865"}}
+    store.write_state("collection", {"movie:438631": owned, "movie:329865": other})
+    total, rows = store.query("collection", copies=True)
+    assert total == 1 and [key for key, _ in rows] == ["movie:438631"]
+    assert store.query("collection")[0] == 2

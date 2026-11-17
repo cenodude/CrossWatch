@@ -206,7 +206,7 @@
       if (MEDIA.some((m) => m.id === saved.media)) state.media = saved.media;
       if (PAGE_SIZES.includes(saved.pageSize)) state.pageSize = saved.pageSize;
       if (MOBILE_PAGE_SIZES.includes(saved.mobilePageSize)) state.mobilePageSize = saved.mobilePageSize;
-      state.layouts = Object.fromEntries(VIEWS.map(({ id }) => [id, saved.layouts?.[id] === "grid" || (id === "collection" && saved.layouts?.[id] === "shelf") ? saved.layouts[id] : "list"]));
+      state.layouts = Object.fromEntries(VIEWS.map(({ id }) => [id, saved.layouts?.[id] === "grid" || (id === "collection" && ["covers", "shelf"].includes(saved.layouts?.[id])) ? saved.layouts[id] : "list"]));
       if (!saved.layouts && saved.layout === "grid") state.layouts[state.view] = "grid";
       state.byDay = saved.byDay === true;
       state.hideDropped = saved.hideDropped === true;
@@ -1038,7 +1038,7 @@
         <div class="trk-search-wrap"><input class="cw-input trk-search" data-trk-input="q" value="${esc(state.q)}" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}"><button type="button" class="trk-filter-toggle${count || state.filtersOpen ? " active" : ""}" data-trk-action="filters" aria-label="${filterLabel}" title="${filterLabel}" aria-expanded="${state.filtersOpen}" aria-controls="trk-extra-filters">${icon("filter_list")}${count ? `<span>${count}</span>` : ""}</button></div>
         <div class="trk-actions">
           ${state.view === "history" ? `<button type="button" class="cw-filter-chip trk-icon-btn${state.byDay ? " active" : ""}" data-trk-action="by-day" aria-pressed="${state.byDay}" aria-label="Group by day" title="By day">${symbol("calendar_view_day", "cw-type-icon")}</button>` : ""}
-          <div class="cw-type-filter trk-layout" role="group" aria-label="Display layout">${[['list', 'view_list', 'List'], ['grid', 'grid_view', 'Grid'], ...(state.view === "collection" ? [['shelf', 'shelves', 'Shelf']] : [])].map(([value, glyph, label]) => `<button type="button" class="cw-filter-chip trk-icon-btn${(state.layouts[state.view] || "list") === value ? " active" : ""}" data-trk-layout="${value}" aria-pressed="${(state.layouts[state.view] || "list") === value}" aria-label="${label} view" title="${label} view">${symbol(glyph, "cw-type-icon")}</button>`).join("")}</div>
+          <div class="cw-type-filter trk-layout" role="group" aria-label="Display layout">${[['list', 'view_list', 'List'], ['grid', 'grid_view', 'Grid'], ...(state.view === "collection" ? [['covers', 'photo_library', 'Covers'], ['shelf', 'shelves', 'Shelf']] : [])].map(([value, glyph, label]) => `<button type="button" class="cw-filter-chip trk-icon-btn${(state.layouts[state.view] || "list") === value ? " active" : ""}" data-trk-layout="${value}" aria-pressed="${(state.layouts[state.view] || "list") === value}" aria-label="${label} view" title="${label} view">${symbol(glyph, "cw-type-icon")}</button>`).join("")}</div>
           <div class="trk-secondary-actions">${[['views','bookmarks','Saved views'],['changes','manage_history','Changes'],['import','download','Import']].map(([action,glyph,label]) => `<button type="button" class="cw-btn trk-icon-btn" data-trk-action="${action}" title="${label}" aria-label="${label}">${icon(glyph)}<span class="trk-tool-label">${label}</span></button>`).join('')}</div>
           <div class="trk-add-split">
             <button type="button" class="cw-btn primary trk-log-btn" data-trk-action="log" aria-label="Log a watch">${icon("add_circle")}<span>Log a watch</span></button>
@@ -1303,6 +1303,7 @@
     const rows = recent ? recentRows : shows ? state.shows : notes ? state.noteRows : state.items;
     if (!rows.length) return shows ? renderShows() : notes ? renderTitles() : renderList();
     const feature = recent ? "history" : listFeature();
+    const coverMode = feature === "collection" && !recent && !shows && !notes && state.layouts.collection === "covers";
     let previousDay = "";
     const cards = rows.map((item, index) => {
       const refName = shows ? "show" : notes ? "note" : "key";
@@ -1310,7 +1311,7 @@
       const title = shows || notes ? item.title || item.key : cardTitle(item);
       const card = canCard(cardItem(item, shows || isChild(item) || item.type === "show"));
       const art = item.art || (item.ids?.tmdb ? {kind: item.type === "movie" ? "movie" : "tv", tmdb: item.ids.tmdb} : null);
-      const posterCard = feature === "collection" && !recent && !shows && !notes && !isChild(item);
+      const posterCard = coverMode && !isChild(item);
       const url = artUrl({...item, art}, posterCard ? "w342" : "w500");
       const copies = Array.isArray(item.copies) ? item.copies : [];
       const mediaPill = feature === "collection" && !shows && !notes ? window.CW?.Shelf?.pill?.({ format: copies[0]?.format || item.format || "", media: item.media_info || {}, copies: copies.length, service: copies[0]?.service }) || "" : "";
@@ -1342,7 +1343,7 @@
         </div></article>`;
     }).join("");
     const more = recent ? "" : timelineOn() ? state.items.length < state.total ? `<div class="cw-pager"><button type="button" class="cw-btn" data-trk-action="more"${state.loading ? " disabled" : ""}>Show older plays</button></div>` : "" : pager();
-    return `<div class="trk-cover-grid${feature === "collection" && !recent ? " is-posters" : ""}">${cards}</div>${more}`;
+    return `<div class="trk-cover-grid${coverMode ? " is-posters" : ""}">${cards}</div>${more}`;
   }
 
   function trackerShelfItem(item, index) {
@@ -1393,7 +1394,7 @@
   }
 
   function renderShelf() {
-    if (!state.items.length) return renderList();
+    if (!state.items.length) return emptyState(state.q ? "No copies match this search." : "No copies yet. Open a title's menu and choose Add copy to put it on your shelf.", "shelves");
     const groups = new Map();
     state.items.forEach((item, index) => {
       const copies = Array.isArray(item.copies) ? item.copies : [];
@@ -1621,7 +1622,7 @@
     if (state.error) return emptyState(state.error, "error");
     if (state.view === "overview") return renderOverview();
     if (state.layouts[state.view] === "shelf" && state.view === "collection") return renderShelf();
-    if (state.layouts[state.view] === "grid") return renderGrid();
+    if (state.layouts[state.view] === "grid" || (state.layouts[state.view] === "covers" && state.view === "collection")) return renderGrid();
     if (timelineOn()) return renderTimeline();
     if (state.view === "shows") return renderShows();
     if (state.view === "titles") return renderTitles();
@@ -2438,6 +2439,7 @@
         });
         if (state.view === "cleanup" && state.healthFilter) params.set("health", state.healthFilter);
         if (timeline && state.month) params.set("month", state.month);
+        if (state.view === "collection" && state.layouts.collection === "shelf") params.set("copies", "true");
         const data = await getJSON(`/api/tracker/items?${params}`);
         if (id !== state.request) return;
         const rows = Array.isArray(data.items) ? data.items : [];
@@ -5105,9 +5107,11 @@
       const layout = event.target.closest("[data-trk-layout]");
       if (layout) {
         const wanted = layout.dataset.trkLayout;
-        state.layouts[state.view] = wanted === "grid" || (wanted === "shelf" && state.view === "collection") ? wanted : "list";
+        const wasShelf = state.layouts[state.view] === "shelf";
+        state.layouts[state.view] = wanted === "grid" || (["covers", "shelf"].includes(wanted) && state.view === "collection") ? wanted : "list";
         saveView();
-        renderSlots(true);
+        if (state.view === "collection" && wasShelf !== (state.layouts.collection === "shelf")) reload();
+        else renderSlots(true);
         return;
       }
       const view = event.target.closest("[data-trk-view]");

@@ -712,6 +712,7 @@ def tracker_items(
     attention: bool = Query(False),
     health: str = Query(""),
     month: str = Query("", pattern=r"^(\d{4}-(0[1-9]|1[0-2]))?$"),
+    copies: bool = Query(False),
 ) -> Any:
     if status and status not in (*NOTE_STATUSES, "none"):
         return _error("invalid_status", 400)
@@ -733,6 +734,7 @@ def tracker_items(
                 attention=attention,
                 health=health if health in ("ok", "attention", "unchecked") else "",
                 until=_month_end(month),
+                copies=copies and feature == "collection",
             )
             checks = store.checks_for(feature, [key for key, _ in rows])
             note_keys = {key: _title_key(_identity_of(item, key)) for key, item in rows}

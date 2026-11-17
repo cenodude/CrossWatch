@@ -698,7 +698,7 @@ dialog.eg-dialog{font-size:14px;line-height:1.45;background:var(--is-surface);co
 .cw-shelfv-art:focus-visible{border-radius:8px;outline:2px solid var(--cw-theme-accent);outline-offset:4px}
 .cw-case{filter:drop-shadow(0 14px 22px rgba(0,0,0,.5))}
 .cw-case[data-case="plain"] .cw-case-art{border-radius:6px}
-.cw-case[data-case="steelbook"] .cw-case-art,.cw-case-sheen{border-radius:5.19%/4.09%}
+.cw-case[data-case="steelbook"] .cw-case-art,.cw-case-sheen{border-radius:5.19%/3.46%}
 .cw-case[data-case="steelbook"] .cw-case-art{filter:saturate(.92) contrast(1.05)}
 .cw-case-logo{filter:brightness(0) invert(1)}
 .cw-case-sheen{background-image:linear-gradient(112deg,transparent 30%,rgba(255,255,255,.3) 46%,rgba(210,222,240,.1) 52%,transparent 64%)}
