@@ -590,8 +590,7 @@ def _profile_menu_items(user: dict | None = None) -> str:
           <button class="cw-menu-item" type="button" role="menuitem" data-cw-account-view="main"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">arrow_back</span><span>Back</span></button>
           <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="help"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">help</span><span>Help</span></button>
           <button class="cw-menu-item" type="button" role="menuitem" data-cw-profile-menu-action="about"><span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">info</span><span>About CrossWatch</span></button>
-        </div>
-        <div class="cw-account-version">__CW_CURRENT_VERSION__</div>"""
+        </div>"""
 
 
 def _nav_profile_link(user: dict | None = None) -> str:
@@ -1106,9 +1105,6 @@ __CW_NAV_PROFILE_MENU__
       </div>
       <div class="cw-stats-head-side">
         <button id="stats-calendar-open" class="cw-stats-calendar-btn" type="button" onclick="window.openStatisticsModal?.()" title="Sync activity calendar" aria-label="Open sync activity calendar"><span class="material-symbols-rounded" aria-hidden="true">calendar_month</span></button>
-        <div id="cw-view-as" class="cw-view-as hidden">
-          <select id="cw-view-as-select" aria-label="View data as profile"></select>
-        </div>
       </div>
     </div>
 
@@ -2643,10 +2639,6 @@ def get_profile_html(user: dict | None = None) -> str:
     ) if watchlist_allowed else ""
     collection_bulk = _profile_bulk_bar("profile-collection-bulk", "collection")
     remove_dialog = _profile_remove_dialog()
-    view_as_picker = (
-        '<div id="cw-view-as" class="cw-view-as hidden"><select id="cw-view-as-select" aria-label="View profile as"></select></div>'
-        if is_admin else ""
-    )
     view_as_banner = """  <div id="profile-view-as-banner" class="cw-profile-viewas" role="status" hidden>
     <span class="material-symbols-rounded" aria-hidden="true">visibility</span>
     <span class="cw-profile-viewas-copy">Viewing <strong id="profile-view-as-name"></strong> as read-only</span>
@@ -2742,7 +2734,6 @@ def get_profile_html(user: dict | None = None) -> str:
           </div>
         </div>
       </div>
-      <div class="cw-media-hero-account">{view_as_picker}</div>
     </div>
     <div id="profile-hero-media" class="cw-media-hero-context" aria-live="polite">
       <span class="cw-media-hero-heading"><strong>Everything you watch, across your providers</strong><img class="cw-media-hero-logo" alt="" hidden></span>

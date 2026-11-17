@@ -997,64 +997,50 @@ test("Mobile tracker uses short previews, deliberate paging and one-time card mo
 });
 
 const pickerProfiles = [{id:"ann",label:"Ann and family",instances:{CROSSWATCH:["other"]}},{id:"bob",label:"Bob",instances:{CROSSWATCH:["default"]}}];
-for (const theme of ["original","flat-dark","flat-light"]) for (const width of [320,768,1440]) test(`${theme}: Tracker profile picker at ${width}px`, async t => {
-  const {page,boot,scopedReads} = await fixture(t,theme,{width,profiles:pickerProfiles});
-  const button = page.locator('#trk-profile + .cw-icon-select button');
-  await button.waitFor();
-  assert.match(await button.textContent(),/All profiles/);
+const pickProfile = (page, id) => page.evaluate(value => CW.OverviewProfile.setActive(value), id);
+const pickedProfile = page => page.evaluate(() => CW.OverviewProfile.id);
+
+for (const width of [390,1440]) test(`Tracker follows the selected profile at ${width}px`, async t => {
+  const {page,boot,scopedReads} = await fixture(t,'flat-dark',{width,profiles:pickerProfiles});
+  assert.equal(await page.locator('.trk-profile-picker').count(),0);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+1),false);
-  await button.focus();
-  await page.keyboard.press('Enter');
-  const menu = page.locator('.cw-icon-select-menu:not(.hidden)');
-  await menu.waitFor();
-  const bounds = await menu.boundingBox();
-  assert.ok(bounds.x>=0 && bounds.x+bounds.width<=width+1);
-  if (process.env.CW_PROFILE_PICKER_SCREENSHOTS) {
-    await mkdir(process.env.CW_PROFILE_PICKER_SCREENSHOTS,{recursive:true});
-    await page.screenshot({path:`${process.env.CW_PROFILE_PICKER_SCREENSHOTS}/${theme}-${width}.png`});
-  }
-  await page.keyboard.press('Escape');
-  assert.equal(await button.evaluate(el=>el===document.activeElement),true);
-  await Promise.all([page.waitForEvent('load'),choose(page,'#trk-profile','ann')]);
+  await Promise.all([page.waitForEvent('load'),pickProfile(page,'ann')]);
   await boot();
-  assert.equal(await page.locator('#trk-profile').inputValue(),'ann');
+  assert.equal(await pickedProfile(page),'ann');
   assert.equal(await page.locator('#trk-instance').inputValue(),'other');
   assert.equal(await page.locator('#trk-instance option').count(),1);
   assert.equal(scopedReads.filter(row=>row.path==='/api/tracker/summary').at(-1).viewAs,'ann');
   assert.match(await page.locator('[data-trk-overview-open="airing:0"]').textContent(),/Other tracker show/);
   await page.reload();
   await boot();
-  assert.equal(await page.locator('#trk-profile').inputValue(),'ann');
-  await Promise.all([page.waitForEvent('load'),choose(page,'#trk-profile','__default__')]);
+  assert.equal(await pickedProfile(page),'ann');
+  await Promise.all([page.waitForEvent('load'),pickProfile(page,'__default__')]);
   await boot();
-  assert.equal(await page.locator('#trk-profile').inputValue(),'__default__');
-  assert.match(await button.textContent(),/Admin \/ Default instances/);
+  assert.equal(await pickedProfile(page),'__default__');
+  assert.equal(await page.evaluate(()=>CW.OverviewProfile.label),'Admin');
   assert.equal(await page.locator('#trk-instance').inputValue(),'default');
   const defaultReads = scopedReads.filter(row=>row.path==='/api/tracker/summary').at(-1);
   assert.equal(defaultReads.instance,'default');
   assert.equal(defaultReads.viewAs,'');
   await page.reload();
   await boot();
-  assert.equal(await page.locator('#trk-profile').inputValue(),'__default__');
+  assert.equal(await pickedProfile(page),'__default__');
   assert.equal(await page.locator('#trk-instance').inputValue(),'default');
-  await Promise.all([page.waitForEvent('load'),choose(page,'#trk-profile','')]);
+  await Promise.all([page.waitForEvent('load'),pickProfile(page,'')]);
   await boot();
-  assert.equal(await page.locator('#trk-profile').inputValue(),'');
+  assert.equal(await pickedProfile(page),'');
   assert.equal(await page.locator('#trk-instance option').count(),2);
   assert.equal(scopedReads.filter(row=>row.path==='/api/tracker/summary').at(-1).viewAs,'');
 });
 
-test('Tracker profile picker respects managed users and an empty profile list', async t => {
+test('Tracker profile scope respects managed users and an empty profile list', async t => {
   const managed = await fixture(t,'flat-dark',{width:390,profiles:pickerProfiles,managed:true});
-  assert.equal(await managed.page.locator('.trk-profile-picker').isVisible(),false);
   assert.equal(await managed.page.locator('#trk-instance').inputValue(),'other');
   assert.equal(await managed.page.evaluate(()=>CW.OverviewProfile.setActive('bob')),false);
   const empty = await fixture(t,'flat-light',{width:390,profiles:[]});
-  assert.equal(await empty.page.locator('#trk-profile').isDisabled(),false);
-  assert.deepEqual(await empty.page.locator('#trk-profile option').allTextContents(),['All profiles','Admin / Default instances']);
-  await Promise.all([empty.page.waitForEvent('load'),choose(empty.page,'#trk-profile','__default__')]);
+  await Promise.all([empty.page.waitForEvent('load'),pickProfile(empty.page,'__default__')]);
   await empty.boot();
-  assert.equal(await empty.page.locator('#trk-profile').inputValue(),'__default__');
+  assert.equal(await pickedProfile(empty.page),'__default__');
   assert.equal(await empty.page.locator('#trk-instance').inputValue(),'default');
 });
 
@@ -1064,7 +1050,7 @@ test('Tracker reloads the selected profile when returning from another page', as
     document.querySelector('#page-tracker').classList.add('hidden');
     CW.OverviewProfile.setActive('ann');
   });
-  assert.equal(await page.locator('#trk-profile').inputValue(),'ann');
+  assert.equal(await pickedProfile(page),'ann');
   await Promise.all([page.waitForEvent('load'),page.evaluate(()=>{
     document.querySelector('#page-tracker').classList.remove('hidden');
     TrackerPage.resume();

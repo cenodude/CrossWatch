@@ -702,7 +702,7 @@ export default {
     const ddOrigin = createDropdown({ label: "Any origin", items: [{ value: "", label: "Any origin" }], onChange: () => load(0) });
     const ddFeature = createDropdown({ label: "Any feature", items: [{ value: "", label: "Any feature" }, ...["history", "ratings", "watchlist", "progress", "collection"].map((f) => ({ value: f, label: FEATURE_LABEL[f] }))], onChange: () => load(0) });
     const ddPair = createDropdown({ label: "Any pair", items: [{ value: "", label: "Any pair" }], onChange: () => load(0) });
-    const overviewScopes = [{ value: "", label: "All profiles" }, { value: "__default__", label: "Admin / Default instances" }];
+    const overviewScopes = [{ value: "", label: "All profiles" }, { value: "__default__", label: "Admin" }];
     const ddProfile = createDropdown({
       label: "All profiles",
       items: overviewScopes,

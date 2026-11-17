@@ -17,7 +17,7 @@
   const shelf = () => window.CW?.Shelf || {};
   const formats = () => shelf().formats || {};
   const statuses = () => shelf().statuses || { owned: "Owned", ordered: "Ordered", wishlist: "Wishlist" };
-  const state = { node: null, type: "", id: "", title: "", year: "", ids: {}, entry: null, synced: null, services: null, servicesLoading: false, draft: null, groups: {}, confirmRemove: false, confirmDelete: null, canEdit: false, loading: true, error: "", editing: null, busy: false, lastFocus: null, seq: 0, tracker: null, start: null, onSaved: null };
+  const state = { node: null, type: "", id: "", title: "", year: "", ids: {}, entry: null, synced: null, services: null, servicesLoading: false, draft: null, groups: {}, confirmRemove: false, confirmDelete: null, canEdit: false, loading: true, error: "", editing: null, busy: false, lastFocus: null, seq: 0, fallbackSynced: null, start: null, onSaved: null };
 
   const endpoint = () => `/api/profile/shelf/${encodeURIComponent(state.type)}/${encodeURIComponent(state.id)}`;
   const options = (map, value, blank = "") => `${blank ? `<option value="">${esc(blank)}</option>` : ""}${Object.entries(map).map(([key, label]) => `<option value="${esc(key)}"${key === value ? " selected" : ""}>${esc(label)}</option>`).join("")}`;
@@ -167,13 +167,13 @@
     return `<div class="cw-shelf-quick">
       <span class="cw-shelf-quick-label">${hasCopies ? "Add another copy" : "What do you have?"}</span>
       <div class="cw-shelf-quick-row">${buttons}${select}</div>
-      ${hint && !hasCopies ? `<small class="cw-shelf-quick-hint">${state.tracker ? "Tracker" : "Your providers"}: ${esc(hint)}</small>` : ""}
+      ${hint && !hasCopies ? `<small class="cw-shelf-quick-hint">Your providers: ${esc(hint)}</small>` : ""}
     </div>`;
   }
 
   function bodyHtml() {
     if (state.loading) return `<p class="cw-mm-art-note">Loading...</p>`;
-    if (state.error && !state.entry && !state.tracker) return `<p class="cw-mm-art-note is-error">${esc(state.error)}</p>`;
+    if (state.error && !state.entry) return `<p class="cw-mm-art-note is-error">${esc(state.error)}</p>`;
     const copies = state.entry?.copies || [];
     const error = state.error ? `<p class="cw-mm-art-note is-error">${esc(state.error)}</p>` : "";
     const list = copies.length ? `<div class="cw-shelf-copies">${copies.map(copyHtml).join("")}</div>` : "";
@@ -194,7 +194,7 @@
     if (foot) foot.hidden = state.editing !== null;
     const remove = state.node.querySelector("[data-shelf-remove]");
     if (remove) {
-      remove.hidden = !!state.tracker || !state.canEdit || !state.entry || state.editing !== null;
+      remove.hidden = !state.canEdit || !state.entry || state.editing !== null;
       remove.textContent = state.confirmRemove ? "Click again to remove" : "Remove from shelf";
       remove.classList.toggle("is-confirming", state.confirmRemove);
       remove.disabled = state.busy;
@@ -214,19 +214,13 @@
 
   async function load() {
     const seq = ++state.seq;
-    if (state.tracker) {
-      state.loading = false;
-      applyStart();
-      render();
-      return;
-    }
     try {
       const response = await fetch(endpoint(), { cache: "no-store", credentials: "same-origin" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data?.ok) throw new Error(data?.error || "Shelf could not be loaded.");
       if (seq !== state.seq) return;
       state.entry = data.entry || null;
-      state.synced = data.synced && typeof data.synced === "object" ? data.synced : null;
+      state.synced = data.synced && typeof data.synced === "object" ? data.synced : state.fallbackSynced;
       state.canEdit = data.can_edit === true && state.canEdit;
     } catch (error) {
       if (seq !== state.seq) return;
@@ -244,16 +238,6 @@
     state.error = "";
     render();
     try {
-      if (state.tracker) {
-        const body = { feature: "collection", provider_instance: state.tracker.instance, key: state.tracker.key, changes: { copies: next.copies } };
-        const response = await fetch("/api/tracker/edit", { method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store", credentials: "same-origin", body: JSON.stringify(body) });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || !data?.ok) throw new Error(data?.error === "no_changes" ? "Nothing changed." : data?.error === "invalid_copies" ? "Check the copy details." : "Saving failed.");
-        if (data.key) state.tracker.key = data.key;
-        state.entry = { status: "owned", copies: Array.isArray(data.item?.copies) ? data.item.copies : [] };
-        try { state.onSaved?.(data); } catch {}
-        return true;
-      }
       const body = { status: next.status, title: state.title, year: state.year || undefined, ids: state.ids, copies: next.copies };
       const response = await fetch(endpoint(), { method: "PUT", headers: { "Content-Type": "application/json" }, cache: "no-store", credentials: "same-origin", body: JSON.stringify(body) });
       const data = await response.json().catch(() => ({}));
@@ -295,7 +279,7 @@
     state.editing = null;
     state.draft = null;
     const status = state.entry?.status || "owned";
-    if (!copies.length && !state.tracker && status === "owned") { void removeTitle(); return; }
+    if (!copies.length && status === "owned") { void removeTitle(); return; }
     void save({ status, copies });
   }
 
@@ -441,25 +425,23 @@
     close();
   }
 
-  function open({ type, id, title = "", year = "", ids = {}, canEdit = false, host = document.body, start = null, tracker = null, onSaved = null } = {}) {
+  function open({ type, id, title = "", year = "", ids = {}, canEdit = false, host = document.body, start = null, synced = null, onSaved = null } = {}) {
     if (!type || !id) return false;
     close();
-    const trackerMode = tracker && tracker.key ? { instance: String(tracker.instance || "default"), key: String(tracker.key) } : null;
-    const trackerItem = trackerMode ? tracker.item || {} : null;
+    const fallbackSynced = synced && (synced.format || synced.media_info) ? { format: synced.format || "", media_info: synced.media_info || {}, providers: [] } : null;
     Object.assign(state, {
       type: type === "movie" ? "movie" : "tv", id: String(id), title: String(title || ""), year: year || "", ids: ids && typeof ids === "object" ? ids : {},
-      entry: trackerMode ? { status: "owned", copies: Array.isArray(trackerItem.copies) ? trackerItem.copies : [] } : null,
-      synced: trackerMode && (trackerItem.format || trackerItem.media_info) ? { format: trackerItem.format || "", media_info: trackerItem.media_info || {}, providers: [] } : null,
+      entry: null, synced: null, fallbackSynced,
       draft: null, groups: {}, confirmRemove: false, confirmDelete: null, canEdit: !!canEdit, loading: true, error: "", editing: null, busy: false, lastFocus: document.activeElement,
-      tracker: trackerMode, start, onSaved: typeof onSaved === "function" ? onSaved : null,
+      start, onSaved: typeof onSaved === "function" ? onSaved : null,
     });
     void shelf().load?.();
     const node = document.createElement("div");
     node.className = `cw-mm-art cw-shelf${host === document.body ? " is-floating" : ""}`;
-    const statusBar = trackerMode ? "" : `<div class="cw-shelf-status" role="radiogroup" aria-label="Status">${Object.entries(statuses()).map(([key, label]) => `<button type="button" role="radio" aria-checked="false" data-shelf-status="${esc(key)}">${esc(label)}</button>`).join("")}</div>`;
+    const statusBar = `<div class="cw-shelf-status" role="radiogroup" aria-label="Status">${Object.entries(statuses()).map(([key, label]) => `<button type="button" role="radio" aria-checked="false" data-shelf-status="${esc(key)}">${esc(label)}</button>`).join("")}</div>`;
     node.innerHTML = `<section class="cw-mm-art-panel cw-shelf-dialog" role="dialog" aria-modal="true" aria-labelledby="cw-shelf-title" tabindex="-1">
         <header class="cw-mm-art-head">
-          <div><h3 id="cw-shelf-title">${trackerMode ? "Copies in this tracker" : "My shelf"}</h3><p>${esc(state.title)}</p></div>
+          <div><h3 id="cw-shelf-title">My shelf</h3><p>${esc(state.title)}</p></div>
           ${statusBar}
           <button type="button" class="cw-mm-art-close" data-shelf-close aria-label="Close">${icon("close")}</button>
         </header>

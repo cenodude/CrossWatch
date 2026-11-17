@@ -345,7 +345,12 @@
     const art = `<img class="cw-case-art" src="${shelfEsc(poster)}" alt="" loading="lazy" decoding="async" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">`;
     if (kind === "plain") return `<span class="cw-case" data-case="plain">${art}</span>`;
     const logo = CASE_LOGOS[kind];
-    return `<span class="cw-case" data-case="${kind}">${art}<img class="cw-case-frame" src="/assets/img/cases/${kind}.svg" alt="" decoding="async">${logo ? `<img class="cw-case-logo" src="/assets/img/quality/${logo}" alt="" decoding="async">` : ""}${kind === "steelbook" ? '<span class="cw-case-sheen" aria-hidden="true"></span>' : ""}</span>`;
+    return `<span class="cw-case" data-case="${kind}">${art}<img class="cw-case-frame" src="/assets/img/cases/${kind}.svg" alt="" decoding="async">${logo ? `<img class="cw-case-logo" src="/assets/img/quality/${logo}" alt="" decoding="async">` : ""}<span class="cw-case-sheen" aria-hidden="true"></span></span>`;
+  }
+
+  function shelfScene({ cover = "", disc = "", reflection = false } = {}) {
+    const scene = `<span class="cw-shelf-scene">${disc ? `<span class="cw-shelf-disc"><img src="${shelfEsc(disc)}" alt="" loading="lazy" decoding="async" onerror="this.closest('.cw-shelfv-item,.cw-mm-coll-art')?.classList.remove('has-disc');this.parentElement.remove()"></span>` : ""}${cover}</span>`;
+    return `${scene}${reflection ? `<span class="cw-shelf-reflection" aria-hidden="true">${scene}</span>` : ""}`;
   }
 
   const shelfPopState = { node: null, anchor: null };
@@ -363,6 +368,23 @@
   function shelfPopHide() {
     shelfPopState.anchor = null;
     shelfPopState.node?.classList.remove("is-open");
+  }
+
+  function shelfPopHtml({ title = "", sub = "", info = {}, media = {} } = {}) {
+    const perFormat = Object.entries(info.per_format || {}).map(([key, count]) => `${count > 1 ? `${count}× ` : ""}${SHELF_FORMATS[key] || key}`).join(", ");
+    const copies = Number(info.copies) || 0;
+    const edition = [info.edition, info.packaging === "steelbook" && String(info.edition || "").toLowerCase() !== "steelbook" ? "Steelbook" : ""].filter(Boolean).join(" · ");
+    const bought = [shelfDate(info.purchased), Number(info.spent) > 0 ? shelfMoney(info.spent) : ""].filter(Boolean).join(" · ");
+    const rows = [
+      ["Copies", copies ? `${new Intl.NumberFormat(window.__CW_LOCALE || undefined).format(copies)} · ${perFormat}` : ""],
+      ["Edition", edition],
+      ["Bought", bought],
+      ["Shelf", (info.shelves || []).join(", ")],
+      ["Status", info.status && info.status !== "owned" ? SHELF_STATUSES[info.status] || info.status : ""],
+      ["Lent out", info.lent ? "Yes" : ""],
+    ].filter(([, value]) => value);
+    const pill = shelfPill({ format: (info.formats || [])[0] || "", media, service: info.service });
+    return `<h4>${shelfEsc(title)}</h4><span class="cw-shelfv-pop-sub">${shelfEsc(sub)}</span>${pill}${rows.length ? `<dl>${rows.map(([label, value]) => `<dt>${shelfEsc(label)}</dt><dd>${shelfEsc(value)}</dd>`).join("")}</dl>` : ""}<span class="cw-shelfv-pop-hint">Click for all details</span>`;
   }
 
   function shelfPopShow(anchor, html, target = anchor) {
@@ -390,7 +412,7 @@
   }
 
   window.CW.Shelf = {
-    load: shelfLoad, peek: shelfPeek, set: shelfSet, pill: shelfPill, caseHtml: shelfCase, caseKind: shelfCaseKind, casesOn: shelfCasesOn, setCases: shelfSetCases, casesSwitch: shelfCasesSwitch, date: shelfDate, popShow: shelfPopShow, popHide: shelfPopHide, label: shelfLabel, money: shelfMoney, discUrl: shelfDiscUrl, logoUrl: shelfLogoUrl, formats: SHELF_FORMATS, statuses: SHELF_STATUSES,
+    load: shelfLoad, peek: shelfPeek, set: shelfSet, pill: shelfPill, caseHtml: shelfCase, sceneHtml: shelfScene, caseKind: shelfCaseKind, casesOn: shelfCasesOn, setCases: shelfSetCases, casesSwitch: shelfCasesSwitch, date: shelfDate, popHtml: shelfPopHtml, popShow: shelfPopShow, popHide: shelfPopHide, label: shelfLabel, money: shelfMoney, discUrl: shelfDiscUrl, logoUrl: shelfLogoUrl, formats: SHELF_FORMATS, statuses: SHELF_STATUSES,
     currency: () => shelfIndex.currency,
     setCurrency: (value) => { shelfIndex.currency = String(value || ""); window.dispatchEvent(new CustomEvent("cw:shelf-changed", { detail: { currency: shelfIndex.currency } })); },
   };

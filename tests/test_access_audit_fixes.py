@@ -1135,7 +1135,7 @@ def test_profile_view_as_is_admin_only() -> None:
     admin = ui_frontend.get_profile_html({"is_admin": True, "username": "a"})
     user = ui_frontend.get_profile_html({"is_admin": False, "username": "u", "permissions": full})
 
-    assert 'id="cw-view-as-select"' in admin
+    assert 'id="cw-view-as-select"' not in admin
     assert 'id="profile-view-as-banner"' in admin
     assert "/assets/helpers/profile-select.js" in admin
     assert 'id="cw-view-as-select"' not in user

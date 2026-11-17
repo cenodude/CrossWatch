@@ -438,6 +438,19 @@ def _user(request: Request | None) -> Mapping[str, Any] | None:
     return None if not user or bool(user.get("is_admin")) else user
 
 
+def _shelf_keys(request: Request) -> list[str]:
+    from api import profileAPI
+    from services import shelf_store
+
+    ctx = profileAPI._profile_context(request)
+    if isinstance(ctx, JSONResponse):
+        return []
+    try:
+        return list(shelf_store.entries(profileAPI._shelf_owner(ctx)))
+    except Exception:
+        return []
+
+
 def _store(provider_instance: Any, request: Request | None = None, *, fallback: bool = False) -> tuple[dict[str, Any], str, TrackerStore]:
     cfg = _cfg()
     user = _user(request)
@@ -712,13 +725,14 @@ def tracker_items(
     attention: bool = Query(False),
     health: str = Query(""),
     month: str = Query("", pattern=r"^(\d{4}-(0[1-9]|1[0-2]))?$"),
-    copies: bool = Query(False),
+    shelf: bool = Query(False),
 ) -> Any:
     if status and status not in (*NOTE_STATUSES, "none"):
         return _error("invalid_status", 400)
     if feature not in FEATURES:
         return _error("unknown_feature", 400)
     _, inst, store = _store(provider_instance, request)
+    shelf_keys = _shelf_keys(request) if shelf and feature == "collection" else None
     try:
         with store.session():
             total, rows = store.query(
@@ -734,7 +748,7 @@ def tracker_items(
                 attention=attention,
                 health=health if health in ("ok", "attention", "unchecked") else "",
                 until=_month_end(month),
-                copies=copies and feature == "collection",
+                shelf=shelf_keys,
             )
             checks = store.checks_for(feature, [key for key, _ in rows])
             note_keys = {key: _title_key(_identity_of(item, key)) for key, item in rows}

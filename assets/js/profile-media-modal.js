@@ -332,6 +332,9 @@
       if (event.detail?.loaded || event.detail?.id) void loadCollectionInfo(state.item, state.seq);
       void scheduleRender();
     });
+    window.addEventListener("cw:shelf-cases", () => {
+      if (!root.hidden && !personView && state.item) void scheduleRender();
+    });
     return root;
   }
 
@@ -750,10 +753,9 @@
       ? `${copy ? `<button type="button" class="cw-mm-btn" data-mm-coll-edit="${index}">${icon("edit")}Edit copy</button>` : ""}<button type="button" class="cw-mm-btn" data-mm-coll-add>${icon("add")}${info.entry ? "Add copy" : "Add to shelf"}</button>`
       : "";
     return `<section class="cw-mm-coll" aria-label="Collection">
-      ${caseKind !== "plain" || disc ? `<div class="cw-mm-coll-art${disc ? " has-disc" : ""}" data-case="${esc(caseKind)}">
-        ${disc ? `<img class="cw-mm-coll-disc" src="${esc(disc)}" alt="" loading="lazy" decoding="async" onerror="this.closest('.cw-mm-coll-art')?.classList.remove('has-disc');this.remove()">` : ""}
-        ${cover}
-      </div>` : ""}
+      <div class="cw-mm-coll-art${disc ? " has-disc" : ""}${info.entry?.status === "wishlist" ? " is-wishlist" : ""}" data-case="${esc(caseKind)}" aria-hidden="true">
+        ${shelf.sceneHtml?.({ cover, disc }) || cover}
+      </div>
       <div class="cw-mm-coll-main">
         <div class="cw-mm-coll-head"><h3>Collection</h3><span>${esc(statusLine)}</span>${pill}</div>
         ${tabs}

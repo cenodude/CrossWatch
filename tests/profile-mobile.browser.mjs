@@ -356,9 +356,6 @@ for(const width of [390,1440]) test(`Hub header follows playback and falls back 
   assert.equal(await heading.locator('img').evaluate(el=>getComputedStyle(el).backgroundColor),'rgba(0, 0, 0, 0)');
   assert.equal(await page.locator('.cw-media-hero-kicker').textContent(),'My Media Hub');
   assert.equal(await page.locator('.cw-media-hero-brand #profile-display-name').textContent(),'Mobile preview');
-  const picker=await page.locator('#cw-view-as').boundingBox();
-  const identity=await page.locator('.cw-profile-identity').boundingBox();
-  assert.ok(identity.x+identity.width<=picker.x);
   assert.equal(await page.locator('.cw-profile-avatar-badge').count(),0);
   assert.equal(await page.locator('#profile-hero-chips').isVisible(),width>760);
   assert.match(await heading.innerText(),/2026.*Movie/);

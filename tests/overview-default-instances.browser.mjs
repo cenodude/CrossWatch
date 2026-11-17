@@ -9,6 +9,9 @@ import {chromium} from "playwright";
 const scope = "__default__";
 const scripts = await Promise.all(["assets/helpers/provider-meta.js", "assets/helpers/api.js", "assets/js/overview-profile.js", "assets/js/settings-scope.js"].map(path => readFile(new URL(`../${path}`, import.meta.url), "utf8")));
 
+const pick = (page, id) => page.locator(`[data-cw-nav-view-as-pick="${id}"]`).dispatchEvent("click");
+const picked = page => page.locator('[data-cw-nav-view-as-pick][aria-checked="true"]').getAttribute("data-cw-nav-view-as-pick");
+
 async function fixture(t, {managed = false, profiles = [], stored = ""} = {}) {
   const browser = await chromium.launch({headless:true});
   t.after(() => browser.close());
@@ -20,7 +23,7 @@ async function fixture(t, {managed = false, profiles = [], stored = ""} = {}) {
   await page.route("https://overview.test/**", async route => {
     const request = route.request(), url = new URL(request.url());
     requests.push({path:url.pathname, scope:url.searchParams.get("user_profile"), headers:request.headers(), method:request.method()});
-    if (!url.pathname.startsWith("/api/")) return route.fulfill({contentType:"text/html", body:'<!doctype html><html><body><div id="cw-view-as"><select id="cw-view-as-select"></select></div></body></html>'});
+    if (!url.pathname.startsWith("/api/")) return route.fulfill({contentType:"text/html", body:'<!doctype html><html><body><div id="cw-profile-menu" class="hidden"><div data-cw-account-panel="main"></div></div></body></html>'});
     const data = url.pathname === "/api/app-auth/status" ? {is_admin:!managed,user:{is_admin:!managed,profile_id:managed ? "alice" : ""}}
       : url.pathname === "/api/user-profiles" ? {items:profiles}
       : url.pathname.startsWith("/api/user-profiles/") ? {profile:profiles.find(row => url.pathname.endsWith(row.id))}
@@ -43,10 +46,9 @@ async function fixture(t, {managed = false, profiles = [], stored = ""} = {}) {
 
 test("admin can select and restore defaults without any user profiles", async t => {
   const {page,boot} = await fixture(t);
-  const picker = page.locator("#cw-view-as-select");
-  assert.equal(await picker.isEnabled(), true);
-  assert.deepEqual(await picker.locator("option").allTextContents(), ["All profiles", "Admin / Default instances"]);
-  await picker.selectOption(scope);
+  assert.deepEqual(await page.locator("[data-cw-nav-view-as-pick] > span:nth-child(2)").allTextContents(), ["All profiles", "Admin"]);
+  assert.match(await page.locator("[data-cw-nav-view-as-entry]").textContent(), /View asAll profiles/);
+  await pick(page, scope);
   const state = await page.evaluate(() => {
     const view = window.CW.OverviewProfile;
     return {id:view.id,label:view.label,profile:view.profile,defaults:view.isDefaultView,
@@ -55,17 +57,17 @@ test("admin can select and restore defaults without any user profiles", async t 
       otherSource:view.matchesSources({sources_by_provider:{plex:["PLEX-P01"]}}),
       tracker:view.instanceForProvider("CROSSWATCH"),settings:window.CW.SettingsScope.active()};
   });
-  assert.deepEqual(state, {id:scope,label:"Admin / Default instances",profile:null,defaults:true,own:true,other:false,source:true,otherSource:false,tracker:"default",settings:false});
+  assert.deepEqual(state, {id:scope,label:"Admin",profile:null,defaults:true,own:true,other:false,source:true,otherSource:false,tracker:"default",settings:false});
   await page.reload();
   await boot();
-  assert.equal(await picker.inputValue(), scope);
-  await picker.selectOption("");
+  assert.equal(await picked(page), scope);
+  await pick(page, "");
   assert.equal(await page.evaluate(() => window.CW.OverviewProfile.matchesEndpoint("PLEX","PLEX-P01")), true);
 });
 
 test("default overview does not send impersonation or assignment headers", async t => {
   const {page,requests} = await fixture(t, {profiles:[{id:"alice",label:"Alice",instances:{PLEX:["PLEX-P01"]}}]});
-  await page.locator("#cw-view-as-select").selectOption(scope);
+  await pick(page, scope);
   await page.evaluate(async () => {
     await fetch("/api/config");
     await fetch("/api/pairs", {method:"POST"});
@@ -79,14 +81,14 @@ test("default overview does not send impersonation or assignment headers", async
   }
   assert.equal(requests.find(row => row.path === "/api/events/calendar").scope, scope);
   assert.equal(requests.find(row => row.path === "/api/events/statistics").scope, "all");
-  await page.locator("#cw-view-as-select").selectOption("alice");
+  await pick(page, "alice");
   await page.evaluate(() => fetch("/api/config"));
   assert.equal(requests.at(-1).headers["x-cw-view-as"], "alice");
 });
 
 test("managed users ignore a saved admin default selection", async t => {
   const {page} = await fixture(t, {managed:true,stored:scope,profiles:[{id:"alice",label:"Alice",instances:{PLEX:["PLEX-P01"]}}]});
-  assert.equal(await page.locator("#cw-view-as").evaluate(el => el.classList.contains("hidden")), true);
+  assert.equal(await page.locator("[data-cw-nav-view-as-entry]").count(), 0);
   assert.deepEqual(await page.evaluate(scope => ({id:window.CW.OverviewProfile.id,changed:window.CW.OverviewProfile.setActive(scope),defaults:window.CW.OverviewProfile.isDefaultView}), scope), {id:"alice",changed:false,defaults:false});
 });
 
@@ -111,7 +113,7 @@ test("late statistics responses cannot restore another scope's counts or cache",
   await page.addScriptTag({content:await readFile(new URL("../assets/js/insights.js", import.meta.url), "utf8")});
   await page.evaluate(() => { window.pendingInsights = window.refreshInsights(); });
   await started;
-  await page.locator("#cw-view-as-select").selectOption(scope);
+  await pick(page, scope);
   await page.waitForFunction(() => document.querySelector("#stat-now").dataset.v === "1");
   release();
   await page.evaluate(() => window.pendingInsights);
@@ -145,7 +147,7 @@ test("default view displays its part of a mixed run and hides unattributed repor
   await page.waitForFunction(() => document.querySelector("#ux-lanes").textContent.includes("Other person's movie"));
   assert.equal(await page.evaluate(() => window.CW.getRunSummary().run_id), "mixed");
   await page.evaluate(() => { window.oldSummaryStream = window.esSum; });
-  await page.locator("#cw-view-as-select").selectOption(scope);
+  await pick(page, scope);
   assert.equal((await page.locator("#ux-lanes").textContent()).includes("Other person's movie"), false);
   await page.waitForFunction(() => document.querySelector("#ux-lanes").textContent.includes("Admin movie"));
   assert.equal(await page.evaluate(() => window.sharedSummaries.includes(null)), true);
@@ -165,7 +167,7 @@ test("default view displays its part of a mixed run and hides unattributed repor
   await page.evaluate(() => window.UX.refresh());
   assert.equal((await page.locator("#ux-lanes").textContent()).includes("Unscoped movie"), false);
   await page.waitForFunction(() => document.querySelector("#ux-lanes").textContent.includes("Item details are unavailable"));
-  await page.locator("#cw-view-as-select").selectOption("");
+  await pick(page, "");
   await page.waitForFunction(() => document.querySelector("#ux-lanes").textContent.includes("Unscoped movie"));
   await page.evaluate(() => window.esSum.onmessage({data:JSON.stringify({run_id:"streamed",running:true,started_at:1793989800,features:{}})}));
   assert.equal(await page.evaluate(() => window.CW.getRunSummary().run_id), "streamed");
@@ -227,7 +229,7 @@ test("a pending now-playing response cannot replace the default view", async t =
     await page.addScriptTag({content:await readFile(new URL(`../${path}`, import.meta.url), "utf8")});
   }
   await started;
-  await page.locator("#cw-view-as-select").selectOption(scope);
+  await pick(page, scope);
   await page.locator(".pc-title").filter({hasText:"Admin playback"}).waitFor({state:"attached"});
   const oldResponse = page.waitForResponse("https://overview.test/api/watch/currently_watching");
   release();
@@ -262,7 +264,7 @@ test("switching views clears watchlist posters and ignores a late failed request
   hold = true;
   await page.evaluate(() => { window.pendingWall = window.loadWall(); });
   await started;
-  await page.locator("#cw-view-as-select").selectOption(scope);
+  await pick(page, scope);
   assert.equal(await page.locator('#poster-row [data-key="other"]').count(), 0);
   await page.locator('#poster-row [data-key="own"]').waitFor({state:"attached"});
   release();
