@@ -2100,7 +2100,7 @@
       const copies = items.reduce((sum, item) => sum + (Number(item?.shelf?.copies) || 0), 0);
       const summary = [`${numberFmt.format(items.length)} ${items.length === 1 ? "title" : "titles"}`, `${numberFmt.format(copies)} ${copies === 1 ? "copy" : "copies"}`].join(" · ");
       return `<section class="cw-shelfv-row">
-        <header class="cw-shelfv-head"><span class="material-symbols-rounded" aria-hidden="true">shelves</span><h3>${esc(name || "No shelf set")}</h3><span>${esc(summary)}</span></header>
+        <div class="cw-shelfv-head"><span class="material-symbols-rounded" aria-hidden="true">shelves</span><h3>${esc(name || "No shelf set")}</h3><span>${esc(summary)}</span></div>
         <div class="cw-shelfv-rack">${items.map(shelfItem).join("")}</div>
       </section>`;
     }).join("");

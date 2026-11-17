@@ -13,14 +13,14 @@ from cw_platform.run_control import raise_if_cancelled
 from providers.auth import _auth_WETRAKR as auth
 from providers.sync._mod_common import build_op_result, build_session, make_snapshot_progress
 from providers.sync._log import log
-from providers.sync.wetrakr import _history, _playlists, _progress, _ratings, _watchlist
+from providers.sync.wetrakr import _collection, _history, _playlists, _progress, _ratings, _watchlist
 from providers.sync.wetrakr._common import WRITE_BATCH_SIZE, WeTrakrSyncError, body_of, commit_snapshot, dropped_show_tokens, item_key, request, tag_dropped_shows, write_lock
 
 __VERSION__ = "0.5"
 _MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "WETRAKRModule", "OPS"]
-_FEATURES = {"watchlist": True, "history": True, "ratings": True, "progress": True, "playlists": True, "collection": False}
-_FEATURE_MODULES = {"watchlist": _watchlist, "history": _history, "ratings": _ratings, "progress": _progress}
+_FEATURES = {"watchlist": True, "history": True, "ratings": True, "progress": True, "playlists": True, "collection": True}
+_FEATURE_MODULES = {"watchlist": _watchlist, "history": _history, "ratings": _ratings, "progress": _progress, "collection": _collection}
 _PLAYLIST_CAPABILITIES: dict[str, Any] = {
     "read": True,
     "create": True,
@@ -86,7 +86,10 @@ def get_manifest() -> Mapping[str, Any]:
                     "accepted_ids": ["tmdb", "imdb", "tvdb"], "requires_duration": False, "batch_size": 1,
                     "completion_policy": {"progress_write": {"mode": "none"}}},
                 "playlists": _PLAYLIST_CAPABILITIES,
-                "collection": {"read": False, "write": False}}}
+                "collection": {"read": True, "write": True, "upsert": True, "remove": True, "observed_deletes": True,
+                    "accepted_ids": ["tmdb", "imdb", "tvdb", "wetrakr"], "provides_ids": ["tmdb", "imdb", "tvdb", "wetrakr"],
+                    "batch_size": WRITE_BATCH_SIZE, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
+                    "media_updates": True, "copies": True, "copy_details": "option"}}}
 
 
 class WETRAKRModule:

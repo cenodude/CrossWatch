@@ -10,6 +10,8 @@
   const RESOLUTIONS = { uhd_4k: "4K", hd_1080p: "1080p", hd_1080i: "1080i", hd_720p: "720p", sd_576p: "576p", sd_576i: "576i", sd_480p: "480p", sd_480i: "480i" };
   const HDRS = { dolby_vision: "Dolby Vision", hdr10_plus: "HDR10+", hdr10: "HDR10", hlg: "HLG" };
   const AUDIOS = { dolby_atmos: "Dolby Atmos", dolby_digital_plus_atmos: "Dolby Atmos", dolby_truehd: "Dolby TrueHD", dolby_digital_plus: "Dolby Digital Plus", dolby_digital: "Dolby Digital", dts_x: "DTS:X", dts_ma: "DTS-HD MA", dts_hr: "DTS-HD HRA", dts: "DTS", lpcm: "LPCM", flac: "FLAC", aac: "AAC" };
+  const AUDIO_CHOICES = { dolby_atmos: "Dolby Atmos (TrueHD)", dolby_digital_plus_atmos: "Dolby Atmos (DD+)", dolby_truehd: "Dolby TrueHD", dolby_digital_plus: "Dolby Digital Plus", dolby_digital: "Dolby Digital", dolby_prologic: "Dolby Pro Logic", dts_x: "DTS:X", dts_ma: "DTS-HD MA", dts_hr: "DTS-HD HRA", dts: "DTS", auro_3d: "Auro-3D", lpcm: "LPCM", flac: "FLAC", aac: "AAC", mp3: "MP3", mp2: "MP2", ogg: "Ogg Vorbis", ogg_opus: "Opus", wma: "WMA" };
+  const CHANNELS = Object.fromEntries(["1.0", "2.0", "2.1", "3.0", "3.1", "4.0", "4.1", "5.0", "5.1", "5.1.2", "5.1.4", "6.1", "7.1", "7.1.2", "7.1.4", "9.1", "10.1"].map((value) => [value, value]));
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
   const icon = (name) => `<span class="material-symbols-rounded" aria-hidden="true">${esc(name)}</span>`;
   const shelf = () => window.CW?.Shelf || {};
@@ -37,8 +39,13 @@
     return [formats()[synced.format], RESOLUTIONS[media.resolution], HDRS[media.hdr], [AUDIOS[media.audio], media.audio_channels].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
   }
 
+  function copyMedia(row) {
+    return [RESOLUTIONS[row.resolution], HDRS[row.hdr], [AUDIOS[row.audio], row.audio_channels].filter(Boolean).join(" "), row.is_3d ? "3D" : ""].filter(Boolean).join(" · ");
+  }
+
   function copySummary(row) {
     const parts = [
+      copyMedia(row),
       row.format === "digital" ? row.service?.name : "",
       row.edition || PACKAGING[row.packaging],
       row.shelf ? `Shelf ${row.shelf}` : "",
@@ -98,6 +105,13 @@
     return `<form class="cw-shelf-form" data-shelf-form novalidate>
       <input type="hidden" name="format" value="${esc(row.format || "")}">
       <fieldset class="cw-shelf-group"><legend>Edition</legend><div class="cw-shelf-grid">${edition}${scope}</div></fieldset>
+      <fieldset class="cw-shelf-group"><legend>Video and audio</legend><div class="cw-shelf-grid">
+        ${field("Resolution", `<select name="resolution">${options(RESOLUTIONS, row.resolution, "Not set")}</select>`)}
+        ${field("HDR", `<select name="hdr">${options(HDRS, row.hdr, "None")}</select>`)}
+        ${field("Audio", `<select name="audio">${options(AUDIO_CHOICES, row.audio, "Not set")}</select>`)}
+        ${field("Channels", `<select name="audio_channels">${options(CHANNELS, row.audio_channels, "Not set")}</select>`)}
+        ${field("3D", `<select name="is_3d"><option value="">No</option><option value="true"${row.is_3d ? " selected" : ""}>Yes</option></select>`)}
+      </div></fieldset>
       <fieldset class="cw-shelf-group"><legend>Purchase</legend><div class="cw-shelf-grid">
         ${field("Date", `<input name="purchased" type="date" value="${esc(row.purchased || "")}">`)}
         ${field("Price", `<span class="cw-shelf-price"><input name="price" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(row.price ?? "")}"><select data-shelf-currency aria-label="Currency for all prices">${currencies.map((code) => `<option value="${esc(code)}"${code === currency ? " selected" : ""}>${esc(code || "–")}</option>`).join("")}</select></span>`)}
@@ -286,6 +300,7 @@
     if (row.discs) row.discs = Number(row.discs);
     if (row.price) row.price = Number(row.price);
     if (row.season) row.season = Number(row.season);
+    if (row.is_3d) row.is_3d = true;
     const serviceId = row.service_id;
     delete row.service_id;
     if (row.format === "digital" && serviceId) {
@@ -302,7 +317,7 @@
     const index = state.editing;
     const copies = [...(state.entry?.copies || [])];
     const before = copies[index] || {};
-    copies[index] = { ...row, format: row.format || before.format, id: before.id, added_at: before.added_at };
+    copies[index] = { ...row, format: row.format || before.format, id: before.id, added_at: before.added_at, ...(before.source ? { source: before.source } : {}), ...(before.ref ? { ref: before.ref } : {}) };
     state.editing = null;
     if (await save({ status: state.entry?.status || "owned", copies })) {
       state.draft = null;
