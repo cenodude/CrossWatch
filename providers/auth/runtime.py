@@ -50,6 +50,10 @@ def _backend(provider: Any) -> Any:
         from providers.auth import _auth_FLICKLIST as flicklist_auth
 
         return flicklist_auth
+    if name in {"movieparadise", "movie_paradise"}:
+        from providers.auth import _auth_MOVIEPARADISE as movieparadise_auth
+
+        return movieparadise_auth
     if name == "kitsu":
         from providers.auth import _auth_KITSU
 

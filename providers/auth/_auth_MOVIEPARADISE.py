@@ -1,0 +1,796 @@
+# providers/auth/_auth_MOVIEPARADISE.py
+# CrossWatch - Movie Paradise Authentication Provider
+# Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
+from __future__ import annotations
+
+import os
+import threading
+import time
+from collections.abc import Mapping, MutableMapping
+from typing import Any
+
+import requests
+from urllib3.exceptions import NewConnectionError
+
+from ._cleanup import cleanup_remote
+from ._auth_base import AuthManifest, AuthStatus
+from cw_platform.app_version import user_agent as http_user_agent
+from cw_platform.config_base import load_config, save_config
+from cw_platform.provider_instances import ensure_instance_block, normalize_instance_id, resolve_provider_block
+
+try:
+    from _logging import log as _real_log
+except ImportError:
+    _real_log = None
+
+
+def log(msg: str, level: str = "INFO", module: str = "AUTH", **_: Any) -> None:
+    try:
+        if _real_log is not None:
+            _real_log(msg, level=level, module=module, **_)
+        else:
+            print(f"[{module}] {level}: {msg}")
+    except Exception:
+        pass
+
+
+API_BASE = "https://platform.movieparadise.app"
+RESOURCE = API_BASE
+DEVICE_CODE_URL = f"{API_BASE}/oauth/device_authorization"
+TOKEN_URL = f"{API_BASE}/oauth/token"
+REVOKE_URL = f"{API_BASE}/oauth/revoke"
+ME_URL = f"{API_BASE}/v1/me"
+CAPABILITIES_URL = f"{API_BASE}/v1/capabilities"
+VERIFY_URL = "https://movieparadise.app/oauth/device"
+DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
+
+DEFAULT_CLIENT_ID = "mpc_EeE8j2YJIuUQFTxVuSauPHbQHws4iXNCKFfbE67ycJu2idcA1"
+CLIENT_ID_ENV = "CROSSWATCH_MOVIEPARADISE_CLIENT_ID"
+
+DEFAULT_SCOPES: tuple[str, ...] = ("library:read", "library:write", "scrobble:write", "offline_access")
+SCOPE = " ".join(DEFAULT_SCOPES)
+
+POLL_INTERVAL_SEC = 5
+SLOW_DOWN_STEP_SEC = 5
+REFRESH_SKEW_SEC = 120
+HTTP_TIMEOUT = 20
+UA = http_user_agent("MovieParadiseAuth", override_env="CW_MOVIEPARADISE_UA")
+__VERSION__ = "0.1"
+
+_TOKEN_KEYS = (
+    "access_token",
+    "refresh_token",
+    "token_type",
+    "scope",
+    "expires_at",
+    "username",
+    "user_id",
+)
+
+_REFRESH_LOCKS: dict[str, threading.Lock] = {}
+_REFRESH_LOCKS_GUARD = threading.Lock()
+_LAST_POLL: dict[str, float] = {}
+_LAST_POLL_GUARD = threading.Lock()
+_TERMINAL_GRANT_ERRORS = {"invalid_grant", "invalid_client", "unauthorized_client"}
+
+
+class MovieParadiseAuthError(RuntimeError):
+    pass
+
+
+def now() -> int:
+    return int(time.time())
+
+
+def app_client_id() -> str:
+    return str(os.environ.get(CLIENT_ID_ENV) or DEFAULT_CLIENT_ID).strip()
+
+
+def _refresh_lock(instance_id: Any) -> threading.Lock:
+    inst = normalize_instance_id(instance_id)
+    with _REFRESH_LOCKS_GUARD:
+        lock = _REFRESH_LOCKS.get(inst)
+        if lock is None:
+            lock = threading.Lock()
+            _REFRESH_LOCKS[inst] = lock
+        return lock
+
+
+def _load_full_cfg() -> dict[str, Any]:
+    try:
+        cfg = load_config() or {}
+        return cfg if isinstance(cfg, dict) else dict(cfg)
+    except Exception:
+        return {}
+
+
+def _save_full_cfg(cfg: dict[str, Any]) -> None:
+    save_config(cfg)
+
+
+def _headers(token: str | None = None) -> dict[str, str]:
+    h = {"Accept": "application/json", "User-Agent": UA}
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+    return h
+
+
+def _error_of(r: requests.Response) -> str:
+    try:
+        body = r.json() or {}
+    except Exception:
+        return ""
+    if not isinstance(body, Mapping):
+        return ""
+    return str(body.get("error") or body.get("code") or "").strip()
+
+
+def _retry_after(r: requests.Response) -> int:
+    try:
+        return max(0, int(float(r.headers.get("Retry-After") or 0)))
+    except Exception:
+        return 0
+
+
+def _answer_may_be_lost(exc: requests.RequestException) -> bool:
+    if isinstance(exc, (requests.ConnectTimeout, requests.exceptions.SSLError)):
+        return False
+    if isinstance(exc, requests.ConnectionError):
+        reason = getattr(exc.args[0] if exc.args else None, "reason", None)
+        return not isinstance(reason, NewConnectionError)
+    return isinstance(exc, (requests.ReadTimeout, requests.exceptions.ChunkedEncodingError))
+
+
+def _poll_too_soon(device_code: str, interval: int) -> bool:
+    stamp = time.monotonic()
+    with _LAST_POLL_GUARD:
+        last = _LAST_POLL.get(device_code, 0.0)
+        if last and stamp - last < max(1, interval):
+            return True
+        if len(_LAST_POLL) > 32:
+            _LAST_POLL.clear()
+        _LAST_POLL[device_code] = stamp
+        return False
+
+
+def provider_block(cfg: Mapping[str, Any] | None, instance_id: Any = None) -> dict[str, Any]:
+    try:
+        return dict(resolve_provider_block(cfg or {}, "movieparadise", instance_id) or {})
+    except Exception:
+        base = (cfg or {}).get("movieparadise") if isinstance(cfg, Mapping) else None
+        return dict(base or {}) if isinstance(base, Mapping) else {}
+
+
+def writable_block(cfg: dict[str, Any], instance_id: Any = None) -> dict[str, Any]:
+    return ensure_instance_block(cfg, "movieparadise", instance_id)
+
+
+def normalize_auth_method(value: Any = None, block: Mapping[str, Any] | None = None) -> str:
+    return "device_code"
+
+
+def active_method(block: Mapping[str, Any] | None = None) -> str:
+    return "device_code"
+
+
+def set_active_method(block: MutableMapping[str, Any], method: str = "device_code") -> str:
+    block["auth_method"] = "device_code"
+    return "device_code"
+
+
+def clear_oauth(block: MutableMapping[str, Any]) -> None:
+    for key in _TOKEN_KEYS:
+        if key in block:
+            block[key] = 0 if key == "expires_at" else ""
+    block.pop("_pending_device", None)
+    block.pop("auth_error", None)
+
+
+def needs_reconnect(block: Mapping[str, Any] | None) -> bool:
+    return str((block or {}).get("auth_error") or "") == "reconnect_required"
+
+
+def is_configured(block: Mapping[str, Any] | None) -> bool:
+    return bool(str((block or {}).get("access_token") or "").strip())
+
+
+def about_to_expire(block: Mapping[str, Any], skew_sec: int = REFRESH_SKEW_SEC) -> bool:
+    try:
+        exp = int(block.get("expires_at") or 0)
+    except Exception:
+        exp = 0
+    return bool(exp and exp - now() <= max(0, int(skew_sec)))
+
+
+def scopes_of(block: Mapping[str, Any] | None) -> list[str]:
+    raw = str((block or {}).get("scope") or "").strip()
+    return [s for s in raw.split(" ") if s]
+
+
+def status_for_block(block: Mapping[str, Any] | None) -> dict[str, Any]:
+    b = block or {}
+    out: dict[str, Any] = {
+        "auth_method": "device_code",
+        "connected": is_configured(b),
+        "reconnect_required": needs_reconnect(b),
+        "client_id_configured": bool(app_client_id()),
+        "expires_at": int(b.get("expires_at") or 0),
+        "username": str(b.get("username") or ""),
+        "user_id": str(b.get("user_id") or ""),
+        "scopes": scopes_of(b),
+    }
+    pend = b.get("_pending_device")
+    if isinstance(pend, Mapping) and str(pend.get("user_code") or "").strip():
+        out["pending"] = {
+            "user_code": str(pend.get("user_code") or ""),
+            "verification_uri": str(pend.get("verification_uri") or VERIFY_URL),
+            "expires_at": int(pend.get("expires_at") or 0),
+            "interval": int(pend.get("interval") or POLL_INTERVAL_SEC),
+        }
+    return out
+
+
+def _mark_reconnect(inst: str, reason: str) -> None:
+    latest = _load_full_cfg()
+    writable_block(latest, inst)["auth_error"] = "reconnect_required"
+    _save_full_cfg(latest)
+    log(f"MOVIEPARADISE: reconnect required ({reason}) (instance={inst})", level="ERROR", module="AUTH")
+
+
+def _apply_token_response(block: MutableMapping[str, Any], tok: Mapping[str, Any]) -> None:
+    try:
+        expires_in = int(tok.get("expires_in") or 0)
+    except Exception:
+        expires_in = 0
+    block["access_token"] = str(tok.get("access_token") or "").strip()
+    block["refresh_token"] = str(tok.get("refresh_token") or "").strip()
+    block["token_type"] = str(tok.get("token_type") or "Bearer").strip() or "Bearer"
+    block["scope"] = str(tok.get("scope") or block.get("scope") or "").strip()
+    block["expires_at"] = now() + expires_in if expires_in > 0 else 0
+    block["auth_method"] = "device_code"
+    block.pop("auth_error", None)
+
+
+def fetch_identity(access_token: str, *, timeout: float = HTTP_TIMEOUT) -> dict[str, Any]:
+    if not str(access_token or "").strip():
+        return {}
+    try:
+        r = requests.get(ME_URL, headers=_headers(access_token), timeout=timeout)
+    except requests.RequestException:
+        return {}
+    if r.status_code >= 400:
+        return {}
+    try:
+        data = r.json() or {}
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _store_identity(block: MutableMapping[str, Any], access_token: str) -> None:
+    me = fetch_identity(access_token)
+    if not me:
+        return
+    username = str(me.get("username") or "").strip()
+    if username:
+        block["username"] = username
+    user_id = str(me.get("id") or "").strip()
+    if user_id:
+        block["user_id"] = user_id
+    credential = me.get("credential") if isinstance(me.get("credential"), Mapping) else {}
+    granted = (credential or {}).get("scopes")
+    if isinstance(granted, (list, tuple)) and granted:
+        block["scope"] = " ".join(str(s) for s in granted if str(s or "").strip())
+
+
+def start_device_code(
+    cfg: dict[str, Any] | None = None,
+    *,
+    instance_id: Any = None,
+    timeout: float = HTTP_TIMEOUT,
+    **_: Any,
+) -> dict[str, Any]:
+    cfgd = cfg if isinstance(cfg, dict) else _load_full_cfg()
+    inst = normalize_instance_id(instance_id)
+    block = writable_block(cfgd, inst)
+    cid = app_client_id()
+    if not cid:
+        return {"ok": False, "error": "missing_client_id", "instance": inst}
+    set_active_method(block)
+
+    try:
+        r = requests.post(
+            DEVICE_CODE_URL,
+            data={"client_id": cid, "scope": SCOPE, "resource": RESOURCE},
+            headers=_headers(),
+            timeout=timeout,
+        )
+    except requests.RequestException as e:
+        return {"ok": False, "error": "network_error", "detail": str(e), "instance": inst}
+
+    if r.status_code == 429 or (r.status_code == 503 and _error_of(r) == "temporarily_unavailable"):
+        retry = _retry_after(r) or 60
+        log(f"MOVIEPARADISE: device code refused (instance={inst} status={r.status_code} retry_after={retry}s)", level="WARN", module="AUTH")
+        return {"ok": False, "error": "rate_limited", "retry_after": retry, "rate_limit_source": "provider", "instance": inst}
+    if r.status_code >= 400:
+        return {"ok": False, "error": _error_of(r) or "http_error", "status": int(r.status_code), "instance": inst}
+
+    try:
+        data: dict[str, Any] = r.json() or {}
+    except ValueError:
+        return {"ok": False, "error": "invalid_json", "instance": inst}
+
+    device_code = str(data.get("device_code") or "").strip()
+    user_code = str(data.get("user_code") or "").strip()
+    if not device_code or not user_code:
+        return {"ok": False, "error": "invalid_response", "instance": inst}
+
+    verification_uri = str(data.get("verification_uri") or VERIFY_URL).strip() or VERIFY_URL
+    try:
+        expires_in = int(data.get("expires_in") or 600)
+    except Exception:
+        expires_in = 600
+    try:
+        interval = max(1, int(data.get("interval") or POLL_INTERVAL_SEC))
+    except Exception:
+        interval = POLL_INTERVAL_SEC
+    expires_at = now() + expires_in
+
+    block["_pending_device"] = {
+        "device_code": device_code,
+        "user_code": user_code,
+        "verification_uri": verification_uri,
+        "interval": interval,
+        "expires_at": expires_at,
+        "created_at": now(),
+    }
+    _save_full_cfg(cfgd)
+
+    log(f"MOVIEPARADISE: device code issued (instance={inst})", level="INFO", module="AUTH")
+    return {
+        "ok": True,
+        "instance": inst,
+        "user_code": user_code,
+        "verification_uri": verification_uri,
+        "interval": interval,
+        "expires_in": expires_in,
+        "expires_at": expires_at,
+    }
+
+
+def poll_device_code(
+    cfg: dict[str, Any] | None = None,
+    *,
+    instance_id: Any = None,
+    device_code: str | None = None,
+    timeout: float = HTTP_TIMEOUT,
+) -> dict[str, Any]:
+    cfgd = cfg if isinstance(cfg, dict) else _load_full_cfg()
+    inst = normalize_instance_id(instance_id)
+    block = writable_block(cfgd, inst)
+    cid = app_client_id()
+    pend = dict(block.get("_pending_device") or {}) if isinstance(block.get("_pending_device"), Mapping) else {}
+    dc = str(device_code or pend.get("device_code") or "").strip()
+
+    if not cid:
+        return {"ok": False, "status": "missing_client_id", "instance": inst}
+    if not dc:
+        return {"ok": False, "status": "no_device_code", "instance": inst}
+    pend_expires = int(pend.get("expires_at") or 0)
+    if pend_expires and now() >= pend_expires:
+        block.pop("_pending_device", None)
+        _save_full_cfg(cfgd)
+        return {"ok": False, "status": "expired_token", "instance": inst}
+    if _poll_too_soon(dc, int(pend.get("interval") or POLL_INTERVAL_SEC)):
+        return {"ok": False, "status": "authorization_pending", "instance": inst}
+
+    try:
+        r = requests.post(
+            TOKEN_URL,
+            data={"grant_type": DEVICE_GRANT, "device_code": dc, "client_id": cid},
+            headers=_headers(),
+            timeout=timeout,
+        )
+    except requests.RequestException as e:
+        if _answer_may_be_lost(e):
+            block.pop("_pending_device", None)
+            _save_full_cfg(cfgd)
+            return {"ok": False, "status": "answer_lost", "instance": inst}
+        return {"ok": False, "status": "network_error", "error": str(e), "instance": inst}
+
+    err = _error_of(r)
+    if r.status_code == 429:
+        return {"ok": False, "status": "slow_down", "retry_after": _retry_after(r), "instance": inst}
+    if r.status_code >= 500:
+        block.pop("_pending_device", None)
+        _save_full_cfg(cfgd)
+        return {"ok": False, "status": "answer_lost", "instance": inst}
+    if r.status_code >= 400:
+        status = err or "authorization_pending"
+        if status == "slow_down":
+            pend["interval"] = int(pend.get("interval") or POLL_INTERVAL_SEC) + SLOW_DOWN_STEP_SEC
+            block["_pending_device"] = pend
+            _save_full_cfg(cfgd)
+            return {"ok": False, "status": "slow_down", "interval": pend["interval"], "instance": inst}
+        if status in {"expired_token", "access_denied", "invalid_grant"}:
+            block.pop("_pending_device", None)
+            _save_full_cfg(cfgd)
+        return {"ok": False, "status": status, "instance": inst}
+
+    try:
+        tok: dict[str, Any] = r.json() or {}
+    except ValueError:
+        return {"ok": False, "status": "bad_json", "instance": inst}
+
+    access_token = str(tok.get("access_token") or "").strip()
+    if not access_token:
+        return {"ok": False, "status": "no_access_token", "instance": inst}
+
+    _apply_token_response(block, tok)
+    block.pop("_pending_device", None)
+    _store_identity(block, access_token)
+    _save_full_cfg(cfgd)
+
+    log(f"MOVIEPARADISE: tokens stored (instance={inst})", level="SUCCESS", module="AUTH")
+    return {
+        "ok": True,
+        "status": "authorized",
+        "instance": inst,
+        "expires_at": int(block.get("expires_at") or 0),
+        "username": str(block.get("username") or ""),
+    }
+
+
+def cancel_device_code(cfg: dict[str, Any] | None = None, *, instance_id: Any = None) -> dict[str, Any]:
+    cfgd = cfg if isinstance(cfg, dict) else _load_full_cfg()
+    inst = normalize_instance_id(instance_id)
+    block = writable_block(cfgd, inst)
+    existed = block.pop("_pending_device", None) is not None
+    if existed:
+        _save_full_cfg(cfgd)
+    return {"ok": True, "cancelled": existed, "instance": inst}
+
+
+def _copy_token_fields(dst: MutableMapping[str, Any], src: Mapping[str, Any]) -> None:
+    for key in _TOKEN_KEYS:
+        if key in src:
+            dst[key] = src.get(key)
+
+
+def refresh_token(
+    cfg: dict[str, Any] | None = None,
+    *,
+    instance_id: Any = None,
+    update_cfg: dict[str, Any] | None = None,
+    force: bool = False,
+    rejected_token: str | None = None,
+    timeout: float = HTTP_TIMEOUT,
+    **_: Any,
+) -> dict[str, Any]:
+    inst = normalize_instance_id(instance_id)
+    with _refresh_lock(inst):
+        full = _load_full_cfg()
+        block = writable_block(full, inst)
+        current = str(block.get("access_token") or "").strip()
+
+        if needs_reconnect(block):
+            return {"ok": False, "status": "reconnect_required", "instance": inst, "reconnect_required": True}
+        if not force and current and not about_to_expire(block):
+            return {"ok": True, "status": "fresh", "instance": inst, "expires_at": int(block.get("expires_at") or 0)}
+        rejected = str(rejected_token or "").strip()
+        if rejected and current and current != rejected and not about_to_expire(block):
+            return {"ok": True, "status": "fresh", "instance": inst, "expires_at": int(block.get("expires_at") or 0)}
+
+        cid = app_client_id()
+        rt = str(block.get("refresh_token") or "").strip()
+        if not cid or not rt:
+            return {"ok": False, "status": "missing_refresh", "instance": inst}
+
+        try:
+            r = requests.post(
+                TOKEN_URL,
+                data={"grant_type": "refresh_token", "refresh_token": rt, "client_id": cid, "resource": RESOURCE},
+                headers=_headers(),
+                timeout=timeout,
+            )
+        except requests.RequestException as e:
+            if _answer_may_be_lost(e):
+                _mark_reconnect(inst, "refresh answer lost")
+                return {"ok": False, "status": "reconnect_required", "instance": inst, "reconnect_required": True}
+            return {"ok": False, "status": "network_error", "error": str(e), "instance": inst}
+
+        err = _error_of(r)
+        if r.status_code == 429:
+            retry = _retry_after(r)
+            log(f"MOVIEPARADISE: refresh rate limited (instance={inst} retry_after={retry or '-'}s)", level="WARN", module="AUTH")
+            return {"ok": False, "status": "rate_limited", "retry_after": retry, "instance": inst}
+        if r.status_code >= 500:
+            _mark_reconnect(inst, f"refresh status {r.status_code}")
+            return {"ok": False, "status": "reconnect_required", "instance": inst, "reconnect_required": True}
+        if r.status_code >= 400:
+            if err in _TERMINAL_GRANT_ERRORS:
+                latest = _load_full_cfg()
+                latest_block = writable_block(latest, inst)
+                latest_rt = str(latest_block.get("refresh_token") or "").strip()
+                if latest_rt and latest_rt != rt and str(latest_block.get("access_token") or "").strip():
+                    return {"ok": True, "status": "fresh", "instance": inst, "expires_at": int(latest_block.get("expires_at") or 0)}
+                _mark_reconnect(inst, err)
+                return {"ok": False, "status": err, "instance": inst, "reconnect_required": True}
+            log(f"MOVIEPARADISE: refresh failed (instance={inst} status={r.status_code} error={err or '-'})", level="WARN", module="AUTH")
+            return {"ok": False, "status": f"refresh_failed:{r.status_code}", "error": err, "instance": inst}
+
+        try:
+            tok: dict[str, Any] = r.json() or {}
+        except ValueError:
+            _mark_reconnect(inst, "refresh answer unreadable")
+            return {"ok": False, "status": "reconnect_required", "instance": inst, "reconnect_required": True}
+
+        if not str(tok.get("access_token") or "").strip() or not str(tok.get("refresh_token") or "").strip():
+            _mark_reconnect(inst, "refresh answer incomplete")
+            return {"ok": False, "status": "reconnect_required", "instance": inst, "reconnect_required": True}
+
+        _apply_token_response(block, tok)
+        latest = _load_full_cfg()
+        latest_block = writable_block(latest, inst)
+        _copy_token_fields(latest_block, block)
+        latest_block["auth_method"] = "device_code"
+        latest_block.pop("auth_error", None)
+        _save_full_cfg(latest)
+
+        for target in (cfg, update_cfg):
+            if isinstance(target, dict):
+                try:
+                    _copy_token_fields(writable_block(target, inst), block)
+                except Exception:
+                    pass
+
+        log(f"MOVIEPARADISE: token refreshed (instance={inst})", level="INFO", module="AUTH")
+        return {"ok": True, "status": "ok", "instance": inst, "expires_at": int(block.get("expires_at") or 0)}
+
+
+def revoke_token(
+    cfg: Mapping[str, Any] | None = None,
+    *,
+    instance_id: Any = None,
+    token: str | None = None,
+    timeout: float = HTTP_TIMEOUT,
+) -> dict[str, Any]:
+    inst = normalize_instance_id(instance_id)
+    block = provider_block(cfg if cfg is not None else _load_full_cfg(), inst)
+    cid = app_client_id()
+    tok = str(token or block.get("refresh_token") or block.get("access_token") or "").strip()
+    if not cid or not tok:
+        return {"ok": False, "status": "missing_token", "instance": inst}
+    try:
+        r = requests.post(REVOKE_URL, data={"token": tok, "client_id": cid}, headers=_headers(), timeout=timeout)
+    except requests.RequestException as e:
+        return {"ok": False, "status": "network_error", "error": str(e), "instance": inst}
+    if r.status_code >= 400:
+        return {"ok": False, "status": f"revoke_failed:{r.status_code}", "error": _error_of(r), "instance": inst}
+    return {"ok": True, "status": "ok", "instance": inst}
+
+
+def prepare_auth(
+    cfg: Mapping[str, Any] | None,
+    *,
+    instance_id: Any = None,
+    refresh: bool = True,
+) -> dict[str, str]:
+    inst = normalize_instance_id(instance_id)
+    block = provider_block(cfg, inst)
+
+    if refresh and (not str(block.get("access_token") or "").strip() or about_to_expire(block)):
+        res = refresh_token(dict(cfg or {}), instance_id=inst)
+        if not res.get("ok"):
+            raise MovieParadiseAuthError(str(res.get("status") or "refresh_failed"))
+        block = provider_block(_load_full_cfg(), inst)
+
+    token = str(block.get("access_token") or "").strip()
+    if not token:
+        raise MovieParadiseAuthError("missing_access_token")
+    return {"Authorization": f"Bearer {token}"}
+
+
+def merge_auth_kwargs(
+    cfg: Mapping[str, Any] | None,
+    *,
+    instance_id: Any = None,
+    kwargs: dict[str, Any] | None = None,
+    refresh: bool = True,
+) -> dict[str, Any]:
+    out = dict(kwargs or {})
+    headers = dict(out.get("headers") or {})
+    headers.setdefault("Accept", "application/json")
+    headers.setdefault("User-Agent", UA)
+    headers.update(prepare_auth(cfg, instance_id=instance_id, refresh=refresh))
+    out["headers"] = headers
+    return out
+
+
+def request_with_auth(
+    session: requests.Session,
+    method: str,
+    url: str,
+    *,
+    cfg: Mapping[str, Any] | None,
+    instance_id: Any = None,
+    timeout: float = HTTP_TIMEOUT,
+    max_retries: int = 3,
+    request_func: Any = None,
+    **kwargs: Any,
+) -> requests.Response:
+    from providers.sync._mod_common import request_with_retries
+
+    call = request_func or request_with_retries
+    req_kwargs = merge_auth_kwargs(cfg, instance_id=instance_id, kwargs=kwargs)
+    resp = call(session, method, url, timeout=timeout, max_retries=max_retries, **req_kwargs)
+    if getattr(resp, "status_code", None) != 401:
+        return resp
+
+    used = str((req_kwargs.get("headers") or {}).get("Authorization") or "").removeprefix("Bearer ").strip()
+    latest = _load_full_cfg()
+    current = str(provider_block(latest, instance_id).get("access_token") or "").strip()
+    if used and current and current != used:
+        req_kwargs = merge_auth_kwargs(latest, instance_id=instance_id, kwargs=kwargs, refresh=False)
+        return call(session, method, url, timeout=timeout, max_retries=max_retries, **req_kwargs)
+
+    res = refresh_token(dict(cfg or {}), instance_id=instance_id, force=True, rejected_token=used or None)
+    if not res.get("ok"):
+        return resp
+    req_kwargs = merge_auth_kwargs(_load_full_cfg(), instance_id=instance_id, kwargs=kwargs, refresh=False)
+    return call(session, method, url, timeout=timeout, max_retries=max_retries, **req_kwargs)
+
+
+class MovieParadiseAuth:
+    name = "MOVIEPARADISE"
+    label = "Movie Paradise"
+
+    def manifest(self) -> AuthManifest:
+        return AuthManifest(
+            name=self.name,
+            label=self.label,
+            flow="device_code",
+            fields=[],
+            actions={"start": True, "finish": True, "refresh": True, "disconnect": True},
+            verify_url=VERIFY_URL,
+            notes="Device code only. CrossWatch ships a public Movie Paradise app id, so no keys are required.",
+        )
+
+    def capabilities(self) -> dict[str, Any]:
+        return {"device_code": True, "refresh": True, "revoke": True}
+
+    def get_status(self, cfg: Mapping[str, Any] | None = None, *, instance_id: Any = None) -> AuthStatus:
+        cfgd = cfg if cfg is not None else _load_full_cfg()
+        inst = normalize_instance_id(instance_id)
+        block = provider_block(cfgd, inst)
+        label = self.label if inst == "default" else f"{self.label} ({inst})"
+        return AuthStatus(
+            connected=is_configured(block),
+            label=label,
+            user=str(block.get("username") or "") or None,
+            expires_at=int(block.get("expires_at") or 0) or None,
+            scopes=scopes_of(block) or None,
+        )
+
+    def start(
+        self,
+        cfg: MutableMapping[str, Any] | None = None,
+        redirect_uri: str | None = None,
+        *,
+        instance_id: Any = None,
+    ) -> dict[str, Any]:
+        return start_device_code(dict(cfg or _load_full_cfg()), instance_id=instance_id)
+
+    def finish(
+        self,
+        cfg: MutableMapping[str, Any] | None = None,
+        *,
+        instance_id: Any = None,
+        **payload: Any,
+    ) -> AuthStatus:
+        poll_device_code(dict(cfg or _load_full_cfg()), instance_id=instance_id, device_code=str(payload.get("device_code") or "").strip() or None)
+        return self.get_status(_load_full_cfg(), instance_id=instance_id)
+
+    def refresh(self, cfg: MutableMapping[str, Any] | None = None, *, instance_id: Any = None) -> AuthStatus:
+        try:
+            refresh_token(dict(cfg or _load_full_cfg()), instance_id=instance_id)
+        except Exception:
+            pass
+        return self.get_status(_load_full_cfg(), instance_id=instance_id)
+
+    def disconnect(self, cfg: MutableMapping[str, Any] | None = None, *, instance_id: Any = None) -> AuthStatus:
+        cfgd = dict(cfg or _load_full_cfg())
+        inst = normalize_instance_id(instance_id)
+        block = writable_block(cfgd, inst)
+        remote = {"movieparadise": dict(block)}
+        clear_oauth(block)
+        _save_full_cfg(cfgd)
+        cleanup_remote(revoke_token, remote)
+        log(f"MOVIEPARADISE: disconnected (instance={inst})", level="INFO", module="AUTH")
+        return self.get_status(cfgd, instance_id=inst)
+
+    def html(self, cfg: Mapping[str, Any] | None = None) -> str:
+        return html()
+
+
+PROVIDER = MovieParadiseAuth()
+__all__ = ["PROVIDER", "MovieParadiseAuth", "MovieParadiseAuthError", "html", "__VERSION__"]
+
+
+def html() -> str:
+    return r'''<div class="section" id="sec-movieparadise">
+  <style>
+    #sec-movieparadise .sub{opacity:.7;font-size:.92em}
+    #sec-movieparadise .hidden{display:none !important}
+    #sec-movieparadise .mp-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px}
+    #sec-movieparadise #movieparadise_device_start{background:linear-gradient(135deg,#d7628f,#8b3fa1);border-color:rgba(215,98,143,.45);box-shadow:0 0 14px rgba(139,63,161,.35);color:#fff}
+    #sec-movieparadise #movieparadise_device_start:hover{filter:brightness(1.06);box-shadow:0 0 18px rgba(139,63,161,.5)}
+    #sec-movieparadise .mp-qc{margin-top:12px;padding:14px;border-radius:12px;border:1px solid rgba(215,98,143,.35);background:rgba(139,63,161,.08)}
+    #sec-movieparadise .mp-qc-codewrap{display:flex;align-items:center;justify-content:center;gap:12px}
+    #sec-movieparadise .mp-qc-code{font-size:2em;font-weight:700;letter-spacing:.18em;padding:6px 0 6px .18em;color:#f08fb8;text-align:center;text-transform:uppercase;font-variant-numeric:tabular-nums}
+    #sec-movieparadise .mp-qc-copy{appearance:none;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;flex:0 0 auto;border:1px solid rgba(215,98,143,.35);background:rgba(215,98,143,.08);color:#f08fb8;transition:background .15s ease,border-color .15s ease,transform .12s ease}
+    #sec-movieparadise .mp-qc-copy:hover{background:rgba(215,98,143,.16);border-color:rgba(215,98,143,.6)}
+    #sec-movieparadise .mp-qc-copy:active{transform:scale(.94)}
+    #sec-movieparadise .mp-qc-copy.copied{background:rgba(215,98,143,.24);border-color:rgba(215,98,143,.75)}
+    #sec-movieparadise .mp-qc-copy svg{width:16px;height:16px;display:block}
+    #sec-movieparadise .mp-qc-meta{display:flex;justify-content:space-between;gap:12px;margin-top:6px}
+  </style>
+
+  <div class="head" data-toggle-section="sec-movieparadise">
+    <span class="chev"></span><strong>Movie Paradise</strong>
+  </div>
+
+  <div class="body">
+    <div class="cw-panel">
+      <div class="cw-meta-provider-panel active" data-provider="movieparadise">
+        <div class="cw-panel-head">
+          <div>
+            <div class="cw-panel-title">Movie Paradise</div>
+            <div class="muted">Connect your Movie Paradise account with a device code.</div>
+          </div>
+        </div>
+
+        <div class="cw-subtiles" style="margin-top:2px">
+          <button type="button" class="cw-subtile active" data-sub="auth">Authentication</button>
+        </div>
+
+        <div class="cw-subpanels">
+          <div class="cw-subpanel active" data-sub="auth">
+            <div class="cw-auth-journey" style="--cw-auth-c1:215,98,143;--cw-auth-c2:139,63,161;--cw-auth-logo:url('/assets/img/MOVIEPARADISE.png')">
+              <div class="cw-auth-journey-text">
+                <div class="cw-auth-journey-title">Connect to Movie Paradise</div>
+                <div class="cw-auth-journey-copy">Click Connect Movie Paradise and approve the code at movieparadise.app/oauth/device. No API keys are needed &mdash; CrossWatch ships its own Movie Paradise app id.</div>
+              </div>
+            </div>
+
+            <div id="movieparadise_device_panel">
+              <div id="movieparadise_qc_state" class="mp-qc hidden">
+                <div class="mp-qc-codewrap">
+                  <div class="mp-qc-code" id="movieparadise_qc_code">----&ndash;----</div>
+                  <button type="button" id="movieparadise_qc_copy" class="mp-qc-copy" title="Copy code" aria-label="Copy code">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                  </button>
+                </div>
+                <div class="sub" id="movieparadise_qc_help">Opening movieparadise.app/oauth/device &mdash; enter this code there and approve CrossWatch.</div>
+                <div class="mp-qc-meta">
+                  <span class="sub" id="movieparadise_qc_status">Waiting for approval&hellip;</span>
+                  <span class="sub" id="movieparadise_qc_timer"></span>
+                </div>
+              </div>
+            </div>
+
+            <div class="mp-actions">
+              <button id="movieparadise_device_start" class="btn" type="button">Connect Movie Paradise</button>
+              <button id="movieparadise_device_cancel" class="btn danger hidden" type="button">Cancel</button>
+              <button id="movieparadise_device_restart" class="btn hidden" type="button">Restart</button>
+              <button id="movieparadise_disconnect" class="btn danger" type="button">Delete</button>
+              <div id="movieparadise_msg" class="msg ok hidden" role="status" aria-live="polite"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+'''

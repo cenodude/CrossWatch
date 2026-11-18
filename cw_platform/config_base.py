@@ -465,6 +465,17 @@ DEFAULT_CFG: dict[str, Any] = {
         },
     },
 
+    "movieparadise": {
+        "auth_method": "device_code",
+        "access_token": "",
+        "refresh_token": "",
+        "token_type": "Bearer",
+        "scope": "",
+        "expires_at": 0,
+        "username": "",
+        "user_id": "",
+    },
+
     "bingebase": {
         "auth_method": "device_code",
         "access_token": "",
@@ -1028,6 +1039,7 @@ def redact_config(cfg: dict[str, Any]) -> dict[str, Any]:
         "myanimelist": {"access_token", "refresh_token"},
         "wetrakr": {"access_token", "refresh_token"},
         "punchplay": {"access_token", "refresh_token", "_pending_device"},
+        "movieparadise": {"access_token", "refresh_token", "_pending_device"},
         "bingebase": {"access_token", "webhook_url", "api_key", "_pending_device"},
         "flicklist": {"api_key", "access_token", "token", "_pending_device"},
         "nuvio": {"access_token", "refresh_token", "_pending_tv_login", "_pending_tv_caller"},
@@ -1166,6 +1178,7 @@ CONFIG_TOP_LEVEL_ORDER: tuple[str, ...] = (
     "publicmetadb",
     "wetrakr",
     "punchplay",
+    "movieparadise",
     "bingebase",
     "flicklist",
     "nuvio",
@@ -3153,6 +3166,7 @@ _ROTATING_TOKEN_EXPIRY: dict[str, str] = {
     "wetrakr": "expires_at",
     "nuvio": "expires_at",
     "punchplay": "expires_at",
+    "movieparadise": "expires_at",
 }
 _ROTATING_TOKEN_FIELDS: tuple[str, ...] = (
     "access_token",
