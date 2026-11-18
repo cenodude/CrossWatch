@@ -7,7 +7,7 @@
   const label = (v) => providerMeta().label?.(v) || String(v || "").toUpperCase();
   const logo = (v) => providerMeta().logoPath?.(v) || "";
   const plexRatingSinks = ["kitsu", "myanimelist", "crosswatch", "trakt", "simkl", "mdblist", "floppy", "punchplay", "flicklist", "wetrakr", "anilist", "scrob", "silo"];
-  const state = { root: null, overview: null, busy: false, panels: { watcherDefaults: false, ratings: false, webhookDefaults: false }, delBtn: null, delTimer: 0, regenBtn: null, regenTimer: 0, legacyConfirm: false, legacyTimer: 0, hybridDismissed: false };
+  const state = { root: null, overview: null, busy: false, panels: { watcherDefaults: false, ratings: false, webhookDefaults: false }, delBtn: null, delTimer: 0, regenBtn: null, regenTimer: 0, hybridDismissed: false };
 
   async function authSetupBlocked() {
     const boot = w.__cwAuthBootstrapState;
@@ -352,23 +352,9 @@
     `;
   }
 
-  function renderProviderGate(o) {
-    const srcOk = (o.eligible_sources || []).some((g) => (g.profiles || []).some((p) => p.configured));
-    const sinkOk = (o.destination_availability || []).some((g) => (g.profiles || []).some((p) => p.configured));
-    if (srcOk && sinkOk) return "";
-    const needServer = "a compatible media server (Plex, Emby or Jellyfin)";
-    const needTracker = "a compatible tracker (Trakt, SIMKL or MDBList)";
-    const both = !srcOk && !sinkOk;
-    const need = both ? `${needServer} and ${needTracker}` : (!srcOk ? needServer : needTracker);
-    return `<div class="sc2-inline-note is-warn"><span class="material-symbols-rounded">warning</span><span>The Scrobbler needs ${esc(need)}. Configure ${both ? "them" : "it"} in Connections to enable webhook and watcher routing.</span><button type="button" class="btn small" data-action="open-connections">Open Connections</button></div>`;
-  }
-
   function render() {
     const o = state.overview || {};
-    const gate = renderProviderGate(o);
     const hybrid = o.hybrid_warning && !state.hybridDismissed ? `<div class="sc2-inline-note is-warn sc2-dismissible-note"><span class="material-symbols-rounded">warning</span><span>Webhook and Watcher are both enabled. Do not route the same tracker through both sources.</span><button type="button" class="sc2-note-dismiss" data-action="dismiss-hybrid-warning" aria-label="Dismiss Scrobbler notice"><span class="material-symbols-rounded">close</span></button></div>` : "";
-    const legacyList = o.legacy_webhooks || [];
-    const legacy = legacyList.length ? `<button type="button" class="sc2-inline-note is-warn sc2-legacy-note" data-legacy-cleanup><span class="material-symbols-rounded">mop</span><span>${state.legacyConfirm ? "Click again to remove the old webhook endpoints from your config." : `Legacy webhook endpoints found (${esc(legacyList.join(", "))}). Click to clean them up but only after switching your media server to the new webhook URLs.`}</span></button>` : "";
     const routes = o.routes || [];
     const webhooks = o.webhooks || [];
     const hasEnabledRoute = routes.some((r) => r && r.enabled);
@@ -378,7 +364,7 @@
     const ratingsWebhook = hasEnabledPlexRoute ? renderRatingsWebhook(o) : "";
     const collapseRow = (watcherDefaults || ratingsWebhook) ? `<div class="sc2-collapse-row">${watcherDefaults}${ratingsWebhook}</div>` : "";
     const webhookDefaults = hasEnabledWebhook ? renderWebhookDefaults(o) : "";
-    state.root.innerHTML = `<div class="sc2-page">${renderHeader(o)}${gate}${renderSummary(o)}${hybrid}${legacy}${renderRoutes(o)}${collapseRow}${renderRuntime(o)}${renderWebhooks(o)}${webhookDefaults}</div>`;
+    state.root.innerHTML = `<div class="sc2-page">${renderHeader(o)}${renderSummary(o)}${hybrid}${renderRoutes(o)}${collapseRow}${renderRuntime(o)}${renderWebhooks(o)}${webhookDefaults}</div>`;
   }
 
   function renderAuthPending() {
@@ -595,28 +581,6 @@
         await autostartToggle(auto);
         return;
       }
-      const legacyBtn = e.target.closest("[data-legacy-cleanup]");
-      if (legacyBtn) {
-        e.preventDefault();
-        if (!state.legacyConfirm) {
-          state.legacyConfirm = true;
-          if (state.legacyTimer) clearTimeout(state.legacyTimer);
-          state.legacyTimer = setTimeout(() => { state.legacyConfirm = false; render(); }, 4200);
-          render();
-        } else {
-          if (state.legacyTimer) clearTimeout(state.legacyTimer);
-          state.legacyConfirm = false;
-          if (state.busy) return;
-          state.busy = true;
-          try {
-            const data = await j("/api/scrobbler/webhooks/cleanup-legacy", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
-            applyMutation(data);
-          } finally {
-            state.busy = false;
-          }
-        }
-        return;
-      }
       const collapse = e.target.closest("[data-collapse]");
       if (collapse) {
         e.preventDefault();
@@ -671,7 +635,6 @@
       if (!btn) return;
       const action = btn.getAttribute("data-action");
       if (action === "dismiss-hybrid-warning") { state.hybridDismissed = true; btn.closest(".sc2-dismissible-note")?.remove(); return; }
-      if (action === "open-connections") { try { w.cwSettingsSelect?.("providers"); } catch {} return; }
       if (action === "refresh-scrobbler") {
         if (btn.classList.contains("loading")) return;
         btn.classList.add("loading", "spin");
@@ -694,9 +657,6 @@
     state.root = opts.mountId ? d.getElementById(opts.mountId) : d.getElementById("scrobble-mount");
     if (!state.root) return;
     state.panels = { watcherDefaults: false, ratings: false, webhookDefaults: false };
-    state.legacyConfirm = false;
-    if (state.legacyTimer) clearTimeout(state.legacyTimer);
-    state.legacyTimer = 0;
     resetRegenConfirm();
     resetInlineDelete();
     if (!state.root.querySelector(".sc2-page")) {

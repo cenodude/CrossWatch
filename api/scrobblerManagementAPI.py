@@ -681,13 +681,6 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
             "endpoint_url": "" if managed else _global_plex_ratings_url(request, cfg),
         },
     }
-    sec = _dict(cfg.get("security"))
-    sec_ids = _dict(sec.get("webhook_ids"))
-    legacy_webhooks = (
-        []
-        if bool(sec.get("legacy_webhooks_removed"))
-        else [label for label, key in (("Plex", "plextrakt"), ("Jellyfin", "jellyfintrakt"), ("Emby", "embytrakt")) if str(sec_ids.get(key) or "").strip()]
-    )
     return {
         "ok": True,
         "source_state": global_settings,
@@ -698,7 +691,6 @@ def build_overview(cfg: dict[str, Any], request: Request) -> dict[str, Any]:
         "watcher_runtime": runtime,
         "summary": _summary(cfg, request, webhooks, routes, runtime),
         "hybrid_warning": bool(sources.get("webhook") and sources.get("watcher")),
-        "legacy_webhooks": legacy_webhooks,
     }
 
 
@@ -1059,32 +1051,6 @@ def api_profile_webhook_regenerate(request: Request, payload: dict[str, Any] = B
         return JSONResponse(_save_and_runtime(request, before, after), headers={"Cache-Control": "no-store"})
     except ValidationFailure as exc:
         return _validation_response(exc)
-
-
-@router.post("/webhooks/cleanup-legacy")
-def api_cleanup_legacy_webhooks(request: Request) -> JSONResponse:
-    before = load_config() or {}
-    after = _clone(before)
-    sec = after.setdefault("security", {})
-    ids = sec.setdefault("webhook_ids", {})
-    if isinstance(ids, dict):
-        for key in ("plextrakt", "jellyfintrakt", "embytrakt"):
-            ids.pop(key, None)
-        for key in [k for k in ids if str(k).startswith("profile:") and not _profile_key_exists(after, str(k))]:
-            ids.pop(key, None)
-    sec["legacy_webhooks_removed"] = True
-    return JSONResponse(_save_and_runtime(request, before, after), headers={"Cache-Control": "no-store"})
-
-
-def _profile_key_exists(cfg: Mapping[str, Any], key: str) -> bool:
-    parts = str(key).split(":")
-    if len(parts) != 3:
-        return True
-    _, provider, inst = parts
-    provider = provider.strip().lower()
-    if provider not in SOURCE_PROVIDERS:
-        return False
-    return normalize_instance_id(inst) in {normalize_instance_id(i) for i in _instances(cfg, provider)}
 
 
 @router.post("/routes")

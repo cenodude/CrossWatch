@@ -95,7 +95,6 @@ def test_only_scoped_scrobbler_and_schedule_endpoints_open_to_managed_users() ->
     assert non_admin_api_allowed("/api/scrobbler/webhooks/profile", "POST")
     assert non_admin_api_allowed("/api/scheduling/profiles/" + BOB, "POST")
     assert not non_admin_api_allowed("/api/scrobbler/settings", "POST")
-    assert not non_admin_api_allowed("/api/scrobbler/webhooks/cleanup-legacy", "POST")
     assert not non_admin_api_allowed("/api/scheduling", "POST")
     assert not non_admin_api_allowed("/api/config", "POST")
 
