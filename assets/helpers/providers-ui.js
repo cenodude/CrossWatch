@@ -47,7 +47,7 @@
 
   const AUTH_GROUPS = Object.freeze([
     { id: "sec-auth-media", title: "Media servers", keys: ["PLEX", "JELLYFIN", "EMBY", "SILO", "TOFA"] },
-    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "MYANIMELIST", "KITSU", "WETRAKR", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "FLOPPY", "SCROB"] },
+    { id: "sec-auth-trackers", title: "Trackers", keys: ["CROSSWATCH", "TRAKT", "SIMKL", "TMDB", "MDBLIST", "PUBLICMETADB", "ANILIST", "MYANIMELIST", "KITSU", "WETRAKR", "PUNCHPLAY", "BINGEBASE", "FLICKLIST", "MOVIEPARADISE", "FLOPPY", "SCROB"] },
     { id: "sec-auth-clients", title: "Media clients", keys: ["NUVIO", "KODI", "STREMIO"] },
     { id: "sec-auth-others", title: "Others", keys: ["TAUTULLI", "TRACEARR"] },
   ]);
@@ -286,6 +286,7 @@
     if (p === "myanimelist") return hasConfiguredValue(b.access_token) && !b.reauth_required;
     if (p === "wetrakr") return hasConfiguredValue(b.access_token) && !b.reauth_required;
     if (p === "punchplay") return hasConfiguredValue(b.access_token);
+    if (p === "movieparadise") return hasConfiguredValue(b.access_token) && b.auth_error !== "reconnect_required";
     if (p === "bingebase") return hasConfiguredValue(b.access_token) || hasConfiguredValue(b.webhook_url);
     if (p === "flicklist") return hasConfiguredValue(b.api_key) || hasConfiguredValue(b.access_token) || hasConfiguredValue(b.token);
     if (p === "floppy") return hasConfiguredValue(b.server_url || b.server) && hasConfiguredValue(b.api_token || b.token);
@@ -872,6 +873,16 @@
       order: ["#punchplay_device_panel", ".pp-actions"],
       code: ["#punchplay_device_panel"],
       actions: [{ row: ".pp-actions", status: "#punchplay_msg", buttons: "#punchplay_device_start, #punchplay_device_cancel, #punchplay_device_restart" }]
+    },
+    MOVIEPARADISE: {
+      provider: "movieparadise", logo: "MOVIEPARADISE", help: window.CW.HelpLinks.url("movieparadise"), deleteSelector: "#movieparadise_disconnect",
+      tabs: { auth: ["lock", "Authentication", "Connect with a device code"] },
+      copy: { auth: ["Movie Paradise Authentication", "Connect Movie Paradise with a device code. CrossWatch ships its own Movie Paradise app id, so no keys are needed."] },
+      journey: ["Connect to Movie Paradise", "Click Connect Movie Paradise and approve the code at movieparadise.app/oauth/device. No API keys are needed - CrossWatch ships its own Movie Paradise app id.", "215,98,143", "139,63,161", "MOVIEPARADISE"],
+      steps: [["1", "Start device login", "CrossWatch shows a short link code"], ["2", "Approve access", "Enter the code at movieparadise.app/oauth/device"], ["3", "Validate account", "CrossWatch confirms Movie Paradise access"]],
+      order: ["#movieparadise_device_panel", ".mp-actions"],
+      code: ["#movieparadise_device_panel"],
+      actions: [{ row: ".mp-actions", status: "#movieparadise_msg", buttons: "#movieparadise_device_start, #movieparadise_device_cancel, #movieparadise_device_restart" }]
     },
     BINGEBASE: {
       provider: "bingebase", logo: "BINGEBASE", help: window.CW.HelpLinks.url("bingebase"), deleteSelector: "#bingebase_disconnect", allowSaveWithoutConnection: true,

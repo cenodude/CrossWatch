@@ -48,6 +48,7 @@
     { key: "MYANIMELIST", paths: [["myanimelist"]], keys: ["access_token"] },
     { key: "WETRAKR", paths: [["wetrakr"]], keys: ["access_token"] },
     { key: "PUNCHPLAY", paths: [["punchplay"], ["auth", "punchplay"]], keys: ["access_token"] },
+    { key: "MOVIEPARADISE", paths: [["movieparadise"], ["auth", "movieparadise"]], keys: ["access_token"] },
     { key: "BINGEBASE", paths: [["bingebase"], ["auth", "bingebase"]], keys: ["access_token", "webhook_url"] },
     { key: "FLICKLIST", paths: [["flicklist"], ["auth", "flicklist"]], keys: ["api_key", "access_token", "token"] },
     { key: "NUVIO", paths: [["nuvio"], ["auth", "nuvio"]], keys: ["access_token", "refresh_token"] },
@@ -678,6 +679,8 @@
       tag = `<span class="tag vip" title="Trakt ${label}">${svgCheck()}${label}</span>`;
     } else if (providerKey === "WETRAKR" && (info?.vip || info?.plan === "vip")) {
       tag = `<span class="tag vip" title="WeTrakr VIP">${svgCrown()}VIP</span>`;
+    } else if (providerKey === "MOVIEPARADISE" && (info?.vip || info?.plan === "premium")) {
+      tag = `<span class="tag vip" title="Movie Paradise Premium">${svgCrown()}Premium</span>`;
     }
 
     const tips = [];
@@ -690,6 +693,11 @@
       if (info.vip || info.plan === "vip") tips.push("Plan: VIP");
       else if (info.plan === "free") tips.push("Plan: Free");
       tips.push(...(META.dailyQuotaDetails?.(info) || []));
+    }
+    if (providerKey === "MOVIEPARADISE" && info && typeof info === "object") {
+      if (info.username) tips.push(`Account: ${info.username}`);
+      if (info.vip || info.plan === "premium") tips.push("Plan: Premium");
+      else if (info.plan === "free") tips.push("Plan: Free");
     }
     if (providerKey === "TRAKT" && info && typeof info === "object") {
       const limits = info.limits || {};

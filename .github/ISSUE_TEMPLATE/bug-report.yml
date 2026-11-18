@@ -61,6 +61,7 @@ body:
         - label: Jellyfin
         - label: Kodi
         - label: MDBList
+        - label: Movie Paradise
         - label: Nuvio
         - label: Plex
         - label: PublicMetaDB

@@ -82,6 +82,12 @@ ENDPOINTS: dict[str, Endpoints] = {
         cancel="/api/flicklist/device/cancel",
         disconnect="/api/flicklist/disconnect",
     ),
+    "MOVIEPARADISE": Endpoints(
+        start="/api/movieparadise/device/start",
+        poll="/api/movieparadise/device/poll",
+        cancel="/api/movieparadise/device/cancel",
+        disconnect="/api/movieparadise/disconnect",
+    ),
     "NUVIO": Endpoints(
         start="/api/nuvio/device/start",
         poll="/api/nuvio/device/poll",

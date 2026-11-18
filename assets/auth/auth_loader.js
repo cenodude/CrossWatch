@@ -27,6 +27,7 @@
     punchplay: "/assets/auth/auth.punchplay.js",
     bingebase: "/assets/auth/auth.bingebase.js",
     flicklist: "/assets/auth/auth.flicklist.js",
+    movieparadise: "/assets/auth/auth.movieparadise.js",
     scrob: "/assets/auth/auth.scrob.js",
   };
 
@@ -55,6 +56,7 @@
     "sec-punchplay": "punchplay",
     "sec-bingebase": "bingebase",
     "sec-flicklist": "flicklist",
+    "sec-movieparadise": "movieparadise",
     "sec-scrob": "scrob",
   };
 

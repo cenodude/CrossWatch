@@ -18,6 +18,7 @@ PROVIDER_BLOCKS: dict[str, dict[str, Any]] = {
     "floppy": {"server_url": "http://floppy:8080", "api_token": "T"},
     "kodi": {"server": "http://kodi:8080", "connection_verified": True},
     "mdblist": {"api_key": "K"},
+    "movieparadise": {"access_token": "T", "refresh_token": "R"},
     "nuvio": {"access_token": "T", "refresh_token": "R", "profile_id": 2},
     "publicmetadb": {"api_key": "K"},
     "punchplay": {"access_token": "T"},

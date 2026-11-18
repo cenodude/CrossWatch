@@ -22,6 +22,7 @@
     punchplay: "crosswatch/settings/connections/trackers/punchplay",
     bingebase: "crosswatch/settings/connections/trackers/bingebase",
     flicklist: "crosswatch/settings/connections/trackers/flicklist",
+    movieparadise: "crosswatch/settings/connections/trackers/movieparadise",
     floppy: "crosswatch/settings/connections/trackers/floppy",
     scrob: "crosswatch/settings/connections/trackers/scrob",
     crosswatch: "crosswatch/settings/connections/trackers/crosswatch",

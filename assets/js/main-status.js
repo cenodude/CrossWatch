@@ -345,6 +345,12 @@
         lines.push(...(meta.dailyQuotaDetails?.(data) || []));
         return { vip: premium, detail: lines.join("\n") };
       }
+      case "MOVIEPARADISE": {
+        const plan = txt(data?.plan).toLowerCase();
+        const vip = plan === "premium" || !!data?.vip;
+        const username = txt(data?.username);
+        return { vip, detail: [username ? `Account: ${username}` : "", vip ? "Plan: Premium" : plan === "free" ? "Plan: Free" : ""].filter(Boolean).join("\n") };
+      }
       case "EMBY":
         return { vip: !!data?.premiere, detail: data?.premiere ? "Plan: Premiere" : "" };
       case "MDBLIST": {

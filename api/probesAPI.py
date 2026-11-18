@@ -95,6 +95,7 @@ PROVIDERS: tuple[str, ...] = (
     "myanimelist",
     "wetrakr",
     "punchplay",
+    "movieparadise",
     "bingebase",
     "flicklist",
     "scrob",
@@ -233,7 +234,7 @@ def _account_fetch(provider: str, cfg: Mapping[str, Any], fetch: Callable, *, re
     return cache[key]
 
 
-def _authenticated_account(provider: str, cfg: dict[str, Any], url: str) -> tuple[int, str]:
+def _authenticated_account(provider: str, cfg: dict[str, Any], url: str, *, shared: bool = True) -> tuple[int, str]:
     def fetch():
         try:
             hint = cfg.get("_cw_probe") or {}
@@ -247,7 +248,7 @@ def _authenticated_account(provider: str, cfg: dict[str, Any], url: str) -> tupl
         except Exception as exc:
             _set_http_error(str(exc))
             return 0, ""
-    return _account_fetch(provider, cfg, fetch)
+    return _account_fetch(provider, cfg, fetch) if shared else fetch()
 
 
 def _set_http_error(msg: str) -> None:
@@ -296,6 +297,7 @@ PROBE_CFG_KEY: dict[str, str] = {
     "MYANIMELIST": "myanimelist",
     "WETRAKR": "wetrakr",
     "PUNCHPLAY": "punchplay",
+    "MOVIEPARADISE": "movieparadise",
     "BINGEBASE": "bingebase",
     "FLICKLIST": "flicklist",
     "SCROB": "scrob",
@@ -479,6 +481,13 @@ def _probe_key(provider_id: str, cfg: Mapping[str, Any]) -> str:
         tok = str((pp.get("access_token") or "")).strip()
         exp = str(pp.get("expires_at") or "0")
         return f"punchplay|tok:{_secret_cache_tag(tok)}|exp:{exp}" if tok else "punchplay|unconfigured"
+
+    if p == "movieparadise":
+        mp = cfg.get("movieparadise") or {}
+        tok = str((mp.get("access_token") or "")).strip()
+        exp = str(mp.get("expires_at") or "0")
+        reauth = str(mp.get("auth_error") or "")
+        return f"movieparadise|tok:{_secret_cache_tag(tok)}|exp:{exp}|err:{reauth}" if tok else "movieparadise|unconfigured"
 
     if p == "bingebase":
         bb = cfg.get("bingebase") or {}
@@ -1792,6 +1801,45 @@ def _probe_punchplay_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -
     return ok, rsn
 
 
+@_persistent_probe("movieparadise")
+def _probe_movieparadise_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
+    key = _probe_key("movieparadise", cfg)
+    bust_ts = _consume_bust("movieparadise")
+    now = time.time()
+    cached = PROBE_DETAIL_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts):
+        return cached[1], cached[2]
+
+    from providers.auth import _auth_MOVIEPARADISE as movieparadise
+
+    p: Mapping[str, Any] = (cfg.get("movieparadise") or {}) if isinstance(cfg.get("movieparadise"), Mapping) else {}
+    if not movieparadise.is_configured(p):
+        rsn = "Movie Paradise: missing authentication"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+    if movieparadise.needs_reconnect(p):
+        rsn = "Movie Paradise: reconnect required"
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    code, body = _authenticated_account("movieparadise", cfg, movieparadise.ME_URL)
+
+    if code != 200:
+        rsn = "Movie Paradise: reconnect required" if code == 401 else _reason_http(code, "Movie Paradise")
+        with _CACHE_LOCK:
+            PROBE_DETAIL_CACHE[key] = (now, False, rsn)
+        return False, rsn
+
+    j = _json_loads(body) or {}
+    ok = bool(isinstance(j, dict) and j.get("id") and j.get("username"))
+    rsn = "" if ok else "Movie Paradise: invalid response"
+    with _CACHE_LOCK:
+        PROBE_DETAIL_CACHE[key] = (now, ok, rsn)
+    return ok, rsn
+
+
 @_persistent_probe("bingebase")
 def _probe_bingebase_detail(cfg: dict[str, Any], max_age_sec: int = PROBE_TTL) -> tuple[bool, str]:
     key = _probe_key("bingebase", cfg)
@@ -2170,6 +2218,49 @@ def punchplay_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) ->
     return out
 
 
+@_persistent_userinfo("movieparadise")
+def movieparadise_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
+    key = _probe_key("movieparadise", cfg)
+    bust_ts = _consume_bust("movieparadise")
+    now = time.time()
+    cached = _USERINFO_CACHE.get(key)
+    if cached and (now - cached[0]) < max_age_sec and (not bust_ts or cached[0] >= bust_ts) and isinstance(cached[1], dict):
+        return cached[1]
+
+    from providers.auth import _auth_MOVIEPARADISE as movieparadise
+
+    mp = (cfg.get("movieparadise") or cfg.get("MOVIEPARADISE") or {}) or {}
+    if not movieparadise.is_configured(mp) or movieparadise.needs_reconnect(mp):
+        with _CACHE_LOCK:
+            _USERINFO_CACHE[key] = (now, {})
+        return {}
+
+    code, body = _authenticated_account("movieparadise", cfg, movieparadise.ME_URL)
+
+    out: dict[str, Any] = {}
+    if code == 200:
+        j = _json_loads(body) or {}
+        if isinstance(j, dict):
+            cred = j.get("credential") if isinstance(j.get("credential"), Mapping) else {}
+            scopes = (cred or {}).get("scopes")
+            out = {
+                "username": j.get("username"),
+                "user_id": j.get("id"),
+                "scopes": list(scopes) if isinstance(scopes, (list, tuple)) else [],
+            }
+            caps_code, caps_body = _authenticated_account("movieparadise", cfg, movieparadise.CAPABILITIES_URL, shared=False)
+            caps = _json_loads(caps_body) if caps_code == 200 else None
+            limits = caps.get("limits") if isinstance(caps, dict) and isinstance(caps.get("limits"), Mapping) else {}
+            tier = str((limits or {}).get("tier") or "").strip().lower()
+            if tier:
+                out["plan"] = tier
+                out["vip"] = tier == "premium"
+
+    with _CACHE_LOCK:
+        _USERINFO_CACHE[key] = (now, out)
+    return out
+
+
 @_persistent_userinfo("bingebase")
 def bingebase_user_info(cfg: dict[str, Any], max_age_sec: int = USERINFO_TTL) -> dict[str, Any]:
     key = _probe_key("bingebase", cfg)
@@ -2527,6 +2618,9 @@ def _prov_configured(cfg: dict[str, Any], name: str, instance_id: Any = "default
     if ck == "punchplay":
         return bool(str(blk.get("access_token") or "").strip())
 
+    if ck == "movieparadise":
+        return _provider_auth().is_configured("movieparadise", blk)
+
     if ck == "bingebase":
         return bool(str(blk.get("access_token") or "").strip() or str(blk.get("webhook_url") or "").strip())
 
@@ -2628,6 +2722,7 @@ DETAIL_PROBES: dict[str, Callable[..., tuple[bool, str]]] = {
     "MYANIMELIST": _probe_myanimelist_detail,
     "WETRAKR": _probe_wetrakr_detail,
     "PUNCHPLAY": _probe_punchplay_detail,
+    "MOVIEPARADISE": _probe_movieparadise_detail,
     "BINGEBASE": _probe_bingebase_detail,
     "FLICKLIST": _probe_flicklist_detail,
     "SCROB": _probe_scrob_detail,
@@ -2643,6 +2738,7 @@ USERINFO_FNS: dict[str, Callable[..., dict[str, Any]]] = {
     "MYANIMELIST": myanimelist_user_info,
     "WETRAKR": wetrakr_user_info,
     "PUNCHPLAY": punchplay_user_info,
+    "MOVIEPARADISE": movieparadise_user_info,
     "BINGEBASE": bingebase_user_info,
     "FLICKLIST": flicklist_user_info,
     "SCROB": scrob_user_info,
@@ -2959,6 +3055,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             myanimelist_ok, myanimelist_reason, cfg_myanimelist = _provider_tuple("MYANIMELIST")
             wetrakr_ok, wetrakr_reason, cfg_wetrakr = _provider_tuple("WETRAKR")
             punchplay_ok, punchplay_reason, cfg_punchplay = _provider_tuple("PUNCHPLAY")
+            movieparadise_ok, movieparadise_reason, cfg_movieparadise = _provider_tuple("MOVIEPARADISE")
             bingebase_ok, bingebase_reason, cfg_bingebase = _provider_tuple("BINGEBASE")
             flicklist_ok, flicklist_reason, cfg_flicklist = _provider_tuple("FLICKLIST")
             scrob_ok, scrob_reason, cfg_scrob = _provider_tuple("SCROB")
@@ -2988,6 +3085,8 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 userinfo_jobs["WETRAKR"] = (wetrakr_user_info, cfg_wetrakr)
             if punchplay_ok:
                 userinfo_jobs["PUNCHPLAY"] = (punchplay_user_info, cfg_punchplay)
+            if movieparadise_ok:
+                userinfo_jobs["MOVIEPARADISE"] = (movieparadise_user_info, cfg_movieparadise)
             if bingebase_ok:
                 userinfo_jobs["BINGEBASE"] = (bingebase_user_info, cfg_bingebase)
             if flicklist_ok:
@@ -3018,6 +3117,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
             info_mdbl = userinfo.get("MDBLIST", {})
             info_bingebase = userinfo.get("BINGEBASE", {})
             info_flicklist = userinfo.get("FLICKLIST", {})
+            info_movieparadise = userinfo.get("MOVIEPARADISE", {})
 
             trakt_block: dict[str, Any] = {"connected": trakt_ok}
             if not trakt_ok:
@@ -3371,6 +3471,19 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                     "rep_instance": inst_sum.get("rep"),
                 }
 
+            if "MOVIEPARADISE" in active_providers:
+                inst_map, inst_sum = _instances_payload("MOVIEPARADISE")
+                providers_out["MOVIEPARADISE"] = {
+                    "connected": movieparadise_ok,
+                    **({} if movieparadise_ok else {"reason": movieparadise_reason}),
+                    **({"username": info_movieparadise.get("username")} if info_movieparadise.get("username") else {}),
+                    **({"user_id": info_movieparadise.get("user_id")} if info_movieparadise.get("user_id") else {}),
+                    **({"plan": info_movieparadise.get("plan"), "vip": bool(info_movieparadise.get("vip"))} if info_movieparadise.get("plan") else {}),
+                    "instances": inst_map,
+                    "instances_summary": inst_sum,
+                    "rep_instance": inst_sum.get("rep"),
+                }
+
             if "BINGEBASE" in active_providers:
                 inst_map, inst_sum = _instances_payload("BINGEBASE")
                 providers_out["BINGEBASE"] = {
@@ -3473,6 +3586,7 @@ def register_probes(app: FastAPI, load_config_fn: Callable[[], dict[str, Any]]) 
                 "myanimelist_connected": myanimelist_ok,
                 "wetrakr_connected": wetrakr_ok,
                 "punchplay_connected": punchplay_ok,
+                "movieparadise_connected": movieparadise_ok,
                 "bingebase_connected": bingebase_ok,
                 "flicklist_connected": flicklist_ok,
                 "scrob_connected": scrob_ok,
