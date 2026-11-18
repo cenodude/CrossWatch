@@ -341,16 +341,7 @@
       setStatus(false, friendlyError("invalid_url"));
       return;
     }
-    let win = null;
-    try { win = window.open("about:blank", "_blank"); } catch {}
-    try {
-      win.document.write(
-        '<!doctype html><meta charset="utf-8"><title>CrossWatch -> Tofa</title>' +
-        '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif">' +
-        '<div style="font-size:14px;opacity:.7">Contacting Tofa...</div></body>'
-      );
-      win.document.close();
-    } catch {}
+    const win = Shared.openWaitWindow("Tofa", "Contacting Tofa...", "TOFA");
     const gen = ++loginGen;
     const startPollUrl = api("/api/tofa/device/poll");
     try {
@@ -369,25 +360,7 @@
       setPolling("Waiting for approval...");
       const url = txt(data.verification_uri_complete || data.verification_uri);
       if (url && win && !win.closed) {
-        const code = txt(data.user_code).replace(/[^A-Za-z0-9-]/g, "");
-        try {
-          win.document.open();
-          win.document.write(
-            '<!doctype html><meta charset="utf-8"><title>CrossWatch -> Tofa</title>' +
-            '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
-            '<div><div style="font-size:14px;opacity:.7;margin-bottom:12px">Opening the Tofa approval page...</div>' +
-            (code ? '<div style="font-size:36px;font-weight:700;letter-spacing:.18em;color:#7cf0dc">' + code + '</div>' : '') +
-            '<div style="font-size:12px;opacity:.6;margin-top:12px">Redirecting in a moment...</div></div></body>'
-          );
-          win.document.close();
-        } catch {}
-        setTimeout(() => {
-          try {
-            if (!win || win.closed) return;
-            if (gen !== loginGen) win.close();
-            else win.location.href = url;
-          } catch {}
-        }, 3000);
+        Shared.showWaitCode(win, { key: "TOFA", label: "Tofa", code: txt(data.user_code), url, shouldContinue: () => gen === loginGen });
       } else if (url) {
         try { window.open(url, "_blank", "noopener"); } catch {}
         note("Popup blocked - open the Tofa link page.");

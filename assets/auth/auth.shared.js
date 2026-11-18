@@ -264,22 +264,118 @@
     };
   }
 
-  function openWaitWindow(label, message) {
+  const escWait = (value) => String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  const scriptJSON = (value) => JSON.stringify(value).replace(/</g, "\\u003c");
+
+  function parseRgb(value) {
+    const parts = String(value || "").split(",").map((n) => Math.max(0, Math.min(255, Number(n))));
+    return parts.length === 3 && parts.every((n) => Number.isFinite(n)) ? parts : null;
+  }
+
+  function rgbLum(rgb) {
+    return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+  }
+
+  function mixWhite(rgb, amount) {
+    return rgb.map((n) => Math.round(n + (255 - n) * amount));
+  }
+
+  function waitBrand(label, key) {
+    const meta = w.CW?.ProviderMeta;
+    const info = meta?.brandInfo ? meta.brandInfo(key || label) : null;
+    const providerKey = txt(info?.key || key).toUpperCase();
+    const pair = w.CW?.connectionBrand?.(providerKey) || null;
+    const fallback = parseRgb(info?.tone?.rgb) || [124, 92, 255];
+    let c1 = parseRgb(pair?.c1) || fallback;
+    let c2 = parseRgb(pair?.c2) || c1;
+    if (Math.abs(rgbLum(c1) - rgbLum(c2)) > 0.5) c2 = c1;
+    const icon = txt(info?.icon);
+    return {
+      label: txt(label) || txt(info?.label) || "the provider",
+      logo: icon ? (/^https?:/i.test(icon) ? icon : location.origin + icon) : "",
+      c1,
+      c2,
+    };
+  }
+
+  function waitPageHtml(brand, opts) {
+    const rgb = (c) => "rgb(" + c.join(",") + ")";
+    const light = rgbLum(brand.c1) > 0.62 && rgbLum(brand.c2) > 0.62;
+    const t1 = rgbLum(brand.c1) < 0.3 ? mixWhite(brand.c1, 0.55) : mixWhite(brand.c1, 0.3);
+    const t2 = rgbLum(brand.c2) < 0.3 ? mixWhite(brand.c2, 0.55) : mixWhite(brand.c2, 0.3);
+    const code = txt(opts.code).replace(/[^A-Za-z0-9-]/g, "");
+    const url = txt(opts.url);
+    const seconds = Math.max(1, Number(opts.seconds) || (code ? 6 : 3));
+    const heading = txt(opts.message) || (code ? "Enter this code on the " + brand.label + " approval page" : url ? "Opening the " + brand.label + " approval page" : "Contacting " + brand.label + "...");
+    const logo = brand.logo ? '<img src="' + escWait(brand.logo) + '" alt="" style="display:block;margin:0 auto 18px;max-width:150px;max-height:72px;width:auto;height:auto">' : "";
+    const codeHtml = code
+      ? '<div style="font-size:38px;font-weight:800;letter-spacing:.18em;padding-left:.18em;word-break:break-all;background:linear-gradient(135deg,' + rgb(t1) + ',' + rgb(t2) + ');-webkit-background-clip:text;background-clip:text;color:transparent">' + escWait(code) + '</div>' +
+        '<div id="cw-wait-state" style="font-size:12px;opacity:.65;margin-top:10px;min-height:16px"></div>'
+      : "";
+    const action = url
+      ? '<button id="cw-wait-go" type="button" style="margin-top:18px;cursor:pointer;border:0;border-radius:10px;padding:11px 18px;font:600 14px system-ui,sans-serif;color:' + (light ? "#0b0d12" : "#fff") + ';background:linear-gradient(135deg,' + rgb(brand.c1) + ',' + rgb(brand.c2) + ');box-shadow:0 0 16px rgba(' + brand.c2.join(",") + ',.4)">' + (code ? "Copy code and continue" : "Continue") + '</button>' +
+        '<div style="font-size:12px;opacity:.55;margin-top:14px">Continuing to ' + escWait(brand.label) + ' in <span id="cw-wait-left">' + seconds + '</span>s</div>'
+      : '<div style="font-size:12px;opacity:.5;margin-top:14px">This page continues on its own</div>';
+    const script = url
+      ? '<script>(function(){var code=' + scriptJSON(code) + ',url=' + scriptJSON(url) + ',left=' + seconds + ';' +
+        'function state(t){var s=document.getElementById("cw-wait-state");if(s)s.textContent=t}' +
+        'function legacy(){if(!code)return false;try{var t=document.createElement("textarea");t.value=code;t.setAttribute("readonly","");t.style.position="fixed";t.style.top="-9999px";document.body.appendChild(t);t.select();var ok=document.execCommand("copy");t.remove();return ok}catch(e){return false}}' +
+        'try{if(code&&navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(code).then(function(){state("Code copied - paste it on the next page")},function(){})}}catch(e){}' +
+        'document.getElementById("cw-wait-go").addEventListener("click",function(){if(legacy())state("Code copied");window.__cwWaitDone=true;location.href=url});' +
+        'var iv=setInterval(function(){left-=1;var n=document.getElementById("cw-wait-left");if(n)n.textContent=String(Math.max(0,left));if(left<=0)clearInterval(iv)},1000);' +
+        '})();<\/script>'
+      : "";
+    return '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CrossWatch - ' + escWait(brand.label) + '</title>' +
+      '<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#09090b;color:#f4f4f5;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
+      '<div style="padding:24px;max-width:440px">' + logo +
+      '<div style="font-size:14px;opacity:.75;margin-bottom:14px">' + escWait(heading) + '</div>' +
+      codeHtml + action + '</div>' + script + '</body>';
+  }
+
+  function writeWaitPage(win, opts) {
+    if (!win || win.closed) return false;
+    try {
+      win.document.open();
+      win.document.write(waitPageHtml(waitBrand(opts?.label, opts?.key), opts || {}));
+      win.document.close();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function openWaitWindow(label, message, key) {
     let win = null;
     try { win = w.open("about:blank", "_blank"); } catch {}
     if (!win) return null;
     try { win.opener = null; } catch {}
-    const safe = (value) => String(value || "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
-    try {
-      win.document.open();
-      win.document.write(
-        '<!doctype html><meta charset="utf-8"><title>CrossWatch -> ' + safe(label) + '</title>' +
-        '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
-        '<div style="font-size:14px;opacity:.7">' + safe(message || ("Contacting " + label + "...")) + '</div></body>'
-      );
-      win.document.close();
-    } catch {}
+    writeWaitPage(win, { label, key, message });
     return win;
+  }
+
+  function showWaitCode(win, opts) {
+    const o = opts || {};
+    const url = txt(o.url);
+    if (!win || win.closed || !url) return false;
+    if (!writeWaitPage(win, o)) {
+      try { win.location.href = url; } catch {}
+      return true;
+    }
+    const seconds = Math.max(1, Number(o.seconds) || (txt(o.code) ? 6 : 3));
+    setTimeout(() => {
+      try {
+        if (!win || win.closed || win.__cwWaitDone) return;
+      } catch {
+        return;
+      }
+      if (typeof o.shouldContinue === "function" && !o.shouldContinue()) {
+        try { win.close(); } catch {}
+        return;
+      }
+      if (typeof o.navigate === "function") { o.navigate(win, url); return; }
+      try { win.location.href = url; } catch {}
+    }, seconds * 1000);
+    return true;
   }
 
   function closeWaitWindow(win) {
@@ -916,6 +1012,7 @@
     setConnectLocked,
     captureAuthCompletion,
     openWaitWindow,
+    showWaitCode,
     closeWaitWindow,
     mediaAuthGuide,
     setMediaAuthStep,

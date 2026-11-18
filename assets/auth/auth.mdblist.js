@@ -349,8 +349,7 @@
     const startBtn = el("mdblist_device_start");
     if (startBtn) { startBtn.disabled = true; startBtn.classList.add("busy"); }
 
-    let win = null;
-    try { win = window.open("about:blank", "_blank"); } catch (_) {}
+    const win = Shared.openWaitWindow("MDBList", "Requesting an MDBList code...", "MDBLIST");
     try {
       methodOverride = "device_code";
       const r = await fetchJSON(mdblApi("/api/mdblist/device/start"), {
@@ -375,18 +374,7 @@
       setConn(false, "Waiting for approval");
       startPoll(Math.max(2, Number(data.interval || 5)));
 
-      if (win && !win.closed) {
-        try {
-          win.document.write(
-            '<!doctype html><meta charset="utf-8"><title>CrossWatch → MDBList</title>' +
-            '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
-            '<div><div style="font-size:14px;opacity:.7;margin-bottom:12px">Opening the MDBList approval page…</div>' +
-            '<div style="font-size:36px;font-weight:700;letter-spacing:.22em;color:#8ff0c2">' + code + '</div>' +
-            '<div style="font-size:12px;opacity:.6;margin-top:12px">Redirecting in a moment…</div></div></body>'
-          );
-        } catch (_) {}
-        setTimeout(function () { try { if (win && !win.closed) win.location.href = url; } catch (_) {} }, 3000);
-      } else {
+      if (!Shared.showWaitCode(win, { key: "MDBLIST", label: "MDBList", code, url })) {
         note("Popup blocked - open the MDBList page and enter the code.");
       }
     } catch (e) {

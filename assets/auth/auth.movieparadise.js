@@ -125,33 +125,6 @@
     mpQcCopyRevert = setTimeout(function () { btn.classList.remove("copied"); btn.innerHTML = MP_ICON_COPY; btn.title = "Copy code"; }, 1400);
   }
 
-  function waitingScreen(win, code, url) {
-    const logo = location.origin + "/assets/img/MOVIEPARADISE.png";
-    const safeUrl = JSON.stringify(String(url));
-    const safeCode = JSON.stringify(code);
-    win.document.write(
-      '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CrossWatch - Movie Paradise</title>' +
-      '<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#09090b;color:#f4f4f5;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
-      '<div style="padding:24px;max-width:420px">' +
-      '<img src="' + logo + '" alt="" style="width:64px;height:auto;margin-bottom:18px">' +
-      '<div style="font-size:14px;opacity:.75;margin-bottom:14px">Enter this code on the Movie Paradise approval page</div>' +
-      '<div style="font-size:38px;font-weight:800;letter-spacing:.18em;padding-left:.18em;background:linear-gradient(135deg,#f08fb8,#b56fd0);-webkit-background-clip:text;background-clip:text;color:transparent">' + code + '</div>' +
-      '<div id="mp-copy-state" style="font-size:12px;opacity:.65;margin-top:10px;min-height:16px"></div>' +
-      '<button id="mp-go" type="button" style="margin-top:18px;cursor:pointer;border:0;border-radius:10px;padding:11px 18px;font:600 14px system-ui,sans-serif;color:#fff;background:linear-gradient(135deg,#d7628f,#8b3fa1);box-shadow:0 0 16px rgba(139,63,161,.4)">Copy code and continue</button>' +
-      '<div style="font-size:12px;opacity:.55;margin-top:14px">Continuing to Movie Paradise in <span id="mp-left">6</span>s</div>' +
-      '</div>' +
-      '<script>(function(){var code=' + safeCode + ',url=' + safeUrl + ',left=6,done=false;' +
-      'function state(t){var s=document.getElementById("mp-copy-state");if(s)s.textContent=t}' +
-      'function legacy(){try{var t=document.createElement("textarea");t.value=code;t.setAttribute("readonly","");t.style.position="fixed";t.style.top="-9999px";document.body.appendChild(t);t.select();var ok=document.execCommand("copy");t.remove();return ok}catch(e){return false}}' +
-      'function go(){if(done)return;done=true;location.href=url}' +
-      'try{if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(code).then(function(){state("Code copied - paste it on the next page")},function(){})}}catch(e){}' +
-      'document.getElementById("mp-go").addEventListener("click",function(){if(legacy())state("Code copied");go()});' +
-      'var iv=setInterval(function(){left-=1;var n=document.getElementById("mp-left");if(n)n.textContent=String(Math.max(0,left));if(left<=0){clearInterval(iv);go()}},1000);' +
-      '})();<\/script></body>'
-    );
-    win.document.close();
-  }
-
   function ensureMovieParadiseInstanceUI() {
     profile?.ensureUI(() => {
       try { mpQcStop(); } catch (_) {}
@@ -242,8 +215,7 @@
     const startBtn = el("movieparadise_device_start");
     if (startBtn) { startBtn.disabled = true; startBtn.classList.add("busy"); }
 
-    let win = null;
-    try { win = window.open("about:blank", "_blank"); } catch (_) {}
+    const win = Shared.openWaitWindow("Movie Paradise", "Requesting a Movie Paradise code...", "MOVIEPARADISE");
     try {
       const r = await Shared.fetchJSON(mpApi("/api/movieparadise/device/start"), {
         method: "POST",
@@ -267,10 +239,7 @@
       setConn(false, "Waiting for approval");
       startPoll(data.interval);
 
-      if (win && !win.closed) {
-        try { waitingScreen(win, code, url); }
-        catch (_) { try { win.location.href = url; } catch (_) {} }
-      } else {
+      if (!Shared.showWaitCode(win, { key: "MOVIEPARADISE", label: "Movie Paradise", code, url })) {
         note("Popup blocked - open " + VERIFY_LABEL + " and enter the code.");
       }
     } catch (e) {

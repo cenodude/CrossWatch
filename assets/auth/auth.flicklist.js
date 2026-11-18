@@ -202,8 +202,7 @@
 
   async function startDevice() {
     stopPoll();
-    let win = null;
-    try { win = window.open("about:blank", "_blank"); } catch (_) {}
+    const win = Shared.openWaitWindow("FlickList", "Requesting a FlickList code...", "FLICKLIST");
     const startBtn = el("flicklist_device_start");
     if (startBtn) { startBtn.disabled = true; startBtn.classList.add("busy"); }
     note("Requesting a FlickList link code...", true, false);
@@ -220,18 +219,7 @@
       setCode(d);
       startPolling(d);
       note("Enter the code at flicklist.tv/link.", true, false);
-      if (win && !win.closed) {
-        try {
-          win.document.write(
-            '<!doctype html><meta charset="utf-8"><title>CrossWatch - FlickList</title>' +
-            '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
-            '<div><div style="font-size:14px;opacity:.7;margin-bottom:12px">Opening the FlickList approval page...</div>' +
-            '<div style="font-size:36px;font-weight:800;letter-spacing:.18em;color:#58d0f8;text-transform:uppercase">' + txt(d.user_code) + '</div>' +
-            '<div style="font-size:12px;opacity:.6;margin-top:12px">Redirecting in a moment...</div></div></body>'
-          );
-        } catch (_) {}
-        setTimeout(() => { try { if (win && !win.closed) win.location.href = url; } catch (_) {} }, 3000);
-      } else {
+      if (!Shared.showWaitCode(win, { key: "FLICKLIST", label: "FlickList", code: txt(d.user_code).toUpperCase(), url })) {
         note("Popup blocked - open flicklist.tv/link and enter the code.", false);
       }
     } catch (e) {
