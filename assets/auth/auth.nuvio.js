@@ -31,16 +31,6 @@
     return profile.api(path);
   }
 
-  function escapeHtml(value) {
-    return txt(value).replace(/[&<>"']/g, (ch) => ({
-      "&": "&amp;",
-      "<": "&lt;",
-      ">": "&gt;",
-      "\"": "&quot;",
-      "'": "&#39;",
-    }[ch]));
-  }
-
   function notifyModalState() {
     const panel = document.getElementById("sec-nuvio")?.closest?.(".cw-connection-modal-panel")
       || document.querySelector?.(".cw-connection-modal-panel[data-cw-connection-provider='nuvio'], .cw-connection-modal-panel[data-provider='nuvio'], .cw-connection-modal-panel");
@@ -386,16 +376,7 @@
   async function startLogin() {
     profileSelectionReady = false;
     renderProfiles([], null, "", false);
-    let win = null;
-    try { win = window.open("about:blank", "_blank"); } catch {}
-    try {
-      win.document.write(
-        '<!doctype html><meta charset="utf-8"><title>CrossWatch -> Nuvio</title>' +
-        '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif">' +
-        '<div style="font-size:14px;opacity:.7">Checking Nuvio server...</div></body>'
-      );
-      win.document.close();
-    } catch {}
+    const win = Shared.openWaitWindow("Nuvio", "Checking Nuvio server...", "NUVIO");
     try {
       setStatus(false, "Checking Nuvio server...");
       await applyServer();
@@ -407,20 +388,7 @@
       setPolling("Waiting for approval...");
       const url = txt(data.login_url);
       if (url) {
-        if (win && !win.closed) {
-          try {
-            const code = escapeHtml(txt(data.code).slice(0, 5).toUpperCase());
-            win.document.write(
-              '<!doctype html><meta charset="utf-8"><title>CrossWatch -> Nuvio</title>' +
-              '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
-              '<div style="padding:24px;max-width:86vw"><div style="font-size:14px;opacity:.7;margin-bottom:12px">Opening the Nuvio approval page...</div>' +
-              '<div style="font-size:30px;font-weight:700;letter-spacing:.14em;color:#8ff0c2;line-height:1.35;word-break:break-all">' + code + '</div>' +
-              '<div style="font-size:12px;opacity:.6;margin-top:12px">Redirecting in a moment...</div></div></body>'
-            );
-            win.document.close();
-          } catch {}
-          setTimeout(function () { try { if (win && !win.closed) win.location.href = url; } catch {} }, 3000);
-        } else {
+        if (!Shared.showWaitCode(win, { key: "NUVIO", label: "Nuvio", code: txt(data.code).slice(0, 5).toUpperCase(), url })) {
           try { window.open(url, "_blank", "noopener"); } catch {}
           note("Popup blocked - open the Nuvio approval link.");
         }

@@ -640,16 +640,7 @@
     const verify_ssl = !!(Q("#jfy_verify_ssl")?.checked || Q("#jfy_verify_ssl_dup")?.checked);
     jfyQcStop({ cancel: true });
     setMethodNote("");
-    let win = null;
-    try { win = window.open("about:blank", "_blank"); } catch {}
-    try {
-      win.document.write(
-        '<!doctype html><meta charset="utf-8"><title>CrossWatch → Jellyfin</title>' +
-        '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif">' +
-        '<div style="font-size:14px;opacity:.7">Contacting your Jellyfin server…</div></body>'
-      );
-      win.document.close();
-    } catch {}
+    const win = Shared.openWaitWindow("Jellyfin", "Contacting your Jellyfin server...", "JELLYFIN");
     const closeWin = () => { try { if (win && !win.closed) win.close(); } catch {} };
     const start = Q("#btn-jfy-qc-start"); if (start) { start.disabled = true; start.classList.add("busy"); }
     try {
@@ -668,19 +659,7 @@
       if (!url) {
         closeWin();
       } else if (win && !win.closed) {
-        const safeCode = String(d.code).replace(/[^0-9A-Za-z]/g, "");
-        try {
-          win.document.open();
-          win.document.write(
-            '<!doctype html><meta charset="utf-8"><title>CrossWatch → Jellyfin</title>' +
-            '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
-            '<div><div style="font-size:14px;opacity:.7;margin-bottom:12px">Opening Jellyfin Quick Connect…</div>' +
-            '<div style="font-size:36px;font-weight:700;letter-spacing:.22em;color:#00a4dc">' + safeCode + '</div>' +
-            '<div style="font-size:12px;opacity:.6;margin-top:12px">Redirecting in a moment…</div></div></body>'
-          );
-          win.document.close();
-        } catch {}
-        setTimeout(() => { try { if (win && !win.closed) win.location.href = url; } catch {} }, 3000);
+        Shared.showWaitCode(win, { key: "JELLYFIN", label: "Jellyfin", code: String(d.code), url, message: "Enter this code in Jellyfin Quick Connect" });
       } else {
         try { window.open(url, "_blank", "noopener"); } catch {}
       }

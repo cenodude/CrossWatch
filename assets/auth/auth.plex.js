@@ -447,7 +447,7 @@ function ensurePlexInstanceUI() {
     const connectBtn = $("btn-connect-plex");
     if (connectBtn) { connectBtn.disabled = true; connectBtn.classList.add("busy"); }
 
-    let win = null; try { win = w.open("about:blank", "_blank"); } catch {}
+    const win = Shared.openWaitWindow("Plex", "Requesting a Plex link code...", "PLEX");
 
     let data = null;
     try {
@@ -476,18 +476,7 @@ function ensurePlexInstanceUI() {
     plexQcUpdateTimer();
     plexQcTimer = setInterval(plexQcUpdateTimer, 1000);
 
-    if (win && !win.closed) {
-      try {
-        win.document.write(
-          '<!doctype html><meta charset="utf-8"><title>CrossWatch → Plex</title>' +
-          '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
-          '<div><div style="font-size:14px;opacity:.7;margin-bottom:12px">Opening plex.tv/link…</div>' +
-          '<div style="font-size:36px;font-weight:700;letter-spacing:.22em;color:#8ff0c2">' + pin + '</div>' +
-          '<div style="font-size:12px;opacity:.6;margin-top:12px">Redirecting in a moment…</div></div></body>'
-        );
-      } catch {}
-      setTimeout(() => { try { if (win && !win.closed) win.location.href = "https://plex.tv/link"; } catch {} }, 3000);
-    } else {
+    if (!Shared.showWaitCode(win, { key: "PLEX", label: "Plex", code: pin, url: "https://plex.tv/link" })) {
       notify("Popup blocked - open plex.tv/link and enter the code.");
     }
 

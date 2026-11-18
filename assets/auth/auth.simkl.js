@@ -277,8 +277,7 @@
     const btn = $("btn-connect-simkl-pin");
     if (btn) { btn.disabled = true; btn.classList.add("busy"); }
 
-    let win = null;
-    try { win = w.open("about:blank", "_blank"); } catch (_) {}
+    const win = Shared.openWaitWindow("SIMKL", "Requesting a SIMKL code...", "SIMKL");
 
     let data = null;
     try {
@@ -304,18 +303,7 @@
     smqcShowCode(code, secs);
     startSimklPinPoll(Math.max(2, Number(data.interval || 5)));
 
-    if (win && !win.closed) {
-      try {
-        win.document.write(
-          '<!doctype html><meta charset="utf-8"><title>CrossWatch → SIMKL</title>' +
-          '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
-          '<div><div style="font-size:14px;opacity:.7;margin-bottom:12px">Opening simkl.com/pin…</div>' +
-          '<div style="font-size:36px;font-weight:700;letter-spacing:.22em;color:#8ff0c2">' + code + '</div>' +
-          '<div style="font-size:12px;opacity:.6;margin-top:12px">Redirecting in a moment…</div></div></body>'
-        );
-      } catch (_) {}
-      setTimeout(function () { try { if (win && !win.closed) win.location.href = url; } catch (_) {} }, 3000);
-    } else {
+    if (!Shared.showWaitCode(win, { key: "SIMKL", label: "SIMKL", code, url })) {
       notify("Popup blocked - open simkl.com/pin and enter the code.");
     }
 
@@ -343,8 +331,7 @@
       return;
     }
 
-    let win = null;
-    try { win = w.open("https://simkl.com/", "_blank"); } catch {}
+    const win = Shared.openWaitWindow("SIMKL", "Preparing the SIMKL approval page...", "SIMKL");
 
     let authCompleted;
     try { authCompleted = await Shared.captureAuthCompletion(profile); }

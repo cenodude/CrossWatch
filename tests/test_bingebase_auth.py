@@ -265,9 +265,7 @@ def test_bingebase_device_code_uses_forwarding_page() -> None:
     auth_js = (root / "assets" / "auth" / "auth.bingebase.js").read_text(encoding="utf-8")
 
     assert "function writeForwardingPage" in auth_js
-    assert 'window.open("about:blank", "_blank")' in auth_js
-    assert "Opening the BingeBase approval page" in auth_js
-    assert "cw-bb-count" in auth_js
-    assert "Redirecting in <span" in auth_js
-    assert "location.href=target" in auth_js
+    assert 'Shared.openWaitWindow("BingeBase"' in auth_js
+    assert 'Shared.showWaitCode(win, { key: "BINGEBASE"' in auth_js
+    assert "document.write" not in auth_js
     assert "window.open(VERIFY_URL" not in auth_js

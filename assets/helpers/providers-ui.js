@@ -1035,6 +1035,12 @@
     return info ? { ...info, key: norm } : null;
   }
 
+  window.CW = window.CW || {};
+  window.CW.connectionBrand = (key) => {
+    const journey = connectionInfoForKey(key)?.journey;
+    return journey ? { c1: journey[2], c2: journey[3] || journey[2] } : null;
+  };
+
   function connectionPanelFor(section, info) {
     if (!section || !info) return null;
     return section.querySelector(`.cw-meta-provider-panel[data-provider="${info.provider}"]`) || (section.matches?.(".cw-meta-provider-panel") ? section.querySelector(":scope > .body") || section : null) || section.querySelector(":scope > .body") || section;

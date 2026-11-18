@@ -29,27 +29,8 @@
   function emitConnected() {
     try { document.dispatchEvent(new CustomEvent("cw-provider-connected", { bubbles: true, detail: { provider: "bingebase", key: "BINGEBASE" } })); } catch {}
   }
-  function escHtml(value) {
-    return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
-  }
   function writeForwardingPage(win, code, url) {
-    if (!win || win.closed) return false;
-    const safeCode = escHtml(code || "----");
-    const target = JSON.stringify(url || VERIFY_URL);
-    try {
-      win.document.write(
-        '<!doctype html><meta charset="utf-8"><title>CrossWatch - BingeBase</title>' +
-        '<body style="margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#0b0d12;color:#e9eefb;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;text-align:center">' +
-        '<div style="padding:28px"><div style="font-size:14px;opacity:.72;margin-bottom:12px">Opening the BingeBase approval page</div>' +
-        '<div style="font-size:38px;font-weight:800;letter-spacing:.18em;color:#ffb978">' + safeCode + '</div>' +
-        '<div style="font-size:13px;opacity:.68;margin-top:14px">Enter this code when prompted. Redirecting in <span id="cw-bb-count">3</span> seconds.</div></div>' +
-        '<script>var n=3,target=' + target + ';var el=document.getElementById("cw-bb-count");var iv=setInterval(function(){n-=1;if(el)el.textContent=String(Math.max(0,n));if(n<=0)clearInterval(iv);},1000);setTimeout(function(){try{location.href=target;}catch(e){}},3000);<\/script></body>'
-      );
-      try { win.document.close(); } catch (_) {}
-      return true;
-    } catch (_) {
-      return false;
-    }
+    return Shared.showWaitCode(win, { key: "BINGEBASE", label: "BingeBase", code, url: url || VERIFY_URL });
   }
   function setPolling(show) {
     const box = el("bingebase_qc_state"); if (box) box.classList.toggle("hidden", !show);
@@ -182,8 +163,7 @@
   }
   async function startDevice() {
     stopPoll();
-    let win = null;
-    try { win = window.open("about:blank", "_blank"); } catch (_) {}
+    const win = Shared.openWaitWindow("BingeBase", "Requesting a BingeBase code...", "BINGEBASE");
     const startBtn = el("bingebase_device_start");
     if (startBtn) { startBtn.disabled = true; startBtn.classList.add("busy"); }
     note("Requesting a BingeBase link code...", true, false);
