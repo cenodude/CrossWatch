@@ -684,7 +684,7 @@
 
     function removeLabel(target) {
       if (ctx.feature === "ratings") return `Remove rating on ${target}`;
-      if (ctx.feature === "history") return `Remove watched status on ${target}`;
+      if (ctx.feature === "history") return `Remove all watches for this title from ${target}`;
       if (ctx.feature === "collection") return `Remove from ${target} collection`;
       return `Remove from ${target} watchlist`;
     }
@@ -716,7 +716,7 @@
           body.push(ratingStars());
         }
         const armed = isArmed("one");
-        body.push(item("remove-one", armed ? "warning" : "delete", armed ? "Click again to remove every watch here" : removeLabel(name), "danger"));
+        body.push(item("remove-one", armed ? "warning" : "delete", armed ? "Click again to remove all watches for this title" : removeLabel(name), "danger"));
       } else {
         if (feature === "ratings") body.push(ratingStars());
         body.push(whenHtml());
@@ -1106,7 +1106,7 @@
       let title;
       let disabled = false;
       if (entry) {
-        title = !target ? `On ${name}` : clearsAll(play, ref) ? `Remove the watched status on ${name}` : `Remove this watch from ${name}`;
+        title = !target ? `On ${name}` : clearsAll(play, ref) ? `Remove all watches for this title from ${name}` : `Remove this play from ${name}`;
         disabled = !target;
       } else if (!target) {
         return "";
@@ -1134,11 +1134,14 @@
         const refs = (play.present || []).map(cleanRef);
         const writableRefs = refs.filter(writable);
         const armedRow = isArmed(key);
-        const wipes = writableRefs.filter((ref) => clearsAll(play, ref)).map((ref) => providerName(ref.provider));
-        const label = armedRow ? "Click again to remove this watch everywhere" : "Remove this watch everywhere";
+        const wipes = writableRefs.filter((ref) => clearsAll(play, ref)).map((ref) => `${providerName(ref.provider)} · ${accountName(ref, list)}`);
+        const action = !wipes.length ? "Remove this play everywhere"
+          : wipes.length === writableRefs.length ? "Remove all watches for this title"
+          : `Remove this play; remove all watches for this title from ${listNames(wipes)}`;
+        const label = armedRow ? `Click again to ${action[0].toLowerCase()}${action.slice(1)}` : action;
         const where = refs.map((ref) => `${providerName(ref.provider)} · ${accountName(ref, list)}`).join(", ");
         const warning = armedRow && wipes.length
-          ? `<p class="cw-ia-warn">${icon("warning")}${esc(`${listNames(wipes)} only ${wipes.length === 1 ? "knows" : "know"} that you watched this, not each watch. Removing it there clears every watch on ${wipes.length === 1 ? "that provider" : "those providers"}.`)}</p>`
+          ? `<p class="cw-ia-warn">${icon("warning")}${esc(`This removes all watches for this title from ${listNames(wipes)}.${wipes.length < writableRefs.length ? " Only this play is removed from the other selected accounts." : ""}`)}</p>`
           : "";
         return `<div class="cw-ia-play${armedRow ? " is-armed" : ""}">
           <span class="cw-ia-play-copy"><strong>${esc(fmtWhen(play.epoch))}</strong><small>${esc(where)}</small></span>
@@ -1223,7 +1226,7 @@
           ${leftOut.length ? `<p class="cw-ia-muted">${esc(`Not listed: ${listNames(leftOut)}.`)}</p>` : ""}
           ${notes.length ? `<p class="cw-ia-hint">${esc(notes.join(" · "))}</p>` : ""}
           <button type="button" class="cw-ia-btn is-primary is-wide" data-ia-sheet="add"${chosen.length && dateOk && !loading ? "" : " disabled"}>${esc(addLabel)}</button>
-          ${clearable ? `<button type="button" class="cw-ia-btn is-quiet-danger is-wide${clearArmed ? " is-armed" : ""}" data-ia-sheet="clear">${esc(clearArmed ? "Click again to mark as unwatched everywhere" : "Mark as unwatched everywhere")}</button>` : ""}
+          ${clearable ? `<button type="button" class="cw-ia-btn is-quiet-danger is-wide${clearArmed ? " is-armed" : ""}" data-ia-sheet="clear">${esc(clearArmed ? "Click again to remove all watches for this title everywhere" : "Remove all watches for this title everywhere")}</button>` : ""}
         </div>`;
     }
 
@@ -1296,7 +1299,8 @@
         const present = (play.present || []).some((row) => refKey(row) === refKey(ref));
         const index = button.dataset.iaPlay;
         if (present) {
-          void run({ ...job, tasks: [removeTask("history", ref, playItem(play, ref), name, { play: index })], working: `Removing the watch from ${name}…`, done: () => `Watch removed from ${name}` });
+          const all = clearsAll(play, ref);
+          void run({ ...job, tasks: [removeTask("history", ref, playItem(play, ref), name, { play: index })], working: `Removing ${all ? "all watches for this title" : "this play"} from ${name}…`, done: () => `${all ? "All watches for this title" : "Play"} removed from ${name}` });
         } else {
           const fields = Number(play.epoch) ? { watched_at: isoFromEpoch(play.epoch) } : { watched: true, _cw_watched_state: true };
           void run({ ...job, tasks: [addTask("history", ref, ctx.item, name, { fields, rewatch: holds(ref), play: index })], working: `Copying the watch to ${name}…`, done: () => `Watch copied to ${name}` });
@@ -1309,11 +1313,17 @@
         armed = { key: "", until: 0 };
         const play = plays()[Number(index)];
         const refs = (play?.present || []).map(cleanRef).filter(writable);
+        const removal = refs.every((ref) => clearsAll(play, ref)) ? "all watches for this title"
+          : refs.some((ref) => clearsAll(play, ref)) ? "selected history" : "this play";
         void run({
           ...job,
           tasks: refs.map((ref) => removeTask("history", ref, playItem(play, ref), label(ref), { play: index })),
-          working: `Removing the watch from ${refs.length === 1 ? label(refs[0]) : `${refs.length} accounts`}…`,
-          done: (okTasks) => `Watch removed from ${okTasks.length === 1 ? okTasks[0].name : `${okTasks.length} accounts`}`,
+          working: `Removing ${removal} from ${refs.length === 1 ? label(refs[0]) : `${refs.length} accounts`}…`,
+          done: (okTasks) => {
+            const all = okTasks.filter((task) => clearsAll(play, task.ref)).map((task) => task.name);
+            const single = okTasks.filter((task) => !clearsAll(play, task.ref)).map((task) => task.name);
+            return [all.length ? `All watches for this title removed from ${listNames(all)}` : "", single.length ? `Play removed from ${listNames(single)}` : ""].filter(Boolean).join(". ");
+          },
         });
         return;
       }
@@ -1325,8 +1335,8 @@
         void run({
           ...job,
           tasks: refs.map((ref) => removeTask("history", ref, titleItem, label(ref))),
-          working: `Marking as unwatched on ${refs.length === 1 ? label(refs[0]) : `${refs.length} accounts`}…`,
-          done: (okTasks) => `Marked as unwatched on ${okTasks.length === 1 ? okTasks[0].name : `${okTasks.length} accounts`}`,
+          working: `Removing all watches for this title from ${refs.length === 1 ? label(refs[0]) : `${refs.length} accounts`}…`,
+          done: (okTasks) => `All watches for this title removed from ${okTasks.length === 1 ? okTasks[0].name : `${okTasks.length} accounts`}`,
         });
         return;
       }
