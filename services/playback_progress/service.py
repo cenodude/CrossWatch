@@ -1116,6 +1116,15 @@ class PlaybackProgressService:
                 return result
         return None
 
+    def _fresh_cached_result(self, spec: Mapping[str, str]) -> PlaybackListResult | None:
+        key = self._cache_key(spec["provider"], spec["instance_id"], self._adapter(spec["provider"]))
+        with self._lock:
+            cached = self._cache.get(key) or {}
+            result = cached.get("result")
+            if time.time() - float(cached.get("ts") or 0) < CACHE_TTL_SECONDS and isinstance(result, PlaybackListResult):
+                return result
+        return None
+
     def _list_one(
         self,
         cfg: Mapping[str, Any],
@@ -1232,6 +1241,7 @@ class PlaybackProgressService:
         loading: list[dict[str, Any]] = []
         if readable_specs:
             snapshots = {(spec["provider"], spec["instance_id"]): self._cached_result(spec) for spec in readable_specs}
+            fresh = {} if force_refresh else {(spec["provider"], spec["instance_id"]): self._fresh_cached_result(spec) for spec in readable_specs}
             timeout_s = _provider_timeout_seconds(cfg)
             jobs = [(spec, *self._submit_list(cfg, spec, force_refresh)) for spec in readable_specs]
             now = time.monotonic()
@@ -1245,6 +1255,10 @@ class PlaybackProgressService:
                         results.append(future.result())
                     except Exception:
                         results.append(PlaybackListResult(ok=False, provider=spec["provider"], instance_id=spec["instance_id"], error_code="provider_error", message="Provider request failed.", retryable=True))
+                    continue
+                fresh_result = fresh.get((spec["provider"], spec["instance_id"]))
+                if fresh_result is not None:
+                    results.append(fresh_result)
                     continue
                 if progressive and now - started < timeout_s:
                     snapshot = snapshots.get((spec["provider"], spec["instance_id"]))
