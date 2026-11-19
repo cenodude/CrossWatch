@@ -17,6 +17,7 @@ from ._common import (
     key_of,
     normalize_watchlist_row,
     pick_trakt_kind,
+    scalar_ids,
     fetch_last_activities,
     update_watermarks_from_last_activities,
     state_file,
@@ -265,12 +266,12 @@ def _fetch_bucket(
                         elif t == "season" and isinstance(row.get("season"), dict):
                             se = row["season"]
                             show = row.get("show") or {}
-                            show_ids = show.get("ids") or {}
+                            show_ids = scalar_ids(show.get("ids"))
                             season_no = se.get("number")
                             m = id_minimal(
                                 {
                                     "type": "season",
-                                    "ids": se.get("ids") or {},
+                                    "ids": scalar_ids(se.get("ids")),
                                     "show_ids": show_ids,
                                     "season": season_no,
                                     "series_title": show.get("title"),
@@ -284,13 +285,13 @@ def _fetch_bucket(
                         elif t == "episode" and isinstance(row.get("episode"), dict):
                             ep = row["episode"]
                             show = row.get("show") or {}
-                            show_ids = show.get("ids") or {}
+                            show_ids = scalar_ids(show.get("ids"))
                             season_no = ep.get("season")
                             ep_no = ep.get("number")
                             m = id_minimal(
                                 {
                                     "type": "episode",
-                                    "ids": ep.get("ids") or {},
+                                    "ids": scalar_ids(ep.get("ids")),
                                     "show_ids": show_ids,
                                     "season": season_no,
                                     "episode": ep_no,

@@ -116,6 +116,8 @@ _NUMERIC_ID_KEYS = frozenset({"tmdb", "tvdb", "trakt", "simkl", "mal", "anilist"
 
 
 def _normalize_id(key: str, val: Any) -> str | None:
+    if isinstance(val, (Mapping, list, tuple, set)):
+        return None
     k = (key or "").lower().strip()
     s = _norm_str(val)
     if not s:

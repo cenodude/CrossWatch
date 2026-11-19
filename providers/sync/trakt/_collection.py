@@ -24,6 +24,7 @@ from ._common import (
     key_of,
     normalize_watchlist_row,
     pick_trakt_kind,
+    scalar_ids,
     state_file,
     update_watermarks_from_last_activities,
 )
@@ -138,14 +139,7 @@ def _shadow_bust() -> None:
 
 
 def _ids_clean(ids: Mapping[str, Any] | None) -> dict[str, str]:
-    out: dict[str, str] = {}
-    for k, v in dict(ids or {}).items():
-        if v is None:
-            continue
-        s = str(v).strip()
-        if s:
-            out[str(k)] = s
-    return out
+    return scalar_ids(ids)
 
 
 def _item_key(item: Mapping[str, Any]) -> str:

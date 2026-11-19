@@ -458,7 +458,7 @@ def load_dropped_show_tokens(adapter: Any) -> set[str]:
                     "type": "show",
                     "title": show.get("title"),
                     "year": show.get("year"),
-                    "ids": {k: str(v) for k, v in ids.items() if v is not None and str(v).strip()},
+                    "ids": scalar_ids(ids),
                 }
             )
             tokens.update(_identity_tokens(item))
@@ -539,6 +539,13 @@ def build_headers(arg1: Any, access_token: str | None = None) -> dict[str, str]:
 _ALLOWED_ID_KEYS = ("tmdb", "imdb", "tvdb", "trakt")
 
 
+def scalar_ids(ids: Any) -> dict[str, str]:
+    if not isinstance(ids, Mapping):
+        return {}
+    return {str(k): str(v) for k, v in ids.items()
+            if isinstance(v, (str, int)) and not isinstance(v, bool) and str(v).strip()}
+
+
 def _fix_imdb(ids: dict[str, Any]) -> None:
     v = str(ids.get("imdb") or "").strip()
     if not v:
@@ -561,7 +568,7 @@ def normalize_watchlist_row(row: Mapping[str, Any]) -> dict[str, Any]:
                 "type": "movie",
                 "title": payload.get("title"),
                 "year": payload.get("year"),
-                "ids": {k: str(v) for k, v in ids.items() if v},
+                "ids": scalar_ids(ids),
             }
         )
 
@@ -574,7 +581,7 @@ def normalize_watchlist_row(row: Mapping[str, Any]) -> dict[str, Any]:
                 "type": "show",
                 "title": payload.get("title"),
                 "year": payload.get("year"),
-                "ids": {k: str(v) for k, v in ids.items() if v},
+                "ids": scalar_ids(ids),
             }
         )
 
@@ -592,10 +599,10 @@ def normalize_watchlist_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "series_title": show.get("title"),
             "year": show.get("year"),
             "season": number,
-            "ids": {k: str(v) for k, v in ids.items() if v},
+            "ids": scalar_ids(ids),
         }
         if show_ids:
-            m["show_ids"] = {k: str(v) for k, v in show_ids.items() if v}
+            m["show_ids"] = scalar_ids(show_ids)
         return id_minimal(m)
 
     if t == "episode":
@@ -614,10 +621,10 @@ def normalize_watchlist_row(row: Mapping[str, Any]) -> dict[str, Any]:
             "year": show.get("year"),
             "season": season_no,
             "episode": episode_no,
-            "ids": {k: str(v) for k, v in ids.items() if v},
+            "ids": scalar_ids(ids),
         }
         if show_ids:
-            m["show_ids"] = {k: str(v) for k, v in show_ids.items() if v}
+            m["show_ids"] = scalar_ids(show_ids)
         return id_minimal(m)
 
     return id_minimal(row)

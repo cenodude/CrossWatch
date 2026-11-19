@@ -523,6 +523,34 @@ def test_ratings_update_is_written_when_every_new_rating_is_skipped(config_base,
     assert written == {canonical_key(changed): 7, canonical_key(rated(3, 9)): 9}
 
 
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_library_skipped_items_clear_their_old_unresolved_entries(config_base, monkeypatch, mode, dry_run):
+    from cw_platform.orchestrator import Orchestrator
+    from cw_platform.orchestrator._scope import pair_scope
+    from cw_platform.orchestrator._unresolved import load_unresolved_map, record_unresolved
+
+    skipped, kept = rated(2, 8), rated(3, 9)
+    cfg, src, dst = ratings_setup(config_base, monkeypatch, [skipped, kept], [], mode=mode, options={lp.OPTION: True})
+    enable_ratings_presence(dst, {canonical_key(skipped)})
+    check = dst.library_presence
+    seen: dict[str, Any] = {}
+
+    def presence(pcfg, items, *, feature):
+        record_unresolved("DST", "ratings", [skipped, rated(4, 5)], hint="apply:add:failed")
+        result = check(pcfg, items, feature=feature)
+        seen["before"] = set(load_unresolved_map("DST", "ratings", cross_features=False))
+        seen["scope"] = pair_scope()
+        return result
+
+    dst.library_presence = presence
+    Orchestrator(cfg).run(dry_run=dry_run, pair_scope_ids=["p1"], write_state_json=False)
+    assert canonical_key(skipped) in seen["before"]
+    monkeypatch.setenv("CW_PAIR_SCOPE", seen["scope"])
+    expected = {canonical_key(skipped), canonical_key(rated(4, 5))} if dry_run else {canonical_key(rated(4, 5))}
+    assert set(load_unresolved_map("DST", "ratings", cross_features=False)) == expected
+
+
 def test_ratings_option_off_keeps_the_normal_plan(config_base, monkeypatch):
     cfg, src, dst = ratings_setup(config_base, monkeypatch, [rated(1, 7), rated(2, 8)], [])
     calls = enable_ratings_presence(dst, {canonical_key(rated(2, 8))})
@@ -580,6 +608,8 @@ def plex_ratings_setup(monkeypatch, index, coordinates=None, *, shared=False):
     monkeypatch.setattr(_ratings, "_shared_user_scope_active", lambda adapter: shared)
     monkeypatch.setattr(history, "_build_guid_index", lambda adapter, allow, **kwargs: index)
     monkeypatch.setattr(history, "_pms_find_in_guid_index", find)
+    monkeypatch.setattr(history, "_pms_show_copies_in_guid_index",
+                        lambda guids: list(dict.fromkeys(rk for guid in guids for rk in index.get("show_copies", {}).get(guid, ()))))
     monkeypatch.setattr(_presence, "_show_coordinates", show_coordinates)
     return _presence, loads
 
@@ -594,13 +624,45 @@ def test_plex_ratings_presence_checks_movies_shows_seasons_and_episodes(monkeypa
             dict(episode(1, 5), rating=9), season(1), season(4), dict(episode(1, 1, {"tvdb": "999"}), rating=9),
             dict(type="movie", title="No ids", ids={}, rating=5),
             dict(type="episode", season=1, episode=1, ids={"tvdb": "5"}, rating=5),
-            dict(rated(3, 6), ids={"imdb": "tt0000003", "plex": "77"})]
+            dict(rated(3, 6), ids={"imdb": "tt0000003", "plex": "77"}),
+            dict(rated(1, 6), ids={"imdb": "tt0000001", "plex": "57768258801970019674"}),
+            dict(rated(4, 6), ids={"plex": "77"}),
+            dict(episode(1, 2), ids={"plex": "88"}, rating=9),
+            dict(episode(1, 2), ids={"plex": "88"}, show_ids={}, rating=9)]
     result = presence.presence(adapter, rows, feature="ratings")
     assert [row["status"] for row in result] == [
         lp.PRESENT, lp.ABSENT, lp.PRESENT, lp.ABSENT, lp.PRESENT, lp.ABSENT, lp.PRESENT, lp.ABSENT, lp.ABSENT,
-        lp.UNKNOWN, lp.UNKNOWN, lp.UNKNOWN]
+        lp.UNKNOWN, lp.UNKNOWN, lp.ABSENT, lp.PRESENT, lp.UNKNOWN, lp.PRESENT, lp.UNKNOWN]
     assert result[0]["item_id"] == "10"
     assert loads == [["20"]]
+
+
+@pytest.mark.parametrize("feature", ["ratings", "progress"])
+def test_plex_presence_checks_every_copy_of_a_split_show(monkeypatch, feature):
+    index = {"movies": {}, "shows": {"tmdb://500": "20"}, "show_copies": {"tmdb://500": ["20", "21"]}}
+    presence, loads = plex_ratings_setup(monkeypatch, index, {"20": {(1, 1)}, "21": {(2, 1)}})
+    adapter = SimpleNamespace(client=SimpleNamespace(server=object()))
+    rows = [dict(episode(2, 1), ids={"plex": "99"}), episode(1, 1), episode(3, 1)]
+    result = presence.presence(adapter, rows, feature=feature)
+    assert [row["status"] for row in result] == [lp.PRESENT, lp.PRESENT, lp.ABSENT]
+    assert loads == [["20", "21"]]
+
+
+def test_plex_guid_index_keeps_every_show_copy(monkeypatch):
+    from providers.sync.plex import _history as history
+
+    sections = [SimpleNamespace(key="1", type="show"), SimpleNamespace(key="2", type="show")]
+    rows = {"1": [{"ratingKey": "20", "Guid": [{"id": "tmdb://500"}]}],
+            "2": [{"ratingKey": "21", "Guid": [{"id": "tmdb://500"}]}, {"ratingKey": "22", "Guid": [{"id": "tmdb://501"}]}]}
+    monkeypatch.setattr(history, "_fetch_section_guid_rows", lambda srv, sid, kind: (rows[sid], 1))
+    monkeypatch.setattr(history, "_index_cache_context", lambda adapter, allow, feature: (("test",), False))
+    adapter = SimpleNamespace(client=SimpleNamespace(server=object()), libraries=lambda types: sections)
+    history._build_guid_index(adapter, set(), force=True, feature="ratings")
+    try:
+        assert history._pms_find_in_guid_index("show", ["tmdb://500"]) == "20"
+        assert history._pms_show_copies_in_guid_index(["tmdb://500", "tmdb://501"]) == ["20", "21", "22"]
+    finally:
+        history._clear_guid_index()
 
 
 def test_plex_ratings_presence_fails_open(monkeypatch):
