@@ -321,7 +321,8 @@
         'function state(t){var s=document.getElementById("cw-wait-state");if(s)s.textContent=t}' +
         'function legacy(){if(!code)return false;try{var t=document.createElement("textarea");t.value=code;t.setAttribute("readonly","");t.style.position="fixed";t.style.top="-9999px";document.body.appendChild(t);t.select();var ok=document.execCommand("copy");t.remove();return ok}catch(e){return false}}' +
         'try{if(code&&navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(code).then(function(){state("Code copied - paste it on the next page")},function(){})}}catch(e){}' +
-        'document.getElementById("cw-wait-go").addEventListener("click",function(){if(legacy())state("Code copied");window.__cwWaitDone=true;location.href=url});' +
+        'var tried=false;function go(){window.__cwWaitDone=true;location.href=url}' +
+        'document.getElementById("cw-wait-go").addEventListener("click",function(){if(!code||tried||legacy())return go();tried=true;var b=this;function fail(){window.__cwWaitHold=true;clearInterval(iv);var l=document.getElementById("cw-wait-left");if(l&&l.parentNode)l.parentNode.style.display="none";state("Copy failed - copy the code above, then continue");b.textContent="Continue"}if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(code).then(go,fail)}else fail()});' +
         'var iv=setInterval(function(){left-=1;var n=document.getElementById("cw-wait-left");if(n)n.textContent=String(Math.max(0,left));if(left<=0)clearInterval(iv)},1000);' +
         '})();<\/script>'
       : "";
@@ -364,7 +365,7 @@
     const seconds = Math.max(1, Number(o.seconds) || (txt(o.code) ? 6 : 3));
     setTimeout(() => {
       try {
-        if (!win || win.closed || win.__cwWaitDone) return;
+        if (!win || win.closed || win.__cwWaitDone || win.__cwWaitHold) return;
       } catch {
         return;
       }
@@ -468,28 +469,13 @@
       if (opts?.emptyMessage) notify(opts.emptyMessage);
       return false;
     }
-    try {
-      if (navigator.clipboard && w.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        const ta = d.createElement("textarea");
-        ta.value = text;
-        ta.setAttribute("readonly", "");
-        ta.style.position = "fixed";
-        ta.style.top = "-9999px";
-        d.body.appendChild(ta);
-        ta.select();
-        d.execCommand("copy");
-        ta.remove();
-      }
+    if (await w.cwCopyText?.(text)) {
       flashCopyButton(btn, opts?.copiedText);
       if (opts?.successMessage) notify(opts.successMessage);
       return true;
-    } catch (e) {
-      if (opts?.failureMessage !== false) notify(opts?.failureMessage || "Copy failed");
-      try { console.warn("Copy failed", e); } catch (_) {}
-      return false;
     }
+    if (opts?.failureMessage !== false) notify(opts?.failureMessage || "Copy failed");
+    return false;
   }
 
   async function copyField(field, btn, opts) {

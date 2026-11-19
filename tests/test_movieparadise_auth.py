@@ -394,3 +394,18 @@ def test_runtime_backend_and_registry() -> None:
     assert MODULES["AUTH"]["_auth_MOVIEPARADISE"] == "providers.auth._auth_MOVIEPARADISE"
     assert runtime.is_configured("movieparadise", {"access_token": "x"}) is True
     assert provider_display_label("MOVIEPARADISE") == "Movie Paradise"
+
+
+def test_movie_paradise_stays_hidden_until_sync_is_ready() -> None:
+    import re
+    from pathlib import Path
+
+    from providers.auth.registry import auth_providers_html
+
+    html = auth_providers_html()
+    meta = Path("assets/helpers/provider-meta.js").read_text("utf-8")
+
+    assert 'id="sec-movieparadise"' not in html
+    assert 'id="sec-trakt"' in html
+    assert re.search(r"MOVIEPARADISE: \{[^\n]*hidden: true \}", meta)
+    assert "info && !info.hidden ? info.authSectionId" in meta

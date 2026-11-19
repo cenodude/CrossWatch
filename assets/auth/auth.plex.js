@@ -369,16 +369,7 @@ function ensurePlexInstanceUI() {
     const code = ($("plex_qc_code")?.textContent || $("plex_pin")?.value || "").replace(/\s+/g, "").trim();
     if (!code || code === "----") return;
     let ok = false;
-    try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(code); ok = true; } } catch {}
-    if (!ok) {
-      try {
-        const ta = d.createElement("textarea");
-        ta.value = code; ta.style.position = "fixed"; ta.style.opacity = "0";
-        d.body.appendChild(ta); ta.focus(); ta.select();
-        ok = d.execCommand("copy");
-        d.body.removeChild(ta);
-      } catch {}
-    }
+    ok = (await window.cwCopyText?.(code)) === true;
     if (!ok) { notify("Copy failed"); return; }
     btn.classList.add("copied");
     btn.innerHTML = PLEX_ICON_CHECK;

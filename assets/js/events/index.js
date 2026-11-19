@@ -723,6 +723,10 @@ export default {
     Q("#ev-range", root).appendChild(ddRange.el);
     if (isAdmin) {
       eventScope = String(window.CW?.OverviewProfile?.id || "").trim();
+      const activeLabel = String(window.CW?.OverviewProfile?.label || "").trim();
+      if (eventScope && activeLabel && !overviewScopes.some((row) => row.value === eventScope)) {
+        ddProfile.setItems([...overviewScopes, { value: eventScope, label: activeLabel }]);
+      }
       ddProfile.value = eventScope;
       (async () => {
         try {
@@ -731,9 +735,19 @@ export default {
           const rows = (Array.isArray(data?.items) ? data.items : [])
             .map((row) => ({ value: String(row?.id || "").trim(), label: String(row?.label || row?.id || "").trim() }))
             .filter((row) => row.value && row.label);
-          if (!rows.length) return;
-          ddProfile.setItems([...overviewScopes, ...rows]);
-          ddProfile.value = eventScope;
+          const items = [...overviewScopes, ...rows];
+          ddProfile.setItems(items);
+          if (eventScope && !items.some((row) => row.value === eventScope)) {
+            eventScope = "";
+            ddProfile.value = "";
+            clearDetail();
+            state.didInitialSelect = false;
+            if (view === "statistics") loadStats();
+            else load(0);
+          } else {
+            ddProfile.value = eventScope;
+          }
+          updateHidden();
         } catch {}
       })();
     }
@@ -1769,19 +1783,19 @@ export default {
         if (g.acknowledged_at) unacknowledgeRow(g.id); else acknowledgeRow(g.id);
       });
       Q("#ev-copy", detailEl)?.addEventListener("click", (ev) => {
-        navigator.clipboard?.writeText([
+        const button = ev.currentTarget;
+        window.cwCopyText?.([
           `Thread: ${g.summary || ""}`, `Status: ${g.status}`,
           `Feature: ${g.feature || ""}`, `Route: ${routeShort}`, `Pair: ${pairFull}`,
           `Item: ${g.item_key || ""}`, `Events: ${g.event_count}`,
           `First seen: ${TS(g.first_event_at)}`, `Last seen: ${TS(g.last_event_at)}`,
           `Reason: ${reason}`, "",
           ...events.map((e) => `  ${TS(e.created_at)} · ${badgeOf(e)} · ${titleLine(e)}`),
-        ].join("\n"));
-        flashCopy(ev.currentTarget);
+        ].join("\n")).then((ok) => { if (ok) flashCopy(button); });
       });
-      Q("#ev-copy-raw", detailEl)?.addEventListener("click", (ev) => { navigator.clipboard?.writeText(JSON.stringify({ group: g, context: c, events }, null, 2)); flashCopy(ev.currentTarget); });
-      Q("#ev-copy-item", detailEl)?.addEventListener("click", (ev) => { navigator.clipboard?.writeText(g.item_key || ""); flashCopy(ev.currentTarget); });
-      Q("#ev-copy-run", detailEl)?.addEventListener("click", (ev) => { navigator.clipboard?.writeText(runId); flashCopy(ev.currentTarget); });
+      Q("#ev-copy-raw", detailEl)?.addEventListener("click", (ev) => { const button = ev.currentTarget; window.cwCopyText?.(JSON.stringify({ group: g, context: c, events }, null, 2)).then((ok) => { if (ok) flashCopy(button); }); });
+      Q("#ev-copy-item", detailEl)?.addEventListener("click", (ev) => { const button = ev.currentTarget; window.cwCopyText?.(g.item_key || "").then((ok) => { if (ok) flashCopy(button); }); });
+      Q("#ev-copy-run", detailEl)?.addEventListener("click", (ev) => { const button = ev.currentTarget; window.cwCopyText?.(runId).then((ok) => { if (ok) flashCopy(button); }); });
       Q("#ev-open-logs", detailEl)?.addEventListener("click", () => window.openLogs?.({runId, channel:"sync"}));
       const bindRelRows = (root = detailEl) => {
         root.querySelectorAll(".ev-rel").forEach((a) => a.addEventListener("click", () => a.dataset.gid && select(a.dataset.gid)));
@@ -1930,8 +1944,10 @@ export default {
 
       detailEl.innerHTML = parts.join("");
       Q("#ev-copy", detailEl)?.addEventListener("click", () => {
-        navigator.clipboard?.writeText([`Event: ${titleLine(e)}`, `Type: ${e.event_type}`, `Route: ${routeShort}`, `Pair: ${pairLabel}`, `Item: ${e.item_key || ""}`, `When: ${TS(e.created_at)}`, `Reason: ${e.reason || e.reason_code || ""}`].join("\n"));
-        const b = Q("#ev-copy", detailEl); if (b) { const ic = b.querySelector(".material-symbols-rounded"); if (ic) { ic.textContent = "check"; setTimeout(() => { ic.textContent = "content_copy"; }, 1200); } }
+        window.cwCopyText?.([`Event: ${titleLine(e)}`, `Type: ${e.event_type}`, `Route: ${routeShort}`, `Pair: ${pairLabel}`, `Item: ${e.item_key || ""}`, `When: ${TS(e.created_at)}`, `Reason: ${e.reason || e.reason_code || ""}`].join("\n")).then((ok) => {
+          if (!ok) return;
+          const b = Q("#ev-copy", detailEl); if (b) { const ic = b.querySelector(".material-symbols-rounded"); if (ic) { ic.textContent = "check"; setTimeout(() => { ic.textContent = "content_copy"; }, 1200); } }
+        });
       });
       Q("#ev-open-analyzer", detailEl)?.addEventListener("click", () => { try { window.openAnalyzer?.(); } catch {} });
     };

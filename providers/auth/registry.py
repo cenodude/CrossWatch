@@ -151,6 +151,9 @@ def _module_html(mod: ModuleType) -> str:
     )
 
 
+_HIDDEN_AUTH_PROVIDERS = frozenset({"movieparadise"})
+
+
 def auth_providers_html() -> str:
     groups: list[tuple[str, str, list[str]]] = [
         ("sec-auth-media", "Media servers", ["plex", "jellyfin", "emby", "silo", "tofa"]),
@@ -168,6 +171,8 @@ def auth_providers_html() -> str:
 
         stem = str(getattr(mod, "__name__", "")).split(".")[-1]
         key = stem.lower().replace("_auth_", "")
+        if key in _HIDDEN_AUTH_PROVIDERS:
+            continue
         if key and html.strip():
             by_key[key] = html
 

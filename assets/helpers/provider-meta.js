@@ -25,7 +25,7 @@
     PUNCHPLAY: { key: "PUNCHPLAY", label: "PunchPlay", shortLabel: "PunchPlay", brandClass: "brand-punchplay", badgeId: "badge-punchplay", authSectionId: "sec-punchplay", authGroupId: "sec-auth-trackers", aliases: ["PUNCHPLAY", "PUNCH PLAY", "PUNCH-PLAY"], statusLegacy: ["punchplay_connected", "punchplay"], hasLogo: true, hasLogLogo: false, logoFile: "PUNCHPLAY.png", tone: { solid: "#f4400f", rgb: "244,64,15" }, watchlist: true, ratings: true, history: true, progress: true, playlists: true, collection: true, scrobblerSink: true },
     BINGEBASE: { key: "BINGEBASE", label: "BingeBase", shortLabel: "BingeBase", brandClass: "brand-bingebase", badgeId: "badge-bingebase", authSectionId: "sec-bingebase", authGroupId: "sec-auth-trackers", aliases: ["BINGEBASE", "BINGE BASE", "BINGE-BASE"], statusLegacy: ["bingebase_connected", "bingebase"], hasLogo: true, hasLogLogo: false, logoFile: "BINGEBASE.png", tone: { solid: "#ff8533", rgb: "255,133,51" }, watchlist: false, ratings: false, history: false, progress: false, playlists: false, scrobblerSink: true, scrobbleOnly: true, syncSurface: false },
     FLICKLIST: { key: "FLICKLIST", label: "FlickList", shortLabel: "FlickList", brandClass: "brand-flicklist", badgeId: "badge-flicklist", authSectionId: "sec-flicklist", authGroupId: "sec-auth-trackers", aliases: ["FLICKLIST", "FLICK LIST", "FLICK-LIST"], statusLegacy: ["flicklist_connected", "flicklist"], hasLogo: true, hasLogLogo: false, logoFile: "FLICKLIST.png", tone: { solid: "#0850b8", rgb: "8,80,184" }, watchlist: true, ratings: true, history: true, progress: true, playlists: true, collection: true, scrobblerSink: true },
-    MOVIEPARADISE: { key: "MOVIEPARADISE", label: "Movie Paradise", shortLabel: "Movie Paradise", brandClass: "brand-movieparadise", badgeId: "badge-movieparadise", authSectionId: "sec-movieparadise", authGroupId: "sec-auth-trackers", aliases: ["MOVIEPARADISE", "MOVIE PARADISE", "MOVIE-PARADISE"], statusLegacy: ["movieparadise_connected", "movieparadise"], hasLogo: true, hasLogLogo: false, logoFile: "MOVIEPARADISE.png", tone: { solid: "#d7628f", rgb: "215,98,143" }, watchlist: false, ratings: false, history: false, progress: false, playlists: false, syncSurface: false },
+    MOVIEPARADISE: { key: "MOVIEPARADISE", label: "Movie Paradise", shortLabel: "Movie Paradise", brandClass: "brand-movieparadise", badgeId: "badge-movieparadise", authSectionId: "sec-movieparadise", authGroupId: "sec-auth-trackers", aliases: ["MOVIEPARADISE", "MOVIE PARADISE", "MOVIE-PARADISE"], statusLegacy: ["movieparadise_connected", "movieparadise"], hasLogo: true, hasLogLogo: false, logoFile: "MOVIEPARADISE.png", tone: { solid: "#d7628f", rgb: "215,98,143" }, watchlist: false, ratings: false, history: false, progress: false, playlists: false, syncSurface: false, hidden: true },
     SCROB: { key: "SCROB", label: "Scrob", shortLabel: "Scrob", brandClass: "brand-scrob", badgeId: "badge-scrob", authSectionId: "sec-scrob", authGroupId: "sec-auth-trackers", aliases: ["SCROB"], statusLegacy: ["scrob_connected", "scrob"], hasLogo: true, hasLogLogo: false, logoFile: "SCROB.png", tone: { solid: "#6f36cc", rgb: "111,54,204" }, watchlist: true, ratings: true, history: true, progress: true, playlists: true, collection: true, scrobblerSink: true },
     TAUTULLI: { key: "TAUTULLI", label: "Tautulli", shortLabel: "Tautulli", brandClass: "brand-tautulli", badgeId: "badge-tautulli", authSectionId: "sec-tautulli", authGroupId: "sec-auth-others", aliases: ["TAUTULLI"], statusLegacy: ["tautulli_connected", "tautulli"], hasLogo: true, hasLogLogo: false, tone: { solid: "#f59e0b", rgb: "245,158,11" } },
     TRACEARR: { key: "TRACEARR", label: "Tracearr", shortLabel: "Tracearr", brandClass: "brand-tracearr", badgeId: "badge-tracearr", authSectionId: "sec-tracearr", authGroupId: "sec-auth-others", aliases: ["TRACEARR"], statusLegacy: ["tracearr_connected", "tracearr"], hasLogo: true, hasLogLogo: false, logoFile: "TRACEARR.png", tone: { solid: "#18d1e7", rgb: "24,209,231" } },
@@ -70,12 +70,13 @@
   function aliases(v){ const info = get(v); return Array.isArray(info?.aliases) && info.aliases.length ? info.aliases.slice() : [keyOf(v)].filter(Boolean); }
   function aliasesMap(){ return Object.fromEntries(order.map((key) => [key, aliases(key)])); }
   function badgeId(v){ return get(v)?.badgeId || ""; }
-  function sectionId(v){ return get(v)?.authSectionId || ""; }
+  function isHidden(v){ return !!get(v)?.hidden; }
+  function sectionId(v){ const info = get(v); return info && !info.hidden ? info.authSectionId || "" : ""; }
   function authGroupId(v){ return get(v)?.authGroupId || ""; }
   function statusLegacy(v){ return (get(v)?.statusLegacy || []).slice(); }
   function tone(v){ return get(v)?.tone || get("CROSSWATCH")?.tone || { solid: "#7c5cff", rgb: "124,92,255" }; }
-  function statusProviders(){ return order.map((key) => get(key)).filter((info) => info?.badgeId).map((info) => ({ key: info.key, badgeId: info.badgeId, legacy: statusLegacy(info.key) })); }
-  function authProviders(){ return order.map((key) => get(key)).filter((info) => info?.authSectionId).map((info) => ({ key: info.key, sectionId: info.authSectionId, groupId: info.authGroupId || "" })); }
+  function statusProviders(){ return order.map((key) => get(key)).filter((info) => info?.badgeId && !info.hidden).map((info) => ({ key: info.key, badgeId: info.badgeId, legacy: statusLegacy(info.key) })); }
+  function authProviders(){ return order.map((key) => get(key)).filter((info) => info?.authSectionId && !info.hidden).map((info) => ({ key: info.key, sectionId: info.authSectionId, groupId: info.authGroupId || "" })); }
   function watchlistProviders(){ return order.filter((key) => !!get(key)?.watchlist); }
   function scrobblerSinks(){ return order.filter((key) => !!get(key)?.scrobblerSink); }
   function syncSurfaceProvider(v){ return get(v)?.syncSurface !== false; }
@@ -137,7 +138,7 @@
   }
   (window.CW ||= {});
   window.CW.ProviderMeta = {
-    providers, order, get, normalizeToken, keyOf, matchKey, label, instanceLabel, shortLabel, aliases, aliasesMap, badgeId, sectionId, authGroupId,
+    providers, order: Object.freeze(order.filter((key) => !isHidden(key))), get, isHidden, normalizeToken, keyOf, matchKey, label, instanceLabel, shortLabel, aliases, aliasesMap, badgeId, sectionId, authGroupId,
     statusLegacy, tone, statusProviders, authProviders, watchlistProviders, scrobblerSinks, syncSurfaceProvider, assetPath, logoPath, logLogoPath, brandInfo, logoHtml,
     logLogoHtml, mdblistAccountDetails, dailyQuotaDetails, logo: logoPath, logLogo: logLogoPath,
     labels: Object.fromEntries(order.map((key) => [key, label(key)])),

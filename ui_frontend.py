@@ -297,9 +297,43 @@ def _assert_admin_shell_stripped(html: str, *, settings_panes: set[str] | None =
 
 def _profile_nav_tab(label: str, href: str, active: bool = False) -> str:
     cls = "tab active" if active else "tab"
-    route = {"Main": "main", "Hub": "profile", "Captures": "snapshots", "Playlists": "playlists", "Tracker": "tracker", "Editor": "editor"}.get(label)
+    route = {"Main": "main", "Hub": "profile", "Captures": "snapshots", "Playlists": "playlists", "Tracker": "tracker"}.get(label)
     tab_id = f' id="tab-{route}"' if route else ""
     return f"<button{tab_id} class=\"{cls}\" type=\"button\" onclick=\"location.href='{href}'\">{label}</button>"
+
+
+_TOOLS_MENU_ITEMS: tuple[tuple[str, str, str, int], ...] = (
+    ("events", "history", "Events", 0),
+    ("logs", "receipt_long", "Logs", 0),
+    ("editor", "edit_note", "Editor", 1),
+    ("analyzer", "monitoring", "Analyzer", 1),
+    ("import_export", "import_export", "Import / Export", 1),
+    ("maintenance", "build", "Maintenance", 2),
+)
+
+
+def _tools_menu(*, maintenance: bool = True, href_prefix: str = "") -> str:
+    items: list[str] = []
+    group: int | None = None
+    for route, icon, label, item_group in _TOOLS_MENU_ITEMS:
+        if route == "maintenance" and not maintenance:
+            continue
+        if group is not None and item_group != group:
+            items.append('<div class="cw-menu-sep" role="separator" aria-hidden="true"></div>')
+        group = item_group
+        items.append(
+            f'<button id="tab-{route}" class="cw-menu-item" type="button" role="menuitem" onclick="window.cwToolsMenuSelect(\'{route}\')">'
+            f'<span class="material-symbols-rounded cw-menu-icon" aria-hidden="true">{icon}</span><span>{label}</span></button>'
+        )
+    prefix = f' data-href-prefix="{html_lib.escape(href_prefix, quote=True)}"' if href_prefix else ""
+    return (
+        '<div class="cw-tabmenu" id="tab-tools-menu">'
+        '<button id="tab-tools" class="tab" type="button" aria-haspopup="menu" aria-expanded="false" onclick="window.cwToggleToolsMenu(event)">'
+        '<span>Tools</span><span class="tab-caret" aria-hidden="true"></span></button>'
+        f'<div class="cw-menu hidden" id="cw-tools-menu" role="menu" aria-labelledby="tab-tools"{prefix}>'
+        + "".join(items)
+        + "</div></div>"
+    )
 
 
 def _profile_bulk_bar(bar_id: str, scope: str) -> str:
@@ -622,7 +656,7 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
             _profile_nav_tab("Hub", "/profile#overview"),
             '    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">Captures</button>',
             '    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>',
-            '    <button id="tab-editor" class="tab" type="button" onclick="showTab(\'editor\')">Editor</button>',
+            "    " + _tools_menu(maintenance=False),
             *(['    <button id="tab-settings" class="tab" type="button" onclick="showTab(\'settings\')">Settings</button>'] if settings_panes else []),
             _nav_profile_link(user),
         ]
@@ -647,7 +681,6 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
         )
         html = html.replace('    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">Captures</button>\n', "")
         html = html.replace('    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>\n', "")
-        html = html.replace('    <button id="tab-editor" class="tab" type="button" onclick="showTab(\'editor\')">Editor</button>\n', "")
         for fragment in (
             '  <section id="page-snapshots" class="card hidden tab-page cw-themed-page"></section>\n\n',
             '  <section id="page-capture_compare" class="card hidden tab-page"></section>\n\n',
@@ -718,6 +751,7 @@ def _asset_block(include_admin: bool = True, user: dict | None = None) -> str:
     ) if include_admin else (('<script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>',) if full_user else ())
     return "\n".join((
         '<script src="/assets/helpers/dialog-focus.js?v=__CW_VERSION__" defer></script>',
+        '<script src="/assets/helpers/clipboard.js?v=__CW_VERSION__" defer></script>',
         helper_tags,
         '<script src="/assets/crosswatch.js?v=__CW_VERSION__" defer></script>',
         app_tags,
@@ -963,7 +997,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
     <button id="tab-profile" class="tab" type="button" onclick="location.href='/profile#overview'">Hub</button>
     <button id="tab-snapshots" class="tab" type="button" onclick="showTab('snapshots')">Captures</button>
     <button id="tab-playlists" class="tab" type="button" onclick="showTab('playlists')">Playlists</button>
-    <button id="tab-editor" class="tab" type="button" onclick="showTab('editor')">Editor</button>
+    __CW_TOOLS_MENU__
     <div class="cw-tabmenu" id="tab-settings-menu">
       <button id="tab-settings" class="tab" type="button"
               aria-haspopup="menu" aria-expanded="false"
@@ -2258,7 +2292,7 @@ __CW_NAV_PROFILE_MENU__
 </div>
 
 
-<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$(id==="settings"?"cw-settings-menu":"cw-about-menu"),b=$(id==="settings"?"tab-settings":"tab-about");m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const menuId=id==="settings"?"cw-settings-menu":"cw-about-menu",btnId=id==="settings"?"tab-settings":"tab-about",m=$(menuId),b=$(btnId);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)};window.CW_CURRENT_VERSION="__CW_CURRENT_VERSION__";window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():w==="assistant"?window.openAssistant?.():undefined);window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs"||w==="sync")return openSettings("sync");if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app");if(w==="maintenance")return openSettings("maintenance")};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
+<script>(()=>{const $=id=>document.getElementById(id),closeMenu=id=>{const m=$("cw-"+id+"-menu"),b=$("tab-"+id);m?.classList.add("hidden");b?.setAttribute("aria-expanded","false")},closeAll=()=>{closeMenu("settings");closeMenu("about");closeMenu("tools")},toggleMenu=(id,e)=>{e?.preventDefault?.();e?.stopPropagation?.();const m=$("cw-"+id+"-menu"),b=$("tab-"+id);if(!m||!b)return;const open=m.classList.contains("hidden");closeAll();m.classList.toggle("hidden",!open);b.setAttribute("aria-expanded",String(open))},setHelp=open=>{const o=$("cw-help-overlay");if(!o)return;if(open){const f=$("cw-help-frame");if(f&&!f.src)f.src="https://wiki.crosswatch.app";o.classList.remove("hidden");o.setAttribute("aria-hidden","false")}else{o.classList.add("hidden");o.setAttribute("aria-hidden","true")}},openSettings=pane=>{window.showTab?.("settings");setTimeout(()=>window.cwSettingsSelect?.(pane),0)};window.CW_CURRENT_VERSION="__CW_CURRENT_VERSION__";window.APP_VERSION="__CW_VERSION__";window["__CW_"+"VERSION__"]=window.APP_VERSION;window.cwOpenHelp=()=>setHelp(true);window.cwCloseHelp=()=>setHelp(false);window.openHelp=()=>window.location?.protocol==="https:"?window.cwOpenHelp?.():window.open("https://wiki.crosswatch.app","_blank","noopener,noreferrer");window.cwCloseAboutMenu=()=>closeMenu("about");window.cwCloseSettingsMenu=()=>closeMenu("settings");window.cwToggleAboutMenu=e=>toggleMenu("about",e);window.cwToggleSettingsMenu=e=>toggleMenu("settings",e);window.cwCloseToolsMenu=()=>closeMenu("tools");window.cwToggleToolsMenu=e=>toggleMenu("tools",e);window.cwToolsMenuSelect=r=>{closeMenu("tools");const f={events:"openEvents",logs:"openLogs",analyzer:"openAnalyzer",import_export:"openExporter",maintenance:"openMaintenance"}[r];return f&&typeof window[f]==="function"?window[f]():window.showTab?.(r)};window.cwAboutMenuSelect=w=>(closeMenu("about"),w==="about"?window.openAbout?.():w==="help"?window.openHelp?.():w==="assistant"?window.openAssistant?.():undefined);window.cwSettingsMenuSelect=w=>{closeMenu("settings");if(w==="overview")return openSettings("overview");if(w==="providers")return openSettings("providers");if(w==="scheduling")return openSettings("scheduling");if(w==="pairs"||w==="sync")return openSettings("sync");if(w==="scrobbler")return openSettings("scrobbler");if(w==="app")return openSettings("app");if(w==="maintenance")return openSettings("maintenance")};document.addEventListener("click",e=>{const o=$("cw-help-overlay"),c=$("cw-help-card"),aboutHost=$("tab-about-menu"),settingsHost=$("tab-settings-menu"),toolsHost=$("tab-tools-menu");if(o&&!o.classList.contains("hidden")&&c&&!c.contains(e.target))window.cwCloseHelp?.();if(aboutHost&&!aboutHost.contains(e.target))closeMenu("about");if(settingsHost&&!settingsHost.contains(e.target))closeMenu("settings");if(toolsHost&&!toolsHost.contains(e.target))closeMenu("tools")},true);document.addEventListener("keydown",e=>{if(e.key!=="Escape")return;window.cwCloseHelp?.();closeAll()},true)})();</script>
 
 __CW_ASSET_BLOCK__
 
@@ -2482,6 +2516,7 @@ def _seed_media_card_style(html: str, user: dict | None = None) -> str:
 def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:
     html = _get_index_html_static().replace("__CW_ASSET_BLOCK__", _asset_block(include_admin=include_admin, user=user))
     html = html.replace("__CW_NAV_PROFILE_MENU__", _nav_profile_link(user if user is not None else {"is_admin": include_admin}))
+    html = html.replace("__CW_TOOLS_MENU__", _tools_menu(maintenance=include_admin))
     html = html.replace('<html lang="en"', f'<html lang="en" data-cw-reconnect="{" ".join(reconnect_connection_keys())}"', 1)
     if not include_admin:
         perms = _managed_user_permissions(user)
@@ -2584,7 +2619,7 @@ def get_profile_html(user: dict | None = None) -> str:
             _profile_nav_tab("Hub", "/profile#overview", active=True),
             _profile_nav_tab("Captures", "/#snapshots"),
             _profile_nav_tab("Playlists", "/#playlists"),
-            _profile_nav_tab("Editor", "/#editor"),
+            _tools_menu(href_prefix="/"),
             settings_nav,
         ])
     elif write_nav:
@@ -2594,7 +2629,7 @@ def get_profile_html(user: dict | None = None) -> str:
             _profile_nav_tab("Hub", "/profile#overview", active=True),
             _profile_nav_tab("Captures", "/?main=1#snapshots"),
             _profile_nav_tab("Playlists", "/?main=1#playlists"),
-            _profile_nav_tab("Editor", "/?main=1#editor"),
+            _tools_menu(maintenance=False, href_prefix="/?main=1"),
         ])
     else:
         nav_items.append(_profile_nav_tab("Hub", "/profile#overview", active=True))
@@ -3032,17 +3067,17 @@ def get_profile_html(user: dict | None = None) -> str:
 (() => {{
   const $ = id => document.getElementById(id);
   const closeMenu = id => {{
-    const menu = $(id === "settings" ? "cw-settings-menu" : "cw-about-menu");
-    const button = $(id === "settings" ? "tab-settings" : "tab-about");
+    const menu = $(`cw-${{id}}-menu`);
+    const button = $(`tab-${{id}}`);
     menu?.classList.add("hidden");
     button?.setAttribute("aria-expanded", "false");
   }};
-  const closeAll = () => {{ closeMenu("settings"); closeMenu("about"); }};
+  const closeAll = () => {{ closeMenu("settings"); closeMenu("about"); closeMenu("tools"); }};
   const toggleMenu = (id, event) => {{
     event?.preventDefault?.();
     event?.stopPropagation?.();
-    const menu = $(id === "settings" ? "cw-settings-menu" : "cw-about-menu");
-    const button = $(id === "settings" ? "tab-settings" : "tab-about");
+    const menu = $(`cw-${{id}}-menu`);
+    const button = $(`tab-${{id}}`);
     if (!menu || !button) return;
     const open = menu.classList.contains("hidden");
     closeAll();
@@ -3095,6 +3130,13 @@ def get_profile_html(user: dict | None = None) -> str:
   window.cwToggleSettingsMenu = event => toggleMenu("settings", event);
   window.cwToggleAboutMenu = event => toggleMenu("about", event);
   window.cwSettingsMenuSelect = pane => {{ closeMenu("settings"); openSettings(pane); }};
+  window.cwToggleToolsMenu = event => toggleMenu("tools", event);
+  window.cwCloseToolsMenu = () => closeMenu("tools");
+  window.cwToolsMenuSelect = route => {{
+    closeMenu("tools");
+    const prefix = $("cw-tools-menu")?.dataset.hrefPrefix || "/";
+    window.location.href = `${{prefix}}#${{route}}`;
+  }};
   window.cwAboutMenuSelect = async what => {{
     closeMenu("about");
     if (what === "help") window.openHelp?.();
@@ -3106,6 +3148,7 @@ def get_profile_html(user: dict | None = None) -> str:
     if (overlay && !overlay.classList.contains("hidden") && card && !card.contains(event.target)) window.cwCloseHelp?.();
     if (!$("tab-settings-menu")?.contains(event.target)) closeMenu("settings");
     if (!$("tab-about-menu")?.contains(event.target)) closeMenu("about");
+    if (!$("tab-tools-menu")?.contains(event.target)) closeMenu("tools");
   }}, true);
   document.addEventListener("keydown", event => {{
     if (event.key === "Escape") {{ window.cwCloseHelp?.(); closeAll(); }}
@@ -3113,6 +3156,7 @@ def get_profile_html(user: dict | None = None) -> str:
 }})();
 </script>
 <script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>
+<script src="/assets/helpers/clipboard.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/selection-bar.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/card-actions.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__" defer></script>

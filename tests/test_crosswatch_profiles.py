@@ -1963,7 +1963,10 @@ def test_profile_nav_uses_full_user_links_for_write_managed_user() -> None:
     assert """location.href='/profile#playback'">Playback</button>""" not in html
     assert """<button id="tab-snapshots" class="tab" type="button" onclick="location.href='/?main=1#snapshots'">Captures</button>""" in html
     assert """<button id="tab-playlists" class="tab" type="button" onclick="location.href='/?main=1#playlists'">Playlists</button>""" in html
-    assert """<button id="tab-editor" class="tab" type="button" onclick="location.href='/?main=1#editor'">Editor</button>""" in html
+    assert 'id="tab-tools" class="tab"' in html
+    assert 'id="cw-tools-menu" role="menu" aria-labelledby="tab-tools" data-href-prefix="/?main=1"' in html
+    assert "window.cwToolsMenuSelect('editor')" in html
+    assert 'id="tab-maintenance"' not in html
     assert 'href="/profile#watchlist">View all</a>' in html
     assert 'href="/profile#playback">View all</a>' in html
     assert 'href="/?main=1#settings">Settings</a>' not in html
@@ -1977,6 +1980,33 @@ def test_profile_page_redirects_stale_app_hashes_to_the_app_shell() -> None:
     assert 'window.location?.pathname !== "/profile"' in js
     assert '"playback_progress"' in js
     assert 'window.location.replace(`/?main=1${raw}`)' in js
+
+
+def test_tools_menu_groups_tool_pages_per_role() -> None:
+    import re
+
+    import ui_frontend
+
+    def tools(html: str) -> list[str]:
+        menu = re.search(r'id="cw-tools-menu"[^>]*>(.*?)</div></div>', html)
+        assert menu
+        return ["|" if sep else route for route, sep in re.findall(r'id="tab-([a-z_]+)" class="cw-menu-item"|(cw-menu-sep)', menu.group(1))]
+
+    admin = ui_frontend.get_index_html(include_admin=True, user={"is_admin": True, "username": "admin"})
+    managed = ui_frontend.get_index_html(
+        include_admin=False,
+        user={"is_admin": False, "profile_id": ALICE_PROFILE_ID, "username": "pascal", "permissions": {"dashboard": True, "write": True}},
+    )
+    read_only = ui_frontend.get_index_html(
+        include_admin=False,
+        user={"is_admin": False, "profile_id": ALICE_PROFILE_ID, "username": "pascal", "permissions": {"dashboard": True, "write": False}},
+    )
+
+    assert tools(admin) == ["events", "logs", "|", "editor", "analyzer", "import_export", "|", "maintenance"]
+    assert tools(managed) == ["events", "logs", "|", "editor", "analyzer", "import_export"]
+    assert 'id="tab-tools"' not in read_only
+    assert 'id="tab-editor" class="tab"' not in admin
+    assert "data-href-prefix" not in admin
 
 
 def test_profile_page_supports_admin_account() -> None:
@@ -1994,7 +2024,9 @@ def test_profile_page_supports_admin_account() -> None:
     assert """location.href='/profile#playback'">Playback</button>""" not in html
     assert """<button id="tab-snapshots" class="tab" type="button" onclick="location.href='/#snapshots'">Captures</button>""" in html
     assert """<button id="tab-playlists" class="tab" type="button" onclick="location.href='/#playlists'">Playlists</button>""" in html
-    assert """<button id="tab-editor" class="tab" type="button" onclick="location.href='/#editor'">Editor</button>""" in html
+    assert 'id="tab-tools" class="tab"' in html
+    assert 'id="cw-tools-menu" role="menu" aria-labelledby="tab-tools" data-href-prefix="/"' in html
+    assert "window.cwToolsMenuSelect('maintenance')" in html
     assert 'id="tab-settings" class="tab"' in html
     assert '<span>Settings</span><span class="tab-caret"' in html
     assert 'id="tab-about" class="tab"' not in html

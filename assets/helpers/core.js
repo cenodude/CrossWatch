@@ -335,6 +335,7 @@
     if ([cfg?.tracearr, cfg?.auth?.tracearr].some((block) => hasAnyConfigValue(block, ["api_key", "server_url", "server"]))) set.add("TRACEARR");
 
     if ([cfg?.crosswatch, cfg?.CrossWatch].some(hasCrosswatchConfig)) set.add("CROSSWATCH");
+    for (const key of [...set]) if (window.CW?.ProviderMeta?.isHidden?.(key)) set.delete(key);
     return set;
   }
 
@@ -960,6 +961,7 @@
     ["main", "snapshots", "capture_compare", "playlists", "tracker", "editor", "analyzer", "events", "logs", "import_export", "maintenance", "settings"].forEach((name) => {
       byId(`tab-${name}`)?.classList.toggle("active", name === tab || (name === "snapshots" && tab === "capture_compare"));
     });
+    byId("tab-tools")?.classList.toggle("active", ["events", "logs", "editor", "analyzer", "import_export", "maintenance"].includes(tab));
   }
 
   function setPageVisibility(tab) {
@@ -2058,14 +2060,9 @@
       `Exit: ${summary.exit_code != null ? summary.exit_code : "—"}`,
     ];
 
-    try {
-      await navigator.clipboard.writeText(lines.join("\n"));
-      flashCopy(btn, true);
-      return true;
-    } catch {
-      flashCopy(btn, false);
-      return false;
-    }
+    const ok = (await window.cwCopyText?.(lines.join("\n"))) === true;
+    flashCopy(btn, ok);
+    return ok;
   }
 
   function setRefreshBusy(busy) {

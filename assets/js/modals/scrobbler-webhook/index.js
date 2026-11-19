@@ -454,7 +454,7 @@ function endpointBlock(current) {
     <div class="scrm-provider-card scwm-endpoint-card">
       <div class="scrm-card-head"><span class="scrm-provider-mark"><span class="material-symbols-rounded">link</span></span><div><strong>Endpoint URL</strong><small>Use this URL in ${esc(label(current.provider))}</small></div></div>
       <div class="scrm-endpoint scwm-endpoint">
-        <code title="${esc(current.endpoint_url || "")}">${esc(current.endpoint_url || "Saved instance will receive a URL")}</code>
+        ${current.endpoint_url ? `<input type="text" readonly value="${esc(current.endpoint_url)}" title="${esc(current.endpoint_url)}" aria-label="Endpoint URL" spellcheck="false" data-copy-field>` : "<code>Saved instance will receive a URL</code>"}
         <button type="button" class="btn small sc2-icon-btn material-symbols-rounded" data-copy="${esc(current.endpoint_url || "")}" title="Copy URL">content_copy</button>
         <button type="button" class="btn small danger sc2-icon-btn cw-danger-confirm" data-regenerate title="Regeneration is destructive for the old endpoint URL."><span class="material-symbols-rounded">sync_lock</span></button>
       </div>
@@ -1030,8 +1030,8 @@ export async function mount(shell, incoming = {}) {
     const copy = e.target.closest("[data-copy]");
     if (copy?.dataset.copy) {
       e.preventDefault();
-      await navigator.clipboard?.writeText(copy.dataset.copy);
-      flashCopied(copy);
+      if (await window.cwCopyText?.(copy.dataset.copy)) flashCopied(copy);
+      else window.cwSelectCopyField?.(copy.parentElement?.querySelector("[data-copy-field]"));
       return;
     }
     const add = e.target.closest("[data-add-filter]");

@@ -1304,12 +1304,8 @@
       toast(`Nothing to copy yet`, false);
       return;
     }
-    try {
-      await w.navigator.clipboard.writeText(text);
-      toast(`${label} copied`, true);
-    } catch {
-      toast("Copy is not available here", false);
-    }
+    if (await w.cwCopyText?.(text)) toast(`${label} copied`, true);
+    else toast("Copy is not available here", false);
   }
 
   function chooseLogin(wanted) {

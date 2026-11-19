@@ -386,14 +386,19 @@ def _settings_scrobbler_summary(cfg: dict[str, Any], request: Request) -> dict[s
     return out
 
 
-def _settings_activity_summary() -> dict[str, Any]:
+def _settings_last_sync_at() -> int:
     try:
-        from services.activity import list_events
+        from cw_platform.event_archive.db import get_conn
 
-        items = (list_events(limit=3, offset=0).get("items") or [])[:3]
+        conn = get_conn()
+        if conn is None:
+            return 0
+        row = conn.execute(
+            "SELECT MAX(finished_at) FROM sync_runs WHERE status='done' AND COALESCE(errors,0)=0 AND COALESCE(dry_run,0)=0"
+        ).fetchone()
+        return int(row[0] or 0) if row else 0
     except Exception:
-        items = []
-    return {"items": items}
+        return 0
 
 
 def register_insights(app: FastAPI) -> None:
@@ -409,7 +414,7 @@ def register_insights(app: FastAPI) -> None:
         metadata = _settings_metadata_summary(cfg)
         scheduling = _settings_scheduling_summary(cfg)
         scrobbler = _settings_scrobbler_summary(cfg, request)
-        activity = _settings_activity_summary()
+        last_sync_at = _settings_last_sync_at()
         payload = {
             "ok": True,
             "auth": auth,
@@ -417,7 +422,7 @@ def register_insights(app: FastAPI) -> None:
             "metadata": metadata,
             "scheduling": scheduling,
             "scrobbler": scrobbler,
-            "recent_activity": activity,
+            "last_sync_at": last_sync_at,
         }
         return JSONResponse(payload, headers={"Cache-Control": "no-store"})
 

@@ -244,16 +244,7 @@
     var code = ((_el("trakt_qc_code") && _el("trakt_qc_code").textContent) || (_el("trakt_pin") && _el("trakt_pin").value) || "").replace(/\s+/g, "").trim();
     if (!code || code === "------") return;
     var ok = false;
-    try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(code); ok = true; } } catch (_) {}
-    if (!ok) {
-      try {
-        var ta = document.createElement("textarea");
-        ta.value = code; ta.style.position = "fixed"; ta.style.opacity = "0";
-        document.body.appendChild(ta); ta.focus(); ta.select();
-        ok = document.execCommand("copy");
-        document.body.removeChild(ta);
-      } catch (_) {}
-    }
+    ok = (await window.cwCopyText?.(code)) === true;
     if (!ok) { _notify("Copy failed"); return; }
     btn.classList.add("copied"); btn.innerHTML = TRK_ICON_CHECK; btn.title = "Copied!";
     if (trqcCopyRevert) clearTimeout(trqcCopyRevert);

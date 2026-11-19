@@ -228,6 +228,8 @@ html[data-cw-theme="flat-light"] .sch-adv .chipdays label:has(input:checked){
 #sec-scheduling .sch-plan-summary-note,#sec-scheduling .sch-std-summary-note{font-size:12px;line-height:1.45;color:var(--sch-fg-soft)}
 #sec-scheduling .sch-plan-summary-state,#sec-scheduling .sch-std-summary-state{display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border-radius:999px;border:1px solid var(--sch-border);background:var(--sch-card-bg);font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:var(--sch-fg)}
 #sec-scheduling .sch-plan-summary-state.attention,#sec-scheduling .sch-std-summary-state.attention{border-color:rgba(255,176,32,.26);background:rgba(77,49,0,.26);color:#ffe6b2}
+#sec-scheduling #schAdv.is-plan-off .sch-adv-section{opacity:.55;transition:opacity .15s ease}
+#sec-scheduling #schAdv.is-plan-off .sch-adv-section:is(:hover,:focus-within){opacity:1}
 #sec-scheduling .sch-std-step{display:grid;gap:12px;margin-left:18px!important;margin-right:18px!important;padding:16px;border:1px solid var(--sch-border-soft);border-radius:14px;background:var(--sch-card-bg-soft);box-shadow:none}
 #sec-scheduling .sch-std-step-head{display:grid;gap:4px}
 #sec-scheduling .sch-std-step-kicker{font-size:10px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:var(--sch-fg-soft)}
@@ -2444,8 +2446,10 @@ const ensureStdEnabledToggle = () => {
         summaryText.textContent = parts.join(" • ");
       }
     }
+    const planOff = !_advEnabled && totalConfigured > 0;
+    $("#schAdv")?.classList.toggle("is-plan-off", !_advEnabled);
     if (summaryNote) {
-      summaryNote.textContent = summaryIssue || (
+      summaryNote.textContent = summaryIssue || (planOff ? "Nothing here runs until Use advanced plan is turned on." : null) || (
         totalConfigured
           ? "Combine timed steps, recurring workflows, automated captures, and event triggers in one advanced plan."
           : "Add timed steps, capture schedules, or event triggers to build an advanced automation flow."
@@ -2462,8 +2466,8 @@ const ensureStdEnabledToggle = () => {
                 ? "Capture schedules need attention"
                 : "Event triggers need attention"
         )
-        : (_advEnabled ? "Advanced plan active" : "Advanced plan ready");
-      summaryState.classList.toggle("attention", !!summaryIssue);
+        : (_advEnabled ? "Advanced plan active" : planOff ? "Not running, advanced plan is off" : "Advanced plan ready");
+      summaryState.classList.toggle("attention", !!summaryIssue || planOff);
     }
   };
 

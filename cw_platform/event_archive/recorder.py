@@ -327,7 +327,7 @@ class RunRecorder:
                 self._pair_stats = {}
             record_run_finished(
                 self._run_id,
-                status="done",
+                status="cancelled" if f.get("cancelled") else "done",
                 pairs=int(f.get("pairs") or 0),
                 summary={k: f.get(k) for k in ("added", "removed", "updated", "unresolved", "blocked", "errors")},
                 conn=self._conn,

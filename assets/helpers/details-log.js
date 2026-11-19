@@ -578,19 +578,7 @@ async function _copyDetailsLog(btn) {
   const text = _copyableDetailsLog(el);
   if (!text) return;
 
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch (_) {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    document.body.removeChild(ta);
-  }
+  if (!(await window.cwCopyText?.(text))) return;
 
   if (!btn) return;
   const icon = btn.querySelector(".material-symbols-rounded");

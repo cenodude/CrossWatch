@@ -47,6 +47,7 @@
       $('cw-mobile-more')?.setAttribute('aria-expanded', 'false');
       window.cwCloseSettingsMenu?.();
       window.cwCloseAboutMenu?.();
+      window.cwCloseToolsMenu?.();
     };
     toggle.addEventListener('click', () => {
       if (toggle.getAttribute('aria-expanded') === 'true') return close();
@@ -110,7 +111,7 @@
       '<button id="cw-mobile-more" type="button" aria-controls="cw-mobile-navigation" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span><span>More</span></button>';
     document.body.appendChild(nav);
     document.body.classList.add('cw-has-bottom-nav');
-    const icons = {'tab-main':'home','tab-snapshots':'photo_library','tab-playlists':'queue_music','tab-tracker':'inventory_2','tab-editor':'edit_note','tab-settings':'tune','tab-profile':'bar_chart'};
+    const icons = {'tab-main':'home','tab-snapshots':'photo_library','tab-playlists':'queue_music','tab-tracker':'inventory_2','tab-tools':'handyman','tab-settings':'tune','tab-profile':'bar_chart'};
     document.querySelectorAll('#cw-mobile-navigation .tab').forEach(tab => {
       const icon = document.createElement('span');
       icon.className = 'material-symbols-rounded cw-mobile-destination-icon';
@@ -463,7 +464,7 @@
       const icon = settings.querySelector('.cw-mobile-destination-icon');
       if (icon) icon.classList.add('cw-settings-icon');
     }
-    const destinations = ['snapshots','playlists','editor'].map(route => $(`tab-${route}`)).filter(Boolean);
+    const destinations = ['snapshots','playlists'].map(route => $(`tab-${route}`)).filter(Boolean);
     if (!destinations.length) return;
     const anchors = destinations.map(node => {
       const anchor = document.createComment('');
@@ -486,6 +487,7 @@
       close();
       if (open) {
         window.cwCloseSettingsMenu?.();
+        window.cwCloseToolsMenu?.();
         dropdown.classList.remove('hidden');
         toggle.setAttribute('aria-expanded','true');
         destinations[0].focus();
