@@ -76,7 +76,7 @@
   const statusCacheKey = () => `${STATUS_CACHE_KEY}.${String(window.CW?.OverviewProfile?.id || "").trim() || "all"}`;
   const DETAILS_MAX_LINES = 300;
   const authSetupPending = () => window.cwIsAuthSetupPending?.() === true;
-  const ROUTE_TABS = new Set(["main", "snapshots", "capture_compare", "playlists", "tracker", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
+  const ROUTE_TABS = new Set(["main", "snapshots", "capture_compare", "playlists", "tracker", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "backups", "settings"]);
   const SETTINGS_PANES = new Set(["overview", "providers", "sync", "scrobbler", "scheduling", "app", "maintenance"]);
   let routeSyncing = false;
 
@@ -958,10 +958,10 @@
   }
 
   function setTabHeaderState(tab) {
-    ["main", "snapshots", "capture_compare", "playlists", "tracker", "editor", "analyzer", "events", "logs", "import_export", "maintenance", "settings"].forEach((name) => {
+    ["main", "snapshots", "capture_compare", "playlists", "tracker", "editor", "analyzer", "events", "logs", "import_export", "maintenance", "backups", "settings"].forEach((name) => {
       byId(`tab-${name}`)?.classList.toggle("active", name === tab || (name === "snapshots" && tab === "capture_compare"));
     });
-    byId("tab-tools")?.classList.toggle("active", ["events", "logs", "editor", "analyzer", "import_export", "maintenance"].includes(tab));
+    byId("tab-tools")?.classList.toggle("active", ["events", "logs", "editor", "analyzer", "import_export", "maintenance", "backups"].includes(tab));
   }
 
   function setPageVisibility(tab) {
@@ -976,6 +976,7 @@
     byId("page-editor")?.classList.toggle("hidden", tab !== "editor");
     byId("page-analyzer")?.classList.toggle("hidden", tab !== "analyzer");
     byId("page-maintenance")?.classList.toggle("hidden", tab !== "maintenance");
+    byId("page-backups")?.classList.toggle("hidden", tab !== "backups");
     byId("page-events")?.classList.toggle("hidden", tab !== "events");
     byId("page-logs")?.classList.toggle("hidden", tab !== "logs");
     byId("page-import_export")?.classList.toggle("hidden", tab !== "import_export");
@@ -1030,6 +1031,7 @@
       if (tab === "tracker" && window.location.hash.startsWith("#tracker?")) await window.TrackerPage?.mount?.(byId("page-tracker"));
       else if (tab === "tracker") await window.TrackerPage?.resume?.();
       if (tab === "interactive_sync") window.InteractiveSync?.refresh?.();
+      if (tab === "backups") await window.BackupsPage?.mount?.(byId("page-backups"));
       if (tab === "maintenance") await window.MaintenancePage?.mount?.(byId("page-maintenance"));
       if (tab === "capture_compare") await window.CaptureComparePage?.mount?.(byId("page-capture_compare"));
       if (tab === "events") await window.EventsPage?.mount?.(byId("page-events"));
@@ -1048,6 +1050,7 @@
 
     if (previousTab === "capture_compare") window.CaptureComparePage?.hide?.();
     if (previousTab === "events") window.EventsPage?.hide?.();
+    if (previousTab === "backups") window.BackupsPage?.hide?.();
     if (previousTab === "logs") window.LogsPage?.hide?.();
     setTabHeaderState(tab);
     setPageVisibility(tab);
@@ -1117,6 +1120,20 @@
 
     if (tab === "interactive_sync") {
       await ensurePageModule("interactive-sync", "/assets/js/interactive-sync.js", "InteractiveSync");
+      return;
+    }
+
+    if (tab === "backups") {
+      try {
+        await ensurePageModule("backups", "/assets/helpers/backups.js", "BackupsPage");
+        if (!isCurrentNavigation()) return;
+        await window.BackupsPage.mount(byId("page-backups"));
+      } catch (error) {
+        if (!isCurrentNavigation()) return;
+        const root = byId("page-backups");
+        if (root) root.innerHTML = '<div class="cw-page-load-error">Backup & Restore failed to load. Refresh the page and try again.</div>';
+        console.error("Backup & Restore failed to load", error);
+      }
       return;
     }
 

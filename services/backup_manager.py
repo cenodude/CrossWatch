@@ -178,8 +178,8 @@ def enqueue(trigger: str = "manual") -> dict[str, Any]:
         if (private_dir() / "pending.json").exists():
             raise ValueError("A restore is waiting for restart.")
         rows = _jobs()
-        if any(row["stage"] in {"queued", "creating", "validating", "encrypting"} for row in rows):
-            raise ValueError("A local backup is already queued or running.")
+        if any(row["stage"] in {"queued", "creating", "validating", "encrypting", "uploading", "verifying"} for row in rows):
+            raise ValueError("A backup is already queued or running.")
         job = {"id": uuid.uuid4().hex, "stage": "queued", "trigger": trigger, "created_at": time.time(), "updated_at": time.time(), "attempts": 0, "retry_at": 0, "settings": current, "local_status": "pending", "remote_status": "pending" if current["destination"]["kind"] != "none" else "disabled", "bytes": 0, "total_bytes": 0}
         rows.append(job)
         write("jobs.json", rows)
@@ -190,7 +190,10 @@ def enqueue(trigger: str = "manual") -> dict[str, Any]:
 
 def retry(job_id: str) -> None:
     with _LOCK:
-        row = next((r for r in _jobs() if r["id"] == job_id), None)
+        rows = _jobs()
+        if any(r["stage"] not in {"complete", "failed"} for r in rows):
+            raise ValueError("A backup is already queued or running.")
+        row = next((r for r in rows if r["id"] == job_id), None)
         if not row or row["stage"] != "failed":
             raise ValueError("Choose a failed backup job.")
         if row.get("local_status") in {"expired", "deleted"}:

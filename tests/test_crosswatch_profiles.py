@@ -1967,6 +1967,7 @@ def test_profile_nav_uses_full_user_links_for_write_managed_user() -> None:
     assert 'id="cw-tools-menu" role="menu" aria-labelledby="tab-tools" data-href-prefix="/?main=1"' in html
     assert "window.cwToolsMenuSelect('editor')" in html
     assert 'id="tab-maintenance"' not in html
+    assert 'id="tab-backups"' not in html
     assert 'href="/profile#watchlist">View all</a>' in html
     assert 'href="/profile#playback">View all</a>' in html
     assert 'href="/?main=1#settings">Settings</a>' not in html
@@ -2002,7 +2003,10 @@ def test_tools_menu_groups_tool_pages_per_role() -> None:
         user={"is_admin": False, "profile_id": ALICE_PROFILE_ID, "username": "pascal", "permissions": {"dashboard": True, "write": False}},
     )
 
-    assert tools(admin) == ["events", "logs", "|", "editor", "analyzer", "import_export", "|", "maintenance"]
+    assert tools(admin) == ["events", "logs", "|", "editor", "analyzer", "import_export", "|", "backups"]
+    assert 'id="page-backups"' in admin
+    assert 'id="page-backups"' not in managed
+    assert 'onclick="openBackupRestore()"' not in admin
     assert tools(managed) == ["events", "logs", "|", "editor", "analyzer", "import_export"]
     assert 'id="tab-tools"' not in read_only
     assert 'id="tab-editor" class="tab"' not in admin
@@ -2026,7 +2030,7 @@ def test_profile_page_supports_admin_account() -> None:
     assert """<button id="tab-playlists" class="tab" type="button" onclick="location.href='/#playlists'">Playlists</button>""" in html
     assert 'id="tab-tools" class="tab"' in html
     assert 'id="cw-tools-menu" role="menu" aria-labelledby="tab-tools" data-href-prefix="/"' in html
-    assert "window.cwToolsMenuSelect('maintenance')" in html
+    assert "window.cwToolsMenuSelect('backups')" in html
     assert 'id="tab-settings" class="tab"' in html
     assert '<span>Settings</span><span class="tab-caret"' in html
     assert 'id="tab-about" class="tab"' not in html
@@ -2096,9 +2100,10 @@ def test_main_shell_has_early_hash_route_hint() -> None:
     core_js = Path("assets/helpers/core.js").read_text("utf-8")
 
     assert "data-cw-initial-tab" in html
-    assert 'const tabs = new Set(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);' in html
+    assert 'const tabs = new Set(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "backups", "settings"]);' in html
     assert 'html[data-cw-initial-tab]:not([data-cw-initial-tab="main"]) #ops-card' in html
     assert 'html[data-cw-initial-tab="settings"] #page-settings' in html
+    assert 'html[data-cw-initial-tab="backups"] #page-backups' in html
     assert "delete document.documentElement.dataset.cwInitialTab;" in core_js
 
 

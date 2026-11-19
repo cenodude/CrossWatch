@@ -308,7 +308,7 @@ _TOOLS_MENU_ITEMS: tuple[tuple[str, str, str, int], ...] = (
     ("editor", "edit_note", "Editor", 1),
     ("analyzer", "monitoring", "Analyzer", 1),
     ("import_export", "import_export", "Import / Export", 1),
-    ("maintenance", "build", "Maintenance", 2),
+    ("backups", "backup", "Backup & Restore", 2),
 )
 
 
@@ -316,7 +316,7 @@ def _tools_menu(*, maintenance: bool = True, href_prefix: str = "") -> str:
     items: list[str] = []
     group: int | None = None
     for route, icon, label, item_group in _TOOLS_MENU_ITEMS:
-        if route == "maintenance" and not maintenance:
+        if route == "backups" and not maintenance:
             continue
         if group is not None and item_group != group:
             items.append('<div class="cw-menu-sep" role="separator" aria-hidden="true"></div>')
@@ -641,6 +641,7 @@ __CW_NAV_PROFILE_ITEMS__
 
 def _managed_user_shell(html: str, user: dict | None = None) -> str:
     html = html.replace('  <section id="page-maintenance" class="card hidden tab-page"></section>\n\n', "")
+    html = html.replace('  <section id="page-backups" class="hidden tab-page cw-page-backups" aria-labelledby="br-title"></section>\n\n', "")
     tracker = _managed_tracker_allowed(user)
     if not tracker:
         html = html.replace('  <section id="page-tracker" class="card hidden tab-page cw-themed-page"></section>\n\n', "")
@@ -810,6 +811,7 @@ def _get_index_html_static() -> str:
     logs: "Logs",
     import_export: "Import / Export",
     maintenance: "Maintenance tools",
+    backups: "Backup & Restore",
     interactive_sync: "Interactive Sync",
     settings: "Settings",
   };
@@ -899,7 +901,7 @@ def _get_index_html_static() -> str:
       window.location.replace("/profile#watchlist");
       return;
     }
-    const tabs = new Set(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "settings"]);
+    const tabs = new Set(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "backups", "settings"]);
     let tab = tabs.has(route) ? route : "main";
     document.documentElement.dataset.cwInitialTab = tab;
     document.documentElement.dataset.tab = tab;
@@ -942,6 +944,7 @@ html[data-cw-initial-tab="tracker"] #page-tracker,
 html[data-cw-initial-tab="editor"] #page-editor,
 html[data-cw-initial-tab="analyzer"] #page-analyzer,
 html[data-cw-initial-tab="maintenance"] #page-maintenance,
+html[data-cw-initial-tab="backups"] #page-backups,
 html[data-cw-initial-tab="events"] #page-events,
 html[data-cw-initial-tab="logs"] #page-logs,
 html[data-cw-initial-tab="import_export"] #page-import_export,
@@ -1271,6 +1274,8 @@ __CW_NAV_PROFILE_MENU__
   <section id="page-analyzer" class="card hidden tab-page"></section>
 
   <section id="page-maintenance" class="card hidden tab-page"></section>
+
+  <section id="page-backups" class="hidden tab-page cw-page-backups" aria-labelledby="br-title"></section>
 
   <section id="page-events" class="card hidden tab-page"></section>
 
@@ -2245,7 +2250,7 @@ __CW_NAV_PROFILE_MENU__
         </section>
 
         <section class="cw-settings-pane cw-page-maintenance" data-pane="maintenance">
-          <header class="mt-page-head"><h3>Maintenance</h3><p>Backups, cleanup and diagnostics.</p></header>
+          <header class="mt-page-head"><h3>Maintenance</h3><p>Cleanup and diagnostics.</p></header>
           <div id="sec-troubleshoot" data-accordion="off">
             <section class="cw-page-panel mt-debug">
               <div><h4>Debug logging</h4><p>Choose the detail included in logs.</p></div>
@@ -2257,9 +2262,6 @@ __CW_NAV_PROFILE_MENU__
               </label>
             </section>
             <div class="cw-page-panel mt-tool-list" aria-label="Maintenance actions">
-              <button class="mt-tool" type="button" onclick="openBackupRestore()">
-                <span><strong>Backup & Restore</strong><small>Back up and recover application data, trackers and captures.</small></span><span class="mt-open" aria-hidden="true">Open</span>
-              </button>
               <button class="mt-tool" type="button" onclick="openMaintenance()">
                 <span><strong>Maintenance tools</strong><small>Check local data, clear caches and reset sync state.</small></span><span class="mt-open" aria-hidden="true">Open</span>
               </button>
