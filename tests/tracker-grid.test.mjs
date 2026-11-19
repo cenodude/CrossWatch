@@ -91,9 +91,10 @@ function preferences(initial = {}) {
   const click = source.slice(source.indexOf("      if (layout) {"), source.indexOf('      const view = event.target.closest("[data-trk-view]")'));
   let saved = JSON.stringify(initial);
   const state = {view:"history",layouts:{},picked:new Set()};
-  const views = ["history","shows","titles","watchlist","ratings","progress","collection","cleanup"];
-  const context = vm.createContext({state,STORE_KEY:"test",VIEWS:views.map(id=>({id})),MEDIA:[],PAGE_SIZES:[],MOBILE_PAGE_SIZES:[],renderSlots:()=>{},localStorage:{getItem:()=>saved,setItem:(_,value)=>{saved=value;}}});
-  vm.runInContext(prefs + "loadView();",context);
+  const views = ["history","watched","titles","watchlist","ratings","progress","collection","cleanup"];
+  const context = vm.createContext({state,STORE_KEY:"test",VIEWS:[...views,"movies","shows"].map(id=>({id})),MEDIA:[],PAGE_SIZES:[],MOBILE_PAGE_SIZES:[],renderSlots:()=>{},localStorage:{getItem:()=>saved,setItem:(_,value)=>{saved=value;}}});
+  const helpers = source.slice(source.indexOf("  const historyView ="), source.indexOf("  const timelineOn ="));
+  vm.runInContext(helpers + prefs + "loadView();",context);
   vm.runInContext(`function choose(value) { const layout = {dataset:{trkLayout:value}}; ${click} }`,context);
   return {state,views,choose:value=>vm.runInContext(`choose(${JSON.stringify(value)})`,context),reload:()=>vm.runInContext("loadView()",context)};
 }
@@ -116,6 +117,18 @@ test("each tab saves its own layout and restores it after reload", () => {
   reload();
   assert.equal(state.layouts.history,"list");
   assert.equal(state.layouts.ratings,"grid");
+});
+
+test("grouped movies and shows share a layout without changing individual watches", () => {
+  const {state,choose,reload} = preferences();
+  state.view = "movies";
+  choose("grid");
+  state.view = "shows";
+  assert.equal(state.layouts.watched,"grid");
+  choose("list");
+  reload();
+  assert.equal(state.layouts.watched,"list");
+  assert.equal(state.layouts.history,"list");
 });
 
 test("legacy grid preference migrates only to the previously active tab", () => {

@@ -1365,6 +1365,50 @@ class TrackerStore(TrackerAutomation):
         except Exception:
             raise TrackerUnreadable(feature, [DB_NAME])
 
+    def history_titles(
+        self, *, text: str = "", status: str = "", tag: str = "", sort: str = "recent", media: str = "",
+        offset: int = 0, limit: int = 60,
+    ) -> tuple[int, list[tuple[str, Any, str, int]]]:
+        kinds = "kind='movie'" if media == "movie" else "kind='episode' AND show_key IS NOT NULL" if media == "show" else "(kind='movie' OR (kind='episode' AND show_key IS NOT NULL))"
+        cte = (
+            "WITH titles AS (SELECT item_key, data, find, sort_title, when_at, "
+            f"{_ITEM_NOTE_KEY} AS title_key, COUNT(*) OVER (PARTITION BY {_ITEM_NOTE_KEY}) AS plays, "
+            f"ROW_NUMBER() OVER (PARTITION BY {_ITEM_NOTE_KEY} ORDER BY when_at DESC, item_key DESC) AS position "
+            f"FROM items WHERE scope='' AND feature='history' AND {kinds}) "
+        )
+        where, args = self._note_filters(status=status, tag=tag, key="titles.title_key")
+        where.append("position=1")
+        if text.strip():
+            where.append(
+                f"title_key IN (SELECT {_ITEM_NOTE_KEY} FROM items WHERE scope='' AND feature='history' "
+                f"AND {kinds} AND instr(find, ?) > 0)"
+            )
+            args.append(text.strip().lower())
+        clause = " AND ".join(where)
+        order = {
+            "recent": "when_at DESC, title_key",
+            "oldest": "when_at ASC, title_key",
+            "title": "sort_title, title_key",
+        }.get(sort, "when_at DESC, title_key")
+        with self._db() as conn:
+            if conn is None:
+                return 0, []
+            try:
+                total = int(self._cached(conn, "history_titles", (media, clause, *args), lambda: conn.execute(
+                    f"{cte}SELECT COUNT(*) FROM titles WHERE {clause}", args,
+                ).fetchone()[0]))
+                rows = conn.execute(
+                    f"{cte}SELECT item_key, data, title_key, plays FROM titles WHERE {clause} "
+                    f"ORDER BY {order} LIMIT ? OFFSET ?",
+                    [*args, max(1, min(int(limit), 200)), max(0, int(offset))],
+                ).fetchall()
+            except sqlite3.Error as exc:
+                raise TrackerUnreadable("history", [DB_NAME]) from exc
+        try:
+            return total, [(str(key), json.loads(data), str(title_key), int(plays)) for key, data, title_key, plays in rows]
+        except Exception:
+            raise TrackerUnreadable("history", [DB_NAME])
+
     def months(self, feature: str, *, text: str = "", media: str = "", status: str = "", tag: str = "", duplicates: bool = False) -> list[dict[str, Any]]:
         where, args = self._filters(feature, text=text, media=media, duplicates=duplicates)
         note_where, note_args = self._note_filters(status=status, tag=tag)

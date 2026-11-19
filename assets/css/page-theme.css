@@ -332,7 +332,9 @@ dialog.cw-page-panel {
 #page-tracker .trk-overview-progress i{background:var(--accent)}
 #page-tracker .trk-overview-open:focus-visible,#page-tracker .trk-others>summary:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:8px}
 #page-tracker .trk-others.is-active>summary,#page-tracker .trk-others>summary small{color:var(--accent)}
-#page-tracker .trk-overflow{border-bottom:1px solid var(--cw-theme-border)}
+#layout #page-tracker .trk-others-menu .cw-btn{--cw-control-bg:transparent;--cw-control-border:transparent;--cw-page-control-radius:8px;--cw-page-control-height:44px}
+#layout #page-tracker .trk-others-menu .cw-btn:hover:not(:disabled){--cw-control-bg:var(--cw-page-hover-bg)}
+#layout #page-tracker .trk-others-menu .cw-btn[aria-current="page"]{--cw-control-bg:var(--cw-page-selected-bg);--cw-control-text:var(--cw-page-selected-text)}
 #layout .cw-themed-page .cw-page-table {
   background: var(--cw-theme-surface);
 }
@@ -1413,7 +1415,7 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-months{--hist-tone-rgb:70,86
 #page-tracker .trk-grid-status .trk-status{background:color-mix(in srgb,var(--trk-status) 20%,#080b10);color:#fff;box-shadow:0 1px 4px rgba(0,0,0,.2)}
 #page-tracker .trk-grid-status .material-symbol{color:color-mix(in srgb,var(--trk-status) 75%,#fff)}
 #page-tracker .trk-extra-filters{border-top:1px solid var(--cw-theme-border)}
-#page-tracker .trk-filter-toggle{background:transparent;border:0;box-shadow:none;color:var(--cw-theme-muted);font:inherit;font-size:12px}
+#page-tracker .trk-filter-toggle{border-radius:0 calc(var(--cw-page-control-radius) - 1px) calc(var(--cw-page-control-radius) - 1px) 0;background:transparent;border:0;box-shadow:none;color:var(--cw-theme-muted);font:inherit;font-size:12px}
 #page-tracker .trk-filter-toggle:hover{background:var(--cw-page-hover-bg);color:var(--cw-theme-text)}
 #page-tracker .trk-filter-toggle.active{color:var(--cw-theme-accent);background:var(--cw-page-selected-bg)}
 #page-tracker .trk-extra-filters>small{color:var(--cw-theme-muted)}

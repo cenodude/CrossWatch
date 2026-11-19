@@ -80,6 +80,98 @@ def test_unknown_feature_is_rejected(client):
     assert client.get("/api/tracker/items", params={"feature": "secrets"}).status_code == 400
 
 
+def test_grouped_movies_groups_rewatches_and_keeps_title_details(client):
+    store = TrackerStore(Path(trackerAPI.load_config()["crosswatch"]["root_dir"]))
+    store.write_state("history", {
+        "tmdb:949@first": MOVIE,
+        "tmdb:949@latest": {**MOVIE, "watched_at": "2026-11-01T12:00:00Z"},
+        "tmdb:949": {key: value for key, value in MOVIE.items() if key != "watched_at"},
+        "imdb:tt2543164": BARE,
+        "tmdb:95396#s01e02": EPISODE,
+    })
+    data = client.get("/api/tracker/history/titles", params={"media": "movie"}).json()
+    assert data["total"] == 2
+    movie = data["items"][0]
+    assert movie["key"] == "tmdb:949@latest"
+    assert movie["title_key"] == "movie:tmdb:949"
+    assert movie["plays"] == 3
+    assert movie["date"] == "2026-11-01T12:00:00Z"
+    assert movie["user_rating"] == 9
+    detail = client.get("/api/tracker/title", params={"key": movie["key"], "feature": "history"}).json()
+    assert detail["ok"] is True
+    preview = client.post("/api/tracker/titles/remove", json={"keys": [movie["title_key"]], "scope": "history"}).json()
+    assert preview["counts"]["history"] == 3
+    assert client.get("/api/tracker/items").json()["total"] == 5
+
+
+@pytest.mark.parametrize(("params", "title"), [
+    ({"sort": "title", "limit": 1}, "Arrival"),
+    ({"sort": "title", "limit": 1, "offset": 1}, "Heat"),
+    ({"sort": "oldest", "limit": 1}, "Arrival"),
+    ({"q": "HEAT"}, "Heat"),
+])
+def test_grouped_movies_filters_and_pages_titles(client, params, title):
+    data = client.get("/api/tracker/history/titles", params={"media": "movie", **params}).json()
+    assert [row["title"] for row in data["items"]] == [title]
+    assert data["total"] == (1 if "q" in params else 2)
+
+
+def test_grouped_movies_status_tags_and_instance_scope(client):
+    store = TrackerStore(Path(trackerAPI.load_config()["crosswatch"]["root_dir"]))
+    store.save_note("movie:tmdb:949", {"title": "Heat", "status": "completed", "tags": ["Favorite"]})
+    data = client.get("/api/tracker/history/titles", params={"media": "movie", "status": "completed", "tag": "Favorite"}).json()
+    assert data["total"] == 1
+    assert data["items"][0]["status"] == "completed"
+    assert client.get("/api/tracker/history/titles", params={"media": "movie", "status": "none"}).json()["total"] == 1
+    assert client.get("/api/tracker/history/titles", params={"media": "movie", "status": "invalid"}).status_code == 400
+    assert client.get("/api/tracker/history/titles", params={"media": "movie", "provider_instance": "CW-P01"}).json()["total"] == 0
+
+
+def test_grouped_movies_keeps_unknown_dates_and_refreshes_after_writes(client):
+    store = TrackerStore(Path(trackerAPI.load_config()["crosswatch"]["root_dir"]))
+    assert client.get("/api/tracker/history/titles", params={"media": "movie"}).json()["total"] == 2
+    unknown = {key: value for key, value in MOVIE.items() if key != "watched_at"}
+    store.write_state("history", {"tmdb:949": unknown})
+    data = client.get("/api/tracker/history/titles", params={"media": "movie"}).json()
+    assert data["total"] == 1
+    assert data["items"][0]["plays"] == 1
+    assert not data["items"][0]["date"]
+    store.write_state("history", {})
+    assert client.get("/api/tracker/history/titles", params={"media": "movie"}).json()["items"] == []
+
+
+def test_grouped_history_combines_movies_and_series_with_stable_paging(client):
+    store = TrackerStore(Path(trackerAPI.load_config()["crosswatch"]["root_dir"]))
+    store.write_state("history", {
+        "tmdb:949": MOVIE,
+        "imdb:tt2543164": BARE,
+        "tmdb:95396#s01e02": EPISODE,
+        "tmdb:95396#s01e02@rewatch": {**EPISODE, "watched_at": "2026-05-01T00:00:00Z"},
+        "tmdb:95396#s01e03": {**EPISODE, "episode": 3, "title": "S01E03"},
+    })
+    store.write_state("ratings", {"tmdb:95396": {"type": "show", "title": "Severance", "ids": {"tmdb": "95396"}, "rating": 8}})
+    data = client.get("/api/tracker/history/titles").json()
+    assert data["total"] == 3
+    show = data["items"][0]
+    assert (show["title"], show["type"], show["plays"]) == ("Severance", "show", 3)
+    assert show["season"] is None and show["episode"] is None
+    assert show["user_rating"] == 8
+    assert show["ids"] == {"tmdb": "95396"}
+    assert show["title_key"] == "show:tmdb:95396"
+    assert show["key"] == "tmdb:95396#s01e02@rewatch"
+    matched = client.get("/api/tracker/history/titles", params={"q": "S01E03"}).json()
+    assert matched["total"] == 1
+    assert matched["items"][0]["key"] == show["key"]
+    assert matched["items"][0]["plays"] == 3
+    assert client.get("/api/tracker/title", params={"key": show["key"]}).json()["show"] is True
+    pages = [client.get("/api/tracker/history/titles", params={"sort": "title", "offset": n, "limit": 1}).json() for n in range(3)]
+    assert [page["items"][0]["title"] for page in pages] == ["Arrival", "Heat", "Severance"]
+    assert client.get("/api/tracker/history/titles", params={"media": "show"}).json()["total"] == 1
+    assert client.get("/api/tracker/history/titles", params={"media": "invalid"}).status_code == 400
+    preview = client.post("/api/tracker/titles/remove", json={"keys": [show["title_key"], "movie:tmdb:949"], "scope": "history"}).json()
+    assert preview["counts"]["history"] == 4
+
+
 def test_unreadable_tracker_reports_an_error_instead_of_an_empty_list(tmp_path, monkeypatch):
     base = tmp_path / "broken"
     base.mkdir()

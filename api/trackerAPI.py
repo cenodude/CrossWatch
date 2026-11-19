@@ -776,6 +776,46 @@ def tracker_items(
     }
 
 
+@router.get("/history/titles", dependencies=_READY)
+def tracker_history_titles(
+    request: Request,
+    provider_instance: str | None = Query("default"),
+    q: str = Query("", max_length=200),
+    status: str = Query(""),
+    tag: str = Query("", max_length=40),
+    sort: str = Query("recent"),
+    media: str = Query(""),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(60, ge=1, le=200),
+) -> Any:
+    if status and status not in (*NOTE_STATUSES, "none"):
+        return _error("invalid_status", 400)
+    if media not in ("", "movie", "show"):
+        return _error("invalid_media", 400)
+    _, inst, store = _store(provider_instance, request)
+    try:
+        with store.session():
+            total, rows = store.history_titles(text=q, status=status, tag=tag, sort=sort, media=media, offset=offset, limit=limit)
+            notes = store.notes_for(title_key for _, _, title_key, _ in rows)
+            items = []
+            for key, item, title_key, plays in rows:
+                row = _row(key, item, "history")
+                row["title_key"] = title_key
+                row["plays"] = plays
+                if title_key.startswith("show:"):
+                    row.update(type="show", title=row.get("series_title") or row.get("title"), year=row.get("series_year") or row.get("year"))
+                    row["ids"] = row.get("show_ids") or {}
+                    row["season"] = None
+                    row["episode"] = None
+                    row["episode_title"] = None
+                row["user_rating"] = _user_rating(store, row, key)
+                row["status"] = (notes.get(title_key) or {}).get("status")
+                items.append(row)
+    except TrackerUnreadable:
+        return _unreadable()
+    return {"ok": True, "provider_instance": inst, "total": total, "offset": offset, "items": items}
+
+
 def _month_end(month: str) -> str:
     if not month:
         return ""
