@@ -72,6 +72,16 @@ def test_token_refresh_keeps_the_pair_scope(config_base):
     assert pair_feature_scope(changed, changed["pairs"][0], "history") != pair_feature_scope(cfg, pair, "history")
 
 
+def test_pins_and_credentials_stay_out_of_the_scope(config_base):
+    cfg, pair = _oauth_cfg(1000)
+    changed = deepcopy(cfg)
+    changed["plex"].update(home_pin="1234", pin="5678")
+    changed["punchplay"]["credential"] = "secret-value"
+    assert pair_feature_scope(cfg, pair, "history") == pair_feature_scope(changed, pair, "history")
+    changed["plex"]["status_mapping"] = {"x": 1}
+    assert pair_feature_scope(cfg, pair, "history") != pair_feature_scope(changed, pair, "history")
+
+
 def _seed_legacy(base, cfg, pair):
     old = pair_feature_scope(cfg, pair, "history", 1, legacy=True)
     StateStore(base).for_pair(old, pair_id="one").save_feature_blocks({

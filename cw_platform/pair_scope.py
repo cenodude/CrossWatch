@@ -18,6 +18,11 @@ _PAIR_SCOPE_TABLES = (
 )
 
 
+def _private_key(key: str) -> bool:
+    k = key.lower()
+    return k in {"pin", "credential"} or k.endswith("_pin")
+
+
 def _runtime_key(key: str) -> bool:
     k = key.lower()
     return k.endswith("expires_at") or k in _RUNTIME_KEYS
@@ -30,7 +35,8 @@ def pair_feature_scope(config: Mapping[str, Any], pair: Mapping[str, Any], featu
             return {str(k): settings(v, endpoint) for k, v in value.items()
                     if not str(k).startswith("_cw_") and not any(word in str(k).lower() for word in ("token", "password", "secret", "api_key"))
                     and str(k) not in {"auth", "oauth", "label", "sync_users"}
-                    and (legacy or not endpoint or not _runtime_key(str(k)))}
+                    and (legacy or not endpoint or not _runtime_key(str(k)))
+                    and (legacy or not _private_key(str(k)))}
         if isinstance(value, (list, tuple)):
             return [settings(v, endpoint) for v in value]
         return value
