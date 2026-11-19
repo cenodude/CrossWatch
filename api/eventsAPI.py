@@ -130,8 +130,15 @@ def _group_has_allowed_event(cfg: dict[str, Any], request: Request | None, group
     return any(isinstance(row, dict) and _event_row_allowed(cfg, request, row, False) for row in rows)
 
 
-def _audit_row(row: Any) -> bool:
-    return isinstance(row, dict) and str(row.get("domain") or "").strip().lower() == "audit"
+_ADMIN_ONLY_DOMAINS = ("audit", "backup")
+
+
+def _admin_only_row(row: Any) -> bool:
+    return isinstance(row, dict) and str(row.get("domain") or "").strip().lower() in _ADMIN_ONLY_DOMAINS
+
+
+def _backup_row(row: Any) -> bool:
+    return isinstance(row, dict) and str(row.get("domain") or "").strip().lower() == "backup"
 
 
 def _default_overview_requested(request: Request | None) -> bool:
@@ -144,15 +151,17 @@ def _default_overview_requested(request: Request | None) -> bool:
 def _event_row_allowed(cfg: dict[str, Any], request: Request | None, row: dict[str, Any] | None, allow_group_children: bool = True) -> bool:
     user = request_user(request)
     if _default_overview_requested(request):
-        if not isinstance(row, dict) or _audit_row(row):
+        if _backup_row(row):
+            return not request_is_monitor(request)
+        if not isinstance(row, dict) or _admin_only_row(row):
             return False
         refs = _event_refs(row)
         if refs:
             return all(normalize_instance_id(instance) == "default" for _, instance in refs)
         return bool(allow_group_children and "group_hash" in row and _group_has_allowed_event(cfg, request, row.get("id")))
     if not user or bool(user.get("is_admin")):
-        return not (request_is_monitor(request) and _audit_row(row))
-    if not isinstance(row, dict) or _audit_row(row):
+        return not (request_is_monitor(request) and _admin_only_row(row))
+    if not isinstance(row, dict) or _admin_only_row(row):
         return False
     refs = _event_refs(row)
     if refs and all(user_can_access_instance(cfg, user, provider, instance) for provider, instance in refs):
@@ -176,7 +185,7 @@ def _filter_event_payload(cfg: dict[str, Any], request: Request | None, payload:
             rows = visible.get(key)
             if not isinstance(rows, list):
                 continue
-            keep = [row for row in rows if not _audit_row(row)]
+            keep = [row for row in rows if not _admin_only_row(row)]
             if key == "items" and isinstance(visible.get("total"), int):
                 visible["total"] = max(0, visible["total"] - (len(rows) - len(keep)))
             visible[key] = keep
@@ -307,6 +316,16 @@ def _scrobble_summary_parts(summary: str) -> dict[str, str]:
     return {"action": action, "title": title.strip(), "destination": destination, "progress": progress}
 
 
+def _capture_in_feed(group: dict[str, Any], events: list[dict[str, Any]]) -> bool:
+    if str(group.get("status") or "").strip().lower() == "failed":
+        return True
+    last = events[-1] if events else {}
+    return (
+        str(last.get("source_kind") or "").strip().lower() == "scheduler"
+        and str(last.get("event_type") or "") in ("capture_completed", "backup_completed")
+    )
+
+
 def _feed_item(group: dict[str, Any], events: list[dict[str, Any]]) -> dict[str, Any]:
     domain = str(group.get("domain") or "").strip().lower()
     operation = str(group.get("operation") or "").strip().lower()
@@ -331,6 +350,12 @@ def _feed_item(group: dict[str, Any], events: list[dict[str, Any]]) -> dict[str,
         badge = "Webhook" if kind == "webhook" else "Watcher"
         item_title = item_title or scrobble_parts.get("title", "")
         title = item_title or summary or ("Webhook activity" if kind == "webhook" else "Watcher activity")
+    elif domain in ("capture", "backup"):
+        is_backup = domain == "backup"
+        kind = "backup" if is_backup else "capture"
+        icon = "backup" if is_backup else "photo_camera"
+        badge = "Backup" if is_backup else "Capture"
+        title = summary or badge
     elif scheduler_mode:
         kind = "scheduler"
         icon = "event_available"
@@ -388,11 +413,11 @@ def _managed_request(request: Request | None) -> bool:
     return bool(user and not bool(user.get("is_admin")))
 
 
-def _audit_domain_requested(domain: Any) -> bool:
-    return str(domain or "").strip().lower() == "audit"
+def _admin_only_domain_requested(domain: Any) -> bool:
+    return str(domain or "").strip().lower() in _ADMIN_ONLY_DOMAINS
 
 
-def _audit_hidden(request: Request | None) -> bool:
+def _admin_only_hidden(request: Request | None) -> bool:
     return _managed_request(request) or request_is_monitor(request)
 
 
@@ -725,7 +750,7 @@ def events_recent(
     request: Request = cast(Request, None),
 ) -> JSONResponse:
     cfg = load_config() or {}
-    if _audit_hidden(request) and _audit_domain_requested(domain):
+    if _admin_only_hidden(request) and _admin_only_domain_requested(domain):
         return _scope_denied()
     if str(view).lower() == "events":
         return _ok(_filter_event_payload(cfg, request, _recent(limit=limit, offset=offset, visibility=visibility, order=order, domain=domain)))
@@ -748,7 +773,7 @@ def events_feed(
 
     sample_limit = max(50, min(500, int(limit or 8) * 20))
     rows: list[dict[str, Any]] = []
-    for domain in ("sync", "scrobble"):
+    for domain in ("sync", "scrobble", "capture", "backup"):
         payload = _list_groups(visibility=visibility, order="newest", limit=sample_limit, offset=0, domain=domain)
         for group in payload.get("items") or []:
             if not isinstance(group, dict):
@@ -759,15 +784,27 @@ def events_feed(
                 event for event in (_group_events(group.get("id"), order="asc", limit=250, offset=0).get("items") or [])
                 if isinstance(event, dict)
             ]
-            if scoped and not (_row_matches_profile_filter(group, profile_filter) or any(_row_matches_profile_filter(event, profile_filter) for event in events)):
+            default_scope_backup = domain == "backup" and normalize_overview_scope(profile) == DEFAULT_OVERVIEW_SCOPE
+            if scoped and not default_scope_backup and not (_row_matches_profile_filter(group, profile_filter) or any(_row_matches_profile_filter(event, profile_filter) for event in events)):
+                continue
+            if domain in ("capture", "backup") and not _capture_in_feed(group, events):
                 continue
             rows.append(_feed_item(group, events))
 
     rows.sort(key=lambda item: int(item.get("created_at") or 0), reverse=True)
+    job_cap = max(2, int(limit or 8) // 3)
+    picked: list[dict[str, Any]] = []
+    jobs = 0
+    for item in rows:
+        if item.get("kind") in ("capture", "backup"):
+            if jobs >= job_cap:
+                continue
+            jobs += 1
+        picked.append(item)
     return _ok({
         "ok": True,
-        "items": rows[:limit],
-        "total": len(rows),
+        "items": picked[:limit],
+        "total": len(picked),
         "limit": limit,
         **({"user_profile": profile} if scoped else {}),
     })
@@ -799,7 +836,7 @@ def events_search(
     request: Request = cast(Request, None),
 ) -> JSONResponse:
     cfg = load_config() or {}
-    if _audit_hidden(request) and _audit_domain_requested(domain):
+    if _admin_only_hidden(request) and _admin_only_domain_requested(domain):
         return _scope_denied()
     if str(view).lower() == "events":
         return _ok(_filter_event_payload(cfg, request, _search(
@@ -841,7 +878,7 @@ def events_groups(
     request: Request = cast(Request, None),
 ) -> JSONResponse:
     cfg = load_config() or {}
-    if _audit_hidden(request) and _audit_domain_requested(domain):
+    if _admin_only_hidden(request) and _admin_only_domain_requested(domain):
         return _scope_denied()
     return _ok(_filter_event_payload(cfg, request, _list_groups(
         q=q, status=status, category=category, event_type=event_type, provider=provider, origin_provider=origin_provider,
@@ -877,7 +914,7 @@ def events_tree(
     request: Request = cast(Request, None),
 ) -> JSONResponse:
     cfg = load_config() or {}
-    if _audit_hidden(request) and _audit_domain_requested(domain):
+    if _admin_only_hidden(request) and _admin_only_domain_requested(domain):
         return _scope_denied()
     return _ok(_filter_event_payload(cfg, request, _list_tree(
         order=order, limit=limit, offset=offset, include_children=children, domain=domain,

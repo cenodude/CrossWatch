@@ -165,9 +165,10 @@ def _is_playlist_batch_event(r: Any) -> bool:
 
 
 def group_hash(r: Any) -> str:
-    if str(_g(r, "domain") or "").strip().lower() == "audit":
+    if str(_g(r, "domain") or "").strip().lower() in ("audit", "capture", "backup"):
         ident = str(_g(r, "event_hash") or _g(r, "id") or _g(r, "created_at") or "").strip()
-        return hashlib.sha256(f"\x00audit\x1f{ident}".encode("utf-8", "replace")).hexdigest()
+        dom = str(_g(r, "domain") or "").strip().lower()
+        return hashlib.sha256(f"\x00{dom}\x1f{ident}".encode("utf-8", "replace")).hexdigest()
     if str(_g(r, "domain") or "sync") == "scrobble":
         token = session_token(_g(r, "session_key"), _g(r, "created_at"))
         ident = str(_g(r, "item_key") or "").strip() or str(_g(r, "title") or "").strip().lower()
@@ -220,6 +221,10 @@ def group_hash(r: Any) -> str:
 
 def _derive_status(events: list[dict[str, Any]], extra_problems: int = 0) -> str:
     types = {e.get("event_type") for e in events}
+
+    if any(str(e.get("domain") or "").strip().lower() in ("capture", "backup") for e in events):
+        last = max(events, key=lambda e: int(e.get("created_at") or 0))
+        return "failed" if str(last.get("event_type") or "").endswith("_failed") else "completed"
 
     if any(str(e.get("domain") or "").strip().lower() == "audit" for e in events):
         best, best_ts = "informational", -1
@@ -366,6 +371,9 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
     types = {e.get("event_type") for e in events}
     last = events[-1] if events else {}
     feat_disp = str(feature or "").title()
+
+    if any(str(e.get("domain") or "").strip().lower() in ("capture", "backup") for e in events):
+        return str(last.get("title") or last.get("event_type") or "Capture").strip()
 
     if any(str(e.get("domain") or "").strip().lower() == "audit" for e in events):
         d = _detail(last)

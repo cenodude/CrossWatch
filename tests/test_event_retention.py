@@ -35,6 +35,21 @@ def _groups(c):
     )
 
 
+def test_capture_and_backup_events_expire_including_failures(conn):
+    _ev(conn, "capture", "capture_completed", 200, "cap_old", feature="capture")
+    _ev(conn, "capture", "capture_failed", 30, "cap_new", feature="capture")
+    _ev(conn, "backup", "backup_failed", 400, "bak_old", feature="backup")
+    _ev(conn, "backup", "backup_completed", 30, "bak_new", feature="backup")
+    correlate(conn=conn)
+
+    out = retention.apply_retention(conn=conn, now=NOW)
+
+    assert out["threads"]["capture"] == 1
+    assert out["threads"]["backup"] == 1
+    assert _groups(conn) == [("backup", "bak_new", "completed"), ("capture", "cap_new", "failed")]
+    assert conn.execute("SELECT COUNT(*) FROM events WHERE domain IN ('capture', 'backup')").fetchone()[0] == 2
+
+
 def test_threads_expire_per_domain_and_keep_open_failures(conn):
     _ev(conn, "sync", "write_succeeded", 400, "imdb:old_ok", destination_provider="TRAKT")
     _ev(conn, "sync", "write_failed", 400, "imdb:old_fail", destination_provider="TRAKT")
@@ -44,7 +59,7 @@ def test_threads_expire_per_domain_and_keep_open_failures(conn):
     _ev(conn, "audit", "audit_login", 30, "audit_new")
     correlate(conn=conn)
     out = retention.apply_retention(conn=conn, now=NOW)
-    assert out["threads"] == {"sync": 1, "scrobble": 1, "audit": 1}
+    assert out["threads"] == {"sync": 1, "scrobble": 1, "audit": 1, "capture": 0, "backup": 0}
     assert _groups(conn) == [
         ("audit", "audit_new", "completed"),
         ("sync", "imdb:new_ok", "resolved"),

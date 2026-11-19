@@ -231,11 +231,13 @@ def _encrypt_archive(source: Path, target: Path, password: str, manifest: dict[s
 def run_job(job: dict[str, Any]) -> None:
     ident = job["id"]
     unsaved = None
+    phase = "local" if job.get("local_status") != "saved" else "remote"
+    remote_kind = ""
     try:
         setup = reveal(job["settings"])
         if job.get("local_status") != "saved":
             _update(ident, stage="creating", error="")
-            result = backups.create_backup(scope="selected", components=setup["components"], trackers=setup["trackers"], trigger=job["trigger"], job_id=PLAN_ID, label="automatic" if job["trigger"] == "scheduler" else "manual", password=setup["password"] if setup["encrypt_local"] else "")
+            result = backups.create_backup(scope="selected", components=setup["components"], trackers=setup["trackers"], trigger=job["trigger"], job_id=PLAN_ID, label="automatic" if job["trigger"] == "scheduler" else "manual", password=setup["password"] if setup["encrypt_local"] else "", record_event=False)
             _, unsaved = backups._resolve_backup_file(result["path"])
             _update(ident, stage="validating")
             validation = backups.validate_backup(result["path"], setup["password"] if setup["encrypt_local"] else "")
@@ -244,12 +246,15 @@ def run_job(job: dict[str, Any]) -> None:
             manifest = validation["manifest"]
             job = _update(ident, local_status="saved", path=result["path"], local_saved_at=time.time(), manifest={k: v for k, v in manifest.items() if k != "files"})
             unsaved = None
+            _record_backup(job["trigger"], ok=True, scope=result.get("scope") or "selected", size=result.get("size"), label=result.get("label"), path=result.get("path"))
+            phase = "remote"
         try:
             _local_retention(job)
         except Exception:
             _update(ident, warning="Backup saved. Old automatic local backups could not be cleaned up. Check permissions and storage.")
         _, source = backups._resolve_backup_file(job["path"])
         destination = setup["destination"]
+        remote_kind = str(destination.get("kind") or "")
         if destination["kind"] not in destinations.SUPPORTED_KINDS:
             raise destinations.UnsupportedDestination("This destination is no longer supported. Your local backup is available. Choose Nextcloud / WebDAV or a mounted folder.")
         if destination["kind"] != "none":
@@ -269,9 +274,11 @@ def run_job(job: dict[str, Any]) -> None:
             _update(ident, stage="verifying", remote_status="verifying")
             destinations.verify(destination, source, name)
             _update(ident, remote_status="verified", remote_verified_at=time.time(), bytes=source.stat().st_size)
+            _record_upload(remote_kind, ok=True, trigger=job["trigger"], path=name)
             if source.parent == private_dir():
                 source.unlink(missing_ok=True)
                 source.with_suffix(".metadata.json").unlink(missing_ok=True)
+        phase = "done"
         _update(ident, stage="complete", retry_at=0)
         try:
             _remote_retention(job, setup)
@@ -283,10 +290,32 @@ def run_job(job: dict[str, Any]) -> None:
         current = next(r for r in _jobs() if r["id"] == ident)
         attempts = int(current.get("attempts") or 0) + 1
         message = str(exc) if isinstance(exc, ValueError) else "Backup operation failed. Check available storage and connection settings."
+        if phase == "local":
+            _record_backup(job["trigger"], ok=False, scope="selected", reason=message)
+        elif phase == "remote" and remote_kind != "none":
+            _record_upload(remote_kind or "remote", ok=False, trigger=job["trigger"], reason=message)
         _update(ident, stage="failed", attempts=attempts, error=message, remote_status="failed" if current.get("local_status") == "saved" and current["remote_status"] != "disabled" else current["remote_status"], retry_at=time.time() + min(3600, 60 * 2 ** attempts) if attempts < 5 and not isinstance(exc, (destinations.RcloneUnavailable, destinations.UnsupportedDestination)) else 0)
 
 
-def prune_local(*, retention_days: int = 0, max_backups: int = 0, auto_delete_old: bool = False, job_id: str | None = None) -> dict[str, Any]:
+def _record_backup(trigger: Any, *, ok: bool, scope: str, **fields: Any) -> None:
+    try:
+        from cw_platform.event_archive import record_backup
+
+        record_backup(scope, trigger=trigger, ok=ok, **fields)
+    except Exception:
+        pass
+
+
+def _record_upload(destination: str, *, ok: bool, trigger: Any, reason: str = "", path: str = "") -> None:
+    try:
+        from cw_platform.event_archive import record_backup_upload
+
+        record_backup_upload(destination, ok=ok, trigger=trigger, reason=reason, path=path)
+    except Exception:
+        pass
+
+
+def prune_local(*, retention_days: int = 0, max_backups: int = 0, auto_delete_old: bool = False, job_id: str | None = None, trigger: str = "manual") -> dict[str, Any]:
     with _LOCK:
         rows = _jobs()
         protected = [row.get("path", "") for row in rows if row["stage"] not in {"complete", "failed"}]
@@ -297,6 +326,12 @@ def prune_local(*, retention_days: int = 0, max_backups: int = 0, auto_delete_ol
         if not result["applied"]:
             return result
         deleted = set(result["deleted"])
+        try:
+            from cw_platform.event_archive import record_backup_cleanup
+
+            record_backup_cleanup(len(deleted), trigger=trigger)
+        except Exception:
+            pass
         for row in rows:
             if row.get("path") in deleted:
                 fields: dict[str, Any] = {"local_status": "expired", "retry_at": 0}
@@ -321,7 +356,7 @@ def _local_retention(job: dict[str, Any]) -> None:
     cfg = load_config()
     jobs = ((cfg.get("scheduling") or {}).get("advanced") or {}).get("backup_jobs") or []
     schedule = next((j for j in jobs if j.get("id") == PLAN_ID), {})
-    result = prune_local(max_backups=int(schedule.get("max_backups") or 7), retention_days=int(schedule.get("retention_days") or 0), auto_delete_old=bool(schedule.get("auto_delete_old", True)), job_id=PLAN_ID)
+    result = prune_local(max_backups=int(schedule.get("max_backups") or 7), retention_days=int(schedule.get("retention_days") or 0), auto_delete_old=bool(schedule.get("auto_delete_old", True)), job_id=PLAN_ID, trigger="scheduler")
     if not result["ok"]:
         raise OSError("Automatic local backup cleanup failed.")
 

@@ -375,6 +375,8 @@
     if (kind === "webhook") return "Webhook";
     if (kind === "watcher") return "Watcher";
     if (kind === "playlist") return "Playlist";
+    if (kind === "capture") return "Capture";
+    if (kind === "backup") return "Backup";
     return "Sync";
   };
   const activityTone = (row) => {

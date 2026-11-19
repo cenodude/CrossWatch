@@ -188,6 +188,14 @@ const BADGE = {
   scrobble_skipped: "Scrobble skipped",
   rating_applied: "Rated",
   rating_failed: "Rating failed",
+  capture_completed: "Capture",
+  capture_failed: "Capture failed",
+  capture_cleanup: "Captures removed",
+  backup_completed: "Backup",
+  backup_failed: "Backup failed",
+  backup_uploaded: "Backup copied",
+  backup_upload_failed: "Backup copy failed",
+  backup_cleanup: "Backups removed",
   audit_login: "Login",
   audit_login_failed: "Login failed",
   audit_login_blocked: "Login blocked",
@@ -329,13 +337,19 @@ const EVENT_TYPES = [
   "provider_health", "sync_run_started", "sync_run_finished",
 ];
 const SCROBBLE_TYPES = ["", "scrobble_playback", "scrobble_started", "scrobble_completed", "scrobble_skipped", "scrobble_failed", "rating_applied", "rating_failed"];
+const CAPTURE_TYPES = ["", "capture_completed", "capture_failed", "capture_cleanup"];
+const BACKUP_TYPES = ["", "backup_completed", "backup_failed", "backup_uploaded", "backup_upload_failed", "backup_cleanup"];
+const JOB_DOMAINS = ["capture", "backup"];
+const CAPTURE_TRIGGERS = { scheduler: "Schedule", manual: "Manual", pre_restore: "Before a restore", upgrade: "Before an upgrade", maintenance_state_compact: "Before database compact", maintenance_state_prune: "Before state cleanup" };
 const AUDIT_TYPES = ["", "audit_login", "audit_login_failed", "audit_login_blocked", "audit_2fa_required", "audit_2fa_failed", "audit_logout", "audit_logout_all", "audit_logout_others", "audit_user_created", "audit_user_updated", "audit_user_deleted", "audit_credentials_updated", "audit_totp_setup", "audit_totp_enabled", "audit_totp_disabled", "audit_plex_sso_linked", "audit_plex_sso_unlinked", "audit_api_action"];
 const OUTCOME_ITEMS = {
   sync: [{ value: "", label: "Any outcome" }, { value: "successful", label: "Successful" }, { value: "problems", label: "Problems" }, { value: "informational", label: "Informational" }],
   scrobble: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Watched" }, { value: "failed", label: "Failed" }, { value: "rated", label: "Rated" }, { value: "running", label: "In progress" }, { value: "paused", label: "Paused" }, { value: "stopped", label: "Stopped (Incomplete)" }, { value: "skipped", label: "Skipped" }],
   audit: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Successful" }, { value: "failed", label: "Failed" }, { value: "informational", label: "Informational" }],
+  capture: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Successful" }, { value: "failed", label: "Failed" }],
+  backup: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Successful" }, { value: "failed", label: "Failed" }],
 };
-const typeItems = (dom) => (dom === "audit" ? AUDIT_TYPES : (dom === "scrobble" ? SCROBBLE_TYPES : EVENT_TYPES)).map((t) => ({ value: t, label: t ? BADGE[t] || t.replace(/_/g, " ") : "All types" }));
+const typeItems = (dom) => (dom === "audit" ? AUDIT_TYPES : dom === "capture" ? CAPTURE_TYPES : dom === "backup" ? BACKUP_TYPES : (dom === "scrobble" ? SCROBBLE_TYPES : EVENT_TYPES)).map((t) => ({ value: t, label: t ? BADGE[t] || t.replace(/_/g, " ") : "All types" }));
 
 // group helpers
 const GROUP_SEV = { success: "ok", warning: "warn", error: "error", info: "info" };
@@ -538,7 +552,7 @@ export default {
     let order = ls("cw.events.order", "newest");
     let mode = ["grouped", "raw"].includes(initialMode) ? initialMode : ls("cw.events.mode", "grouped");
     if (initialGroupId) mode = "grouped";
-    let domain = ["sync", "scrobble", "audit"].includes(initialDomain) ? initialDomain : ls("cw.events.domain", "sync");
+    let domain = ["sync", "scrobble", "audit", ...JOB_DOMAINS].includes(initialDomain) ? initialDomain : ls("cw.events.domain", "sync");
     let detailTab = ls("cw.events.detailtab", "timeline");
     lset("cw.events.order", order);
 
@@ -781,9 +795,10 @@ export default {
     ddCategory.el.style.display = (mode === "grouped") ? "" : "none";
 
     const canAudit = isAdmin && !String(window.CW?.OverviewProfile?.id || "").trim();
-    let view = initialDomain && ["sync", "scrobble", "audit"].includes(initialDomain) ? initialDomain : ls("cw.events.view", domain === "scrobble" ? "scrobble" : "sync");
+    let view = initialDomain && ["sync", "scrobble", "audit", ...JOB_DOMAINS].includes(initialDomain) ? initialDomain : ls("cw.events.view", domain === "scrobble" ? "scrobble" : "sync");
+    if (view === "backup" && !isAdmin) view = "sync";
     if (view === "audit" && !canAudit) view = "sync";
-    if (view === "sync" || view === "scrobble" || view === "audit") domain = view;
+    if (view === "sync" || view === "scrobble" || view === "audit" || JOB_DOMAINS.includes(view)) domain = view;
     let statsRange = ls("cw.events.stats.range", "30d");
 
     const toolbarEl = Q(".ev-toolbar", root);
@@ -795,19 +810,24 @@ export default {
     const applyDomainUI = () => {
       const scrobble = domain === "scrobble";
       const audit = domain === "audit";
+      const capture = JOB_DOMAINS.includes(domain);
+      const backup = domain === "backup";
       ddCategory.setItems(OUTCOME_ITEMS[domain] || OUTCOME_ITEMS.sync);
       ddType.setItems(typeItems(domain));
-      if (scrobble || audit) { ddFeature.reset(); ddPair.reset(); }
-      if (audit) { ddProvider.reset(); ddOrigin.reset(); }
-      ddFeature.el.style.display = (scrobble || audit) ? "none" : "";
-      ddPair.el.style.display = (scrobble || audit) ? "none" : "";
-      ddProvider.el.style.display = audit ? "none" : "";
-      ddOrigin.el.style.display = audit ? "none" : "";
+      if (scrobble || audit || capture) { ddFeature.reset(); ddPair.reset(); }
+      if (audit || backup) ddProvider.reset();
+      if (audit || capture) ddOrigin.reset();
+      ddFeature.el.style.display = (scrobble || audit || capture) ? "none" : "";
+      ddPair.el.style.display = (scrobble || audit || capture) ? "none" : "";
+      ddProvider.el.style.display = (audit || backup) ? "none" : "";
+      ddOrigin.el.style.display = (audit || capture) ? "none" : "";
     };
 
     const VIEW_TABS = [
       { value: "sync", label: "Sync", icon: "sync" },
       { value: "scrobble", label: "Scrobble", icon: "play_circle" },
+      { value: "capture", label: "Captures", icon: "photo_camera" },
+      ...(isAdmin ? [{ value: "backup", label: "Backups", icon: "backup" }] : []),
       ...(canAudit ? [{ value: "audit", label: "Audits", icon: "admin_panel_settings" }] : []),
       { value: "statistics", label: "Statistics", icon: "bar_chart" },
     ];
@@ -880,7 +900,7 @@ export default {
     const setView = (v) => {
       if (v === view) return;
       view = v; lset("cw.events.view", v);
-      if (v === "sync" || v === "scrobble" || v === "audit") {
+      if (v === "sync" || v === "scrobble" || v === "audit" || JOB_DOMAINS.includes(v)) {
         domain = v; lset("cw.events.domain", v);
         state.selected = null; state.didInitialSelect = false; clearDetail();
         applyDomainUI();
@@ -972,7 +992,7 @@ export default {
       if (ddFeature.value) p.set("feature", ddFeature.value);
       if (ddPair.value) p.set("pair_key", ddPair.value);
       if (runFilter) p.set("run_id", runFilter);
-      if (grouped() && ddCategory.value) p.set((domain === "scrobble" || domain === "audit") ? "status" : "category", ddCategory.value);
+      if (grouped() && ddCategory.value) p.set((domain === "scrobble" || domain === "audit" || JOB_DOMAINS.includes(domain)) ? "status" : "category", ddCategory.value);
       p.set("domain", domain);
       const { since, until } = rangeEpoch();
       if (since) p.set("since", since);
@@ -1124,7 +1144,7 @@ export default {
         actions = `<button class="ev-linkbtn" id="ev-empty-open">Back to Open</button>`;
       } else {
         icon = "inbox"; head = "No events in the archive.";
-        hint = domain === "audit" ? "Logins and user actions will appear here." : (domain === "scrobble" ? "Start watching something to record scrobble threads here." : "Run a sync to start recording events here.");
+        hint = domain === "audit" ? "Logins and user actions will appear here." : domain === "capture" ? "Scheduled and manual captures will appear here." : domain === "backup" ? "Scheduled, manual and automatic backups will appear here." : (domain === "scrobble" ? "Start watching something to record scrobble threads here." : "Run a sync to start recording events here.");
         actions = "";
       }
       return `<div class="ev-empty ev-empty-list"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><div class="ev-empty-head">${esc(head)}</div><div class="ev-empty-hint">${esc(hint)}</div><div class="ev-empty-actions">${actions}</div></div>`;
@@ -1230,7 +1250,7 @@ export default {
       if (page != null) state.page = page;
       updateHidden();
       const url = grouped()
-        ? ((domain === "scrobble" || domain === "audit") ? `/api/events/groups?${buildQuery(state.page)}` : `/api/events/tree?${buildQuery(state.page)}`)
+        ? ((domain === "scrobble" || domain === "audit" || JOB_DOMAINS.includes(domain)) ? `/api/events/groups?${buildQuery(state.page)}` : `/api/events/tree?${buildQuery(state.page)}`)
         : `/api/events/search?view=events&${buildQuery(state.page)}`;
       try {
         const data = await fjson(url);
@@ -1854,6 +1874,53 @@ export default {
       return rows.map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`).join("");
     };
 
+    const captureSize = (value) => {
+      const n = Number(value || 0);
+      if (!n) return "";
+      const units = ["B", "KB", "MB", "GB"];
+      const i = Math.min(units.length - 1, Math.floor(Math.log(n) / Math.log(1024)));
+      return `${(n / 1024 ** i).toFixed(i ? 1 : 0)} ${units[i]}`;
+    };
+
+    const captureRowsHTML = (e) => {
+      const d = detailOf(e);
+      const backup = String(e.feature || "") === "backup";
+      const failed = String(e.event_type || "").endsWith("_failed");
+      const rows = [
+        ["Type", backup ? "Backup" : "Capture"],
+        ...(backup ? [] : [["Provider", e.source_provider ? instLabel(e.source_provider, e.source_instance) : "–"]]),
+        [backup ? "Scope" : "Feature", (backup ? d.scope : d.capture_feature) || "–"],
+        ["Triggered by", CAPTURE_TRIGGERS[String(e.source_kind || "")] || String(e.source_kind || "manual").replace(/_/g, " ")],
+        ["Result", failed ? "Failed" : "Successful"],
+      ];
+      if (d.items != null) rows.push(["Items", String(d.items)]);
+      if (d.size) rows.push(["Size", captureSize(d.size)]);
+      if (d.removed) rows.push(["Removed", String(d.removed)]);
+      if (d.destination) rows.push(["Destination", String(d.destination)]);
+      if (d.label) rows.push(["Label", String(d.label)]);
+      if (d.path) rows.push(["File", String(d.path)]);
+      if (e.reason) rows.push(["Reason", String(e.reason)]);
+      return rows.map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${esc(v)}</div>`).join("");
+    };
+
+    const renderCaptureDetail = (detail, eventOverride = null) => {
+      const g = detail.group || eventOverride || {};
+      const events = Array.isArray(detail.events) && detail.events.length ? detail.events : (eventOverride ? [eventOverride] : []);
+      const e = eventOverride || events[events.length - 1] || g;
+      const sv = sevOf(e);
+      detailEl.innerHTML = `
+        <div class="ev-dhead">
+          <div class="ev-dhead-row">
+            <span class="ev-badge ${sv}">${esc(badgeOf(e))}</span>
+            <span class="ev-dhead-spacer"></span>
+            <span class="ev-dtime">${esc(TS(g.last_event_at || e.created_at))}</span>
+          </div>
+          <div class="ev-dtitle">${esc(g.summary || e.title || titleLine(e))}</div>
+        </div>
+        <h4>${String(e.feature || "") === "backup" ? "Backup" : "Capture"}</h4><div class="ev-kv">${captureRowsHTML(e)}</div>
+        <details class="ev-tech"><summary>Raw data</summary><div class="ev-tech-body"><pre>${esc(JSON.stringify({ group: detail.group || null, events }, null, 2))}</pre></div></details>`;
+    };
+
     const renderAuditDetail = (detail, eventOverride = null) => {
       const g = detail.group || eventOverride || {};
       const events = Array.isArray(detail.events) && detail.events.length ? detail.events : (eventOverride ? [eventOverride] : []);
@@ -1893,6 +1960,10 @@ export default {
       const d = detailOf(e);
       if (String(e.domain || "").toLowerCase() === "audit") {
         renderAuditDetail({ event: e, events: [e] }, e);
+        return;
+      }
+      if (JOB_DOMAINS.includes(String(e.domain || "").toLowerCase())) {
+        renderCaptureDetail({ event: e, events: [e] }, e);
         return;
       }
       const c = ctx.context || {};
@@ -1968,7 +2039,7 @@ export default {
           const detail = await fjson(`/api/events/groups/${encodeURIComponent(id)}?run_items_limit=${RUN_ITEMS_PAGE_SIZE}&run_items_offset=0`);
           if (!alive || sequence !== selectionSequence) return;
           if (!detail || detail.ok === false) throw new Error("not found");
-          if (domain === "scrobble") renderScrobbleDetail(detail); else if (domain === "audit") renderAuditDetail(detail); else renderGroupDetail(detail);
+          if (domain === "scrobble") renderScrobbleDetail(detail); else if (domain === "audit") renderAuditDetail(detail); else if (JOB_DOMAINS.includes(domain)) renderCaptureDetail(detail); else renderGroupDetail(detail);
         } else {
           const ctx = await fjson(`/api/events/context?event_id=${encodeURIComponent(id)}`);
           if (!alive || sequence !== selectionSequence) return;
@@ -2062,7 +2133,7 @@ export default {
 
     Q("#ev-refresh", root).addEventListener("click", () => doRefresh());
     Q("#ev-clear", root)?.addEventListener("click", async () => {
-      const label = domain === "audit" ? "audit" : (domain === "scrobble" ? "scrobble" : "sync");
+      const label = domain === "audit" ? "audit" : domain === "capture" ? "capture" : domain === "backup" ? "backup" : (domain === "scrobble" ? "scrobble" : "sync");
       if (!window.confirm(`Delete all ${label} events from the archive?\n\nThis clears the ${label} history from the SQLite event archive.\nThis cannot be undone.`)) return;
       const btn = Q("#ev-clear", root);
       btn?.classList.add("busy");

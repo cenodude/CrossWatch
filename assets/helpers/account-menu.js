@@ -43,6 +43,7 @@
       if (toggle.getAttribute('aria-expanded') !== 'true') return;
       if (panel.contains(document.activeElement)) focusToggle();
       header.classList.remove('cw-nav-open');
+      panel.classList.remove('cw-mobile-tools-open');
       toggle.setAttribute('aria-expanded', 'false');
       $('cw-mobile-more')?.setAttribute('aria-expanded', 'false');
       window.cwCloseSettingsMenu?.();
@@ -128,12 +129,37 @@
       openProfileTab('overview');
     };
     extra.addEventListener('click', openMediaHub);
+    const tools = document.createElement('div');
+    tools.className = 'cw-mobile-extra-destinations cw-mobile-tool-destinations';
+    $('tab-tools-menu')?.before(tools);
+    const navPanel = $('cw-mobile-navigation');
+    const showTools = (open) => {
+      navPanel.classList.toggle('cw-mobile-tools-open', open);
+      window.cwCloseToolsMenu?.();
+      (open ? tools.querySelector('.cw-mobile-tools-back') : $('tab-tools'))?.focus();
+    };
+    navPanel.addEventListener('click', event => {
+      if (!navPanel.classList.contains('cw-page-mobile-navigation')) return;
+      const opener = event.target.closest('#tab-tools');
+      const back = event.target.closest('.cw-mobile-tools-back');
+      if (!opener && !back) return;
+      event.preventDefault();
+      event.stopPropagation();
+      showTools(!!opener);
+    }, true);
+    const toolItems = () => [...document.querySelectorAll('#cw-tools-menu .cw-menu-item[id^="tab-"]')].map(item => [
+      item.id.slice(4),
+      item.querySelector('.cw-menu-icon')?.textContent.trim() || 'build',
+      item.querySelector('span:not(.cw-menu-icon)')?.textContent.trim() || item.id.slice(4),
+    ]);
     nav.addEventListener('click', openMediaHub);
     const renderShortcuts = () => {
       const items = [...fixed, ...shortcuts.map(route => choices.find(item => item[0] === route)).filter(Boolean)];
       nav.querySelectorAll('a').forEach(node => node.remove());
       $('cw-mobile-more').insertAdjacentHTML('beforebegin', items.map(item => link(item)).join(''));
       extra.innerHTML = choices.filter(item => !$(item[0] === 'profile/overview' ? 'tab-profile' : `tab-${item[0]}`) && !shortcuts.includes(item[0])).map(item => link(item, 'class="tab"')).join('');
+      tools.innerHTML = '<button type="button" class="tab cw-mobile-tools-back"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span><span>Back</span></button>'
+        + toolItems().filter(item => !shortcuts.includes(item[0])).map(item => link(item, 'class="tab"')).join('');
       for (const route of ['main', 'tracker', 'snapshots', 'playlists', 'editor']) {
         $(`tab-${route}`)?.classList.toggle('cw-mobile-pinned', items.some(item => item[0] === route));
       }

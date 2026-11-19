@@ -1049,6 +1049,40 @@ def create_snapshot(
     instance_id: Any | None = None,
     cfg: Mapping[str, Any] | None = None,
     progress_id: str | None = None,
+    trigger: str = "manual",
+) -> dict[str, Any]:
+    try:
+        result = _create_snapshot(provider, feature, label=label, instance_id=instance_id, cfg=cfg, progress_id=progress_id)
+    except SyncCancelled:
+        raise
+    except Exception as exc:
+        _record_capture_event(provider, instance_id, feature, trigger, ok=False, reason=str(exc))
+        raise
+    _record_capture_event(
+        provider, instance_id, result.get("feature") or feature, trigger,
+        ok=result.get("ok") is not False, count=(result.get("stats") or {}).get("count"),
+        label=result.get("label"), path=result.get("path"), reason=result.get("message"),
+    )
+    return result
+
+
+def _record_capture_event(provider: Any, instance_id: Any, feature: Any, trigger: str, **fields: Any) -> None:
+    try:
+        from cw_platform.event_archive import record_capture
+
+        record_capture(str(provider or "").strip().upper(), normalize_instance_id(instance_id), feature, trigger=trigger, **fields)
+    except Exception:
+        pass
+
+
+def _create_snapshot(
+    provider: str,
+    feature: CreateFeature | str,
+    *,
+    label: str = "",
+    instance_id: Any | None = None,
+    cfg: Mapping[str, Any] | None = None,
+    progress_id: str | None = None,
 ) -> dict[str, Any]:
     try:
         cfg = cfg or load_config()
@@ -1210,6 +1244,7 @@ def enforce_capture_retention(
     retention_days: int = 0,
     max_captures: int = 0,
     auto_delete_old: bool = False,
+    trigger: str = "manual",
 ) -> dict[str, Any]:
     pid = _norm_provider(provider)
     feat_any = _norm_create_feature(str(feature or ""))
@@ -1245,6 +1280,7 @@ def enforce_capture_retention(
     deleted: list[str] = []
     errors: list[str] = []
     seen: set[str] = set()
+    removed = 0
     for path in to_delete:
         rel = str(path or "").strip()
         if not rel or rel in seen:
@@ -1252,10 +1288,19 @@ def enforce_capture_retention(
         seen.add(rel)
         try:
             res = delete_snapshot(rel)
-            deleted.extend([str(x) for x in (res.get("deleted") or [])])
+            gone = [str(x) for x in (res.get("deleted") or [])]
+            removed += 1 if gone else 0
+            deleted.extend(gone)
             errors.extend([str(x) for x in (res.get("errors") or [])])
         except Exception as e:
             errors.append(str(e))
+
+    try:
+        from cw_platform.event_archive import record_capture_cleanup
+
+        record_capture_cleanup(pid, inst, feat_any, removed, trigger=trigger)
+    except Exception:
+        pass
 
     return {
         "ok": len(errors) == 0,

@@ -390,6 +390,45 @@ def create_backup(
     job_id: str = "",
     app_version: str = "",
     password: str = "",
+    record_event: bool = True,
+) -> dict[str, Any]:
+    try:
+        result = _create_backup(
+            scope=scope, label=label, include_snapshots=include_snapshots, include_reports=include_reports,
+            include_cache=include_cache, trigger=trigger, components=components, trackers=trackers,
+            job_id=job_id, app_version=app_version, password=password,
+        )
+    except Exception as exc:
+        if record_event:
+            _record_backup_event(scope, trigger, ok=False, reason=_error_text(exc) or type(exc).__name__)
+        raise
+    if record_event:
+        _record_backup_event(result.get("scope") or scope, trigger, ok=True, size=result.get("size"), label=result.get("label"), path=result.get("path"))
+    return result
+
+
+def _record_backup_event(scope: Any, trigger: Any, **fields: Any) -> None:
+    try:
+        from cw_platform.event_archive import record_backup
+
+        record_backup(str(scope or ""), trigger=trigger, **fields)
+    except Exception:
+        pass
+
+
+def _create_backup(
+    *,
+    scope: BackupScope | str = "app_state",
+    label: str = "manual",
+    include_snapshots: bool | None = None,
+    include_reports: bool | None = None,
+    include_cache: bool = False,
+    trigger: str = "manual",
+    components: list[str] | None = None,
+    trackers: list[str] | None = None,
+    job_id: str = "",
+    app_version: str = "",
+    password: str = "",
 ) -> dict[str, Any]:
     sc = _normalize_scope(scope)
     ts = _utc_now()

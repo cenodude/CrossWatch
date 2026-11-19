@@ -14,7 +14,7 @@ from .db import get_conn
 _LOG = logging.getLogger("crosswatch.event_archive")
 
 DAY = 86400
-THREAD_DAYS = {"sync": 365, "scrobble": 365, "audit": 90}
+THREAD_DAYS = {"sync": 365, "scrobble": 365, "audit": 90, "capture": 180, "backup": 365}
 KEEP_OPEN_DOMAINS = ("sync", "scrobble")
 OPEN_STATUSES = ("failed", "unresolved", "blackboxed")
 REPORT_KEEP = 500

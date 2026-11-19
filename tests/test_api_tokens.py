@@ -611,8 +611,8 @@ def test_monitor_view_hides_webhook_secrets_and_audit_events(monkeypatch: pytest
 
     audit_row = {"id": 1, "domain": "audit"}
     sync_row = {"id": 2, "domain": "sync"}
-    assert eventsAPI._audit_hidden(monitor_request) is True
-    assert eventsAPI._audit_hidden(admin_request) is False
+    assert eventsAPI._admin_only_hidden(monitor_request) is True
+    assert eventsAPI._admin_only_hidden(admin_request) is False
     assert eventsAPI._event_row_allowed({}, monitor_request, audit_row) is False
     assert eventsAPI._event_row_allowed({}, monitor_request, sync_row) is True
     assert eventsAPI._event_row_allowed({}, admin_request, audit_row) is True
