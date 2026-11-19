@@ -140,6 +140,8 @@
     };
     navPanel.addEventListener('click', event => {
       if (!navPanel.classList.contains('cw-page-mobile-navigation')) return;
+      const control = event.target.closest('a[href], button, summary');
+      if (control && !control.matches(':disabled, [aria-disabled="true"]')) mobileNavigationFeedback();
       const opener = event.target.closest('#tab-tools');
       const back = event.target.closest('.cw-mobile-tools-back');
       if (!opener && !back) return;

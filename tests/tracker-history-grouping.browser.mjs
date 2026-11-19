@@ -133,6 +133,23 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
     await openFilters(page);
     await page.locator('.trk-shows tbody tr').waitFor();
     assert.equal(await page.locator('[data-trk-history-media="show"]').getAttribute("aria-pressed"), "true");
+    const dropped = page.getByRole("checkbox", {name:"Hide dropped", exact:true});
+    assert.equal(await dropped.locator('xpath=ancestor::div[contains(@class,"trk-filter-checks")]').count(), 1);
+    assert.equal(await page.locator('.trk-filter-fields [data-trk-input="hide-dropped"]').count(), 0);
+    if (width === 1600) {
+      const fields = await page.locator('.trk-filter-fields> :is(.trk-filter-type,.trk-status-filter)').evaluateAll(fields => fields.map(field => {
+        const label = field.querySelector('span').getBoundingClientRect();
+        const control = field.querySelector('select,.trk-seg').getBoundingClientRect();
+        return {label:label.y,top:control.y,height:control.height};
+      }));
+      for (const field of fields) {
+        assert.ok(Math.abs(field.label - fields[0].label) < 1);
+        assert.ok(Math.abs(field.top - fields[0].top) < 1);
+        assert.ok(Math.abs(field.height - fields[0].height) < 1);
+      }
+    }
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
+    await screenshot(page, `shows-filter-${theme}-${width}`);
     await page.locator('[data-trk-history-media="movie"]').click();
     await page.locator('.trk-movies tbody tr').first().waitFor();
     await page.locator('[data-trk-layout="grid"]').click();
@@ -224,5 +241,38 @@ test("filter badge tracks hidden choices and Clear filters restores defaults", a
   await toggle.click();
   assert.equal(await page.locator('[data-trk-input="history-group"]').isVisible(), false);
   assert.equal(await page.locator('[data-trk-history-media="movie"]').isVisible(), false);
+  assert.deepEqual(errors, []);
+});
+
+
+test("Hide dropped checkbox filters shows, persists and clears conflicting status", async t => {
+  const {page, requests, errors} = await fixture(t, "flat-dark", 1600);
+  await page.locator('[data-trk-history-media="show"]').click();
+  await page.locator('.trk-shows tbody tr').waitFor();
+  const dropped = page.getByRole("checkbox", {name:"Hide dropped", exact:true});
+  const status = page.getByRole("combobox", {name:"Filter by status", exact:true});
+  await dropped.check();
+  await page.waitForFunction(() => document.activeElement?.dataset.trkInput === "hide-dropped");
+  await page.locator('.trk-shows tbody tr').waitFor();
+  assert.ok(requests.filter(url => url.pathname === "/api/tracker/shows").at(-1).searchParams.get("hide_dropped") === "true");
+  await page.reload();
+  await openFilters(page);
+  assert.equal(await dropped.isChecked(), true);
+  await status.selectOption("dropped");
+  assert.equal(await dropped.isChecked(), false);
+  await page.locator('.trk-shows tbody tr').waitFor();
+  assert.equal(requests.filter(url => url.pathname === "/api/tracker/shows").at(-1).searchParams.has("hide_dropped"), false);
+  await dropped.check();
+  assert.equal(await status.inputValue(), "");
+  await dropped.uncheck();
+  await page.locator('.trk-shows tbody tr').waitFor();
+  assert.equal(requests.filter(url => url.pathname === "/api/tracker/shows").at(-1).searchParams.has("hide_dropped"), false);
+  await dropped.check();
+  await page.locator('[data-trk-action="filters-clear"]').click();
+  await page.locator('.trk-list tbody tr').first().waitFor();
+  await page.getByRole("combobox", {name:"Group history by"}).selectOption("title");
+  await page.locator('[data-trk-history-media="show"]').click();
+  await page.locator('.trk-shows tbody tr').waitFor();
+  assert.equal(await dropped.isChecked(), false);
   assert.deepEqual(errors, []);
 });

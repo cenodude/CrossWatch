@@ -1007,9 +1007,6 @@
       const health = HEALTH.map((h) => `<button type="button" class="trk-clean-health" data-trk-health="${h.id}" aria-pressed="${state.healthFilter === h.id}">${symbol(h.icon)}<span>${esc(h.label)}</span><b>${esc(num(healthOf()[h.id]))}</b></button>`).join("");
       return `<select class="cw-select trk-clean-list" data-trk-input="clean-feature" aria-label="List to clean up">${lists}</select><div class="trk-clean-health-options" role="group" aria-label="TMDB health">${health}</div>`;
     }
-    if (state.view === "shows") {
-      return chip('data-trk-action="hide-dropped"', "Hide dropped", { active: state.hideDropped, iconName: "do_not_disturb_on", title: "Leave out shows you dropped" });
-    }
     if (state.view === "titles" || historyView()) return "";
     let out = `<div class="trk-seg" role="group" aria-label="Type">${MEDIA.map((m) => chip(`data-trk-media="${m.id}"`, m.label, { active: state.media === m.id, iconName: m.icon })).join("")}</div>`;
     if (timelineOn() && state.month) {
@@ -1020,10 +1017,11 @@
 
   function renderExtraFilters() {
     const type = historyView() ? `<div class="trk-filter-type"><span>Type</span><div class="trk-seg" role="group" aria-label="History type">${[["", "All", ""], ["movie", "Movies", "movie"], ["show", "Shows", "tv"]].map(([id, label, glyph]) => chip(`data-trk-history-media="${id}"`, label, {active:state.historyMedia === id, iconName:glyph})).join("")}</div></div><label class="trk-status-filter"><span>Group by</span><select class="cw-select" data-trk-input="history-group" aria-label="Group history by"><option value="watch"${!groupedHistory() ? " selected" : ""}>Watch</option><option value="title"${groupedHistory() ? " selected" : ""}>Title</option></select></label>` : "";
+    const dropped = state.view === "shows" ? `<label class="trk-filter-check"><input type="checkbox" class="cw-checkbox" data-trk-input="hide-dropped"${state.hideDropped ? " checked" : ""}><span>Hide dropped</span></label>` : "";
     const labels = `<label class="trk-filter-check"><input type="checkbox" class="cw-checkbox" data-trk-input="status-labels"${state.showStatusLabels !== false ? " checked" : ""}><span>Status labels on cards</span></label>`;
     const sort = ["shows", "cleanup", "titles"].includes(state.view) ? "" : `<label class="trk-status-filter"><span>Sort</span><select class="cw-select" data-trk-input="sort" aria-label="Sort results">${[["recent","Newest first"],["oldest","Oldest first"],["title","Title A-Z"]].map(([value,label]) => `<option value="${value}"${state.sort === value ? " selected" : ""}>${label}</option>`).join("")}</select></label>`;
     const options = renderFilters();
-    return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Filters"><div class="trk-filter-fields">${type}${options ? `<div class="trk-filter-options">${options}</div>` : ""}${renderNoteFilters()}${sort}</div><div class="trk-filter-footer"><div class="trk-filter-checks">${state.view === "history" ? `<label class="trk-filter-check"><input type="checkbox" class="cw-checkbox" data-trk-input="duplicates"${state.duplicates ? " checked" : ""}><span>Only possible duplicates</span></label>` : ""}${labels}</div><button type="button" class="cw-btn" data-trk-action="filters-clear">Clear filters</button></div>${state.view === "history" && state.duplicates ? "<small>Same title, episode and watch time. Compare entries before deleting; watches at different times are kept.</small>" : ""}</div>`;
+    return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Filters"><div class="trk-filter-fields">${type}${options ? `<div class="trk-filter-options">${options}</div>` : ""}${renderNoteFilters()}${sort}</div><div class="trk-filter-footer"><div class="trk-filter-checks">${state.view === "history" ? `<label class="trk-filter-check"><input type="checkbox" class="cw-checkbox" data-trk-input="duplicates"${state.duplicates ? " checked" : ""}><span>Only possible duplicates</span></label>` : ""}${dropped}${labels}</div><button type="button" class="cw-btn" data-trk-action="filters-clear">Clear filters</button></div>${state.view === "history" && state.duplicates ? "<small>Same title, episode and watch time. Compare entries before deleting; watches at different times are kept.</small>" : ""}</div>`;
   }
 
   function renderControls() {
@@ -2312,7 +2310,7 @@
       setSlot("controls", renderControls());
       if (focusedView) state.root.querySelector('.trk-tabs [aria-selected="true"]')?.focus({preventScroll:true});
       if (focusedHistoryMedia !== undefined) state.root.querySelector(`[data-trk-history-media="${focusedHistoryMedia}"]`)?.focus({preventScroll:true});
-      if (["q", "view", "note-status", "note-tag", "sort", "history-group", "duplicates", "status-labels"].includes(focused)) {
+      if (["q", "view", "note-status", "note-tag", "sort", "history-group", "duplicates", "hide-dropped", "status-labels"].includes(focused)) {
         const input = state.root.querySelector(`[data-trk-input="${focused}"]`);
         input?.focus({preventScroll:true});
         if (focused === "q") input?.setSelectionRange?.(input.value.length, input.value.length);
@@ -5264,11 +5262,6 @@
         state.byDay = !state.byDay;
         if (state.byDay) state.sort = "recent";
         reload();
-      } else if (action === "hide-dropped") {
-        state.noteStatus = "";
-        state.hideDropped = !state.hideDropped;
-        saveView();
-        reload();
       }
       else if (action === "import-cancel") cancelImport();
       else if (action === "import-dismiss") dismissImport();
@@ -5412,6 +5405,11 @@
       } else if (input === "note-status") {
         state.noteStatus = event.target.value;
         if (state.noteStatus) state.hideDropped = false;
+        reload();
+      } else if (input === "hide-dropped") {
+        state.hideDropped = event.target.checked;
+        if (state.hideDropped) state.noteStatus = "";
+        saveView();
         reload();
       } else if (input === "status-labels") {
         state.showStatusLabels = event.target.checked;
