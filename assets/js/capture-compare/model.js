@@ -45,24 +45,7 @@ const pretty = (v) => { try { return JSON.stringify(v, null, 2); } catch { retur
 async function copyText(t) {
   const s = String(t ?? "");
   if (!s) return false;
-  try {
-    await navigator.clipboard.writeText(s);
-    return true;
-  } catch {
-    try {
-      const ta = Object.assign(document.createElement("textarea"), { value: s });
-      ta.style.cssText = "position:fixed;left:-9999px";
-      document.body.appendChild(ta);
-      ta.focus({ preventScroll: true });
-      ta.select();
-      ta.setSelectionRange(0, ta.value.length);
-      document.execCommand("copy");
-      ta.remove();
-      return true;
-    } catch {
-      return false;
-    }
-  }
+  return (await window.cwCopyText?.(s)) === true;
 }
 
 function renderRecordCard(label, rec, missingText = "Missing") {

@@ -810,12 +810,9 @@
           const btn = e.target.closest("[data-copy]");
           if (!btn) return;
           const text = btn.dataset.copy || "";
-          try {
-            await navigator.clipboard.writeText(text);
-          } catch {
-            const field = btn.parentElement.querySelector("input,textarea");
-            field.select();
-            document.execCommand("copy");
+          if (!(await window.cwCopyText?.(text))) {
+            window.cwSelectCopyField?.(btn.parentElement.querySelector("input,textarea"));
+            return;
           }
           btn.textContent = "Copied";
           setTimeout(() => { btn.textContent = "Copy"; }, 1500);

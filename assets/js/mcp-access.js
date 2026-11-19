@@ -193,23 +193,7 @@
   async function copy() {
     const text = String($("mcp_snippet")?.textContent || "");
     if (!text) return;
-    let ok = false;
-    try {
-      if (navigator.clipboard && w.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-        ok = true;
-      } else {
-        const area = d.createElement("textarea");
-        area.value = text;
-        area.setAttribute("readonly", "");
-        area.style.position = "fixed";
-        area.style.top = "-9999px";
-        d.body.appendChild(area);
-        area.select();
-        ok = d.execCommand("copy");
-        area.remove();
-      }
-    } catch {}
+    const ok = (await w.cwCopyText?.(text)) === true;
     toast(ok ? "Copied" : "Copy failed, select the text and copy it by hand", ok);
   }
 

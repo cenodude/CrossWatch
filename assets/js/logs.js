@@ -277,10 +277,9 @@ const LogsPage = {
         else if(button.hasAttribute('data-clear')){if(!window.confirm('Delete completed, unpinned logs in this channel for the current profile?'))return;await api('',{channel},{method:'DELETE'});reset();}
         else if(['data-copy','data-copy-full','data-download','data-download-full'].some(a=>button.hasAttribute(a))){
           if(!sid)return; const full=button.hasAttribute('data-copy-full')||button.hasAttribute('data-download-full');
-          const res=await fetch(url(`/${sid}/download`,{...scope(),...(full?{}:{q:query,level,provider})}),{cache:'no-store'});if(!res.ok)throw new Error('Could not export this log.');
-          const text=await res.text();if(!alive)return;
-          if(button.hasAttribute('data-copy')||button.hasAttribute('data-copy-full')){await navigator.clipboard.writeText(text);copied(button);}
-          else {const link=document.createElement('a');const object=URL.createObjectURL(new Blob([text],{type:'text/plain'}));link.href=object;link.download=`crosswatch-${channel}-${sid}.log`;link.click();setTimeout(()=>URL.revokeObjectURL(object),1000);}
+          const load=fetch(url(`/${sid}/download`,{...scope(),...(full?{}:{q:query,level,provider})}),{cache:'no-store'}).then(res=>{if(!res.ok)throw new Error('Could not export this log.');return res.text();});
+          if(button.hasAttribute('data-copy')||button.hasAttribute('data-copy-full')){const ok=await (window.cwCopyTextFrom?.(load)??false);if(!alive)return;if(ok)copied(button);else throw new Error('Could not copy this log.');}
+          else {const text=await load;if(!alive)return;const link=document.createElement('a');const object=URL.createObjectURL(new Blob([text],{type:'text/plain'}));link.href=object;link.download=`crosswatch-${channel}-${sid}.log`;link.click();setTimeout(()=>URL.revokeObjectURL(object),1000);}
         }
       } catch(error){if(alive)notice(error.message);}
     }

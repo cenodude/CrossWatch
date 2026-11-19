@@ -686,16 +686,7 @@
     const code = (Q("#jfy_qc_code")?.textContent || "").replace(/\s+/g, "").trim();
     if (!code || code === "------") return;
     let ok = false;
-    try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(code); ok = true; } } catch {}
-    if (!ok) {
-      try {
-        const ta = document.createElement("textarea");
-        ta.value = code; ta.style.position = "fixed"; ta.style.opacity = "0";
-        document.body.appendChild(ta); ta.focus(); ta.select();
-        ok = document.execCommand("copy");
-        document.body.removeChild(ta);
-      } catch {}
-    }
+    ok = (await window.cwCopyText?.(code)) === true;
     if (!ok) { window.notify?.("Copy failed", "warn"); return; }
     btn.classList.add("copied");
     btn.innerHTML = QC_ICON_CHECK;

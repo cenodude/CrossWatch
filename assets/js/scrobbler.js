@@ -320,7 +320,7 @@
             ${visibleSinks.map((k) => `<button type="button" class="sc2-rating-pill provider-${k} ${r[k] ? "is-on" : ""}" data-rating-target="${k}"><span class="material-symbols-rounded">${r[k] ? "check_circle" : "radio_button_unchecked"}</span>${esc(label(k))}</button>`).join("") || '<div class="sc2-muted">Configure a ratings destination first.</div>'}
           </div>
           <div class="sc2-endpoint">
-            <code title="${esc(url)}">${esc(url || "Global Plex ratings URL is unavailable until a token exists")}</code>
+            ${url ? `<input type="text" readonly value="${esc(url)}" title="${esc(url)}" aria-label="Global Plex ratings URL" spellcheck="false" data-copy-field>` : "<code>Global Plex ratings URL is unavailable until a token exists</code>"}
             <button type="button" class="btn small sc2-icon-btn material-symbols-rounded" data-copy-url="${esc(url)}" title="Copy URL">content_copy</button>
             <button type="button" class="btn small danger sc2-icon-btn cw-danger-confirm" data-regen-global title="Regeneration is destructive for the old endpoint URL."><span class="material-symbols-rounded">sync_lock</span></button>
           </div>
@@ -610,8 +610,8 @@
       if (copyUrl) {
         e.preventDefault();
         if (copyUrl.getAttribute("data-copy-url")) {
-          await navigator.clipboard?.writeText(copyUrl.getAttribute("data-copy-url"));
-          flashCopied(copyUrl);
+          if (await window.cwCopyText?.(copyUrl.getAttribute("data-copy-url"))) flashCopied(copyUrl);
+          else window.cwSelectCopyField?.(copyUrl.parentElement?.querySelector("[data-copy-field]"));
         }
         return;
       }

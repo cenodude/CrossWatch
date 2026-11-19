@@ -60,11 +60,6 @@
     return aside;
   }
 
-  function providerMeta(provider) {
-    const raw = String(provider || '').trim(), key = raw.toUpperCase(), meta = Meta();
-    return { key, label: meta?.label?.(key) || meta?.label?.(raw) || key || '?', logo: meta?.logoPath?.(key) || meta?.logoPath?.(raw) || '' };
-  }
-
   const sep = (s = '•') => `<span class="si-sep">${s}</span>`;
   const wait = (ms = 0) => new Promise((r) => setTimeout(r, ms));
 
@@ -108,12 +103,6 @@
     return r.json();
   }
 
-  const epochOf = (item) => {
-    const raw = item?.captured_at ?? item?.watched_at ?? item?.updated_at ?? 0;
-    const n = Number(raw || 0);
-    return Number.isFinite(n) && n > 0 ? (n > 1e10 ? Math.floor(n / 1000) : Math.floor(n)) : 0;
-  };
-
   function relTime(epoch) {
     const n = Number(epoch || 0);
     if (!n) return 'No recent sync yet';
@@ -141,36 +130,6 @@
   }
 
   const plural = (n, one, many = `${one}s`) => `${Number(n || 0)} ${Number(n || 0) === 1 ? one : many}`;
-  const providerLabel = (value) => providerMeta(value).label || String(value || '').trim().toUpperCase() || 'Provider';
-
-  function activityIcon(item) {
-    const method = String(item?.method || '').toLowerCase();
-    const kind = String(item?.kind || '').toLowerCase();
-    if (method === 'watcher' || method === 'webhook' || kind === 'scrobble') return { icon: method === 'webhook' ? 'rss_feed' : 'sensors', cls: 'is-watch' };
-    if (kind.includes('meta') || String(item?.source || '').toLowerCase().includes('tmdb')) return { icon: 'database', cls: 'is-meta' };
-    return { icon: 'sync', cls: 'is-sync' };
-  }
-
-  function activityTitle(item, index) {
-    const method = String(item?.method || '').toLowerCase();
-    const kind = String(item?.kind || '').toLowerCase();
-    const source = providerLabel(item?.source || item?.target);
-    if (method === 'watcher') return `Watcher event received, ${source}`;
-    if (method === 'webhook') return `Webhook event received, ${source}`;
-    if (kind.includes('meta')) return `Metadata lookup completed, ${source}`;
-    if (item?.targets?.length) return `Sync completed, ${item.targets.length} routes processed`;
-    if (index === 0) return 'Sync completed';
-    return item?.title ? `Activity recorded, ${item.title}` : 'Activity recorded';
-  }
-
-  function activityRows(items) {
-    const rows = Array.isArray(items) ? items : [];
-    if (!rows.length) return '<div class="si-empty is-ops">No recent activity yet.</div>';
-    return `<div class="si-activity-list">${rows.map((item, index) => {
-      const ic = activityIcon(item);
-      return `<div class="si-activity-row"><span class="si-activity-icon ${ic.cls}"><span class="material-symbols-rounded">${ic.icon}</span></span><span class="si-activity-main"><strong>${esc(activityTitle(item, index))}</strong><small>${esc(relTime(epochOf(item)))}</small></span></div>`;
-    }).join('')}</div>`;
-  }
 
   function fact(icon, text, good = false) {
     return `<div class="si-fact ${good ? 'is-good' : ''}"><span class="material-symbols-rounded">${icon}</span><span>${esc(text)}</span></div>`;
@@ -184,8 +143,7 @@
     const metaReady = !!data?.meta?.configured;
     const scrob = data?.scrob || {};
     const sched = data?.sched || {};
-    const items = data?.activity?.items || [];
-    const lastEpoch = epochOf(items[0]);
+    const lastEpoch = Math.max(0, Math.floor(Number(data?.last_sync_at || 0))) || 0;
     const watcherOn = !!(scrob.enabled && scrob.sources?.watcher);
     const webhookOn = !!(scrob.enabled && scrob.sources?.webhook);
     const watcherState = watcherOn ? (scrob.watcher?.alive ? 'Listening' : 'Configured') : 'Inactive';
@@ -237,10 +195,6 @@
           <div class="si-mini-status ${webhookStatusClass}"><span class="material-symbols-rounded">rss_feed</span><span class="si-mini-copy"><strong>Webhook</strong><small>${esc(webhookState)}</small></span></div>
         </div>
         <button type="button" class="si-action" data-target="scheduling">View schedule <span class="material-symbols-rounded">arrow_forward</span></button>
-      </section>
-      <section class="si-op-card">
-        <div class="si-op-head"><span class="material-symbols-rounded si-good">sync</span><strong>Recent activity</strong></div>
-        ${activityRows(items)}
       </section>
     `;
   }
@@ -316,14 +270,13 @@
     const meta = data.meta || data.metadata || {};
     const sched = data.sched || data.scheduling || {};
     const scrob = data.scrob || data.scrobbler || {};
-    const activity = data.activity || data.recent_activity || {};
-    return { ...data, meta, metadata: meta, sched, scheduling: sched, scrob, scrobbler: scrob, activity };
+    return { ...data, meta, metadata: meta, sched, scheduling: sched, scrob, scrobbler: scrob };
   }
 
   function applyOverview(data, fetched = false) {
     const overview = normalizeOverview(data);
     state.data = overview;
-    state.liveData = { sched: overview.sched, scrob: overview.scrob, activity: overview.activity };
+    state.liveData = { sched: overview.sched, scrob: overview.scrob };
     if (fetched) {
       state.lastFetch = Date.now();
       state.dirty = false;

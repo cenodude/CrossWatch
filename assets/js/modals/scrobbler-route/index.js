@@ -688,7 +688,7 @@ function ratingsPanel(r, ratings, ratingTargets) {
       }).join("")
     : `<span class="scrm-muted">No configured rating destinations</span>`;
   const endpoint = r.ratings_webhook_url
-    ? `<div class="scrm-endpoint"><code title="${esc(r.ratings_webhook_url)}">${esc(r.ratings_webhook_url)}</code><button type="button" class="btn small material-symbols-rounded" data-copy="${esc(r.ratings_webhook_url)}" title="Copy URL" aria-label="Copy URL">content_copy</button><button type="button" class="btn small danger material-symbols-rounded" data-regen-route title="Regenerate URL" aria-label="Regenerate URL">sync_lock</button></div>`
+    ? `<div class="scrm-endpoint"><input type="text" readonly value="${esc(r.ratings_webhook_url)}" title="${esc(r.ratings_webhook_url)}" aria-label="Ratings webhook URL" spellcheck="false" data-copy-field><button type="button" class="btn small material-symbols-rounded" data-copy="${esc(r.ratings_webhook_url)}" title="Copy URL" aria-label="Copy URL">content_copy</button><button type="button" class="btn small danger material-symbols-rounded" data-regen-route title="Regenerate URL" aria-label="Regenerate URL">sync_lock</button></div>`
     : `<div class="scrm-note"><span class="material-symbols-rounded">link</span><span>Save the route to generate a route-specific ratings webhook URL.</span></div>`;
   return `
     <section class="scrm-panel ${activeTab === "ratings" ? "active" : ""}" data-panel="ratings">
@@ -1055,8 +1055,8 @@ export async function mount(shell, incoming = {}) {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation?.();
-      await navigator.clipboard?.writeText(copy.dataset.copy);
-      flashCopied(copy);
+      if (await window.cwCopyText?.(copy.dataset.copy)) flashCopied(copy);
+      else window.cwSelectCopyField?.(copy.parentElement?.querySelector("[data-copy-field]"));
       preserveVisiblePanel(currentActiveTab());
       return;
     }

@@ -173,8 +173,8 @@ for (const shell of ['main','profile']) {
     const {page} = await fixture(t,{shell,width:390,height:844});
     await page.locator('#cw-mobile-more').click();
     const menu=page.locator('#cw-mobile-navigation');
-    assert.equal(await menu.getByRole('button',{name:'Editor',exact:true}).isVisible(),true);
-    for (const selector of ['#tab-settings','.tab:has-text("Editor")']) {
+    assert.equal(await menu.getByRole('button',{name:'Tools',exact:true}).isVisible(),true);
+    for (const selector of ['#tab-settings','#tab-tools']) {
       const style=await menu.locator(selector).evaluate(node=>{
         const s=getComputedStyle(node);
         return {border:s.borderTopWidth,radius:s.borderTopLeftRadius,color:s.color,fill:s.webkitTextFillColor};
@@ -188,13 +188,8 @@ for (const shell of ['main','profile']) {
     await page.setViewportSize({width:390,height:844});
     await page.locator('#cw-mobile-more').click();
     assert.equal(await page.locator('#tab-settings').evaluate(node=>getComputedStyle(node).borderTopWidth),'0px');
-    if(shell==='profile') {
-      await menu.getByRole('button',{name:'Editor',exact:true}).focus();
-      await page.keyboard.press('Enter');
-      await page.waitForURL('https://account-menu.test/#editor');
-    } else {
-      assert.equal(await menu.locator('#tab-editor').getAttribute('onclick'),"showTab('editor')");
-    }
+    assert.equal(await menu.locator('#tab-editor').getAttribute('onclick'),"window.cwToolsMenuSelect('editor')");
+    if(shell==='profile') assert.equal(await menu.locator('#cw-tools-menu').getAttribute('data-href-prefix'),'/');
   });
 
   test(`${shell}: profile settings and logout`, async t => {
@@ -224,21 +219,22 @@ for (const shell of ['main','profile']) {
 
 for (const shell of ['main','profile']) test(`${shell}: primary order and desktop overflow`, async t => {
   const {page} = await fixture(t,{shell,width:1440});
-  assert.deepEqual(await page.locator('#cw-mobile-navigation > .tab').evaluateAll(nodes=>nodes.map(node=>node.id)), ['tab-main','tab-tracker','tab-profile','tab-snapshots','tab-playlists','tab-editor']);
+  assert.deepEqual(await page.locator('#cw-mobile-navigation > .tab, #cw-mobile-navigation > .cw-tabmenu:not(#cw-desktop-more) > .tab').evaluateAll(nodes=>nodes.map(node=>node.id)), ['tab-main','tab-tracker','tab-profile','tab-snapshots','tab-playlists','tab-tools','tab-settings']);
   assert.equal(await page.locator('#tab-about').count(),0);
   assert.equal(await page.locator('#tab-settings').getAttribute('aria-label'),'Settings');
   assert.equal(await page.locator('#tab-settings .cw-settings-icon').evaluate(node=>getComputedStyle(node).fontSize),'20px');
   await page.setViewportSize({width:1000,height:800});
   await page.locator('#cw-desktop-more-toggle').click();
-  assert.deepEqual(await page.locator('#cw-desktop-more-menu [role="menuitem"]').evaluateAll(nodes=>nodes.map(node=>node.id)),['tab-snapshots','tab-playlists','tab-editor']);
+  assert.deepEqual(await page.locator('#cw-desktop-more-menu [role="menuitem"]').evaluateAll(nodes=>nodes.map(node=>node.id)),['tab-snapshots','tab-playlists']);
+  assert.equal(await page.locator('#tab-tools').isVisible(),true);
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('#cw-desktop-more-menu').isVisible(),false);
   await page.setViewportSize({width:390,height:844});
   await page.locator('#cw-mobile-more').click();
-  assert.equal(await page.locator('#tab-editor').isVisible(),true);
+  assert.equal(await page.locator('#tab-tools').isVisible(),true);
   assert.equal(await page.locator('#cw-desktop-more').isVisible(),false);
   await page.setViewportSize({width:1440,height:900});
-  assert.equal(await page.locator('#tab-editor').isVisible(),true);
+  assert.equal(await page.locator('#tab-tools').isVisible(),true);
   await page.locator('#tab-profile').click();
   await page.waitForURL('https://account-menu.test/profile#overview');
 });

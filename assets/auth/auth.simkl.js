@@ -255,16 +255,7 @@
     const code = (($("simkl_qc_code") && $("simkl_qc_code").textContent) || ($("simkl_pin_code") && $("simkl_pin_code").value) || "").replace(/\s+/g, "").trim();
     if (!code || code === "------") return;
     let ok = false;
-    try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(code); ok = true; } } catch (_) {}
-    if (!ok) {
-      try {
-        const ta = d.createElement("textarea");
-        ta.value = code; ta.style.position = "fixed"; ta.style.opacity = "0";
-        d.body.appendChild(ta); ta.focus(); ta.select();
-        ok = d.execCommand("copy");
-        d.body.removeChild(ta);
-      } catch (_) {}
-    }
+    ok = (await window.cwCopyText?.(code)) === true;
     if (!ok) { notify("Copy failed"); return; }
     btn.classList.add("copied"); btn.innerHTML = SMK_ICON_CHECK; btn.title = "Copied!";
     if (smqcCopyRevert) clearTimeout(smqcCopyRevert);

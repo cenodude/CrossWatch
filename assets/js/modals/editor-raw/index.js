@@ -106,7 +106,7 @@ export async function mount(shell, props = {}) {
     const btn = ev.currentTarget;
     const txt = root?.querySelector(".raw-copy-text")?.textContent || "";
     try {
-      await navigator.clipboard.writeText(txt);
+      if (!(await window.cwCopyText?.(txt))) throw new Error("copy failed");
       btn.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">check</span>';
       btn.title = "Copied";
       btn.setAttribute("aria-label", "Copied");

@@ -54,6 +54,38 @@ test("code screen uses brand colours, copy button and countdown", () => {
   assert.equal(win.location.href, "https://movieparadise.app/oauth/device");
 });
 
+test("failed copy keeps the popup open through the countdown", () => {
+  const { Shared, timers } = setup();
+  const win = Shared.openWaitWindow("Movie Paradise", "", "MOVIEPARADISE");
+  Shared.showWaitCode(win, { key: "MOVIEPARADISE", label: "Movie Paradise", code: "XSWV-R42J", url: "https://movieparadise.app/oauth/device" });
+
+  const script = win.html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const nodes = {};
+  const node = (id) => (nodes[id] ||= { id, textContent: "", style: {}, parentNode: { style: {} }, listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } });
+  const popupDocument = {
+    getElementById: node,
+    createElement: () => ({ style: {}, setAttribute() {}, select() {}, remove() {} }),
+    body: { appendChild() {} },
+    execCommand: () => false,
+  };
+  const intervals = [];
+  win.location = { href: "about:blank" };
+  vm.runInNewContext(script, { window: win, document: popupDocument, location: win.location, navigator: {}, setInterval: (fn) => intervals.push(fn) || intervals.length, clearInterval: (id) => { intervals[id - 1] = null; } });
+
+  const button = node("cw-wait-go");
+  button.listeners.click.call(button);
+  assert.equal(win.__cwWaitHold, true);
+  assert.equal(button.textContent, "Continue");
+  assert.equal(node("cw-wait-left").parentNode.style.display, "none");
+  assert.match(node("cw-wait-state").textContent, /Copy failed/);
+
+  timers.at(-1).fn();
+  assert.equal(win.location.href, "about:blank");
+
+  button.listeners.click.call(button);
+  assert.equal(win.location.href, "https://movieparadise.app/oauth/device");
+});
+
 test("code and url are escaped and a light brand gets dark button text", () => {
   const { Shared } = setup();
   const win = Shared.openWaitWindow("SIMKL", "", "SIMKL");

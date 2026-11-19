@@ -155,16 +155,7 @@
     const code = ((el("mdblist_qc_code") && el("mdblist_qc_code").textContent) || (el("mdblist_device_code") && el("mdblist_device_code").value) || "").replace(/\s+/g, "").trim();
     if (!code || code === "------") return;
     let ok = false;
-    try { if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(code); ok = true; } } catch (_) {}
-    if (!ok) {
-      try {
-        const ta = document.createElement("textarea");
-        ta.value = code; ta.style.position = "fixed"; ta.style.opacity = "0";
-        document.body.appendChild(ta); ta.focus(); ta.select();
-        ok = document.execCommand("copy");
-        document.body.removeChild(ta);
-      } catch (_) {}
-    }
+    ok = (await window.cwCopyText?.(code)) === true;
     if (!ok) { note("Copy failed"); return; }
     btn.classList.add("copied"); btn.innerHTML = MDBL_ICON_CHECK; btn.title = "Copied!";
     if (mdblQcCopyRevert) clearTimeout(mdblQcCopyRevert);
