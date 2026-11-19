@@ -923,8 +923,47 @@ def clear_pair_state(base_path: str | Path, pair_scope: str) -> tuple[int, int]:
             conn.execute("DELETE FROM episode_group_state WHERE pair_scope=?", (pair_scope,))
             conn.execute("DELETE FROM episode_group_scrobbles WHERE pair_scope=?", (pair_scope,))
             conn.execute("DELETE FROM pair_analyzer_skips WHERE pair_scope=?", (pair_scope,))
+            conn.execute("DELETE FROM pair_scope_moves WHERE old_scope=? OR new_scope=?", (pair_scope, pair_scope))
         _invalidate()
         return removed
+
+
+def rename_pair_scope(base_path: str | Path, old: str, new: str, tables: tuple[str, ...]) -> bool:
+    if not old or not new or old == new:
+        return False
+    with _LOCK:
+        conn = get_conn(base_path)
+        if conn is None:
+            return False
+        if conn.execute("SELECT 1 FROM pair_feature_state WHERE pair_scope=? LIMIT 1", (new,)).fetchone() is not None:
+            return False
+        if conn.execute("SELECT 1 FROM pair_feature_state WHERE pair_scope=? LIMIT 1", (old,)).fetchone() is None:
+            return False
+        with conn:
+            for table in tables:
+                conn.execute(f"UPDATE OR IGNORE {table} SET pair_scope=? WHERE pair_scope=?", (new, old))
+                conn.execute(f"DELETE FROM {table} WHERE pair_scope=?", (old,))
+            conn.execute("INSERT OR REPLACE INTO pair_scope_moves(old_scope,new_scope,created_at) VALUES(?,?,?)",
+                         (old, new, _now()))
+        _invalidate()
+        return True
+
+
+def pending_scope_moves(base_path: str | Path) -> list[tuple[str, str]]:
+    with _LOCK:
+        conn = get_conn(base_path)
+        if conn is None:
+            return []
+        return [(str(r[0]), str(r[1])) for r in conn.execute("SELECT old_scope, new_scope FROM pair_scope_moves").fetchall()]
+
+
+def finish_scope_move(base_path: str | Path, old: str) -> None:
+    with _LOCK:
+        conn = get_conn(base_path)
+        if conn is None:
+            return
+        with conn:
+            conn.execute("DELETE FROM pair_scope_moves WHERE old_scope=?", (old,))
 
 
 def set_last_sync_epoch(base_path: str | Path, value: Any) -> None:
@@ -948,6 +987,7 @@ def clear_state(base_path: str | Path) -> None:
             conn.execute("DELETE FROM pair_analyzer_skips")
             conn.execute("DELETE FROM pair_baseline_items")
             conn.execute("DELETE FROM pair_scope_owners")
+            conn.execute("DELETE FROM pair_scope_moves")
             conn.execute("DELETE FROM pair_feature_state")
             conn.execute("DELETE FROM baseline_items")
             conn.execute("DELETE FROM provider_feature_state")

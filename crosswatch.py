@@ -1122,6 +1122,15 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         except Exception:
             pass
     try:
+        from services.pair_state_maintenance import start as _start_pair_state_cleanup
+
+        _start_pair_state_cleanup(load_config, CONFIG_DIR)
+    except Exception as e:
+        try:
+            _UIHostLogger("SYNC")(f"pair state cleanup startup error: {e}", level="ERROR")
+        except Exception:
+            pass
+    try:
         from cw_platform.anime_mapping.auto_update import refresh_from_config as _anime_mapping_refresh_auto_update
 
         _anime_mapping_refresh_auto_update(load_config)
@@ -1162,6 +1171,12 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
             _stop_tracker_storage()
             _stop_tracker_month()
             _stop_tracker_automation()
+        except Exception:
+            pass
+        try:
+            from services.pair_state_maintenance import stop as _stop_pair_state_cleanup
+
+            _stop_pair_state_cleanup()
         except Exception:
             pass
         try:

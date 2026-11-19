@@ -11,24 +11,33 @@ import logging
 from cw_platform.local_db import state as sqlite_state
 from cw_platform.orchestrator._pairs import _feature_list_for_pair
 from cw_platform.orchestrator._state_store import StateStore
-from cw_platform.pair_scope import pair_feature_scope
+from cw_platform.pair_scope import adopt_legacy_scope, pair_feature_scope
 from cw_platform.provider_instances import normalize_instance_id
 
 FEATURES = ("watchlist", "history", "ratings", "progress", "collection", "playlists")
 
 
-def configured_scopes(cfg: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
+def _scope_pairs(cfg: Mapping[str, Any]) -> Iterable[tuple[int, Mapping[str, Any]]]:
     from cw_platform.orchestrator._pairs import expand_sync_user_pairs
     from cw_platform.value_coercion import coerce_bool
 
-    out: dict[str, tuple[str, str]] = {}
     expanded = expand_sync_user_pairs(cfg)
     for pairs in (expanded, [pair for pair in expanded if coerce_bool(pair.get("enabled", True), True)]):
-        for index, pair in enumerate(pairs, 1):
-            for feature in FEATURES:
-                scope = pair_feature_scope(cfg, pair, feature, index)
-                out[scope] = (str(pair.get("id") or pair.get("pair_id") or index), feature)
+        yield from enumerate(pairs, 1)
+
+
+def configured_scopes(cfg: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
+    out: dict[str, tuple[str, str]] = {}
+    for index, pair in _scope_pairs(cfg):
+        for feature in FEATURES:
+            scope = pair_feature_scope(cfg, pair, feature, index)
+            out[scope] = (str(pair.get("id") or pair.get("pair_id") or index), feature)
     return out
+
+
+def adopt_legacy_scopes(config_dir: str | Path, cfg: Mapping[str, Any]) -> int:
+    return sum(adopt_legacy_scope(config_dir, cfg, pair, feature, index)
+               for index, pair in _scope_pairs(cfg) for feature in FEATURES)
 
 
 def stale_pair_scopes(config_dir: str | Path, cfg: Mapping[str, Any], *, protected: Iterable[str] = ()) -> dict[str, Any]:
@@ -70,6 +79,7 @@ def stale_pair_scopes(config_dir: str | Path, cfg: Mapping[str, Any], *, protect
 def prune_pair_scopes(config_dir: str | Path, cfg: Mapping[str, Any], *, protected: Iterable[str] = ()) -> dict[str, Any]:
     from cw_platform.local_db.db import get_conn
 
+    adopt_legacy_scopes(config_dir, cfg)
     inventory = stale_pair_scopes(config_dir, cfg, protected=protected)
     result = clear_pair_state(config_dir, Path(config_dir) / ".cw_state", inventory["scopes"])
     if result["errors"]:
@@ -166,6 +176,10 @@ def clear_pair_state(
     out: dict[str, Any] = {"baselines": 0, "items": 0, "tombstones": 0, "files": [], "bytes": 0, "errors": []}
     if not wanted:
         return out
+    try:
+        wanted |= {old for old, new in sqlite_state.pending_scope_moves(config_dir) if new in wanted}
+    except Exception as exc:
+        out["errors"].append(f"database: {exc}")
 
     for scope in sorted(wanted):
         try:
