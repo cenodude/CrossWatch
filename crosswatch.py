@@ -1495,6 +1495,7 @@ def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
                     max_backups=max_backups,
                     auto_delete_old=True,
                     job_id=backup_job_id,
+                    trigger="scheduler",
                 ) or {}
                 deleted = cleanup.get("deleted") or []
                 if deleted:
@@ -1532,6 +1533,12 @@ def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
             auto_delete_old = capture.get("auto_delete_old") is True
             if not provider or not feature:
                 _append_log("SYNC", "[!] Scheduler capture: missing provider or feature")
+                try:
+                    from cw_platform.event_archive import record_capture
+
+                    record_capture(provider, instance, feature, trigger="scheduler", ok=False, reason="Capture schedule has no provider or feature")
+                except Exception:
+                    pass
                 return False
 
             label = render_capture_label_template(
@@ -1540,7 +1547,7 @@ def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
                 instance=instance,
                 feature=feature,
             )
-            res = create_snapshot(provider, feature, label=label, instance_id=instance) or {}
+            res = create_snapshot(provider, feature, label=label, instance_id=instance, trigger="scheduler") or {}
             _append_log(
                 "SYNC",
                 f"[i] Scheduler capture: saved {provider} {feature} ({instance}) -> {res.get('path') or 'capture created'}",
@@ -1553,6 +1560,7 @@ def _start_sync_from_scheduler(payload: dict[str, Any] | None = None) -> bool:
                     retention_days=retention_days,
                     max_captures=max_captures,
                     auto_delete_old=True,
+                    trigger="scheduler",
                 ) or {}
                 deleted = cleanup.get("deleted") or []
                 if deleted:

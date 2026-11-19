@@ -173,7 +173,8 @@ for (const shell of ['main','profile']) {
     const {page} = await fixture(t,{shell,width:390,height:844});
     await page.locator('#cw-mobile-more').click();
     const menu=page.locator('#cw-mobile-navigation');
-    assert.equal(await menu.getByRole('button',{name:'Tools',exact:true}).isVisible(),true);
+    assert.equal(await menu.locator('#tab-tools').isVisible(),true);
+    assert.equal(await menu.locator('.cw-mobile-tool-destinations [data-mobile-route="events"]').isVisible(),false);
     for (const selector of ['#tab-settings','#tab-tools']) {
       const style=await menu.locator(selector).evaluate(node=>{
         const s=getComputedStyle(node);
@@ -188,6 +189,14 @@ for (const shell of ['main','profile']) {
     await page.setViewportSize({width:390,height:844});
     await page.locator('#cw-mobile-more').click();
     assert.equal(await page.locator('#tab-settings').evaluate(node=>getComputedStyle(node).borderTopWidth),'0px');
+    await menu.locator('#tab-tools').click();
+    assert.equal(await menu.locator('#cw-tools-menu').isVisible(),false);
+    assert.equal(await menu.locator('#tab-settings').isVisible(),false);
+    assert.deepEqual(await menu.locator('.cw-mobile-tool-destinations .tab').evaluateAll(nodes=>nodes.filter(node=>node.getClientRects().length).map(node=>node.dataset.mobileRoute || 'back')), ['back','events','logs','editor','analyzer','import_export','maintenance']);
+    await menu.locator('.cw-mobile-tools-back').click();
+    assert.equal(await page.locator('#cw-mobile-nav-toggle').getAttribute('aria-expanded'),'true');
+    assert.equal(await menu.locator('#tab-tools').isVisible(),true);
+    assert.equal(await menu.locator('.cw-mobile-tool-destinations [data-mobile-route="events"]').isVisible(),false);
     assert.equal(await menu.locator('#tab-editor').getAttribute('onclick'),"window.cwToolsMenuSelect('editor')");
     if(shell==='profile') assert.equal(await menu.locator('#cw-tools-menu').getAttribute('data-href-prefix'),'/');
   });

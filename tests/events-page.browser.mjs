@@ -74,3 +74,48 @@ test('activity links show their sync thread and cloud filters reset to all types
   assert.equal(queries.at(-1).q,undefined);
   assert.deepEqual(errors,[]);
 });
+
+test('captures and backups have their own tabs and detail',async t=>{
+  const browser=await chromium.launch({headless:true});
+  t.after(()=>browser.close());
+  const page=await browser.newPage({viewport:{width:1440,height:960}});
+  const queries=[],errors=[];
+  page.on('pageerror',error=>errors.push(error.message));
+  const capture={id:51,domain:'capture',feature:'capture',status:'failed',severity:'error',summary:'Watchlist capture, Plex failed',event_count:1,first_event_at:1794568000,last_event_at:1794568000,source_provider:'PLEX',source_instance:'default'};
+  const backup={id:52,domain:'backup',feature:'backup',status:'completed',summary:'Full backup',event_count:1,first_event_at:1794567000,last_event_at:1794567000};
+  const captureEvent={id:7,domain:'capture',feature:'capture',event_type:'capture_failed',severity:'error',created_at:1794568000,source_provider:'PLEX',source_instance:'default',source_kind:'scheduler',title:'Watchlist capture, Plex failed',reason:'Provider not configured',detail:JSON.stringify({capture_feature:'watchlist',items:0})};
+  await page.route('http://events.test/**',async route=>{
+    const url=new URL(route.request().url());
+    if(url.pathname.startsWith('/assets/')) return route.fulfill({body:await readFile(new URL('..'+url.pathname,import.meta.url)),contentType:url.pathname.endsWith('.css')?'text/css':'text/javascript'});
+    if(url.pathname.startsWith('/api/')) {
+      queries.push({path:url.pathname,...Object.fromEntries(url.searchParams)});
+      let json={ok:true,items:[],pairs:[]};
+      if(url.pathname==='/api/events/groups') json=url.searchParams.get('domain')==='backup'?{items:[backup],total:1}:{items:[capture],total:1};
+      if(url.pathname==='/api/events/groups/51') json={group:capture,events:[captureEvent]};
+      return route.fulfill({json});
+    }
+    return route.fulfill({contentType:'text/html',body:'<!doctype html><html data-tab="events"><head><style>body{margin:20px;background:#080a0d;font-family:Arial,sans-serif}*{box-sizing:border-box}.material-symbols-rounded{font-size:0!important}</style></head><body><main id="page-events"></main></body></html>'});
+  });
+  await page.goto('http://events.test/#events');
+  await page.evaluate(async()=>{
+    window.CW={AuthState:{read:()=>({isAdmin:true})}};
+    window.eventsView=(await import('/assets/js/events/index.js')).default;
+    await window.eventsView.mount(document.querySelector('#page-events'),{domain:'capture'});
+  });
+  await page.locator('#ev-list .ev-row[data-id="51"]').waitFor();
+  assert.ok(queries.some(q=>q.path==='/api/events/groups'&&q.domain==='capture'));
+  assert.equal(queries.some(q=>q.path==='/api/events/tree'),false);
+  assert.match(await page.locator('.ev-vtab.on').innerText(),/Captures/);
+  assert.equal(await page.locator('#ev-list .ev-row[data-id="52"]').count(),0);
+  await page.locator('#ev-list .ev-row[data-id="51"]').click();
+  await page.locator('#ev-detail .ev-kv').waitFor();
+  const detail=await page.locator('#ev-detail').innerText();
+  assert.match(detail,/Watchlist capture, Plex failed/);
+  assert.match(detail,/Triggered by\s*Schedule/);
+  assert.match(detail,/Provider not configured/);
+  await page.locator('.ev-vtab[data-v="backup"]').click();
+  await page.locator('#ev-list .ev-row[data-id="52"]').waitFor();
+  assert.ok(queries.some(q=>q.path==='/api/events/groups'&&q.domain==='backup'));
+  assert.equal(await page.locator('#ev-list .ev-row[data-id="51"]').count(),0);
+  assert.deepEqual(errors,[]);
+});

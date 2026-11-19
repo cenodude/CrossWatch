@@ -14,6 +14,7 @@ from .recorder import (
     RunRecorder,
 )
 from .audit import record_audit
+from .captures import record_backup, record_backup_cleanup, record_backup_upload, record_capture, record_capture_cleanup
 from .importer import import_all
 from .scrobble_recorder import record_watch, record_webhook
 from .query import recent, search, by_item, by_run, status, acknowledge, unacknowledge
@@ -45,6 +46,11 @@ __all__ = [
     "compute_event_hash",
     "record_events",
     "record_audit",
+    "record_capture",
+    "record_capture_cleanup",
+    "record_backup",
+    "record_backup_upload",
+    "record_backup_cleanup",
     "record_run_started",
     "record_run_finished",
     "RunRecorder",
