@@ -147,19 +147,44 @@
       event.stopPropagation();
       showTools(!!opener);
     }, true);
-    const toolItems = () => [...document.querySelectorAll('#cw-tools-menu .cw-menu-item[id^="tab-"]')].map(item => [
-      item.id.slice(4),
-      item.querySelector('.cw-menu-icon')?.textContent.trim() || 'build',
-      item.querySelector('span:not(.cw-menu-icon)')?.textContent.trim() || item.id.slice(4),
-    ]);
+    const toolItems = () => [...document.querySelectorAll('#cw-tools-menu .cw-menu-item[id^="tab-"]')]
+      .map(item => [
+        item.id.slice(4),
+        item.querySelector('.cw-menu-icon')?.textContent.trim() || 'build',
+        item.querySelector('span:not(.cw-menu-icon)')?.textContent.trim() || item.id.slice(4),
+      ])
+      .filter(([route]) => /^[a-z_]+$/.test(route));
+    const tileNode = (tag, icon, label) => {
+      const node = document.createElement(tag);
+      node.className = 'tab';
+      const mark = document.createElement('span');
+      mark.className = 'material-symbols-rounded';
+      mark.setAttribute('aria-hidden', 'true');
+      mark.textContent = icon;
+      const text = document.createElement('span');
+      text.textContent = label;
+      node.append(mark, text);
+      return node;
+    };
+    const toolTile = ([route, icon, label]) => {
+      const node = tileNode('a', icon, label);
+      node.href = `${routeBase}#${route}`;
+      node.dataset.mobileRoute = route;
+      return node;
+    };
+    const toolsBack = () => {
+      const node = tileNode('button', 'arrow_back', 'Back');
+      node.type = 'button';
+      node.classList.add('cw-mobile-tools-back');
+      return node;
+    };
     nav.addEventListener('click', openMediaHub);
     const renderShortcuts = () => {
       const items = [...fixed, ...shortcuts.map(route => choices.find(item => item[0] === route)).filter(Boolean)];
       nav.querySelectorAll('a').forEach(node => node.remove());
       $('cw-mobile-more').insertAdjacentHTML('beforebegin', items.map(item => link(item)).join(''));
       extra.innerHTML = choices.filter(item => !$(item[0] === 'profile/overview' ? 'tab-profile' : `tab-${item[0]}`) && !shortcuts.includes(item[0])).map(item => link(item, 'class="tab"')).join('');
-      tools.innerHTML = '<button type="button" class="tab cw-mobile-tools-back"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span><span>Back</span></button>'
-        + toolItems().filter(item => !shortcuts.includes(item[0])).map(item => link(item, 'class="tab"')).join('');
+      tools.replaceChildren(toolsBack(), ...toolItems().filter(item => !shortcuts.includes(item[0])).map(toolTile));
       for (const route of ['main', 'tracker', 'snapshots', 'playlists', 'editor']) {
         $(`tab-${route}`)?.classList.toggle('cw-mobile-pinned', items.some(item => item[0] === route));
       }
