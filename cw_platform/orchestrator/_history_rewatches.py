@@ -123,7 +123,7 @@ def filter_history_events(idx: Mapping[str, Any], *, event_mode: bool) -> dict[s
     for key, value in (idx or {}).items():
         if not isinstance(value, Mapping):
             continue
-        if not has_history_watch(value) or (event_mode and not (value.get("watched_at") or value.get("last_watched_at"))):
+        if not has_history_watch(value):
             continue
         item = minimal_history_item(value, key, event_mode=event_mode)
         sync_key = history_sync_key(item, key, event_mode=event_mode)

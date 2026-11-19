@@ -201,7 +201,7 @@ def test_undated_watched_state_requires_explicit_opt_in():
     assert has_history_watch(normalized)
     state = filter_history_events({"tmdb:42#s01e02": normalized}, event_mode=False)
     assert len(state) == 1 and state["tmdb:42#s01e02"]["_cw_watched_state"] is True
-    assert filter_history_events(state, event_mode=True) == {}
+    assert len(filter_history_events(state, event_mode=True)) == 1
     for invalid in ({"watched": False}, {"type": "show"}, {"type": "season"}, {"_cw_watched_state": "true"}):
         assert not has_history_watch({**marked, **invalid})
     dated = {**base, "watched_at": "2026-10-09T12:00:00Z"}

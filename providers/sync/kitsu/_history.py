@@ -26,14 +26,10 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             items = [media_item(adapter, media)]
         else:
             items = episode_items(adapter.raw_cfg, str(media["id"]), watched, str(media["attributes"].get("canonicalTitle") or ""))
-        stamp = attr.get("finishedAt") or attr.get("progressedAt") or attr.get("updatedAt")
         for item in items:
             item["watched"] = True
+            item["_cw_watched_state"] = True
             item["watch_status"] = {"current": "watching", "planned": "planning"}.get(attr.get("status"), attr.get("status"))
-            if stamp:
-                item["watched_at"] = stamp
-            else:
-                item["_cw_watched_state"] = True
             out[canonical_key(item)] = item
     return out
 

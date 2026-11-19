@@ -1935,7 +1935,7 @@ left.innerHTML = `
           </label>
         </div>` : ""}
         ${undatedAsTodayAllowed(state) ? `<div class="opt-row" style="grid-column:1/-1">
-          <label for="cx-hs-undated-today" data-tip-id="cx-hs-undated-today">Undated watches as today (SIMKL)</label>
+          <label for="cx-hs-undated-today" data-tip-id="cx-hs-undated-today">Replace unknown watch dates with today (SIMKL)</label>
           <label class="switch">
             <input id="cx-hs-undated-today" type="checkbox" ${hs.undated_as_today ? "checked" : ""}>
             <span class="slider"></span>

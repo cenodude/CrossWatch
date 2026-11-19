@@ -9,6 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
+_UNKNOWN_DATES = {
+    "read": True, "write": True,
+    "rewatches": {"read": True, "write": False},
+    "multiple": {"read": True, "write": False},
+}
+
 def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
     attempted: list[str] = []
     for it in items or []:
@@ -201,6 +207,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "timestamp": True,
                 "event_history": True,
                 "rewatches": {"read": True, "write": True, "account_gate": False},
+                "unknown_dates": _UNKNOWN_DATES,
             },
             "progress": {
                 "upsert": True,

@@ -131,7 +131,7 @@ class InteractivePlan:
             report()
         return kept
 
-    def excluded(self, feature, provider, instance, operation, entries, *, source="", source_instance="default", before=None, scope="", down=False, destination_label=""):
+    def excluded(self, feature, provider, instance, operation, entries, *, result=NOT_IN_LIBRARY, source="", source_instance="default", before=None, scope="", down=False, destination_label=""):
         if not self.record_rows or not entries:
             return
         for item, reason in entries:
@@ -141,7 +141,7 @@ class InteractivePlan:
                            source=source, source_instance=source_instance, destination_label=destination_label)
             rid = fingerprint(payload)
             self.rows[rid] = dict(deepcopy(payload) if self.copy_rows else payload,
-                                  id=rid, key=key, result=NOT_IN_LIBRARY,
+                                  id=rid, key=key, result=result, reason_code=reason,
                                   reason=reason_message(reason, provider=provider, feature=feature) or reason,
                                   selectable=False)
 

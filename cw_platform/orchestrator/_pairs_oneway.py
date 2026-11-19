@@ -318,6 +318,7 @@ from ._history_rewatches import (
 from ._history_copies import config_with_history_copies, copy_gap_adds, history_copies_requested, take_copy_gaps
 from ._history_resets import apply_reset_unwatches, load_reset_plan, preview_reset_unwatches
 from ._pair_skips import record_pair_skips
+from ..history_dates import split_unknown_dates
 from ._continue_watching import requested as continue_watching_requested, sync_removals as sync_continue_watching_removals
 
 # Blackbox imports
@@ -1857,6 +1858,14 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
 
     adds = filter_provider_adds(dst_ops, dst_cfg, feature, adds)
 
+    adds, unknown_adds = split_unknown_dates(feature, dst_ops, adds, event_mode=history_event_mode,
+        emit=emit, provider=dst, instance=dst_inst)
+    updates, unknown_updates = split_unknown_dates(feature, dst_ops, updates, event_mode=history_event_mode,
+        emit=emit, provider=dst, instance=dst_inst, operation="update")
+    removes, unknown_removes = split_unknown_dates(feature, src_ops, removes, event_mode=history_event_mode,
+        emit=emit, provider=dst, instance=dst_inst, operation="remove")
+    unknown_skipped = len(unknown_adds) + len(unknown_updates) + len(unknown_removes)
+
     emit("one:plan", src=src, dst=dst, feature=feature,
         adds=len(adds), removes=len(removes), updates=len(updates),
         src_count=len(src_idx), dst_count=len(dst_full))
@@ -1876,6 +1885,8 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         planned_adds = list(adds)
         review_args = dict(source=src, source_instance=src_inst, before=dst_full, down=dst_down)
         review.excluded(feature, dst, dst_inst, "add", library_skipped, **review_args)
+        for operation, skipped in (("add", unknown_adds), ("update", unknown_updates), ("remove", unknown_removes)):
+            review.excluded(feature, dst, dst_inst, operation, skipped, result="skipped", **review_args)
         adds = review.filter(feature, dst, dst_inst, "add", adds, **review_args)
         updates = review.filter(feature, dst, dst_inst, "update", updates, **review_args)
         removes = review.filter(feature, dst, dst_inst, "remove", removes, **review_args)
@@ -1901,7 +1912,7 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
                                                 dst=(dst, dst_inst, dst_ops, dst_cfg), two_way=False,
                                                 dry_run=True, emit=emit, fcfg=fcfg, blocked=manual_blocks, review=review)
             return {"blocked": blocked_total, "manual_excluded": int(manual_blocked),
-                    "library_skipped": len(library_skipped), "cancelled": cancelled}
+                    "unknown_date_skipped": unknown_skipped, "library_skipped": len(library_skipped), "cancelled": cancelled}
 
     src_idx, dst_full = groups.restore(0, src_idx), groups.restore(1, dst_full)
     dst_canonical = groups.restore(1, dst_canonical)
@@ -2505,14 +2516,14 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         "updated": int(updated_effective),
         "added": int(added_effective),
         "removed": int(removed_count),
-        "skipped": int((res_update or {}).get("skipped", 0)) + int((res_add or {}).get("skipped", 0)) + int((res_remove or {}).get("skipped", 0)),
+        "skipped": unknown_skipped + int((res_update or {}).get("skipped", 0)) + int((res_add or {}).get("skipped", 0)) + int((res_remove or {}).get("skipped", 0)),
         "unresolved": unresolved_total,
         "errors": int((res_update or {}).get("errors", 0)) + int((res_add or {}).get("errors", 0)) + int((res_remove or {}).get("errors", 0)),
         "skipped_exact": int((res_update or {}).get("skipped_exact", 0)) + int((res_add or {}).get("skipped_exact", 0)),
         "skipped_inferred": int((res_update or {}).get("skipped_inferred", 0)) + int((res_add or {}).get("skipped_inferred", 0)),
         "blocked": int(blocked_total),
         "manual_excluded": int(manual_blocked),
-        "library_skipped": len(library_skipped),
+        "unknown_date_skipped": unknown_skipped, "library_skipped": len(library_skipped),
         "res_add": res_add,
         "res_update": res_update,
         "res_remove": res_remove,

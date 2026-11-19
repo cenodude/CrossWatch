@@ -948,7 +948,7 @@ def test_trakt_unknown_date_play_reads_as_undated_watch(monkeypatch) -> None:
     dated_key = next(k for k in idx if k.startswith("tmdb:1757386@"))
     assert idx[dated_key]["watched_at"] == "2026-10-12T23:00:00.000Z"
     assert set(filter_history_events(idx, event_mode=False)) == {"tmdb:17473", "tmdb:1757386"}
-    assert set(filter_history_events(idx, event_mode=True)) == {dated_key}
+    assert set(filter_history_events(idx, event_mode=True)) == {dated_key, "tmdb:17473@id:14578012000"}
 
 
 @pytest.mark.parametrize("activities_available", [False, True])

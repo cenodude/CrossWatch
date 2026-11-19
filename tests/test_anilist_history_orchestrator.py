@@ -14,6 +14,7 @@ from cw_platform.anime_mapping import storage
 from cw_platform.anime_mapping.overrides import upsert_override
 from cw_platform.anime_mapping.service import anime_only_adds
 from cw_platform.id_map import canonical_key
+from cw_platform.history_dates import is_unknown_watch, unknown_watch
 from cw_platform.orchestrator.facade import Orchestrator
 from providers.sync import _mod_ANILIST as anilist_mod
 from providers.sync.anilist import _history as history
@@ -170,7 +171,7 @@ def test_index_reports_list_progress_as_aired_episodes(anilist: type[FakeAniList
     assert sorted(index) == ["mal:32281", "tvdb:267440#s01e01", "tvdb:267440#s01e02",
                              "tvdb:267440#s03e13", "tvdb:267440#s03e14", "tvdb:267440#s03e15"]
     assert index["mal:32281"]["type"] == "movie"
-    assert all(item["watched_at"] for item in index.values())
+    assert all(is_unknown_watch(item) for item in index.values())
 
 
 @pytest.fixture()
@@ -248,7 +249,7 @@ def test_history_uses_tmdb_when_tvdb_mapping_is_absent(anilist, monkeypatch):
     assert all(row["show_ids"] == {"tmdb": "1429"} for row in rows)
 
 
-@pytest.mark.parametrize("target", ["SIMKL", "FLOPPY"])
+@pytest.mark.parametrize("target", ["SIMKL", "CROSSWATCH"])
 @pytest.mark.parametrize("mode", ["one-way", "two-way"])
 @pytest.mark.parametrize("custom", [False, True])
 def test_history_syncs_from_anilist_and_stays_stable(anilist, monkeypatch, target, mode, custom):
@@ -265,6 +266,11 @@ def test_history_syncs_from_anilist_and_stays_stable(anilist, monkeypatch, targe
                          "target_namespace": "anilist", "target_id": "16498"})
 
     class Peer(FakeSource):
+        def capabilities(self):
+            from importlib import import_module
+
+            return import_module("providers.sync._mod_" + target).OPS.capabilities()
+
         def name(self):
             return target
 
@@ -290,7 +296,7 @@ def test_history_syncs_from_anilist_and_stays_stable(anilist, monkeypatch, targe
     assert {(item["show_ids"]["tmdb"], item["season"], item["episode"]) for item in episodes} == (
         {("4242", 2, 5), ("4242", 2, 6)} if custom else {("1429", 1, 1), ("1429", 1, 2)})
     assert [item["ids"]["tmdb"] for item in added if item["type"] == "movie"] == ["372058"]
-    assert all(item.get("watched_at") for item in added)
+    assert all(is_unknown_watch(item) for item in added)
     if mode == "two-way":
         assert anilist.entries[104578]["progress"] == 2
     else:
@@ -298,6 +304,47 @@ def test_history_syncs_from_anilist_and_stays_stable(anilist, monkeypatch, targe
     writes = (len(peer.add_calls), len(anilist.saves))
     Orchestrator(cfg).run()
     assert (len(peer.add_calls), len(anilist.saves)) == writes
+
+
+@pytest.mark.parametrize("dates", [{}, {"updatedAt": 1785000000, "createdAt": 1780000000,
+                                      "startedAt": {"year": 2025}, "completedAt": {"year": 2026, "month": 8, "day": 1}}])
+def test_history_dates_are_not_inferred_from_anilist_entry_dates(anilist, dates):
+    anilist.entries = {16498: {"id": 1, "status": "CURRENT", "progress": 2, **dates},
+                       21519: {"id": 2, "status": "COMPLETED", "progress": 1, **dates}}
+    rows = list(anilist_mod.OPS.build_index(_cfg(), feature="history").values())
+    assert len(rows) == 3
+    assert all(is_unknown_watch(row) for row in rows)
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+@pytest.mark.parametrize("interactive", [False, True])
+def test_unknown_progress_sync_preserves_anilist_dates_and_is_repeatable(anilist, monkeypatch, mode, interactive):
+    from cw_platform.orchestrator._interactive import InteractivePlan
+
+    dates = {"startedAt": {"year": 2025, "month": 1, "day": 2},
+             "completedAt": {"year": 2025, "month": 2, "day": 3}}
+    anilist.entries = {16498: {**_entry("CURRENT", 0), **dates}}
+    watched = [unknown_watch(_episode(AOT, 1, 25)), unknown_watch(_movie(YOUR_NAME))]
+    source = FakeSource({canonical_key(row): row for row in watched})
+    monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"JELLYFIN": source, "ANILIST": anilist_mod.OPS})
+    cfg = _cfg()
+    cfg["pairs"][0]["mode"] = mode
+    if interactive:
+        plan = InteractivePlan()
+        Orchestrator(cfg, interactive=plan).run(dry_run=True, write_state_json=False)
+        assert len([row for row in plan.rows.values() if row["selectable"] and is_unknown_watch(row["item"])]) == 2
+        result = Orchestrator(cfg, interactive=InteractivePlan(preview=False, selected=set(plan.rows))).run()
+    else:
+        result = Orchestrator(cfg).run()
+    assert result["errors"] == 0
+    assert anilist.entries[16498]["progress"] == 25
+    assert anilist.entries[21519]["progress"] == 1
+    assert len(anilist.saves) == 2
+    assert all("startedAt" not in save and "completedAt" not in save for save in anilist.saves)
+    assert all(anilist.entries[16498][key] == value for key, value in dates.items())
+    assert all(is_unknown_watch(row) for row in anilist_mod.OPS.build_index(cfg, feature="history").values())
+    Orchestrator(cfg).run()
+    assert len(anilist.saves) == 2
 
 
 def test_only_episodes_beyond_anilist_progress_are_written_once_per_entry(anilist: type[FakeAniList], monkeypatch: pytest.MonkeyPatch) -> None:

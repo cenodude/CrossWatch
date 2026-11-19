@@ -170,6 +170,7 @@ class SyncReport:
                            unresolved=count(result.get(f"unresolved_to_{side}")))
                 for key in ("skipped", "errors"):
                     row[key] = sum(count((result.get(f"res{side}_{op}") or {}).get(key)) for op in ("add", "update", "remove"))
+                row["skipped"] += count(result.get(f"unknown_date_skipped_to_{side}"))
                 destinations.append(row)
             for key in ("added", "updated", "removed"):
                 totals[key] = sum(row[key] for row in destinations)

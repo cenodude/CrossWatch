@@ -27,6 +27,12 @@ from providers.sync.punchplay._common import (
     request_id_of,
 )
 
+_UNKNOWN_DATES = {
+    "read": False, "write": False,
+    "rewatches": {"read": False, "write": False},
+    "multiple": {"read": False, "write": False},
+}
+
 __VERSION__ = "1.2"
 _MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "PUNCHPLAYModule", "OPS", "feat_collection", "feat_history", "feat_progress", "feat_ratings", "feat_watchlist"]
@@ -136,6 +142,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "rewatch": True,
                 "event_history": True,
                 "rewatches": {"read": True, "write": True, "account_gate": False},
+                "unknown_dates": _UNKNOWN_DATES,
                 "requires_watched_at": True,
                 "batch_size": 100,
             },

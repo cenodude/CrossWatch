@@ -375,3 +375,12 @@ test("disjoint rating choices open a working per-account picker", async () => {
   assert.equal(calls[1].body.items[0].rating,9);
   assert.equal(calls[1].body.providers[0].provider,"STREMIO");
 });
+
+
+test("unknown-date exclusions are skipped rather than already present", async () => {
+  const { api } = load([{ results: [{ ok: true, result: { skipped: 1 }, excluded: [{ reason: "unknown_watch_date_unsupported" }] }] }]);
+  const result = await api.sendAdd("history", { provider: "PUNCHPLAY", instance: "default" }, { watched: true, _cw_watched_state: true }, "PunchPlay");
+  assert.equal(result.ok, false);
+  assert.equal(result.skipped, true);
+  assert.match(result.error, /cannot preserve an unknown watch date/);
+});

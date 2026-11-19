@@ -136,6 +136,7 @@ from ._history_rewatches import (
 from ._history_copies import config_with_history_copies, copy_gap_adds, history_copies_requested, take_copy_gaps
 from ._history_resets import apply_reset_unwatches, load_reset_plan, preview_reset_unwatches
 from ._pair_skips import record_pair_skips
+from ..history_dates import split_unknown_dates
 from ._continue_watching import requested as continue_watching_requested, sync_removals as sync_continue_watching_removals
 from ._pairs_utils import (
     declared_types_for,
@@ -2104,6 +2105,20 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             emit("debug", msg="library_only.filtered", feature=feature, dst=b, pair=f"{a}-{b}",
                  kept=len(add_to_B), skipped=len(library_skipped_B), error=presence_error or None)
 
+    add_to_A, unknown_add_to_A = split_unknown_dates(feature, aops, add_to_A, event_mode=history_event_mode,
+        emit=emit, provider=a, instance=src_inst, operation="add")
+    add_to_B, unknown_add_to_B = split_unknown_dates(feature, bops, add_to_B, event_mode=history_event_mode,
+        emit=emit, provider=b, instance=dst_inst, operation="add")
+    upd_to_A, unknown_upd_to_A = split_unknown_dates(feature, aops, upd_to_A, event_mode=history_event_mode,
+        emit=emit, provider=a, instance=src_inst, operation="update")
+    upd_to_B, unknown_upd_to_B = split_unknown_dates(feature, bops, upd_to_B, event_mode=history_event_mode,
+        emit=emit, provider=b, instance=dst_inst, operation="update")
+    rem_from_A, unknown_rem_from_A = split_unknown_dates(feature, bops, rem_from_A, event_mode=history_event_mode,
+        emit=emit, provider=a, instance=src_inst, operation="remove")
+    rem_from_B, unknown_rem_from_B = split_unknown_dates(feature, aops, rem_from_B, event_mode=history_event_mode,
+        emit=emit, provider=b, instance=dst_inst, operation="remove")
+    unknown_skipped = sum(map(len, (unknown_add_to_A, unknown_add_to_B, unknown_upd_to_A, unknown_upd_to_B, unknown_rem_from_A, unknown_rem_from_B)))
+
     emit("two:plan", a=a, b=b, feature=feature,
          add_to_A=len(add_to_A), add_to_B=len(add_to_B),
          upd_to_A=len(upd_to_A), upd_to_B=len(upd_to_B),
@@ -2127,6 +2142,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         args_B = dict(source=a, source_instance=src_inst, before=B_eff, down=b_down)
         review.excluded(feature, a, src_inst, "add", library_skipped_A, **args_A)
         review.excluded(feature, b, dst_inst, "add", library_skipped_B, **args_B)
+        for provider, instance, args, groups_skipped in (
+            (a, src_inst, args_A, (("add", unknown_add_to_A), ("update", unknown_upd_to_A), ("remove", unknown_rem_from_A))),
+            (b, dst_inst, args_B, (("add", unknown_add_to_B), ("update", unknown_upd_to_B), ("remove", unknown_rem_from_B))),
+        ):
+            for operation, skipped in groups_skipped:
+                review.excluded(feature, provider, instance, operation, skipped, result="skipped", **args)
         add_to_A = review.filter(feature, a, src_inst, "add", add_to_A, **args_A)
         add_to_B = review.filter(feature, b, dst_inst, "add", add_to_B, **args_B)
         upd_to_A = review.filter(feature, a, src_inst, "update", upd_to_A, **args_A)
@@ -2168,7 +2189,7 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 sync_continue_watching_removals(ctx.state_store, src=(a, src_inst, aops, a_cfg),
                                                 dst=(b, dst_inst, bops, b_cfg), two_way=True,
                                                 dry_run=True, emit=emit, fcfg=fcfg, blocked=manual_blocks, review=review)
-            return {"cancelled": cancelled, "library_skipped": len(library_skipped_A) + len(library_skipped_B)}
+            return {"cancelled": cancelled, "unknown_date_skipped": unknown_skipped, "library_skipped": len(library_skipped_A) + len(library_skipped_B)}
 
     B_eff = {path_native_keys_B.get(key, key): item for key, item in B_eff.items()}
     A_eff, B_eff = groups.restore(0, A_eff), groups.restore(1, B_eff)
@@ -2942,9 +2963,12 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
         "unresolved_to_A": unresolved_A_total,
         "unresolved_to_B": unresolved_B_total,
         "unresolved": unresolved_total,
-        "skipped": skipped_total,
+        "skipped": skipped_total + unknown_skipped,
         "blocked": int(blocked_total),
         "manual_excluded": int(manual_blocked),
+        "unknown_date_skipped": unknown_skipped,
+        "unknown_date_skipped_to_A": len(unknown_add_to_A) + len(unknown_upd_to_A) + len(unknown_rem_from_A),
+        "unknown_date_skipped_to_B": len(unknown_add_to_B) + len(unknown_upd_to_B) + len(unknown_rem_from_B),
         "library_skipped": len(library_skipped_A) + len(library_skipped_B),
         "errors": errors_total,
         "cancelled": bool(cancelled or cancel_requested()),

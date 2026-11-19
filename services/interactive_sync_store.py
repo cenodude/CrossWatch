@@ -116,11 +116,14 @@ class ReviewStore:
             self.db.execute("CREATE INDEX IF NOT EXISTS review_selection ON review(selected,id)")
             self.db.commit()
             groups = self.db.execute("SELECT kind,result,COUNT(*),SUM(selected),SUM(selectable) FROM review GROUP BY kind,result").fetchall()
-            self.counts = dict(changes=0, conflicts=0, attention=0, selected=0, not_in_library=0, removals=0)
+            self.counts = dict(changes=0, conflicts=0, attention=0, selected=0, not_in_library=0, skipped=0, removals=0)
             self.selectable_count = 0
             for kind, result, count, selected, selectable in groups:
                 if result == NOT_IN_LIBRARY:
                     self.counts["not_in_library"] += count
+                    continue
+                if result == "skipped":
+                    self.counts["skipped"] += count
                     continue
                 self.counts["conflicts" if kind == "conflict" else "changes"] += count
                 self.counts["selected"] += selected
@@ -155,7 +158,7 @@ class ReviewStore:
             where += " AND json_extract(payload,'$.item._cw_status_mapping') IS NULL"
         with self.lock:
             if not feature and not result and not q and not selected_only and not editable_only:
-                total = self.counts["changes"] + self.counts["conflicts"]
+                total = self.counts["changes"] + self.counts["conflicts"] + self.counts.get("skipped", 0)
                 selectable, selected = self.selectable_count, self.counts["selected"]
             else:
                 total, selectable, selected = self.db.execute(f"SELECT COUNT(*),COALESCE(SUM(selectable),0),COALESCE(SUM(selected),0) FROM review WHERE {where}", args).fetchone()

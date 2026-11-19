@@ -49,6 +49,12 @@ from .simkl._common import (
 )
 
 
+_UNKNOWN_DATES = {
+    "read": True, "write": True,
+    "rewatches": {"read": False, "write": False},
+    "multiple": {"read": False, "write": False},
+}
+
 def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
     attempted: list[str] = []
     for it in items or []:
@@ -310,6 +316,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "observed_deletes": True,
                 "event_history": True,
                 "rewatches": {"read": True, "write": True, "account_gate": "pro_vip"},
+                "unknown_dates": _UNKNOWN_DATES,
             },
             "ratings": {
                 "manual_scale": _MANUAL_RATING_SCALE,
@@ -878,6 +885,7 @@ class _SIMKLOPS:
                 "observed_deletes": True,
                 "event_history": True,
                 "rewatches": {"read": True, "write": True, "account_gate": "pro_vip"},
+                "unknown_dates": _UNKNOWN_DATES,
             },
             "ratings": {
                 "manual_scale": _MANUAL_RATING_SCALE,

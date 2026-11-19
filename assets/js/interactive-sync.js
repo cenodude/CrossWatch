@@ -10,7 +10,7 @@
     if (session?.tracker_import) return [session.report ? `tracker?instance=${encodeURIComponent(session.pair.target_instance || "default")}` : "tracker", "Tracker"];
     try { return ORIGINS[sessionStorage.getItem("cw.interactive_sync.origin")] || ORIGINS.settings; } catch { return ORIGINS.settings; }
   };
-  const labels = { add: "Add", remove: "Remove", update: "Update", tag_dropped: "Mark dropped", rewatch_reset: "Mark unwatched", hide_continue_watching: "Hide from Continue Watching", unresolved: "Needs attention", blocked: "Blocked", conflict: "Conflict", not_in_library: "Not in library" };
+  const labels = { add: "Add", remove: "Remove", update: "Update", tag_dropped: "Mark dropped", rewatch_reset: "Mark unwatched", hide_continue_watching: "Hide from Continue Watching", unresolved: "Needs attention", blocked: "Blocked", conflict: "Conflict", skipped: "Skipped", not_in_library: "Not in library" };
   let session = null, busy = false, timer = null, page = 0, route = "", generation = 0;
   let feature = "", result = "", query = "", mappingDirty = false, mappingWorkspace = null;
   let pageData = { items: [], total: 0 }, pageLoading = false, pageRequest = 0, pageController = null, searchTimer = null;

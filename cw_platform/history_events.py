@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .id_map import canonical_key, minimal as id_minimal
+from .history_dates import is_unknown_watch
 
 EVENT_KEY_RE = re.compile(r"^(?P<base>.+?)@(?P<event>(?:\d{7,}(?:~.+)?|id:.+))$")
 
@@ -128,6 +129,8 @@ def history_epoch_from_key(key: Any) -> int | None:
 
 
 def history_epoch_from_item(item: Mapping[str, Any]) -> int | None:
+    if is_unknown_watch(item):
+        return None
     for field in ("watched_at", "last_watched_at", "collected_at"):
         ts = history_epoch_from_value(item.get(field))
         if ts is not None:
