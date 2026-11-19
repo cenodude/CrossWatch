@@ -99,7 +99,6 @@ def _patch_common(monkeypatch: Any, module: Any, responses: list[_Resp] | None =
     monkeypatch.setattr(module, "_dispatch_scrobble", fake_dispatch)
     monkeypatch.setattr(module, "_cw_update", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "_call_remove_across", lambda *args, **kwargs: None)
-    monkeypatch.setattr(module, "_archive", lambda *args, **kwargs: None)
     if hasattr(module, "_resolve_trakt_movie_id"):
         monkeypatch.setattr(module, "_resolve_trakt_movie_id", lambda *args, **kwargs: None)
     return calls
@@ -269,11 +268,10 @@ def test_sink_diagnostics_preserve_webhook_completion(monkeypatch, source, sink_
     module = import_module(f"providers.webhooks.{source}")
     _patch_common(monkeypatch, module)
     monkeypatch.setattr(module, "_dispatch_scrobble", dispatch.dispatch_scrobble)
-    monkeypatch.setattr(module, "_sinks_from_webhook_cfg", lambda *a: {"trakt"})
     monkeypatch.setattr(dispatch, "webhook_sinks", lambda *a: ["trakt"])
     monkeypatch.setattr(dispatch, "sink_configured", lambda *a: True)
     monkeypatch.setattr(dispatch, "maybe_enrich_event_for_sink", lambda ev, *a: ev)
-    sends, removals, archives = [], [], []
+    sends, removals = [], []
 
     def send(ev, **kwargs):
         sends.append(ev)
@@ -281,7 +279,6 @@ def test_sink_diagnostics_preserve_webhook_completion(monkeypatch, source, sink_
 
     monkeypatch.setattr(dispatch, "_make_sink", lambda *a: SimpleNamespace(send=send))
     monkeypatch.setattr(module, "_call_remove_across", lambda *a, **kw: removals.append(a))
-    monkeypatch.setattr(module, "_archive", lambda *a, **kw: archives.append(a))
     monkeypatch.setattr(module.time, "time", lambda: 1_000.0)
     payload = {"plex": _plex_payload, "jellyfin": _jellyfin_payload, "emby": _emby_payload}[source]
     cfg = {**_cfg(), "trakt": {"access_token": "test-token", "client_id": "test-client"}}
@@ -291,10 +288,9 @@ def test_sink_diagnostics_preserve_webhook_completion(monkeypatch, source, sink_
 
     assert result["ok"] is True
     assert result["ignored"] is not recorded, repr(result)
-    assert result["trakt"]["activity_recorded"] is recorded
+    assert result["dispatch"]["activity_recorded"] is recorded
     assert len(sends) == 1, result
     assert bool(removals) is recorded
-    assert any(a[0] == "scrobble_completed" for a in archives) is recorded
     assert any(state.get("finished") for state in module._SCROBBLE_STATE.values()) is recorded
     assert any(state.get("completion_done") for state in module._SCROBBLE_STATE.values()) is recorded
     if hasattr(module, "_LAST_FINISH_BY_ACC"):
@@ -303,3 +299,37 @@ def test_sink_diagnostics_preserve_webhook_completion(monkeypatch, source, sink_
         replay = module.process_webhook(payload(), {}, cfg=cfg)
         assert replay["dedup"] is True
         assert len(sends) == len(removals) == 1
+
+
+@pytest.mark.parametrize("action,path", [("start", "/scrobble/start"), ("stop", "/scrobble/stop")])
+def test_dispatch_records_failed_scrobble_when_sink_raises(monkeypatch, action, path):
+    import cw_platform.event_archive as event_archive
+    from cw_platform.event_archive import playback_recorder
+    from providers.webhooks import dispatch
+
+    recorded: list[dict[str, Any]] = []
+
+    def broken_sink(*_a):
+        raise RuntimeError("sink exploded")
+
+    monkeypatch.setattr(dispatch, "webhook_sinks", lambda *a: ["simkl"])
+    monkeypatch.setattr(dispatch, "sink_configured", lambda *a: True)
+    monkeypatch.setattr(dispatch, "_make_sink", broken_sink)
+    monkeypatch.setattr(playback_recorder, "prepare_playback", lambda ev: ev)
+    monkeypatch.setattr(playback_recorder, "record_playback", lambda *a, **kw: None)
+    monkeypatch.setattr(event_archive, "record_watch", lambda ev, **kw: recorded.append({"action": ev.action, **kw}))
+
+    response = dispatch.dispatch_scrobble(
+        "jellyfin", path, media_type="movie", ids={"tmdb": 550}, title="Replay Movie", year=2026,
+        progress=95, account="viewer", session_key="session-9", raw={}, cfg=_cfg(), provider_instance="J2",
+    )
+
+    assert response.status_code == 502
+    assert len(recorded) == 1
+    row = recorded[0]
+    assert row["action"] == action
+    assert row["status"] == "fail"
+    assert row["destination_provider"] == "simkl"
+    assert row["source_provider"] == "jellyfin"
+    assert row["source_instance"] == "J2"
+    assert "sink exploded" in row["reason"]

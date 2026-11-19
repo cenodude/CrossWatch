@@ -15,6 +15,7 @@ import requests
 
 from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config, save_config
+from cw_platform.provider_instances import normalize_instance_id
 from cw_platform.trakt_http import paced_request as trakt_paced_request
 
 try:
@@ -26,7 +27,7 @@ from providers.scrobble.currently_watching import update_from_payload as _cw_upd
 from providers.scrobble._auto_remove_watchlist import remove_across_providers_by_ids as _rm_across
 from providers.scrobble.scrobble import mask_account as _mask_account
 from providers.scrobble._show_tmdb import show_tmdb_id
-from providers.scrobble.plex.ratings_sync import RATING_SINKS
+from providers.scrobble.plex.ratings_sync import RATING_SINKS, archive_rating_results
 from providers.scrobble.sources import source_enabled
 from providers.webhooks.config import configured_webhook_sinks, profile_scoped_webhook, webhook_sink_instance
 from providers.webhooks.dispatch import dispatch_scrobble as _dispatch_scrobble
@@ -41,7 +42,7 @@ TRAKT_API = "https://api.trakt.tv"
 _SCROBBLE_STATE: dict[str, dict[str, Any]] = {}
 _TRAKT_ID_CACHE: dict[tuple[Any, ...], Any] = {}
 _LAST_FINISH_BY_ACC: dict[str, dict[str, Any]] = {}
-_LAST_RATING_BY_ACC: dict[tuple[str, str, str], dict[str, Any]] = {}
+_LAST_RATING_BY_ACC: dict[tuple[str, str, str, str], dict[str, Any]] = {}
 
 
 _PAT_IMDB = re.compile(r"(?:com\.plexapp\.agents\.imdb|imdb)://(tt\d+)", re.I)
@@ -82,18 +83,6 @@ _DEF_TRAKT: dict[str, Any] = {
 
 def _sinks_from_webhook_cfg(cfg: dict[str, Any], provider_instance: Any = None) -> set[str]:
     return set(configured_webhook_sinks(cfg, "plex", provider_instance))
-
-
-def _archive(event_type: str, media_type: str, md: dict[str, Any], ids: dict[str, Any], account: Any, prog: Any, **kw: Any) -> None:
-    try:
-        from cw_platform.event_archive import record_webhook
-
-        record_webhook(
-            event_type=event_type, source_provider="plex", destination_provider="trakt",
-            media_type=media_type, md=md, ids=ids, account=account, progress=prog, **kw,
-        )
-    except Exception:
-        pass
 
 
 def _call_remove_across(ids: dict[str, Any], media_type: str, origin: str = "") -> None:
@@ -341,20 +330,15 @@ def _get_trakt_watching(cfg: dict[str, Any]) -> None:
         _emit(None, f"trakt watching check error: {e}", "DEBUG")
 
 
-def _post_trakt(path: str, body: dict[str, Any], cfg: dict[str, Any]) -> requests.Response:
-    url = f"{TRAKT_API}{path}"
+def _post_trakt(path: str, body: dict[str, Any], cfg: dict[str, Any], instance_id: Any = None) -> requests.Response:
+    from providers.scrobble.trakt import sink as trakt_sink
+
+    inst = normalize_instance_id(instance_id)
     body = {**body, **_app_meta(cfg)}
-    r = trakt_paced_request(requests.post, "POST", url, json=body, headers=_headers(cfg), timeout=15)
+    r = trakt_sink._post(path, body, cfg, inst)
 
-    if r.status_code == 401:
-        try:
-            from providers.auth._auth_TRAKT import PROVIDER as TRAKT_AUTH
-
-            TRAKT_AUTH.refresh(cfg)
-            _save_config(cfg)
-        except Exception:
-            pass
-        r = trakt_paced_request(requests.post, "POST", url, json=body, headers=_headers(cfg), timeout=15)
+    if r.status_code == 401 and trakt_sink._tok_refresh(inst):
+        r = trakt_sink._post(path, body, cfg, inst)
 
     if r.status_code in (429, 500, 502, 503, 504):
         try:
@@ -362,7 +346,7 @@ def _post_trakt(path: str, body: dict[str, Any], cfg: dict[str, Any]) -> request
         except Exception:
             ra = 1.0
         time.sleep(min(max(ra, 0.5), 3.0))
-        r = trakt_paced_request(requests.post, "POST", url, json=body, headers=_headers(cfg), timeout=15)
+        r = trakt_sink._post(path, body, cfg, inst)
     return r
 
 
@@ -1243,7 +1227,7 @@ def process_webhook(
 
         acc_key_r = _account_key(payload)
         rk_r = str(md.get("ratingKey") or md.get("ratingkey") or "")
-        dedup_key = (acc_key_r, rk_r, media_type)
+        dedup_key = (provider_instance, acc_key_r, rk_r, media_type)
         prev = _LAST_RATING_BY_ACC.get(dedup_key) or {}
         if prev and prev.get("rating") == rating_precise and (time.time() - float(prev.get("ts", 0))) < 10:
             _emit(logger, "suppress duplicate rating event", "DEBUG")
@@ -1270,14 +1254,14 @@ def process_webhook(
                 body_r = _rating_payload(media_type, md, ids_all2, None, cfg, logger=logger)
                 if body_r:
                     sent = True
-                    r = _post_trakt("/sync/ratings/remove", body_r, cfg)
+                    r = _post_trakt("/sync/ratings/remove", body_r, cfg, webhook_sink_instance(wh, "trakt"))
                 else:
                     r = None
             else:
                 body_r = _rating_payload(media_type, md, ids_all2, int(rating_val), cfg, logger=logger)
                 if body_r:
                     sent = True
-                    r = _post_trakt("/sync/ratings", body_r, cfg)
+                    r = _post_trakt("/sync/ratings", body_r, cfg, webhook_sink_instance(wh, "trakt"))
                 else:
                     r = None
             if r is None:
@@ -1301,10 +1285,10 @@ def process_webhook(
             else:
                 if enable_simkl_ratings:
                     sent = True
-                    results["simkl"] = _simkl_send_rating(media_type, ids_all2, int(rating_val or 0), cfg, logger)
+                    results["simkl"] = _simkl_send_rating(media_type, ids_all2, int(rating_val or 0), cfg, logger, webhook_sink_instance(wh, "simkl"))
                 if enable_mdblist_ratings:
                     sent = True
-                    results["mdblist"] = _mdblist_send_rating(media_type, ids_all2, rating_precise, cfg, logger)
+                    results["mdblist"] = _mdblist_send_rating(media_type, ids_all2, rating_precise, cfg, logger, webhook_sink_instance(wh, "mdblist"))
 
         ops_enabled = [
             name
@@ -1347,6 +1331,10 @@ def process_webhook(
         ok = any(bool(item.get("ok")) for item in target_results)
         results["ok"] = ok
         results["status"] = 200 if ok else 502
+        archive_rating_results(
+            results, media_type=media_type, md=md, ids=ids_all2, account=acc_title, rating=rating_precise,
+            source_instance=provider_instance, instance_for=lambda sink: webhook_sink_instance(wh, sink),
+        )
 
         if ok:
             try:
@@ -1356,11 +1344,9 @@ def process_webhook(
                     _emit(logger, f"user='{_mask_account(acc_title)}' rated {rating_precise:g} - {media_name_dbg}", "INFO")
             except Exception:
                 pass
-            _archive("rating_applied", media_type, md, ids_all2, acc_title, None, feature="ratings", operation="rate", rating=(rating_precise or None))
             return results
 
         _emit(logger, f"rating forward failed {str(results)[:180]}", "ERROR")
-        _archive("rating_failed", media_type, md, ids_all2, acc_title, None, feature="ratings", operation="rate", reason=str(results.get("status")))
         return results
 
     prog_raw = _progress(md)
@@ -1635,8 +1621,6 @@ def process_webhook(
         }
         return {"ok": True, "ignored": True}
 
-    sinks_cfg = _sinks_from_webhook_cfg(cfg, provider_instance)
-
     if media_type == "episode":
         dispatch_title = (md.get("grandparentTitle") or md.get("title") or "").strip()
         dispatch_season = md.get("parentIndex")
@@ -1696,15 +1680,9 @@ def process_webhook(
             _emit(logger, f"user='{_mask_account(acc_title)}' {action_name} {prog:.1f}% • {media_name_dbg}", "INFO")
         except Exception:
             pass
-        if activity_recorded and "trakt" in sinks_cfg and intended == "/scrobble/start":
-            _archive("scrobble_started", media_type, md, ids_all2, acc_title, prog, session_key=sess, source_instance=provider_instance or "default", destination_instance=webhook_sink_instance(wh, "trakt"))
-        elif activity_recorded and "trakt" in sinks_cfg and intended == "/scrobble/stop" and prog >= watched_at:
-            _archive("scrobble_completed", media_type, md, ids_all2, acc_title, prog, session_key=sess, source_instance=provider_instance or "default", destination_instance=webhook_sink_instance(wh, "trakt"))
-        return {"ok": True, "status": 200, "action": intended, "trakt": rj, "ignored": not activity_recorded}
+        return {"ok": True, "status": 200, "action": intended, "dispatch": rj, "ignored": not activity_recorded}
 
     _emit(logger, f"{intended} {r.status_code} {(str(rj)[:180])}", "ERROR")
-    if "trakt" in sinks_cfg and intended in ("/scrobble/start", "/scrobble/stop"):
-        _archive("scrobble_failed", media_type, md, ids_all2, acc_title, prog, reason=str(r.status_code), session_key=sess, source_instance=provider_instance or "default", destination_instance=webhook_sink_instance(wh, "trakt"))
     _SCROBBLE_STATE[sess] = {**st,        "ts": now,
         "last_event": event,
         "last_pause_ts": st.get("last_pause_ts", 0),
@@ -1713,4 +1691,4 @@ def process_webhook(
         **({"wl_removed": st.get("wl_removed")} if st.get("wl_removed") else {}),
         "retry_completion": bool(intended == "/scrobble/stop" and prog >= watched_at),
     }
-    return {"ok": False, "status": r.status_code, "trakt": rj}
+    return {"ok": False, "status": r.status_code, "dispatch": rj}

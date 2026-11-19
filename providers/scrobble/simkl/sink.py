@@ -16,7 +16,7 @@ from providers.sync.simkl._common import SIMKLQuotaError, simkl_app_version
 
 from cw_platform.config_base import load_config
 from cw_platform.local_db.ttl_dedupe import once_per_ttl
-from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.provider_instances import get_provider_block, normalize_instance_id
 from services.activity import record_scrobble_event
 from cw_platform.event_archive import record_watch
 from cw_platform.event_archive.playback_recorder import record_playback
@@ -110,17 +110,7 @@ def _fresh_token(block: Mapping[str, Any], instance_id: Any = None) -> str:
 
 
 def _merged_provider_block(cfg: Mapping[str, Any], key: str, instance_id: Any = None) -> dict[str, Any]:
-    base = cfg.get(key) if isinstance(cfg, Mapping) else None
-    blk = dict(base or {}) if isinstance(base, Mapping) else {}
-    inst = normalize_instance_id(instance_id)
-    if inst != "default":
-        insts = blk.get("instances")
-        if isinstance(insts, Mapping) and isinstance(insts.get(inst), Mapping):
-            overlay = dict(insts.get(inst) or {})
-            blk.pop("instances", None)
-            out = dict(blk)
-            out.update(overlay)
-            return out
+    blk = get_provider_block(cfg if isinstance(cfg, Mapping) else {}, key, instance_id)
     blk.pop("instances", None)
     return blk
 
@@ -625,7 +615,8 @@ class SimklSink(ScrobbleSink):
         if not isinstance(cfg, dict):
             cfg = {}
         cfg = dict(cfg)
-        cfg["simkl"] = _merged_provider_block(cfg, "simkl", self._instance_id)
+        block = _merged_provider_block(cfg, "simkl", self._instance_id)
+        cfg["simkl"] = block if self._instance_id == "default" else {**block, "instances": {self._instance_id: dict(block)}}
         s = cfg.get("simkl") or {}
         api_key = s.get("api_key") or s.get("client_id")
         token = _fresh_token(s, self._instance_id)

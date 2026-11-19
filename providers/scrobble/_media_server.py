@@ -232,6 +232,8 @@ class MediaServerSink:
                 outcome = f"skipped reason={result.get('reason') or result.get('error')}" if result.get("skipped") or not result.get("ok") else "written"
                 _log(f"{self.name} delivery {'watched' if complete else 'progress'} {item.get('type')} '{event.title or ''}' "
                      f"p={progress:.1f} inst={self._instance_id} -> {outcome}", "DEBUG")
+                if not result.get("ok") and not result.get("skipped"):
+                    record_watch(event, **record, status="fail", reason=str(result.get("error") or result.get("reason") or f"{self.name}_scrobble_failed"))
                 if not result.get("ok") or result.get("skipped"):
                     return result
                 self._sent[session] = (now, "complete" if complete else event.action, progress)

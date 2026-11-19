@@ -21,7 +21,7 @@ from providers.scrobble._auto_remove_watchlist import remove_across_providers_by
 from providers.scrobble.scrobble import mask_account as _mask_account
 from providers.scrobble._show_tmdb import show_tmdb_id
 from providers.scrobble.sources import source_enabled
-from providers.webhooks.config import configured_webhook_sinks, profile_scoped_webhook, webhook_sink_instance
+from providers.webhooks.config import profile_scoped_webhook
 from providers.webhooks.dispatch import dispatch_scrobble as _dispatch_scrobble
 try:
     from api.watchlistAPI import remove_across_providers_by_ids as _rm_across_api
@@ -59,10 +59,6 @@ _DEF_TRAKT: dict[str, Any] = {
 _JF_VIEW_CACHE_TTL_SECS = 60.0
 _JF_VIEW_ROOTS_CACHE: dict[str, tuple[float, set[str]]] = {}
 _JF_ITEM_VIEW_CACHE: dict[str, str | None] = {}
-
-
-def _sinks_from_webhook_cfg(cfg: dict[str, Any], provider_instance: Any = None) -> set[str]:
-    return set(configured_webhook_sinks(cfg, "jellyfin", provider_instance))
 
 
 def _as_set_str(v: Any) -> set[str]:
@@ -991,59 +987,6 @@ def _completion_replay_key(
     return f"jellyfin:{provider_instance}|u:{acc_key}|s:{session_token}|m:{media_key}"
 
 
-def _archive(event_type: str, media_type: str, md: dict[str, Any], payload: dict[str, Any], ids: dict[str, Any], account: Any, prog: Any, reason: str | None = None, **kw: Any) -> None:
-    try:
-        from cw_platform.event_archive import record_webhook
-
-        if media_type == "episode":
-            title = md.get("SeriesName") or _grab(payload, ["SeriesName", "SeriesTitle"])
-            season, episode = _episode_numbers(md, payload)
-        else:
-            title, season, episode = md.get("Name"), None, None
-        record_webhook(
-            event_type=event_type, source_provider="jellyfin", destination_provider="trakt",
-            media_type=media_type, ids=ids, account=account, progress=prog, reason=reason,
-            title=title, year=md.get("ProductionYear"), season=season, episode=episode, **kw,
-        )
-    except Exception:
-        pass
-
-
-def _archive_scrobble_result(
-    intended: str,
-    status: int,
-    activity_recorded: bool,
-    sinks: set[str],
-    watched_at: float,
-    args: tuple[Any, ...],
-    *,
-    session_key: str,
-    provider_instance: str | None,
-    settings: dict[str, Any],
-) -> None:
-    if "trakt" not in sinks:
-        return
-    reason = None
-    if status >= 400:
-        if intended not in ("/scrobble/start", "/scrobble/stop"):
-            return
-        event_type = "scrobble_failed"
-        reason = str(status)
-    elif not activity_recorded:
-        return
-    elif intended == "/scrobble/start":
-        event_type = "scrobble_started"
-    elif intended == "/scrobble/stop" and args[-1] >= watched_at:
-        event_type = "scrobble_completed"
-    else:
-        return
-    _archive(
-        event_type, *args, reason=reason, session_key=session_key,
-        source_instance=provider_instance or "default",
-        destination_instance=webhook_sink_instance(settings, "trakt"),
-    )
-
-
 def process_webhook(
     payload: dict[str, Any],
     headers: Mapping[str, str],
@@ -1514,8 +1457,6 @@ def process_webhook(
             }
             return {"ok": True, "ignored": True}
 
-        sinks_cfg = _sinks_from_webhook_cfg(cfg, provider_instance)
-
         _emit(logger, f"webhook intent {intended} using {_body_ids_desc(body) if body else _ids_desc(cw_ids)}, prog={prog}", "DEBUG")
         r = _dispatch_scrobble(
             "jellyfin",
@@ -1544,11 +1485,6 @@ def process_webhook(
             "DEBUG",
         )
         activity_recorded = bool(rj.get("activity_recorded")) if isinstance(rj, dict) else False
-        _archive_scrobble_result(
-            intended, r.status_code, activity_recorded, sinks_cfg, watched_at,
-            (media_type, md, payload, cw_ids or ids_all, acc_title, prog),
-            session_key=sess, provider_instance=provider_instance, settings=wh,
-        )
 
         if r.status_code < 400:
             completed_success = activity_recorded and intended == "/scrobble/stop" and prog >= watched_at
@@ -1584,7 +1520,7 @@ def process_webhook(
             except Exception:
                 pass
 
-            return {"ok": True, "status": 200, "action": intended, "trakt": rj, "ignored": not activity_recorded}
+            return {"ok": True, "status": 200, "action": intended, "dispatch": rj, "ignored": not activity_recorded}
 
         _emit(logger, f"{intended} {r.status_code} {(str(rj)[:180])}", "ERROR")
         _SCROBBLE_STATE[sess] = {**st,            "ts": now,
@@ -1597,7 +1533,7 @@ def process_webhook(
             "paused": st.get("paused") if paused_flag is None else paused_flag,
             "retry_completion": bool(intended == "/scrobble/stop" and prog >= watched_at),
         }
-        return {"ok": False, "status": r.status_code, "trakt": rj}
+        return {"ok": False, "status": r.status_code, "dispatch": rj}
     except Exception as e:
         _emit(logger, f"process_webhook error: {e}", "ERROR")
         return {"ok": False, "error": str(e)}

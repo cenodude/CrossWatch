@@ -669,7 +669,7 @@ function optionsPanel(r) {
 
 function globalRatingTargets() {
   const g = props.overview?.source_state?.global_plex_ratings || {};
-  return ["trakt", "simkl", "mdblist"].filter((s) => g[s]);
+  return Object.keys(g).filter((s) => g[s] === true);
 }
 
 function ratingsPanel(r, ratings, ratingTargets) {

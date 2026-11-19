@@ -140,8 +140,6 @@ def sink_configured(cfg: Mapping[str, Any] | None, sink: str, instance_id: Any =
         return False
     inst = normalize_instance_id(instance_id)
     block = get_provider_block(_dict(cfg), key, inst)
-    if not block and inst != "default":
-        block = get_provider_block(_dict(cfg), key, "default")
     sources = [block]
     if inst == "default":
         sources.append(_dict(_dict(_dict(cfg).get("auth")).get(key)))

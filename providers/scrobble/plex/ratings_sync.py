@@ -108,6 +108,44 @@ OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flick
 RATING_SINKS: tuple[str, ...] = ("trakt", "simkl", "mdblist", "anilist", *OPS_RATING_SINKS)
 
 
+def archive_rating_results(
+    results: Mapping[str, Any],
+    *,
+    media_type: str,
+    md: Mapping[str, Any],
+    ids: Mapping[str, Any],
+    account: Any,
+    rating: Any,
+    source_instance: Any,
+    instance_for: Callable[[str], Any],
+) -> None:
+    for sink in RATING_SINKS:
+        res = results.get(sink)
+        if not isinstance(res, Mapping) or res.get("ignored") or res.get("skipped"):
+            continue
+        applied = bool(res.get("ok"))
+        extra: dict[str, Any] = {"rating": rating or None} if applied else {"reason": str(res.get("status") or res.get("error") or "failed")}
+        try:
+            from cw_platform.event_archive import record_webhook
+
+            record_webhook(
+                event_type="rating_applied" if applied else "rating_failed",
+                source_provider="plex",
+                source_instance=normalize_instance_id(source_instance),
+                destination_provider=sink,
+                destination_instance=normalize_instance_id(instance_for(sink)),
+                media_type=media_type,
+                md=dict(md or {}),
+                ids=dict(ids or {}),
+                account=account,
+                feature="ratings",
+                operation="rate",
+                **extra,
+            )
+        except Exception:
+            pass
+
+
 def dispatch_ops_ratings(
     media_type: str,
     md: Mapping[str, Any],

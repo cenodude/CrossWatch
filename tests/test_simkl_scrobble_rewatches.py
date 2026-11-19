@@ -386,6 +386,7 @@ def diagnostics(api, kind):
 def test_diagnostics_correlate_route_profiles_session_and_results(api):
     cfg = config()
     cfg["scrobble"]["watch"].update(route_id="R12", route_effective_profile_id="profile-a")
+    cfg["simkl"]["instances"] = {"S02": {"access_token": "test-account-b"}}
     sink.SimklSink(instance_id="S02").send(event(), cfg)
     result = diagnostics(api, "result")[0]
     assert result["route"] == "R12"

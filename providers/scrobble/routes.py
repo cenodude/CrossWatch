@@ -293,7 +293,7 @@ def normalize_route(route: dict[str, Any], fallback_id: str) -> dict[str, Any]:
 
     prov = str(r.get("provider") or "").strip().lower() or "plex"
     if prov not in ROUTE_PROVIDERS:
-        prov = "plex"
+        enabled = False
     prov_inst = str(r.get("provider_instance") or r.get("providerInstance") or DEFAULT_INSTANCE_ID).strip() or DEFAULT_INSTANCE_ID
 
     prov_inst = normalize_instance_id(prov_inst)

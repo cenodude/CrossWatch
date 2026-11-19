@@ -11,6 +11,7 @@ import requests
 
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.config_base import load_config
+from cw_platform.event_archive import record_watch
 from cw_platform.provider_instances import normalize_instance_id, resolve_provider_block
 from providers.scrobble._watched_gate import resolve_stop_action
 from services.activity import record_scrobble_event
@@ -375,12 +376,17 @@ class BingeBaseSink(ScrobbleSink):
             )
         except Exception as exc:
             _log(f"BINGEBASE: scrobble {action} failed ({exc.__class__.__name__}) target={_redact_url(webhook_url)}", "WARN")
-            return
+            self._note(event, action, src, src_inst, progress, "fail", "request_failed")
+            return {"ok": False, "error": "request_failed", "retryable": True}
 
         code = int(getattr(resp, "status_code", 0) or 0)
         if not (200 <= code < 300):
             _log(f"BINGEBASE: scrobble {action} rejected status={code} target={_redact_url(webhook_url)}", "WARN")
-            return
+            self._note(event, action, src, src_inst, progress, "fail", f"http_{code}")
+            return {"ok": False, "error": f"http_{code}", "status": code, "retryable": code in (408, 429) or code >= 500}
+
+        if action == "start":
+            self._note(event, action, src, src_inst, progress, "ok")
 
         _log(
             f"BINGEBASE: scrobble {action} user='{mask_account(getattr(event, 'account', None))}' "
@@ -400,6 +406,17 @@ class BingeBaseSink(ScrobbleSink):
             except Exception:
                 pass
             self._completed[done_key] = progress
+        return {"ok": True, "action": action}
+
+    def _note(self, event: Any, action: str, src: str, src_inst: str, progress: float, status: str, reason: str | None = None) -> None:
+        if action not in ("start", "stop"):
+            return
+        try:
+            record_watch(event, action=action, source_provider=src, source_instance=src_inst,
+                         destination_provider="bingebase", destination_instance=self.instance_id,
+                         status=status, progress=progress, reason=reason)
+        except Exception:
+            pass
 
 
 __all__ = ["BingeBaseSink", "_redact_url"]

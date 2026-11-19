@@ -90,6 +90,72 @@ def test_plex_webhook_ratings_forward_to_crosswatch_and_floppy(monkeypatch) -> N
     assert all(call["rating"] == 8 for call in sent)
 
 
+def test_plex_webhook_rating_events_name_the_real_targets(monkeypatch) -> None:
+    import cw_platform.event_archive as event_archive
+    from providers.scrobble.plex import ratings_sync
+    from providers.webhooks import plex
+
+    archived: list[dict[str, Any]] = []
+
+    def fake_send_rating(provider: str, cfg: dict[str, Any], instance: str, item: dict[str, Any], rating: int) -> dict[str, Any]:
+        if provider == "floppy":
+            return {"ok": False, "status": 503}
+        if provider == "wetrakr":
+            return {"ok": True, "skipped": True, "reason": "not_mapped"}
+        return {"ok": True, "resp": {"confirmed_keys": ["tmdb:550"]}}
+
+    monkeypatch.setattr(plex, "_save_config", lambda _cfg: None)
+    monkeypatch.setattr(plex, "_sinks_from_webhook_cfg", lambda *_a: {"crosswatch", "floppy", "wetrakr"})
+    monkeypatch.setattr(ratings_sync, "send_rating", fake_send_rating)
+    monkeypatch.setattr(event_archive, "record_webhook", lambda **kw: archived.append(kw))
+    plex._LAST_RATING_BY_ACC.clear()
+
+    cfg = {
+        "scrobble": {
+            "enabled": True,
+            "sources": {"webhook": True},
+            "webhook": {
+                "sinks": ["crosswatch", "floppy"],
+                "sink_instances": {"crosswatch": "CW-P01", "floppy": "F1"},
+                "plex_crosswatch_ratings": True,
+                "plex_floppy_ratings": True,
+                "plex_wetrakr_ratings": True,
+            },
+        },
+        "crosswatch": {"connected": True, "instances": {"CW-P01": {"connected": True}}},
+        "floppy": {
+            "server_url": "http://floppy.test",
+            "api_token": "token",
+            "instances": {"F1": {"server_url": "http://floppy.test", "api_token": "token"}},
+        },
+    }
+    payload = {
+        "event": "media.rate",
+        "Account": {"title": "test-user"},
+        "Metadata": {
+            "type": "movie",
+            "title": "Fight Club",
+            "year": 1999,
+            "ratingKey": "rk-551",
+            "userRating": 8,
+            "Guid": [{"id": "tmdb://550"}],
+        },
+    }
+
+    result = plex.process_webhook(payload, {}, cfg=cfg, provider_instance="P2")
+
+    assert result["ok"] is True
+    by_target = {row["destination_provider"]: row for row in archived}
+    assert set(by_target) == {"crosswatch", "floppy"}
+    assert by_target["crosswatch"]["event_type"] == "rating_applied"
+    assert by_target["crosswatch"]["destination_instance"] == "CW-P01"
+    assert by_target["crosswatch"]["rating"] == 8
+    assert by_target["floppy"]["event_type"] == "rating_failed"
+    assert by_target["floppy"]["destination_instance"] == "F1"
+    assert by_target["floppy"]["reason"] == "503"
+    assert all(row["source_provider"] == "plex" and row["source_instance"] == "P2" for row in archived)
+
+
 def test_global_plex_rating_surfaces_cover_dispatcher_sinks(monkeypatch) -> None:
     from api import scrobblerManagementAPI as management
     from providers.scrobble.plex import ratings_sync
@@ -277,9 +343,9 @@ def test_plex_webhook_ratings_forward_to_every_dispatcher_sink(monkeypatch) -> N
         return {"ok": True, "resp": {"confirmed_keys": ["tmdb:550"]}}
 
     monkeypatch.setattr(plex, "_save_config", lambda _cfg: None)
-    monkeypatch.setattr(plex, "_post_trakt", lambda path, body, cfg: trakt_calls.append({"path": path, "body": body}) or Resp())
-    monkeypatch.setattr(plex_watch, "_simkl_send_rating", lambda media_type, ids, rating, cfg, logger: {"ok": True, "provider": "simkl"})
-    monkeypatch.setattr(plex_watch, "_mdblist_send_rating", lambda media_type, ids, rating, cfg, logger: {"ok": True, "provider": "mdblist"})
+    monkeypatch.setattr(plex, "_post_trakt", lambda path, body, cfg, instance_id=None: trakt_calls.append({"path": path, "body": body}) or Resp())
+    monkeypatch.setattr(plex_watch, "_simkl_send_rating", lambda media_type, ids, rating, cfg, logger, instance_id=None: {"ok": True, "provider": "simkl"})
+    monkeypatch.setattr(plex_watch, "_mdblist_send_rating", lambda media_type, ids, rating, cfg, logger, instance_id=None: {"ok": True, "provider": "mdblist"})
     monkeypatch.setattr(ratings_sync, "send_rating", fake_send_rating)
     plex._LAST_RATING_BY_ACC.clear()
 
