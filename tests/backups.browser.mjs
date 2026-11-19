@@ -213,6 +213,33 @@ for(const theme of ['', 'flat-dark', 'flat-light'])for(const width of [1100,390]
     assert.deepEqual(tabStyle,['0px','2px','rgba(0, 0, 0, 0)']);
     assert.ok(await page.locator('#br-status').evaluate(n=>n.getBoundingClientRect().height<130));
     await page.screenshot({fullPage:true,path:new URL(`overview-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
+    await page.getByRole('button',{name:'Restore',exact:true}).first().click();
+    await page.getByText('Check your backup to continue',{exact:true}).waitFor();
+    assert.equal(await page.getByLabel('Restore action').count(),0);
+    await noOverflow();
+    const cards=page.locator('.br-restore-card');
+    const details=await cards.nth(0).boundingBox(),options=await cards.nth(1).boundingBox();
+    if(width>1000){
+      assert.ok(Math.abs(details.y-options.y)<1);
+      assert.ok(options.x>=details.x+details.width);
+      assert.ok(options.width>details.width);
+    }else{
+      assert.ok(options.y>=details.y+details.height);
+      assert.ok(Math.abs(details.x-options.x)<1);
+    }
+    await page.screenshot({fullPage:true,path:new URL(`restore-unchecked-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
+    await page.getByRole('button',{name:'Check backup'}).click();
+    await page.getByText('Backup checked',{exact:true}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'Recover tracker',exact:true}).isEnabled(),true);
+    await noOverflow();
+    await page.screenshot({fullPage:true,path:new URL(`restore-tracker-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
+    await page.getByLabel('Restore action').selectOption('replace');
+    assert.equal(await page.getByRole('button',{name:'Restore and restart'}).isDisabled(),true);
+    await noOverflow();
+    await page.screenshot({fullPage:true,path:new URL(`restore-replace-${suffix}.png`,folder).pathname.replace(/^\/([A-Z]:)/,'$1')});
+    await page.getByLabel('Replace the data contained in this backup',{exact:true}).check();
+    assert.equal(await page.getByRole('button',{name:'Restore and restart'}).isEnabled(),true);
+    await page.getByRole('button',{name:'Back to backups'}).click();
     await page.getByRole('tab',{name:'Schedule & storage',exact:true}).click();
     await page.getByRole('button',{name:'Edit destination'}).click();
     await page.getByLabel('Destination',{exact:true}).selectOption('webdav');

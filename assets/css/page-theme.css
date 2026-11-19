@@ -1300,6 +1300,7 @@ input.cw-timestamp-input::-webkit-datetime-edit-second-field{font-family:Arial,s
 #page-tracker .trk-tab.is-warn .trk-tab-count{color:var(--cw-theme-warning)}
 #page-tracker .trk-tab-count i{background:var(--cw-theme-warning)}
 #page-tracker .trk-seg{border:1px solid var(--cw-theme-border);background:var(--cw-theme-surface)}
+#page-tracker .trk-filter-type .trk-seg{border:0;background:transparent}
 #page-tracker .trk-clean-health{border:1px solid var(--cw-theme-border);border-radius:var(--cw-page-control-radius);background:transparent;color:var(--cw-theme-muted);font:inherit;font-size:13px;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
 #page-tracker .trk-clean-health:hover{border-color:var(--cw-theme-border-strong);background:var(--cw-page-hover-bg);color:var(--cw-theme-text)}
 #page-tracker .trk-clean-health[aria-pressed="true"]{border-color:var(--cw-page-selected-border);background:var(--cw-page-selected-bg);color:var(--cw-page-selected-text)}
@@ -1418,7 +1419,7 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-months{--hist-tone-rgb:70,86
 #page-tracker .trk-filter-toggle{border-radius:0 calc(var(--cw-page-control-radius) - 1px) calc(var(--cw-page-control-radius) - 1px) 0;background:transparent;border:0;box-shadow:none;color:var(--cw-theme-muted);font:inherit;font-size:12px}
 #page-tracker .trk-filter-toggle:hover{background:var(--cw-page-hover-bg);color:var(--cw-theme-text)}
 #page-tracker .trk-filter-toggle.active{color:var(--cw-theme-accent);background:var(--cw-page-selected-bg)}
-#page-tracker .trk-extra-filters>small,#page-tracker .trk-filter-fields label>span,#page-tracker .trk-filter-type>span{color:var(--cw-theme-muted);font-size:12px;font-weight:600}
+#page-tracker .trk-extra-filters>small,#page-tracker .trk-filter-fields label>span,#page-tracker .trk-filter-type>span{color:var(--cw-theme-muted);font-size:12px;font-weight:600;line-height:18px}
 #page-tracker .trk-filter-check{color:var(--cw-theme-text);font-size:13px;font-weight:400}
 :is(#page-tracker,.cw-mm-trk) :is(.trk-status-btn,.trk-status-item){--trk-status:var(--cw-theme-muted)}
 :is(#page-tracker,.cw-mm-trk) .trk-status-btn{border:1px solid color-mix(in srgb,var(--trk-status) 40%,var(--cw-theme-border));background:color-mix(in srgb,var(--trk-status) 12%,transparent);color:var(--cw-theme-text)}
@@ -1843,7 +1844,17 @@ header .tabs #tab-settings .cw-settings-icon { color: var(--cw-theme-muted); fon
   html[data-cw-theme="flat-light"] #stats-card :is(.activity-mobile-row,.history-feed-row).err{background:#fbebee;border-color:rgba(169,63,77,.25)}
 }
 .cw-page-backups{background:transparent;color:var(--cw-theme-text)}
-.cw-page-backups :is(.br-head,.br-plan,.br-section,.br-restore,.br-import,.br-status){border:1px solid var(--cw-theme-border);border-radius:12px;background:var(--cw-theme-surface);box-shadow:none}
+.cw-page-backups :is(.br-head,.br-plan,.br-section,.br-restore-card,.br-import,.br-status){border:1px solid var(--cw-theme-border);border-radius:12px;background:var(--cw-theme-surface);box-shadow:none}
+.cw-page-backups .br-restore-step{border:1px solid var(--cw-theme-border);border-radius:50%;background:var(--cw-theme-surface-raised);color:var(--cw-theme-accent);font-size:13px;font-weight:600}
+.cw-page-backups .br-restore-header h3{font-size:18px}
+.cw-page-backups :is(.br-restore-archive,.br-restore-placeholder){border:1px solid var(--cw-theme-border);border-radius:8px;background:var(--cw-theme-input)}
+.cw-page-backups :is(.br-restore-archive,.br-restore-validation,.br-restore-placeholder) strong{font-size:13px;font-weight:600;line-height:1.5}
+.cw-page-backups .br-restore-archive>p{font-size:12px}
+.cw-page-backups .br-restore-validation{border:1px solid color-mix(in srgb,var(--cw-theme-good) 28%,var(--cw-theme-border));border-radius:8px;background:color-mix(in srgb,var(--cw-theme-good) 6%,var(--cw-theme-surface))}
+.cw-page-backups .br-restore-validation strong{color:var(--cw-theme-good)}
+.cw-page-backups .br-restore-validation strong::before{border-radius:50%;background:currentColor}
+.cw-page-backups .br-restore-footer{border-top:1px solid var(--cw-theme-border)}
+.cw-page-backups .br-restore-placeholder{border-style:dashed}
 .cw-page-backups .br-tabs{border-bottom:1px solid var(--cw-theme-border)}
 .cw-page-backups .br-tab{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;color:var(--cw-theme-muted);font:inherit;font-size:13px;font-weight:600;box-shadow:none;letter-spacing:0;text-transform:none;cursor:pointer}
 .cw-page-backups .br-tab:hover:not(:disabled){color:var(--cw-theme-text);background:transparent}
