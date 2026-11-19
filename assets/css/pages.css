@@ -1485,6 +1485,9 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 
 #ops-card .cw-status-dock{display:flex}
 @media(max-width:760px){#ops-card .cw-status-dock{display:none}}
+#ops-card .action-row{container-type:inline-size;container-name:sync-actions}
+#ops-card .action-buttons{width:100%;min-width:0}
+@container sync-actions (min-width:850px){#ops-card .cw-hub-tools-start{margin-inline-start:auto}}
 @media(max-width:600px){
 #ops-card.card.cw-main-card{--cw-hub-action-height:46px;--cw-hub-inner-height:44px;display:flex;flex-direction:column}
 #ops-card .ops-header{order:-3;flex-direction:column;align-items:stretch;gap:8px}
@@ -1496,8 +1499,8 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 #ux-lanes .lane-badges{flex-basis:100%;margin-left:0}
 #ux-lanes .lane-controls{position:static;transform:none;justify-content:flex-end;margin-top:8px}
 #ux-lanes .lane-control{width:44px;height:44px}
-body #ops-card .action-buttons{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr));width:100%}
-#ops-card .action-buttons .cw-split-run{grid-column:1/-1;width:100%}
+body #ops-card .action-buttons{display:flex;flex-wrap:wrap;justify-content:flex-start}
+#ops-card .action-buttons .cw-split-run{max-width:100%}
 #ops-card .action-buttons .btn{min-height:44px!important;height:auto!important;min-width:0;white-space:normal}
 #ops-card .action-buttons #run{flex:1}
 body #ops-card #cw-sync-split #run-menu{min-width:44px!important}
@@ -1506,7 +1509,6 @@ body #ops-card #cw-sync-split #run-menu{min-width:44px!important}
 #page-snapshots .ss-summary-card:last-child{grid-column:1/-1}
 #page-snapshots .ss-summary-label,#page-snapshots .ss-summary-sub{white-space:normal!important;overflow-wrap:anywhere}
 }
-@media(max-width:360px){body #ops-card .action-buttons{grid-template-columns:minmax(0,1fr)}}
 
 @media(max-width:760px){
 #page-snapshots .ss-list,#page-snapshots .ss-table-wrap{max-height:none!important;height:auto!important;overflow:visible!important}
@@ -2462,14 +2464,17 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-table tbody td{display:block;order:0;width:auto;min-width:0;padding:0;border:0}
 #page-tracker .trk-table tbody td:first-child{min-height:44px}
 #page-tracker .trk-table tbody .cw-col-type,#page-tracker .trk-list tbody .cw-col-year,#page-tracker :is(.trk-list,.trk-titles) tbody .trk-col-date{display:none}
-#page-tracker :is(.trk-list,.trk-shows,.trk-titles) tbody .trk-col-pick{grid-column:1;grid-row:1/4}
-#page-tracker :is(.trk-list,.trk-shows,.trk-titles) tbody .cw-col-title{grid-column:2;grid-row:1}
+#page-tracker :is(.trk-list,.trk-shows,.trk-movies,.trk-titles) tbody .trk-col-pick{grid-column:1;grid-row:1/4}
+#page-tracker :is(.trk-list,.trk-shows,.trk-movies,.trk-titles) tbody .cw-col-title{grid-column:2;grid-row:1}
 #page-tracker .trk-list tbody .trk-col-health{grid-column:3;grid-row:1/4}
 #page-tracker .trk-list tbody .trk-col-extra{grid-column:2;grid-row:2;margin-left:58px;text-align:left}
 #page-tracker .trk-list tbody .trk-col-extra:empty{display:none}
-#page-tracker :is(.trk-shows,.trk-titles) tbody .cw-col-title{grid-column:2/-1}
+#page-tracker :is(.trk-shows,.trk-movies,.trk-titles) tbody .cw-col-title{grid-column:2/-1}
 #page-tracker .trk-shows tbody :is(.trk-col-progress,.trk-col-next,.trk-col-date),#page-tracker .trk-titles tbody .trk-col-status{grid-column:2/-1;margin-left:58px;text-align:left}
-#page-tracker .trk-shows tbody .trk-col-last-episode{display:none}
+#page-tracker .trk-shows tbody .trk-col-last-episode,#page-tracker .trk-movies tbody .trk-col-plays{display:none}
+#page-tracker .trk-movies tbody :is(.trk-col-extra,.trk-col-date){grid-column:2/-1;margin-left:58px;text-align:left}
+#page-tracker .trk-movies tbody .trk-col-extra:empty{display:none}
+#page-tracker .trk-movies tbody .trk-col-date::before{content:"Last watched: "}
 #page-tracker .trk-timeline tbody tr{grid-template-columns:42px minmax(0,1fr) auto}
 #page-tracker .trk-timeline tbody .trk-col-time{font-size:12px}
 #page-tracker .trk-timeline tbody .cw-col-title{grid-column:2}
@@ -2489,7 +2494,7 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-toolbar{display:grid;grid-template-columns:minmax(160px,1fr) auto;align-items:center;gap:10px 12px;padding-top:4px}
 #page-tracker .cw-controls .trk-toolbar .trk-search{width:100%;min-width:0;padding-right:70px}
 #page-tracker .trk-search-wrap{position:relative;min-width:0}
-#page-tracker .trk-filter-toggle{position:absolute;right:5px;top:50%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center;gap:4px;min-width:36px;min-height:34px;padding:0 8px;border-radius:7px;cursor:pointer}
+#page-tracker .trk-filter-toggle{position:absolute;right:1px;top:1px;bottom:1px;display:flex;align-items:center;justify-content:center;gap:4px;min-width:36px;min-height:0;padding:0 8px;cursor:pointer}
 #page-tracker .trk-filter-toggle .material-symbols-rounded{font-size:20px}
 #page-tracker .trk-filter-options{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
 :is(#page-tracker,.cw-mm-trk) .trk-status-filter{display:flex;align-items:center;gap:8px;min-width:0;font-size:13px;white-space:nowrap}
@@ -2556,11 +2561,16 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-seasons{display:grid;gap:6px}
 #page-tracker .trk-navigation{display:flex;align-items:center;gap:12px;flex:1 0 100%;min-width:0}
 #page-tracker .trk-navigation .trk-tabs{flex:1;min-width:0;margin:0}
+#page-tracker .trk-history-options{display:flex;align-items:center;gap:12px 20px;flex-wrap:wrap;flex:1 0 100%;min-width:0}
+#page-tracker .trk-history-group{display:flex;align-items:center;gap:8px;white-space:nowrap}
+#page-tracker .trk-history-group .cw-select{width:auto}
+#page-tracker .trk-history-options .cw-filter-chip{min-height:44px}
+#page-tracker .trk-movies .trk-col-plays{width:110px;white-space:nowrap}
 #page-tracker .trk-others{position:relative;flex:0 0 auto}
 #page-tracker .trk-others>summary{list-style:none}
 #page-tracker .trk-others>summary::-webkit-details-marker{display:none}
 #page-tracker .trk-others>summary .material-symbol{font-size:19px}
-#page-tracker .trk-others-menu{position:absolute;right:0;top:100%;z-index:8;min-width:180px;padding:6px}
+#page-tracker .trk-others-menu{position:absolute;right:0;top:calc(100% + 8px);z-index:8;min-width:250px;padding:6px}
 #page-tracker .trk-others-menu .cw-btn{display:flex;align-items:center;justify-content:flex-start;text-align:left;gap:8px;width:100%;min-height:44px;padding:8px 12px;cursor:pointer}
 #page-tracker .trk-others-menu .cw-btn>.material-symbol{flex:0 0 24px;width:24px;text-align:center}
 #page-tracker .trk-others-menu small{margin-left:auto}
@@ -2757,6 +2767,7 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-table col.trk-c-year{width:84px}
 #page-tracker .trk-table col.trk-c-date{width:150px}
 #page-tracker .trk-table col.trk-c-extra{width:140px}
+#page-tracker .trk-table col.trk-c-plays{width:110px}
 #page-tracker .trk-table col.trk-c-rating{width:84px}
 #page-tracker .trk-table col.trk-c-health{width:84px}
 #page-tracker .trk-table col.trk-c-progress{width:200px}
@@ -3189,7 +3200,7 @@ html body img:is([src*="/assets/img/placeholder_poster.svg"],[src*="/art/tmdb/"]
   #page-tracker .trk-list tbody .trk-col-pick{grid-row:2/4}
   #page-tracker .trk-list tbody .trk-col-health{grid-row:2/4}
   #page-tracker .trk-list tbody .trk-col-extra{margin-left:0}
-  #page-tracker .trk-shows tbody :is(.trk-col-progress,.trk-col-next,.trk-col-date),#page-tracker .trk-titles tbody .trk-col-status{margin-left:46px}
+  #page-tracker .trk-shows tbody :is(.trk-col-progress,.trk-col-next,.trk-col-date),#page-tracker .trk-titles tbody .trk-col-status,#page-tracker .trk-movies tbody :is(.trk-col-extra,.trk-col-date){margin-left:46px}
 }
 #page-tracker.is-month-review{min-width:0;width:100%}
 #page-tracker.is-month-review>.cw-root{display:none}

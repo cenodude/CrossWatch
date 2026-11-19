@@ -17,6 +17,8 @@
     { id: "progress", label: "Progress", icon: "play_circle" },
     { id: "collection", label: "Collection", icon: "video_library" },
     { id: "shows", label: "Shows", icon: "tv" },
+    { id: "movies", label: "Movies", icon: "movie" },
+    { id: "watched", label: "History by title", icon: "history" },
     { id: "titles", label: "My titles", icon: "bookmarks" },
     { id: "cleanup", label: "Clean up", icon: "health_and_safety" },
   ];
@@ -132,6 +134,9 @@
     overviewRecentStep: 10,
     overviewBusy: "",
     layouts: {},
+    historyGroup: "watch",
+    historyMedia: "",
+    historyTitleKeys: {},
     cleanFeature: "history",
     media: "",
     byDay: false,
@@ -195,19 +200,26 @@
   const listFeature = () => (state.view === "cleanup" ? state.cleanFeature : FEATURES.some((f) => f.id === state.view) ? state.view : "history");
   const se = (s, e) => `S${pad(s)}E${pad(e)}`;
   const inst = () => `provider_instance=${encodeURIComponent(state.instance)}`;
+  const historyView = () => ["history", "movies", "shows", "watched"].includes(state.view);
+  const groupedHistory = () => ["movies", "shows", "watched"].includes(state.view);
+  const layoutView = () => groupedHistory() ? "watched" : state.view;
+  const preferredHistoryView = () => state.historyGroup === "title" ? state.historyMedia === "movie" ? "movies" : state.historyMedia === "show" ? "shows" : "watched" : "history";
   const timelineOn = () => state.view === "history" && state.byDay;
 
   function loadView() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
       if (VIEWS.some((v) => v.id === saved.view)) state.view = saved.view;
+      state.historyGroup = ["movies", "shows", "watched"].includes(saved.view) || saved.historyGroup === "title" ? "title" : "watch";
+      state.historyMedia = ["", "movie", "show"].includes(saved.historyMedia) ? saved.historyMedia : saved.view === "movies" ? "movie" : saved.view === "shows" ? "show" : saved.view === "history" && MEDIA.some(m => m.id === saved.media) ? saved.media : "";
       state.monthlyReview = saved.monthlyReview === true;
       state.viewSelectedAt = saved.viewSelectedAt;
       if (MEDIA.some((m) => m.id === saved.media)) state.media = saved.media;
       if (PAGE_SIZES.includes(saved.pageSize)) state.pageSize = saved.pageSize;
       if (MOBILE_PAGE_SIZES.includes(saved.mobilePageSize)) state.mobilePageSize = saved.mobilePageSize;
       state.layouts = Object.fromEntries(VIEWS.map(({ id }) => [id, saved.layouts?.[id] === "grid" || (id === "collection" && ["covers", "shelf"].includes(saved.layouts?.[id])) ? saved.layouts[id] : "list"]));
-      if (!saved.layouts && saved.layout === "grid") state.layouts[state.view] = "grid";
+      if (!saved.layouts?.watched && ["movies", "shows"].includes(saved.view)) state.layouts.watched = saved.layouts?.[saved.view] === "grid" ? "grid" : "list";
+      if (!saved.layouts && saved.layout === "grid") state.layouts[layoutView()] = "grid";
       state.byDay = saved.byDay === true;
       state.hideDropped = saved.hideDropped === true;
       state.showStatusLabels = saved.showStatusLabels !== false;
@@ -228,6 +240,10 @@
   }
 
   function rememberView() {
+    if (["history", "movies", "shows", "watched"].includes(state.view)) {
+      state.historyGroup = state.view === "history" ? "watch" : "title";
+      state.historyMedia = state.view === "movies" ? "movie" : state.view === "shows" ? "show" : state.view === "watched" ? "" : state.media;
+    }
     state.viewSelectedAt = Date.now();
     saveView();
   }
@@ -248,7 +264,7 @@
 
   function saveView() {
     try {
-      localStorage.setItem(STORE_KEY, JSON.stringify({ view: state.view, viewSelectedAt: state.viewSelectedAt, monthlyReview: state.monthlyReview, layouts: state.layouts, media: state.media, byDay: state.byDay, hideDropped: state.hideDropped, showStatusLabels: state.showStatusLabels, zoom: state.zoom, pageSize: state.pageSize, mobilePageSize: state.mobilePageSize, instance: state.instance, q: state.q, sort: state.sort, noteStatus: state.noteStatus, noteTag: state.noteTag, cleanFeature: state.cleanFeature, healthFilter: state.healthFilter, duplicates: state.duplicates, offset: state.offset, ref: state.ref, scrollTop: state.scrollTop }));
+      localStorage.setItem(STORE_KEY, JSON.stringify({ view: state.view, historyGroup: state.historyGroup, historyMedia: state.historyMedia, viewSelectedAt: state.viewSelectedAt, monthlyReview: state.monthlyReview, layouts: state.layouts, media: state.media, byDay: state.byDay, hideDropped: state.hideDropped, showStatusLabels: state.showStatusLabels, zoom: state.zoom, pageSize: state.pageSize, mobilePageSize: state.mobilePageSize, instance: state.instance, q: state.q, sort: state.sort, noteStatus: state.noteStatus, noteTag: state.noteTag, cleanFeature: state.cleanFeature, healthFilter: state.healthFilter, duplicates: state.duplicates, offset: state.offset, ref: state.ref, scrollTop: state.scrollTop }));
     } catch {}
   }
 
@@ -493,15 +509,17 @@
 
   function viewCount(view) {
     if (view === "cleanup") return attentionTotal();
-    if (view === state.view && !state.loading && ["history", "shows", "titles"].includes(view)) return state.total;
+    if (view === state.view && !state.loading && ["history", "shows", "movies", "watched", "titles"].includes(view)) return state.total;
     if (view === "titles") return state.notes.total || null;
-    if (view === "shows") return null;
+    if (["shows", "movies", "watched"].includes(view)) return null;
     return state.counts[view] ?? null;
   }
 
   function statusText() {
     if (state.loading && !state.items.length && !state.shows.length && !state.noteRows.length) return "Loading...";
     if (state.view === "shows") return plural(state.total, "show", "shows");
+    if (state.view === "movies") return plural(state.total, "movie", "movies");
+    if (state.view === "watched") return plural(state.total, "title", "titles");
     if (state.view === "titles") return plural(state.total, "title", "titles");
     if (state.view === "history") return plural(state.total, "play", "plays");
     return plural(state.total, "record", "records");
@@ -511,17 +529,21 @@
     return `<button type="button" class="cw-filter-chip${active ? " active" : ""}" ${attrs} aria-pressed="${active}"${title ? ` title="${esc(title)}"` : ""}>${iconName ? symbol(iconName, "cw-type-icon") : ""}<span>${esc(label)}</span>${count ? `<b class="trk-chip-count">${esc(num(count))}</b>` : ""}</button>`;
   }
 
+  function navigationViews() {
+    return VIEWS.filter(v => !["cleanup", "movies", "shows", "watched"].includes(v.id));
+  }
+
   function renderTabs() {
-    return VIEWS.filter(v => v.id !== "cleanup").map((v) => {
-      const active = state.view === v.id;
-      const count = active ? viewCount(v.id) : 0;
+    return navigationViews().map((v) => {
+      const active = state.view === v.id || v.id === "history" && groupedHistory();
+      const count = active ? viewCount(state.view) : 0;
       const badge = count ? `<small class="trk-tab-count" title="${esc(num(count))}" aria-label="${esc(num(count))}">${esc(tabCountFormat.format(count))}</small>` : "";
       return `<button type="button" role="tab" class="trk-tab${active ? " active" : ""}" data-trk-view="${v.id}" aria-selected="${active}" tabindex="${active || state.view === "cleanup" && v.id === "overview" ? 0 : -1}">${symbol(v.icon)}<span>${esc(v.label)}</span>${badge}</button>`;
     }).join("");
   }
 
   function renderNavigation() {
-    const overflow = VIEWS.filter(v => v.id !== "cleanup").map(v => `<button type="button" class="cw-btn" data-trk-view="${v.id}" hidden>${symbol(v.icon)}<span>${esc(v.label)}</span>${viewCount(v.id) ? `<small>${esc(num(viewCount(v.id)))}</small>` : ""}</button>`).join("");
+    const overflow = navigationViews().map(v => `<button type="button" class="cw-btn" data-trk-view="${v.id}" hidden>${symbol(v.icon)}<span>${esc(v.label)}</span>${viewCount(v.id) ? `<small>${esc(num(viewCount(v.id)))}</small>` : ""}</button>`).join("");
     const attention = attentionTotal();
     return `<div class="trk-navigation"><nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav><details class="trk-others${state.view === "cleanup" ? " is-active" : ""}"><summary aria-label="More Tracker views" class="trk-tab${state.view === "cleanup" ? " active" : ""}">${symbol("more_horiz")}<span>More</span>${attention ? `<small aria-label="${esc(plural(attention, "record needs", "records need"))} attention">${esc(num(attention))}</small>` : ""}${symbol("expand_more")}</summary><div class="trk-others-menu cw-page-panel"><div class="trk-overflow" hidden>${overflow}</div>${state.trackerOptions?.month_review !== false ? `<button type="button" class="cw-btn" data-trk-month-open>${symbol("auto_awesome")}<span>Month in review</span></button>` : ""}${state.trackerOptions?.wrapped !== false ? `<button type="button" class="cw-btn" data-trk-wrapped-open>${symbol("celebration")}<span>CrossWatch Wrapped</span></button>` : ""}${state.trackerOptions?.automatic_status !== false ? `<button type="button" class="cw-btn" data-trk-action="automation">${symbol("autorenew")}<span>Automatic statuses</span></button>` : ""}<button type="button" class="cw-btn" data-trk-view="cleanup"${state.view === "cleanup" ? ' aria-current="page"' : ""}>${symbol("health_and_safety")}<span>Clean up</span>${attention ? `<small>${esc(num(attention))}</small>` : ""}</button></div></details></div>`;
   }
@@ -988,7 +1010,7 @@
     if (state.view === "shows") {
       return chip('data-trk-action="hide-dropped"', "Hide dropped", { active: state.hideDropped, iconName: "do_not_disturb_on", title: "Leave out shows you dropped" });
     }
-    if (state.view === "titles") return "";
+    if (state.view === "titles" || historyView()) return "";
     let out = `<div class="trk-seg" role="group" aria-label="Type">${MEDIA.map((m) => chip(`data-trk-media="${m.id}"`, m.label, { active: state.media === m.id, iconName: m.icon })).join("")}</div>`;
     if (timelineOn() && state.month) {
       out += `<button type="button" class="cw-filter-chip active" data-trk-action="month-clear" title="Back to the latest plays">${symbol("event", "cw-type-icon")}<span>${esc(monthName(state.month))} and older</span>${symbol("close", "cw-type-icon")}</button>`;
@@ -1007,17 +1029,18 @@
     const placeholder = state.view === "shows" ? "Filter shows / S01 / S01E02..." : state.view === "titles" ? "Filter my titles..." : "Filter by title...";
     const count = Number(state.view === "history" && !!state.duplicates) + Number(!!state.noteStatus) + Number(!!state.noteTag)
       + Number(state.sort !== "recent" && !["shows", "cleanup", "titles"].includes(state.view))
-      + Number(!["shows", "titles", "cleanup"].includes(state.view) && !!state.media)
+      + Number(!historyView() && !["titles", "cleanup"].includes(state.view) && !!state.media)
       + Number(state.view === "shows" && state.hideDropped) + Number(timelineOn() && !!state.month)
       + Number(state.view === "cleanup" && !!state.healthFilter);
     const filterLabel = `Filters${count ? ` (${count} active)` : ""}`;
     return `
       ${renderNavigation()}
+      ${historyView() ? `<div class="trk-history-options"><div class="trk-seg" role="group" aria-label="History type">${[["", "All", ""], ["movie", "Movies", "movie"], ["show", "Shows", "tv"]].map(([id, label, glyph]) => chip(`data-trk-history-media="${id}"`, label, {active:state.historyMedia === id, iconName:glyph})).join("")}</div><label class="trk-history-group"><span>Group by</span><select class="cw-select" data-trk-input="history-group" aria-label="Group history by"><option value="watch"${!groupedHistory() ? " selected" : ""}>Watch</option><option value="title"${groupedHistory() ? " selected" : ""}>Title</option></select></label></div>` : ""}
       <div class="trk-toolbar${state.view === "cleanup" ? " trk-toolbar-cleanup" : ""}">
         <div class="trk-search-wrap"><input class="cw-input trk-search" data-trk-input="q" value="${esc(state.q)}" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}"><button type="button" class="trk-filter-toggle${count || state.filtersOpen ? " active" : ""}" data-trk-action="filters" aria-label="${filterLabel}" title="${filterLabel}" aria-expanded="${state.filtersOpen}" aria-controls="trk-extra-filters">${icon("filter_list")}${count ? `<span>${count}</span>` : ""}</button></div>
         <div class="trk-actions">
           ${state.view === "history" ? `<button type="button" class="cw-filter-chip trk-icon-btn${state.byDay ? " active" : ""}" data-trk-action="by-day" aria-pressed="${state.byDay}" aria-label="Group by day" title="By day">${symbol("calendar_view_day", "cw-type-icon")}</button>` : ""}
-          <div class="cw-type-filter trk-layout" role="group" aria-label="Display layout">${[['list', 'view_list', 'List'], ['grid', 'grid_view', 'Grid'], ...(state.view === "collection" ? [['covers', 'photo_library', 'Covers'], ['shelf', 'shelves', 'Shelf']] : [])].map(([value, glyph, label]) => `<button type="button" class="cw-filter-chip trk-icon-btn${(state.layouts[state.view] || "list") === value ? " active" : ""}" data-trk-layout="${value}" aria-pressed="${(state.layouts[state.view] || "list") === value}" aria-label="${label} view" title="${label} view">${symbol(glyph, "cw-type-icon")}</button>`).join("")}</div>
+          <div class="cw-type-filter trk-layout" role="group" aria-label="Display layout">${[['list', 'view_list', 'List'], ['grid', 'grid_view', 'Grid'], ...(state.view === "collection" ? [['covers', 'photo_library', 'Covers'], ['shelf', 'shelves', 'Shelf']] : [])].map(([value, glyph, label]) => `<button type="button" class="cw-filter-chip trk-icon-btn${(state.layouts[layoutView()] || "list") === value ? " active" : ""}" data-trk-layout="${value}" aria-pressed="${(state.layouts[layoutView()] || "list") === value}" aria-label="${label} view" title="${label} view">${symbol(glyph, "cw-type-icon")}</button>`).join("")}</div>
           <div class="trk-secondary-actions">${[['views','bookmarks','Saved views'],['changes','manage_history','Changes'],['import','download','Import']].map(([action,glyph,label]) => `<button type="button" class="cw-btn trk-icon-btn" data-trk-action="${action}" title="${label}" aria-label="${label}">${icon(glyph)}<span class="trk-tool-label">${label}</span></button>`).join('')}</div>
           <div class="trk-add-split">
             <button type="button" class="cw-btn primary trk-log-btn" data-trk-action="log" aria-label="Log a watch">${icon("add_circle")}<span>Log a watch</span></button>
@@ -1056,7 +1079,7 @@
       <button type="button" class="cw-selection-button" data-trk-action="pick-visible"${state.loading || state.picking ? " disabled" : ""}>${icon("visibility")}<span>Visible</span></button>
       <button type="button" class="cw-selection-button" data-trk-action="pick-all"${state.loading || state.picking ? " disabled" : ""} title="Select every result matching these filters">${icon("checklist")}<span>${state.picking ? "Selecting…" : "All results"}</span></button>
       <button type="button" class="cw-selection-button" data-trk-action="clear-picked">${icon("close")}<span>Clear</span></button>
-      <span class="cw-selection-actions"><button type="button" class="cw-selection-button" data-trk-action="status-picked" popovertarget="trk-bulk-status-menu" aria-haspopup="menu" aria-expanded="false"${state.picking || state.bulkStatusBusy ? " disabled" : ""}>${icon("flag")}<span>${state.bulkStatusBusy ? "Saving…" : "Set status"}</span></button><button type="button" class="cw-selection-button is-danger" data-trk-action="delete-picked"${state.picking ? " disabled" : ""}>${icon("delete")}<span>${state.view === "titles" ? "Remove from My titles" : state.view === "shows" ? "Remove..." : "Delete"}</span></button></span>`;
+      <span class="cw-selection-actions"><button type="button" class="cw-selection-button" data-trk-action="status-picked" popovertarget="trk-bulk-status-menu" aria-haspopup="menu" aria-expanded="false"${state.picking || state.bulkStatusBusy ? " disabled" : ""}>${icon("flag")}<span>${state.bulkStatusBusy ? "Saving…" : "Set status"}</span></button><button type="button" class="cw-selection-button is-danger" data-trk-action="delete-picked"${state.picking ? " disabled" : ""}>${icon("delete")}<span>${state.view === "titles" ? "Remove from My titles" : groupedHistory() ? "Remove..." : "Delete"}</span></button></span>`;
   }
 
   function createBulkStatusMenu() {
@@ -1233,6 +1256,23 @@
     return tableWrap(`<th class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="page"${state.shows.every(s => state.picked.has(s.key)) ? " checked" : ""} aria-label="Select this page"></th>${th("Show", "cw-col-title")}${th("Progress", "trk-col-progress")}${th("Next up", "trk-col-next")}${th("Last episode", "trk-col-last-episode")}${th("Last watched", "trk-col-date")}`, body, "trk-shows", ["pick", "title", "progress", "next", "last-episode", "date"]) + pager();
   }
 
+  function renderGroupedHistory() {
+    const label = state.view === "movies" ? "movies" : "titles";
+    if (!state.items.length) return emptyState(state.loading ? `Loading ${label}...` : state.q || state.noteStatus || state.noteTag ? `No ${label} match these filters.` : state.view === "movies" ? "No movies in your history yet." : "No watches in your history yet.", state.loading ? "hourglass_empty" : "movie");
+    const body = state.items.map((item, index) => {
+      const selected = state.ref?.key === item.key && state.ref?.feature === "history";
+      return `<tr class="trk-play${selected ? " is-selected" : ""}${state.picked.has(item.key) ? " is-picked" : ""}" data-trk-ref-key="${esc(item.key)}" tabindex="0" aria-selected="${selected}">
+        <td class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="${index}"${state.picked.has(item.key) ? " checked" : ""} aria-label="Select ${esc(item.title || item.key)}"></td>
+        <td class="cw-col-title">${listIdentity(item, `<div class="cw-title-row"><strong class="cw-merged-title">${esc(item.title || item.key)}</strong>${statusPill(item.status)}</div>${item.year ? `<span class="trk-sub trk-list-desktop-meta">${esc(item.year)}</span>` : ""}`, plural(item.plays, "watch", "watches"))}</td>
+        <td class="trk-col-plays">${esc(plural(item.plays, "watch", "watches"))}</td>
+        <td class="trk-col-extra">${extraCell(item, "history")}</td>
+        <td class="trk-col-date">${esc(item.date ? agoText(item.date) : "Unknown")}</td>
+      </tr>`;
+    }).join("");
+    const head = `<th class="trk-col-pick"><input type="checkbox" class="cw-checkbox" data-trk-pick="page"${state.items.every(item => state.picked.has(item.key)) ? " checked" : ""} aria-label="Select this page"></th>`;
+    return tableWrap(`${head}${th(state.view === "movies" ? "Movie" : "Title", "cw-col-title")}${th("Watches", "trk-col-plays")}${th("Rating", "trk-col-extra")}${th("Last watched", "trk-col-date")}`, body, "trk-movies", ["pick", "title", "plays", "extra", "date"]) + pager();
+  }
+
   function renderTitles() {
     if (!state.noteRows.length) {
       const filtered = state.q || state.noteStatus || state.noteTag;
@@ -1280,7 +1320,7 @@
     const recent = Array.isArray(recentRows);
     const shows = !recent && state.view === "shows", notes = !recent && state.view === "titles";
     const rows = recent ? recentRows : shows ? state.shows : notes ? state.noteRows : state.items;
-    if (!rows.length) return shows ? renderShows() : notes ? renderTitles() : renderList();
+    if (!rows.length) return shows ? renderShows() : notes ? renderTitles() : ["movies", "watched"].includes(state.view) ? renderGroupedHistory() : renderList();
     const feature = recent ? "history" : listFeature();
     const coverMode = feature === "collection" && !recent && !shows && !notes && state.layouts.collection === "covers";
     let previousDay = "";
@@ -1303,7 +1343,7 @@
       const prominentStatus = status && ["dropped", "on_hold"].includes(status.id) ? statusPill(status.id) : "";
       const statusIcon = status && !prominentStatus ? `<span class="trk-grid-status-icon" data-status="${esc(status.id)}" tabindex="0" role="img" aria-label="${esc(status.label)}">${symbol(status.icon)}</span>` : "";
       const episode = shows ? item.last_season != null ? `Last ${se(item.last_season, item.last_episode)}` : "" : episodeCode(item);
-      const meta = [isChild(item) ? item.series_year : item.year, shows ? "Show" : typeMeta(item).label, episode].filter(Boolean).join(" · ");
+      const meta = [isChild(item) ? item.series_year : item.year, shows ? "Show" : typeMeta(item).label, episode, !recent && ["movies", "watched"].includes(state.view) ? plural(item.plays, "watch", "watches") : "", !recent && ["movies", "watched"].includes(state.view) && !date ? "Unknown date" : ""].filter(Boolean).join(" · ");
       let heading = "";
       if (!recent && timelineOn()) {
         const day = dayLabel(date);
@@ -1318,7 +1358,7 @@
           ${card ? `<button type="button" class="trk-grid-open" data-trk-card-open data-trk-card-index="${index}" data-trk-card-recent="${recent}" aria-label="Open details for ${esc(title)}"></button>` : ""}
         </div>
         <div class="trk-grid-copy"><strong title="${esc(title)}">${esc(title)}</strong><small>${statusIcon}<span>${esc(meta)}</span></small>${notes ? tagChips(item.tags, 3) : !shows && feature === "progress" ? extraCell(item, feature, "count") : ""}
-          <div class="trk-grid-tools">${shows ? progressCell(item, "count") : !notes ? healthIcon(item, state.view === "cleanup") : ""}<button type="button" class="cw-card-actions" data-trk-card-menu data-trk-card-index="${index}" data-trk-card-recent="${recent}" title="Actions" aria-label="Actions for ${esc(title)}" aria-haspopup="menu" aria-expanded="false">${icon("more_horiz")}</button></div>
+          <div class="trk-grid-tools">${shows ? progressCell(item, "count") : !recent && ["movies", "watched"].includes(state.view) ? "" : !notes ? healthIcon(item, state.view === "cleanup") : ""}<button type="button" class="cw-card-actions" data-trk-card-menu data-trk-card-index="${index}" data-trk-card-recent="${recent}" title="Actions" aria-label="Actions for ${esc(title)}" aria-haspopup="menu" aria-expanded="false">${icon("more_horiz")}</button></div>
         </div></article>`;
     }).join("");
     const more = recent ? "" : timelineOn() ? state.items.length < state.total ? `<div class="cw-pager"><button type="button" class="cw-btn" data-trk-action="more"${state.loading ? " disabled" : ""}>Show older plays</button></div>` : "" : pager();
@@ -1443,11 +1483,11 @@
     const disabled = window.CW?.AuthState?.read?.()?.permissions?.write === false || !!state.overviewBusy;
     const media = canCard(cardItem(row, !!ref.show || isChild(row) || row.type === "show"));
     const entries = [{icon:"info", label:"View details", run:() => selectRef(ref, {openMedia:media})}];
-    if (ref.show || ref.note) {
-      if (ref.show) entries.push({icon:"edit", label:"Edit title", disabled, run:() => selectRef(ref, {action:"edit-title"})});
+    if (ref.show || ref.note || !recent && state.view === "watched" && row.type === "show") {
+      if (ref.show || row.type === "show") entries.push({icon:"edit", label:"Edit title", disabled, run:() => selectRef(ref, {action:"edit-title"})});
       entries.push({icon:"notes", label:"My notes", disabled, run:() => selectRef(ref, {action:"notes"})});
     } else {
-      const label = feature === "history" ? "Edit watch" : feature === "progress" ? "Edit progress" : feature === "ratings" ? "Edit rating" : "Edit item";
+      const label = !recent && ["movies", "watched"].includes(state.view) ? "Edit latest watch" : feature === "history" ? "Edit watch" : feature === "progress" ? "Edit progress" : feature === "ratings" ? "Edit rating" : "Edit item";
       entries.push({icon:"edit", label, disabled, run:() => openSheet("edit", {item:row, feature})});
     }
     if (feature !== "ratings") entries.push({icon:"star", label:"Rate", disabled, run:() => selectRef(ref, {action:"rate"})});
@@ -1611,10 +1651,11 @@
     }
     if (state.error) return emptyState(state.error, "error");
     if (state.view === "overview") return renderOverview();
-    if (state.layouts[state.view] === "shelf" && state.view === "collection") return renderShelf();
-    if (state.layouts[state.view] === "grid" || (state.layouts[state.view] === "covers" && state.view === "collection")) return renderGrid();
+    if (state.layouts[layoutView()] === "shelf" && state.view === "collection") return renderShelf();
+    if (state.layouts[layoutView()] === "grid" || (state.layouts[layoutView()] === "covers" && state.view === "collection")) return renderGrid();
     if (timelineOn()) return renderTimeline();
     if (state.view === "shows") return renderShows();
+    if (["movies", "watched"].includes(state.view)) return renderGroupedHistory();
     if (state.view === "titles") return renderTitles();
     return renderList();
   }
@@ -2264,10 +2305,12 @@
     renderProfilePicker();
     if (controls) {
       const focused = document.activeElement?.dataset?.trkInput;
+      const focusedHistoryMedia = document.activeElement?.dataset?.trkHistoryMedia;
       const focusedView = document.activeElement?.closest(".trk-navigation") && document.activeElement.dataset.trkView;
       setSlot("controls", renderControls());
       if (focusedView) state.root.querySelector('.trk-tabs [aria-selected="true"]')?.focus({preventScroll:true});
-      if (["q", "view", "note-status", "note-tag", "sort"].includes(focused)) {
+      if (focusedHistoryMedia !== undefined) state.root.querySelector(`[data-trk-history-media="${focusedHistoryMedia}"]`)?.focus({preventScroll:true});
+      if (["q", "view", "note-status", "note-tag", "sort", "history-group"].includes(focused)) {
         const input = state.root.querySelector(`[data-trk-input="${focused}"]`);
         input?.focus({preventScroll:true});
         if (focused === "q") input?.setSelectionRange?.(input.value.length, input.value.length);
@@ -2407,6 +2450,12 @@
         state.noteRows = Array.isArray(data.notes) ? data.notes : [];
         state.total = Number(data.total || 0);
         if (data.summary) state.notes = data.summary;
+      } else if (["movies", "watched"].includes(state.view)) {
+        const params = new URLSearchParams({provider_instance:state.instance, q:state.q, status:state.noteStatus, tag:state.noteTag, sort:state.sort, media:state.historyMedia, offset:String(state.offset), limit:String(pageSize())});
+        const data = await getJSON(`/api/tracker/history/titles?${params}`);
+        if (id !== state.request) return;
+        state.items = Array.isArray(data.items) ? data.items : [];
+        state.total = Number(data.total || 0);
       } else if (state.view === "shows") {
         const data = await getJSON(`/api/tracker/shows?${inst()}&q=${encodeURIComponent(state.q)}&offset=${state.offset}&limit=${pageSize()}&status=${encodeURIComponent(state.noteStatus)}&tag=${encodeURIComponent(state.noteTag)}${state.hideDropped ? "&hide_dropped=true" : ""}`);
         if (id !== state.request) return;
@@ -2606,6 +2655,7 @@
   function reload(resetPage = true) {
     pickRequest += 1;
     state.picking = false;
+    state.historyTitleKeys = {};
     if (resetPage) { state.offset = 0; state.scrollTop = 0; }
     state.month = "";
     loadMonths();
@@ -4989,6 +5039,7 @@
     state.picking = true;
     renderSlots(false);
     const keys = new Set();
+    const historyTitleKeys = {};
     try {
       for (let offset = 0; ; offset += 200) {
         const params = new URLSearchParams({ feature: listFeature(), provider_instance: state.instance, q: state.q,
@@ -4998,17 +5049,22 @@
         if (timelineOn() && state.month) params.set("month", state.month);
         const notes = state.view === "titles";
         const shows = state.view === "shows";
+        if (["movies", "watched"].includes(state.view)) params.set("media", state.historyMedia);
         if (shows && state.hideDropped) params.set("hide_dropped", "true");
         params.set("duplicates", String(state.view === "history" && state.duplicates));
         params.set("status", state.noteStatus);
         params.set("tag", state.noteTag);
-        const data = await getJSON(`/api/tracker/${notes ? "notes" : shows ? "shows" : "items"}?${params}`);
+        const data = await getJSON(`/api/tracker/${notes ? "notes" : shows ? "shows" : ["movies", "watched"].includes(state.view) ? "history/titles" : "items"}?${params}`);
         if (id !== pickRequest || request !== state.request) return;
         const rows = (notes ? data.notes : shows ? data.shows : data.items) || [];
-        for (const item of rows) keys.add(item.key);
+        for (const item of rows) {
+          keys.add(item.key);
+          if (["movies", "watched"].includes(state.view)) historyTitleKeys[item.key] = item.title_key;
+        }
         if (!rows.length || offset + rows.length >= Number(data.total)) break;
       }
       state.picked = keys;
+      state.historyTitleKeys = historyTitleKeys;
     } catch (err) {
       if (id === pickRequest && request === state.request) toast.show(errorText(err), { tone: "bad" });
     } finally {
@@ -5097,18 +5153,32 @@
       const layout = event.target.closest("[data-trk-layout]");
       if (layout) {
         const wanted = layout.dataset.trkLayout;
-        const wasShelf = state.layouts[state.view] === "shelf";
-        state.layouts[state.view] = wanted === "grid" || (["covers", "shelf"].includes(wanted) && state.view === "collection") ? wanted : "list";
+        const wasShelf = state.layouts[layoutView()] === "shelf";
+        state.layouts[layoutView()] = wanted === "grid" || (["covers", "shelf"].includes(wanted) && state.view === "collection") ? wanted : "list";
         saveView();
         if (state.view === "collection" && wasShelf !== (state.layouts.collection === "shelf")) reload();
         else renderSlots(true);
         return;
       }
+      const historyMedia = event.target.closest("[data-trk-history-media]");
+      if (historyMedia) {
+        if (historyMedia.dataset.trkHistoryMedia === state.historyMedia) return;
+        state.historyMedia = historyMedia.dataset.trkHistoryMedia;
+        state.media = state.historyMedia;
+        state.view = preferredHistoryView();
+        rememberView();
+        state.ref = null; state.title = null;
+        reload();
+        state.root.querySelector(`[data-trk-history-media="${state.historyMedia}"]`)?.focus();
+        return;
+      }
       const view = event.target.closest("[data-trk-view]");
       if (view) {
         root.querySelector(".trk-others")?.removeAttribute("open");
-        if (view.dataset.trkView === state.view) return;
-        state.view = view.dataset.trkView;
+        const wanted = view.dataset.trkView === "history" && view.closest(".trk-navigation") ? preferredHistoryView() : view.dataset.trkView;
+        if (wanted === state.view) return;
+        state.view = wanted;
+        if (wanted === "history") state.media = state.historyMedia;
         rememberView();
         state.filtersOpen = false;
         state.q = "";
@@ -5213,6 +5283,10 @@
       else if (action === "check-cancel") cancelCheck();
       else if (action === "delete-picked" && state.picked.size) {
         if (state.view === "shows") openTitleRemoval(Array.from(state.picked, key => `show:${key}`));
+        else if (["movies", "watched"].includes(state.view)) {
+          const titles = {...state.historyTitleKeys, ...Object.fromEntries(state.items.map(item => [item.key, item.title_key]))};
+          openTitleRemoval(Array.from(state.picked, key => titles[key]));
+        }
         else if (state.view === "titles") openSheet("notes-bulk", { keys: Array.from(state.picked) });
         else openSheet("delete", { keys: Array.from(state.picked), feature: listFeature() });
       }
@@ -5226,7 +5300,9 @@
         state.root.querySelector('[data-trk-action="filters"]')?.focus();
       }
       else if (action === "filters-clear") {
-        state.noteStatus = ""; state.noteTag = ""; state.q = ""; state.media = ""; state.sort = "recent"; state.hideDropped = false; state.duplicates = false; state.month = ""; state.healthFilter = "";
+        state.noteStatus = ""; state.noteTag = ""; state.q = "";
+        if (!historyView()) state.media = "";
+        state.sort = "recent"; state.hideDropped = false; state.duplicates = false; state.month = ""; state.healthFilter = "";
         reload();
       }
       else if (action === "pick-all") pickAllResults();
@@ -5312,7 +5388,15 @@
         return;
       }
       const input = event.target.dataset?.trkInput;
-      if (input === "size") {
+      if (input === "history-group") {
+        state.historyGroup = event.target.value === "title" ? "title" : "watch";
+        state.media = state.historyMedia;
+        state.view = preferredHistoryView();
+        rememberView();
+        state.ref = null; state.title = null;
+        reload();
+        state.root.querySelector('[data-trk-input="history-group"]')?.focus();
+      } else if (input === "size") {
         const value = Number(event.target.value);
         if (mobile()) state.mobilePageSize = MOBILE_PAGE_SIZES.includes(value) ? value : 20;
         else state.pageSize = PAGE_SIZES.includes(value) ? value : 50;

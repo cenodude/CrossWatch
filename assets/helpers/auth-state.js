@@ -9,6 +9,12 @@
   let user = null;
   let status = null;
   let pending = null;
+  let publishedState = null;
+
+  function stateKey(value) {
+    return JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
+      ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+  }
 
   function read() {
     const managed = DOC.dataset.cwRole === "user";
@@ -52,10 +58,15 @@
       DOC.dataset.cwPermPlayback = "on";
       DOC.dataset.cwPermWrite = "on";
     }
-    try {
-      window.dispatchEvent(new CustomEvent("cw:auth-state-changed", { detail: read() }));
-    } catch {}
-    return read();
+    const detail = read();
+    const key = stateKey({user, role: detail.role, profileId: detail.profileId, permissions: detail.permissions});
+    if (key !== publishedState) {
+      publishedState = key;
+      try {
+        window.dispatchEvent(new CustomEvent("cw:auth-state-changed", { detail }));
+      } catch {}
+    }
+    return detail;
   }
 
   async function refresh() {
