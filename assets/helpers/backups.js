@@ -136,9 +136,10 @@
     return block;
   }
   async function savePlan() {
+    mergeDraft((await api('plan')).plan,s.schedule,true);
     const d=s.draft;
     s.plan=(await api('plan',{components:d.components,trackers:d.trackers,encrypt_local:!!d.encrypt_local,password:d.password||'',password_saved:!!d.password_saved,destination:d.destination,remote_keep:d.remote_keep})).plan;
-    d.password='';d.password_saved=false;d.destination=structuredClone(s.plan.destination);
+    Object.assign(d,structuredClone(s.plan),{password:'',password_saved:false});
   }
   function renderStatus() {
     const slot=$('br-status');if(!slot)return;
@@ -248,12 +249,25 @@
       if(result.restore&&!s.message)message(result.restore.message,!result.restore.ok);
     }catch(e){s.statusReady=false;renderStatus();updateLocks();throw e;}
   }
-  async function refresh(){const [p,sch,l]=await Promise.all([api('plan'),api('schedule'),api('list')]);s.plan=p.plan;s.schedule=sch.schedule||{};s.backups=l.backups||[];s.draft={...structuredClone(p.plan),password:'',password_saved:false,active:!!s.schedule.active,at:s.schedule.at||'03:00',days:s.schedule.days?.length?[...s.schedule.days]:[1,2,3,4,5,6,7],max_backups:s.schedule.max_backups||7};render();await refreshJobs();}
+  function draftValues(plan,schedule) {
+    return {...structuredClone(plan),password:'',password_saved:false,active:!!schedule.active,at:schedule.at||'03:00',days:schedule.days?.length?[...schedule.days]:[1,2,3,4,5,6,7],max_backups:schedule.max_backups||7};
+  }
+  function mergeDraft(plan,schedule,preserve) {
+    const next=draftValues(plan,schedule);
+    if(preserve&&s.draft&&s.plan){
+      const previous=draftValues(s.plan,s.schedule);
+      for(const key of ['components','trackers','encrypt_local','destination','remote_keep','password','password_saved','active','at','days','max_backups']){
+        if(JSON.stringify(s.draft[key])!==JSON.stringify(previous[key]))next[key]=structuredClone(s.draft[key]);
+      }
+    }
+    Object.assign(s.draft||={},next);s.plan=plan;s.schedule=schedule;
+  }
+  async function refresh(preserve=false){const [p,sch,l]=await Promise.all([api('plan'),api('schedule'),api('list')]);mergeDraft(p.plan,sch.schedule||{},preserve);s.backups=l.backups||[];render();await refreshJobs();}
   async function mount(root){
     if(!root)return;
     s.mounted=true;s.statusReady=false;shell(root);render();updateLocks();
     clearInterval(s.timer);
-    try{if(s.plan)await refreshJobs();else await refresh();}catch(e){message(e.message,true);}
+    await perform(()=>refresh(true),true);
     if(s.mounted){clearInterval(s.timer);s.timer=setInterval(()=>{if(!s.busy)refreshJobs().catch(e=>message(e.message,true));},2500);}
   }
   function hide(){s.mounted=false;clearInterval(s.timer);s.timer=null;}

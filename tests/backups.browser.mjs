@@ -15,6 +15,7 @@ async function fixture(t, theme = '', width = 1100, populated = false, overrides
   page.on('pageerror', e => errors.push(e.message));
   t.after(() => assert.deepEqual(errors, []));
   let plan = {components:['application','trackers','captures'],trackers:null,has_password:false,encrypt_local:false,destination:{kind:'none'},remote_keep:30,key_source:'included',rclone_available:true,available_trackers:[{id:'default',label:'Main tracker'},{id:'one',label:'Family tracker'}],...overrides};
+  let schedule = {active:false};
   const backup = {path:'2026-11-15/crosswatch-backup-test.cwbackup',created_at:'2026-11-15T12:00:00Z',components:['application','trackers','captures'],size:218000,encrypted:true};
   let backups = populated ? Array.from({length:typeof populated==='number'?populated:1},(_,i)=>({...backup,path:`saved/crosswatch-backup-${i}.cwbackup`,size:i===0?420:backup.size,created_at:new Date(Date.UTC(2026,10,15-i,12,0)).toISOString(),...(i%3===1?{components:['application']}:i%3===2?{components:['trackers','captures']}: {})})) : [];
   const manifest = {...backup,trackers:[{id:'default',label:'Main tracker'}]};
@@ -30,7 +31,7 @@ async function fixture(t, theme = '', width = 1100, populated = false, overrides
       if(body)writes.push({name,body});
       if(name==='plan'&&body)plan={...plan,...body,has_password:!!body.password||plan.has_password};
       if(name==='delete')backups=backups.filter(b=>b.path!==body.path);
-      const data = {remote:{backups:overrides.remoteBackups||[]},plan:{plan},schedule:{schedule:{active:false}},list:{backups},status:{jobs:overrides.jobs??(populated?[{id:'job',path:backup.path,stage:'failed',local_status:'saved',remote_status:'failed',error:'Server unreachable',retry_at:1794750000}]:[])},create:{job:{id:'new',stage:'queued'}},validate:{validation:{ok:true,manifest,application_ready:true,...validationOverrides}},restore:{result:{message:'Tracker recovered. No sync pairs were created.'}},'recovery-key':{key:'generated-recovery-key-for-test'}}[name]||{};
+      const data = {remote:{backups:overrides.remoteBackups||[]},plan:{plan},schedule:{schedule},list:{backups},status:{jobs:overrides.jobs??(populated?[{id:'job',path:backup.path,stage:'failed',local_status:'saved',remote_status:'failed',error:'Server unreachable',retry_at:1794750000}]:[])},create:{job:{id:'new',stage:'queued'}},validate:{validation:{ok:true,manifest,application_ready:true,...validationOverrides}},restore:{result:{message:'Tracker recovered. No sync pairs were created.'}},'recovery-key':{key:'generated-recovery-key-for-test'}}[name]||{};
       return route.fulfill({json:{ok:true,...data}});
     }
     return route.fulfill({contentType:'text/html',body:`<!doctype html><html${theme?` data-cw-theme="${theme}"`:''}><head><meta name="viewport" content="width=device-width,initial-scale=1">${['themes/tokens','css/base','crosswatch','css/layout','css/components','css/pages','css/page-theme','themes/flat','themes/original-coverage'].map(f=>`<link rel="stylesheet" href="/assets/${f}.css">`).join('')}</head><body style="padding:16px"><main id="page-backups" class="cw-page-backups"></main><script src="/assets/helpers/backups.js"></script></body></html>`});
@@ -38,8 +39,88 @@ async function fixture(t, theme = '', width = 1100, populated = false, overrides
   await page.goto('http://cw.test/');
   await page.evaluate(()=>BackupsPage.mount(document.getElementById('page-backups')));
   await page.getByRole('heading',{name:'What to back up'}).waitFor();
-  return {page,writes,empty:async()=>{populated=false;backups=[];overrides.jobs=[];await page.evaluate(()=>CW.Backups.refresh());}};
+  return {page,writes,updateServer:changes=>{if(changes.plan)plan={...plan,...changes.plan};if(changes.schedule)schedule=changes.schedule;if(changes.backups)backups=changes.backups;},empty:async()=>{populated=false;backups=[];overrides.jobs=[];await page.evaluate(()=>CW.Backups.refresh());}};
 }
+
+test('returning refreshes saved settings and inventory while keeping unsaved selections',async t=>{
+  const {page,writes,updateServer}=await fixture(t);
+  await page.getByLabel('Saved captures',{exact:true}).uncheck();
+  await page.getByRole('tab',{name:'Schedule & storage'}).click();
+  await page.getByRole('button',{name:'Edit schedule'}).click();
+  await page.getByLabel('Time',{exact:true}).fill('06:30');
+  await page.evaluate(()=>BackupsPage.hide());
+  updateServer({plan:{encrypt_local:true,has_password:true,destination:{kind:'folder',path:'/backups'},available_trackers:[{id:'new',label:'New tracker'}]},schedule:{active:true,at:'04:00',days:[1,3,5],max_backups:14,managed:true},backups:[{path:'imported/backup.zip',components:['application'],size:123}]});
+  await page.evaluate(()=>BackupsPage.mount(document.getElementById('page-backups')));
+  assert.equal(await page.getByLabel('Time',{exact:true}).inputValue(),'06:30');
+  assert.equal(await page.getByLabel('Back up automatically',{exact:true}).isChecked(),true);
+  assert.equal(await page.getByLabel('Automatic local copies to keep').inputValue(),'14');
+  await page.getByRole('tab',{name:'Backups',exact:true}).click();
+  assert.equal(await page.getByLabel('Saved captures',{exact:true}).isChecked(),false);
+  assert.equal(await page.locator('#br-history article').count(),1);
+  await page.getByLabel('All trackers',{exact:true}).uncheck();
+  assert.equal(await page.getByLabel('New tracker',{exact:true}).isChecked(),true);
+  assert.equal(await page.getByLabel('Main tracker',{exact:true}).count(),0);
+  await page.locator('#br-create').click();
+  await page.getByText('Backup queued. You can leave this page while it runs.',{exact:true}).waitFor();
+  const saved=writes.findLast(w=>w.name==='plan').body;
+  assert.equal(saved.encrypt_local,true);
+  assert.deepEqual(saved.destination,{kind:'folder',path:'/backups'});
+  assert.deepEqual(saved.components,['application','trackers']);
+  assert.deepEqual(saved.trackers,['new']);
+});
+
+test('starting a backup preserves settings changed in another tab without navigation',async t=>{
+  const {page,writes,updateServer}=await fixture(t);
+  await page.getByLabel('Saved captures',{exact:true}).uncheck();
+  updateServer({plan:{encrypt_local:true,has_password:true,destination:{kind:'folder',path:'/backups'},remote_keep:60}});
+  await page.locator('#br-create').click();
+  await page.getByText('Backup queued. You can leave this page while it runs.',{exact:true}).waitFor();
+  const saved=writes.findLast(w=>w.name==='plan').body;
+  assert.equal(saved.encrypt_local,true);
+  assert.deepEqual(saved.destination,{kind:'folder',path:'/backups'});
+  assert.equal(saved.remote_keep,60);
+  assert.deepEqual(saved.components,['application','trackers']);
+});
+
+test('a failed settings refresh cannot save an old plan or start a backup',async t=>{
+  const {page,writes}=await fixture(t);
+  await page.route('**/api/backups/plan',route=>route.request().method()==='GET'?route.fulfill({status:503,json:{ok:false,error:'Settings unavailable'}}):route.fallback());
+  await page.locator('#br-create').click();
+  await page.getByText('Settings unavailable',{exact:true}).waitFor();
+  assert.equal(writes.length,0);
+  assert.equal(await page.locator('#br-create').isDisabled(),false);
+  await page.unroute('**/api/backups/plan');
+  await page.locator('#br-create').click();
+  await page.getByText('Backup queued. You can leave this page while it runs.',{exact:true}).waitFor();
+  assert.equal(writes.filter(w=>w.name==='create').length,1);
+});
+
+test('unsaved encryption edits survive returning and become clean after saving',async t=>{
+  const {page,writes,updateServer}=await fixture(t);
+  await page.getByRole('tab',{name:'Schedule & storage'}).click();
+  await page.getByRole('button',{name:'Edit encryption'}).click();
+  await page.getByLabel('Encrypt local backups',{exact:true}).check();
+  await page.getByLabel('Backup password or recovery key',{exact:true}).fill('unsaved-recovery-key');
+  await page.getByLabel('I saved any new password outside CW').check();
+  await page.evaluate(()=>BackupsPage.hide());
+  updateServer({plan:{remote_keep:60}});
+  await page.evaluate(()=>BackupsPage.mount(document.getElementById('page-backups')));
+  assert.equal(await page.getByLabel('Encrypt local backups',{exact:true}).isChecked(),true);
+  assert.equal(await page.getByLabel('Backup password or recovery key',{exact:true}).inputValue(),'unsaved-recovery-key');
+  await page.getByRole('button',{name:'Save encryption',exact:true}).click();
+  await page.getByText('Encryption settings saved.',{exact:true}).waitFor();
+  const saved=writes.findLast(w=>w.name==='plan').body;
+  assert.equal(saved.encrypt_local,true);
+  assert.equal(saved.password,'unsaved-recovery-key');
+  assert.equal(saved.password_saved,true);
+  assert.equal(saved.remote_keep,60);
+  await page.evaluate(()=>BackupsPage.hide());
+  updateServer({plan:{encrypt_local:false}});
+  await page.evaluate(()=>BackupsPage.mount(document.getElementById('page-backups')));
+  await page.getByRole('button',{name:'Edit encryption'}).click();
+  assert.equal(await page.getByLabel('Encrypt local backups',{exact:true}).isChecked(),false);
+  assert.equal(await page.getByLabel('New backup password (leave empty to keep current)',{exact:true}).inputValue(),'');
+});
 
 test('backs up only selected contents and tracker instances',async t=>{
   const {page,writes}=await fixture(t);
