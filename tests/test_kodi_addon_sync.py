@@ -30,6 +30,7 @@ def next_seq() -> int:
 @pytest.fixture(autouse=True)
 def _sync_root(config_base, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(addon_sync, "_root", lambda: config_base / ".cw_state" / "kodi_addon_sync")
+    monkeypatch.setattr(addon_sync, "_clock_floor", lambda: 0)
     addon_sync._PENDING_RUNS.clear()
     addon_sync._CACHE.clear()
     addon_sync._NEXT_CHANGE.clear()
@@ -108,7 +109,9 @@ def queue(cfg: dict[str, Any], viewer: str = "kv-1", **kwargs: Any) -> dict[str,
 
 
 def ack(cfg: dict[str, Any], *results: tuple[int, str]) -> dict[str, Any]:
-    return addon_sync.receive_ack(cfg, "default", {"viewer_id": "kv-1", "results": [{"seq": s, "status": st} for s, st in results]},
+    ids = {r.get("seq"): r.get("change_id") for r in addon_sync._load_changes("default", "kv-1")["records"].values()}
+    return addon_sync.receive_ack(cfg, "default", {"viewer_id": "kv-1", "results": [{"seq": s, "status": st, "change_id": ids.get(s) or ""}
+                                                                                    for s, st in results]},
                                   device_id="dev-1")
 
 
@@ -140,7 +143,8 @@ def test_ping_block_only_with_flag_and_maps_single_viewer_to_device():
     cfg = make_cfg()
     assert addon_sync.handle_ping({**cfg, "runtime": {}}, "default", {"event": "ping"}) is None
     block = ping(cfg)
-    assert block == {"version": 1, "enabled": True, "viewers": [{"viewer_id": "kv-1", "instance": "default", "upload_seq": 0}], "queue_pending": 0}
+    assert block == {"version": 1, "enabled": True, "queue_pending": 0,
+                     "viewers": [{"viewer_id": "kv-1", "instance": "default", "upload_seq": 0, "next_change": 1, "run_pending": False}]}
     assert addon_sync.device_info("default")["library_id"] == "lib-1"
     full(cfg)
     assert ping(cfg)["viewers"][0]["upload_seq"] == 1
@@ -154,8 +158,8 @@ def test_several_viewers_need_sync_users():
         full(cfg)
     assert err.value.code == "viewer_unknown"
     cfg = make_cfg(sync_users={"kv-1": {"username": "user1"}, "kv-2": {"username": "user2"}})
-    assert ping(cfg, viewers)["viewers"] == [{"viewer_id": "kv-1", "instance": "default~kv-1", "upload_seq": 0},
-                                             {"viewer_id": "kv-2", "instance": "default~kv-2", "upload_seq": 0}]
+    assert [(v["viewer_id"], v["instance"], v["upload_seq"]) for v in ping(cfg, viewers)["viewers"]] == [
+        ("kv-1", "default~kv-1", 0), ("kv-2", "default~kv-2", 0)]
     assert full(cfg)["instance"] == "default~kv-1"
 
 
@@ -204,6 +208,9 @@ def test_write_is_queued_with_item_and_never_undone_by_an_ack():
     assert module(cfg).add("history", [source])["count"] == 1
     fetched = queue(cfg)
     assert fetched["ok"] is True
+    assert fetched["changes"][0].pop("queued_at")
+    assert fetched["changes"][0].pop("after") == 1
+    assert len(fetched["changes"][0].pop("change_id")) == 16
     assert fetched["changes"] == [{"seq": 1, "method": "VideoLibrary.SetEpisodeDetails",
                                  "params": {"episodeid": 40, "playcount": 1, "lastplayed": "2026-01-03T10:00:00Z"},
                                  "item": {"type": "episode", "uniqueid": {"tvdb": "3254641"}, "title": "Home",
@@ -574,7 +581,7 @@ def test_upload_order_survives_a_viewer_remap():
     full(cfg, movies=[unwatched()], episodes=[], tvshows=[], upload_id="u-2", parts=2)
     delta(cfg, movies=[movie(lastplayed="2026-01-03 10:00:00", userrating=0)])
     remapped = make_cfg(sync_users={"kv-1": {"username": "user1"}})
-    assert ping(remapped)["viewers"] == [{"viewer_id": "kv-1", "instance": "default~kv-1", "upload_seq": 3}]
+    assert [(v["viewer_id"], v["instance"], v["upload_seq"]) for v in ping(remapped)["viewers"]] == [("kv-1", "default~kv-1", 3)]
     for part in (2, 1):
         with pytest.raises(addon_sync.SyncRequestError) as err:
             full(remapped, movies=[unwatched()], episodes=[], tvshows=[], upload_id="u-2", part=part, parts=2)
@@ -590,7 +597,7 @@ def test_parts_together_over_the_row_limit_are_refused(monkeypatch: pytest.Monke
     assert full(cfg, episodes=[], upload_id="u-2", parts=2)["complete"] is False
     with pytest.raises(addon_sync.SyncRequestError) as err:
         full(cfg, movies=[movie(movieid=13, uniqueid={"tmdb": "603"}, title="The Matrix")], upload_id="u-2", part=2, parts=2)
-    assert err.value.code == "invalid_request"
+    assert err.value.code == "payload_too_large"
     assert not addon_sync._path("default", "staging").exists()
     assert titles(cfg, "history") == {"Fight Club"}
 
@@ -727,7 +734,8 @@ def test_endpoints_auth_and_flow(client):
     watch_fight_club(state["cfg"])
     changes = http.get(f"{base}/queue?viewer_id=kv-1", headers=headers).json()["changes"]
     assert [c["seq"] for c in changes] == [1]
-    res = http.post(f"{base}/queue/ack", json={"version": 1, "viewer_id": "kv-1", "results": [{"seq": 1, "status": "applied"}]}, headers=headers)
+    res = http.post(f"{base}/queue/ack", json={"version": 1, "viewer_id": "kv-1",
+                                              "results": [{"seq": 1, "status": "applied", "change_id": changes[0]["change_id"]}]}, headers=headers)
     assert res.json() == {"ok": True, "applied": 1, "failed": 0}
     assert http.get(f"{base}/queue?viewer_id=kv-1", headers=headers).json()["changes"] == []
 
@@ -1124,7 +1132,7 @@ def test_removed_row_without_ids_retires_the_live_row_by_file():
     rate_fight_club(cfg, 6)
     delta(cfg, movies=[{**{k: v for k, v in movie().items() if k != "movieid"}, "uniqueid": {}, "in_library": False}])
     assert titles(cfg, "collection") == set()
-    assert addon_sync.pending_changes(cfg, "default") == []
+    assert [c["params"] for c in addon_sync.pending_changes(cfg, "default")] == [{"userrating": 6}]
     full(cfg, episodes=[], tvshows=[], upload_id="u-2")
     delta(cfg, movies=[{**{k: v for k, v in movie().items() if k != "movieid"}, "uniqueid": {"tmdb": "999"}, "in_library": False}])
     assert titles(cfg, "collection") == {"Fight Club"}
@@ -1231,3 +1239,203 @@ def test_show_losing_its_ids_keeps_its_episodes_in_history():
     delta(cfg, tvshows=[bare])
     assert titles(cfg, "history") == {"Home"}
     assert len(module(cfg).build_index("collection")) == 1
+
+
+
+def test_undelivered_change_is_not_ended_by_a_covering_applied_seq():
+    cfg = make_cfg()
+    ping(cfg)
+    other = unwatched(movieid=13, uniqueid={"tmdb": "603"}, title="The Matrix", file="nfs://nas/movies/m.mkv")
+    full(cfg, movies=[unwatched(), other], episodes=[], tvshows=[])
+    rate_fight_club(cfg, 7)
+    module(cfg).add("ratings", [{"type": "movie", "ids": {"tmdb": "603"}, "rating": 6}])
+    full(cfg, movies=[other], episodes=[], tvshows=[], upload_id="u-2")
+    changes = addon_sync.pending_changes(cfg, "default")
+    assert [(c["seq"], "movieid" in c["params"]) for c in changes] == [(1, False), (2, True)]
+    ack(cfg, (2, "applied"))
+    full(cfg, movies=[unwatched(), other], episodes=[], tvshows=[], upload_id="u-3", applied_seq=2)
+    assert ratings(cfg).get("Fight Club") == 7
+    ack(cfg, (1, "applied"))
+    full(cfg, movies=[unwatched(userrating=7), other], episodes=[], tvshows=[], upload_id="u-4", applied_seq=2)
+    assert ratings(cfg).get("Fight Club") == 7
+
+
+def test_second_viewer_keeps_the_first_on_the_paired_instance():
+    cfg = make_cfg()
+    ping(cfg)
+    full(cfg)
+    block = ping(cfg, [{"viewer_id": "kv-1", "name": "user1"}, {"viewer_id": "kv-2", "name": "user2"}])
+    assert [(v["viewer_id"], v["instance"]) for v in block["viewers"]] == [("kv-1", "default")]
+    assert addon_sync.addon_ready(cfg, "default") is False
+    full(cfg, upload_id="u-2")
+    assert addon_sync.addon_ready(cfg, "default") is True
+
+
+def test_second_connection_on_the_same_library_is_refused():
+    cfg = make_cfg()
+    cfg["security"]["webhook_ids"]["kodiwatcher:kodi2"] = "kodi-sync-test-token-0099"
+    ping(cfg)
+    other = addon_sync.handle_ping(cfg, "kodi2", {"event": "ping", "device": {"id": "dev-2"},
+                                                  "library_sync": {"version": 1, "enabled": True, "library_id": "lib-1",
+                                                                   "viewers": [{"viewer_id": "kv-9", "name": "user9"}]}})
+    assert other["enabled"] is False and other["reason"] == "library_has_sync_device"
+    with pytest.raises(addon_sync.SyncRequestError) as err:
+        addon_sync.receive_upload(cfg, "kodi2", full_body(viewer_id="kv-9", upload_id="u-k2"), device_id="dev-2")
+    assert err.value.code == "sync_disabled"
+    assert ping(cfg)["enabled"] is True
+
+
+def test_ping_reports_run_pending_and_next_change():
+    cfg = make_cfg()
+    ping(cfg)
+    full(cfg, movies=[unwatched()], episodes=[], tvshows=[])
+    rate_fight_club(cfg, 7)
+    addon_sync._PENDING_RUNS.add("default")
+    viewer = ping(cfg)["viewers"][0]
+    assert viewer["run_pending"] is True and viewer["next_change"] == 2
+
+
+def test_change_numbers_follow_the_clock_after_a_restart(monkeypatch: pytest.MonkeyPatch):
+    cfg = make_cfg()
+    ping(cfg)
+    full(cfg, movies=[unwatched()], episodes=[], tvshows=[])
+    rate_fight_club(cfg, 7)
+    addon_sync._NEXT_CHANGE.clear()
+    addon_sync._CACHE.clear()
+    monkeypatch.setattr(addon_sync, "_clock_floor", lambda: 5_000_000)
+    rate_fight_club(cfg, 8)
+    assert addon_sync.pending_changes(cfg, "default")[0]["seq"] >= 5_000_000
+
+
+def test_fresh_full_upload_clears_kodi_baselines_for_the_same_viewer():
+    from pathlib import Path
+
+    from cw_platform.config_base import CONFIG_BASE
+    from cw_platform.local_db import state as db
+
+    base = Path(CONFIG_BASE())
+    item = {"type": "movie", "title": "Old", "ids": {"tmdb": "1"}, "watched": True, "watched_at": "2026-01-01T00:00:00Z"}
+    cfg = make_cfg()
+    ping(cfg)
+    full(cfg)
+    db.save_feature_baseline(base, provider="KODI", instance="default", feature="history", items={"tmdb:1": item})
+    full(cfg, upload_id="u-2")
+    assert any(str(r.get("provider")).upper() == "KODI" for r in db.feature_inventory(base))
+    full(cfg, upload_id="u-3", fresh=True)
+    assert not any(str(r.get("provider")).upper() == "KODI" for r in db.feature_inventory(base))
+
+
+
+def test_full_upload_during_a_run_gets_a_follow_up_run(monkeypatch: pytest.MonkeyPatch):
+    cfg = make_cfg()
+    cfg["pairs"] = [{"id": "p1", "source": "KODI", "source_instance": "default", "target": "TRAKT"}]
+    calls: list[list[str]] = []
+
+    def submit(ids):
+        calls.append(ids)
+        if len(calls) == 1:
+            assert addon_sync.trigger_pair_runs(cfg, "default") == []
+        return {"ok": True}
+
+    monkeypatch.setattr(addon_sync, "_submit_run", submit)
+    addon_sync._PENDING_RUNS.add("default")
+    assert addon_sync.run_with_retry("default", ["p1"]) is True
+    assert calls == [["p1"], ["p1"]]
+    assert "default" not in addon_sync._PENDING_RUNS and "default" not in addon_sync._RERUN
+
+
+def test_library_holder_is_found_without_the_instance_field():
+    cfg = make_cfg()
+    cfg["security"]["webhook_ids"]["kodiwatcher:kodi2"] = "kodi-sync-test-token-0099"
+    ping(cfg)
+    path = addon_sync._path("default", "device")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("instance", None)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    addon_sync._CACHE.clear()
+    other = addon_sync.handle_ping(cfg, "kodi2", {"event": "ping", "device": {"id": "dev-2"},
+                                                  "library_sync": {"version": 1, "enabled": True, "library_id": "lib-1",
+                                                                   "viewers": [{"viewer_id": "kv-9", "name": "user9"}]}})
+    assert other["reason"] == "library_has_sync_device"
+
+
+def test_ack_needs_the_change_id_of_the_change():
+    cfg = make_cfg()
+    ping(cfg)
+    full(cfg, movies=[unwatched()], episodes=[], tvshows=[])
+    rate_fight_club(cfg, 7)
+    change = addon_sync.pending_changes(cfg, "default")[0]
+    for change_id in ("", "not-this-one"):
+        result = addon_sync.receive_ack(cfg, "default", {"viewer_id": "kv-1", "results": [
+            {"seq": change["seq"], "status": "applied", "change_id": change_id}]}, device_id="dev-1")
+        assert result["applied"] == 0
+    assert addon_sync.pending_changes(cfg, "default")[0]["seq"] == change["seq"]
+
+
+def test_upload_applied_seq_raises_the_change_counter():
+    cfg = make_cfg()
+    ping(cfg)
+    full(cfg, movies=[unwatched()], episodes=[], tvshows=[])
+    full(cfg, movies=[unwatched()], episodes=[], tvshows=[], upload_id="u-2", applied_seq=9_000_000)
+    rate_fight_club(cfg, 7)
+    assert addon_sync.pending_changes(cfg, "default")[0]["seq"] > 9_000_000
+    addon_sync._NEXT_CHANGE.clear()
+    addon_sync._CACHE.clear()
+    rate_fight_club(cfg, 8)
+    assert addon_sync.pending_changes(cfg, "default")[0]["seq"] > 9_000_000
+
+
+
+def test_trigger_right_after_the_last_run_is_not_lost(monkeypatch: pytest.MonkeyPatch):
+    import time as _time
+
+    cfg = make_cfg()
+    cfg["pairs"] = [{"id": "p1", "source": "KODI", "source_instance": "default", "target": "TRAKT"}]
+    calls: list[int] = []
+    monkeypatch.setattr(addon_sync, "_run_once", lambda inst, ids: calls.append(1) or True)
+    real = addon_sync._LOCK
+    fired = {"done": False}
+
+    class HookLock:
+        def __enter__(self):
+            return real.__enter__()
+
+        def __exit__(self, *exc):
+            result = real.__exit__(*exc)
+            if calls and not fired["done"]:
+                fired["done"] = True
+                worker = threading.Thread(target=lambda: addon_sync.trigger_pair_runs(cfg, "default"))
+                worker.start()
+                worker.join()
+            return result
+
+        def acquire(self, *args, **kwargs):
+            return real.acquire(*args, **kwargs)
+
+        def release(self):
+            return real.release()
+
+    monkeypatch.setattr(addon_sync, "_LOCK", HookLock())
+    addon_sync._PENDING_RUNS.add("default")
+    addon_sync.run_with_retry("default", ["p1"])
+    deadline = _time.time() + 5
+    while len(calls) < 2 and _time.time() < deadline:
+        _time.sleep(0.01)
+    assert len(calls) == 2
+
+
+
+def test_worker_waits_for_the_run_it_started(monkeypatch: pytest.MonkeyPatch):
+    joined: list[str] = []
+
+    class Run:
+        def __init__(self, name):
+            self.name = name
+
+        def join(self, timeout=None):
+            joined.append(self.name)
+
+    monkeypatch.setattr(addon_sync, "_submit_run", lambda ids: {"ok": True, "_run": Run("mine")})
+    addon_sync._PENDING_RUNS.add("default")
+    assert addon_sync.run_with_retry("default", ["p1"]) is True
+    assert joined == ["mine"]

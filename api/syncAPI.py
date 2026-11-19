@@ -3153,7 +3153,7 @@ def api_run_sync(payload: dict | None = Body(None), request: Request = cast(Requ
         overrides = {
             key: value
             for key, value in (payload or {}).items()
-            if key not in {"pair_id", "pairId", "pair_scope", "pair_scope_ids"}
+            if key not in {"pair_id", "pairId", "pair_scope", "pair_scope_ids", "_cw_on_start"}
         }
         if pair_id:
             overrides["pair_id"] = pair_id
@@ -3167,6 +3167,9 @@ def api_run_sync(payload: dict | None = Body(None), request: Request = cast(Requ
         )
         th.start()
         RUNNING_PROCS["SYNC"] = th
+        on_start = (payload or {}).get("_cw_on_start") if isinstance(payload, dict) else None
+        if callable(on_start):
+            on_start(th)
         _rt()[8]("SYNC", f"[i] Triggered sync run {run_id}")
         return {"ok": True, "run_id": run_id}
 
