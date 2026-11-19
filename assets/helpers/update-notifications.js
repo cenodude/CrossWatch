@@ -21,6 +21,7 @@
     const request = controller = new AbortController();
     const timeout = setTimeout(() => request.abort(), 15000);
     try {
+      await window.CW?.AuthState?.ready?.();
       await window.__cwAuthBootstrapPromise;
       if (request.signal.aborted || window.cwIsAuthSetupPending?.()) return;
       const response = await fetch("/api/version", {credentials:"same-origin", cache:"no-store", signal:request.signal});

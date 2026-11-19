@@ -10,9 +10,11 @@ import {readFileSync} from "node:fs";
 const source = path => readFileSync(new URL(`../assets/${path}`, import.meta.url), "utf8");
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const status = () => ({authenticated: true, user: {id: "alice", is_admin: true, preferences: {theme: "dark"}}});
+const notificationScripts = ["helpers/update-notifications.js", "helpers/database-notifications.js",
+  "helpers/maintenance-notifications.js", "js/tracker-notifications.js"];
 
-function setup() {
-  const listeners = new Map(), events = [], requests = [];
+function setup({readyState = "complete"} = {}) {
+  const listeners = new Map(), documentListeners = new Map(), events = [], requests = [];
   const window = {
     addEventListener(name, fn) {
       if (!listeners.has(name)) listeners.set(name, []);
@@ -23,17 +25,31 @@ function setup() {
       for (const fn of listeners.get(event.type) || []) fn(event);
     },
   };
-  const document = {hidden: false, documentElement: {dataset: {}}, addEventListener() {}};
+  const document = {hidden: false, readyState, documentElement: {dataset: {}},
+    addEventListener(name, fn) {
+      if (!documentListeners.has(name)) documentListeners.set(name, []);
+      documentListeners.get(name).push(fn);
+    },
+  };
   const context = vm.createContext({window, document, AbortController,
     CustomEvent: class { constructor(type, options) { this.type = type; this.detail = options.detail; } },
     setTimeout() {}, clearTimeout() {}, setInterval() {},
     fetch(url, {signal}) {
       requests.push({url, signal});
+      if (url === "/api/app-auth/status") return Promise.resolve({ok: true, json: async () => status()});
       return new Promise((resolve, reject) => signal.addEventListener("abort", () => reject(signal.reason), {once: true}));
     },
   });
   vm.runInContext(source("helpers/auth-state.js"), context);
-  return {auth: window.CW.AuthState, document, events, requests, context};
+  return {auth: window.CW.AuthState, window, document, events, requests, context,
+    loadNotifications() {
+      for (const path of notificationScripts) vm.runInContext(source(path), context);
+    },
+    domReady() {
+      document.readyState = "interactive";
+      for (const fn of documentListeners.get("DOMContentLoaded") || []) fn();
+    },
+  };
 }
 
 test("unchanged auth updates retain fresh status without emitting another change", () => {
@@ -84,10 +100,7 @@ test("equivalent nested permission and preference objects do not restart auth li
 test("unchanged auth preserves pending notification requests while account changes cancel them", async () => {
   const app = setup();
   app.auth.apply(status());
-  for (const path of ["helpers/update-notifications.js", "helpers/database-notifications.js",
-    "helpers/maintenance-notifications.js", "js/tracker-notifications.js"]) {
-    vm.runInContext(source(path), app.context);
-  }
+  app.loadNotifications();
   await flush();
   assert.deepEqual(app.requests.map(request => request.url).sort(), [
     "/api/health/database", "/api/maintenance/jobs/current", "/api/tracker/check/current", "/api/version",
@@ -104,4 +117,63 @@ test("unchanged auth preserves pending notification requests while account chang
   assert.ok(original.every(request => request.signal.aborted));
   assert.equal(app.requests.length, 8);
   assert.ok(app.requests.slice(4).every(request => !request.signal.aborted));
+});
+
+for (const readyState of ["loading", "interactive", "complete"]) {
+  test(`notification startup waits for initial auth while the document is ${readyState}`, async () => {
+    const app = setup({readyState});
+    let resolveBootstrap;
+    const bootstrap = new Promise(resolve => { resolveBootstrap = resolve; });
+    if (readyState === "complete") app.window.__cwAuthBootstrapPromise = bootstrap;
+    app.loadNotifications();
+    await flush();
+    assert.equal(app.requests.length, 0);
+    app.window.__cwAuthBootstrapPromise = bootstrap;
+    app.domReady();
+    await flush();
+    assert.equal(app.requests.length, 0);
+    resolveBootstrap({status: status()});
+    await flush();
+    assert.equal(app.events.length, 1);
+    assert.equal(app.requests.length, 4);
+    assert.ok(app.requests.every(request => request.signal && !request.signal.aborted));
+    app.auth.apply(status());
+    await flush();
+    assert.equal(app.requests.length, 4);
+    assert.ok(app.requests.every(request => !request.signal.aborted));
+  });
+}
+
+test("standalone pages share one initial auth request before checking notifications", async () => {
+  const app = setup();
+  app.loadNotifications();
+  await flush();
+  assert.equal(app.requests.filter(request => request.url === "/api/app-auth/status").length, 1);
+  assert.equal(app.requests.length, 5);
+  assert.ok(app.requests.slice(1).every(request => !request.signal.aborted));
+});
+
+test("bootstrap readiness preserves auth already applied by another startup component", async () => {
+  const app = setup();
+  let resolveBootstrap;
+  app.window.__cwAuthBootstrapPromise = new Promise(resolve => { resolveBootstrap = resolve; });
+  app.loadNotifications();
+  const current = status();
+  current.user.id = "bob";
+  app.auth.apply(current);
+  resolveBootstrap({status: status()});
+  await flush();
+  assert.equal(app.auth.user.id, "bob");
+  assert.equal(app.events.length, 1);
+  assert.equal(app.requests.length, 4);
+  assert.ok(app.requests.every(request => !request.signal.aborted));
+});
+
+test("setup-pending bootstrap does not start notification requests", async () => {
+  const app = setup();
+  app.window.cwIsAuthSetupPending = () => true;
+  app.window.__cwAuthBootstrapPromise = Promise.resolve({status: {authenticated: false, setup_required: true}});
+  app.loadNotifications();
+  await flush();
+  assert.equal(app.requests.length, 0);
 });

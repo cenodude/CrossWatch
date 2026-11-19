@@ -61,13 +61,15 @@
     }
   }
 
-  async function refresh() {
+  async function refresh({force = false} = {}) {
     clearTimeout(timer);
+    if (active() && controller && !controller.signal.aborted && !force) return;
     controller?.abort();
-    if (!active()) return;
+    if (!active()) { controller = null; return; }
     const request = controller = new AbortController();
     let allowed = true;
     try {
+      await window.CW?.AuthState?.ready?.();
       await window.__cwAuthBootstrapPromise;
       await window.CW?.OverviewProfile?.ready;
       if (request.signal.aborted) return;
@@ -82,15 +84,18 @@
     } catch (error) {
       if (!request.signal.aborted) render([], true);
     } finally {
-      if (!request.signal.aborted && active() && allowed) timer = setTimeout(refresh, 10000);
+      if (controller === request) {
+        controller = null;
+        if (!request.signal.aborted && active() && allowed) timer = setTimeout(refresh, 10000);
+      }
     }
   }
-  window.addEventListener("cw:overview-profile-changed", () => { render([], false, true); refresh(); });
+  window.addEventListener("cw:overview-profile-changed", () => { render([], false, true); refresh({force: true}); });
   document.addEventListener("tab-changed", refresh);
   document.addEventListener("cw-settings-pane-changed", refresh);
   document.addEventListener("visibilitychange", refresh);
-  window.addEventListener("auth-changed", () => { render([]); refresh(); });
-  window.addEventListener("cw:auth-state-changed", () => { render([]); refresh(); });
+  window.addEventListener("auth-changed", () => { render([]); refresh({force: true}); });
+  window.addEventListener("cw:auth-state-changed", () => { render([]); refresh({force: true}); });
   document.addEventListener("click", event => {
     if (event.target.closest?.("[data-reviews-retry]")) refresh();
     if (event.target.closest?.(".cw-notifications-footer")) { jumpToReviews = true; refresh(); }

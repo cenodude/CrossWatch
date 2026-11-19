@@ -10,6 +10,7 @@
   let status = null;
   let pending = null;
   let publishedState = null;
+  let initializing = null;
 
   function stateKey(value) {
     return JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
@@ -84,10 +85,23 @@
     return pending;
   }
 
+  function ready() {
+    if (!initializing) initializing = (async () => {
+      if (!window.__cwAuthBootstrapPromise && ["loading", "interactive"].includes(document.readyState)) {
+        await new Promise(resolve => document.addEventListener("DOMContentLoaded", resolve, {once: true}));
+      }
+      const bootstrap = await window.__cwAuthBootstrapPromise;
+      if (status) return read();
+      return bootstrap?.status ? apply(bootstrap.status) : refresh();
+    })().catch(() => read());
+    return initializing;
+  }
+
   CW.AuthState = {
     read,
     apply,
     refresh,
+    ready,
     get user() { return user; },
     get isAdmin() { return read().isAdmin; },
     get isManaged() { return read().isManaged; },

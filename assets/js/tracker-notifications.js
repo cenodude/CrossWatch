@@ -122,13 +122,15 @@
     window.CW?.Notifications?.setSource("tracker-check", {scope: "account", error, items});
   }
 
-  async function refresh() {
+  async function refresh({force = false} = {}) {
     clearTimeout(timer);
+    if (!document.hidden && controller && !controller.signal.aborted && !force) return;
     controller?.abort();
-    if (document.hidden) return;
+    if (document.hidden) { controller = null; return; }
     const request = controller = new AbortController();
     let allowed = true;
     try {
+      await window.CW?.AuthState?.ready?.();
       await window.__cwAuthBootstrapPromise;
       if (request.signal.aborted) return;
       const role = document.documentElement.dataset;
@@ -145,11 +147,15 @@
     } catch {
       if (!request.signal.aborted) render(current, "Could not refresh the tracker status.");
     } finally {
-      if (controller === request && !document.hidden && allowed) timer = setTimeout(refresh, running(current) ? 3000 : 30000);
+      if (controller === request) {
+        controller = null;
+        if (!document.hidden && allowed) timer = setTimeout(refresh, running(current) ? 3000 : 30000);
+      }
     }
   }
-  for (const event of ["cw:notifications-refresh", "cw:tracker-check-changed"]) window.addEventListener(event, refresh);
-  for (const event of ["auth-changed", "cw:auth-state-changed"]) window.addEventListener(event, () => { render(); refresh(); });
+  window.addEventListener("cw:notifications-refresh", refresh);
+  window.addEventListener("cw:tracker-check-changed", () => refresh({force: true}));
+  for (const event of ["auth-changed", "cw:auth-state-changed"]) window.addEventListener(event, () => { render(); refresh({force: true}); });
   document.addEventListener("visibilitychange", refresh);
   refresh();
 })();

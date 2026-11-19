@@ -36,13 +36,15 @@
   function publish(status) {
     window.CW?.Notifications?.setSource("database", {scope: "account", items: items(status)});
   }
-  async function refresh() {
+  async function refresh({force = false} = {}) {
     clearTimeout(timer);
+    if (!document.hidden && controller && !controller.signal.aborted && !force) return;
     controller?.abort();
-    if (document.hidden) return;
+    if (document.hidden) { controller = null; return; }
     const request = controller = new AbortController();
     let allowed = true;
     try {
+      await window.CW?.AuthState?.ready?.();
       await window.__cwAuthBootstrapPromise;
       if (request.signal.aborted || window.cwIsAuthSetupPending?.()) return;
       const response = await fetch("/api/health/database", {credentials: "same-origin", cache: "no-store", signal: request.signal});
@@ -52,11 +54,14 @@
         if (!request.signal.aborted) publish(status);
       }
     } catch {} finally {
-      if (!request.signal.aborted && !document.hidden && allowed) timer = setTimeout(refresh, 15000);
+      if (controller === request) {
+        controller = null;
+        if (!request.signal.aborted && !document.hidden && allowed) timer = setTimeout(refresh, 15000);
+      }
     }
   }
   window.addEventListener("cw:notifications-refresh", refresh);
   document.addEventListener("visibilitychange", refresh);
-  for (const event of ["auth-changed", "cw:auth-state-changed"]) window.addEventListener(event, () => { publish(null); refresh(); });
+  for (const event of ["auth-changed", "cw:auth-state-changed"]) window.addEventListener(event, () => { publish(null); refresh({force: true}); });
   refresh();
 })();
