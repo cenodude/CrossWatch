@@ -192,7 +192,11 @@ for (const shell of ['main','profile']) {
     await menu.locator('#tab-tools').click();
     assert.equal(await menu.locator('#cw-tools-menu').isVisible(),false);
     assert.equal(await menu.locator('#tab-settings').isVisible(),false);
-    assert.deepEqual(await menu.locator('.cw-mobile-tool-destinations .tab').evaluateAll(nodes=>nodes.filter(node=>node.getClientRects().length).map(node=>node.dataset.mobileRoute || 'back')), ['back','events','logs','editor','analyzer','import_export','maintenance']);
+    assert.deepEqual(await menu.locator('.cw-mobile-tool-destinations .tab').evaluateAll(nodes=>nodes.filter(node=>node.getClientRects().length).map(node=>node.dataset.mobileRoute || 'back')), ['back','events','logs','editor','analyzer','import_export','backups']);
+    const backups=menu.locator('[data-mobile-route="backups"]');
+    assert.equal(await backups.innerText().then(value=>value.includes('Backup & Restore')),true);
+    assert.equal(await backups.evaluate(node=>node.scrollWidth<=node.clientWidth),true);
+    assert.equal(await backups.getAttribute('href'),shell==='profile'?'/#backups':'#backups');
     await menu.locator('.cw-mobile-tools-back').click();
     assert.equal(await page.locator('#cw-mobile-nav-toggle').getAttribute('aria-expanded'),'true');
     assert.equal(await menu.locator('#tab-tools').isVisible(),true);

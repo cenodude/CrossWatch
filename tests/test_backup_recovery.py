@@ -346,6 +346,23 @@ def test_encrypted_local_job_and_plaintext_cleanup(installation):
     assert backups.validate_backup(row["path"], PASSWORD)["ok"]
 
 
+@pytest.mark.parametrize("stage", ["queued", "creating", "validating", "encrypting", "uploading", "verifying"])
+def test_active_backup_blocks_creation_and_retry(installation, stage):
+    manager.save_plan(plan())
+    failed = manager.enqueue()
+    manager._update(failed["id"], stage="failed")
+    active = manager.enqueue()
+    manager._update(active["id"], stage=stage)
+    with pytest.raises(ValueError, match="already queued or running"):
+        manager.enqueue()
+    with pytest.raises(ValueError, match="already queued or running"):
+        manager.retry(failed["id"])
+    assert len(manager._jobs()) == 2
+    manager._update(active["id"], stage="complete")
+    manager.retry(failed["id"])
+    assert next(job for job in manager._jobs() if job["id"] == failed["id"])["stage"] == "queued"
+
+
 def test_failed_encryption_removes_plaintext_archive(installation, monkeypatch):
     manager.save_plan(plan())
     manager.enqueue()

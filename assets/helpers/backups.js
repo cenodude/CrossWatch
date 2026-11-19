@@ -2,7 +2,7 @@
 /* CrossWatch - Application, tracker and capture backup interface */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 (function () {
-  const s = { plan: null, draft: null, schedule: {}, backups: [], jobs: [], view: 'backups', choosing: false, page: 0, remotePage: 0, remote: [], section: '', restore: null, message: '', noticeJob: '', error: false, busy: false, timer: null, opener: null, stamp: '' };
+  const s = { plan: null, draft: null, schedule: {}, backups: [], jobs: [], view: 'backups', page: 0, remotePage: 0, remote: [], section: '', restore: null, message: '', noticeJob: '', error: false, busy: false, timer: null, stamp: '', submitted: null, pendingRestore: false, statusReady: false, mounted: false };
   const $ = id => document.getElementById(id);
   const names = { application: 'CrossWatch application', trackers: 'CW trackers', captures: 'Saved captures' };
   const recoverySections = { mappings: 'Mappings and blocks only', anime_rules: 'Custom anime rules only', captures: 'Saved captures only' };
@@ -26,7 +26,20 @@
   const title = v => el('h3',{text:v});
   const row = nodes => el('div',{class:'br-row'},nodes);
   const actions = nodes => el('div',{class:'br-actions'},nodes);
-  const button = (label,fn,primary = false) => el('button',{type:'button',class:`cw-page-button br-button${primary?' primary':''}`,disabled:s.busy,on:{click:fn}},[label]);
+  const runningJob = () => s.submitted || s.jobs.find(job=>!['complete','failed'].includes(job.stage));
+  const locked = () => !s.statusReady || !!runningJob() || s.pendingRestore;
+  const acknowledge = () => {try{if(localStorage.getItem('cw.mobile.haptics')!=='0')navigator.vibrate?.(10);}catch{}};
+  const button = (label,fn,primary = false,safe = false) => el('button',{type:'button',class:`cw-page-button br-button${primary?' primary':''}`,'data-job-lock':String(!safe),disabled:s.busy||(!safe&&locked()),on:{click:e=>{if(e.currentTarget.disabled)return;acknowledge();fn(e);}}},[label]);
+  function updateLocks() {
+    const root=$('page-backups');if(!root)return;
+    root.setAttribute('aria-busy',String(s.busy));
+    root.querySelectorAll('button').forEach(n=>{n.disabled=s.busy||n.dataset.locked==='true'||(n.dataset.jobLock==='true'&&locked());});
+    root.querySelectorAll('input,select').forEach(n=>{n.disabled=s.busy||locked();});
+    const create=$('br-create');
+    if(create){create.disabled ||= !s.draft?.components.length || (s.draft.components.includes('trackers')&&s.draft.trackers?.length===0);create.textContent=s.busy?'Working…':runningJob()?'Backup in progress…':s.pendingRestore?'Restart pending':'Back up now';}
+    const restore=$('br-restore-confirm');
+    if(restore&&s.restore){const r=s.restore;restore.disabled ||= r.mode!=='new_tracker'&&!r.confirm || r.mode==='replace'&&r.validation?.application_ready===false;}
+  }
   const field = (label,control) => {control.setAttribute('aria-label',label);return el('label',{class:'br-field'},[el('span',{text:label}),control]);};
   const input = (value,fn,type = 'text',props = {}) => el('input',{class:'cw-page-input br-input',type,value,...props,on:{input:e=>fn(e.target.value)}});
   const check = (label,checked,fn) => el('label',{class:'br-check'},[el('input',{type:'checkbox',checked,'aria-label':label,on:{change:e=>fn(e.target.checked)}}),el('span',{text:label})]);
@@ -34,7 +47,6 @@
   const pageSize = 5;
   const shortNames = {application:'Application',trackers:'Trackers',captures:'Captures'};
   const badges = values => el('div',{class:'br-badges'},values.map(value=>el('span',{class:'br-badge',text:value})));
-  const quietButton = (label,fn) => {const n=button(label,fn);n.classList.add('br-quiet');return n;};
   const date = v => v ? new Date(typeof v === 'number' ? v*1000 : v).toLocaleString() : 'Not yet';
   const contents = b => Array.isArray(b.components) ? b.components.map(c=>names[c]||c).join(' + ') : legacy[b.scope] || 'Imported archive';
   function select(options,value,fn) { const n=el('select',{class:'cw-page-input br-input',on:{change:e=>fn(e.target.value)}},options.map(([v,label])=>el('option',{value:v,text:label}))); n.value=String(value); return n; }
@@ -43,68 +55,52 @@
     const data=await r.json(); if(!r.ok||data.ok===false) throw new Error(data.error||'Backup request failed.'); return data;
   }
   function message(value,error=false,jobId='') { s.message=value; s.noticeJob=jobId; s.error=error; const n=$('br-message'); if(n){n.textContent=value;n.hidden=!value;n.classList.toggle('is-error',error);} }
-  async function perform(fn) {
-    if(s.busy)return;
-    const active=document.activeElement,modal=$('cw-backups-modal');s.busy=true;modal?.setAttribute('aria-busy','true');
-    modal?.querySelectorAll('button').forEach(n=>{n.disabled=true;});
+  async function perform(fn,safe = false) {
+    if(s.busy||(!safe&&locked()))return;
+    s.busy=true;updateLocks();
     try{await fn();}catch(e){message(e.message||String(e),true);}
-    finally{s.busy=false;modal?.setAttribute('aria-busy','false');modal?.querySelectorAll('button').forEach(n=>{n.disabled=n.dataset.locked==='true';});if(modal&&!modal.contains(document.activeElement))(active?.isConnected?active:modal.querySelector('button'))?.focus({preventScroll:true});}
+    finally{s.busy=false;updateLocks();}
   }
-  function shell() {
-    if($('cw-backups-modal'))return;
-    const modal=el('div',{id:'cw-backups-modal',class:'cw-page-backups hidden'});
-    modal.append(el('section',{class:'br-dialog',role:'dialog','aria-modal':'true','aria-labelledby':'br-title'},[
-      el('header',{class:'br-head'},[el('div',{},[el('h2',{id:'br-title',text:'Backup & Restore'}),text('Protect your application, trackers and saved captures.')]),button('Close',close)]),
+  function shell(root) {
+    if(root.querySelector('#br-body'))return;
+    root.classList.add('cw-page-backups');
+    root.replaceChildren(
+      el('header',{class:'cw-page-hero br-head'},[el('div',{},[el('h2',{id:'br-title',class:'cw-page-hero-title',text:'Backup & Restore'}),text('Protect your application, trackers and saved captures.','cw-page-hero-subtitle br-muted')]),button('Restore from file',()=>{s.restore=null;s.view='backups';s.section=s.section==='import'?'':'import';render();$('br-import')?.scrollIntoView({block:'nearest'});})]),
       el('div',{id:'br-tabs',class:'br-tabs',role:'tablist','aria-label':'Backup views'}),
-      el('div',{id:'br-body',class:'br-body cw-scrollbars',role:'tabpanel'})]));
-    ['input','change'].forEach(event=>modal.addEventListener(event,e=>e.stopPropagation()));
-    modal.addEventListener('keydown',e=>{
-      if(e.key==='Escape'){e.stopPropagation();close();}
-      if(e.key==='Tab'){
-        const nodes=[...modal.querySelectorAll('button:not(:disabled),input:not(:disabled),select:not(:disabled),summary')].filter(n=>n.getClientRects().length);
-        const first=nodes[0],last=nodes[nodes.length-1];
-        if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus();}
-        else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus();}
-      }
-    });
-    document.body.append(modal);
+      el('div',{id:'br-body',class:'br-body',role:'tabpanel'}));
+    ['input','change'].forEach(event=>root.addEventListener(event,e=>{e.stopPropagation();updateLocks();}));
   }
   function renderTabs() {
     const tabs=$('br-tabs'),body=$('br-body');if(!tabs)return;
-    tabs.hidden=!!s.restore;
+    tabs.hidden=false;
     body.setAttribute('aria-labelledby',s.restore?'br-title':`br-tab-${s.view}`);
-    const activate=view=>{s.view=view;s.section='';render();body.scrollTop=0;$(`br-tab-${view}`)?.focus();};
-    tabs.replaceChildren(...[['backups','Backups'],['settings','Settings']].map(([view,label],index)=>el('button',{
-      id:`br-tab-${view}`,type:'button',class:'cw-page-tab br-tab',role:'tab','aria-selected':String(s.view===view),'aria-controls':'br-body',tabindex:s.view===view?'0':'-1',disabled:s.busy||!s.plan,
-      on:{click:()=>activate(view),keydown:e=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();activate(e.key==='Home'?'backups':e.key==='End'?'settings':index===0?'settings':'backups');}}
+    const activate=view=>{s.view=view;s.section='';s.restore=null;render();body.scrollTop=0;$(`br-tab-${view}`)?.focus();};
+    tabs.replaceChildren(...[['backups','Backups'],['settings','Schedule & storage']].map(([view,label],index)=>el('button',{
+      id:`br-tab-${view}`,type:'button',class:'cw-page-tab br-tab',role:'tab','aria-selected':String(s.view===view),'aria-controls':'br-body',tabindex:s.view===view?'0':'-1','data-locked':String(!s.plan),disabled:s.busy||!s.plan,
+      on:{click:()=>{acknowledge();activate(view);},keydown:e=>{if(s.busy||!s.plan||!['ArrowLeft','ArrowRight','Home','End'].includes(e.key))return;e.preventDefault();activate(e.key==='Home'?'backups':e.key==='End'?'settings':index===0?'settings':'backups');}}
     },[label])));
   }
   function selection() {
     const d=s.draft;
-    const selected=Object.keys(names).filter(key=>d.components.includes(key)).map(key=>key==='trackers'?(d.trackers===null?'All trackers':`${d.trackers.length} selected tracker${d.trackers.length===1?'':'s'}`):shortNames[key]);
-    const choose=quietButton(s.choosing?'Done':'Choose contents',()=>{s.choosing=!s.choosing;render();});choose.setAttribute('aria-expanded',String(s.choosing));choose.setAttribute('aria-controls','br-content-options');
-    const create=button('Back up now',()=>perform(async()=>{await savePlan();const result=await api('create',{managed:true});s.choosing=false;s.page=0;render();message('Backup queued. You can close this dialog while it runs.',false,result.job.id);await refreshJobs();}),true);
-    const block=el('section',{class:'cw-page-panel br-plan'},[
-      row([el('div',{class:'br-content-summary'},[title('What to back up'),selected.length?badges(selected):text('Choose backup contents')]),create]),
-      row([el('div',{class:'br-plan-meta'},[el('span',{text:s.schedule.active?'Automatic: '+s.schedule.at:'Automatic backups off'}),el('span',{text:d.encrypt_local?'Encrypted':'Local ZIP'}),el('span',{text:{webdav:'Nextcloud / WebDAV',folder:'Mounted folder'}[d.destination.kind]||'This server only'})]),choose])]);
-    if(s.choosing){
-      const options=el('div',{id:'br-content-options',class:'br-content-options'});
-      Object.entries(names).forEach(([key,label])=>{
-        const option=el('div',{class:'br-content-option'},[check(label,d.components.includes(key),yes=>{d.components=yes?[...new Set([...d.components,key])]:d.components.filter(v=>v!==key);render();})]);
-        if(key==='application'){
-          option.append(text('Settings, connections, sync state, mappings, blocks and custom anime rules.'));
-          if(d.components.includes(key)&&s.plan.key_source==='external')option.append(text('Keep your external configuration key separately.'));
-          if(d.components.includes(key)&&s.plan.key_source==='included')option.append(text('Configuration key included.'));
-        }
-        if(key==='trackers'&&d.components.includes(key)){
-          option.append(check('All trackers',d.trackers===null,all=>{d.trackers=all?null:s.plan.available_trackers.map(t=>t.id);render();}));
-          if(d.trackers!==null)option.append(el('div',{class:'br-tracker-options cw-scrollbars'},s.plan.available_trackers.map(t=>check(t.label,d.trackers.includes(t.id),yes=>{d.trackers=yes?[...d.trackers,t.id]:d.trackers.filter(id=>id!==t.id);}))));
-        }
-        if(key==='captures')option.append(text('Saved capture files. Restoring them does not apply them to providers.'));
-        options.append(option);
-      });
-      block.append(options);
-    }
+    const create=button('Back up now',()=>perform(async()=>{await savePlan();const result=await api('create',{managed:true});s.submitted={...result.job,local_status:'pending',remote_status:'disabled'};s.page=0;render();message('Backup queued. You can leave this page while it runs.',false,result.job.id);await refreshJobs();}),true);
+    create.id='br-create';
+    const block=el('section',{class:'cw-page-panel br-plan','aria-labelledby':'br-plan-title'},[el('h3',{id:'br-plan-title',text:'What to back up'})]);
+    const options=el('div',{id:'br-content-options',class:'br-content-options'});
+    Object.entries(names).forEach(([key,label])=>{
+      const option=el('div',{class:'br-content-option'},[check(label,d.components.includes(key),yes=>{d.components=yes?[...new Set([...d.components,key])]:d.components.filter(v=>v!==key);render();})]);
+      if(key==='application'){
+        option.append(text('Settings, connections, sync state, mappings, blocks and custom anime rules.'));
+        if(d.components.includes(key)&&s.plan.key_source==='external')option.append(text('Keep your external configuration key separately.'));
+        if(d.components.includes(key)&&s.plan.key_source==='included')option.append(text('Configuration key included.'));
+      }
+      if(key==='trackers'&&d.components.includes(key)){
+        option.append(check('All trackers',d.trackers===null,all=>{d.trackers=all?null:s.plan.available_trackers.map(t=>t.id);render();}));
+        if(d.trackers!==null)option.append(el('div',{class:'br-tracker-options cw-scrollbars'},s.plan.available_trackers.map(t=>check(t.label,d.trackers.includes(t.id),yes=>{d.trackers=yes?[...d.trackers,t.id]:d.trackers.filter(id=>id!==t.id);}))));
+      }
+      if(key==='captures')option.append(text('Saved capture files. Restoring them does not apply them to providers.'));
+      options.append(option);
+    });
+    block.append(options,create,text('A local copy is saved on this server.'),el('div',{class:'br-plan-meta'},[el('span',{text:s.schedule.active?'Automatic: '+s.schedule.at:'Automatic backups off'}),el('span',{text:d.encrypt_local?'Encrypted':'Local ZIP'}),el('span',{text:{webdav:'Nextcloud / WebDAV',folder:'Mounted folder'}[d.destination.kind]||'This server only'})]));
     return block;
   }
   function encryptionFields() {
@@ -140,33 +136,37 @@
     return block;
   }
   async function savePlan() {
+    mergeDraft((await api('plan')).plan,s.schedule,true);
     const d=s.draft;
     s.plan=(await api('plan',{components:d.components,trackers:d.trackers,encrypt_local:!!d.encrypt_local,password:d.password||'',password_saved:!!d.password_saved,destination:d.destination,remote_keep:d.remote_keep})).plan;
-    d.password='';d.password_saved=false;d.destination=structuredClone(s.plan.destination);
+    Object.assign(d,structuredClone(s.plan),{password:'',password_saved:false});
   }
   function renderStatus() {
     const slot=$('br-status');if(!slot)return;
-    const job=s.jobs[0],nodes=[];
+    const job=runningJob()||s.jobs[0],nodes=[];
     slot.dataset.state=job?.stage||'';
+    if(s.pendingRestore)nodes.push(title('Restore prepared. Restart pending.'));
+    if(!s.statusReady)nodes.push(text('Checking backup status. Actions are paused until the server responds.'));
     if(job){
       const heading=job.stage==='failed'&&job.local_status==='saved'?'Local backup saved, destination copy failed':stages[job.stage]||job.stage;
       nodes.push(row([el('div',{class:'br-status-heading'},[el('span',{class:'br-status-dot','aria-hidden':'true'}),title(heading)]),text(job.local_status==='saved'?`Saved ${date(job.local_saved_at)}`:`Local copy: ${job.local_status}`)]));
       if(job.remote_status!=='disabled')nodes.push(text(`Destination copy: ${job.remote_status}${job.remote_verified_at?' '+date(job.remote_verified_at):''}`));
       if(job.stage==='uploading')nodes.push(el('progress',{max:Math.max(job.total_bytes||0,1),value:job.bytes||0,'aria-label':'Upload progress'}),text(`${bytes(job.bytes)} of ${bytes(job.total_bytes)}`));
       if(job.error)nodes.push(text(job.error,'br-error'));if(job.warning)nodes.push(text(job.warning));
-      if(job.stage==='failed')nodes.push(row([text(job.retry_at?`Automatic retry: ${date(job.retry_at)}`:'Automatic retries stopped. Check the destination before retrying.'),button('Retry',()=>perform(async()=>{await api('retry',{id:job.id});await refreshJobs();}))]));
+      if(job.stage==='failed')nodes.push(row([text(job.retry_at?`Automatic retry: ${date(job.retry_at)}`:'Automatic retries stopped. Check the destination before retrying.'),button('Retry',()=>perform(async()=>{const result=await api('retry',{id:job.id});s.submitted={...job,...result.job,stage:'queued'};await refreshJobs();}))]));
     }
     const verified=s.jobs.find(j=>j.remote_status==='verified');if(verified&&verified.id!==job?.id)nodes.push(text(`Last verified destination copy: ${date(verified.remote_verified_at)}`));slot.hidden=!nodes.length;slot.replaceChildren(...nodes);
   }
   function pagination(total,key,draw) {
     const pages=Math.max(1,Math.ceil(total/pageSize));s[key]=Math.min(s[key],pages-1);
-    const control=(label,step,locked)=>{const n=button(label,()=>{s[key]+=step;draw();document.querySelector(`[data-pager="${key}"] button:not(:disabled)`)?.focus({preventScroll:true});});n.dataset.locked=String(locked);n.disabled=s.busy||locked;return n;};
+    const control=(label,step,locked)=>{const n=button(label,()=>{s[key]+=step;draw();document.querySelector(`[data-pager="${key}"] button:not(:disabled)`)?.focus({preventScroll:true});},false,true);n.dataset.locked=String(locked);n.disabled=s.busy||locked;return n;};
     return el('nav',{class:'br-row br-pagination','aria-label':key==='page'?'Backup pages':'Destination backup pages','data-pager':key},[
       text(`${s[key]*pageSize+1}-${Math.min((s[key]+1)*pageSize,total)} of ${total}`),
       actions([control('Previous',-1,s[key]===0),control('Next',1,s[key]>=pages-1)])]);
   }
   function renderHistory() {
     const slot=$('br-history');if(!slot)return;
+    const count=$('br-count');if(count)count.textContent=`${s.backups.length} saved on this server`;
     const expanded=new Set([...slot.querySelectorAll('details[open]')].map(n=>n.dataset.path));
     slot.replaceChildren();
     if(!s.backups.length){s.page=0;slot.append(el('div',{class:'br-empty'},[title('No backups yet'),text('Create your first backup or restore from a file.')]));return;}
@@ -175,7 +175,7 @@
       const job=s.jobs.find(j=>j.path===b.path);
       const details=el('details',{'data-path':b.path,open:expanded.has(b.path)},[el('summary',{},[el('span',{text:`${bytes(b.size)} \u00b7 ${b.encrypted?'Encrypted':'ZIP'} \u00b7 Details`})]),el('div',{class:'br-backup-details'},[
         text(b.path),text(`${b.encrypted?'Encrypted archive':'ZIP archive'} \u00b7 ${job?.remote_status==='verified'?'Destination copy verified':'Local copy'} \u00b7 ${b.trigger==='scheduler'?'Automatic retention':'Kept until deleted'}`),actions([
-          button('Download',()=>{window.location.href=`/api/backups/download?path=${encodeURIComponent(b.path)}`;}),
+          button('Download',()=>{window.location.href=`/api/backups/download?path=${encodeURIComponent(b.path)}`;},false,true),
           button('Delete',()=>{if(window.confirm('Delete this local backup? Destination copies are kept separately.'))perform(async()=>{await api('delete',{path:b.path});await refreshList();});})])])]);
       const created=b.created_at||b.mtime,when=created?new Date(typeof created==='number'?created*1000:created):null;
       const labels=Array.isArray(b.components)?Object.keys(names).filter(key=>b.components.includes(key)).map(key=>shortNames[key]):[legacy[b.scope]||'Imported archive'];
@@ -184,11 +184,11 @@
         el('div',{class:'br-backup-info'},[badges(labels),details]),
         button('Restore',()=>{s.restore={path:b.path,password:'',validation:null,mode:'replace',instance:'',label:'Recovered tracker'};render();})])]));
     });
-    slot.append(pager);
+    slot.append(pager);updateLocks();
   }
   function restoreView() {
     const r=s.restore;
-    const section=el('section',{},[button('Back to backups',()=>{s.restore=null;render();}),title('Review restoration'),text(r.path),field('Backup password, if encrypted',input(r.password,v=>{r.password=v;},'password',{autocomplete:'off'})),button('Check backup',()=>perform(async()=>{r.validation=(await api('validate',{path:r.path,password:r.password})).validation;r.mode=r.validation.manifest.trackers?.length?'new_tracker':r.validation.available_sections?.[0]||'replace';r.instance=r.validation.manifest.trackers?.[0]?.id||'';r.confirm=false;render();}))]);
+    const section=el('section',{class:'cw-page-panel br-restore'},[button('Back to backups',()=>{s.restore=null;render();},false,true),title('Review restoration'),text(r.path),field('Backup password, if encrypted',input(r.password,v=>{r.password=v;},'password',{autocomplete:'off'})),button('Check backup',()=>perform(async()=>{r.validation=(await api('validate',{path:r.path,password:r.password})).validation;r.mode=r.validation.manifest.trackers?.length?'new_tracker':r.validation.available_sections?.[0]||'replace';r.instance=r.validation.manifest.trackers?.[0]?.id||'';r.confirm=false;render();}))]);
     if(r.validation){const manifest=r.validation.manifest;section.append(text('Archive checksums and database integrity checked.'),text(contents(manifest)));
       const options=(r.validation.available_sections||[]).filter(key=>recoverySections[key]).map(key=>[key,recoverySections[key]]);
       if(manifest.trackers?.length)options.unshift(['new_tracker','Recover one tracker as a new instance']);
@@ -196,14 +196,14 @@
       section.append(field('Restore action',select(options,r.mode,v=>{r.mode=v;r.confirm=false;render();})));
       if(r.mode==='replace'&&r.validation.application_error)section.append(text(r.validation.application_error,'br-error'));
       if(r.mode==='new_tracker')section.append(field('Tracker',select(manifest.trackers.map(t=>[t.id,t.label||t.id]),r.instance,v=>{r.instance=v;})),field('New tracker name',input(r.label,v=>{r.label=v;})),text('No sync pairs are created. Your existing tracker stays in place.'));
-      if(r.mode==='replace')section.append(text('CW saves a safety copy and applies the replacement during restart. Captures are restored as files only. No captured data is sent to providers.'),check('Replace the data contained in this backup',!!r.confirm,v=>{r.confirm=v;}));
-      if(recoverySections[r.mode])section.append(text(r.mode==='captures'?'Restores saved capture files and replaces files with the same names.':'Replaces the selected rules with those from this backup.'),text('CW saves a safety copy and restores your selection during restart.'),check('Restore only the selected data',!!r.confirm,v=>{r.confirm=v;}));
-      section.append(button(r.mode==='new_tracker'?'Recover tracker':'Restore and restart',()=>perform(async()=>{if(r.mode==='replace'&&r.validation.application_ready===false)throw new Error(r.validation.application_error);if(r.mode!=='new_tracker'&&!r.confirm)throw new Error('Confirm replacement before restoring.');const result=await api('restore',{path:r.path,password:r.password,mode:r.mode,instance:r.instance,label:r.label,confirm:!!r.confirm,restart:true});if(r.mode==='new_tracker'){s.restore=null;render();message(result.result.message);}else message('Restore prepared. CrossWatch is restarting. Reopen CW to see the result.');}),true));}
+      if(r.mode==='replace')section.append(text('CW saves a safety copy and applies the replacement during restart. Captures are restored as files only. No captured data is sent to providers.'),check('Replace the data contained in this backup',!!r.confirm,v=>{r.confirm=v;updateLocks();}));
+      if(recoverySections[r.mode])section.append(text(r.mode==='captures'?'Restores saved capture files and replaces files with the same names.':'Replaces the selected rules with those from this backup.'),text('CW saves a safety copy and restores your selection during restart.'),check('Restore only the selected data',!!r.confirm,v=>{r.confirm=v;updateLocks();}));
+      const confirm=button(r.mode==='new_tracker'?'Recover tracker':'Restore and restart',()=>perform(async()=>{if(r.mode==='replace'&&r.validation.application_ready===false)throw new Error(r.validation.application_error);if(r.mode!=='new_tracker'&&!r.confirm)throw new Error('Confirm replacement before restoring.');const result=await api('restore',{path:r.path,password:r.password,mode:r.mode,instance:r.instance,label:r.label,confirm:!!r.confirm,restart:true});if(r.mode==='new_tracker'){s.restore=null;render();message(result.result.message);}else{s.pendingRestore=true;message('Restore prepared. CrossWatch is restarting. Reopen CW to see the result.');}}),true);confirm.id='br-restore-confirm';section.append(confirm);}
     return section;
   }
   function importView() {
     let password='';const file=el('input',{type:'file',accept:'.zip,.cwbackup',class:'br-input','aria-label':'Backup archive'});
-    return el('div',{class:'br-expand'},[field('Backup archive',file),field('Backup password, if encrypted',input('',v=>{password=v;},'password',{autocomplete:'off'})),button('Import and review',()=>perform(async()=>{if(!file.files?.length)throw new Error('Choose a backup archive.');const form=new FormData();form.append('file',file.files[0]);form.append('password',password);const r=await fetch('/api/backups/upload',{method:'POST',body:form});const data=await r.json();if(!r.ok||data.ok===false)throw new Error(data.error||'Could not import this archive.');s.restore={path:data.backup.path,password,validation:null,mode:'replace',instance:'',label:'Recovered tracker'};s.section='';await refreshList();render();}),true)]);
+    return el('section',{id:'br-import',class:'cw-page-panel br-import'},[title('Restore from file'),field('Backup archive',file),field('Backup password, if encrypted',input('',v=>{password=v;},'password',{autocomplete:'off'})),button('Import and review',()=>perform(async()=>{if(!file.files?.length)throw new Error('Choose a backup archive.');const form=new FormData();form.append('file',file.files[0]);form.append('password',password);const r=await fetch('/api/backups/upload',{method:'POST',body:form});const data=await r.json();if(!r.ok||data.ok===false)throw new Error(data.error||'Could not import this archive.');s.restore={path:data.backup.path,password,validation:null,mode:'replace',instance:'',label:'Recovered tracker'};s.section='';await refreshList();render();}),true)]);
   }
   async function browseRemote() {
     message('Loading destination backups.');s.remote=(await api('remote')).backups;s.remotePage=0;s.section='remote';render();message('');
@@ -217,10 +217,10 @@
   function render() {
     const previous=document.activeElement,focusName=previous?.getAttribute('aria-label')||(previous?.tagName==='BUTTON'?previous.textContent:null);
     queueMicrotask(()=>{if(previous?.isConnected||!focusName)return;[...document.querySelectorAll('#br-body input,#br-body select,#br-body button')].find(n=>(n.getAttribute('aria-label')||n.textContent)===focusName)?.focus({preventScroll:true});});
-    const body=$('br-body');if(!body)return;renderTabs();const msg=el('div',{id:'br-message',class:s.error?'br-message is-error':'br-message',role:'status',hidden:!s.message,text:s.message});
-    if(!s.plan){body.replaceChildren(msg,text('Loading backup settings...'));return;}if(s.restore){body.replaceChildren(msg,restoreView());return;}
+    const body=$('br-body');if(!body)return;queueMicrotask(updateLocks);renderTabs();const msg=el('div',{id:'br-message',class:s.error?'br-message is-error':'br-message',role:'status',hidden:!s.message,text:s.message});
+    if(!s.plan){body.replaceChildren(msg,text('Loading backup settings...'));return;}if(s.restore){body.replaceChildren(msg,el('section',{id:'br-status',class:'br-status','aria-live':'polite',hidden:true}),restoreView());renderStatus();return;}
     const dest={webdav:'Nextcloud / WebDAV',folder:'Mounted folder'}[s.plan.destination.kind]||'This server only';
-    const section=(name,summary,key,label,form)=>el('section',{class:'br-section br-setting'},[row([el('div',{class:'br-content-summary'},[title(name),text(summary)]),button(s.section===key?'Close settings':label,()=>{s.section=s.section===key?'':key;render();})]),...(s.section===key?[form()]:[])]);
+    const section=(name,summary,key,label,form)=>el('section',{class:'cw-page-panel br-section br-setting'},[row([el('div',{class:'br-content-summary'},[title(name),text(summary)]),button(s.section===key?'Close settings':label,()=>{s.section=s.section===key?'':key;render();},false,true)]),...(s.section===key?[form()]:[])]);
     if(s.view==='settings'){
       body.replaceChildren(msg,
         section('Automatic backups',s.schedule.active?`At ${s.schedule.at} \u00b7 ${s.schedule.managed?'Uses your backup selections':'Existing schedule: '+(legacy[s.schedule.scope]||s.schedule.scope)}`:'Off','settings','Edit schedule',scheduleForm),
@@ -229,16 +229,49 @@
         ...(s.plan.destination_notice?[text(s.plan.destination_notice)]:[]));
       return;
     }
-    body.replaceChildren(msg,selection(),el('section',{id:'br-status',class:'br-status','aria-live':'polite',hidden:true}),
+    const library=el('section',{class:'br-library','aria-label':'Saved backups'},[
+      row([title('Saved backups'),el('p',{id:'br-count',class:'br-muted',text:`${s.backups.length} saved on this server`})]),
       ...(s.plan.destination_notice?[text(s.plan.destination_notice)]:[]),
-      row([title('Saved backups'),quietButton('Restore from file',()=>{s.section=s.section==='import'?'':'import';render();})]),
-      ...(s.plan.destination.kind!=='none'?[actions([button('On this server',()=>{s.section='';render();},s.section!=='remote'),button('At destination',()=>perform(browseRemote),s.section==='remote')])]:[]),
-      ...(s.section==='import'?[importView()]:[]),s.section==='remote'?el('div',{id:'br-remote'}):el('div',{id:'br-history'}));renderStatus();renderHistory();renderRemote();
+      ...(s.plan.destination.kind!=='none'?[actions([button('On this server',()=>{s.section='';render();},s.section!=='remote',true),button('At destination',()=>perform(browseRemote,true),s.section==='remote',true)])]:[]),
+      ...(s.section==='import'?[importView()]:[]),s.section==='remote'?el('div',{id:'br-remote'}):el('div',{id:'br-history'})]);
+    body.replaceChildren(msg,el('section',{id:'br-status',class:'br-status','aria-live':'polite',hidden:true}),el('div',{class:'br-workspace'},[selection(),library]));renderStatus();renderHistory();renderRemote();
   }
+
   async function refreshList(){s.backups=(await api('list')).backups||[];renderHistory();}
-  async function refreshJobs(){const result=await api('status');s.jobs=result.jobs||[];if(s.noticeJob&&s.jobs.some(j=>j.id===s.noticeJob))message('');renderStatus();const stamp=JSON.stringify(s.jobs.map(j=>[j.id,j.stage,j.local_status,j.remote_status]));if(stamp!==s.stamp){s.stamp=stamp;await refreshList();}if(result.restore&&!s.message)message(result.restore.message,!result.restore.ok);}
-  async function refresh(){const [p,sch,l]=await Promise.all([api('plan'),api('schedule'),api('list')]);s.plan=p.plan;s.schedule=sch.schedule||{};s.backups=l.backups||[];s.draft={...structuredClone(p.plan),password:'',password_saved:false,active:!!s.schedule.active,at:s.schedule.at||'03:00',days:s.schedule.days?.length?[...s.schedule.days]:[1,2,3,4,5,6,7],max_backups:s.schedule.max_backups||7};render();await refreshJobs();}
-  function open(){shell();s.opener=document.activeElement;s.message='';s.noticeJob='';s.view='backups';s.choosing=false;s.page=0;s.remotePage=0;s.section='';s.restore=null;$('cw-backups-modal').classList.remove('hidden');document.body.classList.add('br-backups-open','cx-modal-open');render();refresh().catch(e=>message(e.message,true));$('cw-backups-modal').querySelector('button')?.focus();clearInterval(s.timer);s.timer=setInterval(()=>refreshJobs().catch(e=>message(e.message,true)),2500);}
-  function close(){if(s.busy)return;clearInterval(s.timer);$('cw-backups-modal')?.classList.add('hidden');document.body.classList.remove('br-backups-open','cx-modal-open');s.draft=null;s.plan=null;s.restore=null;s.opener?.focus();}
-  window.openBackupRestore=open;(window.CW||={}).Backups={open,close,refresh};
+  async function refreshJobs(){
+    try{
+      const result=await api('status');s.jobs=result.jobs||[];s.statusReady=true;s.pendingRestore ||= !!result.pending_restore;
+      if(s.submitted&&s.jobs.some(j=>j.id===s.submitted.id))s.submitted=null;
+      if(s.noticeJob&&s.jobs.some(j=>j.id===s.noticeJob))message('');
+      renderStatus();updateLocks();
+      const stamp=JSON.stringify(s.jobs.map(j=>[j.id,j.stage,j.local_status,j.remote_status]));
+      if(stamp!==s.stamp){s.stamp=stamp;await refreshList();}
+      if(result.restore&&!s.message)message(result.restore.message,!result.restore.ok);
+    }catch(e){s.statusReady=false;renderStatus();updateLocks();throw e;}
+  }
+  function draftValues(plan,schedule) {
+    return {...structuredClone(plan),password:'',password_saved:false,active:!!schedule.active,at:schedule.at||'03:00',days:schedule.days?.length?[...schedule.days]:[1,2,3,4,5,6,7],max_backups:schedule.max_backups||7};
+  }
+  function mergeDraft(plan,schedule,preserve) {
+    const next=draftValues(plan,schedule);
+    if(preserve&&s.draft&&s.plan){
+      const previous=draftValues(s.plan,s.schedule);
+      for(const key of ['components','trackers','encrypt_local','destination','remote_keep','password','password_saved','active','at','days','max_backups']){
+        if(JSON.stringify(s.draft[key])!==JSON.stringify(previous[key]))next[key]=structuredClone(s.draft[key]);
+      }
+    }
+    Object.assign(s.draft||={},next);s.plan=plan;s.schedule=schedule;
+  }
+  async function refresh(preserve=false){const [p,sch,l]=await Promise.all([api('plan'),api('schedule'),api('list')]);mergeDraft(p.plan,sch.schedule||{},preserve);s.backups=l.backups||[];render();await refreshJobs();}
+  async function mount(root){
+    if(!root)return;
+    s.mounted=true;s.statusReady=false;shell(root);render();updateLocks();
+    clearInterval(s.timer);
+    await perform(()=>refresh(true),true);
+    if(s.mounted){clearInterval(s.timer);s.timer=setInterval(()=>{if(!s.busy)refreshJobs().catch(e=>message(e.message,true));},2500);}
+  }
+  function hide(){s.mounted=false;clearInterval(s.timer);s.timer=null;}
+  function open(){if(window.showTab&&$('page-backups'))return window.showTab('backups');window.location.href='/?main=1#backups';}
+  window.BackupsPage={mount,hide};
+  window.openBackupRestore=open;(window.CW||={}).Backups={open,refresh};
 })();
