@@ -628,6 +628,9 @@ def apply_schema(conn: sqlite3.Connection) -> int:
         conn.execute("""CREATE TABLE IF NOT EXISTS pair_scope_owners (
             pair_scope TEXT PRIMARY KEY, pair_id TEXT NOT NULL, feature TEXT NOT NULL
         )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS pair_scope_moves (
+            old_scope TEXT PRIMARY KEY, new_scope TEXT NOT NULL, created_at INTEGER NOT NULL
+        )""")
         _ensure_column(conn, "baseline_items", "collected_at", "TEXT")
         for table in ("baseline_items", "pair_baseline_items"):
             _ensure_column(conn, table, "path_metadata_json", "TEXT")
