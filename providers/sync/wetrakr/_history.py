@@ -8,6 +8,7 @@ from cw_platform.interactive_reads import retained_read
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from cw_platform.history_dates import unknown_watch
 from cw_platform.history_events import history_epoch_from_value, minimal_history_item
 from providers.sync._log import log
 from ._common import WeTrakrSyncError, item_key, media_item, tracking_rows, write_items
@@ -76,6 +77,7 @@ def _history_item(row: Mapping[str, Any], media: Any, kind: str, event_mode: boo
     item = media_item(media, kind)
     item["watched"] = True
     if row.get("watched_at_unknown"):
+        item = unknown_watch(item)
         item["_wetrakr_watched_at_unknown"] = True
     elif history_epoch_from_value(row.get("watched_at")) is not None:
         item["watched_at"] = row["watched_at"]

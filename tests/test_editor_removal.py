@@ -809,6 +809,7 @@ def _rewatch_caps(write):
     def capabilities():
         caps = {feature: {"remove": True} for feature in removal.FEATURES}
         caps["history"]["rewatches"] = {"read": True, "write": write, "account_gate": "pro_vip" if write else False}
+        caps["history"]["unknown_dates"] = {"read": True, "write": True, "rewatches": {"read": True, "write": False}}
         return caps
     return capabilities
 
@@ -1004,7 +1005,7 @@ def test_undated_rewatch_is_refused_instead_of_using_event_mode(setup, monkeypat
     monkeypatch.setattr(api, "apply_add", lambda **kw: pytest.fail("Undated rewatches must not be written"))
     result = api.api_editor_send(dict(kind="history", rewatch=True, items=[movie(watched=True, _cw_watched_state=True)],
                                       providers=[{"provider": "TRAKT", "instance": "default"}]), request=None)
-    assert result["results"][0]["error"] == "undated_rewatch_not_supported"
+    assert result["results"][0]["excluded"][0]["reason"] == "unknown_rewatch_unsupported"
 
 
 def test_undated_history_only_goes_to_providers_that_store_unknown_dates(setup, monkeypatch):
@@ -1018,7 +1019,7 @@ def test_undated_history_only_goes_to_providers_that_store_unknown_dates(setup, 
     result = api.api_editor_send(dict(kind="history", items=[item], providers=[
         {"provider": "PLEX", "instance": "default"}, {"provider": "TRAKT", "instance": "default"}]), request=None)
     rows = {row["provider"]: row for row in result["results"]}
-    assert rows["PLEX"]["error"] == "undated_not_supported"
+    assert rows["PLEX"]["excluded"][0]["reason"] == "unknown_watch_date_unsupported"
     assert [name for name, _ in seen] == ["TRAKT"]
     assert "watched_at" not in seen[0][1][0] and seen[0][1][0]["_cw_watched_state"] is True
     rows = {row["provider"]: row for row in api.api_editor_send_providers(kind="history", request=None)["providers"]}
@@ -1050,3 +1051,15 @@ def test_jellyfin_history_removal_updates_every_copy(setup, feature, flagged):
     s.execute(dict(kind=feature, items=[movie()]))
     assert seen["write"] == [True if flagged else None]
     assert seen["read"] and not any(seen["read"])
+
+
+def test_mixed_history_send_skips_only_unknown_rows(setup, monkeypatch):
+    seen = []
+    monkeypatch.setattr(api, "build_provider_config_view", lambda cfg, provider, instance: dict(provider=provider, instance=instance))
+    monkeypatch.setattr(api, "apply_add", lambda **kw: seen.extend(kw["items"]) or {"ok": True, "attempted": 1, "confirmed": 1})
+    monkeypatch.setattr(api, "_merge_sent_items_into_state", lambda *a, **k: None)
+    result = api.api_editor_send(dict(kind="history", items=[movie(watched=True, _cw_watched_state=True),
+        movie(2, watched_at="2025-06-15T12:00:00Z")], providers=[{"provider": "PLEX", "instance": "default"}]), request=None)
+    assert [row["ids"]["tmdb"] for row in seen] == ["2"]
+    assert result["confirmed"] == 1 and result["skipped"] == 1
+    assert result["results"][0]["excluded"][0]["reason"] == "unknown_watch_date_unsupported"

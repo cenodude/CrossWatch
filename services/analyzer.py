@@ -45,7 +45,8 @@ from cw_platform.orchestrator._unresolved import is_remove_retry
 from cw_platform.orchestrator._pair_skips import PairSkips, load_pair_skips
 from cw_platform.local_db.legacy_files import DB_MANAGED_ARTIFACTS
 from cw_platform.memory_release import register_cache
-from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names
+from cw_platform.modules_registry import get_sync_module_path_by_name, sync_provider_names, load_sync_ops
+from cw_platform.history_dates import is_unknown_watch, unknown_date_reason
 from cw_platform.provider_instances import normalize_instance_id
 from cw_platform.reason_labels import TRACKER_TO_MEDIA_SERVER_MESSAGE, reason_hint, reason_message
 from cw_platform.matching_details import match_details
@@ -2638,6 +2639,12 @@ class _AnalysisContext:
     pair_skips: PairSkips | None = None
 
     def skip_reason(self, src: str, feat: str, dst: str, item: Mapping[str, Any]) -> str:
+        if feat == "history" and is_unknown_watch(item):
+            provider, _ = _split_prov_token(dst)
+            event_mode = (_norm_prov_token(src), _norm_prov_token(dst)) in self.history_rewatch_pairs
+            reason = unknown_date_reason(load_sync_ops(provider), item, event_mode=event_mode)
+            if reason:
+                return reason
         if not self.pair_skips:
             return ""
         return self.pair_skips.reason(feat, _norm_prov_token(src), _norm_prov_token(dst), item)
@@ -3087,6 +3094,8 @@ def _pair_exclusions(
                 rec["excluded_libraries"] = excluded_libs
             if excluded_anime:
                 rec["excluded_anime_only"] = excluded_anime
+            if excluded_skips:
+                rec["excluded_reasons"] = excluded_skips
             if excluded_skips.get("dropped"):
                 rec["excluded_dropped"] = excluded_skips["dropped"]
             if excluded_skips.get("rewatch_reset"):

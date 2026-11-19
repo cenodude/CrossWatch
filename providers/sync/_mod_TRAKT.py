@@ -20,6 +20,12 @@ from .trakt._common import (
 from ._log import log as cw_log
 
 
+_UNKNOWN_DATES = {
+    "read": True, "write": True,
+    "rewatches": {"read": True, "write": False},
+    "multiple": {"read": False, "write": False},
+}
+
 def _confirmed_keys(key_of, items: Iterable[Mapping[str, Any]], unresolved: Any) -> list[str]:
     attempted: list[str] = []
     for it in items or []:
@@ -205,6 +211,7 @@ def get_manifest() -> Mapping[str, Any]:
                 "from_date": True,
                 "event_history": True,
                 "rewatches": {"read": True, "write": True, "account_gate": False},
+                "unknown_dates": _UNKNOWN_DATES,
             },
             "progress": {
                 "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
@@ -793,6 +800,7 @@ class _TraktOPS:
                 "from_date": True,
                 "event_history": True,
                 "rewatches": {"read": True, "write": True, "account_gate": False},
+                "unknown_dates": _UNKNOWN_DATES,
             },
             "progress": {
                 "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},

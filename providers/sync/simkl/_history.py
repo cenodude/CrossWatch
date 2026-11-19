@@ -22,6 +22,8 @@ from cw_platform.anime_mapping.service import (
 )
 from cw_platform.anime_mapping.storage import query_native_identity
 from cw_platform.id_map import minimal as id_minimal, movie_part, part_fragment
+from cw_platform.history_dates import is_unknown_watch, unknown_watch
+from cw_platform.history_events import history_sync_key
 
 from .._log import log as cw_log
 from ._common import (
@@ -1563,11 +1565,16 @@ def _undated_as_today(adapter: Any) -> bool:
 
 def _split_undated(adapter: Any, items: list[Mapping[str, Any]]) -> tuple[list[Mapping[str, Any]], list[dict[str, Any]]]:
     if _undated_as_today(adapter):
+        converted = sum(is_unknown_watch(item) for item in items)
+        if converted:
+            _info("unknown_dates_as_today", count=converted, reason="explicit_date_conversion")
         return items, []
     kept: list[Mapping[str, Any]] = []
     skipped: list[dict[str, Any]] = []
     for item in items:
-        if has_history_watch(item) and not str(item.get("watched_at") or item.get("watchedAt") or "").strip():
+        if is_unknown_watch(item) and not _rewatches_enabled(adapter):
+            kept.append({**item, "watched_at": "1970-01-01T00:00:01Z"})
+        elif has_history_watch(item) and not str(item.get("watched_at") or item.get("watchedAt") or "").strip():
             skipped.append({"item": id_minimal(item), "hint": "missing_watched_at"})
         else:
             kept.append(item)
@@ -1741,7 +1748,15 @@ def _with_watch_status(adapter: Any, index: dict[str, dict[str, Any]]) -> dict[s
 
 
 def build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:
-    return _with_watch_status(adapter, _build_index(adapter, since=since, limit=limit))
+    rows = _with_watch_status(adapter, _build_index(adapter, since=since, limit=limit))
+    out = {}
+    for key, item in rows.items():
+        if _as_epoch(item.get("watched_at")) == 1:
+            item = unknown_watch(item)
+            item.pop("_cw_event_key", None)
+            key = history_sync_key(item, event_mode=_rewatches_enabled(adapter))
+        out[key] = item
+    return out
 
 
 def _build_index(adapter: Any, since: int | None = None, limit: int | None = None) -> dict[str, dict[str, Any]]:

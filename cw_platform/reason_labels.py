@@ -8,6 +8,9 @@ import re
 from .reason_catalog import outcome_text
 
 _MATCH_MESSAGES = {
+    "unknown_watch_removal_unsafe": "Deletion was skipped because the other provider cannot safely represent this unknown watch.",
+    "unknown_watch_date_unsupported": "The destination cannot preserve an unknown watch date. This watch was skipped.",
+    "unknown_rewatch_unsupported": "The adapter cannot safely preserve this unknown-date watch in rewatch sync. This watch was skipped.",
     "ambiguous": "Multiple possible destination matches were found. No item was updated because a unique match could not be established. Check the candidates and their IDs before retrying.",
     "resolve_ambiguous": "Multiple possible destination matches were found. No item was updated because a unique match could not be established. Check the candidates and their IDs before retrying.",
     "path_ambiguous": "The path matches multiple destination items. No unique target could be established.",

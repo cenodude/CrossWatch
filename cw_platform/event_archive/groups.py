@@ -284,6 +284,7 @@ def _derive_status(events: list[dict[str, Any]], extra_problems: int = 0) -> str
         "unresolved_recorded": "unresolved",
         "write_failed": "failed",
         "write_attempted": "pending",
+        "write_skipped": "skipped",
     }
     best_status = None
     best_ts = -1
@@ -499,6 +500,8 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
             add("unresolved cleared")
         elif t == "write_succeeded":
             add(f"item {past} successfully")
+        elif t == "write_skipped":
+            add(f"{verb} skipped")
         elif t == "write_attempted":
             add(f"{verb} attempted")
         elif t == "plan_created":

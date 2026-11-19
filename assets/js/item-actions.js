@@ -132,6 +132,9 @@
       ...(rewatch ? { rewatch: true } : {}),
     });
     const row = (Array.isArray(data?.results) ? data.results : [])[0] || {};
+    const excluded = Array.isArray(row.excluded) ? row.excluded[0]?.reason : "";
+    if (excluded === "unknown_watch_date_unsupported") return { ok: false, skipped: true, error: `${name} cannot preserve an unknown watch date` };
+    if (excluded === "unknown_rewatch_unsupported") return { ok: false, skipped: true, error: `${name} cannot safely sync an unknown-date rewatch` };
     if (row.error === "rewatch_not_supported") return { ok: false, skipped: true, error: `${name} keeps one play per title` };
     if (row.error === "undated_not_supported") return { ok: false, skipped: true, error: `${name} needs a watch date` };
     if (row.error === "undated_rewatch_not_supported") return { ok: false, skipped: true, error: `Already watched on ${name}, another play needs a date` };

@@ -14,6 +14,7 @@ import pytest
 from cw_platform.anime_mapping import storage
 from cw_platform.anime_mapping.overrides import upsert_override
 from cw_platform.id_map import canonical_key
+from cw_platform.history_dates import is_unknown_watch, unknown_watch
 from cw_platform.modules_registry import load_sync_ops, state_read_features, sync_provider_names
 from providers.sync import _mod_KITSU as module
 from providers.sync.kitsu import _common, _history, _ratings, _watchlist
@@ -91,6 +92,53 @@ def dual_numbering(adapter, config_base, monkeypatch):
     return adapter
 
 
+@pytest.mark.parametrize("dates", [{}, {"finishedAt": "2026-10-07T00:00:00Z", "progressedAt": "2026-10-08T00:00:00Z",
+                                      "updatedAt": "2026-10-09T00:00:00Z"}])
+def test_history_dates_are_not_inferred_from_kitsu_entry_dates(adapter, dates):
+    adapter.client.rows = {"1": {"id": "1", "attributes": {"status": "current", "progress": 2, **dates}},
+                           "2": {"id": "2", "attributes": {"status": "completed", "progress": 1, **dates}}}
+    rows = list(_history.build_index(adapter).values())
+    assert len(rows) == 3
+    assert all(is_unknown_watch(row) for row in rows)
+
+
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+@pytest.mark.parametrize("interactive", [False, True])
+def test_unknown_progress_sync_to_kitsu_is_repeatable(adapter, mapping, monkeypatch, mode, interactive):
+    from cw_platform.orchestrator.facade import Orchestrator
+    from cw_platform.orchestrator._interactive import InteractivePlan
+    from tests.test_anilist_history_orchestrator import FakeSource
+
+    dates = {"startedAt": "2025-01-02T00:00:00Z", "finishedAt": "2025-02-03T00:00:00Z"}
+    adapter.client.rows["1"] = {"id": "1", "attributes": {"status": "current", "progress": 0, **dates}}
+    watched = [unknown_watch(episode(22)), unknown_watch(movie())]
+    source = FakeSource({canonical_key(row): row for row in watched})
+    monkeypatch.setattr(module, "KitsuClient", lambda *a: adapter.client)
+    monkeypatch.setattr(module.OPS, "health", lambda cfg: {"ok": True, "status": "ok", "features": module.supported_features()})
+    monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"JELLYFIN": source, "KITSU": module.OPS})
+    monkeypatch.setattr("cw_platform.orchestrator._snapshots.provider_configured", lambda *a: True)
+    cfg = {**mapping, "runtime": {"snapshot_ttl_sec": 0, "apply_chunk_pause_ms": 0},
+           "sync": {"dry_run": False, "enable_add": True, "enable_remove": False},
+           "pairs": [{"id": "unknown-to-kitsu", "enabled": True, "source": "JELLYFIN", "target": "KITSU", "mode": mode,
+                      "feature": "history", "features": {"history": {"enable": True, "add": True, "remove": False}}}]}
+    if interactive:
+        plan = InteractivePlan()
+        Orchestrator(cfg, interactive=plan).run(dry_run=True, write_state_json=False)
+        assert len([row for row in plan.rows.values() if row["selectable"] and is_unknown_watch(row["item"])]) == 2
+        result = Orchestrator(cfg, interactive=InteractivePlan(preview=False, selected=set(plan.rows))).run()
+    else:
+        result = Orchestrator(cfg).run()
+    assert result["errors"] == 0
+    assert adapter.client.rows["1"]["attributes"]["progress"] == 10
+    assert adapter.client.rows["2"]["attributes"]["progress"] == 1
+    assert len(adapter.client.writes) == 2
+    assert all(set(attrs) == {"status", "progress"} for _, attrs in adapter.client.writes)
+    assert all(adapter.client.rows["1"]["attributes"][key] == value for key, value in dates.items())
+    assert all(is_unknown_watch(row) for row in _history.build_index(adapter).values())
+    Orchestrator(cfg).run()
+    assert len(adapter.client.writes) == 2
+
+
 def test_history_keeps_both_coordinate_representations_for_cw(dual_numbering):
     rows = list(_history.build_index(dual_numbering).values())
     assert len(rows) == 6
@@ -161,7 +209,7 @@ def test_registry_and_capabilities():
     assert set(state_read_features(ops)) == {"watchlist", "ratings", "history"}
     assert ops.features()["progress"] is False
     assert ops.capabilities()["history"]["remove"] is True
-    assert module.get_manifest()["version"] == "0.2"
+    assert module.get_manifest()["version"] == "1.0"
 
 
 @pytest.mark.parametrize("verbose", [False, True])
@@ -585,7 +633,7 @@ def test_capture_and_sync_api_discover_kitsu(mapping, monkeypatch, config_base):
     monkeypatch.setattr("cw_platform.config_base.load_config", lambda: mapping)
     providers = json.loads(api_sync_providers().body)
     provider = next(row for row in providers if row["name"] == "KITSU")
-    assert provider["version"] == "0.2" and provider["configured"]
+    assert provider["version"] == "1.0" and provider["configured"]
     assert provider["features"]["history"] and not provider["features"]["progress"]
     monkeypatch.setattr(snapshots, "CONFIG", config_base)
     monkeypatch.setattr(module.KITSUModule, "build_index", lambda self, feature: {canonical_key(movie()): movie()})

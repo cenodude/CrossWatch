@@ -19,6 +19,7 @@ from cw_platform.history_events import base_key_from_history_event, history_epoc
 from cw_platform.id_map import canonical_key, merge_ids, minimal
 from cw_platform.local_db import crosswatch_db_path, manual_policy as sqlite_manual_policy
 from cw_platform.modules_registry import load_sync_ops, state_read_features, sync_provider_names
+from cw_platform.history_dates import is_unknown_watch, unknown_date_capabilities, split_unknown_dates
 from cw_platform.orchestrator._applier import apply_add
 from cw_platform.orchestrator._blackbox import clear_keys as clear_blackbox_keys
 from cw_platform.orchestrator._history_rewatches import config_with_history_rewatches, history_rewatch_supported
@@ -1438,16 +1439,14 @@ def _editor_send_targets(cfg: dict[str, Any], feature: str) -> list[dict[str, An
                 target["rewatch_read"] = history_rewatch_supported(provider, ops, "read")
                 target["rewatch_write"] = history_rewatch_supported(provider, ops, "write")
                 target["rewatch_gate"] = _rewatch_account_gate(ops)
-                target["undated_write"] = provider in UNDATED_HISTORY_PROVIDERS
+                target["undated_write"] = unknown_date_capabilities(ops)["write"]
+                target["unknown_dates"] = unknown_date_capabilities(ops)
             if feat == "ratings":
                 target["rating_scale"] = rating_scale(provider, cfg_view)
             targets.append(target)
 
     targets.sort(key=lambda item: (str(item.get("label") or "").lower(), str(item.get("instance") or "")))
     return targets
-
-
-UNDATED_HISTORY_PROVIDERS = frozenset({"TRAKT", "WETRAKR", "CROSSWATCH"})
 
 
 def _rewatch_send_item(item: Mapping[str, Any]) -> dict[str, Any]:
@@ -1476,7 +1475,7 @@ def _collapsed_rewatch_receipts(items: list[dict[str, Any]], result: Mapping[str
 
 
 def _undated_history_item(item: Mapping[str, Any]) -> bool:
-    return item.get("_cw_watched_state") is True and item.get("watched") is True and not item.get("watched_at")
+    return is_unknown_watch(item)
 
 
 def _rewatch_account_gate(ops: Any) -> str:
@@ -1900,9 +1899,13 @@ def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast
             totals["errors"] += 1
             continue
 
-        if feature == "history" and provider not in UNDATED_HISTORY_PROVIDERS and any(_undated_history_item(item) for item in items):
-            results.append({"provider": provider, "instance": instance, "ok": False, "error": "undated_not_supported"})
-            totals["skipped"] += len(items)
+        eligible_items, unknown_skipped = split_unknown_dates(feature, ops, items, event_mode=rewatch,
+            emit=_emit, provider=provider, instance=instance)
+        if not eligible_items:
+            results.append({"provider": provider, "instance": instance, "ok": True,
+                            "result": {"attempted": 0, "confirmed": 0, "skipped": len(unknown_skipped)},
+                            "excluded": [{"item": item, "reason": reason} for item, reason in unknown_skipped]})
+            totals["skipped"] += len(unknown_skipped)
             continue
 
         cfg_view = build_provider_config_view(cfg, provider, instance)
@@ -1913,17 +1916,13 @@ def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast
                             "result": {"errors": len(rejected), "confirmed": 0}})
             totals["errors"] += len(rejected)
             continue
-        if rewatch and any(_undated_history_item(item) for item in items):
-            results.append({"provider": provider, "instance": instance, "ok": False, "error": "undated_rewatch_not_supported"})
-            totals["skipped"] += len(items)
-            continue
         if rewatch:
             if not history_rewatch_supported(provider, ops, "write"):
                 results.append({"provider": provider, "instance": instance, "ok": False, "error": "rewatch_not_supported"})
                 totals["skipped"] += len(items)
                 continue
             cfg_view = config_with_history_rewatches(cfg_view, True)
-        send_items = [_rewatch_send_item(item) for item in items] if rewatch else items
+        send_items = [_rewatch_send_item(item) for item in eligible_items] if rewatch else eligible_items
         if rejected:
             send_items = [item for item in items if rating_supported(provider, item.get("rating"), cfg_view)]
         if provider == "PLEX" and feature == "history":
@@ -1956,7 +1955,11 @@ def api_editor_send(payload: dict[str, Any] = Body(...), request: Request = cast
             remember_sent_items(provider, instance, feature, send_items, res, rewatch=rewatch)
         if rejected:
             res = {**res, "errors": int(res.get("errors", 0) or 0) + len(rejected), "ok": False}
+        if unknown_skipped:
+            res = {**res, "skipped": int(res.get("skipped", 0) or 0) + len(unknown_skipped)}
         entry = {"provider": provider, "instance": instance, "ok": bool(res.get("ok", True)), "result": res}
+        if unknown_skipped:
+            entry["excluded"] = [{"item": item, "reason": reason} for item, reason in unknown_skipped]
         if rejected:
             entry.update(error="unsupported_rating", rejected=rejected, rating_scale=rating_scale(provider, cfg_view))
         results.append(entry)

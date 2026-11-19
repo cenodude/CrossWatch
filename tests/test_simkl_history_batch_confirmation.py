@@ -637,32 +637,30 @@ def test_simkl_source_status_failure_does_not_write_unchecked_status(env):
     session.post.assert_not_called()
 
 
-def test_simkl_skips_undated_tracker_progress_by_default(env):
+def test_simkl_preserves_unknown_dates_in_mixed_batch(env):
     adapter, session = env
     adapter.config = {"_cw_history_rewatches": False}
-    adapter.raw_cfg = {"_cw_pair_feature_options": {"feature": "history", "use_source_status": True}}
     dated = _episode(2, rewatches=False)
-    session.post.return_value = _response({"added": {"episodes": 1}, "not_found": {}})
-    undated = {**_episode(1, rewatches=False), "watched": True, "watch_status": "on_hold"}
+    session.post.return_value = _response({"added": {"episodes": 2}, "not_found": {}})
+    undated = {**_episode(1, rewatches=False), "watched": True, "_cw_watched_state": True}
     undated.pop("watched_at")
-    undated["_cw_watched_state"] = True
     count, unresolved = history.add(adapter, [undated, dated])
-    assert count == 1
-    assert [u["hint"] for u in unresolved] == ["missing_watched_at"]
+    assert count == 2 and not unresolved
     episodes = session.post.call_args.kwargs["json"]["shows"][0]["seasons"][0]["episodes"]
-    assert [e["number"] for e in episodes] == [2]
+    assert {e["number"]: e["watched_at"] for e in episodes} == {1: "1970-01-01T00:00:01Z", 2: dated["watched_at"]}
+    assert "watched_at" not in undated
 
 
-def test_simkl_skips_only_undated_batch_without_posting(env):
+def test_simkl_writes_unknown_only_batch_without_defaulting_to_today(env):
     adapter, session = env
     adapter.config = {"_cw_history_rewatches": False}
-    item = {**_episode(1, rewatches=False), "watched": True}
+    session.post.return_value = _response({"added": {"episodes": 1}, "not_found": {}})
+    item = {**_episode(1, rewatches=False), "watched": True, "_cw_watched_state": True}
     item.pop("watched_at")
-    item["_cw_watched_state"] = True
     count, unresolved = history.add(adapter, [item])
-    assert count == 0
-    assert [u["hint"] for u in unresolved] == ["missing_watched_at"]
-    session.post.assert_not_called()
+    assert count == 1 and not unresolved
+    episode = session.post.call_args.kwargs["json"]["shows"][0]["seasons"][0]["episodes"][0]
+    assert episode["watched_at"] == "1970-01-01T00:00:01Z"
 
 
 @pytest.mark.parametrize("enabled", [False, True])

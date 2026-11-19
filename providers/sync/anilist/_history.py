@@ -3,7 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import time
 from collections.abc import Iterable, Mapping
 from datetime import date, datetime, timezone
 from typing import Any
@@ -116,29 +115,6 @@ def _year(media: Mapping[str, Any]) -> int | None:
     return year
 
 
-def _fuzzy_iso(value: Any) -> str | None:
-    if not isinstance(value, Mapping):
-        return None
-    year, month, day = _to_int(value.get("year")), _to_int(value.get("month")), _to_int(value.get("day"))
-    if not year:
-        return None
-    try:
-        return date(year, month or 1, day or 1).strftime("%Y-%m-%dT00:00:00Z")
-    except ValueError:
-        return None
-
-
-def _epoch_iso(value: Any) -> str | None:
-    stamp = _to_int(value)
-    if not stamp or stamp <= 0:
-        return None
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(stamp))
-
-
-def _watched_at(entry: Mapping[str, Any]) -> str | None:
-    return _fuzzy_iso(entry.get("completedAt")) or _epoch_iso(entry.get("updatedAt")) or _epoch_iso(entry.get("createdAt"))
-
-
 def _watched_day(item: Mapping[str, Any]) -> date | None:
     text = str(item.get("watched_at") or item.get("last_watched_at") or "").strip()
     if not text:
@@ -218,7 +194,7 @@ def _watched_count(entry: Mapping[str, Any]) -> int:
     return progress
 
 
-def _movie_item(svc: AnimeMappingService, entry: Mapping[str, Any], watched_at: str) -> dict[str, Any]:
+def _movie_item(svc: AnimeMappingService, entry: Mapping[str, Any]) -> dict[str, Any]:
     media = entry["media"]
     seed = {"anilist": str(media.get("id"))}
     if media.get("idMal"):
@@ -228,7 +204,7 @@ def _movie_item(svc: AnimeMappingService, entry: Mapping[str, Any], watched_at: 
     except Exception:
         found = {}
     ids = {**seed, **{str(k): str(v) for k, v in dict(found).items() if str(v or "").strip()}}
-    return {"type": "movie", "title": _title(media), "year": _year(media) or 0, "ids": ids, "watched": True, "watched_at": watched_at}
+    return {"type": "movie", "title": _title(media), "year": _year(media) or 0, "ids": ids, "watched": True, "_cw_watched_state": True}
 
 
 def _ruled_elsewhere(tag: str, media_id: int | None, watched: int, provider: str, ident: str, season: int, episode: int) -> bool:
@@ -272,7 +248,7 @@ def _native_numbers(anilist_id: str, edges: list[dict[str, Any]], number: int) -
     return out
 
 
-def _episode_items(tag: str, entry: Mapping[str, Any], watched: int, watched_at: str) -> list[dict[str, Any]]:
+def _episode_items(tag: str, entry: Mapping[str, Any], watched: int) -> list[dict[str, Any]]:
     media = entry["media"]
     title = _title(media)
     ids = {"anilist": str(media.get("id"))}
@@ -298,7 +274,7 @@ def _episode_items(tag: str, entry: Mapping[str, Any], watched: int, watched_at:
                       if not _ruled_elsewhere(tag, media_id, watched, provider, ident, season, episode)]
         for provider, ident, season, episode in coords:
             out.append({"type": "episode", "title": title, "series_title": title, "season": int(season), "episode": int(episode),
-                        "ids": {}, "show_ids": {str(provider): str(ident)}, "watched": True, "watched_at": watched_at})
+                        "ids": {}, "show_ids": {str(provider): str(ident)}, "watched": True, "_cw_watched_state": True})
     return out
 
 
@@ -314,15 +290,14 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     unmapped = 0
     for done, entry in enumerate(_entries(adapter).values(), start=1):
         watched = _watched_count(entry)
-        watched_at = _watched_at(entry)
-        if watched <= 0 or not watched_at:
+        if watched <= 0:
             continue
         media = entry["media"]
         items: list[dict[str, Any]] = []
         if str(media.get("format") or "").strip().upper() == "MOVIE" or _to_int(media.get("episodes")) == 1:
-            items.append(_movie_item(svc, entry, watched_at))
+            items.append(_movie_item(svc, entry))
         if str(media.get("format") or "").strip().upper() != "MOVIE":
-            items.extend(_episode_items(tag, entry, watched, watched_at))
+            items.extend(_episode_items(tag, entry, watched))
         if not items:
             unmapped += 1
         for item in items:
@@ -330,7 +305,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
             mini["watched"] = True
             mini["watch_status"] = {"CURRENT": "watching", "REPEATING": "watching", "PAUSED": "on_hold",
                                     "DROPPED": "dropped", "COMPLETED": "completed", "PLANNING": "planning"}.get(str(entry.get("status") or "").upper())
-            mini["watched_at"] = watched_at
+            mini["_cw_watched_state"] = True
             key = canonical_key(mini)
             if key and key not in out:
                 out[key] = mini
@@ -435,6 +410,9 @@ def add_detailed(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, 
         plan = plan_progress(media, max(ep for ep, _key, _day, _item in group), today=max(days) if days else None)
         if not plan.get("skip"):
             variables = dict(plan["variables"])
+            if not days:
+                variables.pop("startedAt", None)
+                variables.pop("completedAt", None)
             if "startedAt" in variables and days:
                 variables["startedAt"] = _fuzzy(min(days))
             if use_source_status:

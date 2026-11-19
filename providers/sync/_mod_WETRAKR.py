@@ -16,7 +16,13 @@ from providers.sync._log import log
 from providers.sync.wetrakr import _collection, _history, _playlists, _progress, _ratings, _watchlist
 from providers.sync.wetrakr._common import WRITE_BATCH_SIZE, WeTrakrSyncError, body_of, commit_snapshot, dropped_show_tokens, item_key, request, tag_dropped_shows, write_lock
 
-__VERSION__ = "0.5"
+_UNKNOWN_DATES = {
+    "read": True, "write": True,
+    "rewatches": {"read": True, "write": False},
+    "multiple": {"read": False, "write": False},
+}
+
+__VERSION__ = "1.0"
 _MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "WETRAKRModule", "OPS"]
 _FEATURES = {"watchlist": True, "history": True, "ratings": True, "progress": True, "playlists": True, "collection": True}
@@ -80,7 +86,8 @@ def get_manifest() -> Mapping[str, Any]:
                 "provides_ids": True, "index_semantics": "present", "features": dict(_FEATURES),
                 "watchlist": {**shared, "types": {"movies": True, "shows": True, "seasons": False, "episodes": False}, "custom_lists": False},
                 "history": {**shared, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
-                    "event_history": True, "rewatches": {"read": True, "write": True, "account_gate": False}},
+                    "event_history": True, "rewatches": {"read": True, "write": True, "account_gate": False},
+                    "unknown_dates": _UNKNOWN_DATES},
                 "ratings": {"manual_scale": _MANUAL_RATING_SCALE, **shared, "step": 0.1, "zero_is_rating": True, "types": {"movies": True, "shows": True, "seasons": True, "episodes": True}},
                 "progress": {**shared, "types": {"movies": True, "shows": False, "seasons": False, "episodes": True},
                     "accepted_ids": ["tmdb", "imdb", "tvdb"], "requires_duration": False, "batch_size": 1,

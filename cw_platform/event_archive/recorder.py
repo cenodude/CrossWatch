@@ -14,7 +14,8 @@ from typing import Any
 
 from cw_platform.provider_instances import normalize_instance_id
 from cw_platform.matching_details import match_details
-from cw_platform.reason_labels import reason_hint
+from cw_platform.reason_labels import reason_hint, reason_message
+from cw_platform.history_events import history_sync_key
 
 from .db import get_conn
 from .run_scope import pair_id_from_scope, record_run_pairs, scope_key as _scope_key
@@ -379,6 +380,20 @@ class RunRecorder:
                 destination_instance=self._di or None,
                 detail={k: f.get(k) for k in ("adds", "removes", "updates", "src_count", "dst_count")},
             )
+            self._flush()
+            return
+
+        if event == "history:skipped":
+            src, si, dst, di = self._destination_route(f.get("provider"), f.get("destination_instance"))
+            reason = str(f.get("reason") or "")
+            for item in f.get("items") or []:
+                if not isinstance(item, Mapping):
+                    continue
+                self._add(event_type="write_skipped", operation=str(f.get("op") or "add"),
+                          source_provider=src or None, destination_provider=dst or None,
+                          source_instance=si or None, destination_instance=di or None,
+                          item_key=history_sync_key(item, event_mode=True), reason_code=reason,
+                          reason=reason_message(reason) or reason, **_item_fields(item))
             self._flush()
             return
 

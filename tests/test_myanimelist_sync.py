@@ -460,7 +460,7 @@ def test_capture_and_sync_api_discover_myanimelist(mapping, monkeypatch, config_
     monkeypatch.setattr("cw_platform.config_base.load_config", lambda: mapping)
     providers = json.loads(api_sync_providers().body)
     provider = next(row for row in providers if row["name"] == "MYANIMELIST")
-    assert provider["version"] == "0.3" and provider["configured"]
+    assert provider["version"] == "1.0" and provider["configured"]
     assert provider["features"]["history"] and not provider["features"]["progress"]
     monkeypatch.setattr(snapshots, "CONFIG", config_base)
     monkeypatch.setattr(module.MYANIMELISTModule, "build_index", lambda self, feature: {canonical_key(movie()): movie()})
@@ -622,6 +622,7 @@ def test_undated_mal_history_can_be_used_as_source(adapter, mapping, monkeypatch
     adapter.client.rows["1"].update(num_episodes_watched=3)
     target = FakeSource({})
     monkeypatch.setattr(target, "name", lambda: "SIMKL")
+    monkeypatch.setattr(target, "capabilities", lambda: {"history": {"unknown_dates": {"read": True, "write": True}}})
     monkeypatch.setattr(module, "MyAnimeListClient", lambda *a: adapter.client)
     monkeypatch.setattr(module.OPS, "health", lambda cfg: {"ok": True, "status": "ok", "features": module.supported_features(), "api": {}})
     monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"SIMKL": target, "MYANIMELIST": module.OPS})
@@ -637,6 +638,42 @@ def test_undated_mal_history_can_be_used_as_source(adapter, mapping, monkeypatch
     assert all(item["watched"] is True and not item.get("watched_at") for item in sent)
 
 
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+@pytest.mark.parametrize("interactive", [False, True])
+def test_unknown_watches_reach_mal_without_dates_or_repeat_writes(adapter, mapping, monkeypatch, mode, interactive):
+    from cw_platform.history_dates import is_unknown_watch, unknown_watch
+    from cw_platform.orchestrator.facade import Orchestrator
+    from cw_platform.orchestrator._interactive import InteractivePlan
+    from tests.test_anilist_history_orchestrator import FakeSource
+
+    watched = unknown_watch({**episode(15), "season": 3, "show_ids": {"tvdb": "10"}})
+    source = FakeSource({canonical_key(watched): watched})
+    monkeypatch.setattr(source, "name", lambda: "TRAKT")
+    monkeypatch.setattr(module, "MyAnimeListClient", lambda *a: adapter.client)
+    monkeypatch.setattr(module.OPS, "health", lambda cfg: {"ok": True, "status": "ok", "features": module.supported_features()})
+    monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"TRAKT": source, "MYANIMELIST": module.OPS})
+    monkeypatch.setattr("cw_platform.orchestrator._snapshots.provider_configured", lambda *a: True)
+    cfg = {**mapping, "runtime": {"snapshot_ttl_sec": 0, "apply_chunk_pause_ms": 0},
+           "sync": {"dry_run": False, "enable_add": True, "enable_remove": False},
+           "pairs": [{"id": "unknown-to-mal", "enabled": True, "source": "TRAKT", "target": "MYANIMELIST", "mode": mode,
+                      "feature": "history", "features": {"history": {"enable": True, "add": True, "remove": False}}}]}
+    if interactive:
+        review = InteractivePlan()
+        Orchestrator(cfg, interactive=review).run(dry_run=True, write_state_json=False)
+        assert any(row["selectable"] and is_unknown_watch(row["item"]) for row in review.rows.values())
+        result = Orchestrator(cfg, interactive=InteractivePlan(preview=False, selected=set(review.rows))).run()
+    else:
+        result = Orchestrator(cfg).run()
+    assert result["errors"] == 0
+    assert adapter.client.rows["1"]["num_episodes_watched"] == 3
+    writes = [call for call in adapter.client.calls if call[0] == "PATCH"]
+    assert len(writes) == 1
+    assert "start_date" not in writes[0][2]["data"] and "finish_date" not in writes[0][2]["data"]
+    assert all(is_unknown_watch(row) for row in _history.build_index(adapter).values())
+    Orchestrator(cfg).run()
+    assert len([call for call in adapter.client.calls if call[0] == "PATCH"]) == 1
+
+
 def test_history_filters_keep_explicit_undated_watches_but_not_synthetic_rows():
     from cw_platform.orchestrator._history_rewatches import filter_history_events
     from cw_platform.orchestrator._snapshots import _eventish_count
@@ -649,7 +686,7 @@ def test_history_filters_keep_explicit_undated_watches_but_not_synthetic_rows():
         "tvdb:20": {"type": "show", "ids": {"tvdb": "20"}, "watched": True, "_cw_watched_state": True},
     }
     assert set(filter_history_events(rows, event_mode=False)) == {"tmdb:1", "tvdb:10#s01e01"}
-    assert filter_history_events(rows, event_mode=True) == {}
+    assert set(filter_history_events(rows, event_mode=True)) == {"tmdb:1", "tvdb:10#s01e01"}
     assert _eventish_count("history", rows) == 2
 
 
