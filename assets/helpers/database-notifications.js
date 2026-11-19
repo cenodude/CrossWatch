@@ -5,6 +5,8 @@
 (() => {
   let timer, controller;
   const duration = seconds => seconds >= 120 ? `${Math.round(seconds / 60)} minutes` : `${seconds} seconds`;
+  const MB = 1024 * 1024;
+  const size = bytes => bytes >= 1024 * MB ? `${(bytes / (1024 * MB)).toFixed(1)} GB` : `${Math.round(bytes / MB)} MB`;
   function items(status) {
     if (!status) return [];
     const managed = document.documentElement.dataset.cwRole === "user";
@@ -21,6 +23,13 @@
       title: "Database on a network share",
       detail: `The local database is on ${status.filesystem || "a network filesystem"}. SQLite locking is unreliable there, which can make CrossWatch slow or stuck. Move /config to local storage.`,
       icon: "lan", href: "/#settings/maintenance", action: "Open maintenance",
+    });
+    const reclaimable = Number(status.reclaimable_bytes) || 0;
+    if (status.reclaim_suggested && !managed) out.push({
+      id: `reclaim:${Math.floor(reclaimable / (100 * MB))}`,
+      title: "Database can be compacted",
+      detail: `${size(reclaimable)} of the ${size(Number(status.file_bytes) || 0)} local database is unused space. Run Optimize database under Events in Maintenance to free it.`,
+      icon: "compress", href: "/#settings/maintenance", action: "Open maintenance",
     });
     return out;
   }

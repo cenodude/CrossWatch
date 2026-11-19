@@ -218,6 +218,19 @@ test("managed users see the busy notice without maintenance or storage details",
   assert.doesNotMatch(app.html(), /network share|settings\/maintenance/);
 });
 
+test("large free space suggests compacting to admins only", async () => {
+  const MB=1024*1024, status={busy:false,filesystem:"ext4",network_filesystem:false,file_bytes:1200*MB,reclaimable_bytes:640*MB,reclaim_suggested:true};
+  const admin=await databaseApp(status);
+  assert.match(admin.html(), /Database can be compacted/);
+  assert.match(admin.html(), /640 MB of the 1\.2 GB local database is unused space/);
+  assert.match(admin.html(), /Optimize database/);
+  assert.match(admin.html(), /href="\/#settings\/maintenance"/);
+  const managed=await databaseApp(status,{role:"user"});
+  assert.doesNotMatch(managed.html(), /Database can be compacted/);
+  const small=await databaseApp({...status,reclaim_suggested:false});
+  assert.doesNotMatch(small.html(), /Database can be compacted/);
+});
+
 test("an idle database on local storage adds no notifications", async () => {
   const app=await databaseApp({busy:false,operation:null,seconds:0,since:null,filesystem:"ext4",network_filesystem:false});
   assert.match(app.html(), /all caught up/);

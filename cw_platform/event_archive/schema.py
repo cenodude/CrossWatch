@@ -124,6 +124,15 @@ CREATE TABLE IF NOT EXISTS run_pairs (
 ) WITHOUT ROWID
 """
 
+_CREATE_RUN_ISSUE_COUNTS = """
+CREATE TABLE IF NOT EXISTS run_issue_counts (
+    run_id   TEXT NOT NULL,
+    feature  TEXT NOT NULL DEFAULT '',
+    items    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (run_id, feature)
+) WITHOUT ROWID
+"""
+
 _CREATE_EVENT_IMPORTS = """
 CREATE TABLE IF NOT EXISTS event_imports (
     source_file        TEXT PRIMARY KEY,
@@ -163,6 +172,7 @@ _GROUP_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_groups_acknowledged ON event_groups(acknowledged_at)",
     "CREATE INDEX IF NOT EXISTS idx_groups_ack_last_id ON event_groups(acknowledged_at, last_event_at, id)",
     "CREATE INDEX IF NOT EXISTS idx_groups_domain_last ON event_groups(domain, last_event_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_groups_operation_window ON event_groups(operation, last_event_at, first_event_at)",
 )
 
 
@@ -173,6 +183,8 @@ _ADD_COLUMNS = (
     ("events", "domain", "TEXT DEFAULT 'sync'"),
     ("events", "session_key", "TEXT"),
     ("event_groups", "domain", "TEXT DEFAULT 'sync'"),
+    ("event_groups", "run_owned", "INTEGER DEFAULT 0"),
+    ("event_groups", "health_only", "INTEGER DEFAULT 0"),
 )
 
 _EXTRA_INDEXES = (
@@ -184,7 +196,8 @@ _EXTRA_INDEXES = (
 
 
 def _create_tables(conn: sqlite3.Connection) -> None:
-    for stmt in (_CREATE_SYNC_RUNS, _CREATE_EVENTS, _CREATE_EVENT_GROUPS, _CREATE_EVENT_IMPORTS, _CREATE_RUN_PAIRS):
+    for stmt in (_CREATE_SYNC_RUNS, _CREATE_EVENTS, _CREATE_EVENT_GROUPS, _CREATE_EVENT_IMPORTS, _CREATE_RUN_PAIRS,
+                 _CREATE_RUN_ISSUE_COUNTS):
         conn.execute(stmt)
 
 
