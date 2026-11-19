@@ -48,6 +48,11 @@ class MyAnimeListSink(ScrobbleSink):
             reason = str(unresolved[0].get("reason") or "request_failed")
             _log(f"myanimelist watched write not applied '{ev.title or ''}' season={ev.season} episode={ev.number} reason={reason}", "DEBUG")
             if reason.startswith("request_failed"):
+                watch = scrobble.get("watch") or {}
+                record_watch(ev, action="stop", source_provider=str(watch.get("route_provider") or "watcher"),
+                             source_instance=str(watch.get("route_provider_instance") or "default"),
+                             destination_provider="myanimelist", destination_instance=self._instance_id,
+                             status="fail", progress=ev.progress, reason=reason)
                 return {"ok": False, "error": reason, "retryable": "MyAnimeListAuthError" not in reason}
             return {"ok": True, "skipped": True, "reason": reason}
         _log(f"myanimelist marked watched '{ev.title or ''}' season={ev.season} episode={ev.number} inst={self._instance_id}", "DEBUG")

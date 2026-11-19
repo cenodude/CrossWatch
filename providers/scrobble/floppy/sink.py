@@ -330,6 +330,8 @@ class FloppySink(ScrobbleSink):
             return {"ok": False, "error": reason, "retryable": retryable}
         except Exception as exc:
             _log(f"scrobble failed err={exc}", "ERROR")
+            if body.get("action") in {"start", "stop"}:
+                record_watch(ev, action=str(body.get("action")), source_provider=src, source_instance=src_inst, destination_provider="floppy", destination_instance=self._instance_id, status="fail", progress=progress, reason="request_failed")
             if is_complete_stop:
                 self._mark_session(complete_key, "uncertain")
             return {"ok": False, "error": "request_failed", "retryable": not is_complete_stop}

@@ -17,7 +17,7 @@ from cw_platform.app_version import app_version, user_agent as http_user_agent
 from cw_platform.config_base import load_config
 from cw_platform.trakt_http import paced_request as trakt_paced_request
 from cw_platform.local_db.ttl_dedupe import once_per_ttl
-from cw_platform.provider_instances import normalize_instance_id
+from cw_platform.provider_instances import get_provider_block, normalize_instance_id
 
 try:
     from _logging import log as BASE_LOG
@@ -109,17 +109,7 @@ def _safe_log_repr(value: Any) -> str:
 
 
 def _merged_provider_block(cfg: Mapping[str, Any], key: str, instance_id: Any = None) -> dict[str, Any]:
-    base = cfg.get(key) if isinstance(cfg, Mapping) else None
-    blk = dict(base or {}) if isinstance(base, Mapping) else {}
-    inst = normalize_instance_id(instance_id)
-    if inst != "default":
-        insts = blk.get("instances")
-        if isinstance(insts, Mapping) and isinstance(insts.get(inst), Mapping):
-            overlay = dict(insts.get(inst) or {})
-            blk.pop("instances", None)
-            out = dict(blk)
-            out.update(overlay)
-            return out
+    blk = get_provider_block(cfg if isinstance(cfg, Mapping) else {}, key, instance_id)
     blk.pop("instances", None)
     return blk
 
@@ -922,7 +912,7 @@ class TraktSink(ScrobbleSink):
         auth_trakt = _merged_provider_block({"trakt": auth_trakt_base} if isinstance(auth_trakt_base, dict) else {}, "trakt", inst)
 
         cfg = dict(cfg)
-        cfg["trakt"] = dict(t)
+        cfg["trakt"] = dict(t) if inst == "default" else {**t, "instances": {inst: dict(t)}}
 
         client_id = t.get("client_id") or t.get("api_key")
         token = _TOKEN_OVERRIDE.get(inst) or t.get("access_token") or auth_trakt.get("access_token")

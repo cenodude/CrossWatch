@@ -200,12 +200,15 @@ class ScrobSink(ScrobbleSink):
             try:
                 cfg = self._cfg_provider()
                 if isinstance(cfg, Mapping):
-                    if (cfg.get("_cw_scrobble_sink") or {}).get("provider") == "scrob":
-                        return scrobble_sink_config(dict(cfg), "scrob", self.instance_id)
-                    return dict(cfg)
+                    return self._prepared(cfg)
             except Exception:
                 pass
         return _cfg()
+
+    def _prepared(self, cfg: Mapping[str, Any]) -> dict[str, Any]:
+        if (cfg.get("_cw_scrobble_sink") or {}).get("provider") == "scrob":
+            return scrobble_sink_config(dict(cfg), "scrob", self.instance_id)
+        return dict(cfg)
 
     def _block(self, cfg: Mapping[str, Any]) -> dict[str, Any]:
         try:
@@ -307,8 +310,8 @@ class ScrobSink(ScrobbleSink):
             else:
                 _SESSIONS[scope] = before
 
-    def send(self, event: Any) -> dict[str, Any] | None:
-        cfg = self.config
+    def send(self, event: Any, cfg: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
+        cfg = self._prepared(cfg) if isinstance(cfg, Mapping) else self.config
         block = self._block(cfg)
         if not (str(block.get("server_url") or "").strip() and str(block.get("api_key") or "").strip()):
             _log("SCROB: skip scrobble, not connected", "DEBUG")

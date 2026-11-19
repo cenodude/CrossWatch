@@ -25,7 +25,6 @@ from providers.webhooks.config import apply_webhook_settings, media_source_conne
 from providers.scrobble.routes import build_route_cfg_by_id, normalize_route_options, normalize_routes
 from providers.scrobble.scrobble import mask_account as _mask_account
 from providers.scrobble.sources import scrobble_sources
-from services.activity import add_event as _activity_add_event
 
 try:
     from providers.scrobble.currently_watching import load_state as _cw_load_state
@@ -676,57 +675,6 @@ def _emit_scheduler_webhook_event(provider: str, payload: dict[str, Any], result
     except Exception:
         pass
 
-
-def _emit_activity_webhook_event(provider: str, payload: dict[str, Any], result: dict[str, Any]) -> None:
-    if not isinstance(result, dict):
-        return
-    if result.get("error") or result.get("ignored") or result.get("debounced") or result.get("suppressed") or result.get("dedup"):
-        return
-    if result.get("route_dispatch") or result.get("activity_recorded"):
-        return
-    for value in result.values():
-        if isinstance(value, dict) and (value.get("route_dispatch") or value.get("activity_recorded")):
-            return
-    action = str(result.get("action") or "").strip().lower()
-    if action not in {"/scrobble/stop", "stop"}:
-        return
-
-    try:
-        event = _scheduler_event_webhook_payload(provider, payload or {}, result)
-        trakt_payload = result.get("trakt")
-        trakt_action = str(trakt_payload.get("action") or "").strip().lower() if isinstance(trakt_payload, dict) else ""
-        confirmed_scrobble = trakt_action in {"scrobble", "stop"}
-        confirmed_conflict = str(result.get("note") or "").strip().lower() == "409_checkin"
-        if trakt_action and not confirmed_scrobble:
-            return
-        if not trakt_action and not confirmed_conflict and not bool(event.get("finished")):
-            return
-        media_type = str(event.get("media_type") or "").strip().lower()
-        if media_type not in {"movie", "episode"}:
-            return
-        _activity_add_event(
-            {
-                "kind": "scrobble",
-                "method": "webhook",
-                "event": "scrobble_stop",
-                "status": "ok",
-                "source": provider,
-                "source_instance": "default",
-                "target": "trakt",
-                "target_instance": "default",
-                "media_type": media_type,
-                "title": event.get("title"),
-                "season": event.get("season"),
-                "episode": event.get("episode"),
-                "progress": event.get("progress"),
-                "account": event.get("account"),
-                "watched_at": event.get("ts"),
-                "captured_at": event.get("ts"),
-                "ids": event.get("ids") or {},
-            }
-        )
-    except Exception:
-        pass
 
 def _plex_token(cfg: dict[str, Any]) -> str:
     return ((cfg.get("plex") or {}).get("account_token") or "").strip()
@@ -1503,7 +1451,6 @@ async def webhook_jellyfintrakt(request: Request) -> JSONResponse:
         "DEBUG",
     )
     _emit_scheduler_webhook_event("jellyfin", payload, res)
-    _emit_activity_webhook_event("jellyfin", payload, res)
     return JSONResponse(
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,
@@ -1656,7 +1603,6 @@ async def webhook_embytrakt(request: Request) -> JSONResponse:
         "DEBUG",
     )
     _emit_scheduler_webhook_event("emby", payload, res)
-    _emit_activity_webhook_event("emby", payload, res)
     return JSONResponse(
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,
@@ -1781,7 +1727,6 @@ async def webhook_trakt(request: Request) -> JSONResponse:
         "DEBUG",
     )
     _emit_scheduler_webhook_event("plex", payload, res)
-    _emit_activity_webhook_event("plex", payload, res)
     return JSONResponse(
         {"ok": True, **{k: v for k, v in res.items() if k != "error"}},
         status_code=200,

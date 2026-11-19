@@ -361,6 +361,17 @@ def dispatch_scrobble(
             target["ok"] = False
             target["error"] = str(e)
             _emit(logger, f"webhook sink {sink}:{inst} failed: {e}", "ERROR")
+            if ev.action in ("start", "stop"):
+                try:
+                    from cw_platform.event_archive import record_watch
+
+                    record_watch(
+                        ev, action=ev.action, source_provider=provider_lc, source_instance=provider_inst,
+                        destination_provider=sink, destination_instance=inst,
+                        status="fail", progress=ev.progress, reason=str(e) or type(e).__name__,
+                    )
+                except Exception:
+                    pass
         if target.get("ok") is False and not target.get("skipped"):
             record_playback(ev, route_cfg, delivery="failed", reason=str(target.get("error") or "unknown"))
         targets.append(target)

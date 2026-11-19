@@ -274,8 +274,8 @@ class PunchPlaySink(ScrobbleSink):
             else:
                 _SESSIONS[scope] = before
 
-    def send(self, event: Any) -> dict[str, Any] | None:
-        cfg = self.config
+    def send(self, event: Any, cfg: Mapping[str, Any] | None = None) -> dict[str, Any] | None:
+        cfg = dict(cfg) if isinstance(cfg, Mapping) else self.config
         block = self._block(cfg)
         if not str(block.get("access_token") or "").strip():
             _log("PUNCHPLAY: skip scrobble, not connected", "DEBUG")

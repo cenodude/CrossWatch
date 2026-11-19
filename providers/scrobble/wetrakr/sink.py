@@ -123,6 +123,7 @@ class WeTrakrSink:
             item = _item(event)
             body = _body(item, max(0.01, progress))
         except WeTrakrSyncError as exc:
+            self._archive(event, config, event.action, progress, "fail", exc.reason)
             return {"ok": False, "error": exc.reason, "retryable": False}
         adapter = WETRAKRModule(config, self.instance_id)
         watch = (config.get("scrobble") or {}).get("watch") or {}

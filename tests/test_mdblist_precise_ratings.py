@@ -184,7 +184,7 @@ def test_plex_forwarding_preserves_half_points(monkeypatch, entrypoint):
 
     calls = []
     monkeypatch.setattr(plex, "_save_config", lambda cfg: None)
-    monkeypatch.setattr(watch, "_mdblist_send_rating", lambda media_type, ids, rating, cfg, logger:
+    monkeypatch.setattr(watch, "_mdblist_send_rating", lambda media_type, ids, rating, cfg, logger, instance_id=None:
                         calls.append(rating) or {"ok": True})
     for mod in (watch, plex):
         mod._LAST_RATING_BY_ACC.clear()

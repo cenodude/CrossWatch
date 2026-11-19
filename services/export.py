@@ -1293,7 +1293,9 @@ def _export_file(provider: str, provider_instance: str, feature: str, format: st
                  q: str, ids: str, request: Request, *,
                  selected: list[str] | None = None, excluded: set[str] | None = None) -> Response:
     provider_in = (provider or "").upper().strip()
-    provider_eff = provider_in or "TRAKT"
+    if not provider_in:
+        raise HTTPException(400, "Provider is required")
+    provider_eff = provider_in
     feature = feature.lower().strip()
     q = q if isinstance(q, str) else ""
     s = _load_state(_state_features_for_export(feature))
