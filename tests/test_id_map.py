@@ -7,7 +7,9 @@ from cw_platform.id_map import (
     ids_from_jellyfin_providerids,
     keys_for_item,
     merge_ids,
+    minimal,
 )
+from providers.sync.trakt._common import normalize_watchlist_row
 
 
 def test_ids_from_guid_common_patterns() -> None:
@@ -63,3 +65,24 @@ def test_merge_ids_keeps_priority_and_fills_gaps() -> None:
     merged = merge_ids(old, new)
     assert merged["imdb"] == "tt0000001"
     assert merged["tmdb"] == "123"
+
+
+TRAKT_PLEX = {"guid": "5d776825880197001ec967c4", "slug": "the-matrix"}
+
+
+def test_object_id_values_are_dropped() -> None:
+    ids = minimal({"type": "episode", "season": 1, "episode": 1,
+                   "ids": {"tmdb": 6768683, "plex": {"guid": "694ad6302bf41624d91a2ea4"}, "tvdb": [1]}})["ids"]
+    assert ids == {"tmdb": "6768683"}
+    assert "plex" not in merge_ids({"plex": TRAKT_PLEX}, {"imdb": "tt0133093"})
+
+
+def test_trakt_plex_object_is_not_a_plex_id() -> None:
+    row = {"type": "movie", "movie": {"title": "The Matrix", "year": 1999,
+           "ids": {"trakt": 481, "imdb": "tt0133093", "tmdb": 603, "plex": TRAKT_PLEX}}}
+    assert "plex" not in normalize_watchlist_row(row)["ids"]
+    episode = {"type": "episode", "episode": {"season": 1, "number": 2, "ids": {"tmdb": 1, "plex": {"guid": "a1"}}},
+               "show": {"title": "Show", "ids": {"tvdb": 9, "plex": TRAKT_PLEX}}}
+    out = normalize_watchlist_row(episode)
+    assert "plex" not in out["ids"]
+    assert "plex" not in out["show_ids"]

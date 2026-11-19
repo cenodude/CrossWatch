@@ -143,7 +143,7 @@ def _build_guid_index(adapter: Any, allow: set[str], *, force: bool = False, fea
     _clear_guid_index()
     srv = getattr(getattr(adapter, "client", None), "server", None)
     key, _ = _index_cache_context(adapter, allow, feature)
-    entry: dict[str, Any] = {"key": key, "movies": {}, "shows": {}}
+    entry: dict[str, Any] = {"key": key, "movies": {}, "shows": {}, "show_copies": {}}
     requests_made = 0
     for sec in adapter.libraries(types=("movie", "show")) or []:
         sid = str(getattr(sec, "key", "") or "").strip()
@@ -161,6 +161,10 @@ def _build_guid_index(adapter: Any, allow: set[str], *, force: bool = False, fea
                 gg = str(g or "").strip().lower()
                 if gg and gg not in dst:
                     dst[gg] = rk
+                if gg and not is_movie:
+                    copies = entry["show_copies"].setdefault(gg, [])
+                    if (rk, sid) not in copies:
+                        copies.append((rk, sid))
     entry["ts"] = time.monotonic()
     _INDEX_CACHE.guid = entry
     _dbg("index_fetch_counts", source="guid_index", movies=len(entry["movies"]), shows=len(entry["shows"]), requests=requests_made)
@@ -175,6 +179,17 @@ def _pms_find_in_guid_index(libtype: str, candidates: list[str]) -> str | None:
         if gg and gg in src:
             return src[gg]
     return None
+
+
+def _pms_show_copies_in_guid_index(candidates: list[str]) -> list[str]:
+    entry = getattr(_INDEX_CACHE, "guid", None) or {}
+    src = entry.get("show_copies") or {}
+    out: list[str] = []
+    for g in candidates or []:
+        for rk, _sid in src.get(str(g or "").strip().lower(), ()):
+            if rk not in out:
+                out.append(rk)
+    return out
 
 
 CLASS_IN_CATALOG_WATCHED = "in_catalog_watched"

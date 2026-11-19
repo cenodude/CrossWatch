@@ -117,7 +117,7 @@ from ._snapshots import (
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
 from ._tombstones import clear_items_for_feature, keys_for_feature, media_tombstone_tokens
-from ._unresolved import load_unresolved_keys, load_unresolved_pending, record_unresolved, clear_unresolved, clear_matched_history_retries
+from ._unresolved import load_unresolved_keys, load_unresolved_pending, record_unresolved, clear_unresolved, clear_matched_history_retries, clear_library_skipped
 from ._phantoms import PhantomGuard  # type: ignore[attr-defined]
 
 from ._pairs_blocklist import apply_blocklist
@@ -2132,6 +2132,15 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
                 if resolved:
                     resolved_items = {key: items[event_key] for key, event_key in resolved.items()}
                     _emit_item_resolutions(emit, provider, feature, pair_key, resolved, resolved_items, instance=instance)
+        for provider, skipped, instance in ((a, library_skipped_A, a_cfg.get("_cw_provider_instance")), (b, library_skipped_B, b_cfg.get("_cw_provider_instance"))):
+            if not skipped:
+                continue
+            try:
+                cleared = clear_library_skipped(provider, feature, [it for it, _reason in skipped], instance=instance)
+                if cleared.get("count"):
+                    emit("debug", msg="library_only.unresolved_cleared", feature=feature, dst=provider, count=cleared["count"])
+            except Exception:
+                pass
 
     review = getattr(ctx, "interactive", None)
     if review is not None:

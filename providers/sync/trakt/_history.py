@@ -25,6 +25,7 @@ from ._common import (
     _last_limit_path,
     _record_limit_error,
     headers_for_adapter,
+    scalar_ids,
     watch_only_once,
 )
 from .._mod_common import request_with_retries
@@ -773,8 +774,8 @@ def _search_trakt_episode(adapter: Any, service: str, value: str, *, timeout: fl
                 episode = dict(hit.get("episode") or {})
                 show = dict(hit.get("show") or {})
                 out = {
-                    "ids": {k: str(v) for k, v in (episode.get("ids") or {}).items() if v not in (None, "")},
-                    "show_ids": {k: str(v) for k, v in (show.get("ids") or {}).items() if v not in (None, "")},
+                    "ids": scalar_ids(episode.get("ids")),
+                    "show_ids": scalar_ids(show.get("ids")),
                     "season": _int_or_none(episode.get("season")),
                     "episode": _int_or_none(episode.get("number")),
                     "title": episode.get("title"),
@@ -864,7 +865,7 @@ def _trakt_show_catalog(adapter: Any, show_ids: Mapping[str, Any], *, timeout: f
                             "episode": e_num,
                             "number_abs": _int_or_none(ep.get("number_abs")),
                             "title": ep.get("title"),
-                            "ids": {k: str(v) for k, v in (ep.get("ids") or {}).items() if v not in (None, "")},
+                            "ids": scalar_ids(ep.get("ids")),
                         }
                     )
     except Exception as e:

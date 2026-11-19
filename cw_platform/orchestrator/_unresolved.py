@@ -561,6 +561,24 @@ def clear_superseded_keys(
     return clear_unresolved(dst, feature, stale, instance=instance)
 
 
+def clear_library_skipped(
+    dst: str,
+    feature: str,
+    items: Iterable[Mapping[str, Any]],
+    instance: str | None = None,
+) -> dict[str, Any]:
+    records = load_unresolved_map(dst, feature, cross_features=False, instance=instance)
+    if not records:
+        return {"ok": True, "count": 0}
+    blocking = _read_json(_blocking_path(dst, feature, instance=instance))
+    keys: set[str] = set()
+    for item in items or []:
+        ck, _min = _to_ck_and_min(item)
+        keys.update(k for k in ({ck} | _alias_keys(item)) if k)
+    stale = [key for key in keys if key in records and not (is_remove_retry(records[key]) or is_remove_retry(blocking.get(key)))]
+    return clear_unresolved(dst, feature, stale, instance=instance)
+
+
 def clear_unresolved_all_scopes(dst: str, feature: str, keys: Iterable[str]) -> dict[str, Any]:
     key_set = {str(k) for k in (keys or []) if k}
     if not dst or not feature or not key_set or not STATE_DIR.exists():

@@ -296,17 +296,17 @@ def _guid_presence(adapter: Any, rows: list[dict[str, Any]], feature: str) -> li
             return lp.unknown("not_checkable")
 
         out: list[dict[str, Any] | None] = [None] * len(rows)
-        pending: list[tuple[int, str, str, int | None, int | None]] = []
+        pending: list[tuple[int, tuple[str, ...], str, int | None, int | None]] = []
         for index, row in enumerate(rows):
             raw_kind = str(row.get("type") or "").strip().lower()
             kind = kind_map.get(raw_kind, raw_kind or "movie")
             ids = ids_from(row)
-            if kind not in kinds or ids.get("plex"):
+            if kind not in kinds:
                 out[index] = lp.unknown("not_checkable")
                 continue
             if kind in ("movie", "show"):
                 if not lp.external_ids(ids):
-                    out[index] = uncheckable(item_guid_candidates(ids, {}, row))
+                    out[index] = lp.unknown("not_checkable") if ids.get("plex") else uncheckable(item_guid_candidates(ids, {}, row))
                     continue
                 rk = history._pms_find_in_guid_index(kind, item_guid_candidates(ids, {}, row))
                 out[index] = lp.verdict(lp.PRESENT, item_id=rk) if rk else lp.verdict(lp.ABSENT, reason=lp.REASON)
@@ -316,20 +316,22 @@ def _guid_presence(adapter: Any, rows: list[dict[str, Any]], feature: str) -> li
             season = _number(row.get("season") if row.get("season") is not None else row.get("season_number"))
             episode = _number(row.get("episode") if row.get("episode") is not None else row.get("episode_number"))
             if not lp.external_ids(show_ids):
-                out[index] = uncheckable(item_guid_candidates(ids, show_ids, row))
+                out[index] = lp.unknown("not_checkable") if ids.get("plex") else uncheckable(item_guid_candidates(ids, show_ids, row))
                 continue
             if season is None or (kind == "episode" and episode is None):
                 out[index] = lp.unknown("not_checkable")
                 continue
-            show_rk = history._pms_find_in_guid_index("show", item_guid_candidates(ids, show_ids, row))
-            if not show_rk:
+            candidates = item_guid_candidates(ids, show_ids, row)
+            show_rk = history._pms_find_in_guid_index("show", candidates)
+            copies = tuple(dict.fromkeys(([str(show_rk)] if show_rk else []) + history._pms_show_copies_in_guid_index(candidates)))
+            if not copies:
                 out[index] = lp.verdict(lp.ABSENT, reason=lp.REASON)
             else:
-                pending.append((index, str(show_rk), kind, season, episode))
+                pending.append((index, copies, kind, season, episode))
 
         if pending:
             started = time.monotonic()
-            show_rks = {show_rk for _i, show_rk, _k, _s, _e in pending}
+            show_rks = {show_rk for _i, copies, _k, _s, _e in pending for show_rk in copies}
             try:
                 coordinates = _show_coordinates(adapter, allow, show_rks)
             except Exception as exc:
@@ -337,11 +339,11 @@ def _guid_presence(adapter: Any, rows: list[dict[str, Any]], feature: str) -> li
                 coordinates = None
             history._dbg("presence_episodes_loaded", lookup_feature=feature, items=len(pending), shows=len(show_rks),
                          duration_ms=int((time.monotonic() - started) * 1000))
-            for index, show_rk, kind, season, episode in pending:
+            for index, copies, kind, season, episode in pending:
                 if coordinates is None:
                     out[index] = lp.unknown("episodes_unavailable")
                     continue
-                found = coordinates.get(show_rk) or set()
+                found = set().union(*(coordinates.get(show_rk) or set() for show_rk in copies))
                 hit = (season, episode) in found if kind == "episode" else any(s == season for s, _e in found)
                 out[index] = lp.verdict(lp.PRESENT) if hit else lp.verdict(lp.ABSENT, reason=lp.REASON)
 

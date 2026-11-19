@@ -275,7 +275,7 @@ from ._snapshots import (
 )
 from ._applier import apply_add, apply_remove, apply_update
 from ._chunking import effective_chunk_size
-from ._unresolved import load_unresolved_keys, load_unresolved_map, load_unresolved_pending, record_unresolved, clear_unresolved, clear_matched_history_retries, is_remove_retry_reason
+from ._unresolved import load_unresolved_keys, load_unresolved_map, load_unresolved_pending, record_unresolved, clear_unresolved, clear_matched_history_retries, clear_library_skipped, is_remove_retry_reason
 from ._planner import diff, diff_ratings, diff_progress, _pick_rating, _pick_rated_at, _ts_epoch
 from ._phantoms import PhantomGuard
 from ._tombstones import clear_items_for_feature, media_tombstone_tokens
@@ -1979,6 +1979,15 @@ def run_one_way_feature(  # pyright: ignore[reportGeneralTypeIssues]
         if resolved:
             resolved_items = {key: src_idx[event_key] for key, event_key in resolved.items()}
             _emit_item_resolutions(emit, dst, feature, pair_key, resolved, resolved_items, instance=dst_cfg.get("_cw_provider_instance"))
+
+    if library_skipped and not (cancelled or dry_run_flag or dst_down):
+        try:
+            cleared = clear_library_skipped(dst, feature, [it for it, _reason in library_skipped],
+                                            instance=dst_cfg.get("_cw_provider_instance"))
+            if cleared.get("count"):
+                emit("debug", msg="library_only.unresolved_cleared", feature=feature, dst=dst, count=cleared["count"])
+        except Exception:
+            pass
 
     if updates and not cancelled:
         if dst_down:
