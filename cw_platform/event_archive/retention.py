@@ -18,10 +18,12 @@ THREAD_DAYS = {"sync": 365, "scrobble": 365, "audit": 90}
 KEEP_OPEN_DOMAINS = ("sync", "scrobble")
 OPEN_STATUSES = ("failed", "unresolved", "blackboxed")
 REPORT_KEEP = 500
+THREAD_EVENT_CAP = 200
 INTERVAL = DAY
 STARTUP_DELAY = 600
 
 _CHUNK = 500
+_TRIM_BATCH = 500
 _worker: threading.Thread | None = None
 _worker_lock = threading.Lock()
 _stop = threading.Event()
@@ -47,6 +49,33 @@ def _prune_threads(c: sqlite3.Connection, domain: str, cutoff: int) -> tuple[int
     return len(gids), events
 
 
+def _trim_threads(c: sqlite3.Connection, cap: int) -> tuple[int, int]:
+    from .groups import _GROUP_LOCK, _recompute, run_owned
+
+    gids = [int(r[0]) for r in c.execute(
+        "SELECT id FROM event_groups WHERE COALESCE(domain,'sync')='sync' AND COALESCE(operation,'')<>'run' "
+        "AND COALESCE(item_key,'')<>'' AND event_count>?",
+        (cap,),
+    ).fetchall()]
+    events = 0
+    for gid in gids:
+        while not _stop.is_set():
+            with _GROUP_LOCK, c:
+                n = int(c.execute(
+                    "DELETE FROM events WHERE id IN (SELECT id FROM events WHERE group_id=? "
+                    "ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?)",
+                    (gid, _TRIM_BATCH, cap),
+                ).rowcount or 0)
+                events += n
+                c.execute("UPDATE event_groups SET run_owned=? WHERE id=?", (int(run_owned(c, gid)), gid))
+                if n < _TRIM_BATCH:
+                    _recompute(c, gid, int(time.time()))
+                    break
+        if _stop.is_set():
+            break
+    return len(gids), events
+
+
 def _prune_runs(c: sqlite3.Connection, cutoff: int) -> int:
     run_ids = [str(r[0]) for r in c.execute(
         "SELECT run_id FROM sync_runs WHERE COALESCE(finished_at, started_at, 0)<? "
@@ -68,16 +97,26 @@ def apply_retention(*, conn: sqlite3.Connection | None = None, now: int | None =
     ts = int(now or time.time())
     out: dict[str, Any] = {"ok": True, "threads": {}, "events": 0, "runs": 0, "reports": 0}
     report_rows = 0
-    from .groups import _GROUP_LOCK, correlate
+    from .groups import _GROUP_LOCK, correlate, refresh_group_flags, refresh_run_owned
 
     try:
+        refresh_group_flags(conn=c)
         correlate(conn=c)
         with _GROUP_LOCK:
+            with c:
+                refresh_run_owned(c)
             for domain, days in THREAD_DAYS.items():
                 groups, events = _prune_threads(c, domain, ts - days * DAY)
                 out["threads"][domain] = groups
                 out["events"] += events
+            if out["events"]:
+                with c:
+                    refresh_run_owned(c)
+                    c.execute("DELETE FROM run_issue_counts WHERE run_id NOT IN "
+                              "(SELECT run_id FROM events WHERE run_id IS NOT NULL)")
             out["runs"] = _prune_runs(c, ts - THREAD_DAYS["sync"] * DAY)
+        out["trimmed_threads"], trimmed = _trim_threads(c, THREAD_EVENT_CAP)
+        out["events"] += trimmed
     except Exception as exc:
         _LOG.warning("event retention failed: %s", exc, exc_info=True)
         return {"ok": False, "error": "internal_error"}
@@ -98,10 +137,11 @@ def apply_retention(*, conn: sqlite3.Connection | None = None, now: int | None =
 
 def _loop() -> None:
     try:
-        from .groups import refresh_hide_summaries, refresh_run_summaries
+        from .groups import refresh_group_flags, refresh_hide_summaries, refresh_run_summaries
 
         refresh_run_summaries()
         refresh_hide_summaries()
+        refresh_group_flags()
     except Exception as exc:
         _LOG.warning("run summary refresh failed: %s", exc, exc_info=True)
     if _stop.wait(STARTUP_DELAY):

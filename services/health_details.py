@@ -17,6 +17,8 @@ PROBE_DEADLINE_S = 10
 MAX_PROBE_WORKERS = 8
 SLOW_WRITER_S = 30
 BUSY_NOTICE_S = 10
+RECLAIM_NOTICE_BYTES = 100 * 1024 * 1024
+RECLAIM_NOTICE_RATIO = 0.2
 LEVELS = ("ok", "degraded", "failing")
 
 Issues = list[dict[str, str]]
@@ -187,9 +189,22 @@ def database_health(
     }
 
 
+def database_space() -> dict[str, int]:
+    from cw_platform.local_db.db import get_conn
+
+    conn = get_conn()
+    if conn is None:
+        return {"file_bytes": 0, "reclaimable_bytes": 0}
+    page = int(conn.execute("PRAGMA page_size").fetchone()[0] or 0)
+    pages = int(conn.execute("PRAGMA page_count").fetchone()[0] or 0)
+    free = int(conn.execute("PRAGMA freelist_count").fetchone()[0] or 0)
+    return {"file_bytes": page * pages, "reclaimable_bytes": page * free}
+
+
 def database_status(
     storage: Callable[[Any], dict[str, Any]] | None = None,
     writers: Callable[[], list[dict[str, Any]]] | None = None,
+    space: Callable[[], dict[str, int]] | None = None,
 ) -> dict[str, Any]:
     from cw_platform.local_db.db import active_writers, crosswatch_db_path
     from cw_platform.local_db.storage import storage_info
@@ -197,6 +212,12 @@ def database_status(
     info = (storage or storage_info)(crosswatch_db_path())
     held = (writers or active_writers)()
     top = held[0] if held and float(held[0].get("seconds") or 0) >= BUSY_NOTICE_S else None
+    try:
+        sizes = (space or database_space)()
+    except Exception:
+        sizes = {}
+    file_bytes = int(sizes.get("file_bytes") or 0)
+    reclaimable = int(sizes.get("reclaimable_bytes") or 0)
     return {
         "busy": top is not None,
         "operation": top.get("operation") if top else None,
@@ -204,6 +225,9 @@ def database_status(
         "since": top.get("since") if top else None,
         "filesystem": info.get("filesystem"),
         "network_filesystem": bool(info.get("network")),
+        "file_bytes": file_bytes,
+        "reclaimable_bytes": reclaimable,
+        "reclaim_suggested": reclaimable >= RECLAIM_NOTICE_BYTES and reclaimable >= file_bytes * RECLAIM_NOTICE_RATIO,
     }
 
 

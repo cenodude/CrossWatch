@@ -169,13 +169,40 @@ def test_cached_connection_is_replaced_when_the_file_changes(database, monkeypat
 
 
 def test_database_status_reports_busy_writes_after_ten_seconds():
+    space = {"file_bytes": 0, "reclaimable_bytes": 0, "reclaim_suggested": False}
     idle = health_details.database_status(
         storage=lambda _path: {"filesystem": "ext4", "mount_point": "/", "network": False},
         writers=lambda: [{"operation": "state.save_state", "thread": "sync", "seconds": 4.0, "since": 100}],
+        space=lambda: {"file_bytes": 0, "reclaimable_bytes": 0},
     )
-    assert idle == {"busy": False, "operation": None, "seconds": 0, "since": None, "filesystem": "ext4", "network_filesystem": False}
+    assert idle == {"busy": False, "operation": None, "seconds": 0, "since": None, "filesystem": "ext4", "network_filesystem": False, **space}
     busy = health_details.database_status(
         storage=lambda _path: {"filesystem": "cifs", "mount_point": "/config", "network": True},
         writers=lambda: [{"operation": "state.save_pair_blocks", "thread": "sync", "seconds": 12.6, "since": 100}],
+        space=lambda: {"file_bytes": 0, "reclaimable_bytes": 0},
     )
-    assert busy == {"busy": True, "operation": "state.save_pair_blocks", "seconds": 12, "since": 100, "filesystem": "cifs", "network_filesystem": True}
+    assert busy == {"busy": True, "operation": "state.save_pair_blocks", "seconds": 12, "since": 100, "filesystem": "cifs", "network_filesystem": True, **space}
+
+
+@pytest.mark.parametrize(("file_mb", "free_mb", "suggested"), [(1000, 300, True), (1000, 150, False), (300, 90, False)])
+def test_database_status_suggests_compacting_large_free_space(file_mb, free_mb, suggested):
+    mb = 1024 * 1024
+    status = health_details.database_status(
+        storage=lambda _path: {"filesystem": "ext4", "network": False},
+        writers=lambda: [],
+        space=lambda: {"file_bytes": file_mb * mb, "reclaimable_bytes": free_mb * mb},
+    )
+    assert status["reclaimable_bytes"] == free_mb * mb
+    assert status["reclaim_suggested"] is suggested
+
+
+def test_database_space_reads_free_pages(database):
+    database.execute("CREATE TABLE filler(x BLOB)")
+    database.executemany("INSERT INTO filler VALUES(?)", [(b"x" * 4000,) for _ in range(200)])
+    database.commit()
+    before = health_details.database_space()
+    database.execute("DELETE FROM filler")
+    database.commit()
+    after = health_details.database_space()
+    assert before["file_bytes"] > 0
+    assert after["reclaimable_bytes"] > before["reclaimable_bytes"]
