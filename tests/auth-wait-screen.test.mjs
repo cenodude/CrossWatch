@@ -59,7 +59,8 @@ test("failed copy keeps the popup open through the countdown", () => {
   const win = Shared.openWaitWindow("Movie Paradise", "", "MOVIEPARADISE");
   Shared.showWaitCode(win, { key: "MOVIEPARADISE", label: "Movie Paradise", code: "XSWV-R42J", url: "https://movieparadise.app/oauth/device" });
 
-  const script = win.html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const scriptStart = win.html.indexOf("<script>") + "<script>".length;
+  const script = win.html.slice(scriptStart, win.html.indexOf("</script>", scriptStart));
   const nodes = {};
   const node = (id) => (nodes[id] ||= { id, textContent: "", style: {}, parentNode: { style: {} }, listeners: {}, addEventListener(type, fn) { this.listeners[type] = fn; } });
   const popupDocument = {
