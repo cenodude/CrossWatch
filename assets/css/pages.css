@@ -2499,14 +2499,25 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-filter-options{display:flex;align-items:center;flex-wrap:wrap;gap:8px;min-width:0}
 :is(#page-tracker,.cw-mm-trk) .trk-status-filter{display:flex;align-items:center;gap:8px;min-width:0;font-size:13px;white-space:nowrap}
 :is(#page-tracker,.cw-mm-trk) .trk-status-filter .cw-select{width:auto;min-width:160px;max-width:220px}
-#page-tracker .trk-extra-filters{display:flex;align-items:center;flex-wrap:wrap;flex-basis:100%;width:100%;gap:10px 16px;margin-top:14px;padding-top:14px}
+#page-tracker .trk-extra-filters{display:flex;flex-direction:column;align-items:stretch;flex-basis:100%;width:100%;gap:16px;margin-top:14px;padding-top:16px}
 #page-tracker .trk-extra-filters[hidden]{display:none}
-#page-tracker .trk-extra-filters>.trk-filter-options{flex-basis:100%}
-#page-tracker .trk-extra-filters>small{flex-basis:100%;font-size:12px}
-@media(max-width:720px){#page-tracker .trk-extra-filters .trk-status-filter{flex:1 1 220px;justify-content:space-between}#page-tracker .trk-extra-filters .cw-select{flex:1;max-width:none}#page-tracker .trk-extra-filters>.cw-btn{margin-left:auto}}
-#page-tracker .trk-seg{display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px;padding:3px;border-radius:999px}
+#page-tracker .trk-filter-fields{display:flex;align-items:flex-end;flex-wrap:wrap;gap:16px}
+#page-tracker .trk-filter-fields :is(.trk-status-filter,.trk-filter-type){display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:0}
+#page-tracker .trk-filter-fields .trk-status-filter{flex:1 1 140px}
+#page-tracker .trk-filter-fields .cw-select{width:100%;min-width:0;max-width:none}
+#page-tracker .trk-filter-type{flex:0 1 auto}
+#page-tracker .trk-filter-footer{display:flex;align-items:center;flex-wrap:wrap;gap:12px 24px}
+#page-tracker .trk-filter-checks{display:flex;align-items:center;flex-wrap:wrap;gap:8px 24px;min-width:0}
+#page-tracker .trk-filter-check{display:inline-flex;align-items:center;gap:10px;min-height:44px;cursor:pointer}
+#page-tracker .trk-filter-check .cw-checkbox{flex:none;margin:0}
+#page-tracker .trk-filter-check>span{line-height:1.4}
+#page-tracker .trk-filter-footer>.cw-btn{margin-inline-start:auto}
+#page-tracker .trk-extra-filters>small{font-size:12px;line-height:1.5}
+@media(max-width:720px){#page-tracker .trk-filter-type{flex-basis:100%}#page-tracker .trk-filter-footer>.cw-btn{margin-inline-start:0}}
+
 #page-tracker :is(.trk-extra-filters,.trk-change-filters) .trk-seg .cw-filter-chip{height:28px;padding:0 11px}
-#page-tracker .trk-extra-filters .trk-seg{flex:none;flex-wrap:nowrap}
+#page-tracker .trk-extra-filters .trk-seg{flex:none;flex-wrap:nowrap;align-self:flex-start}
+#page-tracker .trk-extra-filters .trk-seg .cw-filter-chip{height:var(--cw-page-control-height);min-height:var(--cw-page-control-height)}
 #page-tracker .trk-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
 #page-tracker .trk-secondary-actions{display:flex;align-items:center;gap:8px}
 #page-tracker .trk-tool-label{display:none}
@@ -2561,10 +2572,6 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-seasons{display:grid;gap:6px}
 #page-tracker .trk-navigation{display:flex;align-items:center;gap:12px;flex:1 0 100%;min-width:0}
 #page-tracker .trk-navigation .trk-tabs{flex:1;min-width:0;margin:0}
-#page-tracker .trk-history-options{display:flex;align-items:center;gap:12px 20px;flex-wrap:wrap;flex:1 0 100%;min-width:0}
-#page-tracker .trk-history-group{display:flex;align-items:center;gap:8px;white-space:nowrap}
-#page-tracker .trk-history-group .cw-select{width:auto}
-#page-tracker .trk-history-options .cw-filter-chip{min-height:44px}
 #page-tracker .trk-movies .trk-col-plays{width:110px;white-space:nowrap}
 #page-tracker .trk-others{position:relative;flex:0 0 auto}
 #page-tracker .trk-others>summary{list-style:none}

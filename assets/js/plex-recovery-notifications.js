@@ -17,13 +17,15 @@
       href:"/#import_export?recovery=1", action:reading || matching ? "View progress" : "Open recovery",
     }] : []});
   }
-  async function refresh() {
+  async function refresh({force = false} = {}) {
     clearTimeout(timer);
+    if (!document.hidden && controller && !controller.signal.aborted && !force) return;
     controller?.abort();
-    if (document.hidden) return;
+    if (document.hidden) { controller = null; return; }
     const request = controller = new AbortController();
     let allowed = true;
     try {
+      await window.CW?.AuthState?.ready?.();
       await window.__cwAuthBootstrapPromise;
       await window.CW?.OverviewProfile?.ready;
       if (request.signal.aborted) return;
@@ -36,11 +38,15 @@
     } catch {
       if (!request.signal.aborted) render(null,"Could not load Plex recovery.");
     } finally {
-      if (!request.signal.aborted && !document.hidden && allowed) timer=setTimeout(refresh,10000);
+      if (controller === request) {
+        controller = null;
+        if (!request.signal.aborted && !document.hidden && allowed) timer=setTimeout(refresh,10000);
+      }
     }
   }
-  for (const event of ["cw:notifications-refresh","cw:plex-recovery-changed","cw:overview-profile-changed"]) window.addEventListener(event,refresh);
-  for (const event of ["auth-changed","cw:auth-state-changed"]) window.addEventListener(event,()=>{render();refresh();});
+  window.addEventListener("cw:notifications-refresh",refresh);
+  for (const event of ["cw:plex-recovery-changed","cw:overview-profile-changed"]) window.addEventListener(event,()=>refresh({force:true}));
+  for (const event of ["auth-changed","cw:auth-state-changed"]) window.addEventListener(event,()=>{render();refresh({force:true});});
   for (const event of ["visibilitychange","tab-changed"]) document.addEventListener(event,refresh);
   refresh();
 })();

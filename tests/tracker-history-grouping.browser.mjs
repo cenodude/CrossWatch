@@ -55,7 +55,13 @@ async function fixture(t, theme, width) {
   });
   await page.goto("https://tracker-history.test/");
   await page.locator(".trk-movies tbody tr").first().waitFor();
+  assert.equal(await page.locator("#trk-extra-filters").isVisible(), false);
+  await openFilters(page);
   return {page, data, errors, requests, removals};
+}
+
+async function openFilters(page) {
+  if (await page.locator('[data-trk-action="filters"]').getAttribute("aria-expanded") !== "true") await page.locator('[data-trk-action="filters"]').click();
 }
 
 async function screenshot(page, name) {
@@ -76,13 +82,25 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
     assert.equal(await page.locator(".trk-movies tbody tr").count(), 2);
     assert.match(await page.locator(".trk-movies").innerText(), /3 watches/);
     assert.match(await page.locator(".trk-movies").innerText(), /Unknown/);
-    await page.locator('[data-trk-action="filters"]').click();
     const searchBox = await page.locator('.trk-search').boundingBox();
     const filterBox = await page.locator('.trk-filter-toggle').boundingBox();
     assert.ok(Math.abs(searchBox.x + searchBox.width - filterBox.x - filterBox.width - 1) < 0.5);
     assert.ok(Math.abs(filterBox.y - searchBox.y - 1) < 0.5);
     assert.ok(Math.abs(searchBox.height - filterBox.height - 2) < 0.5);
+    await page.getByRole("combobox", {name:"Group history by"}).selectOption("watch");
+    await page.getByRole("checkbox", {name:"Only possible duplicates"}).waitFor();
+    const options = await page.locator('.trk-filter-check').evaluateAll(labels => labels.map(label => {
+      const box = label.getBoundingClientRect();
+      const input = label.querySelector('input').getBoundingClientRect();
+      const text = label.querySelector('span').getBoundingClientRect();
+      return {x:box.x,y:box.y,right:box.right,gap:text.x-input.right};
+    }));
+    assert.equal(options.length, 2);
+    assert.ok(options.every(option => option.gap >= 8));
+    assert.ok(options[1].y > options[0].y || options[1].x - options[0].right >= 20);
     await screenshot(page, `filter-${theme}-${width}`);
+    await page.getByRole("combobox", {name:"Group history by"}).selectOption("title");
+    await page.locator('.trk-movies tbody tr').first().waitFor();
     await page.locator('[data-trk-action="filters"]').click();
     await screenshot(page, `list-${theme}-${width}`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
@@ -108,9 +126,11 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
     assert.ok(box.x >= 0 && box.x + box.width <= width + 1);
     await screenshot(page, `menu-${theme}-${width}`);
     await page.locator('.trk-others summary').click();
+    await openFilters(page);
     await page.locator('[data-trk-history-media="show"]').click();
     await page.locator('.trk-shows tbody tr').waitFor();
     await page.reload();
+    await openFilters(page);
     await page.locator('.trk-shows tbody tr').waitFor();
     assert.equal(await page.locator('[data-trk-history-media="show"]').getAttribute("aria-pressed"), "true");
     await page.locator('[data-trk-history-media="movie"]').click();
@@ -122,6 +142,7 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
     await screenshot(page, `movies-${theme}-${width}`);
     data.movies = [];
     await page.reload();
+    await openFilters(page);
     await page.getByText("No movies in your history yet.", {exact:true}).waitFor();
     await screenshot(page, `empty-${theme}-${width}`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
@@ -173,6 +194,7 @@ test("History switches between watches and mixed titles while preserving type an
   await page.waitForFunction(() => document.querySelectorAll('.trk-grid-card').length === 2);
   await page.locator('[data-trk-history-media=""]').click();
   await page.reload();
+    await openFilters(page);
   await page.waitForFunction(() => document.querySelectorAll('.trk-grid-card').length === 3);
   assert.equal(await page.getByRole("combobox", {name:"Group history by"}).inputValue(), "title");
   assert.equal(await page.locator('[data-trk-history-media=""]').getAttribute("aria-pressed"), "true");
@@ -180,5 +202,27 @@ test("History switches between watches and mixed titles while preserving type an
   assert.ok(requests.some(url => url.pathname === "/api/tracker/history/titles" && url.searchParams.get("media") === ""));
   await page.getByRole("combobox", {name:"Group history by"}).selectOption("watch");
   await page.waitForFunction(() => document.querySelectorAll('.trk-list tbody .trk-play').length === 4);
+  assert.deepEqual(errors, []);
+});
+
+
+test("filter badge tracks hidden choices and Clear filters restores defaults", async t => {
+  const {page, errors} = await fixture(t, "flat-dark", 1600);
+  const toggle = page.locator('[data-trk-action="filters"]');
+  assert.equal(await toggle.getAttribute("aria-label"), "Filters (2 active)");
+  await page.getByRole("combobox", {name:"Group history by"}).selectOption("watch");
+  await page.getByRole("checkbox", {name:"Only possible duplicates"}).check();
+  await page.getByRole("checkbox", {name:"Status labels on cards",exact:true}).uncheck();
+  assert.equal(await toggle.getAttribute("aria-label"), "Filters (3 active)");
+  await page.getByRole("button", {name:"Clear filters",exact:true}).click();
+  await page.waitForFunction(() => document.querySelectorAll('.trk-list tbody .trk-play').length === 4);
+  assert.equal(await toggle.getAttribute("aria-label"), "Filters");
+  assert.equal(await page.locator('[data-trk-history-media=""]').getAttribute("aria-pressed"), "true");
+  assert.equal(await page.getByRole("combobox", {name:"Group history by"}).inputValue(), "watch");
+  assert.equal(await page.getByRole("checkbox", {name:"Only possible duplicates"}).isChecked(), false);
+  assert.equal(await page.getByRole("checkbox", {name:"Status labels on cards",exact:true}).isChecked(), true);
+  await toggle.click();
+  assert.equal(await page.locator('[data-trk-input="history-group"]').isVisible(), false);
+  assert.equal(await page.locator('[data-trk-history-media="movie"]').isVisible(), false);
   assert.deepEqual(errors, []);
 });

@@ -1019,9 +1019,11 @@
   }
 
   function renderExtraFilters() {
-    const labels = `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="status-labels"${state.showStatusLabels !== false ? " checked" : ""}>Show status labels on cards</label>`;
+    const type = historyView() ? `<div class="trk-filter-type"><span>Type</span><div class="trk-seg" role="group" aria-label="History type">${[["", "All", ""], ["movie", "Movies", "movie"], ["show", "Shows", "tv"]].map(([id, label, glyph]) => chip(`data-trk-history-media="${id}"`, label, {active:state.historyMedia === id, iconName:glyph})).join("")}</div></div><label class="trk-status-filter"><span>Group by</span><select class="cw-select" data-trk-input="history-group" aria-label="Group history by"><option value="watch"${!groupedHistory() ? " selected" : ""}>Watch</option><option value="title"${groupedHistory() ? " selected" : ""}>Title</option></select></label>` : "";
+    const labels = `<label class="trk-filter-check"><input type="checkbox" class="cw-checkbox" data-trk-input="status-labels"${state.showStatusLabels !== false ? " checked" : ""}><span>Status labels on cards</span></label>`;
     const sort = ["shows", "cleanup", "titles"].includes(state.view) ? "" : `<label class="trk-status-filter"><span>Sort</span><select class="cw-select" data-trk-input="sort" aria-label="Sort results">${[["recent","Newest first"],["oldest","Oldest first"],["title","Title A-Z"]].map(([value,label]) => `<option value="${value}"${state.sort === value ? " selected" : ""}>${label}</option>`).join("")}</select></label>`;
-    return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Filters">${state.view !== "titles" ? `<div class="trk-filter-options">${renderFilters()}</div>` : ""}${renderNoteFilters()}${sort}${state.view === "history" ? `<label class="trk-status-filter"><input type="checkbox" class="cw-checkbox" data-trk-input="duplicates"${state.duplicates ? " checked" : ""}>Possible duplicates</label>` : ""}${labels}<button type="button" class="cw-btn" data-trk-action="filters-clear">Clear filters</button><small>${state.view === "history" && state.duplicates ? "Same title, episode and watch time. Compare the entries before deleting; watches at different times are kept." : "Status and tags use your local title details."}</small></div>`;
+    const options = renderFilters();
+    return `<div id="trk-extra-filters" class="trk-extra-filters"${state.filtersOpen ? "" : " hidden"} role="group" aria-label="Filters"><div class="trk-filter-fields">${type}${options ? `<div class="trk-filter-options">${options}</div>` : ""}${renderNoteFilters()}${sort}</div><div class="trk-filter-footer"><div class="trk-filter-checks">${state.view === "history" ? `<label class="trk-filter-check"><input type="checkbox" class="cw-checkbox" data-trk-input="duplicates"${state.duplicates ? " checked" : ""}><span>Only possible duplicates</span></label>` : ""}${labels}</div><button type="button" class="cw-btn" data-trk-action="filters-clear">Clear filters</button></div>${state.view === "history" && state.duplicates ? "<small>Same title, episode and watch time. Compare entries before deleting; watches at different times are kept.</small>" : ""}</div>`;
   }
 
   function renderControls() {
@@ -1031,11 +1033,11 @@
       + Number(state.sort !== "recent" && !["shows", "cleanup", "titles"].includes(state.view))
       + Number(!historyView() && !["titles", "cleanup"].includes(state.view) && !!state.media)
       + Number(state.view === "shows" && state.hideDropped) + Number(timelineOn() && !!state.month)
-      + Number(state.view === "cleanup" && !!state.healthFilter);
+      + Number(state.view === "cleanup" && !!state.healthFilter)
+      + Number(historyView() && !!state.historyMedia) + Number(groupedHistory()) + Number(state.showStatusLabels === false);
     const filterLabel = `Filters${count ? ` (${count} active)` : ""}`;
     return `
       ${renderNavigation()}
-      ${historyView() ? `<div class="trk-history-options"><div class="trk-seg" role="group" aria-label="History type">${[["", "All", ""], ["movie", "Movies", "movie"], ["show", "Shows", "tv"]].map(([id, label, glyph]) => chip(`data-trk-history-media="${id}"`, label, {active:state.historyMedia === id, iconName:glyph})).join("")}</div><label class="trk-history-group"><span>Group by</span><select class="cw-select" data-trk-input="history-group" aria-label="Group history by"><option value="watch"${!groupedHistory() ? " selected" : ""}>Watch</option><option value="title"${groupedHistory() ? " selected" : ""}>Title</option></select></label></div>` : ""}
       <div class="trk-toolbar${state.view === "cleanup" ? " trk-toolbar-cleanup" : ""}">
         <div class="trk-search-wrap"><input class="cw-input trk-search" data-trk-input="q" value="${esc(state.q)}" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}"><button type="button" class="trk-filter-toggle${count || state.filtersOpen ? " active" : ""}" data-trk-action="filters" aria-label="${filterLabel}" title="${filterLabel}" aria-expanded="${state.filtersOpen}" aria-controls="trk-extra-filters">${icon("filter_list")}${count ? `<span>${count}</span>` : ""}</button></div>
         <div class="trk-actions">
@@ -2310,7 +2312,7 @@
       setSlot("controls", renderControls());
       if (focusedView) state.root.querySelector('.trk-tabs [aria-selected="true"]')?.focus({preventScroll:true});
       if (focusedHistoryMedia !== undefined) state.root.querySelector(`[data-trk-history-media="${focusedHistoryMedia}"]`)?.focus({preventScroll:true});
-      if (["q", "view", "note-status", "note-tag", "sort", "history-group"].includes(focused)) {
+      if (["q", "view", "note-status", "note-tag", "sort", "history-group", "duplicates", "status-labels"].includes(focused)) {
         const input = state.root.querySelector(`[data-trk-input="${focused}"]`);
         input?.focus({preventScroll:true});
         if (focused === "q") input?.setSelectionRange?.(input.value.length, input.value.length);
@@ -5301,7 +5303,13 @@
       }
       else if (action === "filters-clear") {
         state.noteStatus = ""; state.noteTag = ""; state.q = "";
-        if (!historyView()) state.media = "";
+        state.media = "";
+        state.showStatusLabels = true;
+        if (historyView()) {
+          state.historyMedia = ""; state.historyGroup = "watch"; state.view = "history";
+          state.ref = null; state.title = null;
+          rememberView();
+        }
         state.sort = "recent"; state.hideDropped = false; state.duplicates = false; state.month = ""; state.healthFilter = "";
         reload();
       }
@@ -5408,7 +5416,7 @@
       } else if (input === "status-labels") {
         state.showStatusLabels = event.target.checked;
         saveView();
-        setSlot("main", renderMain());
+        renderSlots(true);
       } else if (input === "duplicates") {
         state.duplicates = event.target.checked;
         reload();

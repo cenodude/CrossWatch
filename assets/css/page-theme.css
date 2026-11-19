@@ -1418,7 +1418,8 @@ html[data-cw-theme="flat-light"] #page-tracker .trk-months{--hist-tone-rgb:70,86
 #page-tracker .trk-filter-toggle{border-radius:0 calc(var(--cw-page-control-radius) - 1px) calc(var(--cw-page-control-radius) - 1px) 0;background:transparent;border:0;box-shadow:none;color:var(--cw-theme-muted);font:inherit;font-size:12px}
 #page-tracker .trk-filter-toggle:hover{background:var(--cw-page-hover-bg);color:var(--cw-theme-text)}
 #page-tracker .trk-filter-toggle.active{color:var(--cw-theme-accent);background:var(--cw-page-selected-bg)}
-#page-tracker .trk-extra-filters>small{color:var(--cw-theme-muted)}
+#page-tracker .trk-extra-filters>small,#page-tracker .trk-filter-fields label>span,#page-tracker .trk-filter-type>span{color:var(--cw-theme-muted);font-size:12px;font-weight:600}
+#page-tracker .trk-filter-check{color:var(--cw-theme-text);font-size:13px;font-weight:400}
 :is(#page-tracker,.cw-mm-trk) :is(.trk-status-btn,.trk-status-item){--trk-status:var(--cw-theme-muted)}
 :is(#page-tracker,.cw-mm-trk) .trk-status-btn{border:1px solid color-mix(in srgb,var(--trk-status) 40%,var(--cw-theme-border));background:color-mix(in srgb,var(--trk-status) 12%,transparent);color:var(--cw-theme-text)}
 :is(#page-tracker,.cw-mm-trk) .trk-status-btn.is-empty{border-style:dashed;background:transparent;color:var(--cw-theme-muted)}
