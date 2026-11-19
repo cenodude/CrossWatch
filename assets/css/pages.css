@@ -1486,7 +1486,7 @@ html.cw-mm-open,html.cw-mm-open body{overflow:hidden}
 #ops-card .cw-status-dock{display:flex}
 @media(max-width:760px){#ops-card .cw-status-dock{display:none}}
 #ops-card .action-row{container-type:inline-size;container-name:sync-actions}
-#ops-card .action-buttons{width:100%;min-width:0}
+#ops-card .action-buttons{display:flex;flex:0 1 auto;align-items:center;justify-content:flex-start;flex-wrap:wrap;gap:10px;order:1;width:100%;min-width:0}
 @container sync-actions (min-width:850px){#ops-card .cw-hub-tools-start{margin-inline-start:auto}}
 @media(max-width:600px){
 #ops-card.card.cw-main-card{--cw-hub-action-height:46px;--cw-hub-inner-height:44px;display:flex;flex-direction:column}
