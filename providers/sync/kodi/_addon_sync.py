@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
 import threading
 import time
 import zlib
@@ -39,6 +40,8 @@ MAX_VIEWERS = 64
 MAX_TEXT = 1000
 RUN_RETRY_SECONDS = 30.0
 RUN_RETRIES = 60
+RUN_POLL_SECONDS = 5.0
+RUN_WAIT_SECONDS = 6 * 3600.0
 
 _MOVIE_FIELDS = ("movieid", "uniqueid", "title", "year", "file", "playcount", "lastplayed", "userrating", "resume", "dateadded")
 _EPISODE_FIELDS = ("episodeid", "tvshowid", "uniqueid", "title", "showtitle", "season", "episode", "file",
@@ -50,6 +53,7 @@ _META_FIELDS = ("uniqueid", "title", "year", "showtitle", "season", "episode", "
 
 _LOCK = threading.RLock()
 _PENDING_RUNS: set[str] = set()
+_RERUN: dict[str, list[str]] = {}
 _CACHE: dict[str, tuple[int, int, dict[str, Any]]] = {}
 _NEXT_CHANGE: dict[str, int] = {}
 
@@ -186,12 +190,13 @@ def binding(cfg: Mapping[str, Any] | None, device: Any) -> dict[str, Any]:
     data = _cached(_path(dev, "binding"))
     if data.get("token") != token:
         return {"token": token, "viewers": {}}
-    return {"token": token, "device_id": data.get("device_id") or "", "viewers": _dict(data.get("viewers"))}
+    return {"token": token, "device_id": data.get("device_id") or "", "bound_at": data.get("bound_at") or 0,
+            "viewers": _dict(data.get("viewers"))}
 
 
 def _save_binding(device: Any, data: Mapping[str, Any]) -> None:
     _write(_path(device, "binding"), {"token": data.get("token") or "", "device_id": data.get("device_id") or "",
-                                      "viewers": _dict(data.get("viewers"))})
+                                      "bound_at": data.get("bound_at") or 0, "viewers": _dict(data.get("viewers"))})
 
 
 def _require_device(cfg: Mapping[str, Any] | None, device: str, device_id: Any, *, bind: bool) -> None:
@@ -205,7 +210,7 @@ def _require_device(cfg: Mapping[str, Any] | None, device: str, device_id: Any, 
     if not bound:
         if not bind:
             raise SyncRequestError(403, "not_sync_device", "This device is not the sync device for this connection.")
-        _save_binding(device, {**current, "device_id": did})
+        _save_binding(device, {**current, "device_id": did, "bound_at": time.time()})
 
 
 def _clear_kodi_baselines(inst: str) -> None:
@@ -228,9 +233,39 @@ def uses_jsonrpc(cfg: Mapping[str, Any] | None, instance_id: Any) -> bool:
     return bool(str(block.get("server") or "").strip() and block.get("connection_verified") is True)
 
 
+def _library_holder(cfg: Mapping[str, Any] | None, library_id: Any) -> str | None:
+    lib = _text(library_id, 128)
+    if not lib:
+        return None
+    from providers.scrobble.kodi import addon as kodi_addon
+
+    best: tuple[tuple[float, str], str] | None = None
+    paired = [normalize_instance_id(str(key)[len(kodi_addon.TOKEN_PREFIX):])
+              for key in _dict(_dict(_dict(cfg).get("security")).get("webhook_ids"))
+              if str(key).startswith(kodi_addon.TOKEN_PREFIX)]
+    for inst in paired:
+        info = device_info(inst)
+        if info.get("library_id") != lib or info.get("enabled") is not True or not _token_enabled(cfg, inst):
+            continue
+        bound = binding(cfg, inst)
+        if not bound.get("device_id"):
+            continue
+        rank = (float(bound.get("bound_at") or 0), inst)
+        if best is None or rank < best[0]:
+            best = (rank, inst)
+    return best[1] if best else None
+
+
+def library_taken(cfg: Mapping[str, Any] | None, device: Any) -> bool:
+    dev = normalize_instance_id(device)
+    holder = _library_holder(cfg, device_info(dev).get("library_id"))
+    return bool(holder) and holder != dev
+
+
 def device_active(cfg: Mapping[str, Any] | None, device: Any) -> bool:
     dev = normalize_instance_id(device)
-    return sync_enabled(cfg) and _token_enabled(cfg, dev) and device_info(dev).get("enabled") is True
+    return (sync_enabled(cfg) and _token_enabled(cfg, dev) and device_info(dev).get("enabled") is True
+            and not library_taken(cfg, dev))
 
 
 def _viewer_ids(info: Mapping[str, Any]) -> list[str]:
@@ -249,7 +284,8 @@ def viewer_instance(cfg: Mapping[str, Any] | None, device: Any, viewer_id: Any, 
     candidate = sync_user_instance_id(dev, vid)
     if candidate in users:
         inst: str | None = candidate
-    elif not users and viewers == [vid] and binding(cfg, dev)["viewers"].get(dev) in (None, vid):
+    elif not users and ((viewers == [vid] and binding(cfg, dev)["viewers"].get(dev) in (None, vid))
+                        or binding(cfg, dev)["viewers"].get(dev) == vid):
         inst = dev
     else:
         inst = None
@@ -297,10 +333,11 @@ def handle_ping(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str, A
             if bound and sent and not wants_sync:
                 _save_binding(dev, {"token": current["token"]})
             elif not bound and wants_sync:
-                _save_binding(dev, {**current, "device_id": device_id})
+                _save_binding(dev, {**current, "device_id": device_id, "bound_at": time.time()})
             path = _path(dev, "device")
             info = _read(path)
             before = dict(info)
+            info["instance"] = dev
             if sent:
                 info["enabled"] = sent.get("enabled", True) is not False
                 info["viewers"] = _clean_viewers(sent.get("viewers"))
@@ -315,11 +352,14 @@ def handle_ping(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str, A
                 info["mapping_key"] = mapping_key
             if info != before:
                 _write(path, info)
+            if library_taken(cfg, dev):
+                return {"version": VERSION, "enabled": False, "reason": "library_has_sync_device", "viewers": [], "queue_pending": 0}
         viewers = []
         pending = 0
         for vid, inst in mapping:
             if inst:
-                viewers.append({"viewer_id": vid, "instance": inst, "upload_seq": last_upload_seq(dev, vid)})
+                viewers.append({"viewer_id": vid, "instance": inst, "upload_seq": last_upload_seq(dev, vid),
+                                "next_change": _change_floor(dev, vid), "run_pending": inst in _PENDING_RUNS})
                 pending += len(pending_changes(cfg, inst))
         return {"version": VERSION, "enabled": device_active(cfg, dev), "viewers": viewers, "queue_pending": pending}
     except Exception:
@@ -566,7 +606,7 @@ def _check_zone(name: str) -> ZoneInfo | None:
 
 
 def _too_large(kind: str) -> SyncRequestError:
-    return SyncRequestError(400, "invalid_request", f"The {kind} holds too many rows.")
+    return SyncRequestError(413, "payload_too_large", f"The {kind} holds too many rows.")
 
 
 def _stale() -> SyncRequestError:
@@ -673,6 +713,10 @@ def _reset_viewer(cfg: Mapping[str, Any] | None, device: str, viewer_id: str, in
     _log("error", "viewer_state_reset", instance=inst, reason=reason)
 
 
+def _change_id(rec: Mapping[str, Any]) -> str:
+    return _text(rec.get("change_id"), 64)
+
+
 def _rec_key(ident: str, group: str) -> str:
     return f"{ident}\t{group}"
 
@@ -754,13 +798,36 @@ def _append_change(device: Any, viewer_id: Any, op: Mapping[str, Any]) -> None:
 CHANGE_BLOCK = 1000
 
 
+def _clock_floor() -> int:
+    return int(time.time() * 1000)
+
+
+def _change_floor(device: Any, viewer_id: Any) -> int:
+    key = str(_viewer_path(device, viewer_id, "changes"))
+    if key in _NEXT_CHANGE:
+        return _NEXT_CHANGE[key]
+    reserved = _int(_map(_cached_strict(_seq_file(device, viewer_id))).get("change_reserved")) or 1
+    return max(int(_load_changes(device, viewer_id)["next_change"]), reserved, _clock_floor())
+
+
+def _raise_change_floor(device: Any, viewer_id: Any, seen: int) -> None:
+    if seen <= 0:
+        return
+    key = str(_viewer_path(device, viewer_id, "changes"))
+    _NEXT_CHANGE[key] = max(_change_floor(device, viewer_id), seen + 1)
+    seq_path = _seq_file(device, viewer_id)
+    seq_state = _map(_cached_strict(seq_path))
+    if (_int(seq_state.get("change_reserved")) or 1) <= seen:
+        _write(seq_path, {**seq_state, "change_reserved": seen + 1})
+
+
 def _next_change(device: Any, viewer_id: Any) -> int:
     key = str(_viewer_path(device, viewer_id, "changes"))
     seq_path = _seq_file(device, viewer_id)
     seq_state = _map(_cached_strict(seq_path))
     reserved = _int(seq_state.get("change_reserved")) or 1
     if key not in _NEXT_CHANGE:
-        _NEXT_CHANGE[key] = max(int(_load_changes(device, viewer_id)["next_change"]), reserved)
+        _NEXT_CHANGE[key] = _change_floor(device, viewer_id)
     seq = _NEXT_CHANGE[key]
     if seq >= reserved:
         _write(seq_path, {**seq_state, "change_reserved": seq + CHANGE_BLOCK})
@@ -916,7 +983,7 @@ def _apply_rows(view: dict[str, Any], changes: dict[str, Any], rows: Mapping[str
                         if upload_seq <= (_int(rec.get("after")) or 0) or not _positive(group, candidate):
                             continue
                         records.pop(key, None)
-                    elif seq > applied_seq:
+                    elif seq > applied_seq or rec.get("status") != "applied":
                         continue
                     else:
                         state = {**_dict(rec.get("values")), "src": state.get("src"), "event": upload_seq}
@@ -991,6 +1058,10 @@ def receive_upload(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str
         if viewer_instance(cfg, dev, viewer_id) != inst:
             raise SyncRequestError(409, "viewer_unknown", "Unknown viewer.")
         generation = _generation(viewer_id, device_info(dev))
+        try:
+            _raise_change_floor(dev, viewer_id, applied_seq)
+        except StateUnreadable:
+            pass
         inventory_path = _path(inst, "inventory")
         staging_path = _path(inst, "staging")
         view_path = _view_file(dev, viewer_id)
@@ -1058,6 +1129,8 @@ def receive_upload(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str
             staging = {"upload_id": upload_id, "upload_seq": upload_seq, "parts": parts, "received": {}, "deltas": [],
                        "viewer_id": viewer_id, "generation": generation}
             _update_seq(dev, viewer_id, max_seq=upload_seq)
+        if body.get("fresh") is True:
+            staging["fresh"] = True
         staging["received"][str(part)] = {"rows": rows, "sources": _clean_sources(body.get("sources")), "applied_seq": applied_seq}
         staged = _encode(staging)
         if _staged_rows(staging) > MAX_ROWS or len(staged) > MAX_STORED_BYTES:
@@ -1106,7 +1179,7 @@ def receive_upload(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str
             _abort_staging(inst, staging_path, staging, "too_large")
             raise
         bound = binding(cfg, dev)
-        if bound["viewers"].get(inst) != viewer_id:
+        if bound["viewers"].get(inst) != viewer_id or staging.get("fresh") is True:
             if _sync_running():
                 raise SyncRequestError(503, "temporarily_unavailable", "A sync is running. Send this part again shortly.", True)
             _clear_kodi_baselines(inst)
@@ -1211,13 +1284,15 @@ def pending_changes(cfg: Mapping[str, Any] | None, instance_id: Any) -> list[dic
             continue
         ident, group, kind = str(rec.get("ident")), str(rec.get("group")), str(rec.get("kind"))
         row = live.get(ident)
-        if row is None or kind not in KIND_METHODS or group not in GROUPS:
+        if kind not in KIND_METHODS or group not in GROUPS:
             continue
         id_key = _KINDS[kind][0]
-        meta = {**_dict(rec.get("meta")), **{k: row[k] for k in _META_FIELDS if k in row}}
-        out.append({"seq": _int(rec.get("seq")), "method": KIND_METHODS[kind],
-                    "params": {id_key: row[id_key], **_group_params(group, _dict(rec.get("values")))},
-                    "item": _item_ref(kind, meta)})
+        meta = {**_dict(rec.get("meta")), **({k: row[k] for k in _META_FIELDS if k in row} if row else {})}
+        params = {id_key: row[id_key]} if row else {}
+        out.append({"seq": _int(rec.get("seq")), "change_id": _change_id(rec), "method": KIND_METHODS[kind],
+                    "params": {**params, **_group_params(group, _dict(rec.get("values")))},
+                    "item": _item_ref(kind, meta), "after": _int(rec.get("after")) or 0,
+                    "queued_at": rec.get("queued_at") or ""})
     return out
 
 
@@ -1276,7 +1351,8 @@ def enqueue(cfg: Mapping[str, Any] | None, instance_id: Any, method: Any, params
                 values = {"resume": dict(_dict(fields.get("resume")))}
             seq = _next_change(dev, viewer_id)
             _append_change(dev, viewer_id, {"op": "set", "rec": {"seq": seq, "ident": str(identity), "group": group, "kind": kind,
-                                                                 "values": values, "meta": meta, "status": "pending", "after": after}})
+                                                                 "values": values, "meta": meta, "status": "pending", "after": after, "change_id": secrets.token_hex(8),
+                                                                 "queued_at": datetime.now(timezone.utc).strftime(UTC_FORMAT)}})
             seqs.append(seq)
     return seqs
 
@@ -1299,7 +1375,7 @@ def receive_ack(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str, A
         seq = _int(row.get("seq"))
         status = _text(row.get("status"), 20).lower()
         if seq is not None and status in ("applied", "failed"):
-            wanted[seq] = (status, _text(row.get("error"), 80))
+            wanted[seq] = (status, _text(row.get("error"), 80), _text(row.get("change_id"), 64))
     applied = failed = 0
     with _LOCK:
         if not device_active(cfg, dev):
@@ -1310,7 +1386,7 @@ def receive_ack(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str, A
         changes = _load_changes(dev, viewer_id)
         for key, rec in list(changes["records"].items()):
             hit = wanted.get(_int(rec.get("seq")) or 0)
-            if not hit or rec.get("status") != "pending":
+            if not hit or rec.get("status") != "pending" or not hit[2] or hit[2] != _change_id(rec):
                 continue
             changes["records"][key] = {**rec, "status": hit[0]}
             if hit[0] == "applied":
@@ -1522,29 +1598,50 @@ def pair_ids_for(cfg: Mapping[str, Any] | None, instance_id: Any) -> list[str]:
 def _submit_run(ids: list[str]) -> Mapping[str, Any]:
     from api.syncAPI import api_run_sync
 
-    result = api_run_sync({"source": "scheduler", "pair_scope_ids": ids}, cast(Any, None))
-    return result if isinstance(result, Mapping) else {}
+    started: list[Any] = []
+    result = api_run_sync({"source": "scheduler", "pair_scope_ids": ids, "_cw_on_start": started.append}, cast(Any, None))
+    out = dict(result) if isinstance(result, Mapping) else {}
+    out["_run"] = started[0] if started else None
+    return out
+
+
+def _run_once(inst: str, ids: list[str]) -> bool:
+    for _ in range(RUN_RETRIES):
+        try:
+            result = _submit_run(ids)
+        except Exception as exc:
+            _log("warning", "pair_run_failed", instance=inst, error=type(exc).__name__)
+            return False
+        if result.get("ok"):
+            run = result.get("_run")
+            if run is not None and hasattr(run, "join"):
+                run.join(RUN_WAIT_SECONDS)
+            return True
+        if "already running" not in str(result.get("error") or "").lower():
+            _log("warning", "pair_run_refused", instance=inst, error=_text(result.get("error"), 120))
+            return False
+        time.sleep(RUN_RETRY_SECONDS)
+    _log("warning", "pair_run_gave_up", instance=inst)
+    return False
 
 
 def run_with_retry(inst: str, ids: list[str]) -> bool:
+    finished = False
     try:
-        for _ in range(RUN_RETRIES):
-            try:
-                result = _submit_run(ids)
-            except Exception as exc:
-                _log("warning", "pair_run_failed", instance=inst, error=type(exc).__name__)
-                return False
-            if result.get("ok"):
-                return True
-            if "already running" not in str(result.get("error") or "").lower():
-                _log("warning", "pair_run_refused", instance=inst, error=_text(result.get("error"), 120))
-                return False
-            time.sleep(RUN_RETRY_SECONDS)
-        _log("warning", "pair_run_gave_up", instance=inst)
-        return False
+        while True:
+            result = _run_once(inst, ids)
+            with _LOCK:
+                follow_up = _RERUN.pop(inst, None)
+                if follow_up is None:
+                    _PENDING_RUNS.discard(inst)
+                    finished = True
+                    return result
+            ids = follow_up
     finally:
-        with _LOCK:
-            _PENDING_RUNS.discard(inst)
+        if not finished:
+            with _LOCK:
+                _PENDING_RUNS.discard(inst)
+                _RERUN.pop(inst, None)
 
 
 def trigger_pair_runs(cfg: Mapping[str, Any] | None, instance_id: Any) -> list[str]:
@@ -1554,6 +1651,7 @@ def trigger_pair_runs(cfg: Mapping[str, Any] | None, instance_id: Any) -> list[s
         return []
     with _LOCK:
         if inst in _PENDING_RUNS:
+            _RERUN[inst] = ids
             return []
         _PENDING_RUNS.add(inst)
     threading.Thread(target=run_with_retry, args=(inst, ids), name="kodi-addon-sync-run", daemon=True).start()
