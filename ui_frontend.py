@@ -2086,13 +2086,13 @@ __CW_NAV_PROFILE_MENU__
                           </div>
                           <div class="cw-ai-caption" id="assistant_presets_label">AI provider</div>
                           <div class="cw-ai-choices" id="assistant_presets" role="radiogroup" aria-labelledby="assistant_presets_label">
+                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="gemini">
+                              <strong>Google Gemini</strong>
+                              <small>Cloud, free tier, recommended</small>
+                            </button>
                             <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="openai">
                               <strong>OpenAI</strong>
                               <small>Cloud, paid key</small>
-                            </button>
-                            <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="gemini">
-                              <strong>Google Gemini</strong>
-                              <small>Cloud, free tier</small>
                             </button>
                             <button type="button" class="cw-ai-choice" role="radio" aria-checked="false" data-assistant-preset="openrouter">
                               <strong>OpenRouter</strong>
@@ -2120,22 +2120,23 @@ __CW_NAV_PROFILE_MENU__
                             <div class="cw-ai-field" id="assistant_key_field">
                               <label class="cw-page-settings-label" for="assistant_api_key">API key</label>
                               <input id="assistant_api_key" type="password" autocomplete="new-password" spellcheck="false" placeholder="Paste your key">
-                              <small>From the provider's developer page. A ChatGPT or Claude subscription does not include one.</small>
+                              <small id="assistant_key_note">From the provider's developer page. A ChatGPT or Claude subscription does not include one.</small>
                             </div>
                             <div class="cw-ai-field">
                               <label class="cw-page-settings-label" for="assistant_model">Model</label>
-                              <div class="cw-ai-inline">
-                                <input id="assistant_model" type="text" list="assistant_models" autocomplete="off" spellcheck="false" placeholder="Search or type a model name">
-                                <datalist id="assistant_models">
-                                </datalist>
-                                <button type="button" class="btn" id="btn-assistant-models">
-                                  <span class="material-symbols-rounded" aria-hidden="true">refresh</span>
-                                  <span>Load models</span>
-                                </button>
-                              </div>
+                              <input id="assistant_model" type="text" list="assistant_models" autocomplete="off" spellcheck="false" placeholder="Search or type a model name">
+                              <datalist id="assistant_models">
+                              </datalist>
                               <details>
-                                <summary>Model options</summary>
+                                <summary>Advanced</summary>
                                 <div class="cw-ai-field">
+                                  <div class="cw-ai-inline">
+                                    <button type="button" class="btn" id="btn-assistant-models">
+                                      <span class="material-symbols-rounded" aria-hidden="true">refresh</span>
+                                      <span>Load models</span>
+                                    </button>
+                                  </div>
+                                  <small>Lists the models your provider offers, to pick another one.</small>
                                   <label class="cw-page-settings-label" for="assistant_models_all">Model list</label>
                                   <select id="assistant_models_all">
                                     <option value="chat">Chat models</option>

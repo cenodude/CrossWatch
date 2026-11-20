@@ -3,6 +3,8 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 const REQUEST_TIMEOUT_MS = 600_000;
+const POLL_MS = 1500;
+const POLL_MISSES = 3;
 const MAX_QUESTION = 1000;
 const SUGGESTIONS = [
   "Is everything healthy?",
@@ -358,6 +360,13 @@ function when(at) {
   return new Date(Number(at)).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
+function failure(status) {
+  if (status === 504 || status === 524) {
+    return `The connection to CrossWatch was cut off (HTTP ${status}). A reverse proxy in front of CrossWatch did not get an answer in time. Try again in a moment.`;
+  }
+  return `HTTP ${status}`;
+}
+
 async function api(path, body) {
   const ctrl = new AbortController();
   const timeout = window.setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS);
@@ -370,7 +379,11 @@ async function api(path, body) {
   try {
     const res = await fetch("/api/assistant" + path, opts);
     const data = await res.json().catch(() => null);
-    if (!res.ok || data?.ok === false) throw new Error(String(data?.error || `HTTP ${res.status}`));
+    if (!res.ok || data?.ok === false) {
+      const err = new Error(String(data?.error || failure(res.status)));
+      err.answered = data !== null;
+      throw err;
+    }
     return data;
   } catch (err) {
     if (err?.name === "AbortError") throw new Error("That took too long. Try a narrower question.");
@@ -378,6 +391,25 @@ async function api(path, body) {
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+async function chat(payload) {
+  const started = Date.now();
+  const job = await api("/jobs", payload);
+  let misses = 0;
+  while (Date.now() - started < REQUEST_TIMEOUT_MS) {
+    await new Promise((resolve) => window.setTimeout(resolve, POLL_MS));
+    let data;
+    try {
+      data = await api(`/jobs/${encodeURIComponent(String(job.job_id || ""))}`);
+    } catch (err) {
+      if (err?.answered || ++misses >= POLL_MISSES) throw err;
+      continue;
+    }
+    misses = 0;
+    if (!data.pending) return data;
+  }
+  throw new Error("That took too long. Try a narrower question.");
 }
 
 function injectCss() {
@@ -484,7 +516,7 @@ async function ask(question) {
   setBusy(true);
   try {
     const messages = history.filter((item) => !item.error).map(({ role, content }) => ({ role, content }));
-    const data = await api("/chat", { messages, scope: view.scope, context: view.context });
+    const data = await chat({ messages, scope: view.scope, context: view.context });
     const proposals = (Array.isArray(data.proposals) ? data.proposals : []).filter(p => p && Object.hasOwn(PROPOSALS, p.action)).slice(0, 3).map(p => ({ action: p.action, title: p.title, params: p.params, status: "ready" }));
     history.push({ role: "assistant", content: data.reply || "The model gave an empty answer.", tools: data.tools || [], actions: data.actions || [], sources: data.sources || [], followups: data.followups || [], evidence: data.evidence || [], proposals, at: Date.now() });
   } catch (err) {

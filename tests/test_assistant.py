@@ -492,6 +492,8 @@ def test_settings_keep_the_key_secret_and_admin_only(gated, config_base: Path) -
         assert client.get(url, headers=blocked).status_code == 403
         assert client.post(url, json={"enabled": True}, headers=blocked).status_code == 403
         assert client.post("/api/assistant/chat", json={"messages": []}, headers=blocked).status_code == 403
+        assert client.post("/api/assistant/jobs", json={"messages": []}, headers=blocked).status_code == 403
+        assert client.get("/api/assistant/jobs/any", headers=blocked).status_code == 403
 
     assert client.get(url, headers=admin).json() == {"ok": True, "enabled": False, "base_url": "", "model": "", "has_key": False, "ready": False, "wiki_help": True, "mode": "wiki"}
     assert client.post(url, json={"base_url": "ftp://ai.test"}, headers=admin).status_code == 400
@@ -1032,7 +1034,7 @@ def test_a_provider_that_stalls_before_answering_cannot_hold_the_request(monkeyp
     assert assistant.run_bounded(lambda: "free", 5) == "free"
 
 
-def test_busy_providers_are_retried_a_few_times_then_reported(gated, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_busy_providers_are_retried_once_and_quota_errors_are_not(gated, monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client()
     admin = _headers(gated)
     client.post("/api/assistant/settings", json={"enabled": True, "base_url": BASE, "model": "m", "api_key": KEY}, headers=admin)
@@ -1041,21 +1043,34 @@ def test_busy_providers_are_retried_a_few_times_then_reported(gated, monkeypatch
     monkeypatch.setattr(assistant.time, "sleep", slept.append)
     busy = {"error": {"message": "This model is currently experiencing high demand."}}
 
-    recovers = Provider(FakeResponse(503, busy), FakeResponse(429, busy, headers={"Retry-After": "1"}), _answer("All good."))
+    recovers = Provider(FakeResponse(503, busy), _answer("All good."))
     monkeypatch.setattr(assistant.requests, "post", recovers.post)
     assert client.post("/api/assistant/chat", json=ask, headers=admin).json() == {"ok": True, "reply": "All good.", "tools": [], "actions": [], "sources": [], "proposals": []}
-    assert slept == [2.0, 1.0]
+    assert slept == [2.0]
+
+    slept.clear()
+    quota = Provider(FakeResponse(429, busy, headers={"Retry-After": "40"}), _answer("never read"))
+    monkeypatch.setattr(assistant.requests, "post", quota.post)
+    limited = client.post("/api/assistant/chat", json=ask, headers=admin)
+    assert limited.status_code == 502
+    assert limited.json()["error"] == "The AI provider's request limit was reached. Try again in 40 seconds."
+    assert slept == [] and len(quota.replies) == 1
 
     slept.clear()
     stuck = Provider(*[FakeResponse(503, busy) for _ in range(len(assistant.RETRY_DELAYS_S) + 1)])
     monkeypatch.setattr(assistant.requests, "post", stuck.post)
     failed = client.post("/api/assistant/chat", json=ask, headers=admin)
     assert failed.status_code == 502
-    assert failed.json()["error"] == "The AI provider answered HTTP 503: This model is currently experiencing high demand."
+    assert failed.json()["error"] == "The AI provider is busy right now. Try again in a minute."
     assert slept == list(assistant.RETRY_DELAYS_S)
     assert stuck.replies == []
 
     slept.clear()
+    slow = Provider(FakeResponse(504, busy), _answer("never read"))
+    monkeypatch.setattr(assistant.requests, "post", slow.post)
+    assert client.post("/api/assistant/chat", json=ask, headers=admin).status_code == 502
+    assert slept == [] and len(slow.replies) == 1
+
     refused = Provider(FakeResponse(401, {"error": {"message": "bad key"}}))
     monkeypatch.setattr(assistant.requests, "post", refused.post)
     assert client.post("/api/assistant/chat", json=ask, headers=admin).status_code == 502
@@ -1065,6 +1080,66 @@ def test_busy_providers_are_retried_a_few_times_then_reported(gated, monkeypatch
     monkeypatch.setattr(assistant.requests, "post", huge_wait.post)
     assert client.post("/api/assistant/chat", json=ask, headers=admin).json()["reply"] == "Later."
     assert slept == [assistant.MAX_RETRY_WAIT_S]
+
+
+def test_old_tool_results_are_shortened_when_the_conversation_grows_too_large() -> None:
+    big = "x" * 20_000
+    convo = [{"role": "system", "content": "s"}, {"role": "user", "content": big}]
+    convo += [{"role": "tool", "tool_call_id": str(i), "content": big} for i in range(4)]
+    assistant._fit(convo, len(convo) - 1)
+    contents = [m["content"] for m in convo]
+    assert contents[1] == big
+    assert contents[2].endswith(assistant.SHORTENED) and len(contents[2]) == assistant.SHORT_TOOL_CHARS + len(assistant.SHORTENED)
+    assert contents[-1] == big
+    assert sum(len(c) for c in contents) <= assistant.MAX_CONVO_CHARS
+
+    small = [{"role": "tool", "tool_call_id": "1", "content": "short"}]
+    assistant._fit(small, 1)
+    assert small[0]["content"] == "short"
+
+
+def test_chat_jobs_answer_in_the_background_for_the_asker_only(gated, monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    from api import assistantAPI
+
+    client = _client()
+    admin = _headers(gated)
+    client.post("/api/assistant/settings", json={"enabled": True, "base_url": BASE, "model": "m", "api_key": KEY}, headers=admin)
+    provider = Provider(_answer("All good."))
+    monkeypatch.setattr(assistant.requests, "post", provider.post)
+
+    started = client.post("/api/assistant/jobs", json={"messages": [{"role": "user", "content": "healthy?"}]}, headers=admin)
+    assert started.status_code == 202
+    job_id = started.json()["job_id"]
+    url = f"/api/assistant/jobs/{job_id}"
+    other = dict(assistantAPI._JOBS[job_id], owner="someone-else")
+
+    for _ in range(100):
+        data = client.get(url, headers=admin).json()
+        if not data.get("pending"):
+            break
+        time.sleep(0.05)
+    assert data == {"ok": True, "reply": "All good.", "tools": [], "actions": [], "sources": [], "proposals": []}
+    assert client.get(url, headers=admin).status_code == 404
+
+    assistantAPI._JOBS["foreign"] = other
+    try:
+        assert client.get("/api/assistant/jobs/foreign", headers=admin).json() == {"ok": False, "error": assistantAPI.JOB_GONE}
+    finally:
+        assistantAPI._JOBS.pop("foreign", None)
+
+    failed = client.post("/api/assistant/jobs", json={"messages": []}, headers=admin).json()["job_id"]
+    for _ in range(100):
+        res = client.get(f"/api/assistant/jobs/{failed}", headers=admin)
+        if not res.json().get("pending"):
+            break
+        time.sleep(0.05)
+    assert (res.status_code, res.json()) == (400, {"ok": False, "error": "Ask a question first"})
+
+    assistantAPI._JOBS["old"] = {"owner": "", "created": time.time() - assistantAPI.JOB_TTL_S - 1, "result": None}
+    client.post("/api/assistant/jobs", json={"messages": []}, headers=admin)
+    assert "old" not in assistantAPI._JOBS
 
 
 @pytest.mark.parametrize("message,header,expected", [
@@ -1088,7 +1163,45 @@ def test_provider_errors_never_carry_part_of_the_key() -> None:
 
     assert KEY[:5] not in message
     assert len(message) <= len("The AI provider answered HTTP 401: ") + assistant.MAX_ERROR_CHARS
-    assert assistant._provider_error(500, b"not json", KEY) == "The AI provider answered HTTP 500"
+    assert assistant._provider_error(500, b"not json", KEY) == "The AI provider had an internal problem (HTTP 500). Try again in a minute."
+
+
+@pytest.mark.parametrize("status,expected", [
+    (413, "The question needed more data than the AI provider accepts. Try a narrower question."),
+    (503, "The AI provider is busy right now. Try again in a minute."),
+    (504, "The AI provider took too long to answer. This often happens when a question needs a lot of data. Try a narrower question."),
+    (502, "The AI provider had an internal problem (HTTP 502). Try again in a minute."),
+])
+def test_provider_errors_explain_what_to_do(status, expected) -> None:
+    assert assistant._provider_error(status, json.dumps({"error": {"message": "upstream noise"}}).encode(), KEY) == expected
+
+
+def test_provider_failures_are_logged_without_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    lines: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(assistant, "log", lambda message, level="INFO", module=None: lines.append((message, level, module)))
+    monkeypatch.setattr(assistant.time, "sleep", lambda _s: None)
+    busy = {"error": {"message": "High demand " + KEY}}
+    stuck = Provider(*[FakeResponse(503, busy) for _ in range(len(assistant.RETRY_DELAYS_S) + 1)])
+    monkeypatch.setattr(assistant.requests, "post", stuck.post)
+    conf = {"base_url": BASE, "api_key": KEY, "model": "gemini-flash-lite-latest"}
+    with pytest.raises(assistant.AssistantError):
+        assistant._provider("POST", conf, "/chat/completions", deadline=assistant.time.monotonic() + 30, body={"messages": ["x" * 3000]})
+    assert len(lines) == 1
+    message, level, module = lines[0]
+    assert (level, module) == ("WARN", "ASSISTANT")
+    assert "POST /chat/completions to ai.test failed" in message
+    assert f"{len(assistant.RETRY_DELAYS_S) + 1} tries" in message
+    assert "request 3 KB, model gemini-flash-lite-latest: HTTP 503: High demand" in message
+    assert KEY not in message
+
+
+def test_slow_answers_are_logged_as_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
+    lines: list[tuple[str, str]] = []
+    monkeypatch.setattr(assistant, "log", lambda message, level="INFO", module=None: lines.append((message, level)))
+    assistant._log_answer({"model": "m"}, 12, ["get_health"])
+    assistant._log_answer({"model": "m"}, assistant.SLOW_ANSWER_S + 5, ["get_health", "read_logs"])
+    assert lines[0] == ("Answer from model m took 12s with 1 tool calls.", "DEBUG")
+    assert lines[1][1] == "WARN" and "needed a lot of data" in lines[1][0]
 
 
 def test_source_code_tools_read_only_the_installed_code(monkeypatch: pytest.MonkeyPatch) -> None:
