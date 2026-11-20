@@ -107,6 +107,7 @@ _SIMKL_HISTORY_MESSAGES = {
 }
 
 _DIRECT_LABELS = {
+    "episode_ratings_unsupported": "Episode ratings are unsupported by this integration",
     "ambiguous": "Multiple matching items found",
     "resolve_ambiguous": "Multiple matching items found",
     "not_found": "No matching item found",

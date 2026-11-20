@@ -70,6 +70,7 @@ _SCROBBLE_STATUS = {
     "scrobble_playback": "running",
     "rating_applied": "rated",
     "rating_failed": "failed",
+    "rating_skipped": "skipped",
 }
 _AUDIT_STATUS = {
     "audit_login": "completed",
@@ -155,6 +156,27 @@ def _g(r: Any, key: str) -> Any:
         return r[key]
     except Exception:
         return None
+
+
+def _activity_hash(row: Any) -> str:
+    return group_hash({**dict(row), "destination_provider": None, "pair_key": None})
+
+
+@_serialized
+def _ensure_activity_hashes(conn: sqlite3.Connection) -> None:
+    rows = conn.execute(
+        "SELECT g.id AS activity_group_id, g.group_hash, e.* FROM event_groups g "
+        "LEFT JOIN events e ON e.id=(SELECT MIN(id) FROM events WHERE group_id=g.id) "
+        "WHERE g.domain='scrobble' AND g.activity_hash IS NULL"
+    ).fetchall()
+    if not rows:
+        return
+    updates = [(_activity_hash(row) if row["id"] is not None else row["group_hash"], row["activity_group_id"]) for row in rows]
+    if conn.in_transaction:
+        conn.executemany("UPDATE event_groups SET activity_hash=? WHERE id=?", updates)
+    else:
+        with conn:
+            conn.executemany("UPDATE event_groups SET activity_hash=? WHERE id=?", updates)
 
 
 def _is_playlist_batch_event(r: Any) -> bool:
@@ -275,7 +297,7 @@ def _derive_status(events: list[dict[str, Any]], extra_problems: int = 0) -> str
     if "sync_run_started" in types:
         return "running"
 
- 
+
     status_by_type = {
         "write_succeeded": "resolved",
         "unresolved_cleared": "resolved",
@@ -570,6 +592,9 @@ def _summarize_scrobble(status: str, events: list[dict[str, Any]], dst: str) -> 
     if status == "paused":
         return f"Paused {name}{to}{tail}"
     if status == "skipped":
+        if any(e.get("event_type") == "rating_skipped" for e in events):
+            reason = str(_pick(events, "reason_code") or _pick(events, "reason") or "")
+            return f"Rating skipped: {name}{to}: {friendly_reason(reason)}" if reason else f"Rating skipped: {name}{to}"
         why = _skipped_delivery(_detail(playback or last))
         if not why:
             skip = next((e for e in reversed(events) if e.get("event_type") == "scrobble_skipped"), None)
@@ -689,6 +714,9 @@ def _recompute(conn: sqlite3.Connection, group_id: int, now: int) -> None:
         "reason_code=?, reason=?, summary=?, health_only=? WHERE id=?",
         (*vals[:-1], int(types == {"provider_health"}), group_id),
     )
+    if domain == "scrobble":
+        conn.execute("UPDATE event_groups SET activity_hash=? WHERE id=?", (_activity_hash(events[0]), group_id))
+
 
 
 def _persist_titles(conn: sqlite3.Connection, ids: list[int]) -> None:
@@ -1004,6 +1032,8 @@ def list_groups(
     order: str | None = "newest",
     limit: int = 50,
     offset: int = 0,
+    activities: bool = False,
+    row_filter: Callable[[dict[str, Any]], bool] | None = None,
     conn: sqlite3.Connection | None = None,
 ) -> dict[str, Any]:
     c = conn or get_conn()
@@ -1031,7 +1061,8 @@ def list_groups(
 
     cat = _CATEGORY_STATUS.get(str(category or "").strip().lower())
     if cat:
-        clauses.append(f"g.status IN ({','.join('?' for _ in cat)})")
+        clause = f"g.status IN ({','.join('?' for _ in cat)})"
+        clauses.append(f"({clause} OR g.severity='error')" if category == "problems" else clause)
         params.extend(cat)
     eq("origin_provider", origin_provider, up=True)
     eq("destination_provider", destination_provider, up=True)
@@ -1087,7 +1118,7 @@ def list_groups(
     if vc:
         clauses.append(vc)
 
-    # hide health-only groups 
+    # hide health-only groups
     explicit = str(visibility or "").strip().lower() == "all" or any(v not in (None, "") for v in (
         q, status, category, event_type, provider, origin_provider,
         destination_provider, source_provider, feature, pair_key, item_key, run_id, reason_code, operation,
@@ -1099,8 +1130,67 @@ def list_groups(
     dir_ = "ASC" if str(order or "").strip().lower() in ("oldest", "asc") else "DESC"
     lim = max(1, min(int(limit or 50), 500))
     off = max(0, int(offset or 0))
+    if activities and domain == "scrobble":
+        _ensure_activity_hashes(c)
+    permission_function = f"cw_activity_allowed_{id(row_filter)}"
+    permission_columns = _GROUP_COLUMNS
+    if activities and domain == "scrobble" and row_filter:
+        c.create_function(permission_function, len(permission_columns), lambda *values: int(bool(row_filter(dict(zip(permission_columns, values))))))
+        where += (" AND " if where else " WHERE ") + f"{permission_function}({','.join('g.' + col for col in permission_columns)})=1"
     try:
         with _read_snapshot(c):
+            if activities and domain == "scrobble":
+                total = int(c.execute(f"SELECT COUNT(DISTINCT g.activity_hash) FROM event_groups g{where}", params).fetchone()[0])
+                keys = [row[0] for row in c.execute(
+                    f"SELECT g.activity_hash FROM event_groups g{where} GROUP BY g.activity_hash "
+                    f"ORDER BY MAX(g.last_event_at) {dir_}, g.activity_hash {dir_} LIMIT ? OFFSET ?",
+                    [*params, lim, off],
+                )]
+                if not keys:
+                    return {"items": [], "total": total, "limit": lim, "offset": off}
+                selected = (" AND " if where else " WHERE ") + f"g.activity_hash IN ({','.join('?' for _ in keys)})"
+                rows = c.execute(
+                    f"SELECT {','.join('g.' + col for col in _GROUP_COLUMNS)}, g.activity_hash, "
+                    "(SELECT latest.detail FROM events latest WHERE latest.group_id=g.id "
+                    "ORDER BY latest.created_at DESC, latest.id DESC LIMIT 1) AS activity_detail "
+                    f"FROM event_groups g{where}{selected} ORDER BY g.last_event_at {dir_}, g.id {dir_}", [*params, *keys],
+                )
+                bundles: dict[str, dict[str, Any]] = {}
+                for row in rows:
+                    item = dict(row)
+                    try:
+                        values = json.loads(item.pop("activity_detail") or "{}")
+                    except (ValueError, TypeError):
+                        values = {}
+                    if isinstance(values, dict):
+                        item["rating"] = values.get("rating")
+                        item["progress"] = values.get("progress")
+                    key = item.pop("activity_hash")
+                    if key not in bundles:
+                        bundles[key] = {**item, "destinations": [], "event_count": 0}
+                    bundle = bundles[key]
+                    bundle["destinations"].append(item)
+                    bundle["event_count"] += int(item.get("event_count") or 0)
+                    bundle["first_event_at"] = min(bundle["first_event_at"], item["first_event_at"])
+                    if item["last_event_at"] > bundle["last_event_at"]:
+                        if bundle["status"] != "failed":
+                            bundle["status"] = item["status"]
+                            bundle["severity"] = item["severity"]
+                        bundle["rating"] = item.get("rating")
+                        bundle["progress"] = item.get("progress")
+                    bundle["last_event_at"] = max(bundle["last_event_at"], item["last_event_at"])
+                    if not item.get("acknowledged_at"):
+                        bundle["acknowledged_at"] = None
+                    if item.get("severity") == "error" or item.get("status") == "failed":
+                        bundle["severity"] = "error"
+                        bundle["status"] = "failed"
+                items = [bundles[key] for key in keys]
+                for item in items:
+                    item["destinations"] = _with_reason_labels(item["destinations"])
+                    if item["status"] != "failed" and any(row["status"] == "rated" for row in item["destinations"]):
+                        item["status"] = "rated"
+                        item["severity"] = "success"
+                return {"items": _with_reason_labels(items), "total": total, "limit": lim, "offset": off}
             total = int(c.execute(f"SELECT COUNT(*) FROM event_groups g{where}", params).fetchone()[0])
             rows = c.execute(
                 f"SELECT {','.join('g.' + col for col in _GROUP_COLUMNS)} FROM event_groups g{where} "
@@ -1110,6 +1200,9 @@ def list_groups(
     except Exception as exc:
         _LOG.warning("group list failed: %s", exc, exc_info=True)
         return {"items": [], "total": 0, "limit": lim, "offset": off}
+    finally:
+        if activities and domain == "scrobble" and row_filter:
+            c.create_function(permission_function, len(permission_columns), None)
     return {"items": _with_reason_labels([dict(r) for r in rows]), "total": total, "limit": lim, "offset": off}
 
 

@@ -146,13 +146,15 @@ def test_plex_webhook_rating_events_name_the_real_targets(monkeypatch) -> None:
 
     assert result["ok"] is True
     by_target = {row["destination_provider"]: row for row in archived}
-    assert set(by_target) == {"crosswatch", "floppy"}
+    assert set(by_target) == {"crosswatch", "floppy", "wetrakr"}
     assert by_target["crosswatch"]["event_type"] == "rating_applied"
     assert by_target["crosswatch"]["destination_instance"] == "CW-P01"
     assert by_target["crosswatch"]["rating"] == 8
     assert by_target["floppy"]["event_type"] == "rating_failed"
     assert by_target["floppy"]["destination_instance"] == "F1"
     assert by_target["floppy"]["reason"] == "503"
+    assert by_target["wetrakr"]["event_type"] == "rating_skipped"
+    assert by_target["wetrakr"]["reason"] == "not_mapped"
     assert all(row["source_provider"] == "plex" and row["source_instance"] == "P2" for row in archived)
 
 

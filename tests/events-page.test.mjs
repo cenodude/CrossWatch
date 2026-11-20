@@ -8,6 +8,20 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import {pageBackLink,statisticsReturn,returnFromEvents,resumeEventsReturn} from '../assets/js/page-return.js';
 
+test('skipped ratings display a readable reason without reporting failure', async () => {
+  const source = await readFile(new URL('../assets/js/events/index.js', import.meta.url), 'utf8');
+  const script = source.slice(source.indexOf('const sevOf ='), source.indexOf('const EVENT_TYPES'));
+  const context = vm.createContext({reasonLabel: (_code, label) => label});
+  vm.runInContext(script + 'globalThis.describe = e => ({title: titleLine(e), severity: sevOf(e)});', context);
+  const event = {
+    event_type: 'rating_skipped', severity: 'info', reason_code: 'episode_ratings_unsupported',
+    reason_label: 'Episode ratings are unsupported by this integration',
+  };
+  assert.equal(context.describe(event).title, 'Rating skipped · Episode ratings are unsupported by this integration');
+  assert.equal(context.describe(event).severity, 'info');
+  assert.equal(context.describe({event_type: 'rating_skipped'}).title, 'Rating skipped');
+});
+
 test('Events captures its caller and keeps Sync activity context when opened again',async()=>{
   const source=await readFile(new URL('../assets/js/modals.js',import.meta.url),'utf8');
   const script=source.slice(source.indexOf('window.openEvents ='),source.indexOf('window.openStatisticsModal ='));

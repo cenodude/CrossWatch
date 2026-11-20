@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 _CREATE_SYNC_RUNS = """
 CREATE TABLE IF NOT EXISTS sync_runs (
@@ -185,11 +185,13 @@ _ADD_COLUMNS = (
     ("event_groups", "domain", "TEXT DEFAULT 'sync'"),
     ("event_groups", "run_owned", "INTEGER DEFAULT 0"),
     ("event_groups", "health_only", "INTEGER DEFAULT 0"),
+    ("event_groups", "activity_hash", "TEXT"),
 )
 
 _EXTRA_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_events_acknowledged ON events(acknowledged_at)",
     "CREATE INDEX IF NOT EXISTS idx_events_group_id ON events(group_id)",
+    "CREATE INDEX IF NOT EXISTS idx_groups_activity ON event_groups(domain, activity_hash, last_event_at, id)",
     "CREATE INDEX IF NOT EXISTS idx_sync_runs_started ON sync_runs(started_at)",
     "CREATE INDEX IF NOT EXISTS idx_sync_runs_finished ON sync_runs(finished_at)",
 )

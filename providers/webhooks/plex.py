@@ -29,6 +29,7 @@ from providers.scrobble.scrobble import mask_account as _mask_account
 from providers.scrobble._show_tmdb import show_tmdb_id
 from providers.scrobble.plex.ratings_sync import RATING_SINKS, archive_rating_results
 from providers.scrobble.sources import source_enabled
+from providers.sync.plex._utils import _resolve_verify_from_cfg
 from providers.webhooks.config import configured_webhook_sinks, profile_scoped_webhook, webhook_sink_instance
 from providers.webhooks.dispatch import dispatch_scrobble as _dispatch_scrobble
 
@@ -494,6 +495,7 @@ def _plex_show_ids_from_metadata(
                     f"{base}/library/metadata/{rk}",
                     headers={"X-Plex-Token": token},
                     timeout=5,
+                    verify=_resolve_verify_from_cfg(cfg, base),
                 )
             except Exception as e:
                 _emit(logger, f"plex show-ids lookup error rk={rk}: {e}", "DEBUG")
@@ -600,7 +602,12 @@ def _probe_active_progress(cfg: dict[str, Any], rating_key: Any) -> tuple[int, i
         rk = str(rating_key or "")
         if not token or not rk:
             return None
-        r = requests.get(f"{base}/status/sessions", headers={"X-Plex-Token": token}, timeout=5)
+        r = requests.get(
+            f"{base}/status/sessions",
+            headers={"X-Plex-Token": token},
+            timeout=5,
+            verify=_resolve_verify_from_cfg(cfg, base),
+        )
         if r.status_code != 200:
             return None
         root = ET.fromstring(r.text or "")
@@ -635,7 +642,12 @@ def _probe_played_status(cfg: dict[str, Any], rating_key: Any) -> bool:
         base, token = _plex_base_token(cfg)
         if not token:
             return False
-        r = requests.get(f"{base}/library/metadata/{rating_key}", headers={"X-Plex-Token": token}, timeout=5)
+        r = requests.get(
+            f"{base}/library/metadata/{rating_key}",
+            headers={"X-Plex-Token": token},
+            timeout=5,
+            verify=_resolve_verify_from_cfg(cfg, base),
+        )
         if r.status_code != 200:
             return False
         root = ET.fromstring(r.text or "")
@@ -1220,7 +1232,7 @@ def process_webhook(
         rating_val = _plex_rating_to_trakt(rating_raw) if rating_raw is not None else 0
         if rating_val is None:
             rating_val = 0
-        from providers.scrobble.plex.ratings_sync import plex_rating_value
+        from providers.scrobble.plex.ratings_sync import episode_rating_skips, plex_rating_value
 
         rating_precise = plex_rating_value(rating_raw)
 
@@ -1236,6 +1248,15 @@ def process_webhook(
 
         results: dict[str, Any] = {"ok": True, "action": "rating", "media_type": media_type, "rating": rating_precise}
         sent = False
+
+        skipped = episode_rating_skips(media_type, (
+            name for name, enabled in (
+                ("simkl", enable_simkl_ratings), ("mdblist", enable_mdblist_ratings),
+                ("anilist", enable_anilist_ratings), ("kitsu", enable_kitsu_ratings),
+                ("myanimelist", enable_myanimelist_ratings), ("silo", enable_silo_ratings),
+            ) if enabled
+        ))
+        results.update(skipped)
 
         if media_type == "season":
             from providers.scrobble.anilist.ratings import send_plex_rating
@@ -1303,7 +1324,7 @@ def process_webhook(
                 ("myanimelist", enable_myanimelist_ratings),
                 ("silo", enable_silo_ratings),
             )
-            if on
+            if on and name not in skipped
         ]
         if ops_enabled and media_type != "season":
             from providers.scrobble.plex.ratings_sync import dispatch_ops_ratings
@@ -1323,7 +1344,7 @@ def process_webhook(
                 )
             )
 
-        if not sent:
+        if not sent and not skipped:
             _emit(logger, "no usable rating target; ignored", "DEBUG")
             return {"ok": True, "ignored": True}
 

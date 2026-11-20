@@ -3,7 +3,7 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
 import {pageBackLink, statisticsReturn, returnFromEvents} from '../page-return.js';
-import {playbackDetail, playbackTimeline} from './playback-timeline.js';
+import {playbackDetail, playbackTimeline, playbackUpdatedAt} from './playback-timeline.js';
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => (
   { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
@@ -80,6 +80,13 @@ const RUN_ITEMS_PAGE_SIZE = 100;
 
 const FEATURE_LABEL = { history: "History", ratings: "Ratings", watchlist: "Watchlist", progress: "Progress", collection: "Collections" };
 const reasonLabel = (reason, label = "") => String(label || reason || "");
+
+const activitySummary = group => {
+  const rows = group.destinations || [group];
+  const skipped = rows.filter(row => row.status === "skipped").length;
+  const value = group.feature === "ratings" && group.rating != null ? ` · ${group.rating}/10` : group.progress != null ? ` · ${group.progress}%` : "";
+  return `${statusLabel(group.status, group.domain)}${value}${skipped ? ` · ${skipped} destination${skipped === 1 ? "" : "s"} skipped` : ""}`;
+};
 
 const withProviderLogos = (text) => {
   const meta = window.CW?.ProviderMeta;
@@ -188,6 +195,7 @@ const BADGE = {
   scrobble_skipped: "Scrobble skipped",
   rating_applied: "Rated",
   rating_failed: "Rating failed",
+  rating_skipped: "Rating skipped",
   capture_completed: "Capture",
   capture_failed: "Capture failed",
   capture_cleanup: "Captures removed",
@@ -244,6 +252,7 @@ const ICON = {
   scrobble_skipped: "block",
   rating_applied: "star",
   rating_failed: "error",
+  rating_skipped: "block",
   audit_login: "login",
   audit_login_failed: "error",
   audit_login_blocked: "block",
@@ -319,6 +328,7 @@ const titleLine = (e) => {
     case "scrobble_failed": return `Scrobble failed${e.reason_code ? ` · ${e.reason_code}` : ""}`;
     case "scrobble_skipped": return `Scrobble skipped${e.reason_code ? ` · ${e.reason_code}` : ""}`;
     case "rating_applied": return "Rating forwarded";
+    case "rating_skipped": return `Rating skipped${e.reason_code ? ` · ${reasonLabel(e.reason_code, e.reason_label)}` : ""}`;
     case "rating_failed": return `Rating failed${e.reason_code ? ` · ${e.reason_code}` : ""}`;
     default: {
       if (String(e.event_type || "").startsWith("audit_")) {
@@ -336,7 +346,7 @@ const EVENT_TYPES = [
   "blackbox_promoted", "blackbox_blocked", "tombstone_created", "plan_created",
   "provider_health", "sync_run_started", "sync_run_finished",
 ];
-const SCROBBLE_TYPES = ["", "scrobble_playback", "scrobble_started", "scrobble_completed", "scrobble_skipped", "scrobble_failed", "rating_applied", "rating_failed"];
+const SCROBBLE_TYPES = ["", "scrobble_playback", "scrobble_started", "scrobble_completed", "scrobble_skipped", "scrobble_failed", "rating_applied", "rating_failed", "rating_skipped"];
 const CAPTURE_TYPES = ["", "capture_completed", "capture_failed", "capture_cleanup"];
 const BACKUP_TYPES = ["", "backup_completed", "backup_failed", "backup_uploaded", "backup_upload_failed", "backup_cleanup"];
 const JOB_DOMAINS = ["capture", "backup"];
@@ -344,7 +354,7 @@ const CAPTURE_TRIGGERS = { scheduler: "Schedule", manual: "Manual", pre_restore:
 const AUDIT_TYPES = ["", "audit_login", "audit_login_failed", "audit_login_blocked", "audit_2fa_required", "audit_2fa_failed", "audit_logout", "audit_logout_all", "audit_logout_others", "audit_user_created", "audit_user_updated", "audit_user_deleted", "audit_credentials_updated", "audit_totp_setup", "audit_totp_enabled", "audit_totp_disabled", "audit_plex_sso_linked", "audit_plex_sso_unlinked", "audit_api_action"];
 const OUTCOME_ITEMS = {
   sync: [{ value: "", label: "Any outcome" }, { value: "successful", label: "Successful" }, { value: "problems", label: "Problems" }, { value: "informational", label: "Informational" }],
-  scrobble: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Watched" }, { value: "failed", label: "Failed" }, { value: "rated", label: "Rated" }, { value: "running", label: "In progress" }, { value: "paused", label: "Paused" }, { value: "stopped", label: "Stopped (Incomplete)" }, { value: "skipped", label: "Skipped" }],
+  scrobble: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Watched" }, { value: "failed", label: "Failed" }, { value: "rated", label: "Rated" }, { value: "running", label: "In progress" }, { value: "paused", label: "Paused" }, { value: "stopped", label: "Stopped watching" }, { value: "skipped", label: "Skipped" }],
   audit: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Successful" }, { value: "failed", label: "Failed" }, { value: "informational", label: "Informational" }],
   capture: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Successful" }, { value: "failed", label: "Failed" }],
   backup: [{ value: "", label: "Any outcome" }, { value: "completed", label: "Successful" }, { value: "failed", label: "Failed" }],
@@ -363,7 +373,7 @@ const STATUS_ICON = {
   warning: "warning",
 };
 const groupIcon = (g) => STATUS_ICON[String(g.status || "").toLowerCase()] || "bolt";
-const STATUS_LABEL = { paused: "Paused", stopped: "Stopped (Incomplete)", running: "In progress", warning: "Completed · issues" };
+const STATUS_LABEL = { paused: "Paused", stopped: "Stopped watching", running: "In progress", warning: "Completed · issues" };
 const statusLabel = (s, domain) => { if (domain === "scrobble" && s === "completed") return "Watched"; const k = String(s || "informational").toLowerCase(); return STATUS_LABEL[k] || (k.charAt(0).toUpperCase() + k.slice(1)); };
 const modeLabel = (m) => {
   const s = String(m || "").toLowerCase();
@@ -523,7 +533,7 @@ export default {
     cleanup?.();
     const generation = ++mountGeneration;
     const cssReady = injectCSS();
-    root.classList.add("ev-page");
+    root.classList.add("ev-page", "cw-page-events");
     let eventScope = null;
     const fjson = (url, options) => requestJSON(withEventScope(url, eventScope), options);
     const knownAuth = window.CW?.AuthState?.read?.();
@@ -547,15 +557,17 @@ export default {
     const back = pageBackLink(props?.returnTo, location.href, 'events');
     if (statisticsReturn(props?.returnContext)) back.label = 'Sync activity';
     let runFilter = String(props?.runId || props?.run_id || "").trim();
-    let visibility = ["open", "acknowledged", "all"].includes(initialVisibility) ? initialVisibility : ls("cw.events.visibility", "open");
+    let visibility = ["open", "acknowledged", "all"].includes(initialVisibility) ? initialVisibility : ls("cw.events.visibility", "all");
     if (runFilter || initialGroupId) visibility = ["open", "acknowledged", "all"].includes(initialVisibility) ? initialVisibility : "all";
     let order = ls("cw.events.order", "newest");
     let mode = ["grouped", "raw"].includes(initialMode) ? initialMode : ls("cw.events.mode", "grouped");
     if (initialGroupId) mode = "grouped";
     let domain = ["sync", "scrobble", "audit", ...JOB_DOMAINS].includes(initialDomain) ? initialDomain : ls("cw.events.domain", "sync");
-    let detailTab = ls("cw.events.detailtab", "timeline");
+    let detailTab = ls("cw.events.detailtab", "details");
     lset("cw.events.order", order);
 
+    let needsAttention = false;
+    const checked = new Set();
     const state = { items: [], page: 0, total: 0, selected: null, relExpanded: false, collapsed: new Set(), childLoading: new Set(), didInitialSelect: false };
     const dropdowns = [];
 
@@ -564,31 +576,10 @@ export default {
         <a class="ev-back" href="${esc(back.href)}" id="ev-back"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>${esc(back.label)}</a>
         <header class="ev-header">
           <div>
-            <div class="ev-eyebrow">ACTIVITY HISTORY</div>
-            <h1>Events</h1>
+            <h1>Activity</h1>
+            <p>Your watching, ratings and sync history, all in one place.</p>
           </div>
         </header>
-
-        <div class="ev-toolbar">
-          <div class="ev-toolbar-row">
-            <label class="ev-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input id="ev-q" type="search" aria-label="Search events" placeholder="Search title, item, reason, run…"></label>
-            <div class="ev-vis"><span id="ev-seg"></span></div>
-            <span id="ev-cat"></span>
-            <span id="ev-mode"></span>
-            <button class="ev-tbtn" id="ev-more" type="button" aria-label="Filters and display options" aria-expanded="false" aria-controls="ev-morefilters"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>More filters</span><span class="ev-more-dot" id="ev-more-dot" hidden></span><span class="material-symbols-rounded ev-tbtn-caret" aria-hidden="true">expand_more</span></button>
-            <button class="ev-tbtn ev-tbtn-refresh" id="ev-refresh" type="button" aria-label="Refresh events"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>
-            ${isAdmin ? `<button class="ev-tbtn" id="ev-clear" type="button" title="Delete all events from the archive"><span class="material-symbols-rounded" aria-hidden="true">delete_sweep</span><span>Clear</span></button>` : ``}
-          </div>
-          <div class="ev-morefilters" id="ev-morefilters" hidden>
-            <div class="ev-mf-row">
-              <span id="ev-range"></span>
-              <label class="ev-date" id="ev-since-wrap" hidden><span class="material-symbols-rounded" aria-hidden="true">event</span><input id="ev-since" type="date" aria-label="Since"></label>
-              <label class="ev-date" id="ev-until-wrap" hidden><span class="material-symbols-rounded" aria-hidden="true">event</span><input id="ev-until" type="date" aria-label="Until"></label>
-              <div class="ev-filters" id="ev-filters"></div>
-            </div>
-          </div>
-          <div class="ev-mf-summary" id="ev-mf-summary" hidden></div>
-        </div>
 
         <div class="ev-tabsbar">
           <label class="ev-mobile-view" for="ev-mobile-view"><span>View</span><select id="ev-mobile-view" aria-label="Event view"></select></label>
@@ -596,10 +587,33 @@ export default {
           <div class="ev-statsrange" id="ev-statsrange" hidden></div>
         </div>
 
+        <div class="ev-toolbar">
+          <div class="ev-toolbar-row">
+            <label class="ev-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input id="ev-q" type="search" aria-label="Search events" placeholder="Search title, item, reason, run…"></label>
+
+            <span id="ev-attention"></span>
+            <span id="ev-range"></span>
+            <button class="ev-tbtn" id="ev-more" type="button" aria-label="Filters and display options" aria-expanded="false" aria-controls="ev-morefilters"><span class="material-symbols-rounded" aria-hidden="true">tune</span><span>Filters</span><span class="ev-more-dot" id="ev-more-dot" hidden></span><span class="material-symbols-rounded ev-tbtn-caret" aria-hidden="true">expand_more</span></button>
+            <button class="ev-tbtn ev-tbtn-refresh" id="ev-refresh" type="button" aria-label="Refresh events"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>
+          </div>
+          <div class="ev-morefilters" id="ev-morefilters" hidden>
+            <div class="ev-mf-row">
+              <span id="ev-cat"></span>
+              <span id="ev-review"></span>
+              <label class="ev-date" id="ev-since-wrap" hidden><span class="material-symbols-rounded" aria-hidden="true">event</span><input id="ev-since" type="date" aria-label="Since"></label>
+              <label class="ev-date" id="ev-until-wrap" hidden><span class="material-symbols-rounded" aria-hidden="true">event</span><input id="ev-until" type="date" aria-label="Until"></label>
+              <div class="ev-filters" id="ev-filters"></div>
+            ${isAdmin ? `<button class="ev-tbtn" id="ev-clear" type="button" title="Delete all events from the archive"><span class="material-symbols-rounded" aria-hidden="true">delete_sweep</span><span>Clear</span></button>` : ``}
+
+            </div>
+          </div>
+          <div class="ev-mf-summary" id="ev-mf-summary" hidden></div>
+        </div>
+
         <div class="ev-layout">
           <div class="ev-col-list">
             <div class="ev-list-head">
-              <div class="ev-list-head-left"><div class="ev-count" id="ev-count">—</div></div>
+              <div class="ev-list-head-left"><div class="ev-count" id="ev-count">—</div><span id="ev-mode"></span></div>
               <div class="ev-list-head-right">
                 <span id="ev-sort"></span>
                 <div class="ev-pagemini">
@@ -609,11 +623,12 @@ export default {
                 </div>
               </div>
             </div>
+            <div class="ev-bulk"><label><input id="ev-select-page" type="checkbox"> Select page</label><span id="ev-selection-count"></span><button class="ev-tbtn" id="ev-review-selected" type="button" disabled>Mark reviewed</button></div>
             <div class="ev-list" id="ev-list"><div class="ev-empty">Loading…</div></div>
             <div class="ev-list-foot" id="ev-foot"></div>
           </div>
           <div class="ev-split" id="ev-split" role="separator" aria-orientation="vertical" title="Drag to resize"></div>
-          <div class="ev-col-detail"><button class="ev-tbtn ev-detail-back" id="ev-detail-back" type="button"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>Back to events</button><div class="ev-detail" id="ev-detail"><div class="ev-empty ev-empty-detail"><span class="material-symbols-rounded" aria-hidden="true">touch_app</span><div>Select an event thread to see details and current context.</div></div></div></div>
+          <div class="ev-col-detail"><button class="ev-tbtn ev-detail-back" id="ev-detail-back" type="button"><span class="material-symbols-rounded" aria-hidden="true">arrow_back</span>Back to events</button><div class="ev-detail" id="ev-detail"><div class="ev-empty ev-empty-detail"><span class="material-symbols-rounded" aria-hidden="true">touch_app</span><div>Select an activity to see what happened.</div></div></div></div>
         </div>
 
         <div class="ev-stats" id="ev-stats" hidden></div>
@@ -779,20 +794,28 @@ export default {
     Q("#ev-sort", root).appendChild(ddSort.el);
 
     const seg = createSegmented({
-      items: [{ value: "open", label: "Open" }, { value: "acknowledged", label: "Acknowledged" }, { value: "all", label: "All" }],
+      items: [{ value: "all", label: "Any review status" }, { value: "open", label: "Unreviewed" }, { value: "acknowledged", label: "Reviewed" }],
       value: visibility,
       onChange: (v) => { visibility = v; lset("cw.events.visibility", v); load(0); },
     });
-    Q("#ev-seg", root).appendChild(seg.el);
+    Q("#ev-review", root).appendChild(seg.el);
+    const attentionSeg = createSegmented({
+      items: [{value: "all", label: "All activity"}, {value: "attention", label: "Needs attention"}],
+      value: "all",
+      onChange: value => { needsAttention = value === "attention"; load(0); },
+    });
+    Q("#ev-attention", root).appendChild(attentionSeg.el);
+
 
     const modeSeg = createSegmented({
       cls: "ev-seg-mode",
       items: [{ value: "grouped", label: "Grouped", icon: "account_tree" }, { value: "raw", label: "Raw events", icon: "list" }],
       value: mode,
-      onChange: (v) => { mode = v; lset("cw.events.mode", v); ddCategory.el.style.display = (v === "grouped") ? "" : "none"; state.selected = null; clearDetail(); load(0); },
+      onChange: (v) => { mode = v; needsAttention = false; attentionSeg.value = "all"; Q("#ev-attention", root).hidden = v === "raw"; lset("cw.events.mode", v); ddCategory.el.style.display = (v === "grouped") ? "" : "none"; state.selected = null; clearDetail(); load(0); },
     });
     Q("#ev-mode", root).appendChild(modeSeg.el);
     ddCategory.el.style.display = (mode === "grouped") ? "" : "none";
+    Q("#ev-attention", root).hidden = mode === "raw";
 
     const canAudit = isAdmin && !String(window.CW?.OverviewProfile?.id || "").trim();
     let view = initialDomain && ["sync", "scrobble", "audit", ...JOB_DOMAINS].includes(initialDomain) ? initialDomain : ls("cw.events.view", domain === "scrobble" ? "scrobble" : "sync");
@@ -825,7 +848,7 @@ export default {
 
     const VIEW_TABS = [
       { value: "sync", label: "Sync", icon: "sync" },
-      { value: "scrobble", label: "Scrobble", icon: "play_circle" },
+      { value: "scrobble", label: "Watching & ratings", icon: "play_circle" },
       { value: "capture", label: "Captures", icon: "photo_camera" },
       ...(isAdmin ? [{ value: "backup", label: "Backups", icon: "backup" }] : []),
       ...(canAudit ? [{ value: "audit", label: "Audits", icon: "admin_panel_settings" }] : []),
@@ -922,6 +945,7 @@ export default {
 
     const syncRangeUI = () => {
       const custom = dateRange === "custom";
+      if (custom) { moreWrap.hidden = false; moreBtn.setAttribute("aria-expanded", "true"); moreBtn.classList.add("on"); }
       sinceWrap.hidden = !custom;
       untilWrap.hidden = !custom;
     };
@@ -944,12 +968,14 @@ export default {
       return "Custom range";
     };
 
-    const hiddenActive = () => !!(runFilter || ddType.value || ddProvider.value || ddOrigin.value || ddFeature.value || ddPair.value || (dateRange && dateRange !== "all"));
-    const filtersActive = () => !!(qEl.value.trim() || (grouped() && ddCategory.value) || hiddenActive());
+    const hiddenActive = () => !!(visibility !== "all" || (grouped() && ddCategory.value) || eventScope || runFilter || ddType.value || ddProvider.value || ddOrigin.value || ddFeature.value || ddPair.value || (dateRange && dateRange !== "all"));
+    const filtersActive = () => needsAttention || !!(qEl.value.trim() || (grouped() && ddCategory.value) || hiddenActive());
 
     const clearHidden = (k) => {
       const all = !k;
       if (all || k === "range") { dateRange = "all"; lset("cw.events.range", "all"); ddRange.value = "all"; sinceEl.value = ""; untilEl.value = ""; syncRangeUI(); }
+      if (all || k === "review") { visibility = "all"; seg.value = "all"; lset("cw.events.visibility", "all"); }
+      if (all || k === "outcome") ddCategory.reset();
       if (all || k === "type") ddType.reset();
       if (all || k === "provider") ddProvider.reset();
       if (all || k === "origin") ddOrigin.reset();
@@ -963,6 +989,8 @@ export default {
 
     const updateHidden = () => {
       const chips = [];
+      if (visibility !== "all") chips.push({ k: "review", label: visibility === "open" ? "Unreviewed" : "Reviewed" });
+      if (grouped() && ddCategory.value) chips.push({ k: "outcome", label: ddCategory.labelOf(ddCategory.value) });
       if (runFilter) chips.push({ k: "run", label: `Run: ${runFilter}` });
       if (dateRange && dateRange !== "all") chips.push({ k: "range", label: dateRange === "custom" ? customRangeLabel() : RANGE_LABEL[dateRange] });
       if (ddType.value) chips.push({ k: "type", label: ddType.labelOf(ddType.value) });
@@ -994,6 +1022,8 @@ export default {
       if (runFilter) p.set("run_id", runFilter);
       if (grouped() && ddCategory.value) p.set((domain === "scrobble" || domain === "audit" || JOB_DOMAINS.includes(domain)) ? "status" : "category", ddCategory.value);
       p.set("domain", domain);
+      if (needsAttention && grouped()) p.set("category", "problems");
+      if (grouped() && domain === "scrobble") p.set("activities", "true");
       const { since, until } = rangeEpoch();
       if (since) p.set("since", since);
       if (until) p.set("until", until);
@@ -1007,13 +1037,15 @@ export default {
 
     const pageCount = () => Math.max(1, Math.ceil((state.total || 0) / PAGE_SIZE));
 
-    // rows 
+    // rows
     const groupRowHTML = (g, opts = {}) => {
       const sv = groupSev(g);
       const feat = FEATURE_LABEL[g.feature] || g.feature || "";
       const route = routeOf(g);
       const count = `${g.event_count || 1} event${g.event_count === 1 ? "" : "s"}`;
-      const meta = [count, feat, route].filter(Boolean).join(" · ");
+      const destinations = g.destinations || [g];
+      const deliveryRoute = destinations.length > 1 ? `${instLabel(g.source_provider, g.source_instance)} → ${destinations.map(d => instLabel(d.destination_provider, d.destination_instance)).join(", ")}` : route;
+      const meta = [deliveryRoute, count].filter(Boolean).join(" · ");
       const item = titleOf(g);
       const s = g.summary || "";
       let headline, detail;
@@ -1031,16 +1063,16 @@ export default {
         : `<span class="ev-twist-sp" aria-hidden="true"></span>`;
       return `
       <div class="ev-row${opts.child ? " ev-row-child" : ""}${g.acknowledged_at ? " acked" : ""}" data-id="${g.id}">
-        ${twist}
+        <input class="ev-check" type="checkbox" aria-label="Select ${esc(headline)}" data-check="${g.id}" ${checked.has(String(g.id)) ? "checked" : ""}>${twist}
         <span class="ev-ic ${sv}"><span class="material-symbols-rounded" aria-hidden="true">${groupIcon(g)}</span></span>
         <span class="ev-line">
-          <span class="ev-primary"><span class="ev-badge ${sv}">${esc(statusLabel(g.status, g.domain))}</span><span class="ev-ptext">${esc(headline)}</span></span>
-          ${detail ? `<span class="ev-summary">${withProviderLogos(detail)}</span>` : ""}
+          <span class="ev-primary"><span class="ev-ptext">${esc(headline)}</span></span>
+          <span class="ev-summary">${esc(g.domain === "scrobble" ? activitySummary(g) : detail || statusLabel(g.status, g.domain))}</span>
           <span class="ev-meta"><span class="material-symbols-rounded ev-meta-ic" aria-hidden="true">format_list_bulleted</span>${withProviderLogos(meta)}</span>
         </span>
-        <span class="ev-time">${esc(TS(g.last_event_at))}</span>
+        <span class="ev-row-end"><time class="ev-time">${esc(TS(g.last_event_at))}</time><span class="ev-badge ${sv}">${esc(statusLabel(g.status, g.domain))}</span></span>
         <span class="ev-rowact">
-          <button class="ev-ack" type="button" title="${g.acknowledged_at ? "Acknowledged — click to undo" : "Acknowledge thread"}" aria-label="${g.acknowledged_at ? "Unacknowledge thread" : "Acknowledge thread"}" data-ack="${g.id}"><span class="material-symbols-rounded" aria-hidden="true">${g.acknowledged_at ? "check_circle" : "check"}</span></button>
+          <button class="ev-ack" type="button" title="${g.acknowledged_at ? "Reviewed — click to undo" : "Mark activity reviewed"}" aria-label="${g.acknowledged_at ? "Mark activity unreviewed" : "Mark activity reviewed"}" data-ack="${g.id}"><span class="material-symbols-rounded" aria-hidden="true">${g.acknowledged_at ? "check_circle" : "check"}</span></button>
         </span>
       </div>`;
     };
@@ -1053,7 +1085,7 @@ export default {
       const item = titleOf(e);
       return `
       <div class="ev-row${e.acknowledged_at ? " acked" : ""}" data-id="${e.id}">
-        <span class="ev-twist-sp" aria-hidden="true"></span>
+        <input class="ev-check" type="checkbox" aria-label="Select ${esc(titleLine(e))}" data-check="${e.id}" ${checked.has(String(e.id)) ? "checked" : ""}><span class="ev-twist-sp" aria-hidden="true"></span>
         <span class="ev-ic ${sv}"><span class="material-symbols-rounded" aria-hidden="true">${iconOf(e)}</span></span>
         <span class="ev-line">
           <span class="ev-primary"><span class="ev-badge ${sv}">${esc(badgeOf(e))}</span><span class="ev-ptext">${esc(titleLine(e))}</span></span>
@@ -1062,7 +1094,7 @@ export default {
         </span>
         <span class="ev-time">${esc(TS(e.created_at))}</span>
         <span class="ev-rowact">
-          <button class="ev-ack" type="button" title="${e.acknowledged_at ? "Acknowledged — click to undo" : "Acknowledge"}" aria-label="${e.acknowledged_at ? "Unacknowledge event" : "Acknowledge event"}" data-ack="${e.id}"><span class="material-symbols-rounded" aria-hidden="true">${e.acknowledged_at ? "check_circle" : "check"}</span></button>
+          <button class="ev-ack" type="button" title="${e.acknowledged_at ? "Reviewed — click to undo" : "Acknowledge"}" aria-label="${e.acknowledged_at ? "Mark event unreviewed" : "Mark event reviewed"}" data-ack="${e.id}"><span class="material-symbols-rounded" aria-hidden="true">${e.acknowledged_at ? "check_circle" : "check"}</span></button>
         </span>
       </div>`;
     };
@@ -1107,12 +1139,17 @@ export default {
         select(el.dataset.id, el);
       });
       el.addEventListener("click", (ev) => {
-        if (ev.target.closest(".ev-rowact") || ev.target.closest(".ev-twist")) return;
+        if (ev.target.closest(".ev-rowact, .ev-twist, .ev-check")) return;
         select(el.dataset.id, el);
+      });
+      el.querySelector(".ev-check")?.addEventListener("change", event => {
+        const id = String(el.dataset.id);
+        if (event.target.checked) checked.add(id); else checked.delete(id);
+        updateSelection();
       });
       el.querySelector(".ev-ack")?.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        const item = findGroup(el.dataset.id);
+        const item = grouped() ? findGroup(el.dataset.id) : state.items.find(row => String(row.id) === el.dataset.id);
         if (item && item.acknowledged_at) unacknowledgeRow(el.dataset.id);
         else acknowledgeRow(el.dataset.id);
       });
@@ -1122,10 +1159,10 @@ export default {
       ++selectionSequence;
       layoutEl.classList.remove("show-detail");
       state.selected = null;
-      detailEl.innerHTML = `<div class="ev-empty ev-empty-detail"><span class="material-symbols-rounded" aria-hidden="true">touch_app</span><div>Select an ${grouped() ? "event thread" : "event"} to see details and current context.</div></div>`;
+      detailEl.innerHTML = `<div class="ev-empty ev-empty-detail"><span class="material-symbols-rounded" aria-hidden="true">touch_app</span><div>Select an ${grouped() ? "activity" : "event"} to see details and current context.</div></div>`;
     };
 
-    const noun = () => grouped() ? "thread" : "event";
+    const noun = () => "event";
 
     const emptyState = () => {
       let icon = "inbox", head = "No events", hint = "", actions = "";
@@ -1135,16 +1172,16 @@ export default {
         hint = "Try clearing filters or widening the date range.";
         actions = `<button class="ev-linkbtn" id="ev-empty-reset">Clear filters</button>`;
       } else if (visibility === "open") {
-        icon = "task_alt"; head = `No open ${n}s.`;
-        hint = "You're all caught up. Acknowledged items are hidden here.";
+        icon = "task_alt"; head = `No unreviewed ${n}s.`;
+        hint = "You're all caught up. Reviewed items are hidden here.";
         actions = `<button class="ev-linkbtn" id="ev-empty-all">Switch to All</button>`;
       } else if (visibility === "acknowledged") {
-        icon = "done_all"; head = `No acknowledged ${n}s yet.`;
-        hint = `Acknowledge a ${n} to move it out of the Open view.`;
-        actions = `<button class="ev-linkbtn" id="ev-empty-open">Back to Open</button>`;
+        icon = "done_all"; head = `No reviewed ${n}s yet.`;
+        hint = `Mark an event reviewed to find it here.`;
+        actions = `<button class="ev-linkbtn" id="ev-empty-open">Show unreviewed</button>`;
       } else {
         icon = "inbox"; head = "No events in the archive.";
-        hint = domain === "audit" ? "Logins and user actions will appear here." : domain === "capture" ? "Scheduled and manual captures will appear here." : domain === "backup" ? "Scheduled, manual and automatic backups will appear here." : (domain === "scrobble" ? "Start watching something to record scrobble threads here." : "Run a sync to start recording events here.");
+        hint = domain === "audit" ? "Logins and user actions will appear here." : domain === "capture" ? "Scheduled and manual captures will appear here." : domain === "backup" ? "Scheduled, manual and automatic backups will appear here." : (domain === "scrobble" ? "Start watching something to see watching activity here." : "Run a sync to start recording events here.");
         actions = "";
       }
       return `<div class="ev-empty ev-empty-list"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><div class="ev-empty-head">${esc(head)}</div><div class="ev-empty-hint">${esc(hint)}</div><div class="ev-empty-actions">${actions}</div></div>`;
@@ -1158,32 +1195,20 @@ export default {
       const end = Math.min(total, state.page * PAGE_SIZE + state.items.length);
       pageLabelEl.textContent = `Page ${state.page + 1} of ${pc}`;
 
-      const nums = [];
       const cur = state.page;
-      const win = new Set([0, pc - 1, cur - 1, cur, cur + 1]);
-      let last = -1;
-      for (let i = 0; i < pc; i++) {
-        if (!win.has(i)) continue;
-        if (i - last > 1) nums.push("…");
-        nums.push(i);
-        last = i;
-      }
-      const numHTML = nums.map((n) => n === "…"
-        ? `<span class="ev-pg-gap">…</span>`
-        : `<button class="ev-pg ev-pg-num${n === cur ? " on" : ""}" type="button" data-p="${n}">${n + 1}</button>`).join("");
-
-      const label = grouped() ? "threads" : "events";
+      const label = grouped() ? "activities" : "events";
       footEl.innerHTML = `
         <div class="ev-showing">Showing ${start.toLocaleString()} to ${end.toLocaleString()} of ${total.toLocaleString()} ${label}</div>
         <div class="ev-pagenums">
           <button class="ev-pg" id="ev-first" type="button" aria-label="First page" ${cur === 0 ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">first_page</span></button>
           <button class="ev-pg" id="ev-prev" type="button" aria-label="Previous page" ${cur === 0 ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
-          ${numHTML}
+          <label class="ev-page-jump">Page <input id="ev-page-number" type="number" min="1" max="${pc}" value="${cur + 1}" aria-label="Page number"> of ${pc.toLocaleString()}</label>
           <button class="ev-pg" id="ev-next" type="button" aria-label="Next page" ${cur >= pc - 1 ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
           <button class="ev-pg" id="ev-last" type="button" aria-label="Last page" ${cur >= pc - 1 ? "disabled" : ""}><span class="material-symbols-rounded" aria-hidden="true">last_page</span></button>
         </div>`;
 
       const go = (p) => { const np = Math.max(0, Math.min(pc - 1, p)); if (np !== state.page) load(np); };
+      Q("#ev-page-number", footEl)?.addEventListener("change", event => { const page = Number(event.target.value); if (Number.isInteger(page) && page >= 1) go(page - 1); else event.target.value = cur + 1; });
       Q("#ev-first", footEl)?.addEventListener("click", () => go(0));
       Q("#ev-prev", footEl)?.addEventListener("click", () => go(cur - 1));
       Q("#ev-next", footEl)?.addEventListener("click", () => go(cur + 1));
@@ -1219,9 +1244,10 @@ export default {
     };
 
     const renderList = () => {
-      const label = grouped() ? "thread" : "event";
-      countEl.textContent = `${(state.total || 0).toLocaleString()} ${label}${state.total === 1 ? "" : "s"}`;
+      const label = grouped() ? (state.total === 1 ? "activity" : "activities") : (state.total === 1 ? "event" : "events");
+      countEl.textContent = `${(state.total || 0).toLocaleString()} ${label}`;
       updateHeadPager();
+      updateSelection();
       if (!state.items.length) {
         listEl.innerHTML = emptyState();
         renderPager();
@@ -1245,6 +1271,8 @@ export default {
     };
 
     const load = async (page) => {
+      checked.clear();
+      updateSelection();
       const sequence = ++loadSequence;
       const previousPage = state.page;
       if (page != null) state.page = page;
@@ -1295,6 +1323,36 @@ export default {
       ? `/api/events/groups/${encodeURIComponent(id)}/${action}`
       : `/api/events/${encodeURIComponent(id)}/${action}`;
 
+    const reviewIds = id => grouped() ? (findGroup(id)?.destinations || [{id}]).map(row => row.id) : [id];
+    const reviewRequest = async (id, action, ids = reviewIds(id)) => {
+      const results = await Promise.allSettled(ids.map(gid => fjson(ackURL(gid, action), {method: "POST"})));
+      const failed = results.some(result => result.status === "rejected" || !result.value?.ok);
+      if (failed) throw new Error("Some records could not be updated. Refresh and try again.");
+      return results[0].value;
+    };
+    const updateSelection = () => {
+      const selectPage = Q("#ev-select-page", root);
+      const ids = state.items.map(row => String(row.id));
+      selectPage.checked = ids.length > 0 && ids.every(id => checked.has(id));
+      selectPage.indeterminate = checked.size > 0 && !selectPage.checked;
+      selectPage.disabled = !ids.length;
+      Q("#ev-selection-count", root).textContent = checked.size ? `${checked.size} selected` : "";
+      Q("#ev-review-selected", root).disabled = !checked.size;
+    };
+    Q("#ev-select-page", root).addEventListener("change", event => {
+      checked.clear();
+      if (event.target.checked) state.items.forEach(row => checked.add(String(row.id)));
+      renderList();
+    });
+    Q("#ev-review-selected", root).addEventListener("click", async event => {
+      event.currentTarget.disabled = true;
+      const results = await Promise.allSettled([...checked].map(id => reviewRequest(id, "acknowledge")));
+      const failures = results.filter(result => result.status === "rejected").length;
+      await load(state.page);
+      if (state.selected) await select(state.selected, null, {reveal: false});
+      showToast(failures ? `${failures} activities could not be marked reviewed. Please try again.` : "Selected activities marked reviewed.", null, failures ? "error" : "ok");
+    });
+
     const animateRowOut = async (id) => {
       const row = listEl.querySelector(`.ev-row[data-id="${id}"]`);
       if (!row) return;
@@ -1308,15 +1366,16 @@ export default {
     };
 
     const acknowledgeRow = async (id) => {
+      const ids = reviewIds(id);
       let res;
-      try { res = await fjson(ackURL(id, "acknowledge"), { method: "POST" }); } catch { return; }
+      try { res = await reviewRequest(id, "acknowledge"); } catch (error) { showToast(error.message, null, "error"); await load(state.page); return; }
       if (!res?.ok) return;
       if (visibility === "open") await animateRowOut(id);
       const idx = state.items.findIndex((x) => String(x.id) === String(id));
       if (idx < 0) {
         await load(state.page);
-        showToast(grouped() ? "Thread acknowledged." : "Event acknowledged.", async () => {
-          try { await fjson(ackURL(id, "unacknowledge"), { method: "POST" }); } catch { return; }
+        showToast(grouped() ? "Activity marked reviewed." : "Event marked reviewed.", async () => {
+          try { await reviewRequest(id, "unacknowledge", ids); } catch { return; }
           await load(state.page); select(id);
         });
         return;
@@ -1339,8 +1398,9 @@ export default {
         const row = listEl.querySelector(`.ev-row[data-id="${id}"]`);
         if (row) { row.classList.add("acked"); const b = row.querySelector(".ev-ack .material-symbols-rounded"); if (b) b.textContent = "check_circle"; }
       }
-      showToast(grouped() ? "Thread acknowledged." : "Event acknowledged.", async () => {
-        try { await fjson(ackURL(id, "unacknowledge"), { method: "POST" }); } catch { return; }
+      if (String(state.selected) === String(id)) await select(id, null, {reveal: false});
+      showToast(grouped() ? "Activity marked reviewed." : "Event marked reviewed.", async () => {
+        try { await reviewRequest(id, "unacknowledge", ids); } catch { return; }
         await load(state.page);
         select(id);
       });
@@ -1348,7 +1408,7 @@ export default {
 
     const unacknowledgeRow = async (id) => {
       let res;
-      try { res = await fjson(ackURL(id, "unacknowledge"), { method: "POST" }); } catch { return; }
+      try { res = await reviewRequest(id, "unacknowledge"); } catch (error) { showToast(error.message, null, "error"); await load(state.page); return; }
       if (!res?.ok) return;
       const idx = state.items.findIndex((x) => String(x.id) === String(id));
       if (idx < 0) { await load(state.page); showToast("Restored."); return; }
@@ -1361,6 +1421,7 @@ export default {
         const row = listEl.querySelector(`.ev-row[data-id="${id}"]`);
         if (row) { row.classList.remove("acked"); const b = row.querySelector(".ev-ack .material-symbols-rounded"); if (b) b.textContent = "check"; }
       }
+      if (String(state.selected) === String(id)) await select(id, null, {reveal: false});
       showToast("Restored.");
     };
 
@@ -1422,7 +1483,7 @@ export default {
       return `<div class="ev-cards">${cards.join("")}</div>`;
     };
 
-    // context summary 
+    // context summary
     const EVENT_DESC = {
       write_failed: "Provider write failed while adding the item.",
       write_succeeded: "Item written successfully.",
@@ -1443,6 +1504,7 @@ export default {
       scrobble_skipped: "The provider did not record the scrobble, nothing went wrong.",
       rating_applied: "Rating forwarded to the target.",
       rating_failed: "The provider rejected the rating.",
+      rating_skipped: "The rating was not forwarded. See the reason for details.",
     };
     const eventDesc = (e) => EVENT_DESC[e.event_type] || "";
 
@@ -1485,9 +1547,21 @@ export default {
     };
 
     const renderScrobbleDetail = (detail) => {
-      const g = detail.group || {};
-      const events = detail.events || [];
-      const related = detail.related_groups || [];
+      const deliveries = detail.deliveries || [detail];
+      const groups = deliveries.map(result => result.group || {});
+      const latest = groups.reduce((picked, row) => Number(row.last_event_at || 0) >= Number(picked.last_event_at || 0) ? row : picked, detail.group || {});
+      const failed = groups.some(row => row.status === "failed" || row.severity === "error");
+      const rated = groups.some(row => row.status === "rated");
+      const g = {
+        ...detail.group, ...latest, id: detail.group?.id,
+        first_event_at: Math.min(...groups.map(row => Number(row.first_event_at || row.last_event_at || 0))),
+        event_count: groups.reduce((count, row) => count + Number(row.event_count || 0), 0),
+        status: failed ? "failed" : rated ? "rated" : latest.status,
+        severity: failed ? "error" : rated ? "success" : latest.severity,
+        acknowledged_at: deliveries.every(result => !result.unavailable && result.group?.acknowledged_at) ? latest.acknowledged_at : null,
+      };
+      const events = deliveries.flatMap(delivery => delivery.events || []).sort((a, b) => a.created_at - b.created_at || a.id - b.id);
+      const related = (detail.related_groups || []).filter(row => !deliveries.some(result => result.group?.id === row.id));
       const sv = groupSev(g);
       const st = String(g.status || "").toLowerCase();
       const item = titleOf(g);
@@ -1498,38 +1572,28 @@ export default {
       const playback = playbackDetail(events);
       const delivery = playback.delivery || {};
       const isProblem = st === "failed" || delivery.status === "failed";
-      let account = "", progress = null, rating = null, manualMark = false;
+      let account = "", progress = null, progressAt = -Infinity, rating = null, manualMark = false;
       for (const e of events) {
         const d = parseDetail(e);
         if (d.account) account = String(d.account);
         if (d.manual_mark) manualMark = true;
-        if (d.progress != null) progress = d.progress;
+        if (d.progress != null && playbackUpdatedAt(e) >= progressAt) { progress = d.progress; progressAt = playbackUpdatedAt(e); }
         if (d.rating != null) rating = d.rating;
       }
 
-      if (playback.progress != null) progress = playback.progress;
-
-      const scard = (icon, cls, title, mainHTML, subs) => `
-        <div class="ev-scard">
-          <div class="ev-scard-head"><span class="ev-scard-ic ${cls}"><span class="material-symbols-rounded" aria-hidden="true">${icon}</span></span><span class="ev-scard-title ${cls}">${esc(title)}</span></div>
-          <div class="ev-scard-main">${mainHTML}</div>
-          ${(subs || []).filter(Boolean).map((s) => `<div class="ev-scard-sub">${s}</div>`).join("")}
-        </div>`;
-      const kvGrid = (rows) => `<div class="ev-kv">${rows.filter(Boolean).map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${v}</div>`).join("")}</div>`;
-
-      const valueCard = isRating
-        ? scard("star", isProblem ? "error" : "ok", "Rating", rating != null ? `${esc(rating)}/10` : "–", [])
-        : scard("bar_chart", sv, "Progress", progress != null ? `${esc(progress)}%` : "–", []);
-      const summaryCards =
-        scard(isProblem ? "error" : (isRating ? "star" : groupIcon(g)), isProblem ? "error" : sv, "Outcome", `<span>${esc(statusLabel(g.status, g.domain))}</span>`, [esc(g.summary || ""), delivery.status ? esc("Last delivery: " + delivery.status + " (" + delivery.action + ")" + (delivery.reason ? " · " + delivery.reason : "")) : ""]) +
-        scard("swap_horiz", "info", "Route", esc(route), [account ? `by ${esc(account)}` : ""]) +
-        scard("movie", "info", "Item", item ? esc(item) : "–", [g.year ? esc(String(g.year)) : ""]) +
-        valueCard;
+      const kvGrid = rows => `<div class="ev-kv">${rows.filter(Boolean).map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${v}</div>`).join("")}</div>`;
+      const outcome = isRating ? `Rating: ${rating != null ? `${rating}/10` : "not provided"}` : st === "stopped" ? `Stopped watching${progress != null ? ` at ${progress}%` : ""}. This is normal playback activity.` : statusLabel(g.status, g.domain);
+      const destinationsHTML = `<section class="ev-deliveries"><h4>Destination results <span class="ev-h4-note">${deliveries.length}</span></h4>${deliveries.map(result => {
+        const row = result.group || {};
+        const status = result.unavailable ? "Details unavailable" : statusLabel(row.status, row.domain);
+        const reason = reasonLabel(row.reason, row.reason_label || row.reason_code);
+        return `<details class="ev-delivery"><summary>${withProviderLogos(instLabel(row.destination_provider, row.destination_instance))}<span class="ev-pill ${groupSev(row)}">${esc(status)}</span></summary><div class="ev-delivery-body">${result.unavailable ? "Could not load this destination. Refresh to try again." : `<p>${esc(reason || row.summary || status)}</p>${kvGrid([["Profile", esc(instLabel(row.destination_provider, row.destination_instance))], ["Last update", esc(TS(row.last_event_at))], ["Records", esc(row.event_count || 0)]])}<details class="ev-tech"><summary>Delivery records</summary><div class="ev-tech-body"><pre>${esc(JSON.stringify(result.events || [], null, 2))}</pre></div></details>`}</div></details>`;
+      }).join("")}</section>`;
 
       const timeline = playbackTimeline(events).slice().reverse().map((e) => {
         const es = sevOf(e);
         const pct = detailOf(e).progress;
-        const desc = [eventDesc(e), pct != null ? String(pct) + "%" : ""].filter(Boolean).join(" · ");
+        const desc = [eventDesc(e), pct != null ? String(pct) + "%" : "", deliveries.length > 1 ? instLabel(e.destination_provider, e.destination_instance) : ""].filter(Boolean).join(" · ");
         return `<div class="ev-tl" data-id="${e.id}"><span class="ev-tl-time">${esc(TS(e.created_at))}</span><span class="ev-tl-dot ${es}"></span><div class="ev-tl-body"><span class="ev-tl-head"><span class="ev-tl-title">${esc(titleLine(e))}</span><span class="ev-badge ${es}">${esc(badgeOf(e))}</span></span>${desc ? `<span class="ev-tl-desc">${esc(desc)}</span>` : ""}${cloudResultsHTML(e)}${failureDetailsHTML(e, events)}</div></div>`;
       }).join("");
 
@@ -1537,8 +1601,8 @@ export default {
         delivery.status ? ["Last delivery", esc(delivery.status + " (" + delivery.action + ")")] : null,
         ["Status", `<span class="ev-pill ${sv}">${esc(statusLabel(g.status, g.domain))}</span>`],
         ["Title", item ? esc(item) : "–"],
-        ["Player", esc(player)],
-        ["Target", esc(target)],
+        ["Player", withProviderLogos(player)],
+
         account ? ["Account", esc(account)] : null,
         manualMark ? ["Trigger", "Marked as watched by hand"] : null,
         isRating ? (rating != null ? ["Rating", `${esc(rating)}/10`] : null) : (progress != null ? ["Progress", `${esc(progress)}%`] : null),
@@ -1546,12 +1610,12 @@ export default {
         ["Last seen", esc(TS(g.last_event_at))],
         g.reason ? ["Reason", esc(g.reason)] : null,
       ]);
-      const rawPane = `<div class="ev-dsec"><h5>Raw data</h5><details class="ev-tech"><summary>Full payload</summary><div class="ev-tech-body"><pre>${esc(JSON.stringify({ group: g, events }, null, 2))}</pre></div></details></div>`;
+      const rawPane = `<div class="ev-dsec"><h5>Raw data</h5><details class="ev-tech"><summary>Full payload</summary><div class="ev-tech-body"><pre>${esc(JSON.stringify({ group: g, deliveries }, null, 2))}</pre></div></details></div>`;
 
       const relRow = (r) => `<button class="ev-rel" type="button" data-gid="${r.id}"><span class="ev-rel-ic ${groupSev(r)}"><span class="material-symbols-rounded" aria-hidden="true">${groupIcon(r)}</span></span><span class="ev-rel-badge ${groupSev(r)}">${esc(statusLabel(r.status, r.domain))}</span><span class="ev-rel-title">${esc(r.summary || titleOf(r) || "")}</span><span class="ev-rel-time">${esc(TS(r.last_event_at))}</span></button>`;
       const relHTML = related.length ? related.slice(0, 12).map(relRow).join("") : "";
 
-      const ackLabel = g.acknowledged_at ? "Acknowledged" : "Acknowledge";
+      const ackLabel = g.acknowledged_at ? "Reviewed" : "Mark reviewed";
       const ackIcon = g.acknowledged_at ? "check_circle" : "check";
       const tabAttr = (t) => detailTab === t ? "" : " hidden";
 
@@ -1563,18 +1627,17 @@ export default {
             <span class="ev-dtime">${esc(TS(g.last_event_at))}</span>
             <button class="ev-hbtn ev-hbtn-accent${g.acknowledged_at ? " on" : ""}" id="ev-ack-detail" type="button"><span class="material-symbols-rounded" aria-hidden="true">${ackIcon}</span><span>${ackLabel}</span></button>
           </div>
-          <div class="ev-dtitle">${esc(g.summary || item || "")}</div>
-          ${item ? `<div class="ev-ditem">${esc(item)}</div>` : ""}
+          <div class="ev-dtitle">${esc(item || g.summary || "")}</div>
+          <p class="ev-outcome">${esc(outcome)}</p>
         </div>
-        <div class="ev-scards">${summaryCards}</div>
         <div class="ev-tabs" role="tablist">
+          <button class="ev-tab${detailTab === "details" ? " on" : ""}" data-tab="details" type="button"><span class="material-symbols-rounded" aria-hidden="true">description</span>Overview</button>
           <button class="ev-tab${detailTab === "timeline" ? " on" : ""}" data-tab="timeline" type="button"><span class="material-symbols-rounded" aria-hidden="true">timeline</span>Timeline</button>
-          <button class="ev-tab${detailTab === "details" ? " on" : ""}" data-tab="details" type="button"><span class="material-symbols-rounded" aria-hidden="true">description</span>Details</button>
-          <button class="ev-tab${detailTab === "raw" ? " on" : ""}" data-tab="raw" type="button"><span class="material-symbols-rounded" aria-hidden="true">data_object</span>Raw data</button>
+          <button class="ev-tab${detailTab === "raw" ? " on" : ""}" data-tab="raw" type="button"><span class="material-symbols-rounded" aria-hidden="true">data_object</span>Technical</button>
         </div>
         <div class="ev-tabpanes">
           <div class="ev-tabpane" data-pane="timeline"${tabAttr("timeline")}>${playback.omitted ? `<p>${esc(playback.omitted)} earlier transitions omitted.</p>` : ""}<div class="ev-timeline">${timeline || `<div class="ev-empty ev-empty-inline">No events in this thread.</div>`}</div></div>
-          <div class="ev-tabpane" data-pane="details"${tabAttr("details")}>${detailsPane}</div>
+          <div class="ev-tabpane" data-pane="details"${tabAttr("details")}>${detailsPane}${destinationsHTML}</div>
           <div class="ev-tabpane" data-pane="raw"${tabAttr("raw")}>${rawPane}</div>
         </div>
         ${relHTML ? `<h4>Related</h4><div class="ev-related">${relHTML}</div>` : ""}`;
@@ -1590,7 +1653,7 @@ export default {
       detailEl.querySelectorAll(".ev-rel").forEach((a) => a.addEventListener("click", () => a.dataset.gid && select(a.dataset.gid)));
     };
 
-    // group detail 
+    // group detail
     const renderGroupDetail = (detail) => {
       const g = detail.group || {};
       const c = detail.context || {};
@@ -1757,7 +1820,7 @@ export default {
         detail.run_items_offset,
       );
 
-      const ackLabel = g.acknowledged_at ? "Acknowledged" : "Acknowledge";
+      const ackLabel = g.acknowledged_at ? "Reviewed" : "Mark reviewed";
       const ackIcon = g.acknowledged_at ? "check_circle" : "check";
       const tabAttr = (t) => detailTab === t ? "" : " hidden";
 
@@ -1776,9 +1839,9 @@ export default {
         </div>
         ${summaryCards ? `<div class="ev-scards">${summaryCards}</div>` : ""}
         <div class="ev-tabs" role="tablist">
+          <button class="ev-tab${detailTab === "details" ? " on" : ""}" data-tab="details" type="button"><span class="material-symbols-rounded" aria-hidden="true">description</span>Overview</button>
           <button class="ev-tab${detailTab === "timeline" ? " on" : ""}" data-tab="timeline" type="button"><span class="material-symbols-rounded" aria-hidden="true">timeline</span>Timeline</button>
-          <button class="ev-tab${detailTab === "details" ? " on" : ""}" data-tab="details" type="button"><span class="material-symbols-rounded" aria-hidden="true">description</span>Details</button>
-          <button class="ev-tab${detailTab === "raw" ? " on" : ""}" data-tab="raw" type="button"><span class="material-symbols-rounded" aria-hidden="true">data_object</span>Raw data</button>
+          <button class="ev-tab${detailTab === "raw" ? " on" : ""}" data-tab="raw" type="button"><span class="material-symbols-rounded" aria-hidden="true">data_object</span>Technical</button>
         </div>
         <div class="ev-tabpanes">
           <div class="ev-tabpane" data-pane="timeline"${tabAttr("timeline")}>
@@ -1926,9 +1989,13 @@ export default {
       const events = Array.isArray(detail.events) && detail.events.length ? detail.events : (eventOverride ? [eventOverride] : []);
       const e = eventOverride || events[events.length - 1] || g;
       const sv = sevOf(e);
+      const data = detailOf(e);
+      const actor = data.actor || {};
+      const overview = [["Who", actor.username || "Unknown"], ["Action", g.summary || titleLine(e)], ["Status", data.status || statusLabel(g.status, "audit")], ["Profile", actor.profile_id || "Default"], ["When", TS(g.last_event_at || e.created_at)]];
+
       const acknowledged = !!(g.acknowledged_at || e.acknowledged_at);
       const ackId = g.id || e.id;
-      const ackLabel = acknowledged ? "Acknowledged" : "Acknowledge";
+      const ackLabel = acknowledged ? "Reviewed" : "Mark reviewed";
       const ackIcon = acknowledged ? "check_circle" : "check";
       const timeline = events.length
         ? events.slice().reverse().map((row) => {
@@ -1946,9 +2013,14 @@ export default {
           </div>
           <div class="ev-dtitle">${esc(g.summary || titleLine(e))}</div>
         </div>
-        <h4>Audit</h4><div class="ev-kv">${auditRowsHTML(e)}</div>
-        <h4>Timeline</h4><div class="ev-timeline">${timeline}</div>
-        <details class="ev-tech"><summary>Raw data</summary><div class="ev-tech-body"><pre>${esc(JSON.stringify({ group: detail.group || null, events }, null, 2))}</pre></div></details>`;
+        <div class="ev-tabs" role="tablist"><button class="ev-tab on" data-tab="details" type="button">Overview</button><button class="ev-tab" data-tab="timeline" type="button">Timeline</button><button class="ev-tab" data-tab="raw" type="button">Technical</button></div>
+        <div class="ev-tabpane" data-pane="details"><h4>Audit</h4><div class="ev-kv">${overview.map(([key, value]) => `<div class="k">${esc(key)}</div><div class="v">${esc(value)}</div>`).join("")}</div>
+        </div><div class="ev-tabpane" data-pane="timeline" hidden><h4>Timeline</h4><div class="ev-timeline">${timeline}</div>
+        </div><div class="ev-tabpane" data-pane="raw" hidden><h4>Request details</h4><div class="ev-kv">${auditRowsHTML(e)}</div><details class="ev-tech"><summary>Raw data</summary><div class="ev-tech-body"><pre>${esc(JSON.stringify({ group: detail.group || null, events }, null, 2))}</pre></div></details></div>`;
+      detailEl.querySelectorAll(".ev-tab").forEach(tab => tab.addEventListener("click", () => {
+        detailEl.querySelectorAll(".ev-tab").forEach(button => button.classList.toggle("on", button === tab));
+        detailEl.querySelectorAll(".ev-tabpane").forEach(pane => { pane.hidden = pane.dataset.pane !== tab.dataset.tab; });
+      }));
       Q("#ev-ack-detail", detailEl)?.addEventListener("click", () => {
         if (!ackId) return;
         if (acknowledged) unacknowledgeRow(ackId); else acknowledgeRow(ackId);
@@ -2039,7 +2111,13 @@ export default {
           const detail = await fjson(`/api/events/groups/${encodeURIComponent(id)}?run_items_limit=${RUN_ITEMS_PAGE_SIZE}&run_items_offset=0`);
           if (!alive || sequence !== selectionSequence) return;
           if (!detail || detail.ok === false) throw new Error("not found");
-          if (domain === "scrobble") renderScrobbleDetail(detail); else if (domain === "audit") renderAuditDetail(detail); else if (JOB_DOMAINS.includes(domain)) renderCaptureDetail(detail); else renderGroupDetail(detail);
+          if (domain === "scrobble") {
+            const destinations = findGroup(id)?.destinations || [detail.group];
+            const results = await Promise.allSettled(destinations.map(row => String(row.id) === String(id) ? Promise.resolve({...detail}) : fjson(`/api/events/groups/${encodeURIComponent(row.id)}`)));
+            if (!alive || sequence !== selectionSequence) return;
+            detail.deliveries = results.map((result, index) => result.status === "fulfilled" && result.value?.ok !== false ? result.value : {group: destinations[index], unavailable: true});
+            renderScrobbleDetail(detail);
+          } else if (domain === "audit") renderAuditDetail(detail); else if (JOB_DOMAINS.includes(domain)) renderCaptureDetail(detail); else renderGroupDetail(detail);
         } else {
           const ctx = await fjson(`/api/events/context?event_id=${encodeURIComponent(id)}`);
           if (!alive || sequence !== selectionSequence) return;
@@ -2094,11 +2172,8 @@ export default {
 
     const resetFilters = () => {
       qEl.value = "";
-      runFilter = "";
-      ddCategory.reset(); ddType.reset(); ddProvider.reset(); ddOrigin.reset(); ddFeature.reset(); ddPair.reset();
-      dateRange = "all"; lset("cw.events.range", "all"); ddRange.value = "all";
-      sinceEl.value = ""; untilEl.value = ""; syncRangeUI();
-      load(0);
+      needsAttention = false; attentionSeg.value = "all";
+      clearHidden();
     };
 
     let refreshing = false;
@@ -2109,7 +2184,10 @@ export default {
       btn?.classList.add("busy");
       try {
         await Promise.all([populateFilters(), load(state.page)]);
-        if (alive && state.items.length) renderList();
+        if (alive && state.items.length) {
+          renderList();
+          if (state.selected) await select(state.selected, null, {reveal: false});
+        }
       } finally { refreshing = false; btn?.classList.remove("busy"); }
     };
 
@@ -2134,7 +2212,7 @@ export default {
     Q("#ev-refresh", root).addEventListener("click", () => doRefresh());
     Q("#ev-clear", root)?.addEventListener("click", async () => {
       const label = domain === "audit" ? "audit" : domain === "capture" ? "capture" : domain === "backup" ? "backup" : (domain === "scrobble" ? "scrobble" : "sync");
-      if (!window.confirm(`Delete all ${label} events from the archive?\n\nThis clears the ${label} history from the SQLite event archive.\nThis cannot be undone.`)) return;
+      if (!window.confirm(`Delete all ${label} events from the archive?\n\nThis clears the ${label} activity history.\nThis cannot be undone.`)) return;
       const btn = Q("#ev-clear", root);
       btn?.classList.add("busy");
       try {

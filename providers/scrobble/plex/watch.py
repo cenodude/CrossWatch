@@ -2750,7 +2750,15 @@ def process_rating_webhook(
         enable_myanimelist = bool(watch_cfg.get("plex_myanimelist_ratings"))
         enable_silo = bool(watch_cfg.get("plex_silo_ratings"))
 
-    if not (enable_trakt or enable_simkl or enable_mdblist or enable_crosswatch or enable_floppy or enable_punchplay or enable_flicklist or enable_scrob or enable_wetrakr or enable_anilist or enable_kitsu or enable_myanimelist or enable_silo):
+    rating_targets = {
+        name for name, enabled in (
+            ("trakt", enable_trakt), ("simkl", enable_simkl), ("mdblist", enable_mdblist),
+            ("crosswatch", enable_crosswatch), ("floppy", enable_floppy), ("punchplay", enable_punchplay),
+            ("flicklist", enable_flicklist), ("scrob", enable_scrob), ("wetrakr", enable_wetrakr),
+            ("anilist", enable_anilist), ("kitsu", enable_kitsu), ("myanimelist", enable_myanimelist), ("silo", enable_silo),
+        ) if enabled
+    }
+    if not rating_targets:
         return {"ok": True, "ignored": True}
 
     if not payload:
@@ -2790,13 +2798,10 @@ def process_rating_webhook(
     rating_val = _plex_rating_to_10(rating_raw) if rating_raw is not None else 0
     if rating_val is None:
         rating_val = 0
-    from providers.scrobble.plex.ratings_sync import plex_rating_value
+    from providers.scrobble.plex.ratings_sync import episode_rating_skips, plex_rating_value
 
     rating_precise = plex_rating_value(rating_raw)
 
-
-    if media_type == "episode" and not (enable_trakt or enable_crosswatch or enable_punchplay or enable_flicklist or enable_scrob or enable_wetrakr):
-        return {"ok": True, "ignored": True}
 
     acc_key = _account_key(payload)
     rk = str(md.get("ratingKey") or md.get("ratingkey") or "").strip()
@@ -2825,6 +2830,12 @@ def process_rating_webhook(
         return season_results
 
     ids = _all_ids_from_metadata(md)
+    results: dict[str, Any] = {"ok": True, "action": "rating", "media_type": media_type, "rating": rating_precise, "route_id": route_scope}
+    skipped = episode_rating_skips(media_type, rating_targets)
+    results.update(skipped)
+    if not rating_targets.difference(skipped):
+        _archive_route_ratings(results, watch_cfg, payload, md, ids, rating_precise, sink_inst)
+        return results
 
     if (not ids) and rk:
         try:
@@ -2844,10 +2855,12 @@ def process_rating_webhook(
             pass
 
     if not _sanitize_ids(ids):
+        if skipped:
+            _archive_route_ratings(results, watch_cfg, payload, md, ids, rating_precise, sink_inst)
+            return results
         _emit(logger, "rating event without usable external IDs; ignored", "DEBUG")
         return {"ok": True, "ignored": True}
 
-    results: dict[str, Any] = {"ok": True, "action": "rating", "media_type": media_type, "rating": rating_precise, "route_id": route_scope}
     if enable_trakt:
         results["trakt"] = _trakt_send_rating(media_type, ids, rating_val, cfg, logger, sink_inst)
     if enable_simkl and media_type in ("movie", "show"):
@@ -2857,7 +2870,7 @@ def process_rating_webhook(
     ops_enabled = [
         name
         for name, on in (("crosswatch", enable_crosswatch), ("floppy", enable_floppy), ("punchplay", enable_punchplay), ("flicklist", enable_flicklist), ("scrob", enable_scrob), ("wetrakr", enable_wetrakr), ("kitsu", enable_kitsu), ("myanimelist", enable_myanimelist), ("silo", enable_silo))
-        if on
+        if on and name not in skipped
     ]
     if ops_enabled:
         from providers.scrobble.plex.ratings_sync import dispatch_ops_ratings

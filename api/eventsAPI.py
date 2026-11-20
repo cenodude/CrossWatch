@@ -875,17 +875,22 @@ def events_groups(
     domain: str = Query("sync"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    activities: bool = False,
     request: Request = cast(Request, None),
 ) -> JSONResponse:
     cfg = load_config() or {}
     if _admin_only_hidden(request) and _admin_only_domain_requested(domain):
         return _scope_denied()
-    return _ok(_filter_event_payload(cfg, request, _list_groups(
+    user = request_user(request)
+    scoped = _default_overview_requested(request) or bool(user and not user.get("is_admin"))
+    payload = _list_groups(
         q=q, status=status, category=category, event_type=event_type, provider=provider, origin_provider=origin_provider,
         destination_provider=destination_provider, source_provider=source_provider,
         feature=feature, pair_key=pair_key, item_key=item_key, run_id=run_id, reason_code=reason_code,
         since=since, until=until, visibility=visibility, order=order, domain=domain, limit=limit, offset=offset,
-    )))
+        activities=activities, row_filter=(lambda row: _event_row_allowed(cfg, request, row)) if scoped else None,
+    )
+    return _ok(payload if activities and domain == "scrobble" else _filter_event_payload(cfg, request, payload))
 
 
 @router.get("/tree")
