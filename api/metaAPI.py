@@ -1034,6 +1034,8 @@ def get_episode_still_file(
     episode: int,
     size: str,
     cache_dir: Path | str,
+    *,
+    backdrop_fallback: Callable[[], tuple[str, str]] | None = None,
 ) -> tuple[str, str]:
     cache_root = _cache_subdir(cache_dir, "art")
     cache_root.mkdir(parents=True, exist_ok=True)
@@ -1066,14 +1068,17 @@ def get_episode_still_file(
     def show_art_fallback() -> tuple[str, str]:
         last: tuple[str, str] | None = None
         for fallback_kind in ("backdrop", "poster"):
-            path, mime = get_art_file(
-                api_key,
-                "tv",
-                show_tmdb_id,
-                size,
-                cache_dir,
-                kind=fallback_kind,
-            )
+            if fallback_kind == "backdrop" and backdrop_fallback is not None:
+                path, mime = backdrop_fallback()
+            else:
+                path, mime = get_art_file(
+                    api_key,
+                    "tv",
+                    show_tmdb_id,
+                    size,
+                    cache_dir,
+                    kind=fallback_kind,
+                )
             last = (path, mime)
             if not _is_placeholder_art(path):
                 return path, mime
@@ -1230,6 +1235,22 @@ def api_tmdb_art(
         if art_kind in {"still", "episode_still"}:
             if t != "tv" or season is None or episode is None:
                 return PlainTextResponse("Episode still requires tv, season and episode", status_code=400)
+
+            def show_backdrop() -> tuple[str, str]:
+                nonlocal fanart_cache
+                mode = _fanart_mode("backdrop")
+                fanart_cache = "no-cache"
+                if mode == "fanart":
+                    response, _ = _fanart_tmdb_override(t, tmdb_id, "backdrop", eff_locale)
+                    if response is not None:
+                        return str(response.path), response.media_type or "image/jpeg"
+                path, mime = get_art_file(api_key, t, tmdb_id, size_tag, base, locale=eff_locale, kind="backdrop")
+                if mode == "tmdb_first" and _is_placeholder_art(path):
+                    response, _ = _fanart_tmdb_override(t, tmdb_id, "backdrop", eff_locale)
+                    if response is not None:
+                        return str(response.path), response.media_type or "image/jpeg"
+                return path, mime
+
             local_path, mime = get_episode_still_file(
                 api_key,
                 tmdb_id,
@@ -1237,6 +1258,7 @@ def api_tmdb_art(
                 int(episode),
                 size_tag,
                 base,
+                backdrop_fallback=show_backdrop,
             )
         else:
             local_path, mime = get_art_file(

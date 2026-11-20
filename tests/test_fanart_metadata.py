@@ -9,6 +9,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from api import metaAPI
 from cw_platform.config_base import redact_config
 from cw_platform.metadata import MetadataManager
@@ -71,6 +73,15 @@ def test_pick_prefers_requested_disc_type_first_disc_and_hd_logo(tmp_path, monke
     assert url_of(prov.pick("movie", {"tmdb": 603}, "logo", lang="nl")).endswith("/hdmovielogo/b.png")
     assert all("evil.example" not in row["url"] for row in prov.images("movie", {"tmdb": 603})["disc"])
     assert calls == ["https://webservice.fanart.tv/v3/movies/603"]
+
+
+@pytest.mark.parametrize("entity,field", [("tv", "show4kbackground"), ("movie", "movie4kbackground")])
+def test_4k_backgrounds_are_available_when_standard_backgrounds_are_absent(tmp_path, entity, field) -> None:
+    provider = make_provider(tmp_path)
+    data = {field: [{"url": "https://assets.fanart.tv/fanart/background.jpg", "lang": "", "likes": "2"}]}
+    images = provider.images_from(entity, data)
+    assert images["background"][0]["field"] == field
+    assert url_of(provider.pick_from(entity, data, "background", textless=True)).endswith("/background.jpg")
 
 
 def test_raw_uses_disk_cache_and_remembers_missing(tmp_path, monkeypatch) -> None:

@@ -231,7 +231,7 @@
     const nestedShowIds = objectOf(show.ids);
     const idsShowIds = objectOf(ids.show_ids);
     if (mediaValue(item) === "movie") return item?.tmdb || item?.tmdb_id || ids.tmdb || ids.id || "";
-    return showIds.tmdb || nestedShowIds.tmdb || objectOf(item?.show_ids).tmdb || idsShowIds.tmdb || show.tmdb || show.tmdb_id || ids.tmdb_show || item?.tmdb_show || ids.show_tmdb || item?.show_tmdb || item?.tmdb || item?.tmdb_id || ids.tmdb || "";
+    return showIds.tmdb || nestedShowIds.tmdb || objectOf(item?.show_ids).tmdb || idsShowIds.tmdb || show.tmdb || show.tmdb_id || ids.tmdb_show || item?.tmdb_show || ids.show_tmdb || item?.show_tmdb || item?.tmdb || item?.tmdb_id || (isEpisodeItem(item) ? "" : ids.tmdb) || "";
   };
   const showTmdbId = (item) => {
     const ids = objectOf(item?.ids);

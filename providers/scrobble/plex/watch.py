@@ -2877,10 +2877,14 @@ def process_rating_webhook(
 
         show_ids = episode_ids = None
         if media_type == "episode":
-            from providers.webhooks.plex import _episode_ids_from_md, _show_ids_from_md, _plex_show_ids_from_metadata
+            from providers.webhooks.plex import _cw_ids_for_payload, _episode_ids_from_md, _show_ids_from_md
 
             episode_ids = _episode_ids_from_md(md)
-            show_ids = _show_ids_from_md(md) or _plex_show_ids_from_metadata(cfg, md, logger)
+            ids = _cw_ids_for_payload(media_type, md, ids, cfg, logger=logger)
+            show_ids = {
+                **_show_ids_from_md(md),
+                **{key: ids[f"{key}_show"] for key in ("tmdb", "imdb", "tvdb") if ids.get(f"{key}_show")},
+            }
         results.update(
             dispatch_ops_ratings(
                 media_type,

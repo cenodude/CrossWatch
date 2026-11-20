@@ -31,7 +31,7 @@ KINDS: dict[str, dict[str, tuple[str, ...]]] = {
         "disc": ("moviedisc",),
         "logo": ("hdmovielogo", "movielogo"),
         "clearart": ("hdmovieclearart", "movieart"),
-        "background": ("moviebackground",),
+        "background": ("moviebackground", "movie4kbackground"),
         "poster": ("movieposter",),
         "banner": ("moviebanner",),
         "thumb": ("moviethumb",),
@@ -39,7 +39,7 @@ KINDS: dict[str, dict[str, tuple[str, ...]]] = {
     "tv": {
         "logo": ("hdtvlogo", "clearlogo"),
         "clearart": ("hdclearart", "clearart"),
-        "background": ("showbackground",),
+        "background": ("showbackground", "show4kbackground"),
         "poster": ("tvposter",),
         "banner": ("tvbanner",),
         "thumb": ("tvthumb",),

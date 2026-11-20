@@ -90,6 +90,50 @@ def test_plex_webhook_ratings_forward_to_crosswatch_and_floppy(monkeypatch) -> N
     assert all(call["rating"] == 8 for call in sent)
 
 
+@pytest.mark.parametrize("lookup", ["plex", "tmdb", "known", "missing"])
+def test_plex_episode_rating_resolves_parent_without_replacing_episode_ids(monkeypatch, lookup) -> None:
+    from providers.scrobble.plex import ratings_sync
+    from providers.webhooks import plex
+
+    sent = []
+    parent_calls = []
+    monkeypatch.setattr(plex, "_save_config", lambda _cfg: None)
+    monkeypatch.setattr(plex, "archive_rating_results", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(ratings_sync, "send_rating", lambda *args: sent.append(args[3]) or {"ok": True})
+    monkeypatch.setattr(
+        plex, "_plex_show_ids_from_metadata",
+        lambda *_args, **_kwargs: parent_calls.append(True) or ({"tmdb": 213375, "tvdb": 426606} if lookup == "plex" else {}),
+    )
+    monkeypatch.setattr(plex, "show_tmdb_id", lambda *_args: 213375 if lookup == "tmdb" else None)
+    plex._LAST_RATING_BY_ACC.clear()
+    cfg = {
+        "scrobble": {"enabled": True, "sources": {"webhook": True}, "webhook": {
+            "sinks": ["crosswatch"], "plex_crosswatch_ratings": True,
+        }},
+        "crosswatch": {"enabled": True},
+    }
+    md = {
+        "type": "episode", "title": "Theseus", "grandparentTitle": "VisionQuest",
+        "parentIndex": 1, "index": 2, "ratingKey": "episode-2", "grandparentRatingKey": "show-1",
+        "userRating": 6, "Guid": [{"id": "tmdb://6412926"}, {"id": "tvdb://12023758"}],
+    }
+    if lookup == "known":
+        md["grandparentGuid"] = "tmdb://213375"
+
+    result = plex.process_webhook({"event": "media.rate", "Metadata": md}, {}, cfg=cfg)
+
+    assert result["ok"] is True
+    assert len(sent) == 1
+    assert sent[0]["ids"] == {"tmdb": 6412926, "tvdb": 12023758}
+    assert sent[0]["rating"] == 6
+    assert sent[0]["season"] == 1 and sent[0]["episode"] == 2
+    if lookup == "missing":
+        assert not sent[0].get("show_ids")
+    else:
+        assert sent[0]["show_ids"]["tmdb"] == 213375
+    assert bool(parent_calls) is (lookup != "known")
+
+
 def test_plex_webhook_rating_events_name_the_real_targets(monkeypatch) -> None:
     import cw_platform.event_archive as event_archive
     from providers.scrobble.plex import ratings_sync
@@ -412,6 +456,59 @@ def test_plex_webhook_ratings_forward_to_every_dispatcher_sink(monkeypatch) -> N
     assert trakt_calls and trakt_calls[0]["path"] == "/sync/ratings"
     assert {call["provider"] for call in ops_calls} == set(ratings_sync.OPS_RATING_SINKS)
     assert {call["instance"] for call in ops_calls} == {f"{sink}-profile" for sink in ratings_sync.OPS_RATING_SINKS}
+
+
+@pytest.mark.parametrize("lookup", ["plex", "tmdb", "known", "missing"])
+@pytest.mark.parametrize("custom", [False, True])
+@pytest.mark.parametrize("rating", [6, 0])
+def test_plex_watcher_episode_rating_resolves_parent(monkeypatch, lookup, custom, rating) -> None:
+    from providers.scrobble.plex import ratings_sync, watch
+    from providers.webhooks import plex
+
+    sent = []
+    parent_calls = []
+    tmdb_calls = []
+    monkeypatch.setattr(watch, "_archive_route_ratings", lambda *_args: None)
+    monkeypatch.setattr(ratings_sync, "send_rating", lambda *args: sent.append(args) or {"ok": True})
+    monkeypatch.setattr(
+        plex, "_plex_show_ids_from_metadata",
+        lambda *_args, **_kwargs: parent_calls.append(True) or ({"tmdb": 213375, "tvdb": 426606} if lookup == "plex" else {}),
+    )
+    monkeypatch.setattr(
+        plex, "show_tmdb_id",
+        lambda cfg, show, episode: tmdb_calls.append((dict(show), dict(episode))) or (213375 if lookup == "tmdb" else None),
+    )
+    watch._LAST_RATING_BY_ACC.clear()
+    cfg = {"scrobble": {"enabled": True, "sources": {"watcher": True}, "watch": {
+        "plex_crosswatch_ratings": True, "route_provider": "plex", "route_sink_instance": "CW-P01",
+        "route_options": {"ratings": {"mode": "custom", "targets": ["crosswatch"]}},
+    }}}
+    md = {
+        "type": "episode", "title": "Theseus", "grandparentTitle": "VisionQuest",
+        "parentIndex": 1, "index": 2, "ratingKey": "episode-2", "grandparentRatingKey": "show-1",
+        "userRating": rating, "Guid": [{"id": "tmdb://6412926"}, {"id": "imdb://tt38934465"}],
+    }
+    if lookup == "known":
+        md["grandparentGuid"] = "tmdb://213375"
+
+    result = watch.process_rating_webhook({"event": "media.rate", "Metadata": md}, {}, cfg_override=cfg, route_hook={} if custom else None)
+
+    assert result["crosswatch"]["ok"]
+    assert len(sent) == 1
+    provider, _cfg, instance, item, value = sent[0]
+    assert (provider, instance, value) == ("crosswatch", "CW-P01", rating)
+    assert item["ids"] == {"tmdb": 6412926, "imdb": "tt38934465"}
+    assert item["series_title"] == "VisionQuest"
+    assert (item["season"], item["episode"]) == (1, 2)
+    assert item.get("rating") == (rating or None)
+    if lookup == "missing":
+        assert not item.get("show_ids")
+    else:
+        assert item["show_ids"]["tmdb"] == 213375
+    assert bool(parent_calls) is (lookup != "known")
+    assert bool(tmdb_calls) is (lookup in {"tmdb", "missing"})
+    if tmdb_calls:
+        assert tmdb_calls[0][1]["imdb"] == "tt38934465"
 
 
 @pytest.mark.parametrize("provider", ["kitsu", "myanimelist"])
