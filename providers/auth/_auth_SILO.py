@@ -21,6 +21,7 @@ from cw_platform.provider_instances import (
     ensure_instance_block,
     is_sync_user_instance,
     list_instance_ids,
+    list_sync_user_ids,
     normalize_instance_id,
     resolve_provider_block,
     resolve_sync_user_block,
@@ -32,7 +33,7 @@ try:
 except ImportError:
     _real_log = None
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 API_PREFIX = "/api/v2"
 DEVICE_NAME = "CrossWatch"
 DEVICE_PLATFORM = "CrossWatch"
@@ -185,6 +186,23 @@ def has_auth(block: Mapping[str, Any] | None) -> bool:
 
 def needs_reconnect(block: Mapping[str, Any] | None) -> bool:
     return str((block or {}).get("auth_error") or "") == "reconnect_required"
+
+
+def is_account_entry(block: Mapping[str, Any] | None) -> bool:
+    return bool(str((block or {}).get("account_user_id") or "").strip())
+
+
+def detach_account_sessions(parent: MutableMapping[str, Any]) -> list[str]:
+    users = parent.get("sync_users")
+    tokens: list[str] = []
+    for entry in (users.values() if isinstance(users, dict) else []):
+        if not isinstance(entry, dict) or not is_account_entry(entry):
+            continue
+        token = str(entry.get("access_token") or "").strip()
+        if token:
+            tokens.append(token)
+        entry.update({"access_token": "", "refresh_token": "", "expires_at": 0, "auth_error": "reconnect_required"})
+    return tokens
 
 
 def needs_profile_pin(block: Mapping[str, Any] | None) -> bool:
@@ -587,6 +605,8 @@ class SiloClient:
         return {"ok": True, "cancelled": bool(device_code), "instance": self.instance_id}
 
     def refresh_token(self, cfg: Mapping[str, Any] | None = None, *, force: bool = False, rejected_token: str | None = None) -> dict[str, Any]:
+        if is_sync_user_instance(self.instance_id) and is_account_entry(self.block):
+            return self._refresh_account(cfg, force=force, rejected_token=rejected_token)
         inst = token_instance(self.instance_id)
         with _refresh_lock(inst):
             full = _load_config()
@@ -639,6 +659,185 @@ class SiloClient:
             log(f"SILO: token refreshed (instance={inst})", level="INFO")
             return {"ok": True, "status": "ok", "instance": inst, "expires_at": int(block.get("expires_at") or 0)}
 
+    def _refresh_account(self, cfg: Mapping[str, Any] | None, *, force: bool, rejected_token: str | None) -> dict[str, Any]:
+        inst = self.instance_id
+        with _refresh_lock(inst):
+            full = _load_config()
+            entry = sync_user_entry(full, inst)
+            if entry is None or not is_account_entry(entry):
+                return {"ok": False, "status": "missing_refresh", "instance": inst}
+            if needs_reconnect(entry):
+                return {"ok": False, "status": "reconnect_required", "reconnect_required": True, "instance": inst}
+            current = str(entry.get("access_token") or "").strip()
+            if not force and current and not about_to_expire(entry):
+                return {"ok": True, "status": "fresh", "instance": inst, "expires_at": int(entry.get("expires_at") or 0)}
+            rejected = str(rejected_token or "").strip()
+            if rejected and current and current != rejected and not about_to_expire(entry):
+                return {"ok": True, "status": "fresh", "instance": inst, "expires_at": int(entry.get("expires_at") or 0)}
+            block = provider_block(full, inst)
+            if not normalize_server_url(block.get("server_url")):
+                return {"ok": False, "status": "missing_refresh", "instance": inst}
+            rt = str(entry.get("refresh_token") or "").strip()
+            tokens: Mapping[str, Any] | None = None
+            if rt:
+                try:
+                    resp = self._post_public(block, "/auth/refresh", {"refresh_token": rt})
+                except SiloServiceUnavailable:
+                    return {"ok": False, "status": "network_error", "instance": inst}
+                if resp.status_code == 429 or resp.status_code >= 500:
+                    return {"ok": False, "status": "service_unavailable", "retry_after": _retry_after(resp), "instance": inst}
+                if resp.status_code < 400:
+                    try:
+                        data = _json(resp)
+                    except SiloInvalidResponse:
+                        return {"ok": False, "status": "invalid_response", "instance": inst}
+                    if not isinstance(data, Mapping) or not str(data.get("access_token") or "").strip():
+                        return {"ok": False, "status": "invalid_response", "instance": inst}
+                    tokens = data
+            reopened = False
+            if tokens is None:
+                tokens = self._reopen_account(str(entry.get("account_user_id")))
+                reopened = tokens is not None
+                full = _load_config()
+                entry = sync_user_entry(full, inst)
+                if entry is None or not is_account_entry(entry):
+                    if tokens is not None:
+                        SiloClient(full, instance_id=token_instance(inst), session=self.session).end_session(str(tokens.get("access_token") or ""))
+                    return {"ok": False, "status": "missing_refresh", "instance": inst}
+            if tokens is None:
+                entry["auth_error"] = "reconnect_required"
+                save_config(full)
+                log(f"SILO: account session ended, save the identity again (instance={inst})", level="ERROR")
+                return {"ok": False, "status": "reconnect_required", "reconnect_required": True, "instance": inst}
+            _apply_tokens(entry, {k: v for k, v in tokens.items() if k != "user"})
+            save_config(full)
+            if isinstance(cfg, dict):
+                view = cfg.get("silo")
+                ref = split_sync_user_id(inst)
+                own_view = isinstance(view, dict) and ref is not None and str(view.get("_cw_sync_user") or "") == ref[1]
+                dst = view if own_view else sync_user_entry(cfg, inst)
+                if isinstance(dst, dict):
+                    for key in ("access_token", "refresh_token", "expires_at", "session_refreshed_at", "auth_error"):
+                        dst[key] = entry.get(key)
+            self.cfg = full
+            log(f"SILO: account session {'reopened' if reopened else 'refreshed'} (instance={inst})", level="WARN" if reopened else "INFO")
+            return {"ok": True, "status": "ok", "instance": inst, "expires_at": int(entry.get("expires_at") or 0)}
+
+    def _reopen_account(self, user_id: str) -> dict[str, Any] | None:
+        parent = token_instance(self.instance_id)
+        try:
+            return SiloClient(_load_config(), instance_id=parent, session=self.session).open_account_session(user_id)
+        except SiloError as exc:
+            log(f"SILO: could not reopen account session (instance={self.instance_id} reason={exc})", level="WARN")
+            return None
+
+    def _admin_headers(self) -> dict[str, str]:
+        profiles = self.list_profiles()
+        primary = next((p for p in profiles if p.get("is_primary")), None)
+        if primary is None:
+            raise SiloProfileError("primary_profile_missing")
+        block = self.block
+        headers = {"X-Profile-Id": primary["id"]}
+        if primary.get("has_pin"):
+            ptok = str(block.get("profile_token") or "").strip() if str(block.get("profile_id") or "") == primary["id"] else ""
+            if not ptok:
+                raise SiloProfileError("admin_pin_required")
+            headers["X-Profile-Token"] = ptok
+        return headers
+
+    def list_accounts(self, headers: Mapping[str, str] | None = None) -> list[dict[str, Any]]:
+        admin = dict(headers or self._admin_headers())
+        out: list[dict[str, Any]] = []
+        cursor = ""
+        seen: set[str] = set()
+        while True:
+            params: dict[str, Any] = {"limit": 200}
+            if cursor:
+                params["cursor"] = cursor
+            resp = self.request("GET", "/admin/users", profile=False, params=params, headers=admin)
+            if resp.status_code in (401, 403):
+                raise SiloAuthError("not_admin")
+            if resp.status_code >= 400:
+                raise SiloInvalidResponse(problem_code(resp) or f"http_{resp.status_code}")
+            data = _json(resp)
+            rows = data.get("items") if isinstance(data, Mapping) else None
+            if not isinstance(rows, list):
+                raise SiloInvalidResponse("accounts_not_list")
+            for row in rows:
+                uid = str(row.get("id") or "").strip() if isinstance(row, Mapping) else ""
+                if uid:
+                    out.append({"id": uid, "username": str(row.get("username") or "").strip(), "role": str(row.get("role") or ""),
+                                "is_owner": row.get("is_owner") is True, "enabled": row.get("enabled") is not False})
+            raw_page = data.get("page") if isinstance(data, Mapping) else None
+            page: Mapping[str, Any] = raw_page if isinstance(raw_page, Mapping) else {}
+            cursor = str(page.get("next_cursor") or "") if page.get("has_more") else ""
+            if not cursor or cursor in seen:
+                return out
+            seen.add(cursor)
+
+    def list_account_profiles(self, user_id: str, headers: Mapping[str, str] | None = None) -> list[dict[str, Any]]:
+        admin = dict(headers or self._admin_headers())
+        resp = self.request("GET", f"/admin/users/{quote(str(user_id), safe='')}/profiles", profile=False, headers=admin)
+        if resp.status_code >= 400:
+            raise SiloInvalidResponse(problem_code(resp) or f"http_{resp.status_code}")
+        data = _json(resp)
+        rows = data.get("items") if isinstance(data, Mapping) else None
+        if not isinstance(rows, list):
+            raise SiloInvalidResponse("profiles_not_list")
+        return [normalize_profile(row) for row in rows if isinstance(row, Mapping)]
+
+    def list_other_account_profiles(self) -> list[dict[str, Any]]:
+        try:
+            admin = self._admin_headers()
+            accounts = self.list_accounts(admin)
+        except (SiloAuthError, SiloProfileError):
+            return []
+        me = str(self.block.get("user_id") or "").strip() or str(self.account().get("id") or "")
+        owner = any(a["id"] == me and a["is_owner"] for a in accounts)
+        out: list[dict[str, Any]] = []
+        for acc in accounts:
+            if acc["id"] == me or acc["is_owner"] or not acc["enabled"] or (acc["role"] == "admin" and not owner):
+                continue
+            try:
+                profiles = self.list_account_profiles(acc["id"], admin)
+            except SiloInvalidResponse as exc:
+                log(f"SILO: profiles of another account unavailable (instance={self.instance_id} reason={exc})", level="WARN")
+                continue
+            primary = next((p["id"] for p in profiles if p["is_primary"]), "")
+            for prof in profiles:
+                out.append({**prof, "account_user_id": acc["id"], "account_username": acc["username"] or prof["name"], "account_primary_profile_id": primary})
+        return out
+
+    def open_account_session(self, user_id: str) -> dict[str, Any]:
+        resp = self.request("POST", f"/admin/users/{quote(str(user_id), safe='')}/impersonate", profile=False, headers=self._admin_headers())
+        if resp.status_code == 429:
+            raise SiloRateLimited("rate_limited", _retry_after(resp))
+        if resp.status_code >= 500:
+            raise SiloServiceUnavailable("service_unavailable")
+        if resp.status_code >= 400:
+            raise SiloAuthError(problem_code(resp) or f"http_{resp.status_code}")
+        data = _json(resp)
+        if not isinstance(data, Mapping) or not str(data.get("access_token") or "").strip() or not str(data.get("refresh_token") or "").strip():
+            raise SiloInvalidResponse("invalid_session")
+        try:
+            expires_in = int(data.get("expires_in") or 0)
+        except Exception:
+            expires_in = 0
+        log(f"SILO: account session opened (instance={self.instance_id})", level="INFO")
+        return {"access_token": str(data["access_token"]), "refresh_token": str(data["refresh_token"]),
+                "expires_at": now() + expires_in if expires_in > 0 else 0, "session_refreshed_at": now()}
+
+    def end_session(self, token: str) -> bool:
+        tok = str(token or "").strip()
+        block = self.block
+        if not tok or not normalize_server_url(block.get("server_url")):
+            return False
+        try:
+            resp = self.session.post(self._url("/auth/logout", block), headers=base_headers(block, token=tok), timeout=10, verify=verify_ssl_of(block))
+        except requests.RequestException:
+            return False
+        return resp.status_code in (200, 204, 401)
+
     def access_token(self, *, refresh: bool = True) -> str:
         block = self.block
         if needs_reconnect(block):
@@ -666,10 +865,12 @@ class SiloClient:
         params: Mapping[str, Any] | None = None,
         timeout: float = HTTP_TIMEOUT,
         retry: bool = True,
+        headers: Mapping[str, str] | None = None,
     ) -> requests.Response:
+        extra = dict(headers or {})
         token = self.access_token()
         block = self.block
-        headers = base_headers(block, token=token, profile=profile)
+        headers = {**base_headers(block, token=token, profile=profile), **extra}
         if json is not None:
             headers["Content-Type"] = "application/json"
         try:
@@ -691,7 +892,7 @@ class SiloClient:
                     raise SiloReconnectRequired("reconnect_required")
                 return resp
             self.cfg = _load_config()
-            return self.request(method, path, profile=profile, json=json, params=params, timeout=timeout, retry=False)
+            return self.request(method, path, profile=profile, json=json, params=params, timeout=timeout, retry=False, headers=extra)
         if resp.status_code == 403 and problem_code(resp) == "profile_verification_required":
             self._flag_profile_pin()
             raise SiloProfileVerificationRequired("profile_verification_required")
@@ -787,6 +988,7 @@ class SiloClient:
         block = writable_block(cfg, self.instance_id)
         remote = deepcopy(block)
         clear_oauth(block)
+        remote["_account_tokens"] = detach_account_sessions(block)
         save_config(cfg)
         if normalize_server_url(remote.get("server_url")):
             try:
@@ -796,6 +998,11 @@ class SiloClient:
         log(f"SILO: disconnected (instance={self.instance_id})", level="INFO")
 
     def _disconnect_remote(self, block: Mapping[str, Any]) -> None:
+        for acc_token in block.get("_account_tokens") or []:
+            try:
+                self.session.post(self._url("/auth/logout", block), headers=base_headers(block, token=str(acc_token)), timeout=10, verify=verify_ssl_of(block))
+            except requests.RequestException:
+                pass
         token = str(block.get("access_token") or "").strip()
         if token and normalize_server_url(block.get("server_url")):
             try:
@@ -839,6 +1046,19 @@ def refresh_all(keepalive_s: int = KEEPALIVE_SEC) -> dict[str, str]:
             continue
         try:
             last = int(block.get("session_refreshed_at") or 0)
+        except Exception:
+            last = 0
+        if now() - last < max(60, int(keepalive_s)):
+            continue
+        res = SiloClient(cfg, instance_id=inst).refresh_token(cfg, force=True)
+        out[inst] = str(res.get("status") or "")
+        cfg = _load_config()
+    for inst in list_sync_user_ids(cfg, "silo"):
+        entry = provider_block(cfg, inst)
+        if not is_account_entry(entry) or not is_configured(entry):
+            continue
+        try:
+            last = int(entry.get("session_refreshed_at") or 0)
         except Exception:
             last = 0
         if now() - last < max(60, int(keepalive_s)):

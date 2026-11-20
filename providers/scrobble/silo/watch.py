@@ -448,14 +448,53 @@ class SiloWatchService:
             raise RuntimeError("invalid_response")
         return [dict(r) for r in rows if isinstance(r, Mapping)]
 
-    def _profile_ids(self, cfg: Mapping[str, Any], block: Mapping[str, Any]) -> set[str]:
-        out = {str(block.get("profile_id") or "")}
+    def _account_instances(self, cfg: Mapping[str, Any]) -> dict[str, tuple[str, str]]:
+        out: dict[str, tuple[str, str]] = {}
+        for user_inst in list_sync_user_ids(cfg, "silo", self._instance_id):
+            blk = provider_block(cfg, user_inst)
+            uid = str(blk.get("account_user_id") or "").strip()
+            if uid and uid not in out and is_configured(blk):
+                out[uid] = (user_inst, str(blk.get("account_primary_profile_id") or blk.get("profile_id") or ""))
+        return out
+
+    def _account_profile_ids(self, cfg: Mapping[str, Any], uid: str) -> set[str]:
+        out: set[str] = set()
+        for user_inst in list_sync_user_ids(cfg, "silo", self._instance_id):
+            blk = provider_block(cfg, user_inst)
+            if str(blk.get("account_user_id") or "").strip() == uid:
+                out.add(str(blk.get("profile_id") or ""))
+        out.discard("")
+        return out
+
+    def _fetch_account_sessions(self, cfg: Mapping[str, Any]) -> tuple[list[dict[str, Any]], set[str]]:
+        rows: list[dict[str, Any]] = []
+        held: set[str] = set()
+        for uid, (inst, primary) in self._account_instances(cfg).items():
+            reader = SimpleNamespace(config=cfg, instance_id=inst, session=self.session)
+            try:
+                resp = silo_request(reader, "GET", SESSIONS_PATH, headers={"X-Profile-Id": primary} if primary else None)
+                if resp.status_code != 200:
+                    raise RuntimeError(f"http:{int(resp.status_code)}")
+                data = safe_json(resp)
+                items = data.get("items") if isinstance(data, Mapping) else None
+                if not isinstance(items, list):
+                    raise RuntimeError("invalid_response")
+                rows.extend(dict(r) for r in items if isinstance(r, Mapping))
+            except Exception as exc:
+                held |= self._account_profile_ids(cfg, uid)
+                self._log_error_limited(f"account:{uid}:{type(exc).__name__}", f"Silo sessions of another account unavailable: {exc}")
+        return rows, held
+
+    def _wants_users(self) -> bool:
         needs = getattr(self._dispatch, "needs_user_resolution", None)
         try:
-            wants_users = bool(needs()) if callable(needs) else False
+            return bool(needs()) if callable(needs) else False
         except Exception:
-            wants_users = False
-        if wants_users:
+            return False
+
+    def _profile_ids(self, cfg: Mapping[str, Any], block: Mapping[str, Any]) -> set[str]:
+        out = {str(block.get("profile_id") or "")}
+        if self._wants_users():
             for user_inst in list_sync_user_ids(cfg, "silo", self._instance_id):
                 pid = str(get_instance_block(cfg, "silo", user_inst).get("profile_id") or "")
                 if pid:
@@ -476,6 +515,11 @@ class SiloWatchService:
             self._mark_offline(exc)
             return bool(self._sessions)
         self._mark_online()
+        held: set[str] = set()
+        if self._wants_users():
+            known = {str(r.get("id") or "") for r in rows}
+            extra, held = self._fetch_account_sessions(cfg)
+            rows += [r for r in extra if str(r.get("id") or "") not in known]
         profiles = self._profile_ids(cfg, block)
         seen: set[str] = set()
         active = False
@@ -502,7 +546,7 @@ class SiloWatchService:
                 self._log_error_limited(f"{type(exc).__name__}:{source_key}", f"Silo session poll failed: {exc}")
         self._skipped &= seen
         for source_key in list(self._sessions.keys()):
-            if source_key in seen:
+            if source_key in seen or str(self._sessions[source_key].get("profile_id") or "") in held:
                 continue
             misses = self._missing.get(source_key, 0) + 1
             self._missing[source_key] = misses

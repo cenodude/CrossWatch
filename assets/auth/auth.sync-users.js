@@ -6,7 +6,7 @@
 
   const PROVIDERS = new Set(["plex", "emby", "jellyfin", "silo", "tofa"]);
   const LABELS = { plex: "Plex", emby: "Emby", jellyfin: "Jellyfin", silo: "Silo", tofa: "Tofa" };
-  const KIND_CLASS = { Owner: "is-owner", Admin: "is-owner", Connected: "is-owner", Home: "is-home", Child: "is-home", Friend: "is-friend", Shared: "is-friend", Disabled: "is-disabled" };
+  const KIND_CLASS = { Owner: "is-owner", Admin: "is-owner", Connected: "is-owner", Home: "is-home", Child: "is-home", Friend: "is-friend", Shared: "is-friend", Account: "is-friend", Disabled: "is-disabled" };
 
   const pending = new Map();
   const pendingKey = (provider, instance) => `${provider}:${instance}`;
@@ -28,7 +28,7 @@
 
   function serverUsersUrl(provider, instance) {
     const q = `?instance=${encodeURIComponent(instance)}`;
-    return provider === "plex" ? `/api/plex/pickusers${q}` : `/api/${provider}/users${q}`;
+    return provider === "plex" ? `/api/plex/pickusers${q}` : provider === "silo" ? `/api/silo/users${q}&accounts=1` : `/api/${provider}/users${q}`;
   }
 
   function syncUsersUrl(provider, instance) {
@@ -44,8 +44,9 @@
     }
     if (provider === "silo" || provider === "tofa") {
       const key = txt(u?.id);
-      const kind = u?.connected ? "Connected" : u?.shared === true ? "Shared" : u?.is_child ? "Child" : "";
-      return key ? { key, username: txt(u?.username), kind, home: u?.has_pin === true, disabled: false } : null;
+      const account = txt(u?.account);
+      const kind = u?.connected ? "Connected" : account ? "Account" : u?.shared === true ? "Shared" : u?.is_child ? "Child" : "";
+      return key ? { key, username: txt(u?.username), kind, account, home: u?.has_pin === true && !account, disabled: false } : null;
     }
     const key = txt(u?.id);
     const admin = u?.IsAdministrator === true;
@@ -66,6 +67,8 @@
     if (code === "silo_unavailable") return "Could not reach the Silo server.";
     if (code === "tofa_unavailable") return "Could not reach the Tofa server.";
     if (code === "tofa_sync_key_failed") return "Tofa did not create a watch sync key for a shared user.";
+    if (code === "silo_account_session_failed") return "Silo did not open a session for another account. Only Silo admins can add other accounts, and only the owner can add admins.";
+    if (code === "rate_limited") return "The server is busy. Try again in a moment.";
     return code || "Something went wrong.";
   }
 
@@ -84,8 +87,13 @@
     const savedPin = state.saved.find((s) => s.key === u.key)?.has_pin;
     const initial = esc((u.username || u.key).charAt(0).toUpperCase());
     const keyLost = state.saved.find((s) => s.key === u.key)?.key_invalid === true;
-    const tag = u.missing ? `<span class="cw-su-tag is-missing">Not on server</span>` : u.kind ? `<span class="cw-su-tag ${KIND_CLASS[u.kind] || ""}">${esc(u.kind)}</span>` : "";
-    const keyTag = keyLost && !u.missing ? `<span class="cw-su-tag is-missing" title="Save changes to create a new watch sync key">Key revoked</span>` : "";
+    const kindTitle = u.kind === "Account" && u.account ? ` title="Separate Silo account: ${esc(u.account)}"` : "";
+    const tag = u.missing ? `<span class="cw-su-tag is-missing">Not on server</span>` : u.kind ? `<span class="cw-su-tag ${KIND_CLASS[u.kind] || ""}"${kindTitle}>${esc(u.kind)}</span>` : "";
+    const keyTag = keyLost && !u.missing
+      ? state.provider === "silo"
+        ? `<span class="cw-su-tag is-missing" title="Save changes to open a new session for this account">Session ended</span>`
+        : `<span class="cw-su-tag is-missing" title="Save changes to create a new watch sync key">Key revoked</span>`
+      : "";
     const pin = (state.provider === "plex" || state.provider === "silo" || state.provider === "tofa") && u.home
       ? `<input type="password" class="cw-su-pin" inputmode="numeric" maxlength="8" autocomplete="off" data-pin="${esc(u.key)}" placeholder="${savedPin ? "PIN saved" : (state.provider === "silo" || state.provider === "tofa") ? "Profile PIN" : "PIN if needed"}" ${on ? "" : "hidden"} data-lpignore="true" data-1p-ignore="true" data-bwignore="true">`
       : "";
@@ -107,7 +115,7 @@
     const list = rows(state);
     state.root.innerHTML = `
       <div class="cw-wl cw-su">
-        <div class="cw-wl-note"><strong>Optional.</strong> Tick the people of this ${esc(label)} server who can be synced. You link them to people on another media server inside a sync pair, watcher route or webhook.</div>
+        <div class="cw-wl-note"><strong>Optional.</strong> Tick the people of this ${esc(label)} server who can be synced. You link them to people on another media server inside a sync pair, watcher route or webhook.${state.provider === "silo" ? " Silo admins also see the profiles of the other accounts on this server, marked Account." : ""}</div>
         ${state.loadError ? `<div class="cw-wl-empty">Could not load users from ${esc(label)}: ${esc(state.loadError)}</div>` : ""}
         <div class="cw-su-tools">
           <span class="cw-su-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input type="search" data-role="search" placeholder="Search people" autocomplete="off" value="${esc(state.query)}"></span>

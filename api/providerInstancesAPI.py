@@ -544,6 +544,9 @@ def _sync_user_rows(cfg: Mapping[str, Any], provider: str, inst: str) -> list[di
         if provider == "silo":
             row["has_pin"] = bool(str(entry.get("profile_token") or "").strip())
             row["needs_pin"] = bool(entry.get("profile_has_pin")) and not row["has_pin"]
+            if str(entry.get("account_user_id") or "").strip():
+                row["account"] = str(entry.get("account_username") or "")
+                row["key_invalid"] = str(entry.get("auth_error") or "") == "reconnect_required" or not str(entry.get("refresh_token") or "").strip()
         if provider == "tofa":
             row["has_pin"] = bool(str(entry.get("profile_token") or "").strip())
             row["needs_pin"] = bool(entry.get("profile_locked")) and not row["has_pin"]
@@ -564,6 +567,16 @@ def _build_sync_user_entry(provider: str, key: str, raw: Mapping[str, Any], exis
         cloud_id = str(raw.get("cloud_account_id") or existing.get("cloud_account_id") or "").strip()
         if cloud_id and cloud_id != key:
             entry["cloud_account_id"] = cloud_id
+    elif provider == "silo" and str(raw.get("account_user_id") or "").strip():
+        uid = str(raw.get("account_user_id"))
+        session = existing if raw.get("_reuse_session") and str(existing.get("account_user_id") or "") == uid and existing.get("refresh_token") else raw
+        entry = {"profile_id": key, "profile_name": name, "username": name, "user": name, "profile_has_pin": False,
+                 "profile_token": "", "profile_token_expires_at": 0, "account_user_id": uid, "user_id": uid,
+                 "account_username": str(raw.get("account_username") or existing.get("account_username") or ""),
+                 "account_primary_profile_id": str(raw.get("account_primary_profile_id") or existing.get("account_primary_profile_id") or ""),
+                 "access_token": str(session.get("access_token") or ""), "refresh_token": str(session.get("refresh_token") or ""),
+                 "expires_at": int(session.get("expires_at") or 0), "session_refreshed_at": int(session.get("session_refreshed_at") or 0),
+                 "auth_error": ""}
     elif provider == "silo":
         entry = {"profile_id": key, "profile_name": name, "username": name, "user": name,
                  "profile_has_pin": bool(raw.get("profile_has_pin", existing.get("profile_has_pin")))}
@@ -587,7 +600,57 @@ def _build_sync_user_entry(provider: str, key: str, raw: Mapping[str, Any], exis
     return entry
 
 
-def _silo_prepare_sync_users(cfg: Mapping[str, Any], inst: str, wanted: dict[str, Mapping[str, Any]]) -> str:
+_SILO_SESSION_FIELDS = ("access_token", "refresh_token", "expires_at", "session_refreshed_at")
+
+
+def _silo_saved_users(cfg: Mapping[str, Any], inst: str) -> dict[str, Mapping[str, Any]]:
+    base = cfg.get("silo") if isinstance(cfg.get("silo"), Mapping) else {}
+    parent = base if inst == "default" else ((base or {}).get("instances") or {}).get(inst)
+    users = parent.get("sync_users") if isinstance(parent, Mapping) else None
+    return {str(k): v for k, v in users.items() if isinstance(v, Mapping)} if isinstance(users, Mapping) else {}
+
+
+def _silo_session_tokens(users: Mapping[str, Mapping[str, Any]]) -> dict[str, str]:
+    return {key: str(e.get("access_token") or "") for key, e in users.items()
+            if str(e.get("account_user_id") or "").strip() and str(e.get("access_token") or "").strip()}
+
+
+def _silo_end_sessions(cfg: Mapping[str, Any], inst: str, tokens: Iterable[str]) -> None:
+    from providers.auth._auth_SILO import SiloClient
+
+    tokens = sorted({t for t in tokens if t})
+    if not tokens:
+        return
+    client = SiloClient(cfg, instance_id=inst)
+    for token in tokens:
+        client.end_session(token)
+
+
+def _silo_account_row(cfg: Mapping[str, Any], inst: str, key: str, raw: Mapping[str, Any], other: Mapping[str, Any],
+                      client: Any, opened: list[str] | None) -> dict[str, Any] | str:
+    from providers.auth._auth_SILO import SiloError, SiloRateLimited, needs_reconnect
+
+    prev = _silo_saved_users(cfg, inst).get(key) or {}
+    row: dict[str, Any] = {"key": key, "username": str(raw.get("username") or other["name"]), "account_user_id": other["account_user_id"],
+                           "account_username": other["account_username"], "account_primary_profile_id": str(other.get("account_primary_profile_id") or ""),
+                           "profile_has_pin": False}
+    same = str(prev.get("account_user_id") or "") == other["account_user_id"]
+    if same and str(prev.get("refresh_token") or "").strip() and not needs_reconnect(prev):
+        row["_reuse_session"] = True
+        row.update({k: prev.get(k) for k in _SILO_SESSION_FIELDS})
+        return row
+    try:
+        row.update(client.open_account_session(other["account_user_id"]))
+    except SiloRateLimited:
+        return "rate_limited"
+    except SiloError:
+        return "silo_account_session_failed"
+    if opened is not None:
+        opened.append(str(row["access_token"]))
+    return row
+
+
+def _silo_prepare_sync_users(cfg: Mapping[str, Any], inst: str, wanted: dict[str, Mapping[str, Any]], opened: list[str] | None = None) -> str:
     from providers.auth._auth_SILO import SiloClient, SiloError, SiloRateLimited
 
     client = SiloClient(cfg, instance_id=inst)
@@ -595,10 +658,23 @@ def _silo_prepare_sync_users(cfg: Mapping[str, Any], inst: str, wanted: dict[str
         profiles = {p["id"]: p for p in client.list_profiles()}
     except SiloError:
         return "silo_unavailable"
+    others: dict[str, dict[str, Any]] | None = None
     for key, raw in list(wanted.items()):
         profile = profiles.get(key)
         if profile is None:
-            return "not_found"
+            if others is None:
+                try:
+                    others = {p["id"]: p for p in client.list_other_account_profiles()}
+                except SiloError:
+                    return "silo_unavailable"
+            other = others.get(key)
+            if other is None:
+                return "not_found"
+            account = _silo_account_row(cfg, inst, key, raw, other, client, opened)
+            if isinstance(account, str):
+                return account
+            wanted[key] = account
+            continue
         row = {k: v for k, v in raw.items() if k != "home_pin"}
         row["profile_has_pin"] = bool(profile["has_pin"])
         pin = str(raw.get("home_pin") or "").strip()
@@ -835,9 +911,12 @@ def api_provider_sync_users_update(provider: str, instance_id: str, payload: dic
         key = str(raw.get("key") or "").strip()
         if key and "~" not in key and str(raw.get("username") or "").strip():
             wanted.setdefault(key, raw)
+    opened_sessions: list[str] = []
+    stale_sessions: list[str] = []
     if _cfg_key(provider) == "silo" and wanted:
-        silo_error = _silo_prepare_sync_users(cfg, inst, wanted)
+        silo_error = _silo_prepare_sync_users(cfg, inst, wanted, opened_sessions)
         if silo_error:
+            _silo_end_sessions(cfg, inst, opened_sessions)
             return {"ok": False, "error": silo_error}
     created_keys: list[tuple[str, str]] = []
     stale_keys: set[tuple[str, str]] = set()
@@ -864,6 +943,9 @@ def api_provider_sync_users_update(provider: str, instance_id: str, payload: dic
         if prov == "tofa":
             stale_keys.clear()
             stale_keys.update(_tofa_key_refs(_tofa_saved_users(latest, inst)) - _tofa_key_refs(updated))
+        if prov == "silo":
+            kept = set(_silo_session_tokens(updated).values())
+            stale_sessions[:] = [t for t in _silo_session_tokens(current).values() if t not in kept]
         for key in set(current) - set(updated):
             user_inst = sync_user_instance_id(inst, key)
             remove_instance_from_user_profiles(latest, prov, user_inst)
@@ -891,14 +973,17 @@ def api_provider_sync_users_update(provider: str, instance_id: str, payload: dic
         _, result = update_config(_mutate)
     except (KeyError, ValueError) as exc:
         _tofa_revoke_keys(cfg, inst, created_keys)
+        _silo_end_sessions(cfg, inst, opened_sessions)
         code = _sync_user_error(exc)
         if code == "sync_user_limit_reached":
             return {"ok": False, "error": code, "limit": _max_sync_users_per_connection(load_config() or {})}
         return {"ok": False, "error": code}
     except Exception:
         _tofa_revoke_keys(cfg, inst, created_keys)
+        _silo_end_sessions(cfg, inst, opened_sessions)
         raise
     _tofa_revoke_keys(cfg, inst, stale_keys)
+    _silo_end_sessions(load_config() or {}, inst, stale_sessions)
     _invalidate_provider_cache(provider)
     return {"ok": True, **result, "count": len(result["users"])}
 
