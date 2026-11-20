@@ -199,6 +199,24 @@ def test_times_are_utc_and_device_zone_is_optional():
     assert addon_sync.AddonKodiClient.kodi_time("2026-10-25T01:30:00Z") == "2026-10-25T01:30:00Z"
 
 
+def test_after_counts_only_applied_uploads():
+    cfg = make_cfg()
+    ping(cfg)
+    full(cfg)
+    first = addon_sync.last_upload_seq("default", "kv-1")
+    source = {"type": "movie", "ids": {"tmdb": "550"}, "watched_at": "2026-01-03T10:00:00Z"}
+    full(cfg, upload_id="u-2", part=1, parts=2)
+    assert addon_sync.last_upload_seq("default", "kv-1") > first
+    assert module(cfg).add("history", [source])["count"] == 1
+    assert [c["after"] for c in queue(cfg)["changes"]] == [first]
+    later = next_seq()
+    delta(cfg, upload_seq=later, movies=[movie(userrating=6)])
+    assert module(cfg).add("ratings", [{**source, "rating": 9}])["count"] == 1
+    assert [c["after"] for c in queue(cfg)["changes"]] == [first, later]
+    full(cfg, upload_id="u-2", part=2, parts=2)
+    assert addon_sync._applied_upload_seq("default", "kv-1") == later
+
+
 def test_write_is_queued_with_item_and_never_undone_by_an_ack():
     cfg = make_cfg()
     ping(cfg)
