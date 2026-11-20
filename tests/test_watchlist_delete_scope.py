@@ -220,6 +220,30 @@ def test_delete_watchlist_batch_routes_generic_watchlist_remove_providers(monkey
     assert out["details"]["NUVIO"]["removed"] == 1
 
 
+def test_delete_watchlist_batch_routes_simkl_through_guarded_sync_module(monkeypatch) -> None:
+    import services.watchlist as wl
+
+    state = {
+        "providers": {
+            "SIMKL": {"watchlist": {"baseline": {"items": {"tmdb:603": {"type": "movie", "ids": {"tmdb": "603"}}}}}},
+        }
+    }
+    called: list[tuple[str, list[str]]] = []
+
+    def _fake_ops(provider, items, cfg):
+        called.append((provider, [str(x.get("key")) for x in items]))
+
+    monkeypatch.setattr(wl, "_registry_sync_providers", lambda: ["SIMKL"])
+    monkeypatch.setattr(wl, "_delete_on_ops_watchlist_batch", _fake_ops)
+    monkeypatch.setattr(wl, "_save_sync_state", lambda *a, **k: None)
+
+    out = wl.delete_watchlist_batch(["tmdb:603"], "SIMKL", state, {})
+
+    assert out["ok"] is True
+    assert called == [("SIMKL", ["tmdb:603"])]
+    assert not hasattr(wl, "_delete_on_simkl_batch")
+
+
 def test_watchlist_aliases_include_simkl_and_mdblist_native_ids(monkeypatch) -> None:
     import services.watchlist as wl
 

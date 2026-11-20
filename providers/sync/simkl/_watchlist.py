@@ -6,7 +6,7 @@ from __future__ import annotations
 import re
 import os
 import time
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.id_map import migrate_media_index, minimal as id_minimal
@@ -31,6 +31,7 @@ from ._common import (
 BASE = "https://api.simkl.com"
 URL_INDEX_ALL = f"{BASE}/sync/all-items"
 URL_INDEX_BUCKET = f"{BASE}/sync/all-items/{{bucket}}/plantowatch"
+URL_INDEX_STATUS = f"{BASE}/sync/all-items/{{bucket}}/{{status}}"
 URL_ADD = f"{BASE}/sync/add-to-list"
 URL_REMOVE = f"{BASE}/sync/history/remove"
 
@@ -49,6 +50,7 @@ def _history_cover_path():
 
 WATCHLIST_BUCKETS = ("movies", "shows", "anime")
 _HISTORY_COVERING_STATUSES = {"completed", "watching"}
+_LEAVING_WATCHLIST_STATUSES = ("completed", "watching", "hold", "dropped")
 _STATUS_HISTORY_COVERED: dict[str, dict[str, Any]] = {}
 
 
@@ -369,11 +371,20 @@ def _first(*values: str | None) -> str | None:
     return None
 
 
+def _latest(*values: str | None) -> str | None:
+    found = [v for v in values if isinstance(v, str) and v]
+    return max(found) if found else None
+
+
+def _status_ts(acts: Mapping[str, Any], *groups: str) -> str | None:
+    return _latest(*(_acts_get(acts, group, status) for group in groups for status in _LEAVING_WATCHLIST_STATUSES))
+
+
 def _bucket_ts(acts: Mapping[str, Any]) -> dict[str, dict[str, str | None]]:
     out: dict[str, dict[str, str | None]] = {
-        "movies": {"ptw": None, "rm": None},
-        "shows": {"ptw": None, "rm": None},
-        "anime": {"ptw": None, "rm": None},
+        "movies": {"ptw": None, "rm": None, "st": _status_ts(acts, "movies")},
+        "shows": {"ptw": None, "rm": None, "st": _status_ts(acts, "shows", "tv_shows")},
+        "anime": {"ptw": None, "rm": None, "st": _status_ts(acts, "anime")},
     }
     out["movies"]["ptw"] = _first(
         _acts_get(acts, "movies", "plantowatch"),
@@ -405,6 +416,14 @@ def _bucket_ts(acts: Mapping[str, Any]) -> dict[str, dict[str, str | None]]:
         _acts_get(acts, "anime", "removed"),
     )
     return out
+
+
+def _save_status_watermark(ts_map: Mapping[str, Mapping[str, str | None]]) -> None:
+    latest = _latest(*(ts_map[bucket].get("st") for bucket in WATCHLIST_BUCKETS))
+    if latest:
+        save_watermark("watchlist_status", latest)
+
+
 def _bucket_present(items: Mapping[str, Mapping[str, Any]], bucket: str) -> bool:
     for value in (items or {}).values():
         if isinstance(value, Mapping) and value.get("simkl_bucket") == bucket:
@@ -801,9 +820,9 @@ def _build_index_live(adapter: Any, limit: int | None = None) -> dict[str, dict[
             return x or "-"
         return "|".join(
             [
-                f"m:{v(tsm['movies']['ptw'])}/{v(tsm['movies']['rm'])}",
-                f"s:{v(tsm['shows']['ptw'])}/{v(tsm['shows']['rm'])}",
-                f"a:{v(tsm['anime']['ptw'])}/{v(tsm['anime']['rm'])}",
+                f"m:{v(tsm['movies']['ptw'])}/{v(tsm['movies']['rm'])}/{v(tsm['movies']['st'])}",
+                f"s:{v(tsm['shows']['ptw'])}/{v(tsm['shows']['rm'])}/{v(tsm['shows']['st'])}",
+                f"a:{v(tsm['anime']['ptw'])}/{v(tsm['anime']['rm'])}/{v(tsm['anime']['st'])}",
             ]
         )
 
@@ -868,6 +887,7 @@ def _build_index_live(adapter: Any, limit: int | None = None) -> dict[str, dict[
 
     watchlist_wm = get_watermark("watchlist")
     removed_wm = get_watermark("watchlist_removed")
+    status_wm = get_watermark("watchlist_status")
     shadow_complete = _has_all_buckets(items, buckets_seen)
     cold_start = not items and not any(bool(v) for v in (buckets_seen or {}).values())
     removal_changed = bool(
@@ -923,6 +943,7 @@ def _build_index_live(adapter: Any, limit: int | None = None) -> dict[str, dict[
         ]
         if rm_candidates:
             save_watermark("watchlist_removed", max(rm_candidates))
+        _save_status_watermark(ts_map)
 
         if prog:
             try:
@@ -940,8 +961,11 @@ def _build_index_live(adapter: Any, limit: int | None = None) -> dict[str, dict[
         have_bucket = _bucket_ready(items, bucket, buckets_seen)
         ptw_ts = ts_map[bucket]["ptw"]
         rm_ts = ts_map[bucket]["rm"]
+        st_ts = ts_map[bucket]["st"]
         rm_key = "watchlist_removed"
         prev_rm = removed_wm
+        rm_changed = bool(rm_ts and (not prev_rm or rm_ts > prev_rm))
+        st_changed = bool(st_ts and (not status_wm or st_ts > status_wm))
 
         if force_all or force_present == bucket:
             _dbg("index_reconcile", bucket=bucket, reason="force_present", strategy="ids_only")
@@ -971,16 +995,7 @@ def _build_index_live(adapter: Any, limit: int | None = None) -> dict[str, dict[
                     pass
             have_bucket = _bucket_ready(items, bucket, buckets_seen)
 
-        elif rm_ts and (not prev_rm or rm_ts > prev_rm):
-            if have_bucket:
-                drop = [
-                    key
-                    for key, value in items.items()
-                    if isinstance(value, Mapping) and value.get("simkl_bucket") == bucket
-                ]
-                for key in drop:
-                    items.pop(key, None)
-
+        elif rm_changed or st_changed:
             df_full = coalesce_date_from(
                 "watchlist",
                 cfg_date_from="1970-01-01T00:00:00Z",
@@ -993,11 +1008,18 @@ def _build_index_live(adapter: Any, limit: int | None = None) -> dict[str, dict[
                 limit=limit,
                 force_refresh=True,
             )
+            drop = [
+                key
+                for key, value in items.items()
+                if isinstance(value, Mapping) and value.get("simkl_bucket") == bucket and key not in fresh
+            ]
+            for key in drop:
+                items.pop(key, None)
             buckets_seen[bucket] = True
             _merge_upsert(items, fresh)
             buckets_seen[bucket] = True
             cnt = len(fresh)
-            _dbg("index_reconcile", bucket=bucket, reason="removed_from_list_changed", strategy="ids_only", count=cnt)
+            _dbg("index_reconcile", bucket=bucket, reason="removed_from_list_changed" if rm_changed else "status_changed", strategy="ids_only", count=cnt)
             if cnt and prog:
                 try:
                     total_known += cnt
@@ -1108,6 +1130,7 @@ def _build_index_live(adapter: Any, limit: int | None = None) -> dict[str, dict[
     if rm_candidates:
         latest_rm = max(rm_candidates)
         save_watermark("watchlist_removed", latest_rm)
+    _save_status_watermark(ts_map)
 
     if prog:
         try:
@@ -1168,6 +1191,85 @@ def _split_buckets(
     if shows:
         payload["shows"] = shows
     return payload, unresolved
+
+
+_LIVE_MATCH_ID_KEYS = tuple(k for k in _ALLOWED_ID_KEYS if k != "trakt")
+
+
+def _live_kind(item: Mapping[str, Any]) -> str:
+    return "movie" if mapped_or_default_media_type(item) == "movie" else "show"
+
+
+def _live_match_tokens(item: Mapping[str, Any]) -> set[str]:
+    ids = item.get("ids")
+    if not isinstance(ids, Mapping):
+        return set()
+    return {
+        f"{ns}:{str(ids.get(ns)).strip().lower()}"
+        for ns in _LIVE_MATCH_ID_KEYS
+        if ids.get(ns) not in (None, "")
+    }
+
+
+def _live_status_tokens(adapter: Any, buckets: Iterable[str], status: str) -> dict[str, set[str]]:
+    session = adapter.client.session
+    headers = _headers(adapter, force_refresh=True)
+    out: dict[str, set[str]] = {"movie": set(), "show": set()}
+    for bucket in buckets:
+        url = URL_INDEX_STATUS.format(bucket=bucket, status=status)
+        extended = "full_anime_seasons" if bucket == "anime" else "ids_only"
+        try:
+            resp = session.get(
+                url,
+                headers=headers,
+                params=simkl_api_params_from_headers(headers, extended=extended),
+                timeout=adapter.cfg.timeout,
+            )
+        except Exception as exc:
+            raise SIMKLFetchError(f"live {status} check for {bucket} failed") from exc
+        if resp.status_code != 200:
+            raise SIMKLFetchError(f"live {status} check for {bucket} failed with HTTP {resp.status_code}")
+        try:
+            data = resp.json() if str(resp.text or "").strip() else None
+        except Exception as exc:
+            raise SIMKLFetchError(f"live {status} check for {bucket} returned invalid JSON") from exc
+        for row in _rows_from_data(data, bucket):
+            mapped = _normalize_row(bucket, row)
+            out[_live_kind(mapped)].update(_live_match_tokens(mapped))
+    return out
+
+
+def split_by_live_status(
+    adapter: Any,
+    rows: Iterable[Any],
+    status: str = "plantowatch",
+    item_of: Callable[[Any], Mapping[str, Any]] = lambda row: row,
+) -> tuple[list[Any], list[Any], list[dict[str, Any]]]:
+    present: list[Any] = []
+    absent: list[Any] = []
+    unresolved: list[dict[str, Any]] = []
+    candidates: list[tuple[Any, str, set[str]]] = []
+    buckets: set[str] = set()
+    for row in rows or []:
+        item = item_of(row)
+        tokens = _live_match_tokens(item)
+        if not tokens:
+            unresolved.append({"item": id_minimal(item), "hint": f"{status}_unverified"})
+            continue
+        kind = _live_kind(item)
+        buckets.update(("movies", "anime") if kind == "movie" else ("shows", "anime"))
+        candidates.append((row, kind, tokens))
+    if not candidates:
+        return present, absent, unresolved
+    try:
+        live = _live_status_tokens(adapter, [b for b in WATCHLIST_BUCKETS if b in buckets], status)
+    except SIMKLFetchError as exc:
+        _warn("live_status_check_failed", status=status, error=str(exc), items=len(candidates))
+        unresolved.extend({"item": id_minimal(item_of(row)), "hint": f"{status}_check_failed"} for row, _, _ in candidates)
+        return [], [], unresolved
+    for row, kind, tokens in candidates:
+        (present if not tokens.isdisjoint(live[kind]) else absent).append(row)
+    return present, absent, unresolved
 
 
 def _chunk_items(seq: list[Mapping[str, Any]], n: int) -> Iterable[list[Mapping[str, Any]]]:
@@ -1344,9 +1446,15 @@ def remove(
     if not items_list:
         _info("write_skipped", op="remove", reason="empty_payload", unresolved=0)
         return 0, []
+    requested = len(items_list)
+    present, absent, unresolved = split_by_live_status(adapter, items_list)
+    ok = len(absent)
+    if absent:
+        _shadow_remove_keys([_mk_shadow_item(item)[0] for item in absent])
+        _unfreeze_if_present([simkl_key_of(id_minimal(it)) for it in absent])
+        _info("write_skipped", op="remove", reason="not_on_simkl_watchlist", skipped=len(absent))
+    items_list = present
     batch = max(1, int(getattr(adapter.cfg, "watchlist_batch_size", 100) or 100))
-    ok = 0
-    unresolved: list[dict[str, Any]] = []
     for part in _chunk_items(items_list, batch):
         payload, part_unresolved = _split_buckets(part)
         unresolved.extend(part_unresolved)
@@ -1441,5 +1549,5 @@ def remove(
                         reasons=["exception"],
                         ids_sent=body_ids,
                     )
-    _info("write_done", op="remove", ok=bool(items_list) and len(unresolved) == 0 and ok == len(items_list), applied=ok, unresolved=len(unresolved))
+    _info("write_done", op="remove", ok=len(unresolved) == 0 and ok == requested, applied=ok, unresolved=len(unresolved), skipped=len(absent))
     return ok, unresolved

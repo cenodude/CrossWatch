@@ -427,13 +427,6 @@ def _type_from_item_or_guess(item: dict[str, Any], key: str) -> str:
     return "tv" if pref in {"tvdb", "thetvdb", "anilist", "mal"} else "movie"
 
 
-_SIMKL_ID_KEYS = ("tmdb", "imdb", "tvdb", "simkl", "slug")
-
-
-def _simkl_filter_ids(ids: dict[str, Any]) -> dict[str, Any]:
-    return {k: str(v) for k, v in ids.items() if k in _SIMKL_ID_KEYS and v}
-
-
 # PLEX GUID and added date helpers
 def _pick_added(d: dict[str, Any]) -> str | None:
     if not isinstance(d, dict):
@@ -1226,78 +1219,6 @@ def _delete_on_plex_single(
         raise RuntimeError("PlexAPI reported removal but item still present")
 
 
-_SIMKL_HIST = "https://api.simkl.com/sync/history/remove"
-_SIMKL_WL = "https://api.simkl.com/sync/watchlist/remove"
-
-
-def _simkl_headers(cfg: dict[str, Any]) -> dict[str, str]:
-    return {
-        "User-Agent": http_user_agent("WebUI", override_env="CW_SIMKL_UA"),
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {cfg.get('access_token', '')}",
-        "simkl-api-key": cfg.get("client_id", ""),
-    }
-
-
-def _post_simkl_delete(
-    url: str,
-    hdr: dict[str, str],
-    payload: dict[str, Any],
-) -> dict[str, Any]:
-    from cw_platform.simkl_http import paced_request
-    from providers.sync.simkl._common import simkl_api_params_from_headers
-
-    r = paced_request(requests.post, "POST", url, headers=hdr, params=simkl_api_params_from_headers(hdr), json=payload, timeout=45)
-    if not r.ok:
-        raise RuntimeError(
-            f"SIMKL delete {r.status_code} {getattr(r, 'text', '')}"
-        )
-    try:
-        data = r.json()
-    except Exception:
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def _simkl_deleted_count(resp: dict[str, Any]) -> int:
-    deleted = resp.get("deleted") or {}
-    if not isinstance(deleted, dict):
-        return 0
-    return sum(
-        int(deleted.get(k, 0) or 0)
-        for k in ("movies", "shows", "episodes", "seasons")
-    )
-
-
-def _delete_on_simkl_batch(
-    items: list[dict[str, Any]],
-    cfg: dict[str, Any],
-) -> None:
-    token = (cfg.get("access_token", "")).strip()
-    client_id = (cfg.get("client_id", "")).strip()
-    if not (token and client_id):
-        raise RuntimeError("SIMKL not configured")
-    payload: dict[str, list[dict[str, Any]]] = {"movies": [], "shows": []}
-    for it in items:
-        ids = _simkl_filter_ids(_ids_from_key_or_item(it["key"], it["item"]))
-        if not ids:
-            continue
-        if it["type"] == "movie":
-            payload["movies"].append({"ids": ids})
-        else:
-            payload["shows"].append({"ids": ids})
-    payload = {k: v for k, v in payload.items() if v}
-    if not payload:
-        raise RuntimeError("SIMKL delete: no resolvable IDs")
-    hdr = _simkl_headers(cfg)
-    if _simkl_deleted_count(_post_simkl_delete(_SIMKL_WL, hdr, payload)) > 0:
-        return
-    if _simkl_deleted_count(_post_simkl_delete(_SIMKL_HIST, hdr, payload)) > 0:
-        return
-    raise RuntimeError(f"SIMKL delete matched 0 items. Payload={payload}")
-
-
 _TRAKT_REMOVE = "https://api.trakt.tv/sync/watchlist/remove"
 
 
@@ -1621,9 +1542,6 @@ def delete_watchlist_batch(
     def _call_handler(p: str, items: list[dict[str, Any]], cfg_view: dict[str, Any]) -> None:
         if p == "PLEX":
             _delete_on_plex_batch(items, state, cfg_view)
-            return
-        if p == "SIMKL":
-            _delete_on_simkl_batch(items, cfg_view.get("simkl", {}) or {})
             return
         if p == "TRAKT":
             _delete_on_trakt_batch(items, cfg_view.get("trakt", {}) or {})

@@ -296,7 +296,7 @@ def test_unchanged_sync_uses_one_activity_call_with_warm_caches(monkeypatch):
 
     monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", send)
     monkeypatch.setattr(_watchlist, "_shadow_load", lambda: {
-        "ts": "m:-/-|s:-/-|a:-/-", "items": {},
+        "ts": "m:-/-/-|s:-/-/-|a:-/-/-", "items": {},
         "buckets_seen": {"movies": True, "shows": True, "anime": True},
     })
     monkeypatch.setattr(_watchlist, "_shadow_age_seconds", lambda: 3600)
