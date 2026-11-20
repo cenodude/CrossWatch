@@ -154,9 +154,12 @@ def test_server_rewritten_status_is_not_confirmed():
 def test_remove_uses_destructive_history_remove_warning():
     session = FakeSession(
         {
+            ("GET", "https://api.simkl.com/sync/all-items/movies/completed"): {
+                "movies": [{"movie": {"ids": {"tmdb": "1"}}}]
+            },
             ("POST", "https://api.simkl.com/sync/history/remove"): {
                 "removed": {"movies": [{"ids": {"tmdb": 1}}]}
-            }
+            },
         }
     )
 
@@ -167,6 +170,37 @@ def test_remove_uses_destructive_history_remove_warning():
     call = next(c for c in session.calls if c["method"] == "POST")
     assert call["url"] == "https://api.simkl.com/sync/history/remove"
     assert call["json"] == {"movies": [{"ids": {"tmdb": "1"}}]}
+
+
+def test_remove_skips_item_no_longer_in_simkl_status():
+    session = FakeSession(
+        {
+            ("GET", "https://api.simkl.com/sync/all-items/movies/plantowatch"): {"movies": []},
+            ("GET", "https://api.simkl.com/sync/all-items/anime/plantowatch"): {"anime": []},
+        }
+    )
+
+    res = pl.remove(FakeAdapter(session), "plantowatch", [_movie()])
+
+    assert res["ok"] is True
+    assert res["count"] == 1
+    assert res["confirmed_keys"] == ["tmdb:1"]
+    assert [c for c in session.calls if c["method"] == "POST"] == []
+
+
+def test_remove_keeps_items_when_simkl_status_check_fails():
+    class FailingSession(FakeSession):
+        def get(self, url: str, **kw: Any) -> FakeResp:
+            self.calls.append({"method": "GET", "url": url})
+            return FakeResp(500, {})
+
+    session = FailingSession()
+
+    res = pl.remove(FakeAdapter(session), "plantowatch", [_movie()])
+
+    assert res["count"] == 0
+    assert [u["hint"] for u in res["unresolved"]] == ["plantowatch_check_failed"]
+    assert [c for c in session.calls if c["method"] == "POST"] == []
 
 
 def test_existing_watchlist_path_still_delegates_to_plan_to_watch(monkeypatch):

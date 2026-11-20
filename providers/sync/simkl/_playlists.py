@@ -922,16 +922,30 @@ def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -
     if custom:
         return _custom_items_write(adapter, custom, list(items or []), remove=True)
     status = _status(playlist_id)
-    body, accepted, unresolved = _remove_payload(list(items or []), status)
+    _, accepted, unresolved = _remove_payload(list(items or []), status)
+    present, absent, guard_unresolved = feat_watchlist.split_by_live_status(adapter, accepted, status, item_of=lambda row: row["item"])
+    unresolved.extend(guard_unresolved)
+    skipped = [str(row.get("key") or "") for row in absent if row.get("key")]
+    if skipped:
+        try:
+            feat_watchlist._shadow_remove_keys(skipped)
+            feat_watchlist._unfreeze_if_present(skipped)
+        except Exception:
+            pass
+        _info("write_skipped", op="remove", status=status, reason="not_in_simkl_status", skipped=len(skipped))
+    accepted = present
+    body: dict[str, list[dict[str, Any]]] = {}
+    for row in accepted:
+        body.setdefault("movies" if row.get("bucket") == "movies" else "shows", []).append({"ids": row["ids"]})
     keys = [str(x.get("key") or "") for x in accepted if x.get("key")]
     if not keys:
-        return {"ok": True, "count": 0, "unresolved": unresolved, "confirmed_keys": [], "warnings": [SIMKL_REMOVE_WARNING]}
+        return {"ok": True, "count": len(skipped), "unresolved": unresolved, "confirmed_keys": skipped, "warnings": [SIMKL_REMOVE_WARNING]}
     headers = adapter_headers(adapter)
     resp = adapter.client.session.post(URL_REMOVE, headers=headers, params=simkl_api_params_from_headers(headers), json=body, timeout=getattr(adapter.cfg, "timeout", 15.0))
     data = _response_json(resp)
     if not (200 <= int(getattr(resp, "status_code", 0) or 0) < 300):
         unresolved.extend({"item": {"key": key}, "hint": f"http:{getattr(resp, 'status_code', 0)}"} for key in keys)
-        return {"ok": False, "count": 0, "unresolved": unresolved, "confirmed_keys": [], "warnings": [SIMKL_REMOVE_WARNING]}
+        return {"ok": False, "count": len(skipped), "unresolved": unresolved, "confirmed_keys": skipped, "warnings": [SIMKL_REMOVE_WARNING]}
     processed = feat_watchlist._sigs_from_write_resp(data)
     processed_count = feat_watchlist._sum_processed_from_body(data)
     confirmed = keys if not processed and (processed_count == 0 or processed_count == len(keys)) else []
@@ -943,7 +957,8 @@ def remove(adapter: Any, playlist_id: Any, items: Sequence[Mapping[str, Any]]) -
         feat_watchlist._unfreeze_if_present(confirmed)
     except Exception:
         pass
-    _info("write_done", op="remove", status=status, applied=len(confirmed), unresolved=len(unresolved))
+    confirmed = list(dict.fromkeys([*confirmed, *skipped]))
+    _info("write_done", op="remove", status=status, applied=len(confirmed), unresolved=len(unresolved), skipped=len(skipped))
     return {"ok": True, "count": len(confirmed), "unresolved": unresolved, "confirmed_keys": confirmed, "warnings": [SIMKL_REMOVE_WARNING]}
 
 
