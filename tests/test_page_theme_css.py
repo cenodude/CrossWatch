@@ -1,6 +1,8 @@
 from pathlib import Path
 import re
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -40,11 +42,13 @@ def test_interactive_sync_empty_state_cannot_resize_other_pages():
     assert all(selector.startswith(".is-page .is-empty") for selector in selectors)
 
 
-def test_flat_light_text_palette_meets_normal_text_contrast():
+@pytest.mark.parametrize("theme", ["flat-dark", "flat-light"])
+def test_flat_text_palette_meets_normal_text_contrast(theme):
     css = (ROOT / "assets/themes/tokens.css").read_text(encoding="utf-8")
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     values = {}
     for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
-        if re.fullmatch(r'html\[data-cw-theme=(?:"flat-light"|flat-light)\]', selector.strip()):
+        if selector.strip() == ":root" or re.fullmatch(rf'html\[data-cw-theme=(?:"{theme}"|{theme})\]', selector.strip()):
             values.update(re.findall(r"(--[\w-]+):\s*([^;]+)", body))
 
     def luminance(value):

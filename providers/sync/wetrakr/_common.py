@@ -38,6 +38,8 @@ WRITE_BATCH_SIZE = 500
 READ_PAGE_SIZE = 500
 DELTA_PAGE_SIZE = 100
 TRACKLOG_BATCH_SIZE = 100
+EPISODE_ID_SOURCES = ("tmdb", "imdb", "tvdb")
+ALREADY_ADDED = "Already added!"
 DAILY_QUOTA_CODES = {
     "QUOTA_EXCEEDED": ("daily_quota_exceeded", "x-quota"),
     "APP_USER_QUOTA_EXCEEDED": ("app_user_quota_exceeded", "x-app-user-quota"),
@@ -620,6 +622,30 @@ def add_index_item(out: dict[str, dict[str, Any]], feature: str, key: str, item:
     return False
 
 
+def episode_ids(item: Mapping[str, Any]) -> dict[str, Any]:
+    if item.get("type") != "episode":
+        return {}
+    ids = item.get("ids")
+    show_ids = item.get("show_ids")
+    ids = ids if isinstance(ids, Mapping) else {}
+    show_ids = show_ids if isinstance(show_ids, Mapping) else {}
+    out: dict[str, Any] = {}
+    for source in EPISODE_ID_SOURCES:
+        value = str(ids.get(source) or "").strip()
+        if not value or value == str(show_ids.get(source) or "").strip():
+            continue
+        if source == "imdb":
+            if value.startswith("tt") and value[2:].isdigit():
+                out[source] = value
+        elif int_value(value) > 0:
+            out[source] = int_value(value)
+    return out
+
+
+def episode_tokens(item: Mapping[str, Any]) -> set[str]:
+    return {f"episode:{source}:{value}" for source, value in episode_ids(item).items()}
+
+
 def identity_tokens(item: Mapping[str, Any]) -> set[str]:
     kind = str(item.get("type") or "")
     ids = item.get("show_ids") if kind in ("season", "episode") else item.get("ids")
@@ -629,21 +655,95 @@ def identity_tokens(item: Mapping[str, Any]) -> set[str]:
     return {f"{kind}:{source}:{value}{suffix}" for source, value in ids.items() if source in ("tmdb", "imdb", "tvdb", "wetrakr") and value}
 
 
+def _native_media(item: Mapping[str, Any]) -> str:
+    ids = item.get("ids")
+    value = int_value(ids.get("wetrakr")) if isinstance(ids, Mapping) else -1
+    return f"{item.get('type')}:{value}" if value > 0 else ""
+
+
+class HistoryIdentity:
+    def __init__(self, dest: Mapping[str, Mapping[str, Any]]):
+        self.media: dict[str, str] = {}
+        self.ids: dict[str, dict[str, Any]] = {}
+        self.lookup: dict[str, set[str]] = {}
+        self.rows: dict[int, tuple[Mapping[str, Any], str]] = {}
+        provisional = []
+        for key, row in dest.items():
+            native = _native_media(row)
+            if native:
+                self._add(key, row, native)
+            else:
+                provisional.append((key, row))
+        for key, row in provisional:
+            try:
+                found = self._find(row)
+            except WeTrakrSyncError:
+                found = set()
+            self._add(key, row, next(iter(found)) if len(found) == 1 else f"key:{canonical_key(row)}")
+
+    def _add(self, key: str, row: Mapping[str, Any], media: str) -> None:
+        self.media[key] = media
+        self.rows[id(row)] = (row, media)
+        self.ids.setdefault(media, episode_ids(row))
+        for token in identity_tokens(row) | episode_tokens(row):
+            self.lookup.setdefault(token, set()).add(media)
+
+    def __call__(self, item: Mapping[str, Any]) -> set[str]:
+        known = self.rows.get(id(item))
+        if known is not None and known[0] is item:
+            return {known[1]}
+        native = _native_media(item)
+        if native in self.ids:
+            return {native}
+        return self._find(item)
+
+    def _find(self, item: Mapping[str, Any]) -> set[str]:
+        own = episode_ids(item)
+        for source in EPISODE_ID_SOURCES:
+            found = self.lookup.get(f"episode:{source}:{own[source]}", set()) if source in own else set()
+            if not found:
+                continue
+            target = self.ids[next(iter(found))]
+            if len(found) > 1 or any(str(target.get(name, value)) != str(value) for name, value in own.items()):
+                raise WeTrakrSyncError("ambiguous_media_identity")
+            return set(found)
+        found = set().union(*(self.lookup.get(token, set()) for token in identity_tokens(item)))
+        if len(found) > 1:
+            raise WeTrakrSyncError("ambiguous_media_identity")
+        return found
+
+
 def matching(adapter: Any, feature: str, source: Mapping[str, Any], dest: Mapping[str, Any]) -> dict[str, str]:
-    if feature == "history" and adapter.config.get("_cw_history_rewatches"):
-        event_ids = {str(row.get("_wetrakr_history_id")): key for key, row in dest.items() if row.get("_wetrakr_history_id")}
-        matches: dict[str, str] = {}
-        used: set[str] = set()
+    if feature == "history":
+        resolve = HistoryIdentity(dest)
+        if adapter.config.get("_cw_history_rewatches"):
+            def tokens(item: Mapping[str, Any]) -> set[str]:
+                return {f"media|{media}" for media in resolve(item)}
+
+            event_ids = {str(row.get("_wetrakr_history_id")): key for key, row in dest.items() if row.get("_wetrakr_history_id")}
+            matches: dict[str, str] = {}
+            used: set[str] = set()
+            for key, item in source.items():
+                event_id = str(item.get("_wetrakr_history_id") or item.get("provider_event_id") or "")
+                peer = event_ids.get(event_id)
+                if peer is not None and peer not in used and resolve.media[peer] in resolve(item):
+                    matches[key] = peer
+                    used.add(peer)
+            matches.update(history_event_matches(
+                {key: item for key, item in source.items() if key not in matches},
+                {key: item for key, item in dest.items() if key not in used},
+                tokens, tolerance_seconds=history_timestamp_tolerance_seconds(adapter.config)))
+            return matches
+        keys: dict[str, list[str]] = {}
+        for key, media in resolve.media.items():
+            keys.setdefault(media, []).append(key)
+        matches = {}
         for key, item in source.items():
-            event_id = str(item.get("_wetrakr_history_id") or item.get("provider_event_id") or "")
-            peer = event_ids.get(event_id)
-            if peer is not None and peer not in used and identity_tokens(item) & identity_tokens(dest[peer]):
-                matches[key] = peer
-                used.add(peer)
-        matches.update(history_event_matches(
-            {key: item for key, item in source.items() if key not in matches},
-            {key: item for key, item in dest.items() if key not in used},
-            identity_tokens, tolerance_seconds=history_timestamp_tolerance_seconds(adapter.config)))
+            found = [peer for media in resolve(item) for peer in keys[media]]
+            if len(found) > 1:
+                raise WeTrakrSyncError("ambiguous_media_identity")
+            if found:
+                matches[key] = found[0]
         return matches
     lookup: dict[str, set[str]] = {}
     for key, item in dest.items():
@@ -710,6 +810,9 @@ def payload_item(item: Mapping[str, Any], feature: str, *, include_date: bool = 
         if season < 0 or episode < 1:
             raise WeTrakrSyncError("invalid_episode_coordinates")
         show = identifier(item.get("show_ids"))
+        own = episode_ids(item)
+        if own:
+            return "episodes", {"ids": own, **fields}
         return "shows", {**show, "seasons": [{"number": season, "episodes": [{"number": episode, **fields}]}]}
     return f"{kind}s", {**identifier(item.get("ids")), **fields}
 
@@ -754,7 +857,19 @@ def write_matches(feature: str, item: Mapping[str, Any], target: Mapping[str, An
     return feature != "ratings" or rating_value(item.get("rating")) == rating_value(target.get("rating"))
 
 
-def _rejected_batch_keys(items, feature, missing):
+def _write_errors(errored: Any) -> Any:
+    if not isinstance(errored, Mapping):
+        return errored or {}
+    return {group: [row for row in rows if not isinstance(row, Mapping) or row.get("error") != ALREADY_ADDED] if isinstance(rows, list) else rows
+            for group, rows in errored.items()}
+
+
+def _same_stamp(row: Mapping[str, Any], sent: Mapping[str, Any]) -> bool:
+    got, want = _stamp(row.get("tracked_at")), _stamp(sent.get("tracked_at"))
+    return got is None or want is None or got == want
+
+
+def _rejected_batch_keys(items, feature, missing, *, include_date=False):
     if not isinstance(missing, Mapping):
         return set(items)
     rejected = set()
@@ -771,11 +886,13 @@ def _rejected_batch_keys(items, feature, missing):
             ids = set(media_ids(show if isinstance(show, Mapping) else row).items())
             matches = set()
             for key, item in items.items():
-                expected_group, payload = payload_item(item, feature, include_date=False)
+                expected_group, payload = payload_item(item, feature, include_date=include_date)
+                sent = payload["seasons"][0]["episodes"][0] if expected_group == "shows" and payload.get("seasons") else payload
                 if ("shows" if flat else group) != expected_group or not ids.intersection(media_ids(payload).items()):
                     continue
                 if flat:
-                    if item.get("type") != "episode" or (int_value(item.get("season")), int_value(item.get("episode"))) != (int_value(row.get("season")), int_value(row.get("number"))):
+                    if (item.get("type") != "episode" or not _same_stamp(row, sent)
+                            or (int_value(item.get("season")), int_value(item.get("episode"))) != (int_value(row.get("season")), int_value(row.get("number")))):
                         continue
                 elif row.get("seasons"):
                     seasons = row["seasons"]
@@ -783,10 +900,13 @@ def _rejected_batch_keys(items, feature, missing):
                         return set(items)
                     if any(not isinstance(episode, Mapping) for season in seasons for episode in season.get("episodes", [])):
                         return set(items)
-                    coordinates = {(int_value(season.get("number")), int_value(episode.get("number")))
-                                   for season in seasons for episode in season.get("episodes", [])}
-                    if item.get("type") == "episode" and (int_value(item.get("season")), int_value(item.get("episode"))) not in coordinates:
+                    coordinate = (int_value(item.get("season")), int_value(item.get("episode")))
+                    if item.get("type") == "episode" and not any(
+                            (int_value(season.get("number")), int_value(episode.get("number"))) == coordinate and _same_stamp(episode, sent)
+                            for season in seasons for episode in season.get("episodes", [])):
                         continue
+                elif not _same_stamp(row, sent):
+                    continue
                 matches.add(key)
             if not matches:
                 return set(items)
@@ -821,16 +941,26 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
             if not replaying():
                 _activities(adapter, fresh=True)
             before = adapter.build_index(feature)
+            resolve = HistoryIdentity(before) if feature == "history" else None
+            if resolve is not None:
+                for key in list(selected):
+                    try:
+                        resolve(selected[key])
+                    except WeTrakrSyncError as exc:
+                        selected.pop(key)
+                        unresolved.append({"key": key, "reason": exc.reason})
+                        log("WETRAKR", feature, "warn", "item_unresolved_before_write", key=key, reason=exc.reason)
             matches = matching(adapter, feature, selected, before)
         except WeTrakrSyncError as exc:
             return build_op_result(ok=False, unresolved_keys=list(selected) + [r["key"] for r in unresolved], unresolved=unresolved,
                                    error=exc.reason, retry_after=exc.retry_after)
         pending: dict[str, Mapping[str, Any]] = {}
         for key, item in selected.items():
-            if event_mode and key not in matches:
+            if event_mode and resolve and key not in matches:
                 stamp = history_epoch_from_item(item)
                 tolerance = history_timestamp_tolerance_seconds(adapter.config)
-                peers = [row for row in before.values() if identity_tokens(row) & identity_tokens(item)
+                media = resolve(item)
+                peers = [row for peer, row in before.items() if resolve.media[peer] in media
                          and stamp is not None and (other := history_epoch_from_item(row)) is not None and abs(stamp - other) <= tolerance]
                 if peers:
                     unresolved.append({"key": key, "reason": "ambiguous_watch_event"})
@@ -876,9 +1006,10 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
                         path += "/remove/all" if feature == "history" else "/remove"
                     response = body_of(request(adapter, "POST", path, json=payload))
                     if replaying() and isinstance(response, Mapping):
-                        missing = response.get("notFound") or response.get("not_found") or {}
-                        if any(missing.values()) if isinstance(missing, Mapping) else bool(missing):
-                            rejected = _rejected_batch_keys({key: pending[key] for key in batch}, feature, missing)
+                        submitted = {key: before[matches[key]] if remove else pending[key] for key in batch}
+                        for missing in (response.get("notFound") or response.get("not_found") or {}, _write_errors(response.get("errored"))):
+                            if any(missing.values()) if isinstance(missing, Mapping) else bool(missing):
+                                rejected |= _rejected_batch_keys(submitted, feature, missing, include_date=not remove)
             except WeTrakrSyncError as exc:
                 error = exc
             if replaying():

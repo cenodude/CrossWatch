@@ -6,12 +6,14 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 
 const SERIES = [
   { key: "sync", label: "Sync runs", color: "var(--ev-ok)" },
-  { key: "watcher", label: "Watcher", color: "var(--ev-info)" },
-  { key: "webhook", label: "Webhooks", color: "var(--ev-warn)" },
-  { key: "failed", label: "Failed", color: "var(--ev-err)" },
+  { key: "watching", label: "Watching", color: "var(--ev-accent)" },
+  { key: "ratings", label: "Ratings", color: "var(--ev-warn)" },
+  { key: "capture", label: "Captures", color: "rgb(var(--cw-feature-history-rgb))" },
+  { key: "backup", label: "Backups", color: "rgb(var(--cw-feature-collection-rgb))" },
+  { key: "audit", label: "Audits", color: "var(--ev-muted)" },
 ];
-const OUTCOME_COLOR = { completed: "var(--ev-ok)", warning: "var(--ev-warn)", failed: "var(--ev-err)", active: "var(--ev-info)" };
-const TYPE_COLOR = { sync: "var(--ev-ok)", watcher: "var(--ev-info)", webhook: "var(--ev-warn)" };
+const OUTCOME_COLOR = { completed: "var(--ev-ok)", warning: "var(--ev-warn)", failed: "var(--ev-err)", active: "var(--ev-accent)", skipped: "var(--ev-muted)", stopped: "rgb(var(--cw-feature-history-rgb))", informational: "var(--ev-info)" };
+const TYPE_COLOR = Object.fromEntries(SERIES.map(s => [s.key, s.color]));
 
 const nf = new Intl.NumberFormat();
 const fmtNum = (n) => nf.format(Math.round(Number(n || 0)));
@@ -53,7 +55,7 @@ function stackedTrend(rows, bucket) {
   const W = 1000, H = 170, padL = 40, padR = 44, padT = 8, padB = 20;
   if (!rows.length) return `<div class="stat-empty">No activity in this period.</div>`;
   const plotW = W - padL - padR, plotH = H - padT - padB;
-  const totals = rows.map((r) => r.sync + r.watcher + r.webhook + r.failed);
+  const totals = rows.map(r => SERIES.reduce((total, s) => total + Number(r[s.key] || 0), 0));
   const sc = niceScale(Math.max(1, ...totals));
   const maxV = sc.max;
   const n = rows.length;
@@ -162,18 +164,24 @@ export default function createStatsView(host, { fetchJson }) {
     const bucket = (d.range || {}).bucket || 86400;
     const kpis = [
       kpiTile("sync", "Sync runs", fmtNum(k.sync_runs?.value), k.sync_runs?.delta),
-      kpiTile("music_note", "Scrobbles", fmtNum(k.scrobbles?.value), k.scrobbles?.delta),
+      kpiTile("play_circle", "Watching", fmtNum(k.scrobbles?.value), k.scrobbles?.delta),
+      kpiTile("star", "Ratings", fmtNum(k.ratings?.value), k.ratings?.delta),
+      kpiTile("photo_camera", "Captures", fmtNum(k.captures?.value), k.captures?.delta),
+      kpiTile("backup", "Backups", fmtNum(k.backups?.value), k.backups?.delta),
+      kpiTile("shield", "Audits", fmtNum(k.audits?.value), k.audits?.delta),
       kpiTile("timer", "Avg sync duration", fmtDur(k.avg_duration?.value), k.avg_duration?.delta == null ? null : -k.avg_duration.delta),
       kpiTile("error", "Failures", fmtNum(k.failures?.value), k.failures?.delta == null ? null : -k.failures.delta, "warn"),
       kpiTile("block", "Blocked", fmtNum(k.blocked?.value), k.blocked?.delta == null ? null : -k.blocked.delta, "warn"),
+      kpiTile("skip_next", "Skipped deliveries", fmtNum(k.delivery_skips?.value), k.delivery_skips?.delta),
       kpiTile("verified", "Success rate", fmtPct(k.success_rate?.value), k.success_rate?.delta, "ok"),
+      kpiTile("list_alt", "All activities", fmtNum(k.activities?.value), k.activities?.delta),
     ].join("");
 
     const legend = SERIES.map((s) => `<div class="stat-lg-item"><span class="stat-lg-dot" style="background:${s.color}"></span><span class="stat-lg-lb">${esc(s.label)}</span></div>`).join("") +
       `<div class="stat-lg-item"><span class="stat-lg-line"></span><span class="stat-lg-lb">Success rate</span></div>`;
 
     const routes = (d.routes || []).map((r) => {
-      const kind = r.runs && r.scrobbles ? `${fmtNum(r.runs)} runs · ${fmtNum(r.scrobbles)} scrobbles` : r.runs ? `${fmtNum(r.runs)} sync run${r.runs === 1 ? "" : "s"}` : `${fmtNum(r.scrobbles)} scrobbles`;
+      const kind = `${fmtNum(r.runs)} sync runs · ${fmtNum(r.scrobbles)} watching/rating deliveries · ${fmtNum(r.skipped)} skipped`;
       const pct = r.success_rate == null ? 0 : r.success_rate;
       return `<tr><td class="stat-rt-route" title="${esc(kind)}">${esc(r.source || "?")} → ${esc(r.destination || "?")}</td>
       <td class="stat-rt-num">${fmtNum(r.volume)}</td>
@@ -198,14 +206,14 @@ export default function createStatsView(host, { fetchJson }) {
         <div class="stat-kpis">${kpis}</div>
 
         <section class="stat-card stat-card-wide">
-          <div class="stat-card-head"><div><h4>Activity trends over time</h4><p>Outcomes by source, with the success-rate overlay.</p></div><div class="stat-legend stat-legend-row">${legend}</div></div>
+          <div class="stat-card-head"><div><h4>Activity trends over time</h4><p>Each activity counts once across destinations. Sync runs use their start date; other activities use their last update.</p><p>Success rate covers completed, failed and attention-needed work. Audits, skips, stopped playback and active work are excluded.</p></div><div class="stat-legend stat-legend-row">${legend}</div></div>
           ${stackedTrend(d.trend || [], bucket)}
         </section>
 
         <div class="stat-grid3">
-          <section class="stat-card"><div class="stat-card-head"><h4>Outcome distribution</h4></div>${donut(outcomes, { caption: "Threads" })}</section>
+          <section class="stat-card"><div class="stat-card-head"><h4>Outcome distribution</h4></div>${donut(outcomes, { caption: "Activities" })}</section>
           <section class="stat-card"><div class="stat-card-head"><h4>Activity by type</h4></div>${donut(types, { caption: "Total" })}</section>
-          <section class="stat-card"><div class="stat-card-head"><h4>Top routes</h4></div>
+          <section class="stat-card"><div class="stat-card-head"><div><h4>Top routes</h4><p>Counts each destination separately, including skipped deliveries.</p></div></div>
             <table class="stat-table"><thead><tr><th>Route</th><th>Volume</th><th>Success</th></tr></thead><tbody>${routes}</tbody></table>
           </section>
         </div>
@@ -253,7 +261,7 @@ export default function createStatsView(host, { fetchJson }) {
   const skeleton = () => {
     const card = (cls = "") => `<section class="stat-card ${cls}"><div class="stat-sk stat-sk-line w40"></div><div class="stat-sk stat-sk-block"></div></section>`;
     host.innerHTML = `<div class="stat-wrap stat-skel">
-      <div class="stat-kpis">${'<div class="stat-tile stat-sk"></div>'.repeat(6)}</div>
+      <div class="stat-kpis">${'<div class="stat-tile stat-sk"></div>'.repeat(12)}</div>
       <section class="stat-card stat-card-wide"><div class="stat-sk stat-sk-line w30"></div><div class="stat-sk stat-sk-block tall"></div></section>
       <div class="stat-grid3">${card()}${card()}${card()}</div>
       <div class="stat-grid2">${card()}${card()}</div>

@@ -6,307 +6,204 @@ from __future__ import annotations
 import math
 import threading
 import time
-from typing import Any
+from collections import Counter, defaultdict
+from typing import Any, Callable
 
 from .db import get_conn
+from .groups import _ensure_correlated, _ensure_activity_hashes, _read_snapshot
 from ..reason_labels import friendly_reason
 
 _HOUR = 3600
 _DAY = 86400
-_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_CACHE: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
 _CACHE_TTL = 30.0
 _CACHE_CAP = 48
 _LOCK = threading.RLock()
-
-_OUTCOME_LABEL = {"completed": "Completed", "warning": "Warning", "failed": "Failed", "active": "In progress"}
-_PROBLEM = "('write_failed','unresolved_recorded')"
+_TYPES = {"sync": "Sync runs", "watching": "Watching", "ratings": "Ratings", "capture": "Captures", "backup": "Backups", "audit": "Audits"}
+_OUTCOMES = {"completed": "Completed", "warning": "Needs attention", "failed": "Failed", "active": "In progress", "skipped": "Skipped", "stopped": "Stopped before completion", "informational": "Informational"}
+_EVENT_COLUMNS = "id,domain,event_type,created_at,run_id,group_id,severity,reason_code,pair_key,item_key,source_provider,source_instance,destination_provider,destination_instance,origin_provider,origin_instance"
 
 
 def default_bucket(span: int) -> int:
-    if span <= 2 * _DAY:
-        return _HOUR
-    if span <= 120 * _DAY:
-        return _DAY
-    return 7 * _DAY
+    return _HOUR if span <= 2 * _DAY else _DAY if span <= 120 * _DAY else 7 * _DAY
 
 
 def _delta(cur: Any, prev: Any) -> float | None:
-    cur = float(cur or 0)
-    prev = float(prev or 0)
-    if prev <= 0:
-        return None if cur == 0 else 100.0
-    return round((cur - prev) / prev * 100.0, 1)
+    cur, prev = float(cur or 0), float(prev or 0)
+    return (None if cur == 0 else 100.0) if prev <= 0 else round((cur - prev) / prev * 100.0, 1)
 
 
 def _kpi(cur: Any, prev: Any) -> dict[str, Any]:
-    return {"value": round(float(cur or 0), 2) if isinstance(cur, float) else int(cur or 0), "prev": int(prev or 0) if not isinstance(prev, float) else round(float(prev or 0), 2), "delta": _delta(cur, prev)}
+    return {"value": round(cur, 2) if isinstance(cur, float) else int(cur), "prev": round(prev, 2) if isinstance(prev, float) else int(prev), "delta": _delta(cur, prev)}
 
 
-def _blocked_items(conn: Any, since: int, until: int) -> int:
-    row = conn.execute(
-        """
-        WITH bb AS (
-          SELECT pair_key, run_id, item_key, created_at FROM events
-          WHERE event_type IN ('blackbox_promoted','blackbox_blocked')
-            AND created_at>=? AND created_at<?
-            AND pair_key IS NOT NULL AND pair_key<>''
-            AND run_id IS NOT NULL AND run_id<>''
-            AND item_key IS NOT NULL AND item_key<>''
-        ),
-        latest AS (SELECT pair_key, MAX(created_at) mx FROM bb GROUP BY pair_key),
-        latest_run AS (
-          SELECT DISTINCT bb.pair_key, bb.run_id FROM bb
-          JOIN latest ON bb.pair_key=latest.pair_key AND bb.created_at=latest.mx
-        )
-        SELECT COUNT(*) FROM (
-          SELECT DISTINCT bb.pair_key, bb.item_key FROM bb
-          JOIN latest_run lr ON bb.pair_key=lr.pair_key AND bb.run_id=lr.run_id
-        )
-        """,
-        (int(since), int(until)),
-    ).fetchone()
-    return int(row[0] or 0) if row else 0
+def _outcome(status: Any) -> str:
+    status = str(status or "").lower()
+    if status in ("completed", "rated", "resolved", "done", "success"):
+        return "completed"
+    if status in ("warning", "unresolved", "blackboxed"):
+        return "warning"
+    if status in ("running", "pending", "paused"):
+        return "active"
+    if status in ("failed", "error"):
+        return "failed"
+    return status if status in _OUTCOMES else "informational"
 
 
-def _percentile(conn: Any, since: int, until: int, p: float) -> int | None:
-    n = int(conn.execute(
-        "SELECT COUNT(*) FROM sync_runs WHERE started_at>=? AND started_at<? AND finished_at IS NOT NULL AND finished_at>=started_at",
-        (since, until),
-    ).fetchone()[0])
-    if n <= 0:
-        return None
-    off = min(n - 1, int(math.floor(p * (n - 1))))
-    row = conn.execute(
-        "SELECT finished_at-started_at FROM sync_runs WHERE started_at>=? AND started_at<? "
-        "AND finished_at IS NOT NULL AND finished_at>=started_at ORDER BY finished_at-started_at LIMIT 1 OFFSET ?",
-        (since, until, off),
-    ).fetchone()
-    return int(row[0]) if row else None
+def _success(rows: list[dict[str, Any]]) -> float | None:
+    counts = Counter(row["outcome"] for row in rows if row["type"] != "audit")
+    total = sum(counts[key] for key in ("completed", "warning", "failed"))
+    return round(counts["completed"] / total * 100.0, 1) if total else None
 
 
-def _compute(conn: Any, since: int, until: int, bucket: int) -> dict[str, Any]:
-    span = max(1, until - since)
-    prev_since = since - span
-    p = {"s": since, "u": until, "ps": prev_since, "bs": max(60, int(bucket))}
-
-    ev = conn.execute(
-        """
-        SELECT
-          COALESCE(SUM(CASE WHEN created_at>=:s AND event_type='scrobble_completed' THEN 1 END),0) scrob_c,
-          COALESCE(SUM(CASE WHEN created_at< :s AND event_type='scrobble_completed' THEN 1 END),0) scrob_p,
-          COALESCE(SUM(CASE WHEN created_at>=:s AND event_type IN ('scrobble_completed','rating_applied') THEN 1 END),0) dok_c,
-          COALESCE(SUM(CASE WHEN created_at< :s AND event_type IN ('scrobble_completed','rating_applied') THEN 1 END),0) dok_p,
-          COALESCE(SUM(CASE WHEN created_at>=:s AND event_type IN ('scrobble_failed','rating_failed') THEN 1 END),0) dfail_c,
-          COALESCE(SUM(CASE WHEN created_at< :s AND event_type IN ('scrobble_failed','rating_failed') THEN 1 END),0) dfail_p,
-          COALESCE(SUM(CASE WHEN created_at>=:s AND domain='scrobble' AND source_kind='webhook' THEN 1 END),0) wh_c,
-          COALESCE(SUM(CASE WHEN created_at>=:s AND domain='scrobble' AND source_kind<>'webhook' THEN 1 END),0) watch_c
-        FROM events WHERE created_at>=:ps AND created_at<:u
-        """,
-        p,
-    ).fetchone()
-
-    rn = conn.execute(
-        """
-        SELECT
-          COALESCE(SUM(CASE WHEN started_at>=:s THEN 1 END),0) runs_c,
-          COALESCE(SUM(CASE WHEN started_at< :s THEN 1 END),0) runs_p,
-          AVG(CASE WHEN started_at>=:s AND finished_at IS NOT NULL AND finished_at>=started_at THEN finished_at-started_at END) dur_c,
-          AVG(CASE WHEN started_at< :s AND finished_at IS NOT NULL AND finished_at>=started_at THEN finished_at-started_at END) dur_p
-        FROM sync_runs WHERE started_at>=:ps AND started_at<:u
-        """,
-        p,
-    ).fetchone()
-
-    def _run_states(a: int, b: int) -> tuple[int, int]:
-        err = {row[0] for row in conn.execute(
-            "SELECT run_id FROM sync_runs WHERE started_at>=? AND started_at<? AND COALESCE(errors,0)>0", (a, b))}
-        prob = {row[0] for row in conn.execute(
-            f"SELECT DISTINCT run_id FROM events WHERE created_at>=? AND created_at<? "
-            f"AND run_id IS NOT NULL AND run_id<>'' AND event_type IN {_PROBLEM}", (a, b))}
-        return len(err), len(prob - err)
-
-    def _rate(ok: Any, tot: Any) -> float:
-        ok, tot = float(ok or 0), float(tot or 0)
-        return round(ok / tot * 100.0, 1) if tot > 0 else 0.0
-
-    runs_c, runs_p = int(rn["runs_c"]), int(rn["runs_p"])
-    failrun_c, warnrun_c = _run_states(since, until)
-    failrun_p, warnrun_p = _run_states(prev_since, since)
-    okrun_c = max(0, runs_c - failrun_c - warnrun_c)
-    okrun_p = max(0, runs_p - failrun_p - warnrun_p)
-    dok_c, dfail_c = int(ev["dok_c"]), int(ev["dfail_c"])
-    dok_p, dfail_p = int(ev["dok_p"]), int(ev["dfail_p"])
-    ops_c, ops_p = runs_c + dok_c + dfail_c, runs_p + dok_p + dfail_p
-    okops_c, okops_p = okrun_c + dok_c, okrun_p + dok_p
-
-    kpis = {
-        "sync_runs": _kpi(runs_c, runs_p),
-        "scrobbles": _kpi(ev["scrob_c"], ev["scrob_p"]),
-        "avg_duration": _kpi(round(float(rn["dur_c"] or 0), 2), round(float(rn["dur_p"] or 0), 2)),
-        "failures": _kpi(failrun_c + warnrun_c + dfail_c, failrun_p + warnrun_p + dfail_p),
-        "blocked": _kpi(_blocked_items(conn, since, until), _blocked_items(conn, prev_since, since)),
-        "success_rate": _kpi(_rate(okops_c, ops_c), _rate(okops_p, ops_p)),
-    }
-
-    trend_rows = conn.execute(
-        """
-        SELECT created_at/:bs AS b,
-          COALESCE(SUM(CASE WHEN event_type='sync_run_finished' THEN 1 END),0) sync,
-          COALESCE(SUM(CASE WHEN event_type IN ('scrobble_completed','rating_applied') AND source_kind='webhook' THEN 1 END),0) webhook,
-          COALESCE(SUM(CASE WHEN event_type IN ('scrobble_completed','rating_applied') AND source_kind<>'webhook' AND domain='scrobble' THEN 1 END),0) watcher,
-          COALESCE(SUM(CASE WHEN event_type IN ('scrobble_failed','rating_failed') THEN 1 END),0) sfail
-        FROM events WHERE created_at>=:s AND created_at<:u GROUP BY b
-        """,
-        p,
-    ).fetchall()
-    frun_rows = conn.execute(
-        "SELECT started_at/:bs AS b, COALESCE(SUM(CASE WHEN COALESCE(errors,0)>0 THEN 1 END),0) frun "
-        "FROM sync_runs WHERE started_at>=:s AND started_at<:u GROUP BY b",
-        p,
-    ).fetchall()
-    frun_by_b = {int(r["b"]): int(r["frun"]) for r in frun_rows}
-    tmap: dict[int, dict[str, Any]] = {}
-    for r in trend_rows:
-        b = int(r["b"])
-        failed = int(r["sfail"]) + frun_by_b.get(b, 0)
-        ok = int(r["sync"]) + int(r["webhook"]) + int(r["watcher"])
-        tot = ok + failed
-        tmap[b] = {"t": b * p["bs"], "sync": int(r["sync"]), "webhook": int(r["webhook"]),
-                   "watcher": int(r["watcher"]), "failed": failed, "rate": round(ok / tot * 100.0, 1) if tot > 0 else None}
-    for b, frun in frun_by_b.items():
-        if b not in tmap and frun:
-            tmap[b] = {"t": b * p["bs"], "sync": 0, "webhook": 0, "watcher": 0, "failed": frun, "rate": 0.0}
-    trend = [tmap[b] for b in sorted(tmap)]
-
-    dur_rows = conn.execute(
-        """
-        SELECT started_at/:bs AS b, AVG(finished_at-started_at) avg, COUNT(*) n
-        FROM sync_runs WHERE started_at>=:s AND started_at<:u AND finished_at IS NOT NULL AND finished_at>=started_at
-        GROUP BY b ORDER BY b
-        """,
-        p,
-    ).fetchall()
-    duration_series = [{"t": int(r["b"]) * p["bs"], "avg": round(float(r["avg"] or 0), 2), "n": int(r["n"])} for r in dur_rows]
-
-    sc_rows = conn.execute(
-        "SELECT status, COUNT(*) c FROM event_groups WHERE domain='scrobble' AND last_event_at>=:s AND last_event_at<:u GROUP BY status",
-        p,
-    ).fetchall()
-    oc = {"completed": okrun_c, "warning": warnrun_c, "failed": failrun_c, "active": 0}
-    for r in sc_rows:
-        st = str(r["status"] or "").lower()
-        c = int(r["c"])
-        if st in ("completed", "rated"):
-            oc["completed"] += c
-        elif st == "warning":
-            oc["warning"] += c
-        elif st == "failed":
-            oc["failed"] += c
-        elif st == "running":
-            oc["active"] += c
-    outcomes = [{"key": k, "label": _OUTCOME_LABEL[k], "value": oc[k]} for k in ("completed", "warning", "failed", "active") if oc.get(k)]
-
-    types = [
-        {"key": "sync", "label": "Sync runs", "value": runs_c},
-        {"key": "watcher", "label": "Watcher", "value": int(ev["watch_c"])},
-        {"key": "webhook", "label": "Webhooks", "value": int(ev["wh_c"])},
-    ]
-
-    rmap: dict[tuple[Any, Any], dict[str, int]] = {}
-    for r in conn.execute(
-        "SELECT source_provider src, destination_provider dst, COUNT(DISTINCT run_id) runs, "
-        f"COUNT(DISTINCT CASE WHEN event_type IN {_PROBLEM} THEN run_id END) failed_runs "
-        "FROM events WHERE created_at>=:s AND created_at<:u AND run_id IS NOT NULL AND run_id<>'' "
-        "AND destination_provider IS NOT NULL AND destination_provider<>'' GROUP BY src, dst",
-        p,
-    ).fetchall():
-        e = rmap.setdefault((r["src"], r["dst"]), {"runs": 0, "sessions": 0, "ok": 0, "bad": 0})
-        runs, fr = int(r["runs"]), int(r["failed_runs"])
-        e["runs"] += runs
-        e["ok"] += runs - fr
-        e["bad"] += fr
-    for r in conn.execute(
-        "SELECT source_provider src, destination_provider dst, COUNT(*) sessions, "
-        "SUM(CASE WHEN status IN ('completed','rated') THEN 1 ELSE 0 END) ok, "
-        "SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) bad "
-        "FROM event_groups WHERE domain='scrobble' AND last_event_at>=:s AND last_event_at<:u "
-        "AND destination_provider IS NOT NULL AND destination_provider<>'' GROUP BY src, dst",
-        p,
-    ).fetchall():
-        e = rmap.setdefault((r["src"], r["dst"]), {"runs": 0, "sessions": 0, "ok": 0, "bad": 0})
-        e["sessions"] += int(r["sessions"])
-        e["ok"] += int(r["ok"])
-        e["bad"] += int(r["bad"])
-    routes = []
-    for (src, dst), e in rmap.items():
-        volume = e["runs"] + e["sessions"]
-        if volume <= 0:
-            continue
-        okb = e["ok"] + e["bad"]
-        routes.append({
-            "source": src, "destination": dst, "volume": volume,
-            "runs": e["runs"], "scrobbles": e["sessions"],
-            "success_rate": round(e["ok"] / okb * 100.0, 1) if okb else None,
+def _compute(conn: Any, since: int, until: int, bucket: int, row_filter: Callable | None = None) -> dict[str, Any]:
+    previous = since - max(1, until - since)
+    allowed = row_filter or (lambda row: True)
+    events = [dict(row) for row in conn.execute(
+        f"SELECT {_EVENT_COLUMNS} FROM events WHERE created_at>=? AND created_at<?", (previous, until),
+    ) if allowed(dict(row))]
+    groups = [dict(row) for row in conn.execute(
+        "SELECT g.*, (SELECT e.source_kind FROM events e WHERE e.group_id=g.id ORDER BY e.id LIMIT 1) source_kind "
+        "FROM event_groups g WHERE g.domain IN ('scrobble','capture','backup','audit') AND g.last_event_at>=? AND g.last_event_at<?",
+        (previous, until),
+    ) if allowed(dict(row))]
+    run_ids = {row["run_id"] for row in events if row["run_id"] and row["domain"] == "sync"}
+    runs = [dict(row) for row in conn.execute("SELECT * FROM sync_runs WHERE started_at>=? AND started_at<?", (previous, until))
+            if row_filter is None or row["run_id"] in run_ids]
+    run_events: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in events:
+        if row["run_id"] and row["domain"] == "sync":
+            run_events[row["run_id"]].append(row)
+    activities = []
+    for run in runs:
+        types = {row["event_type"] for row in run_events[run["run_id"]]}
+        if run["finished_at"] is None:
+            outcome = "active"
+        elif "write_failed" in types or (row_filter is None and (run["errors"] or run["status"] in ("failed", "error"))):
+            outcome = "failed"
+        elif types & {"unresolved_recorded", "blackbox_promoted", "blackbox_blocked"} or (row_filter is None and (run["unresolved"] or run["blocked"])):
+            outcome = "warning"
+        else:
+            outcome = _outcome(run["status"])
+        activities.append({"type": "sync", "outcome": outcome, "at": run["started_at"]})
+    bundles: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for group in groups:
+        if group["domain"] == "scrobble":
+            bundles[group["activity_hash"] or str(group["id"])].append(group)
+        else:
+            activities.append({"type": group["domain"], "outcome": _outcome(group["status"]), "at": group["last_event_at"]})
+    for rows in bundles.values():
+        latest = max(rows, key=lambda row: (row["last_event_at"], row["id"]))
+        statuses = {row["status"] for row in rows}
+        status = "failed" if "failed" in statuses else "rated" if "rated" in statuses else latest["status"]
+        activities.append({
+            "type": "ratings" if latest["feature"] == "ratings" else "watching",
+            "outcome": _outcome(status), "at": latest["last_event_at"],
+            "source": "webhook" if latest["source_kind"] == "webhook" else "watcher",
         })
-    routes.sort(key=lambda x: x["volume"], reverse=True)
-    routes = routes[:8]
 
-    def _fail_map(a: int, b: int) -> dict[str, int]:
-        rows = conn.execute(
-            "SELECT reason_code, COUNT(*) c FROM events WHERE created_at>=? AND created_at<? "
-            "AND severity='error' AND reason_code IS NOT NULL AND reason_code<>'' GROUP BY reason_code ORDER BY c DESC LIMIT 12",
-            (a, b),
-        ).fetchall()
-        return {str(r["reason_code"]): int(r["c"]) for r in rows}
+    def period(a: int, b: int) -> list[dict[str, Any]]:
+        return [row for row in activities if a <= row["at"] < b]
 
-    cur_fails = _fail_map(since, until)
-    prev_fails = _fail_map(prev_since, since)
-    total_fail = sum(cur_fails.values()) or 1
-    failure_reasons = [{
-        "reason": k, "label": friendly_reason(k), "count": v, "prev": prev_fails.get(k, 0),
-        "share": round(v / total_fail * 100.0, 1), "delta": _delta(v, prev_fails.get(k, 0)),
-    } for k, v in sorted(cur_fails.items(), key=lambda x: x[1], reverse=True)[:8]]
+    current, old = period(since, until), period(previous, since)
+    counts, prev_counts = Counter(row["type"] for row in current), Counter(row["type"] for row in old)
+    kpis = {key: _kpi(counts[kind], prev_counts[kind]) for key, kind in (
+        ("sync_runs", "sync"), ("scrobbles", "watching"), ("ratings", "ratings"), ("captures", "capture"), ("backups", "backup"), ("audits", "audit"),
+    )}
+    kpis["activities"] = _kpi(len(current), len(old))
+    kpis["failures"] = _kpi(sum(row["outcome"] == "failed" for row in current), sum(row["outcome"] == "failed" for row in old))
+    kpis["skipped"] = _kpi(sum(row["outcome"] == "skipped" for row in current), sum(row["outcome"] == "skipped" for row in old))
+    kpis["delivery_skips"] = _kpi(*[sum(row["domain"] == "scrobble" and row["status"] == "skipped" and a <= row["last_event_at"] < b for row in groups) for a, b in ((since, until), (previous, since))])
+    rate, prev_rate = _success(current), _success(old)
+    kpis["success_rate"] = {"value": rate, "prev": prev_rate, "delta": _delta(rate, prev_rate) if rate is not None and prev_rate is not None else None}
 
-    percentiles = {
-        "p50": _percentile(conn, since, until, 0.5),
-        "p90": _percentile(conn, since, until, 0.9),
-        "p99": _percentile(conn, since, until, 0.99),
-    }
+    def blocked(a: int, b: int) -> int:
+        rows = [row for row in events if a <= row["created_at"] < b and row["event_type"] in ("blackbox_promoted", "blackbox_blocked") and row["pair_key"] and row["run_id"] and row["item_key"]]
+        latest = {}
+        for row in rows:
+            latest[row["pair_key"]] = max(latest.get(row["pair_key"], 0), row["created_at"])
+        latest_runs = {(row["pair_key"], row["run_id"]) for row in rows if row["created_at"] == latest[row["pair_key"]]}
+        return len({(row["pair_key"], row["item_key"]) for row in rows if (row["pair_key"], row["run_id"]) in latest_runs})
 
+    kpis["blocked"] = _kpi(blocked(since, until), blocked(previous, since))
+    durations = [(row["started_at"], row["finished_at"] - row["started_at"]) for row in runs if row["finished_at"] is not None and row["finished_at"] >= row["started_at"]]
+    cur_durations = [duration for at, duration in durations if at >= since]
+    prev_durations = [duration for at, duration in durations if at < since]
+    kpis["avg_duration"] = _kpi(sum(cur_durations) / len(cur_durations) if cur_durations else 0.0, sum(prev_durations) / len(prev_durations) if prev_durations else 0.0)
+    ordered = sorted(cur_durations)
+    percentiles = {key: ordered[min(len(ordered) - 1, math.floor(p * (len(ordered) - 1)))] if ordered else None for key, p in (("p50", .5), ("p90", .9), ("p99", .99))}
+    duration_buckets = defaultdict(list)
+    for at, duration in durations:
+        if at >= since:
+            duration_buckets[at // bucket * bucket].append(duration)
+    activity_buckets = defaultdict(list)
+    for row in current:
+        activity_buckets[row["at"] // bucket * bucket].append(row)
+    trend = []
+    for at, rows in sorted(activity_buckets.items()):
+        trend.append({"t": at, **{kind: sum(row["type"] == kind for row in rows) for kind in _TYPES},
+                      **{source: sum(row.get("source") == source for row in rows) for source in ("watcher", "webhook")},
+                      "failed": sum(row["outcome"] == "failed" for row in rows), "rate": _success(rows)})
+    outcome_counts = Counter(row["outcome"] for row in current)
+    routes = defaultdict(list)
+    for group in groups:
+        if group["domain"] == "scrobble" and group["last_event_at"] >= since and group["destination_provider"]:
+            routes[(group["source_provider"], group["destination_provider"])].append({"type": "scrobble", "outcome": _outcome(group["status"])})
+    for run in runs:
+        if run["started_at"] < since:
+            continue
+        per_route = defaultdict(set)
+        for row in run_events[run["run_id"]]:
+            if row["destination_provider"]:
+                per_route[(row["source_provider"], row["destination_provider"])].add(row["event_type"])
+        for route, types in per_route.items():
+            status = "active" if run["finished_at"] is None else "failed" if "write_failed" in types else "warning" if types & {"unresolved_recorded", "blackbox_promoted", "blackbox_blocked"} else "completed"
+            routes[route].append({"type": "sync", "outcome": status})
+    route_rows = [{"source": src, "destination": dst, "volume": len(rows), "runs": sum(row["type"] == "sync" for row in rows),
+                   "scrobbles": sum(row["type"] == "scrobble" for row in rows), "skipped": sum(row["outcome"] == "skipped" for row in rows), "success_rate": _success(rows)}
+                  for (src, dst), rows in routes.items()]
+    route_rows.sort(key=lambda row: row["volume"], reverse=True)
+    reasons = []
+    failure_counts = []
+    for a, b in ((since, until), (previous, since)):
+        unique = {(row["reason_code"], row["group_id"] or row["id"]) for row in events if a <= row["created_at"] < b and row["severity"] == "error" and row["reason_code"]}
+        failure_counts.append(Counter(reason for reason, _ in unique))
+    total = sum(failure_counts[0].values()) or 1
+    for reason, count in failure_counts[0].most_common(8):
+        prev = failure_counts[1][reason]
+        reasons.append({"reason": reason, "label": friendly_reason(reason), "count": count, "prev": prev, "share": round(count / total * 100, 1), "delta": _delta(count, prev)})
     return {
-        "ok": True,
-        "range": {"since": since, "until": until, "bucket": p["bs"]},
-        "kpis": kpis,
-        "trend": trend,
-        "duration_series": duration_series,
+        "ok": True, "range": {"since": since, "until": until, "bucket": bucket}, "kpis": kpis, "trend": trend,
+        "duration_series": [{"t": at, "avg": round(sum(values) / len(values), 2), "n": len(values)} for at, values in sorted(duration_buckets.items())],
         "duration_percentiles": percentiles,
-        "outcomes": outcomes,
-        "types": types,
-        "routes": routes,
-        "failure_reasons": failure_reasons,
+        "outcomes": [{"key": key, "label": label, "value": outcome_counts[key]} for key, label in _OUTCOMES.items() if outcome_counts[key]],
+        "types": [{"key": key, "label": label, "value": counts[key]} for key, label in _TYPES.items()],
+        "routes": route_rows[:8], "failure_reasons": reasons,
     }
 
 
-def statistics(*, since: int, until: int, bucket: int | None = None, conn: Any = None) -> dict[str, Any]:
+def statistics(*, since: int, until: int, bucket: int | None = None, conn: Any = None, row_filter: Callable | None = None) -> dict[str, Any]:
     until = int(until)
     since = int(min(since, until))
-    bs = int(bucket) if bucket else default_bucket(until - since)
-    ck = f"{since - since % bs}:{until - until % bs}:{bs}"
-    now = time.monotonic()
-    with _LOCK:
-        hit = _CACHE.get(ck)
-        if hit and hit[0] > now:
-            return hit[1]
-    c = conn or get_conn()
+    bs = max(60, int(bucket or default_bucket(until - since)))
+    c = conn if conn is not None else get_conn()
     if c is None:
         return {"ok": False, "available": False, "range": {"since": since, "until": until, "bucket": bs}}
-    try:
-        payload = _compute(c, since, until, bs)
-    except Exception:
-        return {"ok": False, "error": "internal_error", "range": {"since": since, "until": until, "bucket": bs}}
+    _ensure_correlated(c)
+    _ensure_activity_hashes(c)
+    now = time.monotonic()
+    key = (c, since, until, bs, c.total_changes, c.execute("PRAGMA data_version").fetchone()[0])
+    cached = conn is None and row_filter is None
     with _LOCK:
-        if len(_CACHE) >= _CACHE_CAP:
-            for k in sorted(_CACHE, key=lambda k: _CACHE[k][0])[: _CACHE_CAP // 2]:
-                _CACHE.pop(k, None)
-        _CACHE[ck] = (now + _CACHE_TTL, payload)
+        hit = _CACHE.get(key) if cached else None
+        if hit and hit[0] > now:
+            return hit[1]
+    with _read_snapshot(c):
+        payload = _compute(c, since, until, bs, row_filter)
+    if cached:
+        with _LOCK:
+            if len(_CACHE) >= _CACHE_CAP:
+                for old in sorted(_CACHE, key=lambda k: _CACHE[k][0])[:_CACHE_CAP // 2]:
+                    _CACHE.pop(old, None)
+            _CACHE[key] = (now + _CACHE_TTL, payload)
     return payload

@@ -99,6 +99,10 @@ test('activity links show their sync thread and cloud filters reset to all types
   assert.ok(queries.some(q=>q.domain==='sync'&&q.visibility==='all'&&!q.since&&!q.event_type));
   assert.equal(await page.locator('#ev-list .ev-row[data-id="42"].sel').count(),1);
   assert.match(await page.locator('#ev-detail .ev-dtitle').innerText(),/Sync run completed successfully/);
+  assert.doesNotMatch(await page.locator('#ev-detail .ev-dtitle').innerText(), /PLEX/);
+  assert.match(await page.locator('#ev-detail .ev-outcome').innerText(), /PLEX.*TRAKT/);
+  assert.doesNotMatch(await page.locator('[data-pane="details"]').innerText(), /Current context|Unknown|Item\s*–/);
+  assert.match(await page.locator('[data-pane="raw"]').textContent(), /Sync run completed successfully, PLEX/);
   assert.equal(await page.locator('#ev-detail .ev-scards').count(),0);
   assert.equal(await page.locator('#ev-mf-summary').isVisible(),false);
   await page.locator('#ev-more').click();
