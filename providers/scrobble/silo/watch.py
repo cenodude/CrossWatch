@@ -40,7 +40,7 @@ from providers.scrobble.manual_marks import (
 from providers.scrobble.routes import watch_poll_seconds
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent, ScrobbleSink, mask_account
 from providers.scrobble.sources import source_enabled
-from providers.sync.silo._common import as_int, ids_from_content_id, item_detail, item_ids, library, safe_json, selected_libraries, series_id_of, silo_request
+from providers.sync.silo._common import as_int, ids_from_content_id, item_detail, item_ids, library, safe_json, selected_libraries, series_id_of, session_content_id, silo_request
 from providers.scrobble.routes import progress_step
 
 BASE_POLL_SECONDS = 10.0
@@ -217,7 +217,7 @@ class SiloWatchService:
             return default
 
     def _metadata(self, row: Mapping[str, Any]) -> dict[str, Any] | None:
-        cid = str(row.get("content_id") or "").strip()
+        cid = session_content_id(row)
         media_type = _session_kind(cid, row)
         if not cid or media_type not in ("movie", "episode"):
             return None
@@ -246,11 +246,13 @@ class SiloWatchService:
             season, number = as_int(detail.get("season_number")), as_int(detail.get("episode_number"))
         if season is None or number is None:
             return None
+        new_shape = str(row.get("media_type") or "").strip().lower() == "episode" and "series_name" not in row
+        episode_title = row.get("media_title") if new_shape else row.get("episode_name")
         return {
             "media_type": "episode",
             "ids": ids,
-            "title": str(row.get("series_name") or "").strip() or None,
-            "episode_title": str(row.get("episode_name") or "").strip() or None,
+            "title": str(row.get("series_title") or row.get("series_name") or "").strip() or None,
+            "episode_title": str(episode_title or "").strip() or None,
             "year": None,
             "season": season,
             "number": number,
@@ -314,7 +316,7 @@ class SiloWatchService:
         return content_id not in lib.movies and content_id not in lib.episodes
 
     def _create_session(self, row: Mapping[str, Any], source_key: str) -> dict[str, Any] | None:
-        cid = str(row.get("content_id") or "").strip()
+        cid = session_content_id(row)
         if cid and self._outside_whitelist(cid):
             if source_key not in self._skipped:
                 self._skipped.add(source_key)
@@ -331,7 +333,7 @@ class SiloWatchService:
         session = {
             "session_key": f"silo:{self._instance_id}:{source_key}:{row.get('started_at') or ''}",
             "source_session_key": source_key,
-            "content_id": str(row.get("content_id") or ""),
+            "content_id": cid,
             "profile_id": str(row.get("profile_id") or ""),
             "client": str(row.get("client_label") or row.get("client_name") or ""),
             "meta": meta,
@@ -479,7 +481,7 @@ class SiloWatchService:
         active = False
         now = time.time()
         for row in rows:
-            seen_cid = str(row.get("content_id") or "").strip()
+            seen_cid = session_content_id(row)
             seen_pid = str(row.get("profile_id") or "").strip()
             if seen_cid and seen_pid:
                 self._marks.note_session(f"{seen_pid}:{seen_cid}", now)

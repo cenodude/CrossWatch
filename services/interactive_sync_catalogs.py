@@ -99,7 +99,7 @@ def destination_rows(client, cfg, row, block, query, entity):
                 for r in body.get(kind.lower(), []) if isinstance(r, dict)]
     if provider == "SILO":
         from providers.sync._mod_SILO import SILOModule
-        from providers.sync.silo._common import ids_from_content_id, item_ids, silo_request
+        from providers.sync.silo._common import ids_from_content_id, item_ids, row_ids, silo_request
         adapter = SILOModule({**cfg, "silo": block, "_cw_provider_instance": instance})
         response = silo_request(adapter, "GET", "/catalog", params={"q": query, "type": "movie" if entity == "movie" else "series", "limit": 20, "skip_total": "true"})
         body = checked_json(response, provider)
@@ -108,7 +108,7 @@ def destination_rows(client, cfg, row, block, query, entity):
             cid = str(r.get("content_id") or "") if isinstance(r, dict) else ""
             if not cid.startswith(("movie-", "series-")):
                 continue
-            ids = {**ids_from_content_id(cid)[1], **item_ids(adapter, cid, feature="search")}
+            ids = {**ids_from_content_id(cid)[1], **(row_ids(r) or item_ids(adapter, cid, feature="search"))}
             found.append(dict(title=r.get("title"), year=r.get("year"), ids=ids))
         return found
     if provider == "TOFA":

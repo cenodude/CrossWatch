@@ -7,7 +7,7 @@ from typing import Any, Mapping
 
 from providers.auth._auth_SILO import SiloError
 from providers.sync._mod_SILO import OPS, SILOModule
-from providers.sync.silo._common import SiloSyncError, as_int, cfg_section, library, resolve_item, safe_json, silo_request
+from providers.sync.silo._common import SiloSyncError, as_int, cfg_section, library, resolve_item, safe_json, session_content_id, silo_request
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, utc_now_iso
 from .base import PlaybackProgressAdapter, public_failure
 
@@ -42,7 +42,7 @@ class SiloPlaybackAdapter(PlaybackProgressAdapter):
         data = safe_json(resp)
         rows = data.get("items") if isinstance(data, Mapping) else None
         profile = str(cfg_section(module).get("profile_id") or "")
-        return {str(r.get("content_id") or "") for r in rows or [] if isinstance(r, Mapping) and str(r.get("profile_id") or "") == profile}
+        return {session_content_id(r) for r in rows or [] if isinstance(r, Mapping) and str(r.get("profile_id") or "") == profile}
 
     def list_progress(self, config_view: Mapping[str, Any], *, instance_id: str, instance_label: str,
                       force_refresh: bool = False) -> PlaybackListResult:

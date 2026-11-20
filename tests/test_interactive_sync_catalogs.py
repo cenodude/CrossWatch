@@ -126,6 +126,23 @@ def test_scrob_search_uses_instance_auth_helper(monkeypatch):
     assert search_candidates(cfg, row, "Monster")["results"][0]["ids"] == {"tmdb": "113988"}
 
 
+def test_silo_search_uses_catalog_row_ids(monkeypatch):
+    from providers.sync.silo import _common
+    cfg, row = context("SILO")
+    calls = []
+    class Response:
+        status_code = 200
+        def json(self):
+            return {"items": [{"content_id": "series-tvdb-399", "title": "Monster", "year": 2022, "tvdb_id": "399", "tmdb_id": "113988", "imdb_id": "tt13207736"}]}
+    def request(session, method, url, **kwargs):
+        calls.append(url)
+        assert method == "GET" and url == "https://silo.test/api/v2/catalog"
+        return Response()
+    monkeypatch.setattr(_common, "request_with_auth", request)
+    assert search_candidates(cfg, row, "Monster")["results"][0]["ids"] == {"tvdb": "399", "tmdb": "113988", "imdb": "tt13207736"}
+    assert len(calls) == 1
+
+
 def test_punchplay_catalog_does_not_mix_movies_and_shows(monkeypatch):
     cfg, row = context("PUNCHPLAY")
     class Response:
