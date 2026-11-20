@@ -3170,16 +3170,24 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
             return {"ok": False, "error": _silo_error(e), "instance": inst, "profiles": []}
 
     @app.get("/api/silo/users", tags=["auth"])
-    def api_silo_users(instance: str | None = Query(None)) -> dict[str, Any]:
+    def api_silo_users(instance: str | None = Query(None), accounts: bool = Query(False)) -> dict[str, Any]:
         from providers.auth._auth_SILO import provider_block
 
         inst = normalize_instance_id(instance)
         try:
             cfg = load_config()
             own = str(provider_block(cfg, inst).get("profile_id") or "")
-            rows = _silo_client(cfg, inst).list_profiles()
+            client = _silo_client(cfg, inst)
+            rows = client.list_profiles()
             users = [{"id": p["id"], "username": p["name"], "has_pin": p["has_pin"], "is_child": p["is_child"], "is_primary": p["is_primary"],
                       "connected": p["id"] == own} for p in rows]
+            try:
+                others = client.list_other_account_profiles() if accounts else []
+            except Exception as e:
+                others = []
+                _safe_log(log_fn, "SILO", f"[SILO] other accounts unavailable reason={_silo_error(e)} instance={inst}")
+            users += [{"id": p["id"], "username": p["name"], "has_pin": False, "is_child": p["is_child"], "is_primary": p["is_primary"],
+                       "connected": False, "account": p["account_username"], "account_user_id": p["account_user_id"]} for p in others]
             return {"ok": True, "instance": inst, "users": users}
         except Exception as e:
             _safe_log(log_fn, "SILO", f"[SILO] users failed reason={_silo_error(e)} instance={inst}")

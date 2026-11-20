@@ -3167,6 +3167,12 @@ _ROTATING_TOKEN_EXPIRY: dict[str, str] = {
     "nuvio": "expires_at",
     "punchplay": "expires_at",
     "movieparadise": "expires_at",
+    "silo": "expires_at",
+    "tofa": "expires_at",
+    "kitsu": "expires_at",
+    "flicklist": "expires_at",
+    "scrob": "expires_at",
+    "bingebase": "expires_at",
 }
 _ROTATING_TOKEN_FIELDS: tuple[str, ...] = (
     "access_token",
@@ -3174,6 +3180,7 @@ _ROTATING_TOKEN_FIELDS: tuple[str, ...] = (
     "token_type",
     "scope",
     "refresh_expires_at",
+    "session_refreshed_at",
     "auth_error",
 )
 _TOKEN_LINEAGE_KEY = "_rotated_refresh_tokens"
@@ -3216,11 +3223,12 @@ def _keep_newer_token(new: dict[str, Any], old: dict[str, Any], expiry_key: str)
     new_rt = str(new.get("refresh_token") or "").strip()
     old_rt = str(old.get("refresh_token") or "").strip()
     old_lineage = _token_lineage(old)
-    if not new_rt or not old_rt:
-        return False
-    if new_rt == old_rt:
-        if old_lineage:
+    history = (([_token_digest(old_rt)] if old_rt else []) + old_lineage)[:_TOKEN_LINEAGE_MAX]
+    if not new_rt or new_rt == old_rt:
+        if new_rt and old_lineage:
             new[_TOKEN_LINEAGE_KEY] = old_lineage
+        elif not new_rt and history:
+            new[_TOKEN_LINEAGE_KEY] = history
         return False
     if _token_digest(new_rt) in old_lineage:
         for key in (*_ROTATING_TOKEN_FIELDS, expiry_key, _TOKEN_LINEAGE_KEY):
@@ -3229,7 +3237,8 @@ def _keep_newer_token(new: dict[str, Any], old: dict[str, Any], expiry_key: str)
             else:
                 new.pop(key, None)
         return True
-    new[_TOKEN_LINEAGE_KEY] = ([_token_digest(old_rt)] + old_lineage)[:_TOKEN_LINEAGE_MAX]
+    if history:
+        new[_TOKEN_LINEAGE_KEY] = history
     return False
 
 
@@ -3240,6 +3249,7 @@ def _preserve_rotated_tokens(data: dict[str, Any], prev: dict[str, Any]) -> list
         old_root = prev.get(provider)
         if not isinstance(new_root, dict) or not isinstance(old_root, dict):
             continue
+        new_root = data[provider] = copy.deepcopy(new_root)
         pairs: list[tuple[str, dict[str, Any], dict[str, Any]]] = [("default", new_root, old_root)]
         new_insts = new_root.get("instances")
         old_insts = old_root.get("instances")
@@ -3248,6 +3258,14 @@ def _preserve_rotated_tokens(data: dict[str, Any], prev: dict[str, Any]) -> list
                 old_blk = old_insts.get(inst)
                 if isinstance(blk, dict) and isinstance(old_blk, dict):
                     pairs.append((str(inst), blk, old_blk))
+        for inst, blk, old_blk in list(pairs):
+            new_users = blk.get("sync_users")
+            old_users = old_blk.get("sync_users")
+            if isinstance(new_users, dict) and isinstance(old_users, dict):
+                for key, entry in new_users.items():
+                    old_entry = old_users.get(key)
+                    if isinstance(entry, dict) and isinstance(old_entry, dict):
+                        pairs.append((f"{inst}~{key}", entry, old_entry))
         for inst, blk, old_blk in pairs:
             if _keep_newer_token(blk, old_blk, expiry_key):
                 kept.append(f"{provider}:{inst}")
