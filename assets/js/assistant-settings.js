@@ -13,6 +13,10 @@
     lmstudio: "http://localhost:1234/v1",
   };
   const LOCAL = new Set(["ollama", "lmstudio"]);
+  const DEFAULT_PRESET = "gemini";
+  const DEFAULT_MODELS = { gemini: "gemini-flash-lite-latest" };
+  const KEY_NOTE = "From the provider's developer page. A ChatGPT or Claude subscription does not include one.";
+  const GEMINI_KEY_NOTE = "Get a free key at aistudio.google.com. On Google's free tier, what you send can be used to improve Google's products. CrossWatch hides keys and tokens, but titles, logs and settings are sent.";
   const LOG_QUESTIONS = {
     sync: "Analyze the latest sync run in the sync log. Tell me what happened and whether anything went wrong.",
     watcher: "Analyze the recent watcher log. Is scrobbling working, and did anything go wrong?",
@@ -22,7 +26,7 @@
   const txt = (v) => String(v ?? "").trim();
   const clean = (url) => txt(url).replace(/\/+$/, "");
   let current = null;
-  let preset = "openai";
+  let preset = DEFAULT_PRESET;
   let models = [];
   let revision = 0;
 
@@ -78,7 +82,7 @@
 
   function presetFor(url) {
     const value = clean(url);
-    if (!value) return "openai";
+    if (!value) return DEFAULT_PRESET;
     const exact = Object.keys(PRESETS).find((key) => PRESETS[key] === value);
     if (exact) return exact;
     if (/:11434(\/|$)/.test(value)) return "ollama";
@@ -100,6 +104,7 @@
   function hint() {
     if (LOCAL.has(preset)) return "Enter the address of your model, choose a model and save.";
     if (preset === "custom") return "Enter the address and key of your provider, choose a model and save.";
+    if (DEFAULT_MODELS[preset]) return "Paste your key and click Save and turn on. The model is already filled in.";
     return "Add your key, choose a model and save.";
   }
 
@@ -111,6 +116,8 @@
     $("assistant_key_field")?.classList.toggle("hidden", LOCAL.has(preset));
     const key = $("assistant_api_key");
     if (key) key.placeholder = keyKept() ? "Saved. Leave empty to keep it" : "Paste your key";
+    const note = $("assistant_key_note");
+    if (note) note.textContent = preset === "gemini" ? GEMINI_KEY_NOTE : KEY_NOTE;
   }
 
   const ASK_ON = "Ask CrossWatch";
@@ -161,7 +168,7 @@
     }
     preset = presetFor(conf.base_url);
     $("assistant_base_url").value = conf.base_url || PRESETS[preset] || "";
-    $("assistant_model").value = conf.model || "";
+    $("assistant_model").value = conf.model || DEFAULT_MODELS[preset] || "";
     $("assistant_api_key").value = "";
     renderPreset();
     const pill = $("assistant_pill");
@@ -194,6 +201,12 @@
     const url = $("assistant_base_url");
     if (PRESETS[next] && presetFor(url.value) !== next) url.value = PRESETS[next];
     if (next === "custom" && Object.values(PRESETS).includes(clean(url.value))) url.value = "";
+    const model = $("assistant_model");
+    const value = txt(model?.value);
+    const savedPreset = current?.base_url ? presetFor(current.base_url) : "";
+    const saved = savedPreset === next ? txt(current?.model) : "";
+    const stale = !value || Object.values(DEFAULT_MODELS).includes(value) || (value === txt(current?.model) && savedPreset !== next);
+    if (model && stale) model.value = saved || DEFAULT_MODELS[next] || "";
     renderPreset();
     if (!current?.ready && !(current?.base_url && current?.model)) setStatus(hint());
     (LOCAL.has(next) || next === "custom" ? url : $("assistant_api_key"))?.focus();

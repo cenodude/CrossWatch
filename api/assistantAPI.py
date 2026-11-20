@@ -4,12 +4,16 @@
 from __future__ import annotations
 
 import json
+import secrets
+import threading
+import time
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, HTTPException, Path, Request
 from fastapi.responses import JSONResponse
 
+from _logging import log
 from cw_platform.config_base import load_config, update_config
 from services import assistant
 
@@ -19,6 +23,13 @@ router = APIRouter(prefix="/api/assistant", tags=["assistant"])
 
 NO_STORE = {"Cache-Control": "no-store"}
 MAX_FIELD_CHARS = 400
+JOB_TTL_S = 900
+MAX_JOBS = 20
+JOB_GONE = "This answer is no longer available. Ask again."
+JOB_FAILED = "Something went wrong while answering. Try again."
+
+_JOBS: dict[str, dict[str, Any]] = {}
+_JOBS_LOCK = threading.Lock()
 
 
 def _reply(payload: dict[str, Any], status: int = 200) -> JSONResponse:
@@ -221,17 +232,17 @@ def assistant_test_model(request: Request, payload: dict[str, Any] = Body(defaul
     return _reply({"ok": True, **result})
 
 
-def _wiki_chat(messages: list[dict[str, str]]) -> JSONResponse:
+def _wiki_chat(messages: list[dict[str, str]]) -> tuple[int, dict[str, Any]]:
     try:
         question = assistant.wiki_question(messages)
         found = assistant.run_bounded(lambda: assistant.ask_wiki(question), assistant.WIKI_ASK_TIMEOUT_S + assistant.GRACE_S)
     except assistant.AssistantBusy as exc:
-        return _reply({"ok": False, "error": exc.public}, 429)
+        return 429, {"ok": False, "error": exc.public}
     except assistant.AssistantError as exc:
-        return _reply({"ok": False, "error": exc.public}, 502)
+        return 502, {"ok": False, "error": exc.public}
     finally:
         assistant.CHAT_SLOTS.release()
-    return _reply({
+    return 200, {
         "ok": True,
         "mode": "wiki",
         "reply": found["answer"],
@@ -240,27 +251,23 @@ def _wiki_chat(messages: list[dict[str, str]]) -> JSONResponse:
         "sources": found["sources"],
         "proposals": [],
         "followups": found["followups"],
-    })
+    }
 
 
-@router.post("/chat")
-def assistant_chat(request: Request, payload: dict[str, Any] = Body(default_factory=dict)) -> JSONResponse:
-    blocked = _blocked(request)
-    if blocked is not None:
-        return blocked
+def _answer(request: Request, payload: Any) -> tuple[int, dict[str, Any]]:
     conf = assistant.settings(load_config() or {})
     mode = assistant.mode(conf)
     if mode == "off":
-        return _reply({"ok": False, "error": "The assistant is not set up yet"}, 400)
+        return 400, {"ok": False, "error": "The assistant is not set up yet"}
     body = payload if isinstance(payload, dict) else {}
     messages = assistant.clean_messages(body.get("messages"))
     scope = str(body.get("scope") or "all")
     if scope not in assistant.SCOPES:
         scope = "all"
     if not messages or messages[-1]["role"] != "user":
-        return _reply({"ok": False, "error": "Ask a question first"}, 400)
+        return 400, {"ok": False, "error": "Ask a question first"}
     if not assistant.CHAT_SLOTS.acquire(blocking=False):
-        return _reply({"ok": False, "error": assistant.BUSY}, 429)
+        return 429, {"ok": False, "error": assistant.BUSY}
     if mode == "wiki":
         return _wiki_chat(messages)
     tools = _tools()
@@ -270,11 +277,74 @@ def assistant_chat(request: Request, payload: dict[str, Any] = Body(default_fact
         from services.assistant_context import validate
         result = assistant.run_bounded(lambda: assistant.chat(conf, messages, tools, runner, scope, propose=_proposal, context=validate(request, body.get("context"))), assistant.CHAT_DEADLINE_S)
     except HTTPException as exc:
-        return _reply({"ok": False, "error": str(exc.detail)}, exc.status_code)
+        return exc.status_code, {"ok": False, "error": str(exc.detail)}
     except assistant.AssistantBusy as exc:
-        return _reply({"ok": False, "error": exc.public}, 429)
+        return 429, {"ok": False, "error": exc.public}
     except assistant.AssistantError as exc:
-        return _reply({"ok": False, "error": exc.public}, 502)
+        return 502, {"ok": False, "error": exc.public}
     finally:
         assistant.CHAT_SLOTS.release()
-    return _reply({"ok": True, "reply": result["reply"], "tools": result["tools"], "actions": result["actions"], "sources": result["sources"], "proposals": result["proposals"], **({"evidence": evidence} if evidence else {})})
+    return 200, {"ok": True, "reply": result["reply"], "tools": result["tools"], "actions": result["actions"], "sources": result["sources"], "proposals": result["proposals"], **({"evidence": evidence} if evidence else {})}
+
+
+def _owner(request: Request) -> str:
+    user = getattr(request.state, "cw_user", None)
+    return str(user.get("id") or user.get("username") or "") if isinstance(user, dict) else ""
+
+
+def _prune_jobs(now: float) -> None:
+    for job_id, job in list(_JOBS.items()):
+        if now - job["created"] > JOB_TTL_S:
+            _JOBS.pop(job_id, None)
+
+
+@router.post("/chat")
+def assistant_chat(request: Request, payload: dict[str, Any] = Body(default_factory=dict)) -> JSONResponse:
+    blocked = _blocked(request)
+    if blocked is not None:
+        return blocked
+    status, result = _answer(request, payload)
+    return _reply(result, status)
+
+
+@router.post("/jobs")
+def assistant_job_start(request: Request, payload: dict[str, Any] = Body(default_factory=dict)) -> JSONResponse:
+    blocked = _blocked(request)
+    if blocked is not None:
+        return blocked
+    now = time.time()
+    with _JOBS_LOCK:
+        _prune_jobs(now)
+        if len(_JOBS) >= MAX_JOBS:
+            return _reply({"ok": False, "error": assistant.BUSY}, 429)
+        job_id = secrets.token_urlsafe(16)
+        _JOBS[job_id] = {"owner": _owner(request), "created": now, "result": None}
+
+    def work() -> None:
+        try:
+            result = _answer(request, payload)
+        except Exception as exc:
+            log(f"Answer failed: {type(exc).__name__}", level="ERROR", module=assistant.LOG_MODULE)
+            result = (500, {"ok": False, "error": JOB_FAILED})
+        with _JOBS_LOCK:
+            if job_id in _JOBS:
+                _JOBS[job_id]["result"] = result
+
+    threading.Thread(target=work, name="assistant-job", daemon=True).start()
+    return _reply({"ok": True, "job_id": job_id}, 202)
+
+
+@router.get("/jobs/{job_id}")
+def assistant_job(request: Request, job_id: str = Path(..., max_length=64)) -> JSONResponse:
+    blocked = _blocked(request)
+    if blocked is not None:
+        return blocked
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if job is None or job["owner"] != _owner(request):
+            return _reply({"ok": False, "error": JOB_GONE}, 404)
+        if job["result"] is None:
+            return _reply({"ok": True, "pending": True})
+        _JOBS.pop(job_id, None)
+    status, result = job["result"]
+    return _reply(result, status)

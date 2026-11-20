@@ -16,19 +16,22 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
-from _logging import _redact_log_text
+from _logging import _redact_log_text, log
 
 MAX_ROUNDS = 8
 MAX_CALLS_PER_ROUND = 8
-MAX_TOOL_CHARS = 12_000
+MAX_TOOL_CHARS = 6_000
+MAX_CONVO_CHARS = 60_000
+SHORT_TOOL_CHARS = 1_500
+SHORTENED = "\n[earlier result shortened to save space, call the tool again if you need all of it]"
 MAX_HISTORY = 20
 MAX_MESSAGE_CHARS = 8_000
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_DOC_BYTES = 1024 * 1024
 MAX_MODELS = 500
 MAX_ERROR_CHARS = 400
-RETRY_STATUSES = frozenset({429, 500, 502, 503, 504})
-RETRY_DELAYS_S = (2.0, 5.0)
+RETRY_STATUSES = frozenset({500, 502, 503})
+RETRY_DELAYS_S = (2.0,)
 MAX_RETRY_WAIT_S = 10.0
 MAX_CONCURRENT_CHATS = 2
 MAX_WORKERS = 6
@@ -38,6 +41,8 @@ GRACE_S = 5
 REQUEST_TIMEOUT_S = 120
 MODELS_TIMEOUT_S = 20
 MODEL_TEST_TIMEOUT_S = 30
+SLOW_ANSWER_S = 60
+LOG_MODULE = "ASSISTANT"
 DOCS_TIMEOUT_S = 15
 DOCS_HOST = "wiki.crosswatch.app"
 DOCS_INDEX_URL = f"https://{DOCS_HOST}/llms.txt"
@@ -226,9 +231,10 @@ ProposalValidator = Callable[[str, dict[str, Any]], dict[str, Any] | str]
 
 
 class AssistantError(Exception):
-    def __init__(self, message: str) -> None:
+    def __init__(self, message: str, detail: str = "") -> None:
         super().__init__(message)
         self.public = str(message)
+        self.detail = str(detail)
 
 
 class AssistantBusy(AssistantError):
@@ -694,7 +700,7 @@ def clean_messages(raw: Any) -> list[dict[str, str]]:
     return out[-MAX_HISTORY:]
 
 
-def _provider_error(status: int, body: bytes, key: str, retry_after: str = "") -> str:
+def _error_detail(body: bytes, key: str) -> str:
     detail = ""
     try:
         parsed = json.loads(body)
@@ -707,7 +713,19 @@ def _provider_error(status: int, body: bytes, key: str, retry_after: str = "") -
             detail = error
     except ValueError:
         detail = ""
-    detail = _scrub(detail, key).strip()
+    return _scrub(detail, key).strip()
+
+
+def _provider_error(status: int, body: bytes, key: str, retry_after: str = "") -> str:
+    detail = _error_detail(body, key)
+    if status == 413:
+        return "The question needed more data than the AI provider accepts. Try a narrower question."
+    if status == 503:
+        return "The AI provider is busy right now. Try again in a minute."
+    if status == 504:
+        return "The AI provider took too long to answer. This often happens when a question needs a lot of data. Try a narrower question."
+    if status >= 500:
+        return f"The AI provider had an internal problem (HTTP {status}). Try again in a minute."
     if status == 429:
         match = re.search(r"retry\s+in\s+(\d+(?:\.\d+)?)\s*s", detail, re.IGNORECASE)
         delay = _scrub(str(retry_after), key).strip() or (match.group(1) if match else "")
@@ -731,8 +749,28 @@ def _retry_wait(res: Any, fallback: float) -> float:
 
 
 def _provider(method: str, conf: dict[str, Any], path: str, *, deadline: float, body: Any = None) -> Any:
+    started = time.monotonic()
+    tries = [0]
+    try:
+        return _request(method, conf, path, deadline=deadline, body=body, tries=tries)
+    except AssistantError as exc:
+        size = len(json.dumps(body, default=str).encode("utf-8")) if body is not None else 0
+        host = urlparse(str(conf.get("base_url") or "")).hostname or "unknown host"
+        model = str(conf.get("model") or "") or "no model"
+        reason = _scrub(exc.detail or exc.public, str(conf.get("api_key") or ""))
+        log(
+            f"{method} {path} to {host} failed after {time.monotonic() - started:.1f}s, {tries[0]} tries, "
+            f"request {math.ceil(size / 1024)} KB, model {model}: {reason}",
+            level="WARN",
+            module=LOG_MODULE,
+        )
+        raise
+
+
+def _request(method: str, conf: dict[str, Any], path: str, *, deadline: float, body: Any, tries: list[int]) -> Any:
     headers = {"Authorization": f"Bearer {conf['api_key']}"} if conf.get("api_key") else {}
     for pause in (*RETRY_DELAYS_S, None):
+        tries[0] += 1
         left = deadline - time.monotonic()
         if left <= 1:
             raise AssistantError(TOO_LONG)
@@ -756,7 +794,12 @@ def _provider(method: str, conf: dict[str, Any], path: str, *, deadline: float, 
     if 300 <= res.status_code < 400:
         raise AssistantError("The AI provider address redirects somewhere else. Enter the final address.")
     if res.status_code >= 400:
-        raise AssistantError(_provider_error(res.status_code, raw, str(conf.get("api_key") or ""), str(res.headers.get("retry-after") or "")))
+        key = str(conf.get("api_key") or "")
+        detail = _error_detail(raw, key)[:MAX_ERROR_CHARS]
+        raise AssistantError(
+            _provider_error(res.status_code, raw, key, str(res.headers.get("retry-after") or "")),
+            f"HTTP {res.status_code}" + (f": {detail}" if detail else ""),
+        )
     try:
         return json.loads(raw)
     except ValueError as exc:
@@ -840,6 +883,28 @@ def _run(name: str, args: dict[str, Any], run_tool: ToolRunner, deadline: float 
     return result
 
 
+def _fit(convo: list[dict[str, Any]], keep_from: int) -> None:
+    size = sum(len(str(m.get("content") or "")) for m in convo)
+    for message in convo[:keep_from]:
+        if size <= MAX_CONVO_CHARS:
+            return
+        content = str(message.get("content") or "")
+        if message.get("role") != "tool" or len(content) <= SHORT_TOOL_CHARS + len(SHORTENED):
+            continue
+        message["content"] = content[:SHORT_TOOL_CHARS] + SHORTENED
+        size -= len(content) - len(message["content"])
+
+
+def _log_answer(conf: dict[str, Any], elapsed: float, used: list[str]) -> None:
+    slow = elapsed >= SLOW_ANSWER_S
+    note = " Slow answers often mean the question needed a lot of data or the AI provider was busy." if slow else ""
+    log(
+        f"Answer from model {conf.get('model') or 'unknown'} took {elapsed:.0f}s with {len(used)} tool calls.{note}",
+        level="WARN" if slow else "DEBUG",
+        module=LOG_MODULE,
+    )
+
+
 def pick_actions(raw: Any, chosen: list[str]) -> None:
     for item in raw if isinstance(raw, list) else []:
         name = str(item or "").strip()
@@ -856,7 +921,8 @@ def chat(
     propose: ProposalValidator | None = None,
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    deadline = time.monotonic() + CHAT_DEADLINE_S - GRACE_S
+    started = time.monotonic()
+    deadline = started + CHAT_DEADLINE_S - GRACE_S
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     focus = SCOPES.get(scope, "")
     system = f"{SYSTEM_PROMPT} Today is {today}." + (f" {focus}" if focus else "")
@@ -868,12 +934,14 @@ def chat(
     actions: list[str] = []
     sources: list[dict[str, str]] = []
     proposals: list[dict[str, Any]] = []
+    fresh = len(convo)
 
     def finish(message: dict[str, Any]) -> dict[str, Any]:
         text = _text(message)
         if not text:
             convo.append({"role": "user", "content": NUDGE})
             text = _text(_complete(conf, convo, definitions, "none", deadline)) or NO_TEXT
+        _log_answer(conf, time.monotonic() - started, used)
         return {"reply": text, "tools": used, "actions": actions, "sources": sources, "proposals": proposals}
 
     for _round in range(MAX_ROUNDS):
@@ -881,6 +949,8 @@ def chat(
         calls = [call for call in message.get("tool_calls") or [] if isinstance(call, dict)]
         if not calls:
             return finish(message)
+        _fit(convo, len(convo))
+        fresh = len(convo)
         convo.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": calls})
         for index, call in enumerate(calls):
             name, args = _arguments(call)
@@ -912,4 +982,5 @@ def chat(
                 if source and source not in sources and len(sources) < MAX_SOURCES:
                     sources.append(source)
             convo.append({"role": "tool", "tool_call_id": str(call.get("id") or ""), "content": result})
+    _fit(convo, fresh)
     return finish(_complete(conf, convo, definitions, "none", deadline))
