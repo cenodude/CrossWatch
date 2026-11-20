@@ -683,6 +683,10 @@ def last_upload_seq(device: Any, viewer_id: Any) -> int:
         return _int(_load_seq(device, viewer_id).get("max_seq")) or 0
 
 
+def _applied_upload_seq(device: Any, viewer_id: Any) -> int:
+    return _int(_load_seq(device, viewer_id).get("applied_upload_seq")) or 0
+
+
 def _sync_running() -> bool:
     try:
         from api.syncAPI import _is_sync_running
@@ -1102,6 +1106,7 @@ def receive_upload(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str
             _write(inventory_path, inventory_bytes)
             _write(view_path, view_bytes)
             _save_changes(dev, viewer_id, changes)
+            _update_seq(dev, viewer_id, applied_upload_seq=max(upload_seq, _applied_upload_seq(dev, viewer_id)))
             if staging.get("upload_seq"):
                 staging.setdefault("deltas", []).append({"rows": rows})
                 staged = _encode(staging)
@@ -1187,6 +1192,7 @@ def receive_upload(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str
         _write(view_path, view_bytes)
         _save_changes(dev, viewer_id, changes)
         _write(inventory_path, inventory_bytes)
+        _update_seq(dev, viewer_id, applied_upload_seq=max(upload_seq, _applied_upload_seq(dev, viewer_id)))
         _unlink(staging_path)
     return {"ok": True, "mode": "full", "complete": True, "instance": inst}
 
@@ -1331,7 +1337,7 @@ def enqueue(cfg: Mapping[str, Any] | None, instance_id: Any, method: Any, params
         if current != identity:
             raise ValueError("stale_target")
         dev, viewer_id = device_of(inst), inventory.get("viewer_id")
-        after = last_upload_seq(dev, viewer_id)
+        after = _applied_upload_seq(dev, viewer_id)
         meta = _meta(kind, row, _map(inventory.get("tvshows")))
         seqs: list[int] = []
         for group in GROUPS:
