@@ -11,7 +11,7 @@ from cw_platform.played_writes import note_write
 from providers.scrobble._media_server import DeliveryError, MediaServerSink
 from providers.scrobble.scrobble import _log
 from providers.sync._mod_SILO import SILOModule
-from providers.sync.silo._common import as_int, cfg_section, item_detail, library, resolve_item, safe_json, selected_libraries, silo_request
+from providers.sync.silo._common import as_int, cfg_section, item_detail, library, resolve_item, safe_json, selected_libraries, session_content_id, silo_request
 
 
 class SiloSink(MediaServerSink):
@@ -27,7 +27,7 @@ class SiloSink(MediaServerSink):
         data = safe_json(resp)
         rows = data.get("items") if isinstance(data, dict) else None
         profile = str(cfg_section(adapter).get("profile_id") or "")
-        return any(isinstance(r, dict) and r.get("content_id") == content_id and str(r.get("profile_id") or "") == profile for r in rows or [])
+        return any(isinstance(r, dict) and session_content_id(r) == content_id and str(r.get("profile_id") or "") == profile for r in rows or [])
 
     def _deliver(self, adapter: Any, item: dict[str, Any], complete: bool, progress: float, destination: dict[str, Any], played_at: int) -> dict[str, Any]:
         allowed = set(destination.get("libraries") or []) or selected_libraries(adapter, "history" if complete else "progress")

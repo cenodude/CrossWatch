@@ -199,6 +199,17 @@ def test_times_are_utc_and_device_zone_is_optional():
     assert addon_sync.AddonKodiClient.kodi_time("2026-10-25T01:30:00Z") == "2026-10-25T01:30:00Z"
 
 
+def test_copies_of_one_item_get_one_change():
+    cfg = make_cfg()
+    ping(cfg)
+    full(cfg, movies=[unwatched(), unwatched(movieid=13, file="nfs://nas/movies/fc-4k.mkv")], episodes=[], tvshows=[])
+    assert module(cfg).add("history", [{"type": "movie", "ids": {"tmdb": "550"}, "watched_at": "2026-01-03T10:00:00Z"}])["count"] == 1
+    assert rate_fight_club(cfg, 9)["count"] == 1
+    changes = queue(cfg)["changes"]
+    assert [c["params"]["movieid"] for c in changes] == [12, 12]
+    assert ratings(cfg) == {"Fight Club": 9}
+
+
 def test_after_counts_only_applied_uploads():
     cfg = make_cfg()
     ping(cfg)

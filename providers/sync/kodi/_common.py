@@ -716,6 +716,16 @@ def library_result_rows(result: Any, key: str) -> list[Mapping[str, Any]]:
     return [row for row in rows if isinstance(row, Mapping)]
 
 
+def _addon_ref(item: Mapping[str, Any]) -> tuple[str, str] | None:
+    from providers.sync.kodi._addon_sync import REF_KEY
+
+    raw = item.get("_kodi_raw")
+    ref = raw.get(REF_KEY) if isinstance(raw, Mapping) else None
+    if isinstance(ref, list) and len(ref) == 2 and ref[0] and ref[1]:
+        return str(ref[0]), str(ref[1])
+    return None
+
+
 class LibraryIndex:
     def __init__(self, movies: Iterable[Mapping[str, Any]], episodes: Iterable[Mapping[str, Any]], tvshows: Iterable[Mapping[str, Any]]):
         self.items: list[dict[str, Any]] = []
@@ -772,6 +782,9 @@ class LibraryIndex:
             return candidates[0], "ok"
         if not candidates:
             return None, "not_found"
+        refs = {_addon_ref(c) for c in candidates}
+        if len(refs) == 1 and None not in refs:
+            return min(candidates, key=lambda c: to_int(c.get("_kodi_id")) or 0), "ok"
         return None, "ambiguous"
 
 

@@ -21,8 +21,8 @@ from providers.sync.silo import _ratings as feat_ratings
 from providers.sync.silo import _watchlist as feat_watchlist
 from providers.sync.silo._common import label_silo, problem_of, shared_limiter, silo_request
 
-__VERSION__ = "0.1"
-_MANUAL_RATING_SCALE = {"step": 2, "max": 5, "display_factor": 0.5, "round_step": 2}
+__VERSION__ = "0.2"
+_MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "SILOModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
 
 if "ctx" not in globals():
@@ -110,7 +110,6 @@ def get_manifest() -> Mapping[str, Any]:
                 "accepted_ids": list(_ACCEPTED_IDS),
                 "provides_ids": ["tmdb", "tvdb"],
                 "scale": "1-10",
-                "native_scale": "1-5",
             },
             "history": {
                 "read": True,

@@ -158,7 +158,7 @@ def test_stremio_manual_choices_share_adapter_thresholds(liked, loved):
     ("SIMKL", 7.5, 8, True), ("SIMKL", 7.5, 7, False),
     ("TRAKT", 6.5, 7, True), ("TRAKT", 6.5, 6, False),
     ("TMDB", 7.5, 8, False), ("FLOPPY", 7.5, 7.6, False),
-    ("SILO", 7, 8, True), ("SILO", 7, 6, False),
+    ("SILO", 7.5, 8, True), ("SILO", 7, 8, False),
     ("STREMIO", 7, 6, True), ("STREMIO", 8, 6, False),
     ("UNKNOWN", 7.5, 8, False), ("UNKNOWN", 7.5, 7.5, True),
 ])
@@ -195,7 +195,7 @@ def test_editor_rows_publish_the_selected_instances_scale(monkeypatch, source):
     assert result["rating_scale"]["labels"] == {"7": "Liked", "9.5": "Loved"}
 
 
-@pytest.mark.parametrize("provider,score,allowed", [("SIMKL", 7.5, False), ("TRAKT", 0.5, False), ("SIMKL", 8, True), ("CROSSWATCH", 7.5, True), ("SILO", 7, False), ("SILO", 8, True)])
+@pytest.mark.parametrize("provider,score,allowed", [("SIMKL", 7.5, False), ("TRAKT", 0.5, False), ("SIMKL", 8, True), ("CROSSWATCH", 7.5, True), ("SILO", 7.5, False), ("SILO", 7, True)])
 def test_editor_send_checks_target_scale_before_writing(monkeypatch, provider, score, allowed):
     writes = []
     monkeypatch.setattr(editorAPI, "load_config", lambda: {})
