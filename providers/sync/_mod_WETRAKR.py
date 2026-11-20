@@ -22,7 +22,7 @@ _UNKNOWN_DATES = {
     "multiple": {"read": False, "write": False},
 }
 
-__VERSION__ = "1.0"
+__VERSION__ = "1.1"
 _MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "WETRAKRModule", "OPS"]
 _FEATURES = {"watchlist": True, "history": True, "ratings": True, "progress": True, "playlists": True, "collection": True}

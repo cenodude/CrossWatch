@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
-from collections import Counter, defaultdict
 from typing import Any, cast
 
 from fastapi import APIRouter, Body, Query, Request
@@ -431,239 +429,11 @@ def events_status(request: Request = cast(Request, None)) -> JSONResponse:
 
 _RANGE_SECONDS = {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400, "90d": 90 * 86400}
 _BUCKETS = {"hour": 3600, "day": 86400, "week": 7 * 86400}
-_OUTCOME_LABEL = {"completed": "Completed", "warning": "Warning", "failed": "Failed", "active": "In progress"}
-_PROBLEM_EVENTS = {"write_failed", "unresolved_recorded"}
-
-
-def _delta(cur: Any, prev: Any) -> float | None:
-    cur_f = float(cur or 0)
-    prev_f = float(prev or 0)
-    if prev_f <= 0:
-        return None if cur_f == 0 else 100.0
-    return round((cur_f - prev_f) / prev_f * 100.0, 1)
-
-
-def _kpi(cur: Any, prev: Any) -> dict[str, Any]:
-    value = round(float(cur or 0), 2) if isinstance(cur, float) else int(cur or 0)
-    old = round(float(prev or 0), 2) if isinstance(prev, float) else int(prev or 0)
-    return {"value": value, "prev": old, "delta": _delta(cur, prev)}
-
-
-def _rate(ok: Any, total: Any) -> float:
-    ok_f = float(ok or 0)
-    total_f = float(total or 0)
-    return round(ok_f / total_f * 100.0, 1) if total_f > 0 else 0.0
-
-
-def _duration(row: dict[str, Any]) -> int | None:
-    try:
-        started = int(row.get("started_at") or 0)
-        finished = int(row.get("finished_at") or 0)
-    except Exception:
-        return None
-    return finished - started if started and finished >= started else None
-
-
-def _percentile(values: list[int], p: float) -> int | None:
-    if not values:
-        return None
-    vals = sorted(values)
-    idx = min(len(vals) - 1, int(math.floor(float(p) * (len(vals) - 1))))
-    return int(vals[idx])
-
-
-def _rows_between(conn: Any, table: str, column: str, since: int, until: int) -> list[dict[str, Any]]:
-    try:
-        rows = conn.execute(f"SELECT * FROM {table} WHERE {column}>=? AND {column}<?", (since, until)).fetchall()
-    except Exception:
-        return []
-    return [dict(row) for row in rows]
-
-
-def _scoped_event_rows(cfg: dict[str, Any], request: Request | None, conn: Any, since: int, until: int) -> list[dict[str, Any]]:
-    return [row for row in _rows_between(conn, "events", "created_at", since, until) if _event_row_allowed(cfg, request, row, False)]
-
-
-def _scoped_group_rows(cfg: dict[str, Any], request: Request | None, conn: Any, since: int, until: int) -> list[dict[str, Any]]:
-    return [row for row in _rows_between(conn, "event_groups", "last_event_at", since, until) if _event_row_allowed(cfg, request, row)]
-
-
-def _scoped_run_rows(conn: Any, since: int, until: int, allowed_run_ids: set[str]) -> list[dict[str, Any]]:
-    if not allowed_run_ids:
-        return []
-    return [row for row in _rows_between(conn, "sync_runs", "started_at", since, until) if str(row.get("run_id") or "") in allowed_run_ids]
-
-
-def _default_bucket(span: int) -> int:
-    if span <= 2 * 86400:
-        return 3600
-    if span <= 120 * 86400:
-        return 86400
-    return 7 * 86400
-
-
 def _scoped_statistics(cfg: dict[str, Any], request: Request | None, since: int, until: int, bucket: int | None) -> dict[str, Any]:
-    conn = get_conn()
-    bs = int(bucket or _default_bucket(until - since))
-    if conn is None:
-        return {"ok": False, "available": False, "range": {"since": since, "until": until, "bucket": bs}}
-    span = max(1, until - since)
-    prev_since = since - span
-    all_events = _scoped_event_rows(cfg, request, conn, prev_since, until)
-    all_groups = _scoped_group_rows(cfg, request, conn, prev_since, until)
-    allowed_run_ids = {str(row.get("run_id") or "") for row in all_events if str(row.get("run_id") or "")}
-    all_runs = _scoped_run_rows(conn, prev_since, until, allowed_run_ids)
-
-    cur_events = [row for row in all_events if int(row.get("created_at") or 0) >= since]
-    prev_events = [row for row in all_events if int(row.get("created_at") or 0) < since]
-    cur_groups = [row for row in all_groups if int(row.get("last_event_at") or 0) >= since]
-    prev_groups = [row for row in all_groups if int(row.get("last_event_at") or 0) < since]
-    cur_runs = [row for row in all_runs if int(row.get("started_at") or 0) >= since]
-    prev_runs = [row for row in all_runs if int(row.get("started_at") or 0) < since]
-
-    def failed_run_ids(rows: list[dict[str, Any]], events: list[dict[str, Any]]) -> set[str]:
-        ids = {str(row.get("run_id") or "") for row in rows if int(row.get("errors") or 0) > 0 and str(row.get("run_id") or "")}
-        ids.update(str(row.get("run_id") or "") for row in events if row.get("event_type") in _PROBLEM_EVENTS and str(row.get("run_id") or ""))
-        return ids
-
-    cur_failed_runs = failed_run_ids(cur_runs, cur_events)
-    prev_failed_runs = failed_run_ids(prev_runs, prev_events)
-    cur_warning_runs = {str(row.get("run_id") or "") for row in cur_events if row.get("event_type") in _PROBLEM_EVENTS and str(row.get("run_id") or "")} - cur_failed_runs
-    prev_warning_runs = {str(row.get("run_id") or "") for row in prev_events if row.get("event_type") in _PROBLEM_EVENTS and str(row.get("run_id") or "")} - prev_failed_runs
-    cur_run_ids = {str(row.get("run_id") or "") for row in cur_runs if str(row.get("run_id") or "")}
-    prev_run_ids = {str(row.get("run_id") or "") for row in prev_runs if str(row.get("run_id") or "")}
-
-    cur_domain_ok = sum(1 for row in cur_events if row.get("event_type") in ("scrobble_completed", "rating_applied"))
-    prev_domain_ok = sum(1 for row in prev_events if row.get("event_type") in ("scrobble_completed", "rating_applied"))
-    cur_domain_fail = sum(1 for row in cur_events if row.get("event_type") in ("scrobble_failed", "rating_failed"))
-    prev_domain_fail = sum(1 for row in prev_events if row.get("event_type") in ("scrobble_failed", "rating_failed"))
-    cur_ok_runs = max(0, len(cur_run_ids) - len(cur_failed_runs) - len(cur_warning_runs))
-    prev_ok_runs = max(0, len(prev_run_ids) - len(prev_failed_runs) - len(prev_warning_runs))
-    cur_ops = len(cur_run_ids) + cur_domain_ok + cur_domain_fail
-    prev_ops = len(prev_run_ids) + prev_domain_ok + prev_domain_fail
-    cur_ok_ops = cur_ok_runs + cur_domain_ok
-    prev_ok_ops = prev_ok_runs + prev_domain_ok
-
-    cur_durations = [dur for dur in (_duration(row) for row in cur_runs) if dur is not None]
-    prev_durations = [dur for dur in (_duration(row) for row in prev_runs) if dur is not None]
-    cur_avg = round(sum(cur_durations) / len(cur_durations), 2) if cur_durations else 0.0
-    prev_avg = round(sum(prev_durations) / len(prev_durations), 2) if prev_durations else 0.0
-    blocked_cur = len({(row.get("pair_key"), row.get("run_id"), row.get("item_key")) for row in cur_events if row.get("event_type") in ("blackbox_promoted", "blackbox_blocked") and row.get("pair_key") and row.get("run_id") and row.get("item_key")})
-    blocked_prev = len({(row.get("pair_key"), row.get("run_id"), row.get("item_key")) for row in prev_events if row.get("event_type") in ("blackbox_promoted", "blackbox_blocked") and row.get("pair_key") and row.get("run_id") and row.get("item_key")})
-
-    kpis = {
-        "sync_runs": _kpi(len(cur_run_ids), len(prev_run_ids)),
-        "scrobbles": _kpi(sum(1 for row in cur_events if row.get("event_type") == "scrobble_completed"), sum(1 for row in prev_events if row.get("event_type") == "scrobble_completed")),
-        "avg_duration": _kpi(cur_avg, prev_avg),
-        "failures": _kpi(len(cur_failed_runs) + len(cur_warning_runs) + cur_domain_fail, len(prev_failed_runs) + len(prev_warning_runs) + prev_domain_fail),
-        "blocked": _kpi(blocked_cur, blocked_prev),
-        "success_rate": _kpi(_rate(cur_ok_ops, cur_ops), _rate(prev_ok_ops, prev_ops)),
-    }
-
-    trend_map: dict[int, dict[str, Any]] = {}
-    for row in cur_events:
-        try:
-            b = int(row.get("created_at") or 0) // bs
-        except Exception:
-            continue
-        item = trend_map.setdefault(b, {"t": b * bs, "sync": 0, "webhook": 0, "watcher": 0, "failed": 0, "_ok": 0})
-        et = str(row.get("event_type") or "")
-        if et == "sync_run_finished":
-            item["sync"] += 1
-            item["_ok"] += 1
-        elif et in ("scrobble_completed", "rating_applied"):
-            key = "webhook" if str(row.get("source_kind") or "") == "webhook" else "watcher"
-            item[key] += 1
-            item["_ok"] += 1
-        elif et in ("scrobble_failed", "rating_failed"):
-            item["failed"] += 1
-    for row in cur_runs:
-        dur = _duration(row)
-        if dur is None:
-            continue
-        b = int(row.get("started_at") or 0) // bs
-        item = trend_map.setdefault(b, {"t": b * bs, "sync": 0, "webhook": 0, "watcher": 0, "failed": 0, "_ok": 0})
-        if int(row.get("errors") or 0) > 0:
-            item["failed"] += 1
-    trend = []
-    for b in sorted(trend_map):
-        item = trend_map[b]
-        ok = int(item.pop("_ok", 0))
-        failed = int(item.get("failed") or 0)
-        item["rate"] = round(ok / (ok + failed) * 100.0, 1) if (ok + failed) > 0 else None
-        trend.append(item)
-
-    dur_buckets: dict[int, list[int]] = defaultdict(list)
-    for row in cur_runs:
-        dur = _duration(row)
-        if dur is not None:
-            dur_buckets[int(row.get("started_at") or 0) // bs].append(dur)
-    duration_series = [{"t": b * bs, "avg": round(sum(vals) / len(vals), 2), "n": len(vals)} for b, vals in sorted(dur_buckets.items())]
-
-    scrobble_status = Counter(str(row.get("status") or "").lower() for row in cur_groups if str(row.get("domain") or "") == "scrobble")
-    outcomes_count = {"completed": cur_ok_runs, "warning": len(cur_warning_runs), "failed": len(cur_failed_runs), "active": 0}
-    outcomes_count["completed"] += scrobble_status.get("completed", 0) + scrobble_status.get("rated", 0)
-    outcomes_count["warning"] += scrobble_status.get("warning", 0)
-    outcomes_count["failed"] += scrobble_status.get("failed", 0)
-    outcomes_count["active"] += scrobble_status.get("running", 0)
-    outcomes = [{"key": key, "label": _OUTCOME_LABEL[key], "value": outcomes_count[key]} for key in ("completed", "warning", "failed", "active") if outcomes_count.get(key)]
-
-    watcher_count = sum(1 for row in cur_events if row.get("event_type") in ("scrobble_completed", "rating_applied") and str(row.get("source_kind") or "") != "webhook" and str(row.get("domain") or "") == "scrobble")
-    webhook_count = sum(1 for row in cur_events if row.get("event_type") in ("scrobble_completed", "rating_applied") and str(row.get("source_kind") or "") == "webhook")
-    types = [
-        {"key": "sync", "label": "Sync runs", "value": len(cur_run_ids)},
-        {"key": "watcher", "label": "Watcher", "value": watcher_count},
-        {"key": "webhook", "label": "Webhooks", "value": webhook_count},
-    ]
-
-    route_map: dict[tuple[Any, Any], dict[str, int]] = defaultdict(lambda: {"runs": 0, "scrobbles": 0, "ok": 0, "bad": 0})
-    for row in cur_events:
-        src = row.get("source_provider")
-        dst = row.get("destination_provider")
-        if not dst:
-            continue
-        entry = route_map[(src, dst)]
-        if row.get("run_id"):
-            entry["runs"] += 1 if row.get("event_type") == "sync_run_finished" else 0
-            entry["bad"] += 1 if row.get("event_type") in _PROBLEM_EVENTS else 0
-        elif row.get("event_type") in ("scrobble_completed", "rating_applied", "scrobble_skipped", "scrobble_failed", "rating_failed"):
-            entry["scrobbles"] += 1
-            entry["ok"] += 1 if row.get("event_type") in ("scrobble_completed", "rating_applied") else 0
-            entry["bad"] += 1 if row.get("event_type") in ("scrobble_failed", "rating_failed") else 0
-    routes = []
-    for (src, dst), values in route_map.items():
-        volume = values["runs"] + values["scrobbles"]
-        if volume <= 0:
-            continue
-        ok = values["ok"] + max(0, values["runs"] - values["bad"])
-        bad = values["bad"]
-        routes.append({"source": src, "destination": dst, "volume": volume, "runs": values["runs"], "scrobbles": values["scrobbles"], "success_rate": round(ok / (ok + bad) * 100.0, 1) if (ok + bad) else None})
-    routes.sort(key=lambda row: row["volume"], reverse=True)
-
-    cur_fail_map = Counter(str(row.get("reason_code") or "") for row in cur_events if str(row.get("severity") or "") == "error" and str(row.get("reason_code") or ""))
-    prev_fail_map = Counter(str(row.get("reason_code") or "") for row in prev_events if str(row.get("severity") or "") == "error" and str(row.get("reason_code") or ""))
-    total_fail = sum(cur_fail_map.values()) or 1
-    failure_reasons = [{
-        "reason": key,
-        "label": friendly_reason(key),
-        "count": value,
-        "prev": prev_fail_map.get(key, 0),
-        "share": round(value / total_fail * 100.0, 1),
-        "delta": _delta(value, prev_fail_map.get(key, 0)),
-    } for key, value in cur_fail_map.most_common(8)]
-
-    return {
-        "ok": True,
-        "range": {"since": since, "until": until, "bucket": bs},
-        "kpis": kpis,
-        "trend": trend,
-        "duration_series": duration_series,
-        "duration_percentiles": {"p50": _percentile(cur_durations, 0.5), "p90": _percentile(cur_durations, 0.9), "p99": _percentile(cur_durations, 0.99)},
-        "outcomes": outcomes,
-        "types": types,
-        "routes": routes[:8],
-        "failure_reasons": failure_reasons,
-    }
+    return _statistics(
+        since=since, until=until, bucket=bucket, conn=get_conn(),
+        row_filter=lambda row: _event_row_allowed(cfg, request, row),
+    )
 
 
 @router.get("/statistics")
@@ -681,7 +451,7 @@ def events_statistics(
         span = _RANGE_SECONDS.get(str(range).lower(), _RANGE_SECONDS["30d"])
         s, u = now - span, now
     bs = _BUCKETS.get(str(bucket or "").lower()) if bucket else None
-    if _managed_request(request) or _default_overview_requested(request):
+    if _admin_only_hidden(request) or _default_overview_requested(request):
         return _ok(_scoped_statistics(load_config() or {}, request, s, u, bs))
     return _ok(_statistics(since=s, until=u, bucket=bs))
 

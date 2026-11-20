@@ -1673,6 +1673,11 @@ export default {
       const modeTxt = modeLabel(cx.pairMode) || "–";
       const st = String(g.status || "").toLowerCase();
       const isProblem = ["failed", "unresolved", "blackboxed", "warning"].includes(st);
+      const isRun = g.operation === "run" || events.some(e => ["sync_run_started", "sync_run_finished"].includes(e.event_type));
+      const summary = String(g.summary || item || "");
+      const summaryBreak = isRun ? summary.indexOf(", ") : -1;
+      const headline = summaryBreak > 0 ? summary.slice(0, summaryBreak) : summary;
+      const supporting = summaryBreak > 0 ? summary.slice(summaryBreak + 2) : "";
 
       const pill = (text, cls) => `<span class="ev-pill ${cls}">${esc(text)}</span>`;
       const card = (title, pillHTML, lines, extra = "") => `
@@ -1728,7 +1733,13 @@ export default {
 
       const kvGrid = (rows) => `<div class="ev-kv">${rows.map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${v}</div>`).join("")}</div>`;
 
-      const detailsPane =
+      const detailsPane = isRun
+        ? `<div class="ev-dsec"><h5>Run details</h5>${kvGrid([
+          ["Records", esc(String(g.event_count || events.length))],
+          ["Started", esc(TS(g.first_event_at))],
+          [st === "running" ? "Last update" : "Finished", esc(TS(g.last_event_at))],
+        ])}</div>`
+        :
         `<div class="ev-dsec"><h5>Event</h5>${kvGrid([
           ["Status", `<span class="ev-pill ${sv}">${esc(statusLabel(g.status, g.domain))}</span>`],
           ["Title", esc(g.summary || "–")],
@@ -1834,7 +1845,8 @@ export default {
             <button class="ev-hbtn" id="ev-copy" type="button" title="Copy thread"><span class="material-symbols-rounded" aria-hidden="true">content_copy</span><span>Copy</span></button>
             <button class="ev-hbtn ev-hbtn-accent${g.acknowledged_at ? " on" : ""}" id="ev-ack-detail" type="button"><span class="material-symbols-rounded" aria-hidden="true">${ackIcon}</span><span>${ackLabel}</span></button>
           </div>
-          <div class="ev-dtitle">${esc(g.summary || item || "")}</div>
+          <div class="ev-dtitle">${esc(headline)}</div>
+          ${supporting ? `<p class="ev-outcome">${withProviderLogos(supporting)}</p>` : ""}
           ${item ? `<div class="ev-ditem">${esc(item)}</div>` : ""}
         </div>
         ${summaryCards ? `<div class="ev-scards">${summaryCards}</div>` : ""}

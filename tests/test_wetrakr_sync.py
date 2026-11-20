@@ -158,7 +158,7 @@ def test_registry_profiles_capabilities_and_ids(env):
     from cw_platform.orchestrator._history_rewatches import history_rewatch_pair_enabled
 
     assert load_sync_ops("WETRAKR") is OPS
-    assert get_manifest()["version"] == "1.0"
+    assert get_manifest()["version"] == "1.1"
     assert OPS.is_configured(env.view)
     assert not OPS.is_configured(env.cfg)
     assert sync_provider_supports_feature("wetrakr", "watchlist")
@@ -409,9 +409,7 @@ def test_episode_show_ids_are_not_confused_with_episode_ids(env):
     result = env.adapter.add("history", [source])
     assert result["ok"]
     write = next(kwargs["json"] for method, _, kwargs in env.server.calls if method == "POST")
-    show = write["shows"][0]
-    assert show["id"] == SHOW["id"]
-    assert show["seasons"][0]["episodes"][0]["number"] == 1
+    assert write == {"episodes": [{"ids": {"tmdb": 62085}, "status": "watched", "tracked_at": WHEN}]}
     stored = next(iter(env.adapter.build_index("history").values()))
     assert stored["show_ids"]["tmdb"] == "1396"
     assert stored["ids"]["tmdb"] == "62085"
