@@ -108,6 +108,16 @@ OPS_RATING_SINKS: tuple[str, ...] = ("crosswatch", "floppy", "punchplay", "flick
 RATING_SINKS: tuple[str, ...] = ("trakt", "simkl", "mdblist", "anilist", *OPS_RATING_SINKS)
 
 
+def episode_rating_skips(media_type: str, enabled: Iterable[str]) -> dict[str, dict[str, Any]]:
+    if media_type != "episode":
+        return {}
+    unsupported = {"simkl", "mdblist", "anilist", "kitsu", "myanimelist", "silo"}
+    return {
+        sink: {"ok": True, "skipped": True, "reason": "episode_ratings_unsupported"}
+        for sink in enabled if sink in unsupported
+    }
+
+
 def archive_rating_results(
     results: Mapping[str, Any],
     *,
@@ -121,15 +131,19 @@ def archive_rating_results(
 ) -> None:
     for sink in RATING_SINKS:
         res = results.get(sink)
-        if not isinstance(res, Mapping) or res.get("ignored") or res.get("skipped"):
+        if not isinstance(res, Mapping) or res.get("ignored"):
             continue
         applied = bool(res.get("ok"))
         extra: dict[str, Any] = {"rating": rating or None} if applied else {"reason": str(res.get("status") or res.get("error") or "failed")}
+        event_type = "rating_applied" if applied else "rating_failed"
+        if res.get("skipped"):
+            event_type = "rating_skipped"
+            extra = {"rating": rating, "reason": str(res.get("reason") or "skipped")}
         try:
             from cw_platform.event_archive import record_webhook
 
             record_webhook(
-                event_type="rating_applied" if applied else "rating_failed",
+                event_type=event_type,
                 source_provider="plex",
                 source_instance=normalize_instance_id(source_instance),
                 destination_provider=sink,
