@@ -130,14 +130,16 @@ def _item_episode(item: Mapping[str, Any]) -> Any:
 
 def _item_activity_ids(item: Mapping[str, Any], media_type: str) -> dict[str, Any]:
     if media_type == "episode":
-        show_ids = _compact_dict(item.get("show_ids"))
+        show_ids = {**_compact_dict(_nested_dict(item, "ids").get("show_ids")), **_compact_dict(item.get("show_ids"))}
         for key in ("show", "series"):
             nested_ids = _compact_dict(_nested_dict(item, key).get("ids"))
             if nested_ids:
                 show_ids = {**nested_ids, **show_ids}
         if show_ids:
-            return show_ids
+            return {**show_ids, **{f"{key}_show": value for key, value in show_ids.items() if key in {"tmdb", "imdb", "tvdb", "trakt"}}}
     ids = _compact_dict(item.get("ids"))
+    if media_type == "episode":
+        ids["cw_scope"] = "episode"
     if not ids and media_type == "movie":
         ids = _compact_dict(_nested_dict(item, "movie").get("ids"))
     return ids

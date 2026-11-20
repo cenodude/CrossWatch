@@ -141,6 +141,8 @@ def _ids(item: Mapping[str, Any]) -> dict[str, Any]:
     for nested_key in ("show", "series"):
         nested_ids = _as_dict(_nested_dict(item, nested_key).get("ids"))
         show_ids = _merge_ids(show_ids, nested_ids)
+    if typ == "episode" and item.get("kind") == "history_sync" and not show_ids and ids.get("cw_scope") != "episode":
+        show_ids = {key: ids[key] for key in _ID_KEYS if ids.get(key)}
     if show_ids:
         ids["show_ids"] = show_ids
     return ids
@@ -151,7 +153,7 @@ def _tmdb_id(item: Mapping[str, Any]) -> Any:
     raw_show_ids = ids.get("show_ids")
     show_ids: Mapping[str, Any] = raw_show_ids if isinstance(raw_show_ids, Mapping) else {}
     if _media_type(item) in {"episode", "season"}:
-        return show_ids.get("tmdb") or ids.get("tmdb") or item.get("tmdb") or item.get("tmdb_id")
+        return show_ids.get("tmdb")
     return ids.get("tmdb") or show_ids.get("tmdb") or item.get("tmdb") or item.get("tmdb_id")
 
 
@@ -525,18 +527,38 @@ def _metadata_lookup_ids(row: Mapping[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     is_movie = _art_type(row) == "movie"
     show_ids = ids.get("show_ids") if isinstance(ids.get("show_ids"), Mapping) else {}
-    source = show_ids if not is_movie and show_ids else ids
+    child = _media_type(row) in {"episode", "season"}
+    source = show_ids if child or (not is_movie and show_ids) else ids
     for key in _ID_KEYS:
         value = source.get(key) if isinstance(source, Mapping) else None
         if value not in (None, "", 0, False):
             out[key] = value
-    title = _text(row.get("title"))
-    if title:
+    title = _show_title(row) if child else _text(row.get("title"))
+    if title and not (child and _looks_like_episode_code(title)):
         out["title"] = title
     year = _as_int(row.get("year"))
     if is_movie and year is not None:
         out["year"] = str(year)
     return out
+
+
+def _resolve_show_art_ids(row: dict[str, Any]) -> None:
+    typ = _media_type(row)
+    if typ not in {"episode", "season"} or _tmdb_id(row):
+        return
+    ids = _ids(row)
+    show_ids = dict(ids.get("show_ids") or {})
+    try:
+        from cw_platform.config_base import load_config
+        from providers.scrobble._show_tmdb import show_tmdb_id
+
+        tmdb = show_tmdb_id(load_config() or {}, show_ids, ids if typ == "episode" else {})
+    except Exception:
+        return
+    if tmdb:
+        show_ids["tmdb"] = tmdb
+        row["ids"] = {**ids, "show_ids": show_ids}
+        row["tmdb"] = tmdb
 
 
 def _looks_like_episode_code(value: Any) -> bool:
@@ -568,7 +590,7 @@ def _resolve_episode_show_title(row: dict[str, Any]) -> None:
     if not title or _looks_like_episode_code(title):
         return
     row["title"] = title
-    row.setdefault("series_title", title)
+    row["series_title"] = title
 
 
 def _art_debug(row: dict[str, Any], reason: str, **fields: Any) -> None:
@@ -704,6 +726,7 @@ def _resolve_missing_art_rows(
     resolve_art_type: bool = False,
 ) -> list[dict[str, Any]]:
     def _resolve_row(row: dict[str, Any]) -> None:
+        _resolve_show_art_ids(row)
         _resolve_episode_show_title(row)
         _resolve_missing_art(row, size=size, episode_still=episode_still, backdrop_fallback=backdrop_fallback)
         if resolve_art_type:
@@ -817,6 +840,7 @@ def _rating_row(raw_key: str, item: Mapping[str, Any], sources: list[dict[str, s
         "type": typ,
         "art_type": _art_type(item),
         "title": _title(item),
+        "series_title": _show_title(item),
         "year": _year(item),
         "season": _season_number(item),
         "episode": _episode_number(item),
@@ -914,7 +938,7 @@ def _copy_richer_media_fields(dst: dict[str, Any], src: Mapping[str, Any]) -> No
     merged_ids = _merged_row_ids(dst, src)
     if merged_ids:
         dst["ids"] = merged_ids
-    for key in ("tmdb", "poster", "cover", "ids"):
+    for key in ("tmdb", "poster", "cover", "ids", "series_title"):
         if not dst.get(key) and src.get(key):
             dst[key] = src[key]
     if not dst.get("art_type") and src.get("art_type"):
@@ -1109,6 +1133,7 @@ def _activity_row(event: Mapping[str, Any]) -> dict[str, Any]:
         "type": typ,
         "art_type": _art_type(event),
         "title": _title(event),
+        "series_title": _show_title(event),
         "year": _year(event),
         "season": _season_number(event),
         "episode": _episode_number(event),
@@ -1141,6 +1166,7 @@ def _history_state_row(raw_key: str, item: Mapping[str, Any], sources: list[dict
         "type": _media_type(item),
         "art_type": _art_type(item),
         "title": _title(item),
+        "series_title": _show_title(item),
         "year": _year(item),
         "season": _season_number(item),
         "episode": _episode_number(item),
@@ -1559,6 +1585,7 @@ def _progress_row(raw_key: str, item: Mapping[str, Any], sources: list[dict[str,
         "type": _media_type(item),
         "art_type": _art_type(item),
         "title": _title(item),
+        "series_title": _show_title(item),
         "year": _year(item),
         "season": _season_number(item),
         "episode": _episode_number(item),

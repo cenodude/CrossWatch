@@ -1214,6 +1214,11 @@
     return "just now";
   }
 
+  function artTmdbId(item, meta = null) {
+    const child = ["episode", "season"].includes(String(item?.type || item?.media_type || "").toLowerCase());
+    return item?.ids?.show_ids?.tmdb || item?.show_ids?.tmdb || item?.tmdb || (child ? "" : item?.ids?.tmdb || meta?.ids?.tmdb);
+  }
+
   function poster(item, size = "w300") {
     const src = String(item?.poster || "");
     if (src) return src;
@@ -1238,7 +1243,7 @@
   }
 
   function backdropPoster(item, meta = null, size = "w1280") {
-    const tmdb = item?.tmdb || item?.ids?.tmdb || meta?.ids?.tmdb;
+    const tmdb = artTmdbId(item, meta);
     if (!tmdb) return "";
     const resolved = String(meta?.resolved_type || "").toLowerCase();
     const kind = resolved ? (resolved === "movie" ? "movie" : "tv") : (String(item?.art_type || item?.type || "").toLowerCase() === "movie" ? "movie" : "tv");
@@ -1262,7 +1267,7 @@
   }
 
   async function getDetailMeta(item) {
-    if (!item?.tmdb && !item?.ids?.tmdb) return null;
+    if (!artTmdbId(item)) return null;
     return window.CW?.Meta?.get?.(item, "detail") || null;
   }
 
@@ -1386,7 +1391,7 @@
 
   async function openProgressIcon(node, link, item, all) {
     const actions = window.CW?.ItemActions;
-    const tmdb = String(item?.tmdb || item?.ids?.tmdb || "").trim();
+    const tmdb = String(artTmdbId(item) || "").trim();
     if (!actions || !tmdb) return;
     const episode = String(item?.type || "").toLowerCase() === "episode";
     const params = new URLSearchParams({ page: "1", page_size: episode ? "250" : "50" });

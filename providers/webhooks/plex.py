@@ -1329,6 +1329,12 @@ def process_webhook(
         if ops_enabled and media_type != "season":
             from providers.scrobble.plex.ratings_sync import dispatch_ops_ratings
 
+            if media_type == "episode":
+                ids_all2 = _cw_ids_for_payload(media_type, md, ids_all2, cfg, logger=logger)
+                show_ids = {
+                    **show_ids,
+                    **{key: ids_all2[f"{key}_show"] for key in ("tmdb", "imdb", "tvdb") if ids_all2.get(f"{key}_show")},
+                }
             sent = True
             results.update(
                 dispatch_ops_ratings(

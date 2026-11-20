@@ -23,7 +23,7 @@
 
   const isEpisode = (item) => {
     const raw = String(item?.media_type || item?.type || item?.entity || "").toLowerCase();
-    return raw === "episode" || item?.season != null || item?.episode != null;
+    return raw === "episode" || raw === "season" || item?.season != null || item?.episode != null;
   };
 
   const kindOf = (item) => {
@@ -39,7 +39,7 @@
   const tmdbOf = (item) => {
     const ids = item?.ids || {};
     const id = isEpisode(item)
-      ? (ids.tmdb_show || item?.tmdb_show || tmdbFromCanonical(item) || item?.tmdb || item?.tmdb_id || ids.tmdb || ids.id)
+      ? (item?.show_ids?.tmdb || ids.show_ids?.tmdb || item?.show?.ids?.tmdb || ids.tmdb_show || item?.tmdb_show || item?.tmdb || item?.tmdb_id || (ids.tmdb || ids.id ? "" : tmdbFromCanonical(item)))
       : (item?.tmdb || item?.tmdb_id || ids.tmdb || ids.tmdb_show || ids.id);
     return String(id || "").trim();
   };
@@ -80,7 +80,10 @@
 
   const descriptorFor = (item) => {
     const episode = isEpisode(item);
-    const ids = item?.ids || {};
+    const rawIds = item?.ids || {};
+    const ids = episode
+      ? { imdb: rawIds.imdb_show || item?.imdb_show, tvdb: rawIds.tvdb_show || item?.tvdb_show, ...item?.show?.ids, ...rawIds.show_ids, ...item?.show_ids }
+      : rawIds;
     return {
       tmdb: tmdbOf(item),
       type: kindOf(item),
