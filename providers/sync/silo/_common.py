@@ -314,6 +314,16 @@ class Library:
         self.title_index: dict[tuple[str, str], list[str]] | None = None
         self.views: dict[frozenset[str], "Library"] = {}
         self.listed: set[str] = set()
+        self.episode_ids_loaded: set[str] = set()
+        self.series_episodes: dict[str, list[str]] | None = None
+
+    def episodes_of(self, series_id: str) -> list[str]:
+        if self.series_episodes is None:
+            grouped: dict[str, list[str]] = {}
+            for cid, rec in self.episodes.items():
+                grouped.setdefault(rec["series_id"], []).append(cid)
+            self.series_episodes = grouped
+        return self.series_episodes.get(series_id, [])
 
     def subset(self, keep: set[str]) -> "Library":
         out = Library()
@@ -371,6 +381,7 @@ class Library:
             "series_id": sid,
             "season": s,
             "episode": e,
+            "ids": row_ids(row),
             "title": str(row.get("title") or "").strip(),
             "series_title": str(row.get("series_title") or "").strip(),
             "runtime": as_int(row.get("runtime")),
@@ -604,6 +615,45 @@ def resolve_series(adapter: Any, lib: Library, show_ids: Mapping[str, Any] | Non
     return _lookup(lib.series_by_id, ids, ("tvdb", "tmdb", "imdb"))
 
 
+def _own_episode_ids(ids: Mapping[str, str], show_ids: Mapping[str, str]) -> dict[str, str]:
+    return {k: v for k, v in ids.items() if show_ids.get(k) and show_ids[k] != v}
+
+
+def _ensure_episode_ids(adapter: Any, lib: Library, series_id: str, *, feature: str) -> bool:
+    if series_id in lib.episode_ids_loaded:
+        return True
+    cids = lib.episodes_of(series_id)
+    if cids and all(lib.episodes[cid].get("ids") for cid in cids):
+        lib.episode_ids_loaded.add(series_id)
+        return True
+    lib.episode_ids_loaded.add(series_id)
+    try:
+        rows = pages(adapter, f"/catalog/items/{quote(series_id, safe='')}/episodes", feature=feature)
+    except SiloSyncError:
+        return False
+    if rows is None:
+        return False
+    for row in rows:
+        rec = lib.episodes.get(str(row.get("content_id") or ""))
+        if rec is not None:
+            rec["ids"] = {**(rec.get("ids") or {}), **row_ids(row)}
+    return True
+
+
+def _episode_by_ids(adapter: Any, lib: Library, series_id: str, wanted: Mapping[str, str], coord_cid: str, *, feature: str) -> tuple[str, bool]:
+    if not _ensure_episode_ids(adapter, lib, series_id, feature=feature):
+        return "", False
+    hits = [cid for cid in lib.episodes_of(series_id)
+            if any((lib.episodes[cid].get("ids") or {}).get(k) == v for k, v in wanted.items())]
+    if len(hits) == 1:
+        return hits[0], False
+    if len(hits) > 1:
+        return "", True
+    have = (lib.episodes.get(coord_cid) or {}).get("ids") or {} if coord_cid else {}
+    shared = set(have) & set(wanted)
+    return "", bool(shared) and all(have[k] != wanted[k] for k in shared)
+
+
 def resolve_movie(adapter: Any, lib: Library, ids_in: Mapping[str, Any] | None, *, feature: str) -> str:
     ids = ids_of_value(ids_in)
     if not ids:
@@ -786,6 +836,11 @@ def resolve_item(adapter: Any, lib: Library, item: Mapping[str, Any], *, feature
         s, e = as_int(item.get("season")), as_int(item.get("episode"))
         sid = resolve_series(adapter, lib, show_ids, feature=feature)
         cid = lib.episode_by_coord.get((sid, s, e), "") if sid and s is not None and e is not None else ""
+        wanted = _own_episode_ids(ids_of_value(ids), ids_of_value(show_ids))
+        if sid and wanted:
+            by_id, blocked = _episode_by_ids(adapter, lib, sid, wanted, cid, feature=feature)
+            if by_id or blocked:
+                return by_id, "episode"
         if not cid:
             cid = _by_path(adapter, lib, item, feature)
         if not cid and s is not None and e is not None:

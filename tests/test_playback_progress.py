@@ -209,7 +209,7 @@ def test_mdblist_playback_adapter_uses_documented_nested_episode_payload():
     assert record.can_update_progress is True
     assert reason is None
     assert body == {
-        "show": {"ids": {"imdb": "tt5834204"}, "season": {"number": 6, "episode": {"number": 2}}},
+        "show": {"ids": {"imdb": "tt5834204"}, "season": {"number": 6, "episode": {"number": 2, "ids": {"tmdb": 5978363}}}},
         "progress": 26,
         "app_version": mdblist_progress._app_version(),
     }

@@ -505,6 +505,8 @@ class Dispatcher:
 
     def _log_filter_drop(self, ev: ScrobbleEvent, cfg: dict[str, Any], reason: str,
                          identity: tuple[str, ...], lvl: str = "DEBUG") -> None:
+        if isinstance(ev.raw, dict) and ev.raw.get("_cw_user_probe"):
+            return
         route = self._route_label(cfg)
         msg = f"route {route}: filtered user={mask_account(identity[0])} sess={ev.session_key} reason={reason}"
         if not ev.session_key:

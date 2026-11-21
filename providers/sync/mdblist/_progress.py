@@ -246,6 +246,37 @@ def _movie_body(item: Mapping[str, Any], progress_percent: float) -> tuple[dict[
     return {"movie": {"ids": ids}, "progress": progress_percent, "app_version": _app_version()}, None
 
 
+def _own_episode_ids(ids: Any, show_ids: Any, *, require_show: bool) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for key in ("tmdb", "tvdb"):
+        value = _positive_int(ids.get(key)) if isinstance(ids, Mapping) else None
+        if value is None:
+            continue
+        show_value = _positive_int(show_ids.get(key)) if isinstance(show_ids, Mapping) else None
+        if show_value == value or (require_show and show_value is None):
+            continue
+        out[key] = value
+    return out
+
+
+def _find_target(index: Mapping[str, Any], key: str, item: Mapping[str, Any]) -> tuple[str, Mapping[str, Any] | None]:
+    target = index.get(key)
+    if isinstance(target, Mapping):
+        return key, target
+    if str(item.get("type") or "").strip().lower() != "episode":
+        return key, None
+    wanted = _own_episode_ids(item.get("ids"), item.get("show_ids"), require_show=False)
+    if not wanted:
+        return key, None
+    for other_key, other in index.items():
+        if not isinstance(other, Mapping) or str(other.get("type") or "").strip().lower() != "episode":
+            continue
+        have = _own_episode_ids(other.get("ids"), other.get("show_ids"), require_show=False)
+        if any(have.get(k) == v for k, v in wanted.items()):
+            return str(other_key), other
+    return key, None
+
+
 def _episode_body(item: Mapping[str, Any], progress_percent: float) -> tuple[dict[str, Any] | None, str | None]:
     show_ids = _imdb_ids(item.get("show_ids"))
     if not show_ids:
@@ -254,8 +285,12 @@ def _episode_body(item: Mapping[str, Any], progress_percent: float) -> tuple[dic
     episode = _positive_int(item.get("episode") if item.get("episode") is not None else item.get("number"))
     if season is None or season < 0 or episode is None:
         return None, "mdblist_episode_number_missing"
+    episode_obj: dict[str, Any] = {"number": episode}
+    own_ids = _own_episode_ids(item.get("ids"), item.get("show_ids"), require_show=True)
+    if own_ids:
+        episode_obj["ids"] = own_ids
     return {
-        "show": {"ids": show_ids, "season": {"number": season, "episode": {"number": episode}}},
+        "show": {"ids": show_ids, "season": {"number": season, "episode": episode_obj}},
         "progress": progress_percent,
         "app_version": _app_version(),
     }, None
@@ -343,7 +378,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             unresolved.append(row)
             results.append(row)
             continue
-        target = current.get(key)
+        _target_key, target = _find_target(current, key, item)
         progress_ms, duration_ms, source_percent = _progress_values(item)
         if isinstance(target, Mapping) and _percent_equal(item, target):
             skipped += 1
@@ -404,7 +439,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
     after = build_index(adapter) if pending and not failed else current
     confirmed: list[str] = []
     for key, item, _body in ([] if failed else pending):
-        target = after.get(key)
+        _target_key, target = _find_target(after, key, item)
         if isinstance(target, Mapping) and (
             progress_materially_equal(item.get("progress_ms"), item.get("duration_ms"), target.get("progress_ms"), target.get("duration_ms"))
             or _percent_equal(item, target)
@@ -426,11 +461,13 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
     unresolved: list[dict[str, Any]] = []
     results: list[dict[str, Any]] = []
     pending: list[tuple[str, int, dict[str, Any]]] = []
+    target_keys: dict[str, str] = {}
     skipped = 0
 
     for item in src:
         key = canonical_key(item) or ""
-        target = current.get(key)
+        target_key, target = _find_target(current, key, item)
+        target_keys[key] = target_key
         if not isinstance(target, Mapping):
             skipped += 1
             results.append({"status": "skipped", "reason": "already_absent", "canonical_key": key, "item": id_minimal(item)})
@@ -463,14 +500,14 @@ def remove(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = 
     if replaying():
         accepted = [key for key, _remote_id, _item in pending if key not in failed_keys]
         for key in accepted:
-            current.pop(key, None)
+            current.pop(target_keys.get(key, key), None)
         replace_retained(build_index, current)
         return _result(not unresolved, len(accepted), len(pending), accepted, unresolved, results, skipped)
 
     after = build_index(adapter) if pending and not failed else current
     verified: list[str] = []
     for key, _playback_id, item in ([] if failed else pending):
-        if key not in after:
+        if target_keys.get(key, key) not in after:
             verified.append(key)
         else:
             row = _unresolved(item, "mdblist_progress_clear_unconfirmed", status="failed")

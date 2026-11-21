@@ -262,7 +262,7 @@ class MediaServerMarkPoller:
                 account=name or None,
                 server_uuid=self._server_id,
                 session_key=None,
-                raw={"UserId": uid, "UserName": name, "_cw_manual_mark": True},
+                raw={"UserId": uid, "UserName": name, "_cw_manual_mark": True, "_cw_user_probe": True},
             )
             try:
                 allowed = bool(accepts(probe)) if callable(accepts) else True

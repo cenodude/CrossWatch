@@ -299,6 +299,7 @@ class Library:
         self.movies: dict[str, dict[str, Any]] = {}
         self.shows: dict[str, dict[str, Any]] = {}
         self.episodes: dict[tuple[str, int, int], dict[str, Any]] = {}
+        self.episode_by_tmdb: dict[int, set[tuple[str, int, int]]] = {}
         self.movie_by_id: dict[str, str] = {}
         self.show_by_id: dict[str, str] = {}
         self.file_of: dict[str, tuple[str, Any, str]] = {}
@@ -334,6 +335,8 @@ class Library:
                                               "tmdb_episode_id": as_int(row.get("tmdb_episode_id")), "editions": {}})
         ep["editions"].setdefault(edition, []).append(fid)
         self.file_of[fid] = ("episode", coord, edition)
+        if ep["tmdb_episode_id"]:
+            self.episode_by_tmdb.setdefault(ep["tmdb_episode_id"], set()).add(coord)
 
 
 def build_library(rows_by_library: Mapping[str, list[dict[str, Any]]], allowed: Iterable[str] | None = None) -> Library:
@@ -435,10 +438,22 @@ def resolve_item(lib: Library, item: Mapping[str, Any]) -> tuple[Any, str]:
         return _lookup(lib.movie_by_id, ids, ("tmdb", "imdb", "tvdb")), "movie"
     if typ == "episode":
         show_ids = ids_of_value(item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else {})
+        own_tmdb = as_int(ids.get("tmdb")) if show_ids.get("tmdb") and ids.get("tmdb") != show_ids.get("tmdb") else None
+        if own_tmdb:
+            hits = lib.episode_by_tmdb.get(own_tmdb) or set()
+            if len(hits) == 1:
+                return next(iter(hits)), "episode"
+            if len(hits) > 1:
+                return "", "episode"
         mid = _lookup(lib.show_by_id, show_ids, ("tvdb", "tmdb", "imdb"))
         s, e = as_int(item.get("season")), as_int(item.get("episode"))
         coord = (mid, s, e) if mid and s is not None and e is not None else None
-        return (coord if coord in lib.episodes else ""), "episode"
+        if coord not in lib.episodes:
+            return "", "episode"
+        have = lib.episodes[coord].get("tmdb_episode_id")
+        if own_tmdb and have and have != own_tmdb:
+            return "", "episode"
+        return coord, "episode"
     if typ == "season":
         return "", "season"
     return _lookup(lib.show_by_id, ids, ("tvdb", "tmdb", "imdb")), "show"

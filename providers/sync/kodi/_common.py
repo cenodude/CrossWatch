@@ -717,6 +717,31 @@ def library_result_rows(result: Any, key: str) -> list[Mapping[str, Any]]:
     return [row for row in rows if isinstance(row, Mapping)]
 
 
+def _own_episode_ids(item: Mapping[str, Any]) -> dict[str, str]:
+    ids = item.get("ids") if isinstance(item.get("ids"), Mapping) else {}
+    show_ids = item.get("show_ids") if isinstance(item.get("show_ids"), Mapping) else {}
+    out: dict[str, str] = {}
+    for key in ("tmdb", "tvdb", "imdb"):
+        value = str(ids.get(key) or "").strip().lower()
+        show_value = str(show_ids.get(key) or "").strip().lower()
+        if value and show_value and value != show_value:
+            out[key] = value
+    return out
+
+
+def _episode_id_candidates(item: Mapping[str, Any], candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if id_minimal(item).get("type") != "episode" or not candidates:
+        return candidates
+    wanted = _own_episode_ids(item)
+    if not wanted:
+        return candidates
+    owns = [(candidate, _own_episode_ids(candidate)) for candidate in candidates]
+    matched = [candidate for candidate, own in owns if any(own.get(k) == v for k, v in wanted.items())]
+    if matched:
+        return matched
+    return [candidate for candidate, own in owns if not set(own) & set(wanted)]
+
+
 def _addon_ref(item: Mapping[str, Any]) -> tuple[str, str] | None:
     from providers.sync.kodi._addon_sync import REF_KEY
 
@@ -779,6 +804,7 @@ class LibraryIndex:
 
     def resolve(self, item: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str]:
         candidates = [c for c in self.candidates(item) if (to_int(c.get("_kodi_id")) or 0) > 0]
+        candidates = _episode_id_candidates(item, candidates)
         if len(candidates) == 1:
             return candidates[0], "ok"
         if not candidates:

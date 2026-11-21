@@ -313,6 +313,18 @@ def _show_ids(ev: Any) -> dict[str, Any]:
     return m
 
 
+def _episode_ids(ev: Any, show_ids: Mapping[str, Any]) -> dict[str, int]:
+    ids = getattr(ev, "ids", {}) or {}
+    out: dict[str, int] = {}
+    for k in ("tmdb", "tvdb"):
+        value = _as_int(ids.get(k))
+        show_value = _as_int(show_ids.get(k))
+        if value is None or value <= 0 or show_value is None or show_value == value:
+            continue
+        out[k] = value
+    return out
+
+
 def _best_ids_for_scrobble(ids: dict[str, Any], media_type: str) -> dict[str, Any]:
     mt = _norm_type(media_type)
     if mt == "show":
@@ -406,7 +418,11 @@ def _bodies(ev: Any, progress: float) -> list[dict[str, Any]]:
                 show["title"] = series_title
             if series_year:
                 show["year"] = int(series_year)
-        show["season"] = {"number": season, "episode": {"number": number}}
+        episode: dict[str, Any] = {"number": number}
+        own_ids = _episode_ids(ev, raw)
+        if own_ids:
+            episode["ids"] = own_ids
+        show["season"] = {"number": season, "episode": episode}
         return [{"show": show, "progress": progress}]
 
     raw_ids = _ids(ev)

@@ -19,7 +19,7 @@ from providers.sync.tofa import _progress as feat_progress
 from providers.sync.tofa import _watchlist as feat_watchlist
 from providers.sync.tofa._common import REQUIRED_CAPABILITIES, TofaSyncError, capabilities, label_tofa, shared_limiter, tofa_request
 
-__VERSION__ = "0.1"
+__VERSION__ = "0.2"
 __all__ = ["get_manifest", "TOFAModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_watchlist"]
 
 if "ctx" not in globals():
