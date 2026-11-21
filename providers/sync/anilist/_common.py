@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from cw_platform import capture_mode
 from .._log import log as cw_log
 
 STATE_DIR = Path("/config/.cw_state")
@@ -30,8 +31,7 @@ def _pair_scope() -> str | None:
 
 
 def _is_capture_mode() -> bool:
-    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
-    return v in ("1", "true", "yes", "on")
+    return capture_mode.active("ANILIST")
 
 
 def _safe_scope(value: str) -> str:

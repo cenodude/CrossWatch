@@ -6,9 +6,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
-from contextvars import ContextVar
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +16,7 @@ except Exception:  # pragma: no cover
     def cw_log(provider: str, feature: str, level: str, msg: str, **fields: Any) -> None:  # type: ignore[no-redef]
         pass
 
+from cw_platform import capture_mode
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 from cw_platform.tracker_store import RestorePoint, TrackerStore, TrackerUnreadable
 
@@ -34,24 +33,8 @@ def pair_scoped() -> bool:
     return _truthy_env("CW_CROSSWATCH_PAIR_SCOPED")
 
 
-_CAPTURE: ContextVar[bool | None] = ContextVar("crosswatch_capture", default=None)
-
-
-@contextmanager
-def capture_scope(active: bool) -> Iterator[None]:
-    token = _CAPTURE.set(active)
-    try:
-        yield
-    finally:
-        _CAPTURE.reset(token)
-
-
 def _capture_mode() -> bool:
-    scoped = _CAPTURE.get()
-    if scoped is not None:
-        return scoped
-    provider = str(os.getenv("CW_CAPTURE_PROVIDER") or "").strip().upper()
-    return _truthy_env("CW_CAPTURE_MODE") and provider in ("", "CROSSWATCH")
+    return capture_mode.active("CROSSWATCH")
 
 
 def _pair_scope() -> str | None:

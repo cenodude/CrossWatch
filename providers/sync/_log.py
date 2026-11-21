@@ -13,6 +13,8 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
+from cw_platform import capture_mode
+
 _LEVELS: dict[str, int] = {
     "off": 99,
     "error": 40,
@@ -129,7 +131,7 @@ def set_capture_progress_id(progress_id: str | None) -> str:
 
 
 def _append_capture_progress(provider: str, feature: str, msg: str, fields: Mapping[str, Any]) -> None:
-    progress_id = str(getattr(_CAPTURE_PROGRESS_LOCAL, "progress_id", "") or os.getenv("CW_CAPTURE_PROGRESS_ID") or "").strip()
+    progress_id = str(getattr(_CAPTURE_PROGRESS_LOCAL, "progress_id", "") or capture_mode.progress_id() or "").strip()
     if not progress_id:
         return
     try:

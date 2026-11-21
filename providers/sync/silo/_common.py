@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from urllib.parse import quote
 
+from cw_platform import capture_mode
 from cw_platform.run_control import raise_if_cancelled
 
 import requests
@@ -135,6 +136,8 @@ def read_state(name: str, scope: str) -> dict[str, Any]:
 
 
 def write_state(name: str, scope: str, data: Mapping[str, Any]) -> None:
+    if capture_mode.active("SILO"):
+        return
     path = state_path(name, scope)
     with _STATE_LOCK:
         try:

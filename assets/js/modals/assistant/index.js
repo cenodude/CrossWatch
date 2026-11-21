@@ -92,6 +92,9 @@ export const ACTIONS = {
   open_pairs: { label: "Open sync pairs", icon: "sync_alt", run: () => goSettings("pairs") },
   open_scrobbler: { label: "Open scrobbler", icon: "sensors", run: () => goSettings("scrobbler") },
   open_scheduling: { label: "Open scheduling", icon: "schedule", run: () => goSettings("scheduling") },
+  open_backups: { label: "Open Backup & Restore", icon: "backup", run: () => window.showTab?.("backups") },
+  open_tracker: { label: "Open Tracker", icon: "fact_check", run: () => window.showTab?.("tracker") },
+  open_playlists: { label: "Open Playlists", icon: "playlist_play", run: () => window.showTab?.("playlists") },
 };
 
 const history = [];
@@ -113,6 +116,7 @@ function esc(value) {
 export const PROPOSALS = {
   run_pair: { icon: "sync" },
   create_capture: { icon: "photo_camera" },
+  create_backup: { icon: "backup" },
   refresh_anime_mapping: { icon: "refresh" },
   test_connections: { icon: "hub" },
 };
@@ -194,6 +198,24 @@ export async function runProposal(proposal) {
         }
         const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
         proposalState(proposal, "running", `Capturing… ${Math.round(percent)}%`);
+      }
+    } else if (proposal.action === "create_backup") {
+      const data = await actionRequest("/api/backups/create", { managed: true }, deadline);
+      const id = data.job?.id;
+      if (!id) throw new Error("Backup progress is unavailable");
+      proposalState(proposal, "running", "Backup queued…");
+      while (true) {
+        if (Date.now() >= deadline) throw new Error("The backup is still running. Check Backup & Restore");
+        await new Promise(resolve => window.setTimeout(resolve, Math.min(2000, deadline - Date.now())));
+        const status = await actionRequest("/api/backups/status", undefined, deadline);
+        const job = (status.jobs || []).find(row => row?.id === id);
+        if (!job) throw new Error("The backup job is no longer listed. Check Backup & Restore");
+        if (job.stage === "complete") {
+          message = job.warning ? `Backup saved. ${job.warning}` : "Backup saved";
+          break;
+        }
+        if (job.stage === "failed") throw new Error(String(job.error || "Backup failed"));
+        proposalState(proposal, "running", `Backup ${String(job.stage || "running")}…`);
       }
     } else if (proposal.action === "refresh_anime_mapping") {
       const data = await actionRequest("/api/anime-mapping/update", { force: false }, deadline);

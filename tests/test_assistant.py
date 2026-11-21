@@ -363,6 +363,125 @@ def test_new_read_tools_are_shared_with_mcp(assistant_state_data):
     result = mcpAPI._call_tool(request, {"name": "search_sync_items", "arguments": {"pair_id": "one", "feature": "watchlist"}})
     assert json.loads(result["content"][0]["text"])["sides"][0]["provider"] == "PLEX"
     assert all(row["annotations"]["readOnlyHint"] for row in mcpAPI._tool_list())
+    assert {"get_backup_status", "get_tracker_status", "get_playlists_status", "get_progress_status", "get_maintenance_status"} <= assistant_tools.TOOLS.keys()
+    assert {"open_backups", "open_tracker", "open_playlists"} <= set(assistant.ACTIONS)
+
+
+def _admin_request(admin: bool = True) -> Any:
+    from starlette.requests import Request
+    request = Request({"type": "http"})
+    request.state.cw_user = {"is_admin": admin}
+    return request
+
+
+def test_backup_status_hides_destination_details_and_secrets(monkeypatch):
+    from api import backupsAPI
+    from fastapi import HTTPException
+    from fastapi.responses import JSONResponse
+    from services import assistant_features, backup_manager, backups
+    monkeypatch.setattr(backup_manager, "plan", lambda: {
+        "configured": True, "components": ["application"], "trackers": None, "encrypt_local": True, "has_password": True,
+        "remote_keep": 30, "installation": "abc", "mounted_root": "/mnt/secret",
+        "destination": {"kind": "webdav", "url": "https://dav.example/remote.php", "username": "dav-user-77", "vendor": "nextcloud", "has_password": True},
+    })
+    monkeypatch.setattr(backup_manager, "status", lambda: {"pending_restore": False, "restore": None, "jobs": [
+        {"id": "j1", "stage": "failed", "trigger": "scheduler", "remote_status": "failed", "error": f"upload failed password={KEY}", "remote_local": "/tmp/x"},
+    ]})
+    monkeypatch.setattr(backups, "list_backups", lambda: [{"path": "old.zip", "mtime": 1, "size": 10}, {"path": "new.zip", "mtime": 2, "size": 20, "encrypted": True}])
+    monkeypatch.setattr(backupsAPI, "api_backups_schedule_get", lambda: JSONResponse({"ok": True, "schedule": {"enabled": True, "at": "03:00", "nested": {"x": 1}}, "advanced_enabled": True}))
+    result = assistant_features.run("get_backup_status", _admin_request(), {})
+    text = json.dumps(result)
+    assert result["settings"]["destination"] == {"kind": "webdav", "vendor": "nextcloud", "has_password": True}
+    assert result["jobs"][0]["stage"] == "failed" and "upload failed" in result["jobs"][0]["error"]
+    assert result["local_backups"]["total"] == 2 and result["local_backups"]["newest"][0]["path"] == "new.zip"
+    assert result["schedule"] == {"enabled": True, "at": "03:00", "advanced_enabled": True}
+    for hidden in (KEY, "dav.example", "dav-user-77", "/mnt/secret", "/tmp/x", "installation"):
+        assert hidden not in text
+    with pytest.raises(HTTPException):
+        assistant_features.run("get_backup_status", _admin_request(False), {})
+
+
+def test_tracker_status_reads_counts_and_restore_points(monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from api import trackerAPI
+    from services import assistant_features
+    request = _admin_request()
+    point = SimpleNamespace(name="history-1.json", mtime=5.0, size=9)
+    store = SimpleNamespace(session=nullcontext, restore_points=lambda feature: [point] if feature == "history" else [])
+    seen = []
+    monkeypatch.setattr(trackerAPI, "_not_migrating", lambda: None)
+    monkeypatch.setattr(trackerAPI, "tracker_summary", lambda req, provider_instance: seen.append((req, provider_instance)) or {
+        "provider_instance": "default", "instances": [{"id": "default", "label": "Default"}], "counts": {"history": 3},
+        "attention": {"history": 1}, "health": {}, "check": {"state": "idle", "detail": {"x": 1}}, "import": {"state": "idle"},
+        "tmdb_key": True, "notes": {"secret": KEY}, "delete_effects": {},
+    })
+    monkeypatch.setattr(trackerAPI, "_store", lambda inst, req: ({}, "default", store))
+    result = assistant_features.run("get_tracker_status", request, {})
+    assert seen == [(request, "default")]
+    assert result["counts"] == {"history": 3} and result["metadata_check"] == {"state": "idle"}
+    assert result["restore_points"]["history"] == {"total": 1, "newest": [{"name": "history-1.json", "created": 5.0, "size": 9}]}
+    assert KEY not in json.dumps(result)
+
+
+def test_playlists_status_returns_last_results_and_errors(monkeypatch):
+    from cw_platform import config_base
+    from services import assistant_features, playlists
+    monkeypatch.setattr(config_base, "load_config", lambda: {})
+    monkeypatch.setattr(playlists, "overview", lambda cfg: {"ok": True, "total_mappings": 1, "enabled_mappings": 1, "warnings": ["Two unresolved"]})
+    monkeypatch.setattr(playlists, "list_mappings", lambda cfg: [{"id": "m1", "enabled": True, "token": KEY, "target_endpoints": ["e2"],
+        "last_result": {"ok": False, "finished_at": 9, "errors": [f"write failed token={KEY}"], "warnings": []}}])
+    monkeypatch.setattr(playlists, "list_endpoints", lambda cfg: [{"id": "e1", "provider": "PLEX", "name": "Faves", "item_count": 4, "secret": KEY}])
+    monkeypatch.setattr(playlists, "activity", lambda cfg, limit: [{"ts": 9, "type": "Run", "status": "error", "label": "m1"}])
+    result = assistant_features.run("get_playlists_status", _admin_request(), {})
+    assert result["mappings"][0]["last_result"]["ok"] is False and "write failed" in result["mappings"][0]["last_result"]["errors"][0]
+    assert result["endpoints"] == [{"id": "e1", "provider": "PLEX", "name": "Faves", "item_count": 4}]
+    assert result["activity"][0]["status"] == "error" and result["overview"]["warnings"] == ["Two unresolved"]
+    assert KEY not in json.dumps(result)
+
+
+def test_progress_status_reads_items_quickly_and_hides_artwork_and_metadata(monkeypatch):
+    from types import SimpleNamespace
+    from api import playbackProgressAPI
+    from services import assistant_features, playback_progress
+    seen = {}
+    service = SimpleNamespace(
+        settings=lambda user_filter: {"grouping": "auto", "profiles": [{"provider": "PLEX", "instance_id": "default", "read": True, "included": True}]},
+        items=lambda **kwargs: seen.update(kwargs) or {
+            "total": 1, "summary": {"total": 1, "movies": 1}, "loading": [{"provider": "EMBY", "instance_id": "default"}],
+            "errors": [{"provider": "JELLYFIN", "instance_id": "default", "error_code": "provider_timeout", "message": "Slow"}],
+            "items": [{"provider": "PLEX", "media_type": "movie", "title": "Film", "progress_percent": 40.0, "ids": {"tmdb": 1},
+                       "poster_url": f"https://plex.local/x?X-Plex-Token={KEY}", "provider_metadata": {"token": KEY}}],
+        },
+    )
+    monkeypatch.setattr(playback_progress, "get_service", lambda: service)
+    monkeypatch.setattr(playbackProgressAPI, "_playback_user_filter", lambda req, profile: {})
+    result = assistant_features.run("get_progress_status", _admin_request(), {"provider": "plex", "media_type": "tv", "limit": 999})
+    assert seen["progressive"] is True and seen["provider"] == "PLEX" and seen["media_type"] is None and seen["page_size"] == 50
+    assert result["items"] == [{"provider": "PLEX", "media_type": "movie", "title": "Film", "progress_percent": 40.0, "ids": {"tmdb": 1}}]
+    assert result["still_loading"] == [{"provider": "EMBY", "instance_id": "default"}] and result["errors"][0]["error_code"] == "provider_timeout"
+    assert KEY not in json.dumps(result)
+
+
+def test_maintenance_status_returns_job_state_without_starting_anything(monkeypatch, tmp_path):
+    from api import maintenanceAPI
+    from services import assistant_features, maintenance_jobs
+    monkeypatch.setattr(maintenanceAPI, "_cw", lambda: (None, tmp_path, None, None, None, None))
+    monkeypatch.setattr(maintenance_jobs, "status", lambda base: {"id": "m1", "action": "database-health", "state": "done",
+        "result": {"ok": False, "error": f"locked token={KEY}", "integrity": {"ok": False, "pages": 3, "rows": [1]}, "list": [1, 2]}})
+    result = assistant_features.run("get_maintenance_status", _admin_request(), {})
+    assert result["state"] == "done" and result["result"]["ok"] is False and "locked" in result["result"]["error"]
+    assert result["result"]["integrity"] == {"ok": False, "pages": 3}
+    assert KEY not in json.dumps(result)
+
+
+def test_backup_card_needs_saved_backup_settings(proposal_config, monkeypatch):
+    from api import assistantAPI
+    from services import backup_manager
+    monkeypatch.setattr(backup_manager, "settings", lambda: {"configured": False})
+    assert "not set up" in assistantAPI._proposal("create_backup", {})
+    monkeypatch.setattr(backup_manager, "settings", lambda: {"configured": True})
+    assert assistantAPI._proposal("create_backup", {"provider": "x"}) == {"action": "create_backup", "title": "Create backup", "params": {}}
 
 
 def test_evidence_is_built_from_successful_tools(assistant_state_data, monkeypatch):

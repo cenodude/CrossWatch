@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, TypeGuard
 
+from cw_platform import capture_mode
 from cw_platform.run_control import raise_if_cancelled
 
 import requests
@@ -121,8 +122,7 @@ def _pair_scope() -> str | None:
 
 
 def _is_capture_mode() -> bool:
-    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
-    return v in ("1", "true", "yes", "on")
+    return capture_mode.active("MDBLIST")
 
 
 def _safe_scope(value: str) -> str:

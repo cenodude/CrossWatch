@@ -390,7 +390,7 @@ test('only known actions become buttons', () => {
   assert.deepEqual([...html.matchAll(/data-as-action="([^"]+)"/g)].map(m => m[1]), ['open_logs', 'run_sync']);
   assert.equal(actionButtons(['nope']), '');
   assert.equal(actionButtons(undefined), '');
-  assert.deepEqual(Object.keys(ACTIONS).sort(), ['open_analyzer', 'open_anime_overrides', 'open_connections', 'open_events', 'open_logs', 'open_mappings', 'open_pairs', 'open_scheduling', 'open_scrobbler', 'run_sync']);
+  assert.deepEqual(Object.keys(ACTIONS).sort(), ['open_analyzer', 'open_anime_overrides', 'open_backups', 'open_connections', 'open_events', 'open_logs', 'open_mappings', 'open_pairs', 'open_playlists', 'open_scheduling', 'open_scrobbler', 'open_tracker', 'run_sync']);
   assert.match(actionButtons(['open_mappings']), /Mappings &amp; blocks/);
   assert.equal(lookedAt(['list_saved_mappings']), 'Looked at: mappings and blocks');
   assert.match(actionButtons(['open_anime_overrides']), /Anime ID custom mappings/);

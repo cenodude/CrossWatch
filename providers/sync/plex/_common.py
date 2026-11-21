@@ -3,6 +3,7 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from cw_platform import capture_mode
 from cw_platform.path_matching import media_paths
 
 import json
@@ -46,8 +47,7 @@ def _pair_scope() -> str | None:
 
 
 def _is_capture_mode() -> bool:
-    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
-    return v in ("1", "true", "yes", "on")
+    return capture_mode.active("PLEX")
 
 
 def _safe_scope(value: str) -> str:

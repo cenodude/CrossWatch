@@ -72,7 +72,7 @@ MAX_CODE_PATHS = 10
 MAX_CODE_LINE_CHARS = 220
 MAX_CODE_READ_LINES = 200
 MAX_ACTIONS = 3
-PROPOSAL_ACTIONS = ("run_pair", "create_capture", "refresh_anime_mapping", "test_connections")
+PROPOSAL_ACTIONS = ("run_pair", "create_capture", "create_backup", "refresh_anime_mapping", "test_connections")
 MAX_PROPOSALS = 3
 MAX_SOURCES = 3
 ACTIONS = (
@@ -86,6 +86,9 @@ ACTIONS = (
     "open_pairs",
     "open_scrobbler",
     "open_scheduling",
+    "open_backups",
+    "open_tracker",
+    "open_playlists",
 )
 SCOPES = {
     "all": "",
@@ -129,6 +132,9 @@ SYSTEM_PROMPT = (
     "Use suggest_actions with open_mappings to let the user open the full overview. "
     "For Anime ID custom mappings, use list_anime_overrides and suggest_actions with open_anime_overrides. "
     "These user-created rules are separate from Editor mappings and the downloaded anime mapping database. "
+    "For backups use get_backup_status and open_backups, for the CrossWatch Tracker use get_tracker_status and open_tracker, "
+    "and for playlists use get_playlists_status and open_playlists. "
+    "For Continue watching use get_progress_status, and for Maintenance tools jobs use get_maintenance_status. "
     "Include whether each rule is enabled, its source and target IDs, and any season or episode range and offset. "
     "For how-to questions use search_docs and read_doc, and give the address of the wiki page you used. "
     "When the wiki does not explain something, use search_code and read_code to read the CrossWatch source code of this installed "
@@ -142,7 +148,9 @@ SYSTEM_PROMPT = (
     "When a next step inside CrossWatch would help, call suggest_actions with at most three actions. They appear as buttons "
     "the user can click. Buttons never replace your answer, always write the answer as well. "
     "Only suggest run_sync when a new sync would actually help. "
-    "You can propose run_pair, create_capture, refresh_anime_mapping and test_connections with propose_action. "
+    "You can propose run_pair, create_capture, create_backup, refresh_anime_mapping and test_connections with propose_action. "
+    "create_backup makes a full backup with the saved Backup & Restore settings. Propose it before a restore, a tracker clear "
+    "or other changes that are hard to undo. "
     "When the user asks you to run a sync, use list_pairs to identify the intended enabled pair, then call propose_action "
     "with action run_pair and its exact pair_id. If the intended pair is unclear, ask which pair they want. "
     "For an explicit request to sync all pairs, call suggest_actions with run_sync. "

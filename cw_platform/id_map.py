@@ -4,10 +4,11 @@
 from __future__ import annotations
 
 import re
-import os
 from collections.abc import Iterable, Mapping
 from itertools import chain
 from typing import Any
+
+from cw_platform import capture_mode
 
 # Policy
 ID_KEYS: tuple[str, ...] = (
@@ -57,10 +58,7 @@ _CAPTURE_PROVIDER_TO_IDKEY: dict[str, str] = {
 }
 
 def _capture_prefer_id_key() -> str | None:
-    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
-    if v not in ("1", "true", "yes", "on"):
-        return None
-    prov = str(os.getenv("CW_CAPTURE_PROVIDER") or "").strip().upper()
+    prov = capture_mode.provider()
     if not prov:
         return None
     return _CAPTURE_PROVIDER_TO_IDKEY.get(prov)

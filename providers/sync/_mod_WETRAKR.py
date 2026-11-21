@@ -8,6 +8,7 @@ import time
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from cw_platform import capture_mode
 from cw_platform.provider_instances import list_instance_ids, normalize_instance_id
 from cw_platform.run_control import raise_if_cancelled
 from providers.auth import _auth_WETRAKR as auth
@@ -60,9 +61,14 @@ def _current_instance_id(cfg: Mapping[str, Any]) -> str:
     if isinstance(hint, Mapping) and hint.get("instance"):
         return normalize_instance_id(hint["instance"])
     for prefix in ("CW_PROBE", "CW_CAPTURE", "CW_PAIR_SRC", "CW_PAIR_DST"):
-        name = os.getenv(prefix + "_PROVIDER") if prefix in ("CW_PROBE", "CW_CAPTURE") else os.getenv(prefix)
+        if prefix == "CW_CAPTURE":
+            scope = capture_mode.current()
+            name, instance = (scope.provider, scope.instance) if scope is not None else ("", "")
+        else:
+            name = os.getenv(prefix + "_PROVIDER") if prefix == "CW_PROBE" else os.getenv(prefix)
+            instance = os.getenv(prefix + "_INSTANCE")
         if str(name or "").upper() == "WETRAKR":
-            return normalize_instance_id(os.getenv(prefix + "_INSTANCE"))
+            return normalize_instance_id(instance)
     block = cfg.get("wetrakr")
     if isinstance(block, Mapping) and "instances" not in block and block.get("access_token"):
         full = auth._load_full_cfg()
@@ -139,8 +145,7 @@ class WETRAKRModule:
             total = None
             try:
                 raise_if_cancelled()
-                capture = str(os.getenv("CW_CAPTURE_MODE") or "").lower() in ("1", "true", "yes", "on")
-                capture = capture and str(os.getenv("CW_CAPTURE_PROVIDER") or "").upper() == "WETRAKR"
+                capture = capture_mode.provider() == "WETRAKR"
                 result = module.build_index(self, force=bool(kwargs.get("force_refresh")) or capture)
                 raise_if_cancelled()
                 commit_snapshot(self)

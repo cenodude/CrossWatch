@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, NoReturn
 
+from cw_platform import capture_mode
 from cw_platform.app_version import user_agent as http_user_agent
 from cw_platform.id_map import minimal as id_minimal, canonical_key
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
@@ -86,8 +87,7 @@ def _pair_scope() -> str | None:
 
 
 def _is_capture_mode() -> bool:
-    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
-    return v in ("1", "true", "yes", "on")
+    return capture_mode.active("TRAKT")
 
 
 def _safe_scope(value: str) -> str:

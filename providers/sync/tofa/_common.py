@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -13,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 from urllib.parse import quote
 
+from cw_platform import capture_mode
 from cw_platform.run_control import raise_if_cancelled
 
 import requests
@@ -109,7 +109,7 @@ def server_scope(adapter: Any) -> str:
 
 
 def is_capture_mode() -> bool:
-    return str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower() in {"1", "true", "yes", "on"}
+    return capture_mode.active("TOFA")
 
 
 def account_scope(adapter: Any) -> str:
