@@ -586,7 +586,7 @@ class SiloWatchService:
                 account=name or None,
                 server_uuid=None,
                 session_key=None,
-                raw={"_cw_session_identity": {"user_id": pid, "name": name}, "_cw_manual_mark": True},
+                raw={"_cw_session_identity": {"user_id": pid, "name": name}, "_cw_manual_mark": True, "_cw_user_probe": True},
             )
             try:
                 allowed = bool(accepts(probe)) if callable(accepts) else True

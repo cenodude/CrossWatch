@@ -62,6 +62,7 @@ URL_REMOVE_PLAYS = f"{BASE}/sync/watched/plays/remove"
 
 PLAY_REPORT_MAX_ITEMS = 100
 PLAY_MERGE_WINDOW_SECONDS = 12 * 60 * 60
+EPISODE_ID_KEYS = ("tmdb", "tvdb")
 
 IMDB_RE = re.compile(r'^tt\d+$')
 EP_TAG_RE = re.compile(r'^S\d{2}E\d{2}$')
@@ -1421,8 +1422,8 @@ def _stable_show_key(ids: Mapping[str, Any]) -> str:
     return json.dumps(keep, sort_keys=True)
 
 
-def _tmdb_id_value(ids: Mapping[str, Any]) -> int | None:
-    raw = ids.get("tmdb") if isinstance(ids, Mapping) else None
+def _id_value(ids: Any, key: str) -> int | None:
+    raw = ids.get(key) if isinstance(ids, Mapping) else None
     if raw in (None, ""):
         return None
     try:
@@ -1432,21 +1433,28 @@ def _tmdb_id_value(ids: Mapping[str, Any]) -> int | None:
     return value if value > 0 else None
 
 
-def _flat_episode_tmdb_row(
-    item: Mapping[str, Any],
+def _own_episode_ids(ids: Any, show_ids: Any, *, require_show: bool) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for key in EPISODE_ID_KEYS:
+        value = _id_value(ids, key)
+        if value is None:
+            continue
+        show_value = _id_value(show_ids, key)
+        if show_value == value or (require_show and show_value is None):
+            continue
+        out[key] = value
+    return out
+
+
+def _flat_episode_row(
     ids: Mapping[str, Any],
     show_ids: Mapping[str, Any],
     watched_iso: str | None,
 ) -> dict[str, Any] | None:
-    tmdb = _tmdb_id_value(ids)
-    if tmdb is None:
+    own = _own_episode_ids(ids, show_ids, require_show=True)
+    if not own:
         return None
-
-    show_tmdb = _tmdb_id_value(show_ids)
-    if show_tmdb is None or show_tmdb == tmdb:
-        return None
-
-    row: dict[str, Any] = {"ids": {"tmdb": tmdb}}
+    row: dict[str, Any] = {"ids": own}
     if watched_iso:
         row["watched_at"] = watched_iso
     return row
@@ -1694,7 +1702,7 @@ def _bucketize(adapter: Any, items: Iterable[Mapping[str, Any]], *, unwatch: boo
             continue
 
         if typ == "episode":
-            flat_episode = _flat_episode_tmdb_row(m, ids, show_ids, watched_iso)
+            flat_episode = _flat_episode_row(ids, show_ids, watched_iso)
             if flat_episode is not None:
                 episodes.append(flat_episode)
                 acc = {
@@ -2000,6 +2008,10 @@ def _same_event_candidate(adapter: Any, left: Mapping[str, Any], right: Mapping[
     if left_ids and right_ids and not (left_ids & right_ids):
         return False
     if _type_norm(left.get("type")) == "episode":
+        left_own = _id_aliases(_own_episode_ids(left.get("ids"), left.get("show_ids"), require_show=False))
+        right_own = _id_aliases(_own_episode_ids(right.get("ids"), right.get("show_ids"), require_show=False))
+        if left_own & right_own:
+            return True
         for field in ("season", "episode"):
             lv = _as_int(left.get(field))
             rv = _as_int(right.get(field))
@@ -2092,21 +2104,20 @@ def _write(
     confirmed_keys: list[str] = []
     unresolved: list[dict[str, Any]] = []
     matched_accepted: set[int] = set()
-    accepted_episode_tmdb: dict[str, dict[str, Any]] = {}
+    accepted_episode_ids: dict[str, dict[str, Any]] = {}
     for item in accepted:
         if _type_norm(item.get("type")) != "episode":
             continue
-        raw_ids = item.get("ids")
-        tmdb = _tmdb_id_value(raw_ids if isinstance(raw_ids, Mapping) else {})
-        if tmdb is not None:
-            accepted_episode_tmdb.setdefault(str(tmdb), dict(item))
+        for key, value in _own_episode_ids(item.get("ids"), item.get("show_ids"), require_show=False).items():
+            accepted_episode_ids.setdefault(f"{key}:{value}", dict(item))
 
     def _episode_attempt_for_row(row: Mapping[str, Any]) -> dict[str, Any] | None:
         ids = row.get("ids") if isinstance(row.get("ids"), Mapping) else row
-        tmdb = _tmdb_id_value(ids if isinstance(ids, Mapping) else {})
-        if tmdb is None:
-            return None
-        return accepted_episode_tmdb.get(str(tmdb))
+        for key in EPISODE_ID_KEYS:
+            value = _id_value(ids, key)
+            if value is not None and f"{key}:{value}" in accepted_episode_ids:
+                return accepted_episode_ids[f"{key}:{value}"]
+        return None
 
     def _unresolved_for_sent(bucket_name: str, sent: Mapping[str, Any], hint: str) -> list[dict[str, Any]]:
         ids = sent.get("ids") if isinstance(sent.get("ids"), Mapping) else {}
@@ -2180,6 +2191,15 @@ def _write(
                         continue
                 for item_nf in _items_for_not_found(row_nf, kind, payload_rows):
                     unresolved.append(_unresolved_entry(item_nf, "not_found"))
+
+        errors = data.get("errors")
+        for row_err in errors if isinstance(errors, list) else []:
+            if not isinstance(row_err, Mapping):
+                continue
+            err_kind = _type_norm(row_err.get("type"))
+            err_bucket = {"movie": "movies", "episode": "episodes"}.get(err_kind, "shows")
+            _warn("write_rejected", bucket=err_bucket, error=str(row_err.get("error") or "")[:160], item=id_minimal({"type": err_kind or "unknown", "ids": _ids_pick(row_err)}))
+            unresolved.extend(_unresolved_for_sent(err_bucket, row_err, "mdblist_error"))
 
         if event_mode:
             play_applied = _apply_play_report(data)

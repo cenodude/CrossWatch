@@ -192,7 +192,7 @@ def _emit(logger: Callable[..., None] | Any | None, msg: str, level: str = "INFO
         pass
 
 
-def _ensure_scrobble(cfg: dict[str, Any]) -> dict[str, Any]:
+def _ensure_scrobble(cfg: dict[str, Any], *, persist: bool = True) -> dict[str, Any]:
     changed = False
     sc = cfg.setdefault("scrobble", {})
     wh = sc.setdefault("webhook", {})
@@ -246,7 +246,7 @@ def _ensure_scrobble(cfg: dict[str, Any]) -> dict[str, Any]:
             trk[k] = dv
             changed = True
 
-    if changed:
+    if changed and persist:
         _save_config(cfg)
     return cfg
 
@@ -1106,7 +1106,7 @@ def process_webhook(
     cfg: dict[str, Any] | None = None,
     provider_instance: str | None = None,
 ) -> dict[str, Any]:
-    cfg = _ensure_scrobble(cfg if isinstance(cfg, dict) else _load_config())
+    cfg = _ensure_scrobble(cfg, persist=False) if isinstance(cfg, dict) else _ensure_scrobble(_load_config())
     provider_instance = str(provider_instance or "default").strip() or "default"
 
     sc = cfg.get("scrobble") or {}

@@ -21,7 +21,7 @@ from providers.sync.silo import _ratings as feat_ratings
 from providers.sync.silo import _watchlist as feat_watchlist
 from providers.sync.silo._common import label_silo, problem_of, shared_limiter, silo_request
 
-__VERSION__ = "0.2"
+__VERSION__ = "0.3"
 _MANUAL_RATING_SCALE = {"step": 1}
 __all__ = ["get_manifest", "SILOModule", "OPS", "feat_collection", "feat_history", "feat_playlists", "feat_progress", "feat_ratings", "feat_watchlist"]
 
