@@ -209,7 +209,7 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     items = dict(state.get("items") or {})
 
     changed = 0
-    if not _capture_mode():
+    if not _capture_mode() and not readonly(adapter):
         for v in items.values():
             if not isinstance(v, dict):
                 continue

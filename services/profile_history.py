@@ -8,7 +8,7 @@ from collections import OrderedDict
 from datetime import datetime, timezone, tzinfo
 from typing import Any, Callable, Mapping
 
-from cw_platform.history_events import history_epoch_from_item, history_epoch_from_key, is_history_event_key
+from cw_platform.history_events import base_key_from_history_event, history_epoch_from_item, history_epoch_from_key, is_history_event_key
 from cw_platform.profile_preferences import display_timezone
 
 from services import dashboard_widgets as dw
@@ -576,9 +576,9 @@ def title_plays(state: Any, tracker_items: Any, user_filter: Mapping[str, Any] |
 
 def _title_watches(state: Any, tracker_items: Any, user_filter: Mapping[str, Any] | None, tmdb: Any) -> list[tuple[int, tuple[str, str], str, dict[str, Any]]]:
     wanted = str(tmdb or "").strip()
-    found: list[tuple[int, tuple[str, str], str, dict[str, Any]]] = []
+    found: dict[tuple[Any, ...], tuple[int, tuple[str, str], str, dict[str, Any]]] = {}
     if not wanted:
-        return found
+        return []
 
     def add(raw_key: Any, item: dict[str, Any], sources: list[dict[str, str]]) -> None:
         if dw._media_type(item) != "movie" or str(dw._tmdb_id(item) or "").strip() != wanted:
@@ -592,7 +592,10 @@ def _title_watches(state: Any, tracker_items: Any, user_filter: Mapping[str, Any
             if epoch <= 0:
                 return
         for endpoint in _row_endpoints({"sources": sources}):
-            found.append((epoch, endpoint, str(raw_key), item))
+            watch = (endpoint, epoch) if epoch else (endpoint, 0, base_key_from_history_event(str(raw_key)))
+            kept = found.get(watch)
+            if kept is None or (is_history_event_key(str(raw_key)) and not is_history_event_key(kept[2])):
+                found[watch] = (epoch, endpoint, str(raw_key), item)
 
     for raw_key, raw_item in (_resolve(tracker_items) or {}).items():
         item = dw._unwrap_history_item(raw_item)
@@ -603,7 +606,7 @@ def _title_watches(state: Any, tracker_items: Any, user_filter: Mapping[str, Any
         ref = dw._provider_ref(provider, instance)
         for raw_key, raw_item in dw._feature_items(block, "history").items():
             add(raw_key, dw._unwrap_history_item(raw_item), [ref])
-    return found
+    return list(found.values())
 
 
 def title_play_summary(state: Any, tracker_items: Any, user_filter: Mapping[str, Any] | None, tmdb: Any) -> dict[str, Any]:

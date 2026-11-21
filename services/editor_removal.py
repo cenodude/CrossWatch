@@ -1,5 +1,5 @@
 # services/editor_removal.py
-# CrossWatch - Selective removal of records known to pair sync baselines or the viewed CrossWatch tracker
+# CrossWatch - Selective removal of records known to pair sync baselines or the CrossWatch trackers
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
@@ -263,7 +263,8 @@ def _plan(payload, request):
     found_pair = not pair_id
     # Reuse labels and configured-instance filtering from Send. The baseline,
     # rather than provider discovery or the global inventory, grants eligibility,
-    # unless the caller asks for a live check of specific accounts.
+    # unless the caller asks for a live check of specific accounts or the account
+    # is a local CrossWatch tracker.
     available = {(row["provider"], row["instance"]): row
                  for row in api._filter_targets_for_request(cfg, request, api._editor_send_targets(cfg, feature))}
     for index, pair in enumerate(cfg.get("pairs") or [], 1):
@@ -335,6 +336,13 @@ def _plan(payload, request):
         if len(targets.get(identity, {}).get("rows", ())) >= len(selected):
             continue
         _add_live_records(cfg, feature, selected, targets, available[identity], same_account=identity == tracker)
+    checked = set(_live_checks(payload)) | ({tracker} if source == "CROSSWATCH" else set())
+    for identity in sorted(available) if not pair_id else ():
+        if identity[0] != "CROSSWATCH" or identity in checked or not user_can_access_instance(cfg, user, *identity):
+            continue
+        if len(targets.get(identity, {}).get("rows", ())) >= len(selected):
+            continue
+        _add_live_records(cfg, feature, selected, targets, available[identity], same_account=False)
     rows = sorted(targets.values(), key=lambda t: (t["display"].casefold(), t["instance"]))
     signature = [(t["provider"], t["instance"], t["records"], t["viewings"]) for t in rows]
     digest = hashlib.sha256(json.dumps([feature, pair_id, signature], sort_keys=True, default=str).encode()).hexdigest()
@@ -649,6 +657,40 @@ def _remove_direct_target(cfg, feature, identity, selected):
                 confirmed_keys=[key for key, _ in removed], unresolved_keys=unresolved)
 
 
+def _clear_tracker_leftovers(cfg, feature, identity, selected):
+    from api import editorAPI as api
+    from providers.sync.crosswatch._common import pair_scoped
+    from services.tracker_inventory import _tracker_root
+
+    provider, instance = identity
+    titles = [(key, item) for key, item in selected if not _event(key, item)]
+    if provider != "CROSSWATCH" or pair_scoped() or not titles or len(titles) != len(selected):
+        return None
+    try:
+        if not (_tracker_root(cfg, instance) / "tracker.db").is_file():
+            return None
+        ops = load_sync_ops(provider)
+        view = config_with_history_rewatches(build_provider_config_view(cfg, provider, instance), False)
+        current = _RecordIndex(_read_current(ops, view, provider, instance, feature, fresh=True))
+        if any(current.matches(key, item, same_account=True) for key, item in titles):
+            return None
+        cached = _items(sqlite_state.load_state_features(api._STATE_BASE, {feature}), provider, instance, feature)
+    except Exception:
+        LOG.warning("Editor removal could not check the %s tracker for leftovers", instance, exc_info=True)
+        return None
+    stale = set()
+    for key, item in titles:
+        rows = {k for k, v in cached.items() if isinstance(v, Mapping) and _matches(key, item, k, v, same_account=True, include_viewings=feature == "history")}
+        if not rows or any(current.matches(base_key_from_history_event(k), _status_item(cached[k]), same_account=True) for k in rows):
+            return None
+        stale |= rows
+    sqlite_state.remove_baseline_items(api._STATE_BASE, provider, instance, feature, sorted(stale))
+    _emit("leftovers:cleared", dst=provider, instance=instance, feature=feature, count=len(stale))
+    keys = [key for key, _ in titles]
+    return dict(ok=True, attempted=len(keys), confirmed=len(keys), removed=len(keys), skipped=0, unresolved=0, errors=0,
+                confirmed_keys=keys, unresolved_keys=[])
+
+
 def remove_direct(payload, request=None):
     from api import editorAPI as api
 
@@ -675,6 +717,10 @@ def remove_direct(payload, request=None):
                 continue
             base = {k: entry[k] for k in ("provider", "instance", "label", "instance_label", "display")}
             if not _direct_supported(identity[0], feature, selected):
+                cleared = _clear_tracker_leftovers(cfg, feature, identity, selected)
+                if cleared:
+                    results.append(dict(base, ok=True, result=cleared))
+                    continue
                 results.append(dict(base, ok=False, error="needs_live_match", result={}))
                 continue
             try:

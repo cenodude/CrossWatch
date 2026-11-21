@@ -1087,11 +1087,13 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         from services.tracker_storage_maintenance import start as _start_tracker_storage
         from services.tracker_month import start as _start_tracker_month
         from services.tracker_automation import start as _start_tracker_automation
+        from services.tracker_inventory import start as _start_tracker_inventory
 
         _start_tracker_migration(load_config() or {}, _tracker_config_dir)
         _start_tracker_storage(load_config, _tracker_config_dir)
         _start_tracker_month(load_config, _tracker_config_dir)
         _start_tracker_automation(load_config, _tracker_config_dir)
+        _start_tracker_inventory(load_config)
     except Exception as e:
         try:
             _UIHostLogger("SYNC")(f"tracker database move startup error: {e}", level="ERROR")
@@ -1167,10 +1169,12 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
             from services.tracker_storage_maintenance import stop as _stop_tracker_storage
             from services.tracker_month import stop as _stop_tracker_month
             from services.tracker_automation import stop as _stop_tracker_automation
+            from services.tracker_inventory import stop as _stop_tracker_inventory
 
             _stop_tracker_storage()
             _stop_tracker_month()
             _stop_tracker_automation()
+            _stop_tracker_inventory()
         except Exception:
             pass
         try:

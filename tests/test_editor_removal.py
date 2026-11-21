@@ -662,11 +662,27 @@ def test_live_check_never_matches_server_local_ids_from_another_account(setup):
     assert not api.api_editor_remove_preview(payload, request=None)["providers"]
 
 
-def test_tracker_rows_are_only_offered_when_viewing_that_tracker(setup):
+@pytest.mark.parametrize("source", ["", "PLEX"])
+def test_tracker_rows_are_offered_from_other_views(setup, source):
+    ops = _tracker_only(setup, {"tmdb:1": movie(), "tmdb:2": movie(2)})
+    payload = dict(kind="history", items=[movie()], source_provider=source)
+    preview = api.api_editor_remove_preview(payload, request=None)
+    assert [(p["provider"], p["count"]) for p in preview["providers"]] == [("CROSSWATCH", 1)]
+    assert setup.execute(payload)["confirmed"] == 1
+    assert list(ops.live[("default", "history")]) == ["tmdb:2"]
+
+
+def test_tracker_rows_stay_out_of_a_single_pair_removal(setup):
     _tracker_only(setup, {"tmdb:1": movie()})
-    for source in ("", "PLEX"):
-        preview = api.api_editor_remove_preview(dict(kind="history", items=[movie()], source_provider=source), request=None)
-        assert not preview["providers"]
+    preview = api.api_editor_remove_preview(dict(kind="history", items=[movie()], pair_id="p1"), request=None)
+    assert not preview["providers"]
+
+
+def test_tracker_rows_never_match_server_local_ids_from_another_view(setup):
+    local = dict(type="movie", title="Local", ids={"plex": "123"})
+    _tracker_only(setup, {"plex:123": dict(local)})
+    preview = api.api_editor_remove_preview(dict(kind="history", items=[{**local, "key": "plex:123"}], source_provider="PLEX"), request=None)
+    assert not preview["providers"]
 
 
 def test_tracker_row_already_in_a_baseline_is_counted_once(setup):
