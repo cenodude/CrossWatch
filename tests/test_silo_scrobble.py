@@ -339,6 +339,33 @@ def test_sink_progress_and_already_watched_paths(server: FakeServer) -> None:
     assert sink.send(_event("pause", 50.0, "episode"), _sink_cfg())["reason"] == "destination_already_watched"
 
 
+def test_sink_progress_without_runtime_uses_file_duration(server: FakeServer) -> None:
+    from providers.scrobble.silo.sink import SiloSink
+
+    _catalog(server)
+    sent: list[Any] = []
+    server.on("GET", "/catalog/items/episode-tvdb-300-1-1", lambda kw: ResponseStub(200, {"content_id": "episode-tvdb-300-1-1", "runtime": None, "user_data": {}, "user_state": {"played": False}, "versions": [{"file_id": "f1", "duration": 2673}]}))
+    server.on("POST", "/sync/progress", lambda kw: sent.append(kw["json"]) or ResponseStub(200, {"items": [{"index": 0, "media_item_id": "episode-tvdb-300-1-1", "status": "success"}], "summary": {}}))
+    sink = SiloSink(cfg_provider=_sink_cfg, instance_id="default")
+
+    res = sink.send(_event("start", 10.0, "episode"), _sink_cfg())
+
+    assert res == {"ok": True}
+    assert sent[0]["items"][0] == {"media_item_id": "episode-tvdb-300-1-1", "duration_ms": 2_673_000, "position_ms": 267_300}
+
+
+def test_sink_without_any_duration_fails_start(server: FakeServer) -> None:
+    from providers.scrobble.silo.sink import SiloSink
+
+    _catalog(server)
+    server.on("GET", "/catalog/items/episode-tvdb-300-1-1", lambda kw: ResponseStub(200, {"content_id": "episode-tvdb-300-1-1", "runtime": None, "user_data": {}, "user_state": {"played": False}, "versions": []}))
+    sink = SiloSink(cfg_provider=_sink_cfg, instance_id="default")
+
+    res = sink.send(_event("start", 10.0, "episode"), _sink_cfg())
+
+    assert res.get("ok") is False
+    assert not [c for c in server.calls if c["method"] == "POST" and c["path"] == "/sync/progress"]
+
 def test_sink_unmatched_is_not_retryable(server: FakeServer) -> None:
     from providers.scrobble.scrobble import ScrobbleEvent
     from providers.scrobble.silo.sink import SiloSink

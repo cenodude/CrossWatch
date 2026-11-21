@@ -40,7 +40,7 @@ from providers.scrobble.manual_marks import (
 from providers.scrobble.routes import watch_poll_seconds
 from providers.scrobble.scrobble import Dispatcher, ScrobbleEvent, ScrobbleSink, mask_account
 from providers.scrobble.sources import source_enabled
-from providers.sync.silo._common import as_int, ids_from_content_id, item_detail, item_ids, library, safe_json, selected_libraries, series_id_of, session_content_id, silo_request
+from providers.sync.silo._common import as_int, ids_from_content_id, item_detail, item_ids, library, safe_json, seconds_of, selected_libraries, series_id_of, session_content_id, silo_request
 from providers.scrobble.routes import progress_step
 
 BASE_POLL_SECONDS = 10.0
@@ -656,8 +656,8 @@ class SiloWatchService:
             lookup = series if meta.get("media_type") == "episode" else cid
             detail = item_detail(self, lookup, feature="watch") if lookup else {}
             meta["title"] = str(detail.get("title") or "").strip() or None
-        seconds = as_int(row.get("duration_seconds"))
-        duration_ms = seconds * 1000 if seconds and seconds > 0 else None
+        seconds = seconds_of(row.get("duration_seconds"))
+        duration_ms = seconds * 1000 if seconds else None
         server = str(self._block(self._active_cfg()).get("server_url") or "")
         session = {
             "session_key": f"silo:{self._instance_id}:mark:{pid}:{cid}:{row.get('updated_at') or ''}",

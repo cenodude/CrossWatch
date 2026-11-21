@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import threading
 import time
@@ -848,6 +849,39 @@ def runtime_seconds(lib: Library, content_id: str) -> int:
     rec = lib.movies.get(content_id) or lib.episodes.get(content_id) or {}
     minutes = as_int(rec.get("runtime"))
     return minutes * 60 if minutes and minutes > 0 else 0
+
+
+def seconds_of(value: Any) -> int:
+    if value is None or isinstance(value, bool):
+        return 0
+    try:
+        seconds = float(str(value).strip())
+    except Exception:
+        return 0
+    return int(round(seconds)) if math.isfinite(seconds) and seconds > 0 else 0
+
+
+def detail_duration_seconds(detail: Mapping[str, Any]) -> int:
+    raw_data = detail.get("user_data")
+    data: Mapping[str, Any] = raw_data if isinstance(raw_data, Mapping) else {}
+    seconds = seconds_of(data.get("duration_seconds")) or seconds_of(detail.get("duration_seconds"))
+    if seconds:
+        return seconds
+    minutes = as_int(detail.get("runtime"))
+    if minutes and minutes > 0:
+        return minutes * 60
+    for version in detail.get("versions") or []:
+        seconds = seconds_of(version.get("duration")) if isinstance(version, Mapping) else 0
+        if seconds:
+            return seconds
+    return 0
+
+
+def item_duration_seconds(adapter: Any, lib: Library, content_id: str, *, feature: str) -> int:
+    seconds = runtime_seconds(lib, content_id)
+    if seconds:
+        return seconds
+    return detail_duration_seconds(item_detail(adapter, content_id, feature=feature))
 
 
 def chunks(rows: list[Any], size: int = WRITE_BATCH) -> list[list[Any]]:

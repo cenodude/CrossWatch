@@ -15,13 +15,13 @@ from ._common import (
     cfg_section,
     chunks,
     iso_z,
+    item_duration_seconds,
     key_of,
     library,
     minimal_for,
     pages,
     problem_of,
     resolve_item,
-    runtime_seconds,
     safe_json,
     silo_request,
     unresolved_entry,
@@ -62,11 +62,11 @@ def build_index(adapter: Any) -> dict[str, dict[str, Any]]:
     return collected
 
 
-def _duration_seconds(lib: Any, cid: str, item: Mapping[str, Any]) -> int:
+def _duration_seconds(adapter: Any, lib: Any, cid: str, item: Mapping[str, Any]) -> int:
     ms = as_int(item.get("duration_ms"))
     if ms and ms > 0:
         return int(ms / 1000)
-    return runtime_seconds(lib, cid)
+    return item_duration_seconds(adapter, lib, cid, feature=FEATURE)
 
 
 def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
@@ -98,7 +98,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             else:
                 unresolved.append(unresolved_entry(key, "missing_watched_at", item))
             continue
-        duration = _duration_seconds(lib, cid, item)
+        duration = _duration_seconds(adapter, lib, cid, item)
         if duration <= 0:
             _dbg(FEATURE, "item_unresolved_before_write", key=key, reason="missing_duration")
             unresolved.append(unresolved_entry(key, "missing_duration", item))
