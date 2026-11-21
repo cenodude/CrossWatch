@@ -46,6 +46,7 @@ from ._history import (
     _pms_find_in_guid_index as _hist_find_in_guid_index,
 )
 
+from cw_platform import capture_mode
 from cw_platform.id_map import canonical_key, minimal as id_minimal, ids_from
 
 _dbg, _info, _warn, _error, _log = make_logger("ratings")
@@ -586,7 +587,7 @@ def build_index(adapter: Any, limit: int | None = None) -> dict[str, dict[str, A
             if workers > 1 and len(rows) > 1:
                 executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="plex-ratings")
                 try:
-                    result_iter = executor.map(_process_rating_row, rows)
+                    result_iter = capture_mode.scoped_map(executor, _process_rating_row, rows)
                     for result in result_iter:
                         scanned += 1
                         if result:

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from cw_platform import capture_mode
 from cw_platform.anime_mapping.service import mapped_or_default_media_type
 from cw_platform.id_map import canonical_key, ids_from, minimal as id_minimal
 
@@ -29,8 +30,7 @@ def _pair_scope() -> str | None:
 
 
 def _is_capture_mode() -> bool:
-    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
-    return v in ("1", "true", "yes", "on")
+    return capture_mode.active("TMDB")
 
 
 def _safe_scope(value: str) -> str:

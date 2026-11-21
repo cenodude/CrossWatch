@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from cw_platform import capture_mode
 from cw_platform.id_map import ID_KEYS, canonical_key, ids_from, merge_ids, minimal as id_minimal
 from cw_platform.provider_instances import resolve_provider_block
 from providers.auth._auth_STREMIO import is_configured as auth_is_configured
@@ -28,7 +29,7 @@ _CINEMETA_WRITE_LOCK = threading.Lock()
 
 
 def is_capture_mode() -> bool:
-    return str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower() in {"1", "true", "yes", "on"}
+    return capture_mode.active("STREMIO")
 
 
 def cinemeta_cache_dir() -> Path | None:

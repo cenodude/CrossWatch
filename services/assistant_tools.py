@@ -9,10 +9,12 @@ from typing import Any
 from fastapi import HTTPException, Request
 from services import assistant_state
 from services import assistant_diagnostics
+from services import assistant_features
 
 TOOLS = {
     **assistant_state.TOOLS,
     **assistant_diagnostics.TOOLS,
+    **assistant_features.TOOLS,
     "list_anime_overrides": (
         "Read user-created Anime ID custom mappings from Settings > Metadata > Anime ID Mapping > Custom mappings. "
         "Includes enabled and disabled rules, source and target IDs, season and episode offsets. "
@@ -42,6 +44,8 @@ TOOLS = {
 def run(name: str, request: Request, args: dict[str, Any]) -> Any:
     if name in assistant_diagnostics.TOOLS:
         return assistant_diagnostics.run(name, request, args)
+    if name in assistant_features.TOOLS:
+        return assistant_features.run(name, request, args)
     if name in assistant_state.TOOLS:
         return assistant_state.run(name, request, args)
     if name == "list_anime_overrides":

@@ -9,6 +9,7 @@ import shutil
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from cw_platform import capture_mode
 from .._log import log as cw_log
 
 
@@ -23,8 +24,7 @@ def _pair_scope() -> str | None:
     return None
 
 def _is_capture_mode() -> bool:
-    v = str(os.getenv("CW_CAPTURE_MODE") or "").strip().lower()
-    return v in ("1", "true", "yes", "on")
+    return capture_mode.active("TAUTULLI")
 
 def _safe_scope(value: str) -> str:
     s = "".join(ch if (ch.isalnum() or ch in ("-", "_", ".")) else "_" for ch in str(value))

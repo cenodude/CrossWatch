@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from .._path_matching import path_fallback, resolve_path
 from . import _discover_history
+from cw_platform import capture_mode
 from cw_platform.interactive_reads import retained_read, replace_retained, replaying, use_review_reads
 
 from concurrent.futures import ThreadPoolExecutor
@@ -1501,7 +1502,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
         if workers > 1 and len(rows) > 1:
             executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="plex-history")
             try:
-                row_iter = executor.map(_process_history_row, rows)
+                row_iter = capture_mode.scoped_map(executor, _process_history_row, rows)
                 for i, result in enumerate(row_iter, start=1):
                     if prog:
                         prog.tick(i, total=total)
@@ -1538,7 +1539,7 @@ def build_index(adapter: Any, since: int | None = None, limit: int | None = None
                                   if (row.get("ids") or {}).get("plex")
                                   and str(row["ids"]["plex"]) not in cat.by_rk})
             with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="plex-history-state") as executor:
-                fetched = executor.map(lambda rk: _pms_fetch_metadata_row(adapter, rk, strict=True), rating_keys)
+                fetched = capture_mode.scoped_map(executor, lambda rk: _pms_fetch_metadata_row(adapter, rk, strict=True), rating_keys)
                 live_rows.update(zip(rating_keys, fetched))
         for saved in recorded.values():
             rk = str((saved.get("ids") or {}).get("plex") or "")
@@ -1881,7 +1882,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> tuple[int, list[dic
                 scrobble_ok = []
                 with ThreadPoolExecutor(max_workers=write_workers, thread_name_prefix="plex-scrobble") as ex:
                     for done_n, success in enumerate(
-                        ex.map(lambda t: _scrobble_with_date(srv, t[2], t[3]), to_scrobble), 1
+                        capture_mode.scoped_map(ex, lambda t: _scrobble_with_date(srv, t[2], t[3]), to_scrobble), 1
                     ):
                         scrobble_ok.append(success)
                         write_progress.tick(done_n)

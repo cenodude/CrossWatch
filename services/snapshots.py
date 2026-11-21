@@ -16,6 +16,7 @@ import re
 import time
 import uuid
 
+from cw_platform import capture_mode
 from cw_platform.config_base import CONFIG, load_config
 from cw_platform.modules_registry import load_sync_ops, state_read_features, sync_provider_names
 from cw_platform.provider_instances import (
@@ -546,36 +547,8 @@ def _build_index_capture_mode(
     ts: datetime,
     progress_id: str | None = None,
 ) -> Any:
-    if str(pid or "").strip().upper() == "CROSSWATCH":
-        from providers.sync.crosswatch._common import capture_scope
-
-        with capture_scope(True):
-            return _build_index_with_progress(ops, cfg_view, feat, progress_id)
-    prev: dict[str, str | None] = {
-        "CW_CAPTURE_MODE": os.environ.get("CW_CAPTURE_MODE"),
-        "CW_CAPTURE_PROVIDER": os.environ.get("CW_CAPTURE_PROVIDER"),
-        "CW_CAPTURE_INSTANCE": os.environ.get("CW_CAPTURE_INSTANCE"),
-        "CW_CAPTURE_FEATURE": os.environ.get("CW_CAPTURE_FEATURE"),
-        "CW_CAPTURE_ID": os.environ.get("CW_CAPTURE_ID"),
-        "CW_CAPTURE_PROGRESS_ID": os.environ.get("CW_CAPTURE_PROGRESS_ID"),
-    }
-    os.environ["CW_CAPTURE_MODE"] = "1"
-    os.environ["CW_CAPTURE_PROVIDER"] = str(pid or "").strip().upper()
-    os.environ["CW_CAPTURE_INSTANCE"] = normalize_instance_id(instance)
-    os.environ["CW_CAPTURE_FEATURE"] = str(feat or "").strip().lower()
-    os.environ["CW_CAPTURE_ID"] = ts.strftime("%Y%m%dT%H%M%SZ")
-    if progress_id:
-        os.environ["CW_CAPTURE_PROGRESS_ID"] = str(progress_id)
-    else:
-        os.environ.pop("CW_CAPTURE_PROGRESS_ID", None)
-    try:
+    with capture_mode.capture(pid, normalize_instance_id(instance), str(feat or ""), ts.strftime("%Y%m%dT%H%M%SZ"), str(progress_id or "")):
         return _build_index_with_progress(ops, cfg_view, feat, progress_id)
-    finally:
-        for key, value in prev.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
 
 
 @contextmanager
@@ -585,39 +558,13 @@ def _capture_mode_env(
     instance: str,
     feat: str,
 ) -> Iterator[None]:
-    if str(pid or "").strip().upper() == "CROSSWATCH":
-        from providers.sync.crosswatch._common import capture_scope
-
-        with capture_scope(True):
-            yield
-        return
-    prev: dict[str, str | None] = {
-        "CW_CAPTURE_MODE": os.environ.get("CW_CAPTURE_MODE"),
-        "CW_CAPTURE_PROVIDER": os.environ.get("CW_CAPTURE_PROVIDER"),
-        "CW_CAPTURE_INSTANCE": os.environ.get("CW_CAPTURE_INSTANCE"),
-        "CW_CAPTURE_FEATURE": os.environ.get("CW_CAPTURE_FEATURE"),
-        "CW_CAPTURE_ID": os.environ.get("CW_CAPTURE_ID"),
-    }
-    os.environ["CW_CAPTURE_MODE"] = "1"
-    os.environ["CW_CAPTURE_PROVIDER"] = str(pid or "").strip().upper()
-    os.environ["CW_CAPTURE_INSTANCE"] = normalize_instance_id(instance)
-    os.environ["CW_CAPTURE_FEATURE"] = str(feat or "").strip().lower()
-    os.environ["CW_CAPTURE_ID"] = "tools-clear"
-    try:
+    with capture_mode.capture(pid, normalize_instance_id(instance), feat, "tools-clear", capture_mode.progress_id()):
         yield
-    finally:
-        for key, value in prev.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
 
 
 @contextmanager
 def _crosswatch_write_env() -> Iterator[None]:
-    from providers.sync.crosswatch._common import capture_scope
-
-    with capture_scope(False):
+    with capture_mode.writes():
         yield
 
 

@@ -130,6 +130,12 @@ def _proposal(action: str, args: dict[str, Any]) -> dict[str, Any] | str:
         title = f"Create capture: {text(match.get('label') or provider)} {feature}"
         if instance != "default":
             title += f" ({instance})"
+    elif action == "create_backup":
+        from services.backup_manager import settings as backup_settings
+
+        if not backup_settings().get("configured"):
+            return "Backups are not set up yet. Tell the user to save their settings in Backup & Restore first and offer open_backups."
+        title = "Create backup"
     else:
         title = "Update anime mapping" if action == "refresh_anime_mapping" else "Test all connections"
     return {"action": action, "title": title[:MAX_FIELD_CHARS], "params": params}

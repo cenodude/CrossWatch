@@ -37,7 +37,10 @@ INSTRUCTIONS = (
     "For one missing or wrong item use search_events, get_item_events and get_analyzer_problems. "
     "Use list_sync_context and search_sync_items for saved account state, explain_sync_item for item evidence, "
     "list_saved_mappings and list_anime_overrides for user rules, compare_captures for saved changes, "
-    "get_scheduler_details for scheduling and list_sync_reviews for approvals. Saved state is not live provider state. "
+    "get_scheduler_details for scheduling and list_sync_reviews for approvals. "
+    "Use get_backup_status for backups, get_tracker_status for the CrossWatch Tracker, get_playlists_status for playlists, "
+    "get_progress_status for Continue watching and get_maintenance_status for maintenance jobs. "
+    "Saved state is not live provider state. "
     "Documentation: https://wiki.crosswatch.app/ (page index: https://wiki.crosswatch.app/llms.txt, "
     "docs MCP server: https://wiki.crosswatch.app/~gitbook/mcp)."
 )
