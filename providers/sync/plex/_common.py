@@ -11,6 +11,7 @@ import hashlib
 import os
 import re
 import shutil
+import tempfile
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -86,6 +87,38 @@ def read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
+def global_state_read(name: str) -> dict[str, Any]:
+    if _is_capture_mode():
+        return {}
+    try:
+        data = json.loads((STATE_DIR / name).read_text("utf-8") or "{}")
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def global_state_write(name: str, data: Mapping[str, Any]) -> None:
+    if _is_capture_mode():
+        return
+    tmp = None
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=STATE_DIR, prefix=name + ".",
+                                         suffix=".tmp", delete=False) as handle:
+            tmp = handle.name
+            json.dump(dict(data), handle, separators=(",", ":"))
+        os.replace(tmp, STATE_DIR / name)
+        tmp = None
+    except OSError:
+        pass
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def write_json(
     path: Path,
     data: Mapping[str, Any],
@@ -154,6 +187,69 @@ def configure_plex_context(
 
 DISCOVER = "https://discover.provider.plex.tv"
 METADATA = "https://metadata.provider.plex.tv"
+
+
+class PlexRateLimited(RuntimeError):
+    pass
+
+
+_CLOUD_LOCK = RLock()
+_CLOUD_BLOCKED_UNTIL = 0.0
+_CLOUD_LAST_WAIT = 0.0
+_CLOUD_WAIT: ContextVar[tuple[float, Callable[[float], None] | None, Callable[[], None] | None]] = ContextVar(
+    "plex_cloud_wait", default=(300.0, None, None))
+
+
+@contextmanager
+def cloud_wait_budget(seconds: float, *, on_wait: Callable[[float], None] | None = None,
+                      cancel: Callable[[], None] | None = None):
+    token = _CLOUD_WAIT.set((float(seconds), on_wait, cancel))
+    try:
+        yield
+    finally:
+        _CLOUD_WAIT.reset(token)
+
+
+def _retry_after(response: requests.Response) -> float:
+    try:
+        value = float(response.headers.get("Retry-After") or 60)
+    except (TypeError, ValueError):
+        value = 60.0
+    return max(1.0, value)
+
+
+def cloud_get(url: str, **kwargs: Any) -> requests.Response:
+    global _CLOUD_BLOCKED_UNTIL, _CLOUD_LAST_WAIT
+    budget, on_wait, cancel = _CLOUD_WAIT.get()
+    waited = 0.0
+    while True:
+        with _CLOUD_LOCK:
+            delay = _CLOUD_BLOCKED_UNTIL - time.time()
+        if delay > 0:
+            if waited + delay > budget:
+                raise PlexRateLimited("Plex is rate limiting requests; retry in a few minutes")
+            if on_wait:
+                on_wait(delay)
+            end = time.time() + delay
+            while time.time() < end:
+                (cancel or raise_if_cancelled)()
+                time.sleep(min(1.0, max(0.0, end - time.time())))
+            waited += delay
+            continue
+        response = requests.get(url, **kwargs)
+        if response.status_code != 429:
+            with _CLOUD_LOCK:
+                _CLOUD_LAST_WAIT = 0.0
+            return response
+        delay = _retry_after(response)
+        with _CLOUD_LOCK:
+            if _CLOUD_BLOCKED_UNTIL <= time.time():
+                if _CLOUD_LAST_WAIT and time.time() - _CLOUD_BLOCKED_UNTIL < 600:
+                    delay = max(delay, min(300.0, _CLOUD_LAST_WAIT * 1.5))
+                _CLOUD_LAST_WAIT = delay
+                _CLOUD_BLOCKED_UNTIL = time.time() + delay
+            delay = _CLOUD_BLOCKED_UNTIL - time.time()
+        _warn("cloud_rate_limited", host=urlsplit(url).netloc, wait_s=round(delay))
 
 
 _CLIENT_ID_LOCK: RLock = RLock()
@@ -825,6 +921,7 @@ _FBGUID_MEMO_DIRTY: bool = False
 
 def _fb_cache_flush() -> None:
     global _FBGUID_MEMO_DIRTY
+    cloud_ids_flush()
     if not _FBGUID_MEMO_DIRTY:
         return
     _fb_cache_save()
@@ -844,7 +941,7 @@ def _metadata_request(base: str, rating_key: str, token: str, *, session: Any = 
     source = "meta" if cloud else "pms"
     if not cloud and session is None and base.rstrip("/") == plex_context().get("baseurl"):
         session = plex_context().get("session")
-    get = requests.get if cloud or session is None else session.get
+    get = cloud_get if cloud else (requests.get if session is None else session.get)
     try:
         response = get(
             f"{base.rstrip('/')}/library/metadata/{rating_key}",
@@ -910,6 +1007,8 @@ def _hydrate_show_ids_from_episode_rk(token: str | None, episode_rk: str | None)
             ids = _parse(r)
             _EP_SHOW_IDS_CACHE[key] = dict(ids)
             return dict(ids)
+        except (PlexRateLimited, InterruptedError):
+            raise
         except Exception:
             continue
 
@@ -966,6 +1065,62 @@ def _hydrate_show_ids_from_pms(obj: Any) -> dict[str, str]:
 _GUID_CACHE: dict[str, dict[str, str]] = {}
 _HYDRATE_404: set[str] = set()
 _HYDRATE_LOCK: RLock = RLock()
+_CLOUD_IDS_NAME = "plex_cloud_ids.json"
+_CLOUD_IDS_VERSION = 1
+_CLOUD_IDS_TTL = 14 * 86400
+_CLOUD_IDS_MISS_TTL = 86400
+_CLOUD_IDS_SAVE_EVERY = 15
+_CLOUD_IDS: dict[str, dict[str, Any]] | None = None
+_CLOUD_IDS_DIRTY = False
+_CLOUD_IDS_SAVED = 0.0
+
+
+def _cloud_ids_fresh(entry: Any, now: float) -> bool:
+    if not isinstance(entry, dict) or not isinstance(entry.get("at"), (int, float)) or not isinstance(entry.get("ids"), dict):
+        return False
+    return now - float(entry["at"]) < (_CLOUD_IDS_TTL if entry["ids"] else _CLOUD_IDS_MISS_TTL)
+
+
+def _cloud_ids_entries() -> dict[str, dict[str, Any]]:
+    global _CLOUD_IDS
+    if _CLOUD_IDS is None:
+        data = global_state_read(_CLOUD_IDS_NAME)
+        items = data.get("items") if data.get("version") == _CLOUD_IDS_VERSION else None
+        now = time.time()
+        _CLOUD_IDS = {str(k): v for k, v in items.items() if _cloud_ids_fresh(v, now)} if isinstance(items, dict) else {}
+    return _CLOUD_IDS
+
+
+def cloud_ids_get(rating_key: str) -> dict[str, str] | None:
+    if _is_capture_mode():
+        return None
+    with _HYDRATE_LOCK:
+        entry = _cloud_ids_entries().get(rating_key)
+        return {str(k): str(v) for k, v in entry["ids"].items()} if entry and _cloud_ids_fresh(entry, time.time()) else None
+
+
+def cloud_ids_put(rating_key: str, ids: Mapping[str, Any]) -> None:
+    global _CLOUD_IDS_DIRTY
+    if _is_capture_mode():
+        return
+    with _HYDRATE_LOCK:
+        _cloud_ids_entries()[rating_key] = {"at": time.time(), "ids": {str(k): str(v) for k, v in ids.items() if v}}
+        _CLOUD_IDS_DIRTY = True
+    cloud_ids_flush(force=False)
+
+
+def cloud_ids_flush(*, force: bool = True) -> None:
+    global _CLOUD_IDS_DIRTY, _CLOUD_IDS_SAVED
+    with _HYDRATE_LOCK:
+        if not _CLOUD_IDS_DIRTY or _CLOUD_IDS is None:
+            return
+        if not force and time.time() - _CLOUD_IDS_SAVED < _CLOUD_IDS_SAVE_EVERY:
+            return
+        now = time.time()
+        data = {"version": _CLOUD_IDS_VERSION, "items": {k: v for k, v in _CLOUD_IDS.items() if _cloud_ids_fresh(v, now)}}
+        _CLOUD_IDS_DIRTY = False
+        _CLOUD_IDS_SAVED = now
+    global_state_write(_CLOUD_IDS_NAME, data)
 
 
 def _xml_to_container(xml_text: str) -> Mapping[str, Any]:
@@ -1094,17 +1249,31 @@ def hydrate_external_ids(token: str | None, rating_key: str | None) -> dict[str,
 
     for target, kind in bases:
         try:
+            if kind == "meta":
+                stored = cloud_ids_get(rk)
+                if stored is not None:
+                    with _HYDRATE_LOCK:
+                        _GUID_CACHE[key] = stored
+                        if not stored:
+                            _HYDRATE_404.add(key)
+                    return stored
             r = _metadata_request(target, rk, cloud_token if kind == "meta" else token)
             if kind == "meta":
                 meta_status = r.status_code
+                if r.status_code == 404:
+                    cloud_ids_put(rk, {})
             if r.status_code == 401:
                 raise RuntimeError("Unauthorized (bad Plex token)")
             if not r.ok:
                 continue
             ids = _parse_response(r)
+            if kind == "meta":
+                cloud_ids_put(rk, ids)
             with _HYDRATE_LOCK:
                 _GUID_CACHE[key] = ids
             return ids
+        except (PlexRateLimited, InterruptedError):
+            raise
         except Exception as e:
             last_err = str(e)
             continue
@@ -1875,7 +2044,7 @@ def _discover_search_title(
                 if st:
                     params["searchTypes"] = st
                 try:
-                    r = requests.get(
+                    r = cloud_get(
                         f"{DISCOVER}/library/search",
                         headers=_hdrs(),
                         params=params,
@@ -1885,6 +2054,8 @@ def _discover_search_title(
                         rows2 = _collect_rows(r.json())
                         if rows2:
                             rows.extend(rows2)
+                except (PlexRateLimited, InterruptedError):
+                    raise
                 except Exception:
                     continue
             return rows
@@ -1892,7 +2063,7 @@ def _discover_search_title(
         def _search_v1(q: str) -> list[Mapping[str, Any]]:
             try:
                 params = {"query": q, "limit": max(50, int(limit)), "includeMeta": 1}
-                r = requests.get(
+                r = cloud_get(
                     f"{DISCOVER}/hubs/search",
                     headers=_hdrs(),
                     params=params,
@@ -1900,6 +2071,8 @@ def _discover_search_title(
                 )
                 if r.ok and "json" in (r.headers.get("content-type", "").lower()):
                     return _collect_rows(r.json())
+            except (PlexRateLimited, InterruptedError):
+                raise
             except Exception:
                 pass
             return []
@@ -1909,7 +2082,7 @@ def _discover_search_title(
                 params = {"title": q, "type": 1 if kind == "movie" else 2, "includeGuids": 1}
                 if kind == "movie" and year is not None:
                     params["year"] = year
-                r = requests.get(
+                r = cloud_get(
                     f"{METADATA}/library/metadata/matches",
                     headers=_hdrs(),
                     params=params,
@@ -1917,6 +2090,8 @@ def _discover_search_title(
                 )
                 if r.ok and "json" in (r.headers.get("content-type", "").lower()):
                     return _collect_rows(r.json())
+            except (PlexRateLimited, InterruptedError):
+                raise
             except Exception:
                 pass
             return []
@@ -2014,7 +2189,7 @@ def _discover_search_title(
                 if yb is not None and abs(yb - year) > 1:
                     return None
         return best
-    except InterruptedError:
+    except (InterruptedError, PlexRateLimited):
         raise
     except Exception:
         return None

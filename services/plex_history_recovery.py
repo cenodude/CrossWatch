@@ -33,6 +33,7 @@ from cw_platform.provider_instances import build_provider_config_view, list_inst
 from . import importer
 
 router = APIRouter(prefix="/api/import/plex-recovery", tags=["import"])
+RATE_WAIT_BUDGET = 900
 LOCK = threading.RLock()
 JOBS: dict[str, Job] = {}
 UPLOADS: dict[str, dict[str, Any]] = {}
@@ -351,6 +352,10 @@ def _shape(job, cfg):
 
 
 def _scan_error(job, error):
+    from providers.sync.plex._common import PlexRateLimited
+
+    if isinstance(error, PlexRateLimited):
+        return "Recovery could not finish. Plex kept limiting the lookups. Wait a few minutes, then retry. Nothing was imported."
     if job.database:
         from providers.sync.plex._recovery_db import RecoveryError
         if isinstance(error, RecoveryError):
@@ -424,7 +429,7 @@ def _scan_database(job, cfg, adapter, progress, check_cancel):
 def _scan(job, cfg):
     from api import syncAPI
     from providers.sync._mod_PLEX import PLEXModule
-    from providers.sync.plex._common import isolated_plex_context
+    from providers.sync.plex._common import cloud_wait_budget, isolated_plex_context
     from providers.sync.plex._recovery import scan
 
     def check_cancel():
@@ -439,9 +444,13 @@ def _scan(job, cfg):
                 if activity.get("event"):
                     job.recent = [*job.recent, dict(activity["event"])][-8:]
 
+    def waiting(seconds):
+        with LOCK:
+            job.message = f"Plex is limiting lookups. Waiting {max(1, round(seconds))}s, then continuing."
+
     adapter = None
     try:
-        with isolated_plex_context():
+        with isolated_plex_context(), cloud_wait_budget(RATE_WAIT_BUDGET, on_wait=waiting, cancel=check_cancel):
             check_cancel()
             if job.tautulli:
                 raw = _scan_tautulli(job, cfg, progress, check_cancel)

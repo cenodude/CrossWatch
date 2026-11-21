@@ -361,3 +361,44 @@ def test_interactive_review_and_apply_reuse_playlist_snapshots(world, monkeypatc
         assert all(ops.get_playlist_snapshot.call_count == 1 for ops in providers.values())
     finally:
         reads.close()
+
+
+class RefusingOps(FakeOps):
+    refused = "tmdb:2"
+
+    def create_playlist(self, cfg, name, *, media_type=None, items=None, instance=None, dry_run=False):
+        kept = [x for x in (items or []) if canonical_key(x) != self.refused]
+        res = super().create_playlist(cfg, name, media_type=media_type, items=kept, instance=instance, dry_run=dry_run)
+        res.extra = {"seed_unresolved_keys": [self.refused]}
+        return res
+
+    def add_playlist_items(self, cfg, playlist_id, items, *, instance=None, dry_run=False):
+        refused = [x for x in items if canonical_key(x) == self.refused]
+        res = super().add_playlist_items(cfg, playlist_id, [x for x in items if x not in refused], instance=instance)
+        res["unresolved"] = [{"item": dict(x), "key": self.refused, "hint": "plex_cloud_not_on_discover"} for x in refused]
+        return res
+
+
+def test_a_refused_seed_item_is_reported_and_the_new_playlist_is_kept(world) -> None:
+    cfg, src, dst, provs = world
+    provs["PLEX"] = RefusingOps("PLEX", dst)
+
+    res = R.run_mapping(cfg, R.resolve_mapping_by_id(cfg, "MAP-01"), providers=provs)
+
+    pid = provs["PLEX"].created[0]["id"]
+    assert R.get_endpoint(cfg, "EP-02")["playlist_id"] == pid
+    assert {canonical_key(m) for m in dst[pid]["items"]} == {"tmdb:1", "tmdb:3"}
+    assert [row["key"] for row in res["unresolved"]] == ["tmdb:2"]
+    R.run_mapping(cfg, R.resolve_mapping_by_id(cfg, "MAP-01"), providers=provs)
+    assert len(provs["PLEX"].created) == 1
+
+
+def test_refused_seed_items_are_not_counted_as_seeded(world) -> None:
+    cfg, src, dst, provs = world
+    provs["PLEX"] = RefusingOps("PLEX", dst)
+    mapping = R.resolve_mapping_by_id(cfg, "MAP-01")
+
+    _pid, seeded = R._materialize_pending(provs, cfg, mapping, mapping["target"], [PlaylistItem.from_media(_movie(n)) for n in (1, 2, 3)],
+                                          materialize=True)
+
+    assert seeded == {"tmdb:1", "tmdb:3"}

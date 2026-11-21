@@ -14,6 +14,7 @@ from cw_platform.id_map import canonical_key, minimal
 from cw_platform.playlists import PlaylistAuthError, PlaylistItem, PlaylistResource, PlaylistSnapshot, PlaylistUnavailableError
 from cw_platform.run_control import raise_if_cancelled
 from . import _common as common
+from .._log import log as cw_log
 
 COMMUNITY = "https://community.plex.tv/api"
 PREFIX = "cloud:"
@@ -30,6 +31,14 @@ EDIT = "mutation CrossWatchEditList($id: ID!, $input: EditCustomListItemsInput!)
 
 class PlexListError(PlaylistUnavailableError):
     pass
+
+
+class PlexListRejected(PlexListError):
+    pass
+
+
+def _warn(event: str, **fields: Any) -> None:
+    cw_log("PLEX", "playlists", "warn", event, **fields)
 
 
 def available(adapter: Any) -> bool:
@@ -85,7 +94,17 @@ class Client:
 
     def gql(self, query: str, variables: Mapping[str, Any]) -> Mapping[str, Any]:
         data = self.request("POST", COMMUNITY, json={"query": query, "variables": dict(variables)})
-        if data.get("errors") or not isinstance(data.get("data"), Mapping):
+        errors = data.get("errors")
+        if errors:
+            rows = [row for row in errors if isinstance(row, Mapping)] if isinstance(errors, list) else []
+            codes = sorted({str((row.get("extensions") or {}).get("code") or "") for row in rows if isinstance(row.get("extensions"), Mapping)} - {""})
+            if "RATE_LIMITED" in codes:
+                raise PlexListError("Plex cloud Lists are rate limited; retry later")
+            name = re.match(r"\s*(?:query|mutation)\s+(\w+)", query)
+            _warn("cloud_list_request_rejected", operation=name.group(1) if name else "unknown",
+                  code=",".join(codes) or "none", message=" | ".join(str(row.get("message") or "")[:200] for row in rows[:3]) or "none")
+            raise PlexListRejected("Plex cloud Lists rejected the request")
+        if not isinstance(data.get("data"), Mapping):
             raise PlexListError("Plex cloud Lists rejected the request")
         return data["data"]
 
@@ -297,6 +316,38 @@ class Client:
         if str((result.get("editCustomListItems") or {}).get("id") or "") != resource.extra["raw_id"]:
             raise PlexListError("plex_lists_write_not_confirmed")
 
+    def split(self, resource: PlaylistResource, changes: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+        try:
+            self.edit(resource, changes)
+            return []
+        except PlexListRejected:
+            if len(changes) == 1:
+                return list(changes)
+        half = len(changes) // 2
+        return self.split(resource, changes[:half]) + self.split(resource, changes[half:])
+
+    def apply(self, resource: PlaylistResource, changes: Sequence[Mapping[str, Any]], action: str) -> dict[str, str]:
+        try:
+            self.edit(resource, changes)
+            return {}
+        except PlexListRejected:
+            half = len(changes) // 2
+            failed = list(changes) if len(changes) == 1 else self.split(resource, changes[:half]) + self.split(resource, changes[half:])
+        mids = [str(change[action]["metadataID"]) for change in failed]
+        return {mid: "plex_cloud_not_on_discover" if self.on_discover(mid) is False else "plex_cloud_list_item_refused" for mid in mids}
+
+    def on_discover(self, mid: str) -> bool | None:
+        raise_if_cancelled()
+        try:
+            response = self.session.request("GET", common.DISCOVER + "/library/metadata/" + quote(mid, safe=""),
+                                            headers=common.plex_headers(self.token, accept="application/json"),
+                                            timeout=30, verify=True, allow_redirects=False)
+        except requests.RequestException:
+            return None
+        if response.status_code == 404:
+            return False
+        return True if response.status_code == 200 else None
+
 
 def list_resources(adapter: Any) -> list[PlaylistResource]:
     return Client(adapter).resources() if available(adapter) else []
@@ -325,7 +376,8 @@ def create(adapter: Any, name: str, *, privacy: str | None = None, items: Sequen
     if items:
         added = add(adapter, resource.id, items)
         if added["unresolved"]:
-            raise PlexListError(f"Plex list {resource.id} was created, but some initial items could not be added")
+            _warn("cloud_list_seed_unresolved", list_id=resource.id, count=len(added["unresolved"]))
+            resource = replace(resource, extra={**resource.extra, "seed_unresolved_keys": list(added["unresolved_keys"])})
     return resource
 
 
@@ -367,6 +419,7 @@ def _write(adapter: Any, playlist_id: str, items: Sequence[Mapping[str, Any]], *
     by_key = {canonical_key(client.media(str(row["id"]))): str(row["id"]) for row in members}
     present = {str(row["id"]) for row in members}
     candidates: dict[str, str] = {}
+    sources: dict[str, Mapping[str, Any]] = {}
     unresolved: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in items:
@@ -379,15 +432,23 @@ def _write(adapter: Any, playlist_id: str, items: Sequence[Mapping[str, Any]], *
             unresolved.append({"item": minimal(item), "key": key, "hint": "plex_cloud_title_unresolved"})
             continue
         candidates[key] = mid
-    changes = [{"remove" if removing else "add": {"metadataID": mid}} for mid in dict.fromkeys(candidates.values())
-               if (mid in present) == removing]
+        sources[key] = item
+    action = "remove" if removing else "add"
+    changes = [{action: {"metadataID": mid}} for mid in dict.fromkeys(candidates.values()) if (mid in present) == removing]
+    refused: dict[str, str] = {}
     for start in range(0, len(changes), 100):
-        client.edit(resource, changes[start:start + 100])
+        refused.update(client.apply(resource, changes[start:start + 100], action))
     after = {str(row["id"]) for row in client.members(resource)} if changes else present
     confirmed = []
     for key, mid in candidates.items():
         if (mid in after) != removing:
             confirmed.append(key)
+        elif mid in refused:
+            hint = refused[mid]
+            item = sources[key]
+            _warn("cloud_list_item_refused", list_id=resource.id, key=key, title=str(item.get("title") or ""),
+                  year=item.get("year") or "", metadata_id=mid, hint=hint)
+            unresolved.append({"item": minimal(item), "key": key, "hint": hint})
         else:
             unresolved.append({"item": {"key": key}, "key": key, "hint": "plex_lists_write_not_confirmed"})
     return {"ok": not unresolved, "count": len(confirmed), "confirmed_keys": confirmed,
