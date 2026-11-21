@@ -369,7 +369,7 @@ class RunRecorder:
             self._capture_pair_scope()
             return
 
-        if event in ("one:plan", "two:plan"):
+        if event == "one:plan":
             src, dst = self._ctx_providers()
             self._add(
                 event_type="plan_created",
@@ -380,6 +380,22 @@ class RunRecorder:
                 destination_instance=self._di or None,
                 detail={k: f.get(k) for k in ("adds", "removes", "updates", "src_count", "dst_count")},
             )
+            self._flush()
+            return
+
+        if event == "two:plan":
+            a, b = self._ctx_providers()
+            for src, si, dst, di, side in ((a, self._si, b, self._di, "B"), (b, self._di, a, self._si, "A")):
+                self._add(
+                    event_type="plan_created",
+                    operation="plan",
+                    source_provider=src or None,
+                    destination_provider=dst or None,
+                    source_instance=si or None,
+                    destination_instance=di or None,
+                    detail={"adds": f.get(f"add_to_{side}"), "removes": f.get(f"rem_from_{side}"),
+                            "updates": f.get(f"upd_to_{side}")},
+                )
             self._flush()
             return
 

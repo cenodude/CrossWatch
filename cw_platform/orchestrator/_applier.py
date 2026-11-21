@@ -183,12 +183,15 @@ def _emit_archive_successes(
         base = key.split("@", 1)[0]
         if base != key:
             keys.append(base)
-    if not keys:
+    attempted = int(res.get("attempted", 0) or 0)
+    clean = not any(int(res.get(k, 0) or 0) for k in ("unresolved", "errors", "skipped")) and not res.get("cancelled")
+    fallback = attempted if clean and attempted == len(items) and int(res.get("confirmed", 0) or 0) == attempted else 0
+    if not keys and not fallback:
         return
     try:
         from ..event_archive.titles import SUCCESS_CAP
 
-        rows = _ui_spotlight_items(items, keys, limit=SUCCESS_CAP, fields=_ARCHIVE_SUCCESS_FIELDS)
+        rows = _ui_spotlight_items(items, keys, limit=SUCCESS_CAP, fallback_count=fallback, fields=_ARCHIVE_SUCCESS_FIELDS)
         if rows:
             emit(
                 "archive:item_successes",

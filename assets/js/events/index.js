@@ -179,7 +179,7 @@ const BADGE = {
   tombstone_created: "Tombstone created",
   tombstone_pruned: "Tombstone pruned",
   cloud_history_read: "Plex cloud history read",
-  plan_created: "Item planned",
+  plan_created: "Sync plan",
   provider_health: "Provider health",
   sync_run_started: "Sync started",
   sync_run_finished: "Sync finished",
@@ -283,7 +283,7 @@ const sevOf = (e) => {
   if (e.event_type === "write_failed") return "error";
   if (e.event_type === "write_succeeded") return isRating(e) ? "rating" : "ok";
   if (["blackbox_promoted", "blackbox_blocked"].includes(e.event_type)) return "error";
-  if (["unresolved_recorded", "plan_created", "api_rate_limit"].includes(e.event_type)) return "warn";
+  if (["unresolved_recorded", "api_rate_limit"].includes(e.event_type)) return "warn";
   if (["tombstone_created", "tombstone_pruned"].includes(e.event_type)) return "warn";
   if (["scrobble_completed", "rating_applied"].includes(e.event_type)) return "ok";
   if (["scrobble_failed", "rating_failed"].includes(e.event_type)) return "error";
@@ -296,6 +296,15 @@ const sevOf = (e) => {
   const s = String(e.severity || "").toLowerCase();
   if (s === "error" || s === "warn" || s === "ok") return s;
   return "info";
+};
+
+const planLine = (e) => {
+  const d = detailOf(e);
+  const route = [e.source_provider, e.destination_provider].filter(Boolean).map((p) => String(p).toUpperCase()).join(" → ");
+  const parts = [["add", d.adds], ["remove", d.removes], ["update", d.updates]].filter(([, n]) => Number(n) > 0).map(([w, n]) => `${Number(n).toLocaleString()} to ${w}`);
+  const known = [d.adds, d.removes, d.updates].some((n) => n != null);
+  const what = parts.length ? parts.join(", ") : known ? "nothing to change" : "";
+  return ["Plan", route, what].filter(Boolean).join(" · ");
 };
 
 const titleLine = (e) => {
@@ -316,7 +325,7 @@ const titleLine = (e) => {
     case "tombstone_created": return "Tombstone created";
     case "tombstone_pruned": return "Tombstone pruned";
     case "cloud_history_read": return `Plex cloud history: ${Number(detailOf(e).cloud_history_entries || 0)} entries included after merging with server history`;
-    case "plan_created": return "Add attempted";
+    case "plan_created": return planLine(e);
     case "provider_health": return `Provider health · ${(e.source_provider || "").toUpperCase()}`;
     case "sync_run_started": return "Sync run started";
     case "sync_run_finished": return "Sync run finished";
@@ -838,14 +847,15 @@ export default {
     Q("#ev-review", root).appendChild(seg.el);
 
     const QUICK = {
-      titles: [["all", "Everything"], ["attention", "Needs attention"], ["watched", "Watched"], ["ratings", "Ratings"], ["watchlist", "Watchlist"], ["removals", "Removals"]],
+      titles: [["all", "Everything"], ["attention", "Needs attention"], ["watched", "Watched"], ["ratings", "Ratings"], ["watchlist", "Watchlist"], ["collection", "Collections"], ["removals", "Removals"]],
       grouped: [["all", "All activity"], ["attention", "Needs attention"]],
     };
     const needsAttention = () => quick === "attention";
     const renderQuick = () => {
       const items = (domain === "scrobble" && mode === "titles" ? QUICK.titles.filter(([v]) => ["all", "attention", "watched", "ratings"].includes(v)) : QUICK[mode]) || [];
       quickEl.hidden = !items.length;
-      quickEl.innerHTML = items.map(([v, l]) => `<button type="button" class="ev-qchip${v === quick ? " on" : ""}" data-q="${esc(v)}" aria-pressed="${v === quick}">${v === "attention" ? `<span class="ev-qdot" aria-hidden="true"></span>` : ""}${esc(l)}</button>`).join("")
+      const attn = titles() ? Number(state.attentionTotal || 0) : 0;
+      quickEl.innerHTML = items.map(([v, l]) => `<button type="button" class="ev-qchip${v === quick ? " on" : ""}" data-q="${esc(v)}" aria-pressed="${v === quick}">${v === "attention" && attn ? `<span class="ev-qdot" aria-hidden="true"></span>` : ""}${esc(l)}${v === "attention" && attn ? `<span class="ev-qcount">${esc(attn.toLocaleString())}</span>` : ""}</button>`).join("")
         + (titles() && quick === "attention" ? `<button type="button" class="ev-tbtn ev-qreview" id="ev-review-all" hidden><span class="material-symbols-rounded" aria-hidden="true">done_all</span><span>Mark all reviewed</span></button>` : "");
       Q("#ev-review-all", quickEl)?.addEventListener("click", () => reviewAll());
       quickEl.querySelectorAll(".ev-qchip").forEach((b) => b.addEventListener("click", () => {
@@ -1462,6 +1472,8 @@ export default {
       renderPager();
     };
 
+    const wideDetail = () => !matchMedia("(max-width:900px)").matches;
+
     const load = async (page) => {
       checked.clear();
       updateSelection();
@@ -1491,6 +1503,8 @@ export default {
             updateHidden();
             if (state.runs.some((run) => String(run.run_id) === id)) await select(id, null, { reveal: true });
           }
+          const firstRun = listEl.querySelector(".ev-rrow[data-run]")?.dataset.run;
+          if (!state.selected && firstRun && wideDetail()) await select(firstRun, null, { reveal: false });
         } catch (err) {
           if (!alive || sequence !== loadSequence) return;
           listEl.innerHTML = `<div class="ev-empty ev-empty-list"><span class="material-symbols-rounded" aria-hidden="true">error</span><div class="ev-empty-head">Failed to load runs</div><div class="ev-empty-hint">${esc(err.message)}</div></div>`;
@@ -1503,15 +1517,14 @@ export default {
           if (!alive || sequence !== loadSequence) return;
           state.items = data.items || [];
           state.total = data.total || 0;
+          const attn = Number(data.attention_total || 0);
+          if (attn !== Number(state.attentionTotal || 0)) { state.attentionTotal = attn; renderQuick(); }
           state.preparing = !!data.preparing;
           const pc = pageCount();
           if (state.page > 0 && state.page >= pc) return load(pc - 1);
           if (state.selected && !state.items.some((row) => String(row.id) === String(state.selected))) clearDetail();
           renderList();
-          if (!state.didInitialSelect && state.page === 0 && state.items.length && !matchMedia("(max-width:900px)").matches) {
-            state.didInitialSelect = true;
-            await select(state.items[0].id, null, { reveal: false });
-          }
+          if (!state.selected && state.items.length && wideDetail()) await select(state.items[0].id, null, { reveal: false });
           if (state.preparing) setTimeout(() => { if (alive && titles() && sequence === loadSequence) load(state.page); }, 4000);
           if (state.page !== previousPage) revealSection(layoutEl);
         } catch (err) {
@@ -1689,9 +1702,7 @@ export default {
       }
 
       const ph = c.provider_health;
-      if (!ph || ph.status_available === false) {
-        cards.push(card("Provider health", pill("Unknown", "neutral"), ["Status unavailable"]));
-      } else {
+      if (ph && ph.status_available !== false) {
         const entries = Object.entries(ph.providers || {});
         const anyDown = entries.some(([, h]) => h.configured !== false && h.status !== "unknown" && !h.connected);
         const anyUnknown = entries.some(([, h]) => h.status === "unknown" || h.configured === false);
@@ -1735,7 +1746,7 @@ export default {
       unresolved_cleared: "Unresolved state cleared.",
       blackbox_promoted: "Promoted to blackbox after repeated failures.",
       blackbox_blocked: "Blocked by blackbox.",
-      plan_created: "Included in the sync plan.",
+      plan_created: "What this sync planned to change on the destination.",
       provider_health: "Provider health checked.",
       sync_run_started: "Sync run started.",
       sync_run_finished: "Sync run completed.",
@@ -2299,26 +2310,25 @@ export default {
       const ps = c.pair_state;
       const routeShort = provShort(e.source_provider, e.destination_provider) || "–";
       const pairLabel = (ps && ps.matched && ps.label) ? `${ps.label}${ps.mode ? ` (${modeLabel(ps.mode).toLowerCase()})` : ""}` : (ps && ps.label ? `${ps.label} — not matched` : (e.pair_key || "–"));
-      const origin = e.origin_provider ? instLabel(e.origin_provider, e.origin_instance) : "unknown";
+      const origin = e.origin_provider ? instLabel(e.origin_provider, e.origin_instance) : "";
       const conf = e.origin_confidence ? `<span class="ev-conf">${esc(String(e.origin_confidence))} confidence</span>` : "";
-      const dest = instLabel(e.destination_provider, e.destination_instance) || "–";
+      const dest = instLabel(e.destination_provider, e.destination_instance) || "";
       const runTime = e.source_mtime ? TS(e.source_mtime) : "";
 
       const kv = [
-        ["Type", esc(String(e.event_type || "").replace(/_/g, " "))],
-        ["Feature", esc(FEATURE_LABEL[e.feature] || e.feature || "–")],
-        ["Operation", esc(e.operation || "–")],
-        ["Route", esc(routeShort)],
-        ["Origin", `${esc(origin)}${conf ? ` ${conf}` : ""}`],
+        ["Feature", esc(FEATURE_LABEL[e.feature] || e.feature || "")],
+        ["Operation", esc(e.operation || "")],
+        ["Route", routeShort === "–" ? "" : esc(routeShort)],
+        ["Origin", origin ? `${esc(origin)}${conf ? ` ${conf}` : ""}` : ""],
         ["Destination", esc(dest)],
-        ["Pair", esc(pairLabel)],
-        ["Run", e.run_id ? `<span class="mono">${esc(e.run_id)}</span>` : "–"],
+        ["Pair", pairLabel === "–" ? "" : esc(pairLabel)],
+        ["Run", e.run_id ? `<span class="mono">${esc(e.run_id)}</span>` : ""],
         ...(e.event_type === "cloud_history_read" ? [["Cloud history entries included", esc(d.cloud_history_entries ?? 0)], ["Total merged history entries", esc(d.history_entries ?? 0)]] : []),
         ...(cloudResultsHTML(e) ? [["Plex Discover fallback", cloudResultsHTML(e)]] : []),
-        ["Reason", esc(e.reason || e.reason_code || "–")],
-        ["Source", e.source_file ? `<span class="mono">${esc(e.source_file)}</span>` : esc(e.source_kind || "–")],
-        ["Run time", runTime ? esc(runTime) : "–"],
-      ].map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${v}</div>`).join("");
+        ["Reason", esc(e.reason || e.reason_code || "")],
+        ["Source", e.source_file ? `<span class="mono">${esc(e.source_file)}</span>` : esc(e.source_kind || "")],
+        ["Run time", runTime ? esc(runTime) : ""],
+      ].filter(([, v]) => v !== "").map(([k, v]) => `<div class="k">${esc(k)}</div><div class="v">${v}</div>`).join("");
 
       const item = titleOf(e);
       const parts = [];

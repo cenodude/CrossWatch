@@ -2152,7 +2152,9 @@ html[data-cw-theme=flat-light] #page-events.cw-page-events{--ev-color-scheme:lig
 .ev-refresh .material-symbols-rounded{font-size:19px}
 .ev-qchip{border:1px solid var(--ev-border);border-radius:999px;background:transparent;color:var(--ev-muted);font-size:12.5px}
 .ev-qchip:hover{color:var(--ev-text);background:var(--ev-fill-hover)}
-.ev-qchip.on{background:var(--ev-text);border-color:var(--ev-text);color:var(--ev-bg);font-weight:600}
+.ev-qchip.on{background:var(--ev-accent-soft);border-color:var(--ev-accent-soft);color:var(--ev-text);font-weight:600}
+.ev-qcount{color:var(--ev-muted);font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums}
+.ev-qchip.on .ev-qcount{color:var(--ev-text)}
 .ev-qdot,.ev-tattn{border-radius:50%;background:var(--ev-err)}
 .ev-morefilters{border:1px solid var(--ev-border);border-radius:14px;background:var(--ev-menu);box-shadow:0 18px 40px rgba(0,0,0,.35)}
 .ev-mf-label{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ev-muted)}

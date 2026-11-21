@@ -130,7 +130,20 @@ export function destChipHTML(d) {
   return `<span class="ev-dchip ${state}" title="${esc(tip)}"><span class="material-symbols-rounded" aria-hidden="true">${STATE_ICON[state]}</span>${providerChipHTML(d.provider, d.instance)}<span class="ev-sr">${esc(STATE_LABEL[state])}</span>${short ? `<span class="ev-dreason">${esc(short)}</span>` : ""}</span>`;
 }
 
-const rowVia = (item) => item.domain === "scrobble" && item.progress != null && item.progress !== "" ? `${item.progress}%` : "";
+const rowVia = (item) => {
+  if (item.domain !== "scrobble") return "";
+  const n = Number(item.sessions || 0);
+  return [item.progress != null && item.progress !== "" ? `${item.progress}%` : "", n > 1 ? `${fmt(n)} sessions` : ""].filter(Boolean).join(" · ");
+};
+
+const sessionTime = (sec) => Number(sec || 0) ? new Date(Number(sec) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+
+const sessionRowHTML = (s) => {
+  const what = s.finished ? "Finished" : s.progress != null && s.progress !== "" ? `Stopped at ${s.progress}%` : "Started";
+  const start = sessionTime(s.started_at);
+  const end = sessionTime(s.last_at);
+  return `<div class="ev-erow ev-srow"><span class="ev-erow-main"><span>${esc(what)}</span><span class="ev-erow-sub">${esc(start === end ? start : `${start} – ${end}`)}</span></span></div>`;
+};
 
 export function titleText(item) {
   return item.title || item.item_key || "Unknown title";
@@ -224,7 +237,8 @@ function originItem(item) {
 }
 
 export function renderTitleDetail(host, item, ctx) {
-  const tab = ctx.tab || "path";
+  const sessions = Array.isArray(item.session_list) ? item.session_list : [];
+  const tab = ctx.tab === "sessions" && !sessions.length ? "path" : (ctx.tab || "path");
   const related = Array.isArray(item.related) ? item.related : [];
   const later = related.filter((r) => Number(r.last_event_at) > Number(item.last_event_at)).slice(-4).reverse();
   const failed = item.status === "failed";
@@ -268,9 +282,10 @@ export function renderTitleDetail(host, item, ctx) {
         ${ids ? `<div class="ev-tids">${ids}</div>` : ""}
       </div>
     </div>
-    <div class="ev-tabs" role="tablist">${tabBtn("path", "Path")}${tabBtn("origin", "Where it comes from")}${tabBtn("earlier", "Earlier", related.length || null)}</div>
+    <div class="ev-tabs" role="tablist">${tabBtn("path", "Path")}${tabBtn("origin", "Where it comes from")}${sessions.length ? tabBtn("sessions", "Sessions", sessions.length) : ""}${tabBtn("earlier", "Earlier", related.length || null)}</div>
     <div class="ev-tabpane" data-pane="path"${tab === "path" ? "" : " hidden"}><ol class="ev-path">${steps.join("") || `<li class="ev-empty ev-empty-inline">Nothing recorded yet.</li>`}</ol>${item.run_id && item.domain === "sync" ? `<div class="ev-path-acts"><button type="button" class="ev-tbtn" id="ev-trun"><span class="material-symbols-rounded" aria-hidden="true">sync</span><span>Show this run</span></button><button type="button" class="ev-tbtn" id="ev-tlogs"><span class="material-symbols-rounded" aria-hidden="true">terminal</span><span>View logs</span></button></div>` : ""}</div>
     <div class="ev-tabpane" data-pane="origin"${tab === "origin" ? "" : " hidden"}><p class="ev-origin-note">Likely path, rebuilt from current data.</p>${originHTML}</div>
+    ${sessions.length ? `<div class="ev-tabpane" data-pane="sessions"${tab === "sessions" ? "" : " hidden"}><div class="ev-earlier">${sessions.map(sessionRowHTML).join("")}</div></div>` : ""}
     <div class="ev-tabpane" data-pane="earlier"${tab === "earlier" ? "" : " hidden"}><div class="ev-earlier">${earlierHTML}</div></div>`;
   bindCovers(host);
 
