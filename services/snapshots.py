@@ -518,6 +518,24 @@ def _ops_or_raise(provider: str):
     return ops
 
 
+def _build_index_with_progress(ops: Any, cfg_view: Mapping[str, Any], feat: Feature, progress_id: str | None) -> Any:
+    previous = ""
+    try:
+        from providers.sync import _log as provider_log
+
+        previous = provider_log.set_capture_progress_id(str(progress_id or ""))
+    except Exception:
+        provider_log = None  # type: ignore[assignment]
+    try:
+        return ops.build_index(cfg_view, feature=feat) or {}
+    finally:
+        try:
+            if provider_log is not None:  # type: ignore[name-defined]
+                provider_log.set_capture_progress_id(previous)  # type: ignore[name-defined]
+        except Exception:
+            pass
+
+
 def _build_index_capture_mode(
     *,
     ops: Any,
@@ -528,6 +546,11 @@ def _build_index_capture_mode(
     ts: datetime,
     progress_id: str | None = None,
 ) -> Any:
+    if str(pid or "").strip().upper() == "CROSSWATCH":
+        from providers.sync.crosswatch._common import capture_scope
+
+        with capture_scope(True):
+            return _build_index_with_progress(ops, cfg_view, feat, progress_id)
     prev: dict[str, str | None] = {
         "CW_CAPTURE_MODE": os.environ.get("CW_CAPTURE_MODE"),
         "CW_CAPTURE_PROVIDER": os.environ.get("CW_CAPTURE_PROVIDER"),
@@ -545,21 +568,9 @@ def _build_index_capture_mode(
         os.environ["CW_CAPTURE_PROGRESS_ID"] = str(progress_id)
     else:
         os.environ.pop("CW_CAPTURE_PROGRESS_ID", None)
-    log_progress_prev = ""
     try:
-        from providers.sync import _log as provider_log
-
-        log_progress_prev = provider_log.set_capture_progress_id(str(progress_id or ""))
-    except Exception:
-        provider_log = None  # type: ignore[assignment]
-    try:
-        return ops.build_index(cfg_view, feature=feat) or {}
+        return _build_index_with_progress(ops, cfg_view, feat, progress_id)
     finally:
-        try:
-            if provider_log is not None:  # type: ignore[name-defined]
-                provider_log.set_capture_progress_id(log_progress_prev)  # type: ignore[name-defined]
-        except Exception:
-            pass
         for key, value in prev.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -574,6 +585,12 @@ def _capture_mode_env(
     instance: str,
     feat: str,
 ) -> Iterator[None]:
+    if str(pid or "").strip().upper() == "CROSSWATCH":
+        from providers.sync.crosswatch._common import capture_scope
+
+        with capture_scope(True):
+            yield
+        return
     prev: dict[str, str | None] = {
         "CW_CAPTURE_MODE": os.environ.get("CW_CAPTURE_MODE"),
         "CW_CAPTURE_PROVIDER": os.environ.get("CW_CAPTURE_PROVIDER"),
@@ -598,25 +615,10 @@ def _capture_mode_env(
 
 @contextmanager
 def _crosswatch_write_env() -> Iterator[None]:
-    keys = (
-        "CW_CAPTURE_MODE",
-        "CW_CAPTURE_PROVIDER",
-        "CW_CAPTURE_INSTANCE",
-        "CW_CAPTURE_FEATURE",
-        "CW_CAPTURE_ID",
-        "CW_CAPTURE_PROGRESS_ID",
-    )
-    prev = {key: os.environ.get(key) for key in keys}
-    for key in keys:
-        os.environ.pop(key, None)
-    try:
+    from providers.sync.crosswatch._common import capture_scope
+
+    with capture_scope(False):
         yield
-    finally:
-        for key, value in prev.items():
-            if value is None:
-                os.environ.pop(key, None)
-            else:
-                os.environ[key] = value
 
 
 def _state_read_feature_enabled(ops: Any, feature: Feature) -> bool:

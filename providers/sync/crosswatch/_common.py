@@ -6,7 +6,9 @@ from __future__ import annotations
 import json
 import os
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -32,8 +34,24 @@ def pair_scoped() -> bool:
     return _truthy_env("CW_CROSSWATCH_PAIR_SCOPED")
 
 
+_CAPTURE: ContextVar[bool | None] = ContextVar("crosswatch_capture", default=None)
+
+
+@contextmanager
+def capture_scope(active: bool) -> Iterator[None]:
+    token = _CAPTURE.set(active)
+    try:
+        yield
+    finally:
+        _CAPTURE.reset(token)
+
+
 def _capture_mode() -> bool:
-    return _truthy_env("CW_CAPTURE_MODE")
+    scoped = _CAPTURE.get()
+    if scoped is not None:
+        return scoped
+    provider = str(os.getenv("CW_CAPTURE_PROVIDER") or "").strip().upper()
+    return _truthy_env("CW_CAPTURE_MODE") and provider in ("", "CROSSWATCH")
 
 
 def _pair_scope() -> str | None:

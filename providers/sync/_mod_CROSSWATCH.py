@@ -121,7 +121,7 @@ except Exception as e:
     feat_dropped = None
     cw_log("CROSSWATCH", "module", "warn", "feature_import_failed", import_feature="dropped", error=str(e))
 
-from .crosswatch._common import tracker_store
+from .crosswatch._common import pair_scoped, readonly, tracker_store
 from cw_platform.tracker_store import TrackerConflict
 
 _WRITE_ATTEMPTS = 3
@@ -131,7 +131,7 @@ try:
 except Exception:
     make_snapshot_progress = None  # type: ignore[assignment]
 
-__VERSION__ = "2.1"
+__VERSION__ = "2.2"
 _MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "CROSSWATCHModule", "OPS"]
 
@@ -378,7 +378,10 @@ class CROSSWATCHModule:
             _info(feature, "index_skipped", reason="module_missing")
             return {}
         started = time.perf_counter()
-        out = self._guarded(feature, lambda: mod.build_index(self, **kwargs))
+        if readonly(self) and not pair_scoped():
+            out = mod.build_index(self, **kwargs)
+        else:
+            out = self._guarded(feature, lambda: mod.build_index(self, **kwargs))
         _info(feature, "index_done", count=len(out), dur_ms=int((time.perf_counter() - started) * 1000))
         return out
 

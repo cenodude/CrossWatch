@@ -668,22 +668,29 @@ def _load_state_items(
     return _load_tracker_items(kind, provider, provider_instance)
 
 
+def read_tracker_index(kind: str, provider_instance: str | None = None, *, rewatches: bool = True) -> dict[str, Any]:
+    ops = load_sync_ops("CROSSWATCH")
+    features = getattr(ops, "features", None)
+    if not ops or callable(features) and not (features() or {}).get(kind):
+        raise RuntimeError("CrossWatch tracker is unavailable")
+    cfg = load_config() or {}
+    view = dict(build_provider_config_view(cfg, "CROSSWATCH", normalize_instance_id(provider_instance)))
+    view["_cw_readonly"] = True
+    if kind == "history" and rewatches:
+        view["_cw_history_rewatches"] = True
+    idx = ops.build_index(view, feature=kind) or {}
+    if not isinstance(idx, Mapping):
+        raise RuntimeError("CrossWatch tracker returned no usable inventory")
+    return {str(key): dict(value) for key, value in idx.items() if isinstance(value, Mapping)}
+
+
 def _load_tracker_items(kind: Kind, provider: str, provider_instance: str | None = None) -> dict[str, Any]:
     if str(provider or "").strip().upper() != "CROSSWATCH":
         return {}
-    ops = load_sync_ops("CROSSWATCH")
-    if not ops:
-        return {}
     try:
-        cfg = load_config() or {}
-        view = dict(build_provider_config_view(cfg, "CROSSWATCH", normalize_instance_id(provider_instance)))
-        view["_cw_readonly"] = True
-        if kind == "history":
-            view["_cw_history_rewatches"] = True
-        idx = ops.build_index(view, feature=kind) or {}
+        return read_tracker_index(kind, provider_instance)
     except Exception:
         return {}
-    return {str(key): dict(value) for key, value in idx.items() if isinstance(value, Mapping)}
 
 
 def _save_state_items(kind: Kind, provider: str, items: dict[str, Any], provider_instance: str | None = None) -> None:

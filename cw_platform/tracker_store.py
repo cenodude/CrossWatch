@@ -53,6 +53,7 @@ _IMPORT_LOCK = threading.Lock()
 _MUTATION_GUARD = threading.Lock()
 _MUTATION_LOCKS: dict[str, threading.RLock] = {}
 _READY: set[str] = set()
+_ITEM_LISTENERS: set[Callable[[], None]] = set()
 _CACHE: dict[tuple[Any, ...], tuple[str, Any]] = {}
 _CACHE_LOCK = threading.Lock()
 _GUARD = threading.local()
@@ -467,6 +468,10 @@ def tracker_snapshot_settings(cfg: Mapping[str, Any], instance: str = "default")
     return {**base, **block}
 
 
+def add_item_listener(listener: Callable[[], None]) -> None:
+    _ITEM_LISTENERS.add(listener)
+
+
 class TrackerBackupPending(RuntimeError):
     pass
 
@@ -727,6 +732,28 @@ class TrackerStore(TrackerAutomation):
             (uuid.uuid4().hex,),
         )
 
+    @staticmethod
+    def _bump_items(conn: sqlite3.Connection, features: Iterable[str]) -> None:
+        features = set(features)
+        if not features:
+            return
+        conn.executemany(
+            "INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            [(f"items_rev:{feature}", uuid.uuid4().hex) for feature in features],
+        )
+        for listener in list(_ITEM_LISTENERS):
+            try:
+                listener()
+            except Exception:
+                pass
+
+    def item_revisions(self) -> dict[str, str]:
+        with self._db() as conn:
+            if conn is None:
+                return {}
+            rows = conn.execute("SELECT key, value FROM meta WHERE key LIKE 'items_rev:%'").fetchall()
+        return {str(key).split(":", 1)[1]: str(value) for key, value in rows}
+
     def needs_migration(self) -> bool:
         files, snaps = self._legacy_files()
         if files or snaps is not None:
@@ -942,6 +969,7 @@ class TrackerStore(TrackerAutomation):
                 conn.execute("DELETE FROM meta WHERE key='status_bulk'")
         if gone or put:
             TrackerStore._bump(conn)
+            TrackerStore._bump_items(conn, [feature])
         conn.execute(
             "INSERT INTO states(scope, feature, ts, updated_ns) VALUES(?, ?, ?, ?)"
             " ON CONFLICT(scope, feature) DO UPDATE SET ts=excluded.ts, updated_ns=excluded.updated_ns",
@@ -1643,13 +1671,15 @@ class TrackerStore(TrackerAutomation):
 
     @staticmethod
     def _touch(conn: sqlite3.Connection, features: Iterable[str], now_ns: int) -> None:
-        for feature in set(features):
+        features = set(features)
+        for feature in features:
             conn.execute(
                 "INSERT INTO states(scope, feature, ts, updated_ns) VALUES('', ?, ?, ?)"
                 " ON CONFLICT(scope, feature) DO UPDATE SET ts=excluded.ts, updated_ns=excluded.updated_ns",
                 (feature, now_ns // 1_000_000_000, now_ns),
             )
         TrackerStore._bump(conn)
+        TrackerStore._bump_items(conn, features)
 
     @staticmethod
     def _prune_changes(conn: sqlite3.Connection, now_ns: int) -> None:

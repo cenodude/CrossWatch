@@ -214,6 +214,34 @@ def test_title_plays_reads_wetrakr_unknown_dates_and_ignores_capture_times() -> 
     assert {ref["provider"] for ref in plays[1]["present"]} == {"WETRAKR", "CROSSWATCH"}
 
 
+def test_title_play_summary_counts_one_watch_once_per_holder() -> None:
+    watch = {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}, "watched_at": "2026-10-25T18:45:00Z"}
+    again = {**watch, "watched_at": "2026-05-03T21:10:00Z"}
+    tracker = {"tmdb:11": dict(watch)}
+    state = _history_state({
+        ("CROSSWATCH", "default"): {"tmdb:11": dict(watch), "tmdb:11@1792953900": dict(watch), "tmdb:11@1777842600": dict(again)},
+        ("TRAKT", "default"): {"tmdb:11": dict(watch), "tmdb:11@1792953900": dict(watch)},
+    })
+
+    summary = profile_history.title_play_summary(state, tracker, None, 11)
+
+    holders = {row["provider"]: row["watches"] for row in summary["holders"]}
+    assert holders == {"CROSSWATCH": 2, "TRAKT": 1}
+    newest = summary["plays"][0]
+    assert {ref["provider"]: (ref["key"], ref["event"]) for ref in newest["present"]} == {
+        "CROSSWATCH": ("tmdb:11@1792953900", True), "TRAKT": ("tmdb:11@1792953900", True),
+    }
+
+
+def test_title_play_summary_counts_one_undated_watch_once_per_holder() -> None:
+    undated = {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}, "watched": True, "_cw_watched_state": True}
+    state = _history_state({("CROSSWATCH", "default"): {"tmdb:11": dict(undated)}})
+
+    summary = profile_history.title_play_summary(state, {"tmdb:11": dict(undated)}, None, 11)
+
+    assert [(row["provider"], row["watches"], row["undated"]) for row in summary["holders"]] == [("CROSSWATCH", 1, 1)]
+
+
 def test_title_play_summary_keeps_every_holder_when_rows_are_truncated() -> None:
     base = {"type": "movie", "title": "Michael", "ids": {"tmdb": 11}}
     trakt = {f"tmdb:11@{1792953900 - day * 86400}": {**base, "watched_at": 1792953900 - day * 86400} for day in range(profile_history.TITLE_PLAYS_MAX + 1)}
