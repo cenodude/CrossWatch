@@ -40,7 +40,7 @@ async function fixture(t,theme='',width=1100,empty=false) {
       return route.fulfill({json:data});
     }
     const css=['themes/tokens','css/base','crosswatch','css/layout','css/components','css/pages','css/page-theme','css/profile-page','ui-shell','themes/flat','themes/original-coverage','js/modals/core/styles','fonts/material-symbols-rounded'];
-    return route.fulfill({contentType:'text/html',body:`<!doctype html><html data-cw-role="admin"${theme?` data-cw-theme="${theme}"`:''}><head><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(f=>`<link rel="stylesheet" href="/assets/${f}.css">`).join('')}</head><body class="cw-profile-page"><div id="profile-quick-stats" hidden></div><button id="insights">Insights</button>${playback}<script>window.CW={};window.getConfiguredProviders=()=>new Set(${JSON.stringify(Object.keys(instances))});</script><script src="/assets/helpers/provider-meta.js"></script><script src="/assets/helpers/feature-meta.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/profile-datetime.js"></script><script src="/assets/helpers/month-bar.js"></script><script src="/assets/js/profile-page.js"></script><script type="module">
+    return route.fulfill({contentType:'text/html',body:`<!doctype html><html data-cw-role="admin"${theme?` data-cw-theme="${theme}"`:''}><head><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(f=>`<link rel="stylesheet" href="/assets/${f}.css">`).join('')}</head><body class="cw-profile-page"><div id="profile-quick-stats" hidden></div><button id="insights">Insights</button>${playback}<script>window.CW={};window.getConfiguredProviders=()=>new Set(window.__cwProviderKeys||[]);</script><script src="/assets/helpers/provider-meta.js"></script><script src="/assets/helpers/feature-meta.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/profile-datetime.js"></script><script src="/assets/helpers/month-bar.js"></script><script src="/assets/js/profile-page.js"></script><script type="module">
       import {ModalHost} from '/assets/js/modals/core/host.js';
       import insights from '/assets/js/modals/insight-settings/index.js';
       const host=new ModalHost();
@@ -48,6 +48,7 @@ async function fixture(t,theme='',width=1100,empty=false) {
       window.openEvents=props=>{window.eventsProps=props;host.unmount();};
     </script></body></html>`});
   });
+  await page.addInitScript(keys=>{window.__cwProviderKeys=keys;},Object.keys(instances));
   await page.goto('http://cw.test/');
   await page.waitForFunction(()=>!!document.querySelector('#insights').onclick);
   await page.locator("#profile-panel-playback").evaluate(n=>n.classList.add("active"));

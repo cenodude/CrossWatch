@@ -235,3 +235,20 @@ def test_mark_all_reviewed_follows_filters_and_scope(conn):
     left = titles.list_titles(domain="sync", attention=True, conn=conn)
     assert [d["provider"] for d in left["items"][0]["destinations"]] == ["SIMKL"]
     assert left["total"] == 1
+
+
+def test_cover_lookup_cache_uses_one_fixed_file(monkeypatch, tmp_path):
+    from api import metaAPI
+
+    calls = []
+    monkeypatch.setattr(metaAPI, "_env", lambda: (None, tmp_path, lambda: {}))
+    monkeypatch.setattr(metaAPI, "_LOOKUP_CACHE", None)
+    monkeypatch.setattr(metaAPI, "_tmdb_get_json", lambda url, params, timeout: calls.append(url) or {"movie_results": [{"id": 77}]})
+    assert metaAPI._lookup_tmdb_id("k", "movie", "imdb", "tt0000001") == 77
+    assert metaAPI._lookup_tmdb_id("k", "movie", "imdb", "tt0000001") == 77
+    assert len(calls) == 1
+    assert [p.name for p in tmp_path.iterdir()] == ["tmdb_find.json"]
+    monkeypatch.setattr(metaAPI, "_tmdb_get_json", lambda url, params, timeout: calls.append(url) or {"movie_results": []})
+    assert metaAPI._lookup_tmdb_id("k", "movie", "imdb", "tt0000002") is None
+    assert metaAPI._lookup_tmdb_id("k", "movie", "imdb", "tt0000002") is None
+    assert len(calls) == 2

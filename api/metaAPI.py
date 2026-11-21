@@ -9,6 +9,7 @@ import logging
 import os
 import random
 import re
+import threading
 import time
 from email.utils import parsedate_to_datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1313,21 +1314,51 @@ def get_tmdb_image_file(path: str, size: str, cache_dir: Path | str) -> tuple[st
 
 _LOOKUP_PATTERNS = {"imdb": re.compile(r"^tt\d{1,10}$"), "tvdb": re.compile(r"^\d{1,10}$")}
 _LOOKUP_NEGATIVE_TTL = 7 * 86400
+_LOOKUP_MAX = 5000
+_LOOKUP_LOCK = threading.Lock()
+_LOOKUP_CACHE: dict[str, list[int]] | None = None
+
+
+def _lookup_file() -> Path:
+    _, base, _ = _env()
+    return base / "tmdb_find.json"
+
+
+def _lookup_entries() -> dict[str, list[int]]:
+    global _LOOKUP_CACHE
+    if _LOOKUP_CACHE is None:
+        try:
+            data = json.loads(_lookup_file().read_bytes().decode("utf-8"))
+        except Exception:
+            data = {}
+        _LOOKUP_CACHE = {str(k): [int(v[0]), int(v[1])] for k, v in data.items() if isinstance(v, list) and len(v) == 2} if isinstance(data, dict) else {}
+    return _LOOKUP_CACHE
+
+
+def _lookup_store(key: str, tmdb_id: int | None) -> None:
+    with _LOOKUP_LOCK:
+        entries = _lookup_entries()
+        entries[key] = [int(tmdb_id or 0), int(time.time())]
+        if len(entries) > _LOOKUP_MAX:
+            for old in sorted(entries, key=lambda k: entries[k][1])[: len(entries) - _LOOKUP_MAX]:
+                entries.pop(old, None)
+        try:
+            target = _lookup_file()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(json.dumps(entries, separators=(",", ":")).encode("utf-8"))
+        except Exception:
+            pass
 
 
 def _lookup_tmdb_id(api_key: str, t: str, ns: str, value: str) -> int | None:
-    _, base, _ = _env()
-    folder = base / "tmdb_find"
-    marker = folder / f"{t}-{ns}-{value}.txt"
-    try:
-        if marker.exists():
-            cached = marker.read_text(encoding="utf-8").strip()
-            if cached.isdigit():
-                return int(cached)
-            if time.time() - marker.stat().st_mtime < _LOOKUP_NEGATIVE_TTL:
-                return None
-    except Exception:
-        pass
+    key = f"{t}:{ns}:{value}"
+    with _LOOKUP_LOCK:
+        hit = _lookup_entries().get(key)
+    if hit is not None:
+        if hit[0]:
+            return hit[0]
+        if time.time() - hit[1] < _LOOKUP_NEGATIVE_TTL:
+            return None
     data = _tmdb_get_json(
         f"https://api.themoviedb.org/3/find/{value}",
         {"api_key": api_key, "external_source": f"{ns}_id"},
@@ -1342,11 +1373,7 @@ def _lookup_tmdb_id(api_key: str, t: str, ns: str, value: str) -> int | None:
         rows = [{"id": show}] if show else []
     found = rows[0].get("id") if rows and isinstance(rows[0], dict) else None
     tmdb_id = int(found) if isinstance(found, int) or (isinstance(found, str) and found.isdigit()) else None
-    try:
-        folder.mkdir(parents=True, exist_ok=True)
-        marker.write_bytes(str(tmdb_id or "none").encode("utf-8"))
-    except Exception:
-        pass
+    _lookup_store(key, tmdb_id)
     return tmdb_id
 
 
