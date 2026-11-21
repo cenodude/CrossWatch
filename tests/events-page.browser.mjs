@@ -389,7 +389,7 @@ test('sync titles, activity days, runs and filters in the search bar', async t =
       const detail = url.pathname.match(/^\/api\/events\/titles\/(\d+)$/);
       if (detail) json = {ok: true, item: {...rows.find(r => String(r.id) === detail[1]), related: []}};
       if (url.pathname === '/api/events/calendar') json = {ok: true, days: [{d: today, runs: 1, changes: 2, failed: 0}, {d: today - 1, runs: 2, changes: 0, failed: 1}], totals: {runs: 3, changes: 2, failed: 1}};
-      if (url.pathname === '/api/events/calendar/day') json = {ok: true, runs: [run, {...run, run_id: 'quiet', changes: 0, added: 0, pair_rows: []}]};
+      if (url.pathname === '/api/events/calendar/day') json = {ok: true, runs: [run, {...run, run_id: 'quiet', started_at: now - 3600, changes: 0, added: 0, pair_rows: [], plans: [{src_provider: 'PLEX', src_instance: 'default', dst_provider: 'TRAKT', dst_instance: 'default', feature: 'history'}]}]};
       if (url.pathname === '/api/editor/origin') {
         origins.push(route.request().postDataJSON());
         json = {mode: 'ids', title: 'Dune', sources: [{provider: 'PLEX', instance: 'default', title: 'Dune', year: 2021, via: 'ids', count: 1}], sources_total: 1, pairs: [{pair_id: 'p1'}]};
@@ -446,11 +446,18 @@ test('sync titles, activity days, runs and filters in the search bar', async t =
 
   await page.locator('#ev-mode button[data-v="runs"]').click();
   await page.locator('#ev-list .ev-rrow[data-run="run-a"]').waitFor();
+  assert.equal(await page.locator('#ev-list .ev-rgroup').count(), 1);
+  assert.match(await page.locator('#ev-list .ev-rghead').textContent(), /History · 2 runs/);
   assert.equal(await page.locator('#ev-list .ev-rrow').count(), 1);
-  await page.locator('#ev-runs-quiet').click();
+  await page.locator('#ev-list .ev-rquiet').click();
   assert.equal(await page.locator('#ev-list .ev-rrow').count(), 2);
+  assert.equal(await page.locator('#ev-list .ev-rquiet').getAttribute('aria-expanded'), 'true');
+  await page.locator('#ev-list .ev-rquiet').click();
+  assert.equal(await page.locator('#ev-list .ev-rrow').count(), 1);
   await page.locator('#ev-list .ev-rrow[data-run="run-a"]').click();
-  await page.locator('#ev-detail .ev-rsums').waitFor();
+  await page.waitForFunction(() => /plex/i.test(document.querySelector('#ev-detail .ev-rdtitle')?.textContent || ''));
+  assert.match(await page.locator('#ev-detail .ev-outcome').textContent(), /2 marked watched · took 14s/);
+  assert.equal(await page.locator('#ev-detail .ev-rsums').count(), 0);
   assert.match(await page.locator('#ev-list .ev-rrow[data-run="run-a"] .ev-rsum').textContent(), /2 marked watched/);
   await page.locator('#ev-detail .ev-rtitle[data-tid="2"]').waitFor();
   assert.equal(await page.locator('#ev-detail .ev-rtitle').count(), 2);
@@ -522,7 +529,7 @@ test('sync titles work on a phone', async t => {
       const detail = url.pathname.match(/^\/api\/events\/titles\/(\d+)$/);
       if (detail) json = {ok: true, item: {...rows.find(r => String(r.id) === detail[1]), related: []}};
       if (url.pathname === '/api/events/calendar') json = {ok: true, days: [{d: today, runs: 1, changes: 2, failed: 0}, {d: today - 1, runs: 2, changes: 0, failed: 1}], totals: {runs: 3, changes: 2, failed: 1}};
-      if (url.pathname === '/api/events/calendar/day') json = {ok: true, runs: [run, {...run, run_id: 'quiet', changes: 0, added: 0, pair_rows: []}]};
+      if (url.pathname === '/api/events/calendar/day') json = {ok: true, runs: [run, {...run, run_id: 'quiet', started_at: now - 3600, changes: 0, added: 0, pair_rows: [], plans: [{src_provider: 'PLEX', src_instance: 'default', dst_provider: 'TRAKT', dst_instance: 'default', feature: 'history'}]}]};
       if (url.pathname === '/api/editor/origin') {
         origins.push(route.request().postDataJSON());
         json = {mode: 'ids', title: 'Dune', sources: [{provider: 'PLEX', instance: 'default', title: 'Dune', year: 2021, via: 'ids', count: 1}], sources_total: 1, pairs: [{pair_id: 'p1'}]};

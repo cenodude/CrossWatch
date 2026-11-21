@@ -3084,6 +3084,8 @@ html body img:is([src*="/assets/img/placeholder_poster.svg"],[src*="/art/tmdb/"]
   #page-events .ev-tcover{width:40px;height:60px}
   #page-events .ev-thead .ev-tcover{width:64px;height:96px}
   #page-events .ev-rrow{grid-template-columns:44px 8px minmax(0,1fr);min-height:44px}
+  #page-events .ev-rchild{grid-template-columns:12px 44px 8px minmax(0,1fr);padding:9px 12px}
+  #page-events .ev-rquiet{min-height:44px;padding:9px 12px}
   #page-events .ev-rdur{display:none}
   #page-events .ev-seg-btn{flex:1;padding:0 8px}
   #page-events .ev-mf-field :is(.ev-dd,.ev-dd-btn){width:100%;max-width:none}
@@ -4375,13 +4377,20 @@ html[data-cw-theme=flat-light] .ev-date input::-webkit-calendar-picker-indicator
 .ev-rtime{font-variant-numeric:tabular-nums}
 .ev-rdot{width:9px;height:9px}
 .ev-rmain{display:flex;flex-direction:column;gap:6px;min-width:0}
-.ev-rpairs{display:flex;flex-direction:column;gap:6px;min-width:0}
 .ev-rpair{display:flex;align-items:center;gap:4px 10px;flex-wrap:wrap;min-width:0}
 .ev-rsum{display:inline-flex;flex-wrap:wrap;gap:2px 0;min-width:0}
 .ev-rsum>span+span::before{content:", "}
-.ev-rfoot{padding:10px 14px}
 .ev-rroute{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0}
 .ev-rsums{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+.ev-rgroup{display:flex;flex-direction:column;padding-bottom:6px}
+.ev-rghead{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 12px;padding:12px 14px 6px}
+.ev-rchild{grid-template-columns:14px 52px 10px minmax(0,1fr) auto;padding:9px 14px 9px 18px}
+.ev-rbranch{position:relative;align-self:stretch;width:14px}
+.ev-rbranch::before{content:"";position:absolute;left:3px;top:-9px;width:8px;height:calc(50% + 9px)}
+.ev-rquiet{display:grid;grid-template-columns:14px minmax(0,1fr) auto;gap:12px;align-items:center;width:100%;padding:9px 14px 9px 18px;text-align:left;font:inherit;cursor:pointer}
+.ev-rdtitle{display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px}
+.ev-rdtitle .ev-rroute{gap:8px}
+.ev-rdtitle .ev-pchip-logo{width:18px;height:18px}
 .ev-rtitles{display:flex;flex-direction:column}
 .ev-rtitle{display:grid;grid-template-columns:32px minmax(0,1fr);gap:12px;align-items:center;width:100%;padding:8px 4px;text-align:left;font:inherit;color:inherit;cursor:pointer}
 .ev-rtitle .ev-tcover{width:32px;height:48px}

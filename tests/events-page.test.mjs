@@ -111,3 +111,26 @@ test('Events retains the view on return and isolates a new route or profile', as
   delete globalThis.window;
   delete globalThis.document;
 });
+
+test('sync runs are grouped per pair with quiet runs folded', async () => {
+  globalThis.window ??= {};
+  const {runGroups, runRowsHTML} = await import('../assets/js/events/titles.js');
+  const pair = (src, dst, extra = {}) => ({src_provider: src, src_instance: 'default', dst_provider: dst, dst_instance: 'default', feature: 'watchlist', ...extra});
+  const runs = [
+    {run_id: 'late', started_at: 300, changes: 0, pair_rows: [], plans: [pair('SIMKL', 'TRAKT'), pair('TRAKT', 'SIMKL')]},
+    {run_id: 'busy', started_at: 200, changes: 4, pair_rows: [pair('PLEX', 'CROSSWATCH', {added: 4})], plans: [pair('PLEX', 'CROSSWATCH'), pair('SIMKL', 'TRAKT')]},
+    {run_id: 'old', started_at: 100, changes: 0, pair_rows: [], plans: []},
+  ];
+  const groups = runGroups(runs);
+  assert.deepEqual(groups.map((g) => [g.key ? `${g.src}>${g.dst}` : 'other', g.dirs.size, g.runs.map((e) => `${e.run.run_id}:${e.active}`)]), [
+    ['PLEX>CROSSWATCH', 1, ['busy:true']],
+    ['SIMKL>TRAKT', 2, ['late:false', 'busy:false']],
+    ['other', 0, ['old:false']],
+  ]);
+  const closed = runRowsHTML(runs);
+  assert.equal((closed.match(/class="ev-rrow/g) || []).length, 1);
+  assert.match(closed, /2 runs without changes/);
+  const open = runRowsHTML(runs, {open: new Set([groups[1].key])});
+  assert.equal((open.match(/class="ev-rrow/g) || []).length, 3);
+  assert.match(open, /aria-expanded="true"/);
+});
