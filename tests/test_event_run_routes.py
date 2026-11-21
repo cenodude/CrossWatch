@@ -87,3 +87,23 @@ def test_refresh_run_summaries_once(tmp_path):
         c.execute("UPDATE event_groups SET summary='old'")
     assert refresh_run_summaries(conn=c) == 0
     c.close()
+
+
+def test_two_way_plan_records_both_directions_with_counts():
+    from cw_platform.event_archive.recorder import RunRecorder
+
+    rec = RunRecorder(lambda *a, **k: None, run_id="r1")
+    rec.emit("two:start", a="SIMKL", b="TRAKT", feature="watchlist")
+    rec.emit("two:plan", add_to_A=2, add_to_B=0, upd_to_A=0, upd_to_B=1, rem_from_A=0, rem_from_B=3)
+    plans = [r for r in rec._buf if r["event_type"] == "plan_created"]
+    assert [(p["source_provider"], p["destination_provider"]) for p in plans] == [("SIMKL", "TRAKT"), ("TRAKT", "SIMKL")]
+    assert '"adds": 0' in plans[0]["detail"] and '"removes": 3' in plans[0]["detail"] and '"updates": 1' in plans[0]["detail"]
+    assert '"adds": 2' in plans[1]["detail"]
+
+
+def test_plan_only_thread_names_its_counts():
+    plans = [{**_plan("SIMKL", "TRAKT"), "detail": {"adds": 0, "removes": 3, "updates": 1}},
+             {**_plan("TRAKT", "SIMKL"), "detail": {"adds": 2, "removes": 0, "updates": 0}}]
+    assert _summarize("completed", plans, "watchlist", "", "", "") == "SIMKL ⇄ TRAKT, Watchlist plan, 2 to add, 3 to remove, 1 to update"
+    empty = [{**_plan("PLEX", "TRAKT"), "detail": {"adds": 0, "removes": 0, "updates": 0}}]
+    assert _summarize("completed", empty, "watchlist", "TRAKT", "", "") == "PLEX → TRAKT, Watchlist aligned, no changes needed"

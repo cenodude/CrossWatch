@@ -481,13 +481,14 @@ def _summarize(status: str, events: list[dict[str, Any]], feature: str, dst: str
 
     # aligned when no changes were needed
     if types <= {"plan_created"}:
-        d = _detail(last)
-        changes = sum(int(d.get(k) or 0) for k in ("adds", "removes", "updates"))
-        if changes == 0:
-            src = _P(_pick(events, "source_provider"))
-            route = f"{src} → {dst}" if (src and dst) else (dst or src or "")
-            left = f"{route}, " if route else ""
+        counts = {k: sum(int(_detail(e).get(k) or 0) for e in events) for k in ("adds", "removes", "updates")}
+        src = _P(_pick(events, "source_provider"))
+        route = _run_routes(events) or (f"{src} → {dst}" if (src and dst) else (dst or src or ""))
+        left = f"{route}, " if route else ""
+        if not any(counts.values()):
             return f"{left}{feat_disp or 'Feature'} aligned, no changes needed"
+        parts = [f"{n} to {w}" for w, n in (("add", counts["adds"]), ("remove", counts["removes"]), ("update", counts["updates"])) if n]
+        return f"{left}{feat_disp or 'Feature'} plan, {', '.join(parts)}"
 
     if str(feature or "").lower() == "ratings":
         rat = None

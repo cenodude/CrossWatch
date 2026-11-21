@@ -165,6 +165,7 @@ CREATE TABLE IF NOT EXISTS event_titles (
     ids              TEXT,
     rating           TEXT,
     progress         TEXT,
+    sessions         INTEGER,
     acknowledged_at  INTEGER
 )
 """
@@ -225,6 +226,7 @@ _ADD_COLUMNS = (
     ("events", "title_id", "INTEGER"),
     ("event_titles", "routes", "TEXT"),
     ("event_titles", "ok_dests", "TEXT"),
+    ("event_titles", "sessions", "INTEGER"),
 )
 
 _EXTRA_INDEXES = (

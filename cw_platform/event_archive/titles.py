@@ -17,7 +17,8 @@ from .db import get_conn
 _LOG = logging.getLogger("crosswatch.event_archive")
 
 TITLES_META = "event_titles_backfill_version"
-TITLES_VERSION = 1
+TITLES_VERSION = 2
+_SESSION_LIMIT = 50
 SUCCESS_CAP = 500
 _CHUNK = 400
 _BACKFILL_BATCH = 4000
@@ -49,7 +50,7 @@ TITLE_COLUMNS = (
     "id", "domain", "run_id", "first_event_at", "last_event_at", "event_count", "status", "attention",
     "item_key", "ident", "title", "year", "media_type", "season", "episode",
     "source_provider", "source_instance", "kinds", "destinations", "ok_dests", "ids",
-    "rating", "progress", "acknowledged_at",
+    "rating", "progress", "sessions", "acknowledged_at",
 )
 
 _EVENT_FIELDS = (
@@ -108,6 +109,15 @@ def _sync_hash(run_id: Any, created_at: Any, item_key: Any) -> str | None:
     return _short_hash(f"\x00title\x1fsync\x1f{run}\x1f{key}")
 
 
+def _day_token(created_at: Any) -> str:
+    return "d:" + time.strftime("%Y%j", time.localtime(int(created_at or 0)))
+
+
+def _session_of(row: Any) -> str:
+    sk = str(_g(row, "session_key") or "").strip()
+    return f"s:{sk}" if sk else _day_token(_g(row, "created_at"))
+
+
 def title_hash(row: Any) -> str | None:
     domain = str(_g(row, "domain") or "sync").strip().lower()
     if domain == "scrobble":
@@ -115,7 +125,7 @@ def title_hash(row: Any) -> str | None:
             return None
         from .groups import group_hash
 
-        activity = group_hash({**dict(row), "destination_provider": None, "pair_key": None})
+        activity = group_hash({**dict(row), "destination_provider": None, "pair_key": None, "session_key": None})
         return _short_hash(f"\x00title\x1fscrobble\x1f{activity}")
     if domain != "sync" or str(_g(row, "feature") or "").strip().lower() == "playlists":
         return None
@@ -159,20 +169,57 @@ def _title_id(conn: sqlite3.Connection, th: str, domain: str, now: int) -> int:
     return int(conn.execute("SELECT id FROM event_titles WHERE title_hash=?", (th,)).fetchone()[0])
 
 
+def _scrobble_title(conn: sqlite3.Connection, row: Any, base: str, now: int, seen: dict[int, int]) -> int:
+    gid = _g(row, "group_id")
+    if gid is not None:
+        if int(gid) in seen:
+            return seen[int(gid)]
+        prior = conn.execute(
+            "SELECT title_id FROM events WHERE group_id=? AND title_id>0 LIMIT 1",
+            (int(gid),),
+        ).fetchone()
+        if prior is not None:
+            seen[int(gid)] = int(prior[0])
+            return int(prior[0])
+    session = _session_of(row)
+    created = int(_g(row, "created_at") or 0)
+    th = base
+    for cycle in range(2, 50):
+        hit = conn.execute("SELECT id FROM event_titles WHERE title_hash=?", (th,)).fetchone()
+        if hit is None:
+            break
+        finished = conn.execute(
+            "SELECT session_key, created_at FROM events WHERE title_id=? AND +event_type='scrobble_completed' AND +created_at<=?",
+            (int(hit[0]), created),
+        ).fetchall()
+        if not any(_session_of(r) != session for r in finished):
+            break
+        th = _short_hash(f"{base}\x1f{cycle}")
+    tid = _title_id(conn, th, "scrobble", now)
+    if gid is not None:
+        seen[int(gid)] = tid
+    return tid
+
+
 def assign(conn: sqlite3.Connection, event_ids: Sequence[int]) -> set[int]:
     touched: set[int] = set()
     now = int(time.time())
     for i in range(0, len(event_ids), _CHUNK):
         part = list(event_ids[i:i + _CHUNK])
         rows = conn.execute(
-            f"SELECT {','.join(_EVENT_FIELDS)} FROM events WHERE id IN ({_in(part)})", part,
+            f"SELECT {','.join(_EVENT_FIELDS)} FROM events WHERE id IN ({_in(part)}) ORDER BY created_at, id", part,
         ).fetchall()
         none_ids: list[tuple[int]] = []
         by_hash: dict[str, tuple[str, list[int]]] = {}
+        seen: dict[int, int] = {}
         for row in rows:
             th = title_hash(row)
             if th is None:
                 none_ids.append((int(row["id"]),))
+            elif str(row["domain"] or "") == "scrobble":
+                tid = _scrobble_title(conn, row, th, now, seen)
+                conn.execute("UPDATE events SET title_id=? WHERE id=?", (tid, int(row["id"])))
+                touched.add(tid)
             else:
                 by_hash.setdefault(th, (str(row["domain"] or "sync"), []))[1].append(int(row["id"]))
         if none_ids:
@@ -402,8 +449,10 @@ def recompute(conn: sqlite3.Connection, title_id: int, now: int | None = None) -
             "at": at, "group_id": int(gid) if gid is not None else None,
         }
 
+    sessions = None
     if domain == "scrobble":
-        for gid, g in groups.items():
+        sessions = len({_session_of(e) for e in events}) or None
+        for gid, g in sorted(groups.items(), key=lambda kv: (int(kv[1].get("last_event_at") or 0), kv[0])):
             status = str(g.get("status") or "")
             dst = str(g.get("destination_provider") or "").upper()
             if not dst:
@@ -411,9 +460,13 @@ def recompute(conn: sqlite3.Connection, title_id: int, now: int | None = None) -
                 continue
             reason = f"{g.get('reason_code') or ''} {g.get('reason') or ''}".lower()
             dkey = (dst, str(g.get("destination_instance") or "default"), str(g.get("feature") or ""))
+            state = _state_for(status, reason)
+            current = dests.get(dkey)
+            if current is not None and current["state"] == "fail" and state == "pending":
+                continue
             dests[dkey] = {
                 "provider": dst, "instance": dkey[1], "feature": dkey[2], "op": "watch",
-                "state": _state_for(status, reason), "reason_code": g.get("reason_code"), "reason": g.get("reason"),
+                "state": state, "reason_code": g.get("reason_code"), "reason": g.get("reason"),
                 "at": int(g.get("last_event_at") or 0), "group_id": gid,
             }
 
@@ -461,7 +514,7 @@ def recompute(conn: sqlite3.Connection, title_id: int, now: int | None = None) -
         "UPDATE event_titles SET domain=?, updated_at=?, run_id=?, first_event_at=?, last_event_at=?, event_count=?, "
         "status=?, attention=?, item_key=?, ident=?, title=?, year=?, media_type=?, season=?, episode=?, "
         "source_provider=?, source_instance=?, kinds=?, states=?, dests=?, routes=?, destinations=?, ids=?, rating=?, "
-        "progress=?, acknowledged_at=?, dirty=0 WHERE id=?",
+        "progress=?, sessions=?, acknowledged_at=?, dirty=0 WHERE id=?",
         (
             domain, int(now or time.time()), run_id, min(times), max(times), len(events) + len(oks),
             status, attention, base_key(item_key) or None, ident_of(title, season, episode) or None,
@@ -474,7 +527,7 @@ def recompute(conn: sqlite3.Connection, title_id: int, now: int | None = None) -
             _routes(ordered), _dump(stored), _dump(ids),
             None if rating in (None, "") else str(rating)[:16],
             None if progress in (None, "") else str(progress)[:8],
-            acknowledged_at, title_id,
+            sessions, acknowledged_at, title_id,
         ),
     )
 
@@ -504,9 +557,19 @@ def refresh_dirty(conn: sqlite3.Connection, *, limit: int | None = None) -> int:
         done += len(ids)
 
 
-def _meta_done(conn: sqlite3.Connection) -> bool:
+def _meta_version(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT value_int FROM local_meta WHERE key=?", (TITLES_META,)).fetchone()
-    return row is not None and int(row[0] or 0) >= TITLES_VERSION
+    return int(row[0] or 0) if row is not None else 0
+
+
+def _meta_done(conn: sqlite3.Connection) -> bool:
+    return _meta_version(conn) >= TITLES_VERSION
+
+
+def _regroup_scrobbles(conn: sqlite3.Connection) -> None:
+    conn.execute("UPDATE events SET title_id=NULL WHERE domain='scrobble' AND title_id IS NOT NULL")
+    conn.execute("DELETE FROM event_titles WHERE domain='scrobble'")
+    conn.execute("UPDATE local_meta SET value_int=0 WHERE key=?", (TITLES_META,))
 
 
 def backfill_pending(conn: sqlite3.Connection) -> bool:
@@ -572,6 +635,12 @@ def _mark_backfilled(conn: sqlite3.Connection) -> None:
 def ensure_ready(conn: sqlite3.Connection) -> bool:
     if not backfill_pending(conn):
         return True
+    if not conn.in_transaction and 0 < _meta_version(conn) < 2:
+        from .groups import _GROUP_LOCK
+
+        with _GROUP_LOCK, conn:
+            if 0 < _meta_version(conn) < 2:
+                _regroup_scrobbles(conn)
     if conn.execute("SELECT 1 FROM events WHERE title_id IS NULL AND group_id IS NOT NULL LIMIT 1").fetchone() is None:
         if conn.in_transaction:
             _mark_backfilled(conn)
@@ -612,6 +681,7 @@ _WHAT_KINDS = {
     "watched": ("history:add", "scrobble:watch"),
     "ratings": ("ratings:", "scrobble:rating"),
     "watchlist": ("watchlist:",),
+    "collection": ("collection:",),
     "progress": ("progress:",),
     "removals": (":remove",),
 }
@@ -697,8 +767,14 @@ def list_titles(
         clauses.append(f"{fn}(t.source_provider, t.source_instance, t.routes)=1")
     where = " WHERE " + " AND ".join(clauses)
     dir_ = "ASC" if str(order or "").strip().lower() in ("oldest", "asc") else "DESC"
+    attn_clauses, attn_params = _filters(domain, q, outcome, review, True, source, destination, None, run_id, since, until)
+    if row_filter:
+        attn_clauses.append(f"{fn}(t.source_provider, t.source_instance, t.routes)=1")
     try:
         total = int(c.execute(f"SELECT COUNT(*) FROM event_titles t{where}", params).fetchone()[0])
+        attention_total = int(c.execute(
+            f"SELECT COUNT(*) FROM event_titles t WHERE {' AND '.join(attn_clauses)}", attn_params,
+        ).fetchone()[0])
         rows = c.execute(
             f"SELECT {','.join('t.' + col for col in TITLE_COLUMNS)} FROM event_titles t{where} "
             f"ORDER BY t.last_event_at {dir_}, t.id {dir_} LIMIT ? OFFSET ?",
@@ -711,7 +787,7 @@ def list_titles(
     if row_filter:
         for item in items:
             item["destinations"] = [d for d in item["destinations"] if row_filter(_route(item, d))]
-    return {"items": items, "total": total, "limit": lim, "offset": off, "preparing": preparing or backfill_running()}
+    return {"items": items, "total": total, "attention_total": attention_total, "limit": lim, "offset": off, "preparing": preparing or backfill_running()}
 
 
 def _route(item: Mapping[str, Any], dest: Mapping[str, Any]) -> dict[str, Any]:
@@ -766,7 +842,27 @@ def get_title(title_id: Any, *, related_limit: int = 20, conn: sqlite3.Connectio
         f"AND ({' OR '.join(clauses)}) ORDER BY last_event_at DESC, id DESC LIMIT ?",
         [tid, *params, max(1, min(int(related_limit), 100))],
     ).fetchall()] if clauses else []
+    if item.get("domain") == "scrobble" and int(item.get("sessions") or 0) > 1:
+        item["session_list"] = _sessions(c, tid)
     return item
+
+
+def _sessions(conn: sqlite3.Connection, title_id: int) -> list[dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for e in conn.execute(
+        "SELECT session_key, created_at, event_type, detail FROM events WHERE title_id=? ORDER BY created_at, id",
+        (title_id,),
+    ).fetchall():
+        key = _session_of(e)
+        at = int(e["created_at"] or 0)
+        s = out.setdefault(key, {"started_at": at, "last_at": at, "progress": None, "finished": False})
+        s["last_at"] = max(s["last_at"], at)
+        progress = (_json(e["detail"], {}) or {}).get("progress")
+        if progress not in (None, ""):
+            s["progress"] = progress
+        if e["event_type"] == "scrobble_completed":
+            s["finished"] = True
+    return sorted(out.values(), key=lambda s: s["started_at"], reverse=True)[:_SESSION_LIMIT]
 
 
 def acknowledge(title_id: Any, *, by: str | None = None, undo: bool = False, destinations: Sequence[Mapping[str, Any]] | None = None,

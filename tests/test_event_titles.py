@@ -263,3 +263,100 @@ def test_episode_cover_lookup_uses_the_show_of_the_episode(monkeypatch, tmp_path
     monkeypatch.setattr(metaAPI, "_tmdb_get_json", lambda url, params, timeout: found)
     assert metaAPI._lookup_tmdb_id("k", "tv", "tvdb", "123", True) == 88
     assert metaAPI._lookup_tmdb_id("k", "tv", "tvdb", "123") == 5
+
+def _at(hour: int, minute: int = 0, days: int = 0) -> int:
+    t = time.localtime()
+    return int(time.mktime((t.tm_year, t.tm_mon, t.tm_mday + days, hour, minute, 0, 0, 0, -1)))
+
+
+def _watch(event_type, at, session, progress, dst="TRAKT"):
+    from cw_platform.event_archive import scrobble_recorder
+
+    scrobble_recorder.record(event_type=event_type, source_provider="PLEX", destination_provider=dst,
+                             ids={"imdb": "tt38934465"}, media_type="episode", title="VisionQuest", season=1, episode=2,
+                             progress=progress, session_key=session, created_at=at)
+
+
+def test_watching_sessions_on_one_day_share_a_row(conn):
+    for n, (hour, progress) in enumerate(((10, 32), (11, 51), (12, 14)), start=1):
+        for dst in ("TRAKT", "SIMKL"):
+            _watch("scrobble_started", _at(hour), f"s{n}", progress, dst)
+    page = titles.list_titles(domain="scrobble", conn=conn)
+    assert page["total"] == 1
+    row = page["items"][0]
+    assert (row["sessions"], row["progress"]) == (3, "14")
+    detail = titles.get_title(row["id"], conn=conn)
+    assert [s["progress"] for s in detail["session_list"]] == [14, 51, 32]
+
+
+def test_new_play_after_a_finished_one_gets_its_own_row(conn):
+    _watch("scrobble_started", _at(9), "s1", 5)
+    _watch("scrobble_completed", _at(10), "s1", 96)
+    _watch("scrobble_started", _at(20), "s2", 3)
+    page = titles.list_titles(domain="scrobble", conn=conn)
+    assert page["total"] == 2
+    assert [r["sessions"] for r in page["items"]] == [1, 1]
+
+
+def test_session_past_midnight_stays_on_its_row(conn):
+    _watch("scrobble_started", _at(23, 50, days=-1), "s1", 10)
+    _watch("scrobble_completed", _at(0, 20), "s1", 95)
+    assert titles.list_titles(domain="scrobble", conn=conn)["total"] == 1
+
+
+def test_existing_watching_rows_are_regrouped_once(conn, monkeypatch):
+    for n, hour in enumerate((10, 11), start=1):
+        _watch("scrobble_started", _at(hour), f"s{n}", 20)
+    assert titles.list_titles(domain="scrobble", conn=conn)["total"] == 1
+    conn.execute("UPDATE local_meta SET value_int=1 WHERE key=?", (titles.TITLES_META,))
+    conn.commit()
+    started = []
+    monkeypatch.setattr(titles, "start_backfill", lambda: started.append(1) or True)
+    assert titles.ensure_ready(conn) is False
+    assert started == [1]
+    assert conn.execute("SELECT COUNT(*) FROM event_titles WHERE domain='scrobble'").fetchone()[0] == 0
+    titles.backfill(conn)
+    assert titles.list_titles(domain="scrobble", conn=conn)["total"] == 1
+    assert titles.backfill_pending(conn) is False
+
+
+def test_attention_count_ignores_the_quick_filter(conn):
+    rec = RunRecorder(lambda *a, **kw: None, run_id="run-1", conn=conn)
+    rec.emit("feature:start", src="PLEX", dst="TRAKT", feature="history")
+    _write(rec, [_movie(31)], dst="TRAKT", feature="collection")
+    rec.emit("archive:item_failures", provider="SIMKL", feature="history", op="add",
+             items=[{"key": "tmdb:1032", "item": _movie(32), "reason": "http_500"}])
+    rec.close()
+    page = titles.list_titles(domain="sync", what="collection", conn=conn)
+    assert [r["title"] for r in page["items"]] == ["Movie 31"]
+    assert page["attention_total"] == 1
+    assert titles.list_titles(domain="sync", destination="trakt", conn=conn)["attention_total"] == 0
+
+
+class _Dest:
+    def __init__(self, reply):
+        self.reply = reply
+
+    def add(self, cfg, items, *, feature, dry_run=False):
+        return self.reply(items)
+
+
+@pytest.mark.parametrize("reply, rows", [
+    (lambda items: {"ok": True, "confirmed_keys": [f"tmdb:{i['ids']['tmdb']}" for i in items]}, 3),
+    (lambda items: {"ok": True, "count": len(items)}, 3),
+    (lambda items: {"ok": True, "confirmed_keys": ["other:1", "other:2", "other:3"], "confirmed": len(items)}, 0),
+    (lambda items: {"ok": True, "count": len(items) - 1}, 0),
+    (lambda items: {"ok": True, "count": len(items), "unresolved": [{"item": items[0], "reason": "not_found"}]}, 0),
+], ids=["keys", "count only", "unmatched keys", "partial count", "unresolved"])
+def test_every_provider_reply_shape_reaches_titles(conn, monkeypatch, reply, rows):
+    monkeypatch.setattr(_applier, "record_unresolved", lambda *a, **kw: {})
+    monkeypatch.setattr(_applier._unresolved_mod, "clear_superseded_keys", lambda *a, **kw: None)
+    rec = RunRecorder(lambda *a, **kw: None, run_id="run-1", conn=conn)
+    rec.emit("feature:start", src="PLEX", dst="TRAKT", feature="watchlist")
+    _applier.apply_add(dst_ops=_Dest(reply), cfg={}, dst_name="TRAKT", feature="watchlist",
+                       items=[_movie(n) for n in range(3)], dry_run=False, emit=rec.emit,
+                       dbg=lambda *a, **kw: None, chunk_size=100, chunk_pause_ms=0)
+    rec.close()
+    ok = [r for r in titles.list_titles(domain="sync", conn=conn)["items"]
+          if any(d["state"] == "ok" for d in r["destinations"])]
+    assert len(ok) == rows
