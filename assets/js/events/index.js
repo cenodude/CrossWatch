@@ -1155,7 +1155,7 @@ export default {
       return p.toString();
     };
 
-    const TITLE_PAGE_SIZE = 50;
+    const TITLE_PAGE_SIZE = 25;
     const pageSize = () => titles() ? TITLE_PAGE_SIZE : PAGE_SIZE;
     const pageCount = () => Math.max(1, Math.ceil((state.total || 0) / pageSize()));
 
@@ -2373,7 +2373,12 @@ export default {
       (el || listEl.querySelector(rowSel))?.classList.add("sel");
       if (runsMode()) {
         const run = state.runs.find((r) => String(r.run_id) === String(id));
-        if (run) renderRunDetail(detailEl, run, { showTitles: (runId) => showTitles(runId) });
+        if (run) renderRunDetail(detailEl, run, {
+          tmdbOn,
+          fetchJson: fjson,
+          showTitles: (runId) => showTitles(runId),
+          openTitle: (runId, tid) => { showTitles(runId); void select(tid); },
+        });
         if (reveal) revealSection(Q(".ev-col-detail", root));
         return;
       }

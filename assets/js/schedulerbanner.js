@@ -78,10 +78,9 @@
 #ops-card #sched-inline-log #chip-sched{flex-basis:64px!important;}
 #ops-card #sched-inline-log .sched.ok,#ops-card #sched-inline-log .sched.live{--service-state:var(--hub-service-good);}
 #ops-card #sched-inline-log .sched:is(.ok,.live) .service-icon{opacity:.72!important;}
-#ops-card #sched-inline-log .sched:is(.ok,.live)::before{opacity:.4!important;box-shadow:none!important;}
 #ops-card #sched-inline-log .sched:is(.ok,.live) .watch-progress{opacity:.82;filter:saturate(.82);}
 #ops-card #sched-inline-log .sched.disabled{--service-state:var(--hub-service-disabled);border-color:color-mix(in srgb,var(--hub-service-disabled) 26%,var(--hub-card-border))!important;}
-#ops-card #sched-inline-log .sched::before{content:""!important;position:absolute!important;z-index:2!important;left:0!important;top:5px!important;right:auto!important;bottom:5px!important;width:3px!important;height:auto!important;border:0!important;border-radius:0 999px 999px 0!important;background:var(--service-state)!important;box-shadow:none!important;transform:none!important;opacity:.4!important;pointer-events:none!important;}
+#ops-card #sched-inline-log .sched::before{content:none!important;display:none!important;}
 #ops-card #sched-inline-log .service-icon{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:28px!important;height:28px!important;font-size:23px!important;line-height:1!important;color:var(--service-state)!important;background:transparent!important;border:0!important;border-radius:0!important;box-shadow:none!important;font-variation-settings:"FILL" 0,"wght" 430,"GRAD" 0,"opsz" 24;}
 #ops-card #sched-inline-log .watch-progress{--watch-progress-angle:0deg;position:relative;display:none;place-items:center;flex:0 0 28px;width:28px;height:28px;margin-left:1px;border-radius:50%;background:conic-gradient(var(--service-state) 0 var(--watch-progress-angle),color-mix(in srgb,var(--hub-muted) 20%,transparent) var(--watch-progress-angle) 360deg);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--hub-muted) 18%,transparent);overflow:hidden;}
 #ops-card #sched-inline-log .watch-progress::before{content:"";position:absolute;inset:4px;border-radius:50%;background:var(--hub-card-bg);box-shadow:inset 0 0 0 1px var(--hub-card-border);}
@@ -89,7 +88,6 @@
 #ops-card #sched-inline-log :is(#chip-watch,#chip-hook).has-progress .watch-progress{display:grid;}
 #ops-card #sched-inline-log :is(#chip-watch,#chip-hook).has-progress{min-width:190px!important;}
 #ops-card #sched-inline-log .sched.disabled .service-icon{opacity:.52!important;}
-#ops-card #sched-inline-log .sched.disabled::before{opacity:.48!important;box-shadow:none!important;}
 #ops-card #sched-inline-log .copy{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important;}
 #ops-card #sched-inline-log .sched.has-copy{flex:0 1 auto!important;width:auto!important;max-width:280px!important;justify-content:flex-start!important;gap:9px!important;padding:0 12px 0 9px!important;}
 #ops-card #sched-inline-log #chip-sched.has-copy{min-width:210px!important;}

@@ -1350,8 +1350,8 @@ def _lookup_store(key: str, tmdb_id: int | None) -> None:
             pass
 
 
-def _lookup_tmdb_id(api_key: str, t: str, ns: str, value: str) -> int | None:
-    key = f"{t}:{ns}:{value}"
+def _lookup_tmdb_id(api_key: str, t: str, ns: str, value: str, episode: bool = False) -> int | None:
+    key = f"{t}:{ns}:{value}" + (":ep" if episode else "")
     with _LOOKUP_LOCK:
         hit = _lookup_entries().get(key)
     if hit is not None:
@@ -1366,7 +1366,7 @@ def _lookup_tmdb_id(api_key: str, t: str, ns: str, value: str) -> int | None:
     )
     if data is None:
         return None
-    rows = (data or {}).get("movie_results" if t == "movie" else "tv_results") or []
+    rows = [] if episode else (data or {}).get("movie_results" if t == "movie" else "tv_results") or []
     if t == "tv" and not rows:
         episode = ((data or {}).get("tv_episode_results") or [{}])[0]
         show = episode.get("show_id") if isinstance(episode, dict) else None
@@ -1383,6 +1383,7 @@ def api_art_lookup(
     imdb: str | None = Query(None, max_length=16),
     tvdb: str | None = Query(None, max_length=16),
     size: str = Query("w185"),
+    episode: bool = Query(False),
 ) -> Any:
     t = "tv" if typ.lower() in ("tv", "show") else typ.lower()
     if t not in ("movie", "tv"):
@@ -1398,7 +1399,7 @@ def api_art_lookup(
         clean = str(value or "").strip().lower()
         if not clean or not _LOOKUP_PATTERNS[ns].match(clean):
             continue
-        tmdb_id = _lookup_tmdb_id(api_key, t, ns, clean)
+        tmdb_id = _lookup_tmdb_id(api_key, t, ns, clean, episode and t == "tv")
         if tmdb_id:
             return RedirectResponse(f"/art/tmdb/{t}/{tmdb_id}?fallback=2&size={size_tag}", status_code=307)
     return PlainTextResponse("Not found", status_code=404)

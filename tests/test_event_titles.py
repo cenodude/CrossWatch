@@ -252,3 +252,14 @@ def test_cover_lookup_cache_uses_one_fixed_file(monkeypatch, tmp_path):
     assert metaAPI._lookup_tmdb_id("k", "movie", "imdb", "tt0000002") is None
     assert metaAPI._lookup_tmdb_id("k", "movie", "imdb", "tt0000002") is None
     assert len(calls) == 2
+
+
+def test_episode_cover_lookup_uses_the_show_of_the_episode(monkeypatch, tmp_path):
+    from api import metaAPI
+
+    found = {"tv_results": [{"id": 5}], "tv_episode_results": [{"id": 900, "show_id": 88}]}
+    monkeypatch.setattr(metaAPI, "_env", lambda: (None, tmp_path, lambda: {}))
+    monkeypatch.setattr(metaAPI, "_LOOKUP_CACHE", None)
+    monkeypatch.setattr(metaAPI, "_tmdb_get_json", lambda url, params, timeout: found)
+    assert metaAPI._lookup_tmdb_id("k", "tv", "tvdb", "123", True) == 88
+    assert metaAPI._lookup_tmdb_id("k", "tv", "tvdb", "123") == 5

@@ -450,10 +450,20 @@ test('sync titles, activity days, runs and filters in the search bar', async t =
   await page.locator('#ev-runs-quiet').click();
   assert.equal(await page.locator('#ev-list .ev-rrow').count(), 2);
   await page.locator('#ev-list .ev-rrow[data-run="run-a"]').click();
-  await page.locator('#ev-detail .ev-rtable').waitFor();
-  await page.locator('#ev-run-titles').click();
-  await page.waitForFunction(() => document.querySelector('#ev-count').textContent === '2 titles');
+  await page.locator('#ev-detail .ev-rsums').waitFor();
+  assert.match(await page.locator('#ev-list .ev-rrow[data-run="run-a"] .ev-rsum').textContent(), /2 marked watched/);
+  await page.locator('#ev-detail .ev-rtitle[data-tid="2"]').waitFor();
+  assert.equal(await page.locator('#ev-detail .ev-rtitle').count(), 2);
+  assert.equal(await page.locator('#ev-run-titles').isVisible(), false);
   assert.equal(titleQueries.at(-1).run_id, 'run-a');
+  if (process.env.CW_EVENTS_SCREENSHOTS) {
+    await mkdir(process.env.CW_EVENTS_SCREENSHOTS, {recursive: true});
+    await page.screenshot({path: `${process.env.CW_EVENTS_SCREENSHOTS}/run-detail.png`});
+  }
+  await page.locator('#ev-detail .ev-rtitle[data-tid="2"]').click();
+  await page.waitForFunction(() => document.querySelector('#ev-count').textContent === '2 titles');
+  await page.waitForFunction(() => document.querySelector('#ev-detail .ev-dtitle')?.textContent === 'The Bear');
+  assert.equal(await page.locator('#ev-mode button[data-v="titles"]').getAttribute('aria-selected'), 'true');
 
   await page.locator('#ev-refresh').click();
   await page.waitForFunction(() => document.querySelector('#ev-refresh').classList.contains('is-spinning'));
@@ -560,7 +570,7 @@ test('sync titles work on a phone', async t => {
   assert.equal(await page.locator('.ev-toolbar').isVisible(), true);
   await page.locator('#ev-mode button[data-v="runs"]').tap();
   await page.locator('#ev-list .ev-rrow[data-run="run-a"]').tap();
-  await page.locator('#ev-detail .ev-rtable').waitFor();
+  await page.locator('#ev-detail .ev-rtitle').first().waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'run detail');
   await page.locator('#ev-detail-back').tap();
   for (const theme of ['original', 'flat-dark', 'flat-light']) {
