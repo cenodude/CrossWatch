@@ -4,11 +4,19 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import time
 from typing import Any, Mapping
 
 from cw_platform.run_control import cancel_requested, SyncCancelled
 from . import _common as common
-from ._discover_history import Writer, CloudError, _HISTORY_QUERY
+from .._log import log as cw_log
+from ._discover_history import Writer, CloudError, _HISTORY_QUERY, _LOCK
+
+_CACHE_NAME = "plex_cloud_history.metadata.json"
+_CACHE_VERSION = 1
+_MATCH_TTL = 14 * 86400
+_MISS_TTL = 86400
+_RATE_WAIT_BUDGET = 300
 
 
 def enabled(adapter: Any) -> bool:
@@ -28,8 +36,66 @@ def _tokens(item: Mapping[str, Any]) -> set[tuple]:
             for provider, value in ids.items() if provider in {"tmdb", "tvdb", "imdb"} and value}
 
 
+def _fresh(entry: Any, now: float) -> bool:
+    if not isinstance(entry, dict) or not isinstance(entry.get("at"), (int, float)):
+        return False
+    item = entry.get("item")
+    if item is not None and not isinstance(item, dict):
+        return False
+    return now - float(entry["at"]) < (_MATCH_TTL if item else _MISS_TTL)
+
+
+def _load_cache(now: float) -> dict[str, dict[str, Any]]:
+    with _LOCK:
+        data = common.global_state_read(_CACHE_NAME)
+    items = data.get("items") if data.get("version") == _CACHE_VERSION else None
+    return {str(k): v for k, v in items.items() if _fresh(v, now)} if isinstance(items, dict) else {}
+
+
+def _save_cache(found: Mapping[str, dict[str, Any]], now: float) -> None:
+    if not found:
+        return
+    with _LOCK:
+        merged = _load_cache(now)
+        merged.update(found)
+        common.global_state_write(_CACHE_NAME, {"version": _CACHE_VERSION, "items": merged})
+
+
+def _patient(writer: Any, waited: list[float]):
+    last = [0.0]
+
+    def call(fn: Any, *args: Any, **kwargs: Any) -> Any:
+        while True:
+            try:
+                result = fn(*args, **kwargs)
+                last[0] = 0.0
+                return result
+            except CloudError as exc:
+                until = float(getattr(writer, "blocked_until", 0) or 0)
+                delay = until - time.time()
+                if str(exc) != "plex_discover_rate_limited" or delay <= 0:
+                    raise
+                if last[0]:
+                    delay = max(delay, min(300.0, last[0] * 1.5))
+                if waited[0] + delay > _RATE_WAIT_BUDGET:
+                    raise
+                last[0] = delay
+                cw_log("PLEX", "history", "info", "cloud_history_rate_limited", wait_s=round(delay))
+                end = time.time() + delay
+                while time.time() < end:
+                    _cancel()
+                    time.sleep(min(1.0, max(0.0, end - time.time())))
+                waited[0] += delay
+                writer.blocked_until = 0.0
+    return call
+
+
 def read(adapter: Any) -> tuple[list[dict[str, Any]], int]:
     writer = Writer(adapter)
+    now = time.time()
+    cached = _load_cache(now)
+    found: dict[str, dict[str, Any]] = {}
+    call = _patient(writer, [0.0])
     try:
         _cancel()
         if not writer.token:
@@ -54,7 +120,7 @@ def read(adapter: Any) -> tuple[list[dict[str, Any]], int]:
             if key not in metadata:
                 _cancel()
                 try:
-                    data = writer._metadata(key, params={"includeGuids": 1})
+                    data = call(writer._metadata, key, params={"includeGuids": 1})
                 except CloudError as exc:
                     if str(exc) != "plex_discover_endpoint_unavailable":
                         raise
@@ -80,7 +146,7 @@ def read(adapter: Any) -> tuple[list[dict[str, Any]], int]:
         normalized: dict[str, dict[str, Any] | None] = {}
         while True:
             _cancel()
-            data = writer._gql(_HISTORY_QUERY, {"id": writer.uuid, "after": after})
+            data = call(writer._gql, _HISTORY_QUERY, {"id": writer.uuid, "after": after})
             history = (data.get("user") or {}).get("watchHistory")
             if not isinstance(history, dict) or not isinstance(history.get("nodes"), list):
                 raise CloudError("plex_discover_history_unavailable")
@@ -101,6 +167,8 @@ def read(adapter: Any) -> tuple[list[dict[str, Any]], int]:
                 if not key:
                     unmatched += 1
                     continue
+                if key not in normalized and key in cached:
+                    normalized[key] = cached[key]["item"]
                 if key not in normalized:
                     row = fetch(key)
                     item = None
@@ -119,6 +187,7 @@ def read(adapter: Any) -> tuple[list[dict[str, Any]], int]:
                             if not _tokens(item):
                                 item = None
                     normalized[key] = item
+                    found[key] = {"at": now, "item": item}
                 template = normalized[key]
                 if not template:
                     unmatched += 1
@@ -138,6 +207,7 @@ def read(adapter: Any) -> tuple[list[dict[str, Any]], int]:
             after = cursor
     finally:
         writer.close()
+        _save_cache(found, now)
 
 
 def merge(server: Mapping[str, dict[str, Any]], cloud: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

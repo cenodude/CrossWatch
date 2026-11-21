@@ -33,3 +33,12 @@ def _isolated_cw_mappings(request: pytest.FixtureRequest, tmp_path_factory: pyte
     if not empty.exists():
         empty.write_bytes(b'{"schema_version": 1, "revision": "2000-01-01.0", "entries": []}')
     monkeypatch.setattr(cw_mappings, "BUNDLED_PATH", empty)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_plex_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.sync.plex import _common as plex_common
+
+    monkeypatch.setattr(plex_common, "STATE_DIR", tmp_path / "plex_state")
+    monkeypatch.setattr(plex_common, "_CLOUD_IDS", None)
+    monkeypatch.setattr(plex_common, "_CLOUD_IDS_DIRTY", False)

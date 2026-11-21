@@ -182,3 +182,114 @@ def test_empty_catalog_result_is_unmatched(remote, monkeypatch):
     rows, unmatched = cloud.read(remote.adapter)
     assert rows == []
     assert unmatched == 1
+
+
+@pytest.fixture
+def cache_dir(monkeypatch, tmp_path):
+    monkeypatch.setenv("CW_PAIR_KEY", "cw2_cloud_cache")
+    monkeypatch.setattr(cloud.common, "STATE_DIR", tmp_path)
+    return tmp_path
+
+
+def _metadata_calls(remote):
+    return [c for c in remote.calls if c[0] == "metadata"]
+
+
+def test_metadata_is_cached_between_reads(remote, cache_dir):
+    remote.pages[0]["nodes"].append({"id":"play2", "date":"2021-02-03T04:05:06Z", "metadataItem":{"id":"episode"}})
+    page = {"nodes": list(remote.pages[0]["nodes"]), "pageInfo": {"hasNextPage": False}}
+    remote.pages.append(page)
+    first, _ = cloud.read(remote.adapter)
+    assert len(_metadata_calls(remote)) == 3
+    remote.calls.clear()
+    second, _ = cloud.read(remote.adapter)
+    assert second == first and _metadata_calls(remote) == []
+    assert [c for c in remote.calls if c[0] == "page"]
+
+
+def test_cached_misses_expire_sooner_than_matches(remote, cache_dir, monkeypatch):
+    remote.pages[0]["nodes"].append({"id":"play2", "date":"2021-02-03T04:05:06Z", "metadataItem":{"id":"gone"}})
+    remote.pages.append({"nodes": list(remote.pages[0]["nodes"]), "pageInfo": {"hasNextPage": False}})
+    start = cloud.time.time()
+    assert cloud.read(remote.adapter)[1] == 1
+    remote.calls.clear()
+    monkeypatch.setattr(cloud.time, "time", lambda: start + cloud._MISS_TTL + 1)
+    assert cloud.read(remote.adapter)[1] == 1
+    assert _metadata_calls(remote) == [("metadata", "gone")]
+
+
+def test_failed_read_keeps_metadata_already_fetched(remote, cache_dir):
+    remote.pages[0]["pageInfo"] = {"hasNextPage": True, "endCursor": "next"}
+    remote.pages.append(CloudError("plex_discover_rate_limited"))
+    with pytest.raises(CloudError):
+        cloud.read(remote.adapter)
+    remote.calls.clear()
+    remote.pages = [{"nodes": [{"id":"play1", "date":"2020-01-01T00:00:00Z", "metadataItem":{"id":"movie"}}],
+                     "pageInfo": {"hasNextPage": False}}]
+    rows, _ = cloud.read(remote.adapter)
+    assert len(rows) == 1 and _metadata_calls(remote) == []
+
+
+class Clock:
+    def __init__(self):
+        self.now = 1_000_000.0
+        self.slept = 0.0
+
+    def time(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+        self.slept += seconds
+
+
+def _rate_limit_once(remote, monkeypatch, delay, times=1):
+    clock = Clock()
+    monkeypatch.setattr(cloud, "time", clock)
+    original = cloud.Writer
+    def build(adapter):
+        reader = original(adapter)
+        reader.blocked_until = 0.0
+        fetch = reader._metadata
+        hits = []
+        def limited(key, **kw):
+            if len(hits) < times:
+                hits.append(key)
+                reader.blocked_until = clock.now + delay
+                raise CloudError("plex_discover_rate_limited")
+            return fetch(key, **kw)
+        reader._metadata = limited
+        return reader
+    monkeypatch.setattr(cloud, "Writer", build)
+    return clock
+
+
+def test_rate_limit_waits_and_continues(remote, monkeypatch):
+    clock = _rate_limit_once(remote, monkeypatch, 60)
+    rows, unmatched = cloud.read(remote.adapter)
+    assert len(rows) == 1 and unmatched == 0
+    assert clock.slept == 60
+
+
+def test_rate_limit_beyond_the_wait_budget_still_fails(remote, monkeypatch):
+    clock = _rate_limit_once(remote, monkeypatch, cloud._RATE_WAIT_BUDGET + 1)
+    with pytest.raises(CloudError, match="rate_limited"):
+        cloud.read(remote.adapter)
+    assert clock.slept == 0
+
+
+def test_repeated_rate_limits_wait_longer(remote, monkeypatch):
+    clock = _rate_limit_once(remote, monkeypatch, 60, times=3)
+    rows, _ = cloud.read(remote.adapter)
+    assert len(rows) == 1
+    assert clock.slept == 60 + 90 + 135
+
+
+def test_metadata_cache_works_outside_a_pair_run(remote, monkeypatch, tmp_path):
+    monkeypatch.delenv("CW_PAIR_KEY", raising=False)
+    monkeypatch.setattr(cloud.common, "STATE_DIR", tmp_path)
+    remote.pages.append({"nodes": list(remote.pages[0]["nodes"]), "pageInfo": {"hasNextPage": False}})
+    cloud.read(remote.adapter)
+    remote.calls.clear()
+    cloud.read(remote.adapter)
+    assert _metadata_calls(remote) == []

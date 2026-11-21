@@ -35,6 +35,9 @@ class Session:
         self.media = {mid: metadata(mid) for mid in self.members["a"]}
         self.ignore_writes = False
         self.error = None
+        self.refused: set[str] = set()
+        self.off_discover: set[str] = set()
+        self.edit_errors = None
 
     def resource(self, lid):
         return {**self.rows[lid], "itemCount": len(self.members[lid])}
@@ -47,6 +50,8 @@ class Session:
             if isinstance(self.error, Exception):
                 raise self.error
             return SimpleNamespace(status_code=self.error, json=lambda: {})
+        if url.startswith(lists.common.DISCOVER):
+            return SimpleNamespace(status_code=404 if url.rsplit("/", 1)[-1] in self.off_discover else 200, json=lambda: {})
         if url == "https://plex.tv/api/v2/user":
             result = self.owner
         elif url == lists.COMMUNITY:
@@ -72,6 +77,10 @@ class Session:
                     del self.rows[variables["id"]]
                 result = {"removeCustomList": True}
             elif query == lists.EDIT:
+                changes = variables["input"]["changes"]
+                if self.edit_errors or any((c.get("add") or c.get("remove") or {}).get("metadataID") in self.refused for c in changes):
+                    errors = self.edit_errors or [{"message": "An internal server error occurred."}]
+                    return SimpleNamespace(status_code=200, json=lambda: {"errors": deepcopy(errors), "data": None})
                 members = self.members[variables["id"]]
                 if not self.ignore_writes:
                     for change in variables["input"]["changes"]:
@@ -338,3 +347,53 @@ def test_capabilities_scope_privacy_to_cloud_lists():
     assert resolve_create_privacy(_mod_PLEX.OPS, "public", "collection") is None
     with pytest.raises(ValueError, match="only"):
         _mod_PLEX.OPS.update_playlist_privacy({}, "collection:1:3", "public")
+
+
+def test_refused_items_are_skipped_and_the_rest_is_added(adapter, monkeypatch):
+    logged = []
+    monkeypatch.setattr(lists, "cw_log", lambda *args, **fields: logged.append((args, fields)))
+    session = adapter.client.session
+    for mid in ("4", "5", "6", "7"):
+        session.media[mid] = metadata(mid)
+    session.refused = {"5", "7"}
+    session.off_discover = {"5", "6"}
+    items = [{"type": "movie", "title": f"Movie {mid}", "year": 2001, "ids": {"tmdb": mid}} for mid in ("4", "5", "6", "7")]
+    result = lists.add(adapter, "cloud:a", items)
+    assert session.members["a"] == ["1", "2", "3", "4", "6"]
+    assert sorted(result["confirmed_keys"]) == ["tmdb:4", "tmdb:6"]
+    assert {row["key"]: row["hint"] for row in result["unresolved"]} == {
+        "tmdb:5": "plex_cloud_not_on_discover", "tmdb:7": "plex_cloud_list_item_refused"}
+    refused = [fields for args, fields in logged if args[3] == "cloud_list_item_refused"]
+    assert {row["title"] for row in refused} == {"Movie 5", "Movie 7"}
+    rejected = [fields for args, fields in logged if args[3] == "cloud_list_request_rejected"]
+    assert rejected and rejected[0]["operation"] == "CrossWatchEditList"
+    assert rejected[0]["message"] == "An internal server error occurred."
+
+
+def test_a_lone_refused_item_does_not_fail_the_sync(adapter):
+    session = adapter.client.session
+    session.media["4"] = metadata("4")
+    session.refused = {"4"}
+    result = lists.add(adapter, "cloud:a", [{"type": "movie", "ids": {"tmdb": "4"}}])
+    assert [(row["key"], row["hint"]) for row in result["unresolved"]] == [("tmdb:4", "plex_cloud_list_item_refused")]
+    assert session.members["a"] == ["1", "2", "3"]
+
+
+def test_rate_limited_edits_are_not_split(adapter):
+    session = adapter.client.session
+    for mid in ("4", "5"):
+        session.media[mid] = metadata(mid)
+    session.edit_errors = [{"message": "slow down", "extensions": {"code": "RATE_LIMITED"}}]
+    with pytest.raises(lists.PlexListError, match="rate limited"):
+        lists.add(adapter, "cloud:a", [{"type": "movie", "ids": {"tmdb": mid}} for mid in ("4", "5")])
+    assert len(session.writes()) == 1
+
+
+def test_create_keeps_the_list_when_a_seed_item_is_refused(adapter):
+    session = adapter.client.session
+    for mid in ("4", "5"):
+        session.media[mid] = metadata(mid)
+    session.refused = session.off_discover = {"5"}
+    resource = lists.create(adapter, "New", items=[{"type": "movie", "ids": {"tmdb": mid}} for mid in ("4", "5")])
+    assert resource.id == "cloud:new" and session.members["new"] == ["4"]
+    assert resource.extra["seed_unresolved_keys"] == ["tmdb:5"]

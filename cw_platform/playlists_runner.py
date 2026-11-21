@@ -593,7 +593,8 @@ def _materialize_pending(
     _apply_new_playlist_id(mapping, endpoint_id, new_id, new_name)
     if not _persist_endpoint_playlist_id(cfg, endpoint_id, new_id, new_name):
         raise PlaylistRunError(f"created '{name}' but could not store its id on endpoint {endpoint_id or '?'}")
-    return new_id, {it.key for it in seed_items}
+    refused = set((getattr(res, "extra", None) or {}).get("seed_unresolved_keys") or ())
+    return new_id, {it.key for it in seed_items if it.key not in refused}
 
 
 def _unique_snapshot_items(snapshot: PlaylistSnapshot) -> tuple[list[PlaylistItem], dict[str, PlaylistItem]]:
