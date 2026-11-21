@@ -248,6 +248,7 @@ def test_history_add_without_duration_is_unresolved_and_remove_unmarks(silo: Any
     adapter, server = silo
     _common.library(adapter).movies["movie-tmdb-100"]["runtime"] = None
     server.on("GET", "/progress", lambda kw: _page([]))
+    server.on("GET", "/catalog/items/movie-tmdb-100", lambda kw: ResponseStub(200, {"content_id": "movie-tmdb-100", "runtime": None, "versions": []}))
     res = adapter.add("history", [{"type": "movie", "ids": {"tmdb": "100"}, "watched_at": "2024-06-01T20:00:00Z"}])
     assert res["unresolved"][0]["status"] == "missing_duration"
     assert server.count("POST", "/sync/progress") == 0
@@ -258,6 +259,39 @@ def test_history_add_without_duration_is_unresolved_and_remove_unmarks(silo: Any
     assert res["confirmed_keys"] == ["tmdb:100"]
     assert server.calls[-1]["json"] == {"targets": [{"content_id": "movie-tmdb-100", "scope": "item"}]}
 
+
+def test_history_add_without_runtime_uses_file_duration(silo: Any) -> None:
+    from providers.sync.silo import _common
+
+    adapter, server = silo
+    _common.library(adapter).movies["movie-tmdb-100"]["runtime"] = None
+    sent: list[Any] = []
+    after: list[dict[str, Any]] = []
+
+    def write(kw: dict[str, Any]) -> ResponseStub:
+        sent.append(kw["json"])
+        after.extend({"media_item_id": e["media_item_id"], "completed": True, "updated_at": e["updated_at"]} for e in kw["json"]["items"])
+        return ResponseStub(200, {"items": [{"index": i, "media_item_id": e["media_item_id"], "status": "success"} for i, e in enumerate(kw["json"]["items"])], "summary": {}})
+
+    server.on("GET", "/catalog/items/movie-tmdb-100", lambda kw: ResponseStub(200, {"content_id": "movie-tmdb-100", "runtime": None, "user_data": {}, "versions": [{"file_id": "f1", "duration": 6850}]}))
+    server.on("POST", "/sync/progress", write)
+    server.on("GET", "/progress", lambda kw: _page(after))
+
+    res = adapter.add("history", [{"type": "movie", "ids": {"tmdb": "100"}, "watched_at": "2024-06-01T20:00:00Z"}])
+
+    assert sent[0]["items"][0]["duration_ms"] == 6_850_000
+    assert res["confirmed_keys"] == ["tmdb:100"]
+
+
+def test_detail_duration_order_and_decimal_values() -> None:
+    from providers.sync.silo._common import detail_duration_seconds
+
+    assert detail_duration_seconds({"user_data": {"duration_seconds": 6900.4}, "runtime": 115, "versions": [{"duration": 6906}]}) == 6900
+    assert detail_duration_seconds({"duration_seconds": "5400.0", "runtime": 115}) == 5400
+    assert detail_duration_seconds({"user_data": {"duration_seconds": 0}, "runtime": 115, "versions": [{"duration": 6906}]}) == 6900
+    assert detail_duration_seconds({"runtime": None, "versions": [{"duration": None}, {"duration": 2673}]}) == 2673
+    assert detail_duration_seconds({"runtime": 0, "versions": [], "user_data": None}) == 0
+    assert detail_duration_seconds({"user_data": {"duration_seconds": "nan"}, "versions": [{"duration": float("inf")}]}) == 0
 
 def test_progress_index_and_write_verification(silo: Any) -> None:
     from providers.sync.silo import _progress

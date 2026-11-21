@@ -15,13 +15,13 @@ from ._common import (
     cfg_section,
     chunks,
     iso_z,
+    item_duration_seconds,
     key_of,
     library,
     minimal_for,
     pages,
     problem_of,
     resolve_item,
-    runtime_seconds,
     safe_json,
     silo_request,
     unresolved_entry,
@@ -94,7 +94,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             unresolved.append(unresolved_entry(key, "not_in_library", item))
             continue
         pos = as_int(item.get("progress_ms"))
-        dur = as_int(item.get("duration_ms")) or runtime_seconds(lib, cid) * 1000
+        dur = as_int(item.get("duration_ms")) or item_duration_seconds(adapter, lib, cid, feature=FEATURE) * 1000
         if not pos or pos <= 0 or not dur or dur <= pos:
             unresolved.append(unresolved_entry(key, "missing_position_or_duration", item))
             continue

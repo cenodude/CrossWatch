@@ -11,7 +11,7 @@ from cw_platform.played_writes import note_write
 from providers.scrobble._media_server import DeliveryError, MediaServerSink
 from providers.scrobble.scrobble import _log
 from providers.sync._mod_SILO import SILOModule
-from providers.sync.silo._common import as_int, cfg_section, item_detail, library, resolve_item, safe_json, selected_libraries, session_content_id, silo_request
+from providers.sync.silo._common import cfg_section, detail_duration_seconds, item_detail, library, resolve_item, safe_json, selected_libraries, session_content_id, silo_request
 
 
 class SiloSink(MediaServerSink):
@@ -45,10 +45,8 @@ class SiloSink(MediaServerSink):
             return {"ok": True, "skipped": True, "reason": "destination_already_watched"}
         if self._active_elsewhere(adapter, cid):
             return {"ok": False, "retryable": True, "error": "active_destination_session"}
-        raw_data = detail.get("user_data")
-        data: dict[str, Any] = raw_data if isinstance(raw_data, dict) else {}
-        seconds = as_int(data.get("duration_seconds")) or ((as_int(detail.get("runtime")) or 0) * 60)
-        if not seconds or seconds <= 0:
+        seconds = detail_duration_seconds(detail)
+        if seconds <= 0:
             raise DeliveryError("missing_destination_duration")
         duration_ms = seconds * 1000
         entry: dict[str, Any] = {"media_item_id": cid, "duration_ms": duration_ms}
