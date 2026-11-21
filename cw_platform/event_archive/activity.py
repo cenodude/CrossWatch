@@ -182,6 +182,28 @@ def _run_pair_rows(conn: Any, run_ids: list[str], scope: Scope) -> dict[str, lis
     return out
 
 
+def _run_plans(conn: Any, run_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = {}
+    if not run_ids:
+        return out
+    rows = conn.execute(
+        f"SELECT DISTINCT run_id, feature, source_provider, source_instance, destination_provider, destination_instance "
+        f"FROM events WHERE run_id IN ({','.join('?' for _ in run_ids)}) AND event_type='plan_created'",
+        run_ids,
+    ).fetchall()
+    for row in rows:
+        if not (row["source_provider"] and row["destination_provider"]):
+            continue
+        out.setdefault(str(row["run_id"]), []).append({
+            "feature": row["feature"] or "",
+            "src_provider": str(row["source_provider"]).upper(),
+            "src_instance": str(row["source_instance"] or "default").lower(),
+            "dst_provider": str(row["destination_provider"]).upper(),
+            "dst_instance": str(row["destination_instance"] or "default").lower(),
+        })
+    return out
+
+
 def day_runs(*, since: int, until: int, scope: Scope | None = None, limit: int = _MAX_RUNS, conn: Any = None) -> dict[str, Any]:
     until = int(until)
     since = int(min(since, until))
@@ -217,6 +239,7 @@ def day_runs(*, since: int, until: int, scope: Scope | None = None, limit: int =
 
         runs = [dict(row) for row in rows]
         pair_map = _run_pair_rows(c, [str(r["run_id"]) for r in runs], sc)
+        plan_map = _run_plans(c, [str(r["run_id"]) for r in runs]) if sc.unrestricted else {}
     except Exception:
         return {"ok": False, "error": "internal_error", "range": {"since": since, "until": until}}
 
@@ -229,5 +252,6 @@ def day_runs(*, since: int, until: int, scope: Scope | None = None, limit: int =
             run[key] = int(run.get(key) or 0)
         run["changes"] = run["added"] + run["removed"] + run["updated"]
         run["pair_rows"] = pair_map.get(str(run.get("run_id")), [])
+        run["plans"] = plan_map.get(str(run.get("run_id")), [])
 
     return {"ok": True, "range": {"since": since, "until": until}, "runs": runs, "total": len(runs)}

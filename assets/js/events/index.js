@@ -588,7 +588,7 @@ export default {
 
     let quick = "all";
     let selectedDay = null;
-    let showQuietRuns = false;
+    const openQuietRuns = new Set();
     let titleTab = ls("cw.events.titletab", "path");
     let tmdbOn = false;
     const checked = new Set();
@@ -1410,7 +1410,13 @@ export default {
           open();
         });
       });
-      Q("#ev-runs-quiet", listEl)?.addEventListener("click", () => { showQuietRuns = !showQuietRuns; renderList(); });
+      listEl.querySelectorAll(".ev-rquiet[data-group]").forEach((btn) => btn.addEventListener("click", () => {
+        const key = btn.dataset.group;
+        if (btn.getAttribute("aria-expanded") === "true") openQuietRuns.delete(key);
+        else openQuietRuns.add(key);
+        renderList();
+        listEl.querySelector(`.ev-rquiet[data-group="${CSS.escape(key)}"]`)?.focus();
+      }));
     };
 
     const renderList = () => {
@@ -1423,7 +1429,7 @@ export default {
         Q("#ev-next-top", root).disabled = true;
         listEl.innerHTML = selectedDay == null
           ? `<div class="ev-empty ev-empty-list"><span class="material-symbols-rounded" aria-hidden="true">calendar_month</span><div class="ev-empty-head">No sync runs yet.</div><div class="ev-empty-hint">Runs appear here after the first sync.</div></div>`
-          : `<div class="ev-runs">${runRowsHTML(runs, { selected: state.selected, showQuiet: showQuietRuns || !!qEl.value.trim() })}</div>`;
+          : `<div class="ev-runs">${runRowsHTML(runs, { selected: state.selected, open: openQuietRuns, openAll: !!qEl.value.trim() })}</div>`;
         bindTitleRows();
         return;
       }
@@ -2380,7 +2386,8 @@ export default {
       state.relExpanded = false;
       listEl.querySelectorAll(".ev-row.sel, .ev-trow.sel, .ev-rrow.sel").forEach((n) => n.classList.remove("sel"));
       const rowSel = titles() ? `.ev-trow[data-tid="${CSS.escape(String(id))}"]` : runsMode() ? `.ev-rrow[data-run="${CSS.escape(String(id))}"]` : `.ev-row[data-id="${CSS.escape(String(id))}"]`;
-      (el || listEl.querySelector(rowSel))?.classList.add("sel");
+      if (runsMode()) listEl.querySelectorAll(rowSel).forEach((n) => n.classList.add("sel"));
+      else (el || listEl.querySelector(rowSel))?.classList.add("sel");
       if (runsMode()) {
         const run = state.runs.find((r) => String(r.run_id) === String(id));
         if (run) renderRunDetail(detailEl, run, {

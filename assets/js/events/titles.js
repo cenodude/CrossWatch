@@ -552,35 +552,110 @@ const RUN_TITLE_LIMIT = 10;
 
 const runTitleHTML = (item, tmdbOn) => `<button type="button" class="ev-rtitle" data-tid="${esc(item.id)}">${coverHTML(item, tmdbOn)}<span class="ev-rtitle-main"><span class="ev-rtitle-name">${esc(titleText(item))}</span><span class="ev-tsub">${esc([subText(item), whatOf(item)].filter(Boolean).join(" · "))}</span><span class="ev-tdests">${(item.destinations || []).map(destChipHTML).join("")}</span></span></button>`;
 
-export function runRowsHTML(runs, { selected = "", showQuiet = false } = {}) {
-  const visible = showQuiet ? runs : runs.filter((r) => (r.changes || 0) > 0 || r.errors || r.status === "running");
-  const rows = visible.map((run) => {
-    const status = run.errors ? "error" : run.status === "running" ? "info" : (run.changes ? "ok" : "idle");
-    const routes = runRoutes(run);
-    const what = run.errors ? `${fmt(run.errors)} failed` : run.changes ? `${fmt(run.changes)} changes` : (run.status === "running" ? "Running" : "No changes");
-    return `<div class="ev-rrow${String(selected) === String(run.run_id) ? " sel" : ""}" data-run="${esc(run.run_id)}" tabindex="0" role="button">
+const endpointKey = (provider, instance) => `${String(provider || "").toUpperCase()}|${String(instance || "default").toLowerCase()}`;
+
+export function runGroups(runs) {
+  const groups = new Map();
+  const loose = { key: "", runs: [], features: new Set(), dirs: new Set() };
+  for (const run of runs) {
+    const entries = new Map();
+    const rows = [...(run.pair_rows || []), ...(run.plans || []).map((p) => ({ ...p, plan: true }))];
+    for (const r of rows) {
+      const a = endpointKey(r.src_provider, r.src_instance);
+      const b = endpointKey(r.dst_provider, r.dst_instance);
+      const key = [a, b].sort().join(">");
+      let group = groups.get(key);
+      if (!group) groups.set(key, group = { key, src: r.src_provider, srcInst: r.src_instance, dst: r.dst_provider, dstInst: r.dst_instance, dirs: new Set(), features: new Set(), runs: [] });
+      group.dirs.add(`${a}>${b}`);
+      if (r.feature) group.features.add(r.feature);
+      const entry = entries.get(key) || { run, rows: [] };
+      if (!r.plan) entry.rows.push(r);
+      entries.set(key, entry);
+    }
+    if (!entries.size) loose.runs.push({ run, rows: [] });
+    for (const [key, entry] of entries) groups.get(key).runs.push(entry);
+  }
+  const out = [...groups.values()];
+  if (loose.runs.length) out.push(loose);
+  for (const group of out) {
+    for (const entry of group.runs) {
+      const loneRun = !group.key;
+      entry.changes = loneRun ? Number(entry.run.changes || 0) : entry.rows.reduce((n, r) => n + Number(r.added || 0) + Number(r.removed || 0) + Number(r.updated || 0), 0);
+      entry.errors = loneRun ? Number(entry.run.errors || 0) : entry.rows.reduce((n, r) => n + Number(r.errors || 0), 0);
+      if (!entry.errors && Number(entry.run.errors || 0) && !(entry.run.pair_rows || []).some((r) => Number(r.errors || 0))) entry.errors = Number(entry.run.errors);
+      entry.active = entry.changes > 0 || entry.errors > 0 || entry.run.status === "running";
+    }
+    const latest = (list) => Math.max(0, ...list.map((e) => Number(e.run.started_at || 0)));
+    group.lastActive = latest(group.runs.filter((e) => e.active));
+    group.last = latest(group.runs);
+  }
+  return out.sort((x, y) => (!x.key) - (!y.key) || y.lastActive - x.lastActive || y.last - x.last);
+}
+
+const groupRouteHTML = (group) => group.key
+  ? `<span class="ev-rroute">${providerChipHTML(group.src, group.srcInst)}<span class="material-symbols-rounded ev-tarrow" aria-hidden="true">${group.dirs.size > 1 ? "sync_alt" : "arrow_forward"}</span>${providerChipHTML(group.dst, group.dstInst)}</span>`
+  : `<span class="ev-rwhat">Other runs</span>`;
+
+const entryParts = (group, entry) => {
+  const routes = runRoutes({ pair_rows: entry.rows });
+  const named = group.dirs.size > 1;
+  return routes.flatMap((route) => route.parts.map((p) => ({ ...p, text: named ? `${providerLabel(route.dst)}: ${p.text}` : p.text })));
+};
+
+const childRowHTML = (group, entry, selected) => {
+  const { run } = entry;
+  const status = entry.errors ? "error" : run.status === "running" ? "info" : entry.changes ? "ok" : "idle";
+  const parts = entry.active ? entryParts(group, entry) : [];
+  const what = parts.length ? parts.map((p) => `<span${p.bad ? ` class="bad"` : ""}>${esc(p.text)}</span>`).join("")
+    : esc(entry.errors ? `${fmt(entry.errors)} failed` : entry.changes ? `${fmt(entry.changes)} changes` : run.status === "running" ? "Running" : "No changes");
+  return `<div class="ev-rrow ev-rchild${String(selected) === String(run.run_id) ? " sel" : ""}" data-run="${esc(run.run_id)}" tabindex="0" role="button">
+      <span class="ev-rbranch" aria-hidden="true"></span>
       <span class="ev-rtime">${esc(runTime(run.started_at))}</span>
       <span class="ev-rdot ${status}" aria-hidden="true"></span>
-      <span class="ev-rmain"><span class="ev-rwhat${run.errors ? " bad" : ""}">${esc(what)}${run.dry_run ? " · dry run" : ""}</span>${routes.length ? `<span class="ev-rpairs">${routes.map(routeLineHTML).join("")}</span>` : ""}</span>
+      <span class="ev-rmain"><span class="ev-rsum${entry.active ? " on" : ""}">${what}${run.dry_run ? `<span>dry run</span>` : ""}</span></span>
       <span class="ev-rdur">${esc(runDur(run.duration))}</span>
     </div>`;
-  });
-  const quiet = runs.length - visible.length;
-  const foot = quiet ? `<div class="ev-rfoot">${esc(`${quiet} quiet ${quiet === 1 ? "run" : "runs"} ${showQuiet ? "shown" : "hidden"}`)} · <button type="button" class="ev-linkbtn" id="ev-runs-quiet">${showQuiet ? "Hide" : "Show"}</button></div>` : "";
-  return (rows.join("") || `<div class="ev-empty ev-empty-inline">${runs.length ? "Only runs without changes on this day." : "No sync runs on this day."}</div>`) + foot;
+};
+
+export function runRowsHTML(runs, { selected = "", open = new Set(), openAll = false } = {}) {
+  if (!runs.length) return `<div class="ev-empty ev-empty-inline">No sync runs on this day.</div>`;
+  return runGroups(runs).map((group) => {
+    const active = group.runs.filter((e) => e.active);
+    const quiet = group.runs.filter((e) => !e.active);
+    const features = [...group.features].map((f) => FEATURE_LABEL[f] || f).join(", ");
+    const count = `${fmt(group.runs.length)} ${group.runs.length === 1 ? "run" : "runs"}`;
+    const meta = [features, active.length ? count : `${count}, no changes`].filter(Boolean).join(" · ");
+    const shown = openAll || open.has(group.key) || quiet.some((e) => String(e.run.run_id) === String(selected));
+    const quietLine = quiet.length ? `<button type="button" class="ev-rquiet" data-group="${esc(group.key)}" aria-expanded="${shown}">
+        <span class="ev-rbranch" aria-hidden="true"></span>
+        <span class="ev-rquiet-text">${esc(`${fmt(quiet.length)} ${quiet.length === 1 ? "run" : "runs"} without changes`)}</span>
+        <span class="ev-rquiet-act">${shown ? "Hide" : "Show"}</span>
+      </button>` : "";
+    return `<div class="ev-rgroup">
+      <div class="ev-rghead">${groupRouteHTML(group)}<span class="ev-rgmeta">${esc(meta)}</span></div>
+      ${active.map((e) => childRowHTML(group, e, selected)).join("")}
+      ${quietLine}
+      ${shown ? `<div class="ev-rquiet-list">${quiet.map((e) => childRowHTML(group, e, selected)).join("")}</div>` : ""}
+    </div>`;
+  }).join("");
 }
 
 export function renderRunDetail(host, run, ctx) {
   const routes = runRoutes(run);
-  const summary = routes.length
-    ? `<div class="ev-rsums">${routes.map(routeLineHTML).join("")}</div>`
-    : `<div class="ev-empty ev-empty-inline">No recorded changes for this run.</div>`;
+  const groups = runGroups([run]).filter((g) => g.key);
+  const lead = groups.find((g) => g.runs[0]?.active) || groups[0];
+  const single = groups.length === 1 && routes.length <= 1;
+  const result = single && routes.length ? routes[0].parts.map((p) => p.text).join(", ")
+    : run.changes ? `${fmt(run.changes)} changes` : run.status === "running" ? "Running" : "No changes";
+  const failed = run.errors && !(single && routes.length) ? `${fmt(run.errors)} failed` : "";
+  const outcome = [result, failed, runDur(run.duration) ? `took ${runDur(run.duration)}` : "", run.dry_run ? "dry run" : ""].filter(Boolean).join(" · ");
+  const summary = !single && routes.length ? `<div class="ev-rsums">${routes.map(routeLineHTML).join("")}</div>` : "";
   const status = run.errors ? "error" : run.status === "running" ? "info" : "ok";
   host.innerHTML = `
     <div class="ev-dhead">
       <div class="ev-dhead-row"><span class="ev-badge ${status}">${esc(run.errors ? "Had failures" : run.status === "running" ? "Running" : "Finished")}</span><span class="ev-dhead-spacer"></span><span class="ev-dtime">${esc(fullTime(run.started_at))}</span></div>
-      <div class="ev-dtitle">${esc(`${fmt(run.changes)} changes`)}${run.errors ? ` · ${esc(fmt(run.errors))} failed` : ""}</div>
-      <p class="ev-outcome">${esc([runDur(run.duration) ? `Took ${runDur(run.duration)}` : "", run.dry_run ? "Dry run" : ""].filter(Boolean).join(" · "))}</p>
+      <div class="ev-dtitle ev-rdtitle">${lead ? groupRouteHTML(lead) : "Sync run"}${groups.length > 1 ? `<span class="ev-rdmore">${esc(`+${fmt(groups.length - 1)} more`)}</span>` : ""}</div>
+      <p class="ev-outcome">${esc(outcome.charAt(0).toUpperCase() + outcome.slice(1))}</p>
     </div>
     ${summary}
     <h4>Titles <span class="ev-h4-note" id="ev-run-total"></span></h4>
