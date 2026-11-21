@@ -287,6 +287,8 @@ function _watchLogKnownTags() {
     "KODI-WATCH",
     "SCROB-WATCH",
     "STREMIO-WATCH",
+    "SILO-WATCH",
+    "TOFA-WATCH",
     "ANIME-WATCH",
     "TRAKT-SINK",
     "SIMKL-SINK",
