@@ -463,6 +463,7 @@
       const { added, removed, updated, items, spotAdd, spotRem, spotUpd } = getLaneStats(summary || {}, feat.key);
       const lane = Object.assign(document.createElement("div"), { className: `lane lane-size-${feat.layout.size}${enabled ? "" : " disabled"}` });
       lane.dataset.laneKey = feat.key;
+      lane.style.setProperty("--lane-rgb", `var(--cw-feature-${feat.key}-rgb)`);
       wireLaneDrop(lane, feat.key);
       const total = (added || 0) + (removed || 0) + (updated || 0);
       if (running && enabled && total > (lastCounts[feat.key] ?? 0)) {
@@ -478,7 +479,7 @@
 
       const chipState = laneState(feat.key);
       const header = Object.assign(document.createElement("div"), { className: "lane-h" });
-      header.innerHTML = `<div class="lane-ico"><span class="material-symbols-rounded material-symbol" aria-hidden="true">${feat.icon}</span></div><div class="lane-title">${feat.label}</div><div class="lane-badges"><span class="delta"><b>${fmtDelta(added, removed, updated)}</b></span><span class="chip ${chipState}">${!enabled ? "Disabled" : chipState === "err" ? "Failed" : chipState === "ok" ? "Synced" : chipState === "run" ? "Running" : "Skipped"}</span></div>`;
+      header.innerHTML = `<div class="lane-ico"><span class="material-symbols-rounded material-symbol" aria-hidden="true">${feat.icon}</span></div><div class="lane-title">${feat.label}</div><div class="lane-badges">${enabled && total ? `<span class="delta"><b>${fmtDelta(added, removed, updated)}</b></span>` : ""}<span class="chip ${chipState}">${!enabled ? "Disabled" : chipState === "err" ? "Failed" : chipState === "ok" ? "Synced" : chipState === "run" ? "Running" : "Skipped"}</span></div>`;
       if (!summaryVisible()) {
         header.querySelector(".delta")?.remove();
         const chip = header.querySelector(".lane-badges .chip");

@@ -34,8 +34,23 @@ html[data-cw-theme=flat-light]{--cw-disabled-opacity:1;--cw-content-opacity:1;--
   --cw-mobile-nav-muted: var(--cw-theme-muted);
   --cw-mobile-nav-selected: color-mix(in srgb,var(--cw-theme-accent) 12%,var(--cw-theme-surface));
   --cw-mobile-nav-accent: var(--cw-theme-accent);
+  --cw-hub-panel-bg: #11141a;
+  --cw-hub-lane-bg: #12151b;
+  --cw-hub-lane-border: rgba(255,255,255,.07);
+  --cw-hub-lane-off-border: rgba(255,255,255,.09);
+  --cw-hub-off-text: #a7afbc;
+  --cw-hub-off-muted: #6c7482;
+  --cw-hub-chip-bg: rgba(255,255,255,.06);
+  --cw-hub-chip-text: #b8bfcc;
+  --cw-hub-step-text: #6c7482;
+  --cw-hub-step-ring: #3a404c;
+  --cw-hub-step-current: #eef1f6;
+  --cw-hub-step-done: #c9cfda;
+  --cw-hub-tab-icon: #aab2bf;
+  --cw-hub-tab-icon-active: #e6eaf0;
+  --cw-hub-tab-active-bg: rgba(255,255,255,.06);
 }
-html[data-cw-theme="flat-light"]{--cw-feature-watchlist-rgb:4,138,92;--cw-feature-ratings-rgb:157,105,0;--cw-feature-history-rgb:8,127,158;--cw-feature-progress-rgb:109,77,246;--cw-feature-playlists-rgb:179,0,160;--cw-feature-collection-rgb:178,73,30}
+html[data-cw-theme="flat-light"]{--cw-feature-watchlist-rgb:4,138,92;--cw-feature-ratings-rgb:157,105,0;--cw-feature-history-rgb:8,127,158;--cw-feature-progress-rgb:109,77,246;--cw-feature-playlists-rgb:179,0,160;--cw-feature-collection-rgb:178,73,30;--cw-hub-panel-bg:#ffffff;--cw-hub-lane-bg:#ffffff;--cw-hub-lane-border:rgba(16,24,40,.16);--cw-hub-lane-off-border:rgba(16,24,40,.2);--cw-hub-off-text:#475467;--cw-hub-off-muted:#667085;--cw-hub-chip-bg:#eef2f7;--cw-hub-chip-text:#344054;--cw-hub-step-text:#667085;--cw-hub-step-ring:#c0c7d2;--cw-hub-step-current:#111827;--cw-hub-step-done:#125c38;--cw-hub-tab-icon:#667085;--cw-hub-tab-icon-active:#172033;--cw-hub-tab-active-bg:rgba(16,24,40,.06)}
 :root {
   --cw-page-header-bg: radial-gradient(820px 250px at 100% 0%, rgba(112,96,245,.1), transparent 68%), linear-gradient(100deg, #111821, #151d31 48%, #181a38);
   --cw-page-panel-bg: linear-gradient(180deg, rgba(255,255,255,.025), transparent), var(--cw-theme-surface);
