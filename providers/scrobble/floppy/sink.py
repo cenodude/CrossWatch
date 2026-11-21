@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -247,7 +248,7 @@ class FloppySink(ScrobbleSink):
     def __init__(self, cfg_provider: Callable[[], dict[str, Any]] | None = None, instance_id: str | None = None) -> None:
         self._cfg_provider = cfg_provider
         self._instance_id = normalize_instance_id(instance_id)
-        self._completed: OrderedDict[str, tuple[float, str]] = OrderedDict()
+        self._completed: OrderedDict[str, dict[str, Any]] = OrderedDict()
 
     def _cfg(self, cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         if isinstance(cfg, dict):
@@ -281,20 +282,24 @@ class FloppySink(ScrobbleSink):
             base = f"{base}|s{_int(ev.season) or 0}e{_int(ev.number) or 0}"
         return f"{ev.server_uuid or '?'}:{ev.session_key or '?'}:{ev.media_type}:{base}"
 
-    def _session_state(self, key: str, action: str, progress: float) -> str | None:
+    def _session(self, key: str, action: str, progress: float) -> dict[str, Any]:
         now = time.time()
-        for stale in [k for k, (seen, _state) in self._completed.items() if now - seen > _COMPLETE_TTL]:
+        for stale in [k for k, entry in self._completed.items() if now - entry["seen"] > _COMPLETE_TTL]:
             self._completed.pop(stale, None)
         if action == "start" and progress <= 2:
             self._completed.pop(key, None)
-        entry = self._completed.get(key)
-        return entry[1] if entry else None
+        return dict(self._completed.get(key) or {})
 
-    def _mark_session(self, key: str, state: str) -> None:
-        self._completed[key] = (time.time(), state)
+    def _mark_session(self, key: str, state: str, **extra: Any) -> None:
+        self._completed[key] = {"seen": time.time(), "state": state, **extra}
         self._completed.move_to_end(key)
         while len(self._completed) > _COMPLETE_MAX:
             self._completed.popitem(last=False)
+
+    def _record_failure(self, ev: ScrobbleEvent, body: Mapping[str, Any], cfgd: Mapping[str, Any], progress: float, reason: str) -> None:
+        if body.get("action") in {"start", "stop"}:
+            src, src_inst = _route_source(cfgd)
+            record_watch(ev, action=str(body.get("action")), source_provider=src, source_instance=src_inst, destination_provider="floppy", destination_instance=self._instance_id, status="fail", progress=progress, reason=reason)
 
     def send(self, ev: ScrobbleEvent, cfg: dict[str, Any] | None = None) -> dict[str, Any] | None:
         cfgd = self._cfg(cfg)
@@ -309,32 +314,41 @@ class FloppySink(ScrobbleSink):
         complete_key = self._key(ev)
         progress = _clamp(ev.progress)
         is_complete_stop = body.get("action") == "stop" and body.get("completed") is True
-        session_state = self._session_state(complete_key, str(body.get("action") or ""), progress)
+        session = self._session(complete_key, str(body.get("action") or ""), progress)
+        session_state = session.get("state")
         if is_complete_stop and session_state == "uncertain":
             return {"ok": False, "error": "completion_unconfirmed", "retryable": False}
         if is_complete_stop and not (ev.raw or {}).get("_cw_episode_group") and session_state == "completed":
             return {"ok": True, "log_status": "skipped", "reason": "session_completed"}
+        request: dict[str, Any] = {"json": body}
+        if is_complete_stop:
+            if session_state == "pending":
+                body = dict(session["body"])
+                token = str(session["token"])
+            else:
+                token = uuid.uuid4().hex
+            self._mark_session(complete_key, "pending", token=token, body=dict(body))
+            request = {"json": body, "headers": {"Idempotency-Key": f"crosswatch-floppy-{token}"}}
         src, src_inst = _route_source(cfgd)
         try:
-            api_post(_Adapter(self._client(view)), "scrobble", json=body)
+            api_post(_Adapter(self._client(view)), "scrobble", **request)
         except FloppyAuthError as exc:
             reason = str(getattr(exc, "reason", "") or "request_failed")
             status = getattr(exc, "status_code", None)
-            _log(f"scrobble failed status={status} reason={reason}", "ERROR")
-            if body.get("action") in {"start", "stop"}:
-                record_watch(ev, action=str(body.get("action")), source_provider=src, source_instance=src_inst, destination_provider="floppy", destination_instance=self._instance_id, status="fail", progress=progress, reason=reason)
-            uncertain = is_complete_stop and (not status or status == 404 or status >= 500)
-            if uncertain:
-                self._mark_session(complete_key, "uncertain")
-            retryable = not uncertain and (reason == "request_failed" or (isinstance(status, int) and (status in (408, 429) or status >= 500)))
-            return {"ok": False, "error": reason, "retryable": retryable}
+            if not (is_complete_stop and status == 409 and "idempotency_conflict" in str(exc).lower()):
+                _log(f"scrobble failed status={status} reason={reason}", "ERROR")
+                self._record_failure(ev, body, cfgd, progress, reason)
+                if is_complete_stop and status == 404:
+                    self._mark_session(complete_key, "uncertain")
+                    return {"ok": False, "error": reason, "retryable": False}
+                retryable = reason == "request_failed" or (isinstance(status, int) and (status in (408, 429) or status >= 500))
+                if is_complete_stop and not retryable:
+                    self._completed.pop(complete_key, None)
+                return {"ok": False, "error": reason, "retryable": retryable}
         except Exception as exc:
             _log(f"scrobble failed err={exc}", "ERROR")
-            if body.get("action") in {"start", "stop"}:
-                record_watch(ev, action=str(body.get("action")), source_provider=src, source_instance=src_inst, destination_provider="floppy", destination_instance=self._instance_id, status="fail", progress=progress, reason="request_failed")
-            if is_complete_stop:
-                self._mark_session(complete_key, "uncertain")
-            return {"ok": False, "error": "request_failed", "retryable": not is_complete_stop}
+            self._record_failure(ev, body, cfgd, progress, "request_failed")
+            return {"ok": False, "error": "request_failed", "retryable": True}
         action = str(body.get("action") or ev.action)
         record_watch(ev, action=action, source_provider=src, source_instance=src_inst, destination_provider="floppy", destination_instance=self._instance_id, progress=progress)
         if action == "stop" and body.get("completed") is True:
