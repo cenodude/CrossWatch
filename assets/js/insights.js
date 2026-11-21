@@ -634,10 +634,9 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     const chip = $("#trend-week") || $("#stat-delta-chip");
     if (chip) {
       const diff = (week | 0) - (weekRemoved | 0);
-      chip.textContent = diff === 0 ? "no change" : `${diff > 0 ? "+" : ""}${diff} this week`;
-      chip.classList.remove("up", "down", "flat", "muted");
+      chip.textContent = diff === 0 ? "" : `${diff > 0 ? "+" : ""}${diff} this week`;
+      chip.classList.remove("up", "down", "flat");
       chip.classList.add(diff > 0 ? "up" : diff < 0 ? "down" : "flat");
-      chip.classList.toggle("muted", diff === 0);
       chip.title = diff === 0 ? "No change in the last 7 days" : `${week | 0} added, ${weekRemoved | 0} removed in the last 7 days`;
     }
     $("#stat-breakdown")?.remove();

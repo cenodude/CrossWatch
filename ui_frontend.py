@@ -1140,13 +1140,10 @@ __CW_NAV_PROFILE_MENU__
       <div class="cw-main-card-head-copy">
         <div class="cw-main-card-kicker">Statistics</div>
       </div>
-      <div class="cw-stats-head-side">
-        <button id="stats-calendar-open" class="cw-stats-calendar-btn" type="button" onclick="window.openStatisticsModal?.()" title="Sync activity calendar" aria-label="Open sync activity calendar"><span class="material-symbols-rounded" aria-hidden="true">calendar_month</span></button>
-      </div>
     </div>
 
     <div class="stats-modern v2">
-      <div class="now"><div class="label">Now</div><div id="stat-now" class="value" data-v="0">0</div><div class="chips"><span id="trend-week" class="chip trend flat">no change</span></div></div>
+      <div class="now"><div class="label">Now</div><div id="stat-now" class="value" data-v="0">0</div><div class="chips"><span id="trend-week" class="stat-trend flat"></span></div></div>
       <div class="facts">
         <div class="fact"><span class="k">Last Week</span><span id="stat-week" class="v" data-v="0">0</span></div>
         <div class="fact"><span class="k">Last Month</span><span id="stat-month" class="v" data-v="0">0</span></div>

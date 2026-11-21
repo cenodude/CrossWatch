@@ -2,8 +2,6 @@
 /* CrossWatch - JavaScript Modal Management Module */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-import {statisticsReturn, resumeEventsReturn} from './page-return.js';
-
 const _cwGetV = () => {
   try {
     return (window.__CW_VERSION__ || new URL(import.meta.url).searchParams.get('v') || Date.now());
@@ -33,7 +31,6 @@ ModalRegistry.register('scrobbler-route', () => import(_cwVer('./modals/scrobble
 ModalRegistry.register('editor-raw', () => import(_cwVer('./modals/editor-raw/index.js')));
 ModalRegistry.register('anime-overrides', () => import(_cwVer('./modals/anime-overrides/index.js')));
 ModalRegistry.register('support',      () => import(_cwVer('./modals/support/index.js')));
-ModalRegistry.register('statistics',   () => import(_cwVer('./modals/statistics/index.js')));
 ModalRegistry.register('sync-topology', () => import(_cwVer('./modals/sync-topology/index.js')));
 ModalRegistry.register('assistant',    () => import(_cwVer('./modals/assistant/index.js')));
 
@@ -78,9 +75,7 @@ window.openEvents = (props = {}) => {
   }
   const previous = location.hash.split('?')[0] === '#events' ? new URLSearchParams(location.hash.split('?')[1] || '') : null;
   const returnTo = previous ? previous.get('returnTo') : location.pathname + location.search + location.hash;
-  const returnContext = statisticsReturn(props.returnContext || previous?.get('returnContext'));
   if (returnTo) query.set('returnTo', returnTo);
-  if (returnContext) query.set('returnContext', JSON.stringify(returnContext));
   const hash = '#events' + (query.size ? `?${query}` : '');
   ModalRegistry.close();
   if (!document.getElementById('page-events') || !window.showTab) {
@@ -90,9 +85,6 @@ window.openEvents = (props = {}) => {
   if (location.hash !== hash) history.pushState(null, '', hash);
   return window.showTab('events');
 };
-window.openStatisticsModal = (props = {}) => ModalRegistry.open('statistics', props);
-if (document.readyState === 'complete') resumeEventsReturn();
-else window.addEventListener('load', resumeEventsReturn, {once:true});
 window.openExporter = (props = {}) => {
   const previous = location.hash.split('?')[0] === '#import_export'
     ? new URLSearchParams(location.hash.split('?')[1] || '') : null;

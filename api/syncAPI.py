@@ -586,7 +586,7 @@ def _slim_sync_log_obj(obj: Any) -> dict[str, Any] | None:
         return {}
     if ev == "apply:unresolved":
         return {}
-    if ev == "archive:item_failures":
+    if ev in ("archive:item_failures", "archive:item_successes"):
         return {}
     if ev == "debug" and str(obj.get("msg") or "") == "blocked.counts" and isinstance(obj.get("blackbox_items"), list):
         out = dict(cast(dict[str, Any], obj))

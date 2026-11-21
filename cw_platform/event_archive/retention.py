@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 from .db import get_conn
+from .titles import drop_orphans, mark_dirty_for_groups, prune as prune_titles, refresh_dirty
 
 _LOG = logging.getLogger("crosswatch.event_archive")
 
@@ -44,6 +45,7 @@ def _prune_threads(c: sqlite3.Connection, domain: str, cutoff: int) -> tuple[int
     for part in _chunks(gids):
         qm = ",".join("?" for _ in part)
         with c:
+            mark_dirty_for_groups(c, part)
             events += int(c.execute(f"DELETE FROM events WHERE group_id IN ({qm})", part).rowcount or 0)
             c.execute(f"DELETE FROM event_groups WHERE id IN ({qm})", part)
     return len(gids), events
@@ -59,6 +61,8 @@ def _trim_threads(c: sqlite3.Connection, cap: int) -> tuple[int, int]:
     ).fetchall()]
     events = 0
     for gid in gids:
+        with _GROUP_LOCK, c:
+            mark_dirty_for_groups(c, (gid,))
         while not _stop.is_set():
             with _GROUP_LOCK, c:
                 n = int(c.execute(
@@ -109,6 +113,8 @@ def apply_retention(*, conn: sqlite3.Connection | None = None, now: int | None =
                 groups, events = _prune_threads(c, domain, ts - days * DAY)
                 out["threads"][domain] = groups
                 out["events"] += events
+                with c:
+                    out["titles"] = out.get("titles", 0) + prune_titles(c, domain, ts - days * DAY)
             if out["events"]:
                 with c:
                     refresh_run_owned(c)
@@ -117,6 +123,10 @@ def apply_retention(*, conn: sqlite3.Connection | None = None, now: int | None =
             out["runs"] = _prune_runs(c, ts - THREAD_DAYS["sync"] * DAY)
         out["trimmed_threads"], trimmed = _trim_threads(c, THREAD_EVENT_CAP)
         out["events"] += trimmed
+        if out["events"]:
+            with _GROUP_LOCK, c:
+                drop_orphans(c)
+            refresh_dirty(c)
     except Exception as exc:
         _LOG.warning("event retention failed: %s", exc, exc_info=True)
         return {"ok": False, "error": "internal_error"}

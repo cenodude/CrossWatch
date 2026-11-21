@@ -551,8 +551,8 @@ html[data-cw-theme="flat-dark"] body:not(.cw-profile-page) #layout > #dashboard-
   border-color: var(--cw-theme-border-strong) !important;
 }
 
-html[data-cw-theme="flat-dark"] #ops-card :is(.cw-hub-action, .iconbtn, .det-tool-icon, .det-follow, .det-tab:not(.active)),
-html[data-cw-theme="flat-dark"] #stats-card :is(.cw-stats-calendar-btn, .ghost, .chip.trend),
+html[data-cw-theme="flat-dark"] #ops-card :is(.iconbtn, .det-tool-icon, .det-follow, .det-tab:not(.active)),
+html[data-cw-theme="flat-dark"] #stats-card .ghost,
 html[data-cw-theme="flat-dark"] #layout > #dashboard-widgets-card :is(.nav, .cw-watchlist-see-all) {
   background: var(--cw-theme-surface-strong) !important;
   border-color: var(--cw-theme-border-strong) !important;
@@ -561,22 +561,22 @@ html[data-cw-theme="flat-dark"] #layout > #dashboard-widgets-card :is(.nav, .cw-
 
 html[data-cw-theme="flat-dark"] #ops-card :is(.cw-hub-action, .iconbtn, .det-tool-icon, .det-follow, .det-tab:not(.active)):hover,
 html[data-cw-theme="flat-dark"] #ops-card #ux-lanes .lane:not(.disabled):hover,
-html[data-cw-theme="flat-dark"] #stats-card :is(.cw-stats-calendar-btn, .ghost):hover,
+html[data-cw-theme="flat-dark"] #stats-card .ghost:hover,
 html[data-cw-theme="flat-dark"] #stats-card #insights-switch :is(.seg-btn:not(.active), .ins-gear):hover,
 html[data-cw-theme="flat-dark"] #layout > #dashboard-widgets-card :is(.cw-history-widget-item, .cw-dash-ghost, .cw-dash-see-more, .nav, .cw-watchlist-see-all):hover {
   background: var(--cw-page-hover-bg) !important;
   border-color: var(--cw-theme-border-strong) !important;
 }
 
-html[data-cw-theme="flat-dark"] #ops-card #sched-inline-log :is(.sched, .badge),
+html[data-cw-theme="flat-dark"] #ops-card #sched-inline-log .badge,
 html[data-cw-theme="flat-dark"] #ops-card #sched-inline-log .sched[data-tip]::after {
   background: var(--cw-theme-surface-strong) !important;
 }
 
 html[data-cw-theme="flat-dark"] #ops-card #sched-inline-log{
-  --hub-action-bg:var(--cw-theme-surface-strong);
+  --hub-action-bg:transparent;
   --hub-action-hover:var(--cw-page-hover-bg);
-  --hub-card-border:var(--cw-theme-border-strong);
+  --hub-card-border:var(--cw-hub-lane-border);
 }
 html[data-cw-theme] #ops-card #sched-inline-log .hub-group-items{
   gap:2px;
@@ -605,7 +605,7 @@ html[data-cw-theme] #ops-card #sched-inline-log .sched::before{
   top:8px!important;
   bottom:8px!important;
   width:2px!important;
-  opacity:.75!important;
+  opacity:.4!important;
   box-shadow:none!important;
 }
 html[data-cw-theme] #ops-card #sched-inline-log .sched .service-icon{

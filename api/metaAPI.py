@@ -25,6 +25,7 @@ from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     PlainTextResponse,
+    RedirectResponse,
 )
 from pydantic import BaseModel
 
@@ -1308,6 +1309,72 @@ def get_tmdb_image_file(path: str, size: str, cache_dir: Path | str) -> tuple[st
     dest = _ensure_under_root(cache_root, base.with_suffix(extension))
     local, mime = _cache_download(f"https://image.tmdb.org/t/p/{size_tag}{raw}", dest)
     return str(local), mime
+
+
+_LOOKUP_PATTERNS = {"imdb": re.compile(r"^tt\d{1,10}$"), "tvdb": re.compile(r"^\d{1,10}$")}
+_LOOKUP_NEGATIVE_TTL = 7 * 86400
+
+
+def _lookup_tmdb_id(api_key: str, t: str, ns: str, value: str) -> int | None:
+    _, base, _ = _env()
+    folder = base / "tmdb_find"
+    marker = folder / f"{t}-{ns}-{value}.txt"
+    try:
+        if marker.exists():
+            cached = marker.read_text(encoding="utf-8").strip()
+            if cached.isdigit():
+                return int(cached)
+            if time.time() - marker.stat().st_mtime < _LOOKUP_NEGATIVE_TTL:
+                return None
+    except Exception:
+        pass
+    data = _tmdb_get_json(
+        f"https://api.themoviedb.org/3/find/{value}",
+        {"api_key": api_key, "external_source": f"{ns}_id"},
+        timeout=8,
+    )
+    if data is None:
+        return None
+    rows = (data or {}).get("movie_results" if t == "movie" else "tv_results") or []
+    if t == "tv" and not rows:
+        episode = ((data or {}).get("tv_episode_results") or [{}])[0]
+        show = episode.get("show_id") if isinstance(episode, dict) else None
+        rows = [{"id": show}] if show else []
+    found = rows[0].get("id") if rows and isinstance(rows[0], dict) else None
+    tmdb_id = int(found) if isinstance(found, int) or (isinstance(found, str) and found.isdigit()) else None
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        marker.write_bytes(str(tmdb_id or "none").encode("utf-8"))
+    except Exception:
+        pass
+    return tmdb_id
+
+
+@router.get("/art/lookup/{typ}", tags=["metadata"])
+def api_art_lookup(
+    typ: str = FPath(...),
+    imdb: str | None = Query(None, max_length=16),
+    tvdb: str | None = Query(None, max_length=16),
+    size: str = Query("w185"),
+) -> Any:
+    t = "tv" if typ.lower() in ("tv", "show") else typ.lower()
+    if t not in ("movie", "tv"):
+        return PlainTextResponse("Bad type", status_code=400)
+    try:
+        size_tag = _sanitize_tmdb_size(size)
+    except Exception:
+        return PlainTextResponse("Invalid size", status_code=400)
+    api_key = str(((load_config() or {}).get("tmdb") or {}).get("api_key") or "").strip()
+    if not api_key:
+        return PlainTextResponse("TMDb key missing", status_code=404)
+    for ns, value in (("imdb", imdb), ("tvdb", tvdb)):
+        clean = str(value or "").strip().lower()
+        if not clean or not _LOOKUP_PATTERNS[ns].match(clean):
+            continue
+        tmdb_id = _lookup_tmdb_id(api_key, t, ns, clean)
+        if tmdb_id:
+            return RedirectResponse(f"/art/tmdb/{t}/{tmdb_id}?fallback=2&size={size_tag}", status_code=307)
+    return PlainTextResponse("Not found", status_code=404)
 
 
 @router.get("/art/tmdb/image", tags=["metadata"])

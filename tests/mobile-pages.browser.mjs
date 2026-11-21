@@ -303,20 +303,24 @@ for(const theme of ["original","flat-dark","flat-light"]) {
           assert.equal(await page.locator('.trk-tabs [aria-selected="true"]').getAttribute('data-trk-view'),'watchlist');
         } else if(kind==="events") {
           assert.equal(await page.locator('#ev-cat').isVisible(),false);
-          assert.equal(await page.locator('#ev-mode').isVisible(),false);
+          assert.equal(await page.locator('#ev-mode').isVisible(),true);
           const time=page.locator('.ev-row .ev-time').first();
           assert.equal(await time.isVisible(),true);
           assert.ok((await time.textContent()).trim().length>3);
           assert.ok((await page.locator('.ev-ack').first().boundingBox()).height>=44);
           assert.equal(await page.locator('.ev-rowact').nth(1).evaluate(el=>getComputedStyle(el).opacity),'1');
-          assert.ok((await page.locator('#ev-prev-top').boundingBox()).height>=44);
-          assert.equal(await page.locator('#ev-prev-top').isDisabled(),true);
+          assert.ok((await page.locator('#ev-prev').boundingBox()).height>=44);
+          assert.equal(await page.locator('#ev-prev').isDisabled(),true);
+          for(const id of ['#ev-more','#ev-refresh']) assert.ok((await page.locator(id).boundingBox()).height>=44,id);
           await page.locator('#ev-more').tap();
           assert.equal(await page.locator('#ev-morefilters').isVisible(),true);
+          const sheet=await page.locator('#ev-morefilters').boundingBox();
+          assert.ok(Math.abs(sheet.y+sheet.height-height)<=1&&sheet.width>=width-1);
           assert.equal(await page.locator('#ev-cat').isVisible(),false);
           assert.equal(await page.locator('#ev-mode').isVisible(),true);
           await noOverflow(page);
-          await page.locator('#ev-more').tap();
+          await page.locator('#ev-mf-done').tap();
+          assert.equal(await page.locator('#ev-morefilters').isVisible(),false);
           await page.locator('.ev-row .ev-line').nth(1).tap();
           await page.locator('#ev-detail-back').waitFor();
           assert.equal(await page.locator('.ev-col-list').isVisible(),false);
@@ -329,8 +333,7 @@ for(const theme of ["original","flat-dark","flat-light"]) {
           await page.locator('#ev-refresh').tap();
           await page.waitForFunction(()=>!document.querySelector('#ev-next').disabled);
           await page.locator('#ev-next').tap();
-          await page.waitForFunction(()=>document.querySelector('.ev-pg-num.on')?.textContent==='2');
-          assert.equal(await page.locator('.ev-pg-num:visible').count(),1);
+          await page.waitForFunction(()=>document.querySelector('#ev-page-number')?.value==='2');
           await noOverflow(page);
           state.empty=true;
           await page.locator('#ev-refresh').tap();

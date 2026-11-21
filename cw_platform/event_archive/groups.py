@@ -17,6 +17,7 @@ from typing import Any, Callable, ParamSpec, TypeVar
 
 from .db import get_conn
 from . import query as _query
+from . import titles as _titles
 from .scrobble_recorder import session_token
 from ..reason_labels import friendly_reason
 
@@ -716,6 +717,7 @@ def _recompute(conn: sqlite3.Connection, group_id: int, now: int) -> None:
     )
     if domain == "scrobble":
         conn.execute("UPDATE event_groups SET activity_hash=? WHERE id=?", (_activity_hash(events[0]), group_id))
+    _titles.mark_dirty_for_groups(conn, (group_id,))
 
 
 
@@ -799,6 +801,7 @@ def correlate(*, conn: sqlite3.Connection | None = None, reset: bool = False) ->
                 gid = int(c.execute("SELECT id FROM event_groups WHERE group_hash=?", (gh,)).fetchone()[0])
                 c.executemany("UPDATE events SET group_id=? WHERE id=?", [(gid, i) for i in ids])
                 touched.add(gid)
+            _titles.assign(c, all_ids)
             for gid in touched:
                 _recompute(c, gid, now)
             if reset:
@@ -808,6 +811,10 @@ def correlate(*, conn: sqlite3.Connection | None = None, reset: bool = False) ->
     except Exception as exc:
         _LOG.warning("event correlation failed: %s", exc, exc_info=True)
         return {"ok": False, "error": "internal_error", "grouped": 0}
+    try:
+        _titles.refresh_dirty(c)
+    except Exception as exc:
+        _LOG.warning("event title refresh failed: %s", exc, exc_info=True)
     return {"ok": True, "grouped": len(rows), "groups_touched": len(touched)}
 
 
@@ -1582,6 +1589,7 @@ def acknowledge_group(group_id: Any, *, by: str | None = None, conn: sqlite3.Con
                 "UPDATE event_groups SET acknowledged_at=?, acknowledged_by=? WHERE id=? AND acknowledged_at IS NULL",
                 (ts, by, gid),
             )
+            _titles.mark_dirty_for_groups(c, (gid,))
         row = c.execute("SELECT acknowledged_at, acknowledged_by FROM event_groups WHERE id=?", (gid,)).fetchone()
     except Exception:
         _LOG.exception("group acknowledge failed")
@@ -1602,6 +1610,7 @@ def unacknowledge_group(group_id: Any, *, conn: sqlite3.Connection | None = None
     try:
         with c:
             c.execute("UPDATE event_groups SET acknowledged_at=NULL, acknowledged_by=NULL WHERE id=?", (gid,))
+            _titles.mark_dirty_for_groups(c, (gid,))
         row = c.execute("SELECT id FROM event_groups WHERE id=?", (gid,)).fetchone()
     except Exception:
         _LOG.exception("group unacknowledge failed")

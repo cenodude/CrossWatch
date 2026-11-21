@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
-import {pageBackLink,statisticsReturn,returnFromEvents,resumeEventsReturn} from '../assets/js/page-return.js';
+import {pageBackLink,returnFromEvents} from '../assets/js/page-return.js';
 
 test('skipped ratings display a readable reason without reporting failure', async () => {
   const source = await readFile(new URL('../assets/js/events/index.js', import.meta.url), 'utf8');
@@ -22,58 +22,49 @@ test('skipped ratings display a readable reason without reporting failure', asyn
   assert.equal(context.describe({event_type: 'rating_skipped'}).title, 'Rating skipped');
 });
 
-test('Events captures its caller and keeps Sync activity context when opened again',async()=>{
+test('Events captures its caller and keeps it when opened again',async()=>{
   const source=await readFile(new URL('../assets/js/modals.js',import.meta.url),'utf8');
-  const script=source.slice(source.indexOf('window.openEvents ='),source.indexOf('window.openStatisticsModal ='));
+  const script=source.slice(source.indexOf('window.openEvents ='),source.indexOf('window.openExporter ='));
   const location=new URL('http://localhost/?main=1#settings/sync');
-  const context={location,URLSearchParams,statisticsReturn,ModalRegistry:{close(){}},document:{getElementById:()=>({})},window:{showTab(){}},history:{pushState(_state,_title,hash){location.hash=hash;}}};
+  const context={location,URLSearchParams,ModalRegistry:{close(){}},document:{getElementById:()=>({})},window:{showTab(){}},history:{pushState(_state,_title,hash){location.hash=hash;}}};
   vm.runInNewContext(script,context);
-  const restore={modal:'statistics',day:20704,range:'6m',metric:'runs',filter:'Plex',expanded:['run-one']};
-  context.window.openEvents({runId:'run-one',returnContext:restore});
+  context.window.openEvents({runId:'run-one',returnContext:{modal:'statistics',day:20704}});
   let query=new URLSearchParams(location.hash.split('?')[1]);
   assert.equal(query.get('returnTo'),'/?main=1#settings/sync');
-  assert.deepEqual(JSON.parse(query.get('returnContext')),restore);
+  assert.equal(query.get('runId'),'run-one');
+  assert.equal(query.get('returnContext'),null);
   context.window.openEvents({groupId:'42'});
   query=new URLSearchParams(location.hash.split('?')[1]);
   assert.equal(query.get('returnTo'),'/?main=1#settings/sync');
-  assert.deepEqual(JSON.parse(query.get('returnContext')),restore);
+  assert.equal(query.get('groupId'),'42');
 });
 
-test('Events safely labels callers and only accepts the supported return modal',()=>{
+test('Events safely labels callers',()=>{
   const current='http://localhost/#events';
   assert.deepEqual(pageBackLink('/#settings/sync',current,'events'),{href:'#settings/sync',label:'Sync pairs'});
   assert.deepEqual(pageBackLink('/profile',current,'events'),{href:'/profile',label:'Profile'});
   for(const url of ['https://example.com/','javascript:alert(1)','/#events?runId=one'])assert.equal(pageBackLink(url,current,'events').href,'#main');
-  assert.equal(statisticsReturn('{invalid'),null);
-  assert.equal(statisticsReturn({modal:'maintenance'}),null);
-  assert.deepEqual(statisticsReturn({modal:'statistics',day:-1,range:'bad',metric:'bad'}),{modal:'statistics',day:null,range:'12m',metric:'changes',filter:'',expanded:[]});
 });
 
-test('Events returns to the settings pane before reopening Sync activity',async()=>{
+test('Events returns to the settings pane',async()=>{
   const calls=[];
   globalThis.location=new URL('http://localhost/#events');
   globalThis.history={pushState(_state,_title,href){location.href=href;}};
-  globalThis.window={async showTab(tab){calls.push([tab,window.__cwSettingsPane]);},async openStatisticsModal(props){calls.push(props);}};
-  const restore={modal:'statistics',day:20704,range:'3m',metric:'failed',filter:'SIMKL',expanded:['one']};
+  globalThis.window={async showTab(tab){calls.push([tab,window.__cwSettingsPane]);}};
   try {
-    await returnFromEvents({returnTo:'/#settings/sync',returnContext:JSON.stringify(restore)});
-    assert.deepEqual(calls,[['settings','sync'],restore]);
+    await returnFromEvents({returnTo:'/#settings/sync'});
+    assert.deepEqual(calls,[['settings','sync']]);
     assert.equal(location.hash,'#settings/sync');
   } finally {delete globalThis.window;delete globalThis.location;delete globalThis.history;}
 });
 
-test('a return across pages restores Sync activity once on the destination',async()=>{
-  const saved=new Map(),opened=[];
+test('a return across pages navigates to the destination',async()=>{
   globalThis.location=new URL('http://localhost/?main=1#events');
-  globalThis.sessionStorage={getItem:key=>saved.get(key),setItem:(key,value)=>saved.set(key,value),removeItem:key=>saved.delete(key)};
-  globalThis.window={openStatisticsModal:props=>opened.push(props)};
+  globalThis.window={};
   try {
-    await returnFromEvents({returnTo:'/profile',returnContext:{modal:'statistics',day:20704}});
+    await returnFromEvents({returnTo:'/profile'});
     assert.equal(location.href,'http://localhost/profile');
-    resumeEventsReturn();resumeEventsReturn();
-    assert.equal(opened.length,1);
-    assert.equal(opened[0].day,20704);
-  } finally {delete globalThis.window;delete globalThis.location;delete globalThis.sessionStorage;}
+  } finally {delete globalThis.window;delete globalThis.location;}
 });
 
 test('Events retains the view on return and isolates a new route or profile', async () => {
