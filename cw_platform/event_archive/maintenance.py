@@ -17,7 +17,7 @@ from .importer import import_all
 from .query import status
 
 
-_PURGE_TABLES = ("events", "event_groups", "sync_runs", "run_pairs", "event_imports", "run_issue_counts")
+_PURGE_TABLES = ("events", "event_groups", "event_titles", "sync_runs", "run_pairs", "event_imports", "run_issue_counts")
 
 
 def _table_count(conn: sqlite3.Connection, table: str) -> int:
@@ -198,6 +198,7 @@ def purge(domain: str | None = None) -> dict[str, Any]:
             else:
                 c.execute("DELETE FROM events WHERE domain=?", (scope,))
                 c.execute("DELETE FROM event_groups WHERE domain=?", (scope,))
+                c.execute("DELETE FROM event_titles WHERE domain=?", (scope,))
                 if scope == "sync":
                     for table in ("sync_runs", "run_pairs", "event_imports", "run_issue_counts"):
                         c.execute(f"DELETE FROM {table}")

@@ -44,6 +44,7 @@ from cw_platform.event_archive import (
     purge as _purge_events,
 )
 from cw_platform.event_archive.groups import run_problem_items as _run_problem_items
+from cw_platform.event_archive import titles as _titles
 from cw_platform.access_policy import filter_pairs_for_profile, filter_pairs_for_user, pair_refs, request_is_monitor, request_user, user_can_access_instance
 from cw_platform.config_base import load_config
 from cw_platform.provider_instances import DEFAULT_OVERVIEW_SCOPE, instances_for_user_profile, normalize_instance_id, normalize_overview_scope, provider_display_key
@@ -768,6 +769,112 @@ def events_group_unacknowledge(group_id: int, request: Request = cast(Request, N
     if not _event_row_allowed(load_config() or {}, request, _get_group(group_id)):
         return _scope_denied()
     return _ok(_unacknowledge_group(group_id))
+
+
+_TITLE_DOMAINS = ("sync", "scrobble")
+
+
+def _title_scoped(request: Request | None) -> bool:
+    user = request_user(request)
+    return _default_overview_requested(request) or bool(user and not user.get("is_admin"))
+
+
+def _title_visible(cfg: dict[str, Any], request: Request | None, item: dict[str, Any]) -> dict[str, Any] | None:
+    if not _title_scoped(request):
+        return item
+    allowed = [d for d in item.get("destinations") or [] if _event_row_allowed(cfg, request, _titles._route(item, d))]
+    base = {"domain": item.get("domain"), "source_provider": item.get("source_provider"), "source_instance": item.get("source_instance")}
+    if not allowed and (item.get("destinations") or not _event_row_allowed(cfg, request, base)):
+        return None
+    return {**item, "destinations": allowed}
+
+
+@router.get("/titles")
+def events_titles(
+    domain: str = Query("sync"),
+    q: str | None = Query(None, max_length=200),
+    outcome: str | None = Query(None, max_length=20),
+    review: str | None = Query(None, max_length=20),
+    attention: bool = False,
+    source: str | None = Query(None, max_length=40),
+    destination: str | None = Query(None, max_length=40),
+    what: str | None = Query(None, max_length=20),
+    run_id: str | None = Query(None, max_length=120),
+    since: int | None = None,
+    until: int | None = None,
+    order: str = Query("newest"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    request: Request = cast(Request, None),
+) -> JSONResponse:
+    dom = str(domain or "sync").strip().lower()
+    if dom not in _TITLE_DOMAINS:
+        return _ok({"ok": False, "error": "bad_domain"}, status_code=400)
+    cfg = load_config() or {}
+    row_filter = (lambda row: _event_row_allowed(cfg, request, row)) if _title_scoped(request) else None
+    payload = _titles.list_titles(
+        domain=dom, q=q, outcome=outcome, review=review, attention=attention, source=source,
+        destination=destination, what=what, run_id=run_id, since=since, until=until, order=order,
+        limit=limit, offset=offset, row_filter=row_filter,
+    )
+    return _ok({"ok": True, **payload})
+
+
+@router.post("/titles/acknowledge")
+def events_titles_acknowledge_all(payload: dict[str, Any] | None = Body(None), request: Request = cast(Request, None)) -> JSONResponse:
+    body = payload if isinstance(payload, dict) else {}
+    dom = str(body.get("domain") or "sync").strip().lower()
+    if dom not in _TITLE_DOMAINS or body.get("confirm") is not True:
+        return _ok({"ok": False, "error": "bad_request"}, status_code=400)
+
+    def text(key: str, limit: int = 200) -> str | None:
+        value = body.get(key)
+        return str(value).strip()[:limit] or None if value not in (None, "") else None
+
+    def number(key: str) -> int | None:
+        try:
+            return int(body[key]) if body.get(key) not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    cfg = load_config() or {}
+    row_filter = (lambda row: _event_row_allowed(cfg, request, row)) if _title_scoped(request) else None
+    return _ok(_titles.acknowledge_matching(
+        domain=dom, q=text("q"), outcome=text("outcome", 20), source=text("source", 40), destination=text("destination", 40),
+        what=text("what", 20), run_id=text("run_id", 120), since=number("since"), until=number("until"),
+        by=text("by", 80), row_filter=row_filter,
+    ))
+
+
+@router.get("/titles/{title_id}")
+def events_title_detail(title_id: int, request: Request = cast(Request, None)) -> JSONResponse:
+    cfg = load_config() or {}
+    item = _titles.get_title(title_id)
+    visible = _title_visible(cfg, request, item) if item else None
+    if not visible:
+        return _ok({"ok": False, "found": False}, status_code=404)
+    related = [r for r in (_title_visible(cfg, request, row) for row in visible.get("related") or []) if r]
+    return _ok({"ok": True, "item": {**visible, "related": related}})
+
+
+def _title_ack(title_id: int, request: Request | None, *, undo: bool, by: str | None = None) -> JSONResponse:
+    cfg = load_config() or {}
+    item = _titles.get_title(title_id, related_limit=1)
+    visible = _title_visible(cfg, request, item) if item else None
+    if not visible:
+        return _scope_denied()
+    return _ok(_titles.acknowledge(title_id, by=by, undo=undo, destinations=visible.get("destinations") or []))
+
+
+@router.post("/titles/{title_id}/acknowledge")
+def events_title_acknowledge(title_id: int, payload: dict[str, Any] | None = Body(None), request: Request = cast(Request, None)) -> JSONResponse:
+    by = str((payload or {}).get("by") or "").strip()[:80] or None
+    return _title_ack(title_id, request, undo=False, by=by)
+
+
+@router.post("/titles/{title_id}/unacknowledge")
+def events_title_unacknowledge(title_id: int, request: Request = cast(Request, None)) -> JSONResponse:
+    return _title_ack(title_id, request, undo=True)
 
 
 @router.post("/correlate")

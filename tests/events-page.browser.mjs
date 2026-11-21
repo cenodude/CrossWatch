@@ -41,7 +41,7 @@ for (const scenario of ['clear_review_filter', 'clear_profile_filter', 'stale_ov
     await page.evaluate(async scenario => {
       window.CW = {AuthState: {read: () => ({isAdmin: true})}, OverviewProfile: scenario === 'clear_profile_filter' ? {id: 'P01', label: 'Family'} : null};
       const view = (await import('/assets/js/events/index.js')).default;
-      await view.mount(document.querySelector('#page-events'), {domain: 'scrobble', visibility: scenario === 'clear_review_filter' ? 'acknowledged' : 'all'});
+      await view.mount(document.querySelector('#page-events'), {domain: 'scrobble', mode: 'grouped', visibility: scenario === 'clear_review_filter' ? 'acknowledged' : 'all'});
     }, scenario);
     if (scenario.startsWith('clear_')) {
       await page.locator('#ev-empty-reset').click();
@@ -106,15 +106,17 @@ test('activity links show their sync thread and cloud filters reset to all types
   assert.equal(await page.locator('#ev-detail .ev-scards').count(),0);
   assert.equal(await page.locator('#ev-mf-summary').isVisible(),false);
   await page.locator('#ev-more').click();
-  await page.locator('#ev-filters .ev-dd-btn').filter({hasText:'All types'}).click();
+  await page.locator('#ev-f-type .ev-dd-btn').filter({hasText:'All types'}).click();
   await page.locator('.ev-dd-item[data-v="cloud_history_read"]').click();
   await page.waitForFunction(()=>document.querySelector('#ev-count').textContent==='1 activity');
+  assert.equal(await page.locator('#ev-morefilters').isVisible(),true);
   assert.equal(await page.locator('#ev-list .ev-row[data-id="42"]').count(),0);
   assert.equal(await page.locator('#ev-detail .ev-dtitle').count(),0);
   await page.locator('#ev-more').click();
   assert.equal(await page.locator('#ev-mf-summary').isVisible(),true);
   assert.equal(await page.locator('#ev-clear-hidden').count(),0);
-  await page.locator('#ev-chip-clear').click();
+  assert.equal(await page.locator('#ev-more-dot').textContent(),'1');
+  await page.locator('#ev-mf-summary [data-k="type"]').click();
   await page.waitForFunction(()=>document.querySelector('#ev-count').textContent==='2 activities');
   assert.equal(queries.at(-1).event_type,undefined);
   await page.locator('#ev-list .ev-row[data-id="42"]').click();
@@ -124,10 +126,13 @@ test('activity links show their sync thread and cloud filters reset to all types
     await page.screenshot({path:`${process.env.CW_EVENTS_SCREENSHOTS}/sync-activity.png`,fullPage:true});
   }
   await page.evaluate(async()=>{
-    await window.eventsView.mount(document.querySelector('#page-events'),{runId:'run-one',domain:'sync'});
+    await window.eventsView.mount(document.querySelector('#page-events'),{runId:'run-one',domain:'sync',mode:'grouped'});
   });
-  await page.locator('#ev-filters .ev-dd-btn').filter({hasText:'All types'}).click();
+  await page.locator('#ev-more').click();
+  await page.locator('#ev-f-type .ev-dd-btn').filter({hasText:'All types'}).click();
   await page.locator('.ev-dd-item[data-v="cloud_history_read"]').click();
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#ev-morefilters').isVisible(),false);
   await page.locator('#ev-q').fill('missing item');
   await page.locator('#ev-empty-reset').click();
   await page.waitForFunction(()=>document.querySelector('#ev-count').textContent==='2 activities');
@@ -198,6 +203,9 @@ test('activity workspace keeps destination results, bulk review and large histor
     reason_label: index === 2 ? 'Episode ratings are not supported by this provider' : '',
     first_event_at: 1795131670, last_event_at: 1795131670,
   }));
+  const titleRow = {id: 900, domain: 'scrobble', title: "Marvel's VisionQuest", media_type: 'episode', season: 1, episode: 2, status: 'completed', attention: 0,
+    kinds: ['scrobble:rating'], rating: '6', source_provider: 'PLEX', source_instance: 'default', first_event_at: 1795131670, last_event_at: 1795131670, ids: {},
+    destinations: [{provider: 'TRAKT', instance: 'default', feature: 'scrobble', state: 'ok', at: 1795131670}, {provider: 'SIMKL', instance: 'default', feature: 'scrobble', state: 'skip', reason: 'Episode ratings are not supported', at: 1795131670}]};
   await page.route('http://events.test/**', async route => {
     const url = new URL(route.request().url());
     if (url.pathname.startsWith('/assets/')) {
@@ -237,6 +245,8 @@ test('activity workspace keeps destination results, bulk review and large histor
         json = url.searchParams.get('q') || url.searchParams.get('category') === 'problems' ? {items: [], total: 0} : {items, total};
       }
       if (url.pathname === '/api/events/search') json = {items: [{...routes[0], event_type: 'rating_applied', created_at: 1795131670}], total: 396};
+      if (url.pathname === '/api/events/titles') json = {ok: true, items: [titleRow], total: 1, preparing: false};
+      if (url.pathname === '/api/events/titles/900') json = {ok: true, item: {...titleRow, related: []}};
       return route.fulfill({json});
     }
     return route.fulfill({contentType: 'text/html', body: `<!doctype html><html data-tab="events"><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/themes/tokens.css"><link rel="stylesheet" href="/assets/css/pages.css"><link rel="stylesheet" href="/assets/css/page-theme.css"><style>@font-face{font-family:Material Symbols Rounded;src:url('/assets/fonts/material-symbols-rounded-full-v355.woff2')}body{margin:20px;background:var(--cw-theme-bg,#080a0d);font-family:Arial,sans-serif}.material-symbols-rounded{font-family:Material Symbols Rounded;font-weight:normal;font-style:normal;font-size:20px;line-height:1;display:inline-block;white-space:nowrap;font-feature-settings:'liga'}</style></head><body><main id="page-events"></main></body></html>`});
@@ -246,7 +256,7 @@ test('activity workspace keeps destination results, bulk review and large histor
     window.CW = {AuthState: {read: () => ({isAdmin: true})}};
     await import('/assets/helpers/provider-meta.js');
     window.eventsView = (await import('/assets/js/events/index.js')).default;
-    await window.eventsView.mount(document.querySelector('#page-events'), {domain: 'scrobble'});
+    await window.eventsView.mount(document.querySelector('#page-events'), {domain: 'scrobble', mode: 'grouped'});
   });
   assert.equal(await page.locator('#ev-count').textContent(), '132 activities');
   await page.locator('#ev-more').click();
@@ -314,23 +324,249 @@ test('activity workspace keeps destination results, bulk review and large histor
   await page.locator('#ev-page-number').press('Tab');
   await page.waitForFunction(() => document.querySelector('#ev-list .ev-row').dataset.id === '1010');
   await page.locator('.ev-vtab[data-v="scrobble"]').click();
+  await page.waitForFunction(() => document.querySelector('#ev-count').textContent === '1 title');
+  assert.equal(await page.locator('#ev-mode button[data-v="grouped"]').count(), 0);
   await page.locator('#ev-mode button[data-v="raw"]').click();
   await page.waitForFunction(() => document.querySelector('#ev-count').textContent === '396 events');
-  assert.equal(await page.locator('#ev-attention').isVisible(), false);
-  await page.locator('#ev-mode button[data-v="grouped"]').click();
-  await page.locator('#ev-list .ev-row[data-id="100"]').waitFor();
+  assert.equal(await page.locator('#ev-quick').isVisible(), false);
+  await page.locator('#ev-mode button[data-v="titles"]').click();
+  await page.locator('#ev-list .ev-trow[data-tid="900"]').waitFor();
+  assert.equal(await page.locator('#ev-quick').isVisible(), true);
+  assert.match(await page.locator('#ev-list .ev-trow').first().innerText(), /Rated 6/);
   await page.setViewportSize({width: 390, height: 844});
-  await page.locator('#ev-list .ev-row').first().click();
-  await page.locator('.ev-delivery').first().waitFor();
+  await page.locator('#ev-list .ev-trow').first().click();
+  await page.locator('#ev-detail .ev-path').first().waitFor();
+  assert.match(await page.locator('#ev-detail .ev-path').innerText(), /Skipped.*Episode ratings are not supported/s);
   assert.equal(await page.locator('#ev-detail-back').isVisible(), true);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.CW_EVENTS_SCREENSHOTS) await page.screenshot({path: `${process.env.CW_EVENTS_SCREENSHOTS}/activity-mobile-detail.png`, fullPage: true});
   await page.locator('#ev-detail-back').click();
   assert.equal(await page.locator('#ev-list').isVisible(), true);
-  assert.ok((await page.locator('#ev-list .ev-row').first().boundingBox()).height < 180);
+  assert.ok((await page.locator('#ev-list .ev-trow').first().boundingBox()).height < 180);
   await page.setViewportSize({width: 320, height: 800});
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.setViewportSize({width: 390, height: 844});
   if (process.env.CW_EVENTS_SCREENSHOTS) await page.screenshot({path: `${process.env.CW_EVENTS_SCREENSHOTS}/activity-mobile-list.png`, fullPage: true});
+  assert.deepEqual(errors, []);
+});
+
+
+test('sync titles, activity days, runs and filters in the search bar', async t => {
+  const browser = await chromium.launch({headless: true});
+  t.after(() => browser.close());
+  const page = await browser.newPage({viewport: {width: 1440, height: 1000}});
+  page.setDefaultTimeout(10000);
+  const errors = [], titleQueries = [], origins = [], reviews = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const now = Math.floor(Date.now() / 1000);
+  const tz = -new Date().getTimezoneOffset() * 60;
+  const today = Math.floor((now + tz) / 86400);
+  const rows = [
+    {id: 1, domain: 'sync', run_id: 'run-a', title: 'Dune', year: 2021, media_type: 'movie', status: 'failed', attention: 1, kinds: ['history:add'], source_provider: 'PLEX', source_instance: 'default',
+      item_key: 'tmdb:438631', first_event_at: now - 60, last_event_at: now - 60, ids: {tmdb: '438631'},
+      destinations: [{provider: 'MDBLIST', instance: 'default', feature: 'history', state: 'fail', reason: 'HTTP 429', group_id: 5, at: now - 60}, {provider: 'TRAKT', instance: 'default', feature: 'history', state: 'ok', at: now - 60}]},
+    {id: 2, domain: 'sync', run_id: 'run-a', title: 'The Bear', media_type: 'episode', season: 3, episode: 4, status: 'completed', attention: 0, kinds: ['history:add'], source_provider: 'PLEX', source_instance: 'default',
+      first_event_at: now - 120, last_event_at: now - 120, ids: {show_tmdb: '136315'}, destinations: [{provider: 'TRAKT', instance: 'default', feature: 'history', state: 'ok', at: now - 120}]},
+  ];
+  const run = {run_id: 'run-a', started_at: now - 70, duration: 14, status: 'ok', changes: 2, added: 2, errors: 0,
+    pair_rows: [{src_provider: 'PLEX', src_instance: 'default', dst_provider: 'TRAKT', dst_instance: 'default', feature: 'history', added: 2}]};
+  await page.route('http://events.test/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith('/assets/')) {
+      const ext = url.pathname.split('.').at(-1);
+      return route.fulfill({body: await readFile(new URL('..' + url.pathname, import.meta.url)), contentType: {css: 'text/css', svg: 'image/svg+xml', woff2: 'font/woff2'}[ext] || 'text/javascript'});
+    }
+    if (url.pathname.startsWith('/api/')) {
+      let json = {ok: true, items: [], pairs: []};
+      if (url.pathname === '/api/config') json = {pairs: [{source: 'PLEX', target: 'TRAKT', mode: 'one-way'}, {source: 'PLEX', target: 'MDBLIST', mode: 'one-way'}]};
+      if (url.pathname === '/api/events/titles') {
+        const q = Object.fromEntries(url.searchParams);
+        titleQueries.push(q);
+        const items = rows.filter(r => (!q.attention || r.attention) && (!q.destination || r.destinations.some(d => d.provider === q.destination)) && (!q.run_id || r.run_id === q.run_id));
+        json = {ok: true, items, total: items.length, preparing: false};
+      }
+      if (url.pathname === '/api/events/titles/acknowledge') { reviews.push(route.request().postDataJSON()); json = {ok: true, titles: 1, groups: 1}; }
+      const detail = url.pathname.match(/^\/api\/events\/titles\/(\d+)$/);
+      if (detail) json = {ok: true, item: {...rows.find(r => String(r.id) === detail[1]), related: []}};
+      if (url.pathname === '/api/events/calendar') json = {ok: true, days: [{d: today, runs: 1, changes: 2, failed: 0}, {d: today - 1, runs: 2, changes: 0, failed: 1}], totals: {runs: 3, changes: 2, failed: 1}};
+      if (url.pathname === '/api/events/calendar/day') json = {ok: true, runs: [run, {...run, run_id: 'quiet', changes: 0, added: 0, pair_rows: []}]};
+      if (url.pathname === '/api/editor/origin') {
+        origins.push(route.request().postDataJSON());
+        json = {mode: 'ids', title: 'Dune', sources: [{provider: 'PLEX', instance: 'default', title: 'Dune', year: 2021, via: 'ids', count: 1}], sources_total: 1, pairs: [{pair_id: 'p1'}]};
+      }
+      return route.fulfill({json});
+    }
+    return route.fulfill({contentType: 'text/html', body: `<!doctype html><html data-tab="events"><head><meta charset="utf-8"><link rel="stylesheet" href="/assets/themes/tokens.css"><link rel="stylesheet" href="/assets/css/pages.css"><link rel="stylesheet" href="/assets/css/page-theme.css"><style>@font-face{font-family:Material Symbols Rounded;src:url('/assets/fonts/material-symbols-rounded-full-v355.woff2')}body{margin:20px;background:var(--cw-theme-bg,#080a0d);font-family:Arial,sans-serif}.material-symbols-rounded{font-family:Material Symbols Rounded;font-weight:normal;font-style:normal;font-size:20px;line-height:1;display:inline-block;white-space:nowrap;font-feature-settings:'liga'}</style></head><body><main id="page-events"></main></body></html>`});
+  });
+  await page.goto('http://events.test/');
+  await page.evaluate(async () => {
+    window.CW = {AuthState: {read: () => ({isAdmin: true})}};
+    await import('/assets/helpers/provider-meta.js');
+    window.eventsView = (await import('/assets/js/events/index.js')).default;
+    await window.eventsView.mount(document.querySelector('#page-events'), {domain: 'sync'});
+  });
+  await page.waitForFunction(() => document.querySelector('#ev-count').textContent === '2 titles');
+  assert.deepEqual(await page.locator('#ev-mode .ev-seg-btn').evaluateAll(n => n.map(b => b.dataset.v)), ['titles', 'runs', 'raw']);
+  assert.equal(await page.locator('.ev-trow .ev-dchip.fail').count(), 1);
+  await page.locator('#ev-detail .ev-path').waitFor();
+  assert.match(await page.locator('#ev-detail .ev-path').innerText(), /Failed.*HTTP 429/s);
+
+  await page.locator('.ev-qchip[data-q="attention"]').click();
+  await page.waitForFunction(() => document.querySelector('#ev-count').textContent === '1 title');
+  assert.equal(titleQueries.at(-1).attention, 'true');
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#ev-review-all').click();
+  await page.waitForFunction(() => document.querySelector('#ev-toast')?.textContent.includes('marked reviewed'));
+  assert.deepEqual(reviews, [{confirm: true, domain: 'sync'}]);
+  await page.locator('.ev-qchip[data-q="all"]').click();
+  assert.equal(await page.locator('#ev-review-all').count(), 0);
+
+  await page.locator('#ev-q').fill('to:trakt');
+  await page.locator('#ev-q').press('Enter');
+  await page.locator('#ev-mf-summary [data-k="to"]').waitFor();
+  assert.equal(await page.locator('#ev-q').inputValue(), '');
+  assert.equal(titleQueries.at(-1).destination, 'TRAKT');
+  await page.locator('#ev-q').press('Backspace');
+  await page.waitForFunction(() => !document.querySelector('#ev-mf-summary [data-k="to"]'));
+
+  await page.locator(`.ev-hm-cell[data-d="${today}"]`).click();
+  await page.locator('#ev-mf-summary [data-k="day"]').waitFor();
+  assert.ok(Number(titleQueries.at(-1).since) > 0 && Number(titleQueries.at(-1).until) > Number(titleQueries.at(-1).since));
+
+  await page.locator('#ev-list .ev-trow[data-tid="1"]').click();
+  await page.locator('#ev-detail .ev-tab[data-tab="origin"]').click();
+  await page.locator('#ev-detail .cw-origin-card').first().waitFor();
+  assert.equal(origins[0].provider, 'MDBLIST');
+  assert.equal(origins[0].original.ids.tmdb, '438631');
+
+  await page.locator('#ev-more').click();
+  assert.equal(await page.locator('.ev-mf-field[data-f="to"]').isVisible(), true);
+  assert.equal(await page.locator('.ev-mf-field[data-f="type"]').isVisible(), false);
+  await page.keyboard.press('Escape');
+
+  await page.locator('#ev-mode button[data-v="runs"]').click();
+  await page.locator('#ev-list .ev-rrow[data-run="run-a"]').waitFor();
+  assert.equal(await page.locator('#ev-list .ev-rrow').count(), 1);
+  await page.locator('#ev-runs-quiet').click();
+  assert.equal(await page.locator('#ev-list .ev-rrow').count(), 2);
+  await page.locator('#ev-list .ev-rrow[data-run="run-a"]').click();
+  await page.locator('#ev-detail .ev-rtable').waitFor();
+  await page.locator('#ev-run-titles').click();
+  await page.waitForFunction(() => document.querySelector('#ev-count').textContent === '2 titles');
+  assert.equal(titleQueries.at(-1).run_id, 'run-a');
+
+  await page.locator('#ev-refresh').click();
+  await page.waitForFunction(() => document.querySelector('#ev-refresh').classList.contains('is-spinning'));
+  await page.waitForFunction(() => !document.querySelector('#ev-refresh').classList.contains('is-spinning'));
+
+  for (const theme of ['original', 'flat-dark', 'flat-light']) {
+    await page.evaluate(theme => document.documentElement.dataset.cwTheme = theme, theme);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({width, height: 900});
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${theme} ${width}`);
+      if (process.env.CW_EVENTS_SCREENSHOTS) {
+        await mkdir(process.env.CW_EVENTS_SCREENSHOTS, {recursive: true});
+        await page.screenshot({path: `${process.env.CW_EVENTS_SCREENSHOTS}/titles-${theme}-${width}.png`, fullPage: true});
+      }
+    }
+  }
+  assert.deepEqual(errors, []);
+});
+
+test('sync titles work on a phone', async t => {
+  const browser = await chromium.launch({headless: true});
+  t.after(() => browser.close());
+  const context = await browser.newContext({viewport: {width: 390, height: 844}, hasTouch: true, isMobile: true});
+  const page = await context.newPage();
+  page.setDefaultTimeout(10000);
+  const errors = [], titleQueries = [], origins = [], reviews = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const now = Math.floor(Date.now() / 1000);
+  const tz = -new Date().getTimezoneOffset() * 60;
+  const today = Math.floor((now + tz) / 86400);
+  const rows = [
+    {id: 1, domain: 'sync', run_id: 'run-a', title: 'Dune', year: 2021, media_type: 'movie', status: 'failed', attention: 1, kinds: ['history:add'], source_provider: 'PLEX', source_instance: 'default',
+      item_key: 'tmdb:438631', first_event_at: now - 60, last_event_at: now - 60, ids: {tmdb: '438631'},
+      destinations: [{provider: 'MDBLIST', instance: 'default', feature: 'history', state: 'fail', reason: 'HTTP 429', group_id: 5, at: now - 60}, {provider: 'TRAKT', instance: 'default', feature: 'history', state: 'ok', at: now - 60}]},
+    {id: 2, domain: 'sync', run_id: 'run-a', title: 'The Bear', media_type: 'episode', season: 3, episode: 4, status: 'completed', attention: 0, kinds: ['history:add'], source_provider: 'PLEX', source_instance: 'default',
+      first_event_at: now - 120, last_event_at: now - 120, ids: {show_tmdb: '136315'}, destinations: [{provider: 'TRAKT', instance: 'default', feature: 'history', state: 'ok', at: now - 120}]},
+  ];
+  const run = {run_id: 'run-a', started_at: now - 70, duration: 14, status: 'ok', changes: 2, added: 2, errors: 0,
+    pair_rows: [{src_provider: 'PLEX', src_instance: 'default', dst_provider: 'TRAKT', dst_instance: 'default', feature: 'history', added: 2}]};
+  await page.route('http://events.test/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith('/assets/')) {
+      const ext = url.pathname.split('.').at(-1);
+      return route.fulfill({body: await readFile(new URL('..' + url.pathname, import.meta.url)), contentType: {css: 'text/css', svg: 'image/svg+xml', woff2: 'font/woff2'}[ext] || 'text/javascript'});
+    }
+    if (url.pathname.startsWith('/api/')) {
+      let json = {ok: true, items: [], pairs: []};
+      if (url.pathname === '/api/config') json = {pairs: [{source: 'PLEX', target: 'TRAKT', mode: 'one-way'}, {source: 'PLEX', target: 'MDBLIST', mode: 'one-way'}]};
+      if (url.pathname === '/api/events/titles') {
+        const q = Object.fromEntries(url.searchParams);
+        titleQueries.push(q);
+        const items = rows.filter(r => (!q.attention || r.attention) && (!q.destination || r.destinations.some(d => d.provider === q.destination)) && (!q.run_id || r.run_id === q.run_id));
+        json = {ok: true, items, total: items.length, preparing: false};
+      }
+      if (url.pathname === '/api/events/titles/acknowledge') { reviews.push(route.request().postDataJSON()); json = {ok: true, titles: 1, groups: 1}; }
+      const detail = url.pathname.match(/^\/api\/events\/titles\/(\d+)$/);
+      if (detail) json = {ok: true, item: {...rows.find(r => String(r.id) === detail[1]), related: []}};
+      if (url.pathname === '/api/events/calendar') json = {ok: true, days: [{d: today, runs: 1, changes: 2, failed: 0}, {d: today - 1, runs: 2, changes: 0, failed: 1}], totals: {runs: 3, changes: 2, failed: 1}};
+      if (url.pathname === '/api/events/calendar/day') json = {ok: true, runs: [run, {...run, run_id: 'quiet', changes: 0, added: 0, pair_rows: []}]};
+      if (url.pathname === '/api/editor/origin') {
+        origins.push(route.request().postDataJSON());
+        json = {mode: 'ids', title: 'Dune', sources: [{provider: 'PLEX', instance: 'default', title: 'Dune', year: 2021, via: 'ids', count: 1}], sources_total: 1, pairs: [{pair_id: 'p1'}]};
+      }
+      return route.fulfill({json});
+    }
+    return route.fulfill({contentType: 'text/html', body: `<!doctype html><html data-tab="events"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/assets/themes/tokens.css"><link rel="stylesheet" href="/assets/css/pages.css"><link rel="stylesheet" href="/assets/css/page-theme.css"><style>@font-face{font-family:Material Symbols Rounded;src:url('/assets/fonts/material-symbols-rounded-full-v355.woff2')}body{margin:20px;background:var(--cw-theme-bg,#080a0d);font-family:Arial,sans-serif}.material-symbols-rounded{font-family:Material Symbols Rounded;font-weight:normal;font-style:normal;font-size:20px;line-height:1;display:inline-block;white-space:nowrap;font-feature-settings:'liga'}</style></head><body><main id="page-events"></main></body></html>`});
+  });
+  await page.goto('http://events.test/');
+  await page.evaluate(async () => {
+    window.CW = {AuthState: {read: () => ({isAdmin: true})}};
+    await import('/assets/helpers/provider-meta.js');
+    window.eventsView = (await import('/assets/js/events/index.js')).default;
+    await window.eventsView.mount(document.querySelector('#page-events'), {domain: 'sync'});
+  });
+  await page.waitForFunction(() => document.querySelector('#ev-count').textContent === '2 titles');
+  const tall = async (selector) => (await page.locator(selector).first().boundingBox()).height >= 43.5;
+  for (const selector of ['#ev-refresh', '#ev-more', '.ev-qchip', '#ev-act-toggle', '#ev-mode .ev-seg-btn']) assert.ok(await tall(selector), selector);
+  assert.equal(await page.locator('.ev-activity.collapsed').count(), 1);
+  assert.equal(await page.locator('.ev-activity-body').isVisible(), false);
+  assert.match(await page.locator('#ev-act-sum').textContent(), /3 runs/);
+  assert.equal(await page.locator('#ev-detail').isVisible(), false);
+  await page.locator('#ev-act-toggle').tap();
+  assert.equal(await page.locator('.ev-activity-body').isVisible(), true);
+  assert.equal(await page.locator('.ev-hm-cell').first().getAttribute('width'), '23');
+  await page.locator(`.ev-hm-cell[data-d="${today}"]`).tap();
+  await page.locator('#ev-mf-summary [data-k="day"]').waitFor();
+  await page.locator('#ev-act-toggle').tap();
+  await page.locator('#ev-more').tap();
+  const sheet = await page.locator('#ev-morefilters').boundingBox();
+  assert.ok(Math.abs(sheet.y + sheet.height - 844) <= 1);
+  await page.locator('#ev-mf-done').tap();
+  assert.equal(await page.locator('#ev-morefilters').isVisible(), false);
+  await page.locator('#ev-list .ev-trow[data-tid="1"]').tap();
+  await page.locator('#ev-detail .ev-path').waitFor();
+  for (const selector of ['.ev-toolbar', '#ev-activity-host', '.ev-col-list']) assert.equal(await page.locator(selector).isVisible(), false, selector);
+  await page.locator('#ev-detail .ev-tab[data-tab="origin"]').tap();
+  await page.locator('#ev-detail .cw-origin-card').first().waitFor();
+  for (const width of [390, 320]) {
+    await page.setViewportSize({width, height: 844});
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `detail ${width}`);
+  }
+  await page.locator('#ev-detail-back').tap();
+  await page.locator('#ev-list .ev-trow').first().waitFor();
+  assert.equal(await page.locator('.ev-toolbar').isVisible(), true);
+  await page.locator('#ev-mode button[data-v="runs"]').tap();
+  await page.locator('#ev-list .ev-rrow[data-run="run-a"]').tap();
+  await page.locator('#ev-detail .ev-rtable').waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'run detail');
+  await page.locator('#ev-detail-back').tap();
+  for (const theme of ['original', 'flat-dark', 'flat-light']) {
+    await page.evaluate(theme => document.documentElement.dataset.cwTheme = theme, theme);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, theme);
+    if (process.env.CW_EVENTS_SCREENSHOTS) await page.screenshot({path: `${process.env.CW_EVENTS_SCREENSHOTS}/phone-${theme}.png`, fullPage: true});
+  }
   assert.deepEqual(errors, []);
 });

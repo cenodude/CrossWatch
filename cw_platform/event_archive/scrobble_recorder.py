@@ -107,6 +107,11 @@ def record(
         detail["session_key"] = str(session_key)
     if status:
         detail["status"] = str(status)
+    from .titles import compact_ids
+
+    compact = compact_ids(ids)
+    if compact:
+        detail["ids"] = compact
 
     row = make_event(
         hash_extra=hx,
@@ -192,6 +197,9 @@ def _prune_superseded(row: Mapping[str, Any], conn: Any = None) -> int:
             ids = [int(r["id"]) for r in stale if r["group_id"] is None or int(r["group_id"]) not in mixed]
             if not ids:
                 return 0
+            from .titles import mark_dirty_for_events
+
+            mark_dirty_for_events(c, ids)
             c.executemany("DELETE FROM events WHERE id=?", [(i,) for i in ids])
             gone = [g for g in gids if g not in mixed]
             if gone:

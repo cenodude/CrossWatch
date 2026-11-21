@@ -14,6 +14,8 @@ from ..reason_labels import reason_hint, reason_message
 record_unresolved = cast(Callable[..., dict[str, Any]], getattr(_unresolved_mod, "record_unresolved"))
 
 _UNRESOLVED_EXAMPLE_CAP = 25
+_SPOTLIGHT_FIELDS = ("type", "title", "name", "year", "season", "episode", "series_title", "show_title")
+_ARCHIVE_SUCCESS_FIELDS = (*_SPOTLIGHT_FIELDS, "rating")
 
 _PASSTHROUGH_KEY_LISTS = (
     "cloud_confirmed_keys",
@@ -78,6 +80,7 @@ def _ui_spotlight_items(
     *,
     limit: int = 25,
     fallback_count: int = 0,
+    fields: Sequence[str] = _SPOTLIGHT_FIELDS,
 ) -> list[dict[str, Any]]:
     try:
         from ..id_map import canonical_key as _ckey  # type: ignore
@@ -141,7 +144,7 @@ def _ui_spotlight_items(
                     slim["key"] = key
         except Exception:
             pass
-        for field in ("type", "title", "name", "year", "season", "episode", "series_title", "show_title"):
+        for field in fields:
             val = item.get(field)
             if val not in (None, ""):
                 slim[field] = val
@@ -156,6 +159,48 @@ def _ui_spotlight_items(
         if len(out) >= int(limit):
             break
     return out
+
+
+def _emit_archive_successes(
+    emit,
+    *,
+    dst_name: str,
+    cfg: Any,
+    feature: str,
+    op: str,
+    items: Sequence[Mapping[str, Any]],
+    res: Mapping[str, Any],
+    dry_run: bool,
+) -> None:
+    if dry_run:
+        return
+    keys: list[str] = []
+    for raw in res.get("confirmed_keys") or []:
+        key = str(raw or "").strip()
+        if not key:
+            continue
+        keys.append(key)
+        base = key.split("@", 1)[0]
+        if base != key:
+            keys.append(base)
+    if not keys:
+        return
+    try:
+        from ..event_archive.titles import SUCCESS_CAP
+
+        rows = _ui_spotlight_items(items, keys, limit=SUCCESS_CAP, fields=_ARCHIVE_SUCCESS_FIELDS)
+        if rows:
+            emit(
+                "archive:item_successes",
+                dst=dst_name,
+                destination_instance=(cfg or {}).get("_cw_provider_instance"),
+                feature=feature,
+                op=op,
+                items=rows,
+                total=int(res.get("confirmed", 0) or 0),
+            )
+    except Exception:
+        pass
 
 
 def _dedupe_unresolved_rows(rows: Sequence[Any], *, feature: str) -> list[Mapping[str, Any]]:
@@ -756,6 +801,7 @@ def apply_add(
             emit("ui:spotlight", feature=feature, action="add", items=spotlight, count=len(spotlight))
     except Exception:
         pass
+    _emit_archive_successes(emit, dst_name=dst_name, cfg=cfg, feature=feature, op="add", items=items, res=res, dry_run=dry_run)
     return res
 
 def apply_update(
@@ -816,6 +862,7 @@ def apply_update(
             emit("ui:spotlight", feature=feature, action="update", items=spotlight, count=len(spotlight))
     except Exception:
         pass
+    _emit_archive_successes(emit, dst_name=dst_name, cfg=cfg, feature=feature, op="update", items=items, res=res, dry_run=dry_run)
     return res
 
 def apply_remove(
@@ -877,4 +924,5 @@ def apply_remove(
             emit("ui:spotlight", feature=feature, action="remove", items=spotlight, count=len(spotlight))
     except Exception:
         pass
+    _emit_archive_successes(emit, dst_name=dst_name, cfg=cfg, feature=feature, op="remove", items=items, res=res, dry_run=dry_run)
     return res

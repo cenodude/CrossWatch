@@ -133,6 +133,42 @@ CREATE TABLE IF NOT EXISTS run_issue_counts (
 ) WITHOUT ROWID
 """
 
+_CREATE_EVENT_TITLES = """
+CREATE TABLE IF NOT EXISTS event_titles (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    title_hash       TEXT UNIQUE,
+    domain           TEXT DEFAULT 'sync',
+    created_at       INTEGER,
+    updated_at       INTEGER,
+    dirty            INTEGER DEFAULT 1,
+    run_id           TEXT,
+    first_event_at   INTEGER,
+    last_event_at    INTEGER,
+    event_count      INTEGER DEFAULT 0,
+    status           TEXT,
+    attention        INTEGER DEFAULT 0,
+    item_key         TEXT,
+    ident            TEXT,
+    title            TEXT,
+    year             INTEGER,
+    media_type       TEXT,
+    season           INTEGER,
+    episode          INTEGER,
+    source_provider  TEXT,
+    source_instance  TEXT,
+    kinds            TEXT,
+    states           TEXT,
+    dests            TEXT,
+    routes           TEXT,
+    destinations     TEXT,
+    ok_dests         TEXT,
+    ids              TEXT,
+    rating           TEXT,
+    progress         TEXT,
+    acknowledged_at  INTEGER
+)
+"""
+
 _CREATE_EVENT_IMPORTS = """
 CREATE TABLE IF NOT EXISTS event_imports (
     source_file        TEXT PRIMARY KEY,
@@ -186,6 +222,9 @@ _ADD_COLUMNS = (
     ("event_groups", "run_owned", "INTEGER DEFAULT 0"),
     ("event_groups", "health_only", "INTEGER DEFAULT 0"),
     ("event_groups", "activity_hash", "TEXT"),
+    ("events", "title_id", "INTEGER"),
+    ("event_titles", "routes", "TEXT"),
+    ("event_titles", "ok_dests", "TEXT"),
 )
 
 _EXTRA_INDEXES = (
@@ -194,12 +233,19 @@ _EXTRA_INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_groups_activity ON event_groups(domain, activity_hash, last_event_at, id)",
     "CREATE INDEX IF NOT EXISTS idx_sync_runs_started ON sync_runs(started_at)",
     "CREATE INDEX IF NOT EXISTS idx_sync_runs_finished ON sync_runs(finished_at)",
+    "CREATE INDEX IF NOT EXISTS idx_events_title_id ON events(title_id)",
+    "CREATE INDEX IF NOT EXISTS idx_titles_domain_last ON event_titles(domain, last_event_at, id)",
+    "CREATE INDEX IF NOT EXISTS idx_titles_attention ON event_titles(domain, last_event_at) WHERE attention=1",
+    "CREATE INDEX IF NOT EXISTS idx_titles_run ON event_titles(run_id)",
+    "CREATE INDEX IF NOT EXISTS idx_titles_ident ON event_titles(ident)",
+    "CREATE INDEX IF NOT EXISTS idx_titles_item_key ON event_titles(item_key)",
+    "CREATE INDEX IF NOT EXISTS idx_titles_dirty ON event_titles(dirty) WHERE dirty=1",
 )
 
 
 def _create_tables(conn: sqlite3.Connection) -> None:
     for stmt in (_CREATE_SYNC_RUNS, _CREATE_EVENTS, _CREATE_EVENT_GROUPS, _CREATE_EVENT_IMPORTS, _CREATE_RUN_PAIRS,
-                 _CREATE_RUN_ISSUE_COUNTS):
+                 _CREATE_RUN_ISSUE_COUNTS, _CREATE_EVENT_TITLES):
         conn.execute(stmt)
 
 
