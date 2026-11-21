@@ -5,6 +5,7 @@
   if (w.CW?.SyncUsers) return;
 
   const PROVIDERS = new Set(["plex", "emby", "jellyfin", "silo", "tofa"]);
+  const USER_PICK = new Set(["plex", "emby", "jellyfin"]);
   const LABELS = { plex: "Plex", emby: "Emby", jellyfin: "Jellyfin", silo: "Silo", tofa: "Tofa" };
   const KIND_CLASS = { Owner: "is-owner", Admin: "is-owner", Connected: "is-owner", Home: "is-home", Child: "is-home", Friend: "is-friend", Shared: "is-friend", Account: "is-friend", Disabled: "is-disabled" };
 
@@ -116,6 +117,7 @@
     state.root.innerHTML = `
       <div class="cw-wl cw-su">
         <div class="cw-wl-note"><strong>Optional.</strong> Tick the people of this ${esc(label)} server who can be synced. You link them to people on another media server inside a sync pair, watcher route or webhook.${state.provider === "silo" ? " Silo admins also see the profiles of the other accounts on this server, marked Account." : ""}</div>
+        <div class="cw-wl-note cw-su-warn">Pairs with a tracker always use ${USER_PICK.has(state.provider) ? "the user in Settings" : "the profile in Authentication"}.</div>
         ${state.loadError ? `<div class="cw-wl-empty">Could not load users from ${esc(label)}: ${esc(state.loadError)}</div>` : ""}
         <div class="cw-su-tools">
           <span class="cw-su-search"><span class="material-symbols-rounded" aria-hidden="true">search</span><input type="search" data-role="search" placeholder="Search people" autocomplete="off" value="${esc(state.query)}"></span>

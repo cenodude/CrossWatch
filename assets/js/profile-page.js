@@ -3023,8 +3023,8 @@
         state.targets = watchlistTargets(ctx.entries);
         state.empty = { icon: "bookmark_remove", title: "Not on any watchlist", text: "None of the selected titles are on a provider watchlist." };
       } else {
-        part("targets").innerHTML = emptyHtml({ icon: "progress_activity", title: "Checking providers", text: "Looking up where the selection is synced.", spin: true });
-        syncActions();
+        state.empty = { icon: "progress_activity", title: "Checking providers", text: "Looking up where the selection is synced.", spin: true };
+        render();
         try {
           const data = await postJson("/api/editor/send/preview", { kind: ctx.kind, items: ctx.entries.map(sendItem) }, 60000);
           if (generation !== state.generation) return;
