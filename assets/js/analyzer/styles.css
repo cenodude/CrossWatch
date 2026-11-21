@@ -128,9 +128,7 @@
 .an-page .an-finding-icon{display:flex;padding:9px;border-radius:10px;background:var(--an-card);color:var(--an-muted)}
 .an-page .an-finding-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;font-size:11px;color:var(--an-muted);margin-bottom:8px}
 .an-page .an-severity-badge{border-radius:5px;background:var(--an-card);padding:3px 8px;font-weight:700;color:var(--an-text)}
-.an-page .an-severity-error{border-left:3px solid var(--an-error)}
 .an-page .an-severity-error .an-finding-icon,.an-page .an-severity-error .an-severity-badge{color:var(--an-error);background:color-mix(in srgb,var(--an-error) 9%,var(--an-panel))}
-.an-page .an-severity-warn{border-left:3px solid var(--an-warning)}
 .an-page .an-severity-warn .an-finding-icon,.an-page .an-severity-warn .an-severity-badge{color:var(--an-warning);background:color-mix(in srgb,var(--an-warning) 9%,var(--an-panel))}
 .an-page .an-finding h3{font-size:15px;line-height:1.5;font-weight:700;overflow-wrap:anywhere}
 .an-page .an-finding p{font-size:12px;color:var(--an-muted);margin-top:7px;overflow-wrap:anywhere;white-space:pre-wrap}

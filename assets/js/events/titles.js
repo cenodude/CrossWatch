@@ -65,8 +65,7 @@ export function whatOf(item) {
 
 export function viaOf(item) {
   if (item.domain === "scrobble") return item.progress != null && item.progress !== "" ? `Scrobble · ${item.progress}%` : "Scrobble";
-  const feats = [...new Set((item.kinds || []).map((k) => k.split(":")[0]).filter(Boolean))];
-  return `Sync${feats.length ? ` · ${feats.map((f) => FEATURE_LABEL[f] || f).join(", ")}` : ""}`;
+  return "Sync";
 }
 
 export function coverURL(item, size = "w185") {
@@ -78,12 +77,14 @@ export function coverURL(item, size = "w185") {
     const choice = window.CW?.ArtChoice?.param?.(kind, tmdb) || "";
     return `/art/tmdb/${kind}/${encodeURIComponent(String(tmdb))}?fallback=2&size=${encodeURIComponent(size)}${choice}`;
   }
-  const imdb = String((tv ? ids.show_imdb : ids.imdb) || "").toLowerCase();
-  const tvdb = String((tv ? ids.show_tvdb : ids.tvdb) || "");
+  const showIds = tv && (ids.show_imdb || ids.show_tvdb);
+  const imdb = String((showIds ? ids.show_imdb : ids.imdb) || "").toLowerCase();
+  const tvdb = String((showIds ? ids.show_tvdb : ids.tvdb) || "");
   const qs = new URLSearchParams();
   if (/^tt\d{1,10}$/.test(imdb)) qs.set("imdb", imdb);
   if (/^\d{1,10}$/.test(tvdb)) qs.set("tvdb", tvdb);
   if (![...qs.keys()].length) return "";
+  if (tv && !showIds && isEpisode(item)) qs.set("episode", "1");
   qs.set("size", size);
   return `/art/lookup/${kind}?${qs.toString()}`;
 }
@@ -104,13 +105,32 @@ export function bindCovers(root) {
   });
 }
 
+const SHORT_REASONS = [
+  [/blackbox|blocked/, "blocked"],
+  [/unresolved|not.?found|unmatched|no.?match|missing/, "not found"],
+  [/rate|429|throttl|quota/, "rate limited"],
+  [/auth|401|403|token|forbidden/, "no access"],
+  [/server|5\d\d|timeout|unavailable/, "server error"],
+];
+
+export function shortReason(d) {
+  if (d.state !== "fail" && d.state !== "skip") return "";
+  const code = String(d.reason_code || d.reason || "").toLowerCase();
+  if (!code) return "";
+  const hit = SHORT_REASONS.find(([re]) => re.test(code));
+  return hit ? hit[1] : code.replace(/[_-]+/g, " ").slice(0, 24);
+}
+
 export function destChipHTML(d) {
   const state = STATE_LABEL[d.state] ? d.state : "skip";
   const reason = d.reason_label || d.reason || d.reason_code || "";
   const feature = FEATURE_LABEL[d.feature] || d.feature || "";
   const tip = [STATE_LABEL[state], feature, reason].filter(Boolean).join(" · ");
-  return `<span class="ev-dchip ${state}" title="${esc(tip)}"><span class="material-symbols-rounded" aria-hidden="true">${STATE_ICON[state]}</span>${providerChipHTML(d.provider, d.instance)}<span class="ev-sr">${esc(STATE_LABEL[state])}</span></span>`;
+  const short = shortReason({ ...d, state });
+  return `<span class="ev-dchip ${state}" title="${esc(tip)}"><span class="material-symbols-rounded" aria-hidden="true">${STATE_ICON[state]}</span>${providerChipHTML(d.provider, d.instance)}<span class="ev-sr">${esc(STATE_LABEL[state])}</span>${short ? `<span class="ev-dreason">${esc(short)}</span>` : ""}</span>`;
 }
+
+const rowVia = (item) => item.domain === "scrobble" && item.progress != null && item.progress !== "" ? `${item.progress}%` : "";
 
 export function titleText(item) {
   return item.title || item.item_key || "Unknown title";
@@ -156,7 +176,7 @@ export function titleRowHTML(item, { tmdbOn = false, selected = false } = {}) {
           <span class="ev-ttitle">${esc(name)}</span>
           <time class="ev-ttime">${esc(rowTime(item.last_event_at))}</time>
         </span>
-        <span class="ev-tsub">${esc([subText(item), whatOf(item), viaOf(item)].filter(Boolean).join(" · "))}</span>
+        <span class="ev-tsub">${esc([subText(item), whatOf(item), rowVia(item)].filter(Boolean).join(" · "))}</span>
         <span class="ev-troute">${item.source_provider ? `${providerChipHTML(item.source_provider, item.source_instance, ' data-role="source"')}<span class="material-symbols-rounded ev-tarrow" aria-hidden="true">arrow_forward</span>` : ""}<span class="ev-tdests">${dests || `<span class="ev-tnone">No destination yet</span>`}</span></span>
       </span>
     </div>`;
@@ -221,7 +241,7 @@ export function renderTitleDetail(host, item, ctx) {
     const state = STATE_LABEL[d.state] ? d.state : "skip";
     const reason = d.state === "ok" ? "" : (d.reason_label || d.reason || d.reason_code || "");
     const feature = FEATURE_LABEL[d.feature] || d.feature || "";
-    steps.push(`<li class="ev-pstep"><span class="ev-pdot ${state}"><span class="material-symbols-rounded" aria-hidden="true">${STATE_ICON[state]}</span></span><div><div class="ev-pline">${providerChipHTML(d.provider, d.instance)}<time>${esc(fullTime(d.at))}</time></div><p class="${state}">${esc([STATE_LABEL[state], feature, reason].filter(Boolean).join(" · "))}</p></div></li>`);
+    steps.push(`<li class="ev-pstep"><span class="ev-pdot ${state}"><span class="material-symbols-rounded" aria-hidden="true">${STATE_ICON[state]}</span></span><div><div class="ev-pline">${providerChipHTML(d.provider, d.instance)}<time>${esc(fullTime(d.at))}</time></div><p${state === "fail" ? ` class="ev-pfail"` : ""}>${esc([STATE_LABEL[state], feature, reason].filter(Boolean).join(" · "))}</p></div></li>`);
   }
   for (const r of later) {
     steps.push(`<li class="ev-pstep"><span class="ev-pdot next"><span class="material-symbols-rounded" aria-hidden="true">east</span></span><div><button type="button" class="ev-plink" data-tid="${esc(r.id)}"><span>${esc(`${r.domain === "scrobble" ? "Later scrobble" : "Later sync"}: ${whatOf(r)}`)}</span><time>${esc(fullTime(r.last_event_at))}</time></button><div class="ev-tdests">${(r.destinations || []).map(destChipHTML).join("")}</div></div></li>`);
@@ -244,11 +264,11 @@ export function renderTitleDetail(host, item, ctx) {
           ${failed || reviewed ? `<button class="ev-hbtn ev-hbtn-accent${reviewed ? " on" : ""}" id="ev-tack" type="button"><span class="material-symbols-rounded" aria-hidden="true">${reviewed ? "check_circle" : "check"}</span><span>${reviewed ? "Reviewed" : "Mark reviewed"}</span></button>` : ""}
         </div>
         <div class="ev-dtitle">${esc(titleText(item))}</div>
-        <p class="ev-outcome">${esc([subText(item), viaOf(item)].filter(Boolean).join(" · "))}</p>
+        <p class="ev-outcome">${esc([subText(item), rowVia(item)].filter(Boolean).join(" · "))}</p>
         ${ids ? `<div class="ev-tids">${ids}</div>` : ""}
       </div>
     </div>
-    <div class="ev-tabs" role="tablist">${tabBtn("path", "Path")}${tabBtn("origin", "Where it comes from")}${tabBtn("earlier", "Earlier", related.length)}</div>
+    <div class="ev-tabs" role="tablist">${tabBtn("path", "Path")}${tabBtn("origin", "Where it comes from")}${tabBtn("earlier", "Earlier", related.length || null)}</div>
     <div class="ev-tabpane" data-pane="path"${tab === "path" ? "" : " hidden"}><ol class="ev-path">${steps.join("") || `<li class="ev-empty ev-empty-inline">Nothing recorded yet.</li>`}</ol>${item.run_id && item.domain === "sync" ? `<div class="ev-path-acts"><button type="button" class="ev-tbtn" id="ev-trun"><span class="material-symbols-rounded" aria-hidden="true">sync</span><span>Show this run</span></button><button type="button" class="ev-tbtn" id="ev-tlogs"><span class="material-symbols-rounded" aria-hidden="true">terminal</span><span>View logs</span></button></div>` : ""}</div>
     <div class="ev-tabpane" data-pane="origin"${tab === "origin" ? "" : " hidden"}><p class="ev-origin-note">Likely path, rebuilt from current data.</p>${originHTML}</div>
     <div class="ev-tabpane" data-pane="earlier"${tab === "earlier" ? "" : " hidden"}><div class="ev-earlier">${earlierHTML}</div></div>`;
@@ -485,36 +505,48 @@ const runDur = (s) => {
   if (n < 3600) return `${Math.floor(n / 60)}m ${n % 60}s`;
   return `${(n / 3600).toFixed(1)}h`;
 };
-const counts = (row) => {
-  const bits = [];
-  if (row.added) bits.push(`<span class="ev-n add">+${fmt(row.added)}</span>`);
-  if (row.removed) bits.push(`<span class="ev-n del">−${fmt(row.removed)}</span>`);
-  if (row.updated) bits.push(`<span class="ev-n upd">~${fmt(row.updated)}</span>`);
-  if (row.errors) bits.push(`<span class="ev-n err">${fmt(row.errors)} failed</span>`);
-  return bits.join("") || `<span class="ev-n zero">0</span>`;
+const RUN_PHRASES = {
+  history: { added: "marked watched", removed: "marked unwatched", updated: "updated in history" },
+  ratings: { added: "rated", removed: "ratings removed", updated: "re-rated" },
+  watchlist: { added: "added to watchlist", removed: "removed from watchlist", updated: "updated in watchlist" },
+  progress: { added: "progress saved", removed: "progress removed", updated: "progress updated" },
+  collection: { added: "added to collection", removed: "removed from collection", updated: "updated in collection" },
 };
 
-const runPairs = (run) => {
-  const seen = new Map();
-  for (const row of run.pair_rows || []) {
-    const key = `${row.src_provider}>${row.dst_provider}`;
-    const entry = seen.get(key) || { src: row.src_provider, dst: row.dst_provider, added: 0, removed: 0, updated: 0, errors: 0 };
-    for (const k of ["added", "removed", "updated", "errors"]) entry[k] += Number(row[k] || 0);
-    seen.set(key, entry);
+const runRoutes = (run) => {
+  const routes = new Map();
+  for (const r of run.pair_rows || []) {
+    const key = `${r.src_provider}|${r.src_instance || ""}|${r.dst_provider}|${r.dst_instance || ""}`;
+    const entry = routes.get(key) || { src: r.src_provider, srcInst: r.src_instance, dst: r.dst_provider, dstInst: r.dst_instance, parts: [] };
+    const phrases = RUN_PHRASES[r.feature] || {};
+    const feature = String(FEATURE_LABEL[r.feature] || r.feature || "").toLowerCase();
+    for (const k of ["added", "removed", "updated"]) {
+      const n = Number(r[k] || 0);
+      if (n) entry.parts.push({ text: `${fmt(n)} ${phrases[k] || `${k} in ${feature}`}` });
+    }
+    const errors = Number(r.errors || 0);
+    if (errors) entry.parts.push({ text: `${fmt(errors)} failed${feature ? ` in ${feature}` : ""}`, bad: true });
+    routes.set(key, entry);
   }
-  return [...seen.values()];
+  return [...routes.values()].filter((e) => e.parts.length);
 };
+
+const routeLineHTML = (route) => `<span class="ev-rpair"><span class="ev-rroute">${providerChipHTML(route.src, route.srcInst)}<span class="material-symbols-rounded ev-tarrow" aria-hidden="true">arrow_forward</span>${providerChipHTML(route.dst, route.dstInst)}</span><span class="ev-rsum">${route.parts.map((p) => `<span${p.bad ? ` class="bad"` : ""}>${esc(p.text)}</span>`).join("")}</span></span>`;
+
+const RUN_TITLE_LIMIT = 10;
+
+const runTitleHTML = (item, tmdbOn) => `<button type="button" class="ev-rtitle" data-tid="${esc(item.id)}">${coverHTML(item, tmdbOn)}<span class="ev-rtitle-main"><span class="ev-rtitle-name">${esc(titleText(item))}</span><span class="ev-tsub">${esc([subText(item), whatOf(item)].filter(Boolean).join(" · "))}</span><span class="ev-tdests">${(item.destinations || []).map(destChipHTML).join("")}</span></span></button>`;
 
 export function runRowsHTML(runs, { selected = "", showQuiet = false } = {}) {
   const visible = showQuiet ? runs : runs.filter((r) => (r.changes || 0) > 0 || r.errors || r.status === "running");
   const rows = visible.map((run) => {
     const status = run.errors ? "error" : run.status === "running" ? "info" : (run.changes ? "ok" : "idle");
-    const pairs = runPairs(run).filter((p) => p.added || p.removed || p.updated || p.errors);
+    const routes = runRoutes(run);
     const what = run.errors ? `${fmt(run.errors)} failed` : run.changes ? `${fmt(run.changes)} changes` : (run.status === "running" ? "Running" : "No changes");
     return `<div class="ev-rrow${String(selected) === String(run.run_id) ? " sel" : ""}" data-run="${esc(run.run_id)}" tabindex="0" role="button">
       <span class="ev-rtime">${esc(runTime(run.started_at))}</span>
       <span class="ev-rdot ${status}" aria-hidden="true"></span>
-      <span class="ev-rmain"><span class="ev-rwhat${run.errors ? " bad" : ""}">${esc(what)}${run.dry_run ? " · dry run" : ""}</span><span class="ev-rpairs">${pairs.map((p) => `<span class="ev-rpair">${providerChipHTML(p.src)}<span class="material-symbols-rounded ev-tarrow" aria-hidden="true">arrow_forward</span>${providerChipHTML(p.dst)}${counts(p)}</span>`).join("")}</span></span>
+      <span class="ev-rmain"><span class="ev-rwhat${run.errors ? " bad" : ""}">${esc(what)}${run.dry_run ? " · dry run" : ""}</span>${routes.length ? `<span class="ev-rpairs">${routes.map(routeLineHTML).join("")}</span>` : ""}</span>
       <span class="ev-rdur">${esc(runDur(run.duration))}</span>
     </div>`;
   });
@@ -524,19 +556,10 @@ export function runRowsHTML(runs, { selected = "", showQuiet = false } = {}) {
 }
 
 export function renderRunDetail(host, run, ctx) {
-  const rows = run.pair_rows || [];
-  const features = ["history", "ratings", "watchlist", "progress", "collection"].filter((f) => rows.some((r) => r.feature === f));
-  const routes = new Map();
-  for (const r of rows) {
-    const key = `${r.src_provider}|${r.src_instance}|${r.dst_provider}|${r.dst_instance}`;
-    const entry = routes.get(key) || { r, by: {} };
-    entry.by[r.feature] = r;
-    routes.set(key, entry);
-  }
-  const table = routes.size ? `<div class="ev-rtable" role="table">
-      <div class="ev-rtr ev-rth" role="row"><span role="columnheader">Pair</span>${features.map((f) => `<span role="columnheader">${esc(FEATURE_LABEL[f] || f)}</span>`).join("")}</div>
-      ${[...routes.values()].map(({ r, by }) => `<div class="ev-rtr" role="row"><span role="cell" class="ev-rroute">${providerChipHTML(r.src_provider, r.src_instance)}<span class="material-symbols-rounded ev-tarrow" aria-hidden="true">arrow_forward</span>${providerChipHTML(r.dst_provider, r.dst_instance)}</span>${features.map((f) => `<span role="cell">${by[f] ? counts(by[f]) : `<span class="ev-n zero">–</span>`}</span>`).join("")}</div>`).join("")}
-    </div>` : `<div class="ev-empty ev-empty-inline">No recorded changes for this run.</div>`;
+  const routes = runRoutes(run);
+  const summary = routes.length
+    ? `<div class="ev-rsums">${routes.map(routeLineHTML).join("")}</div>`
+    : `<div class="ev-empty ev-empty-inline">No recorded changes for this run.</div>`;
   const status = run.errors ? "error" : run.status === "running" ? "info" : "ok";
   host.innerHTML = `
     <div class="ev-dhead">
@@ -544,12 +567,43 @@ export function renderRunDetail(host, run, ctx) {
       <div class="ev-dtitle">${esc(`${fmt(run.changes)} changes`)}${run.errors ? ` · ${esc(fmt(run.errors))} failed` : ""}</div>
       <p class="ev-outcome">${esc([runDur(run.duration) ? `Took ${runDur(run.duration)}` : "", run.dry_run ? "Dry run" : ""].filter(Boolean).join(" · "))}</p>
     </div>
-    ${table}
+    ${summary}
+    <h4>Titles <span class="ev-h4-note" id="ev-run-total"></span></h4>
+    <div class="ev-rtitles" id="ev-run-list"><div class="ev-empty ev-empty-inline">Loading titles…</div></div>
     <div class="ev-path-acts">
-      <button type="button" class="ev-tbtn" id="ev-run-titles"><span class="material-symbols-rounded" aria-hidden="true">movie</span><span>Show titles from this run</span></button>
+      <button type="button" class="ev-tbtn" id="ev-run-titles" hidden><span class="material-symbols-rounded" aria-hidden="true">movie</span><span>Show all</span></button>
       <button type="button" class="ev-tbtn" id="ev-run-logs"><span class="material-symbols-rounded" aria-hidden="true">terminal</span><span>View logs</span></button>
     </div>`;
   host.querySelector("#ev-run-titles")?.addEventListener("click", () => ctx.showTitles?.(run.run_id));
   host.querySelector("#ev-run-logs")?.addEventListener("click", () => window.openLogs?.({ runId: run.run_id, channel: "sync" }));
+  void loadRunTitles(host, run, ctx);
+}
+
+async function loadRunTitles(host, run, ctx) {
+  const listEl = host.querySelector("#ev-run-list");
+  if (!listEl || !ctx.fetchJson) return;
+  const query = (extra = "") => ctx.fetchJson(`/api/events/titles?domain=sync&run_id=${encodeURIComponent(run.run_id)}&limit=${RUN_TITLE_LIMIT}${extra}`);
+  try {
+    const [all, failed] = await Promise.all([query(), run.errors ? query("&outcome=failed") : Promise.resolve(null)]);
+    if (!listEl.isConnected) return;
+    if (!all?.ok) throw new Error("failed");
+    const seen = new Set();
+    const items = [...(failed?.items || []), ...(all.items || [])].filter((it) => !seen.has(String(it.id)) && seen.add(String(it.id))).slice(0, RUN_TITLE_LIMIT);
+    const total = Number(all.total || 0);
+    listEl.innerHTML = items.length
+      ? items.map((it) => runTitleHTML(it, ctx.tmdbOn)).join("")
+      : `<div class="ev-empty ev-empty-inline">${all.preparing ? "Titles are still being prepared. Try again in a moment." : "No titles recorded for this run."}</div>`;
+    const totalEl = host.querySelector("#ev-run-total");
+    if (totalEl && total) totalEl.textContent = total > items.length ? `${fmt(items.length)} of ${fmt(total)}` : fmt(total);
+    const more = host.querySelector("#ev-run-titles");
+    if (more && total > items.length) {
+      more.hidden = false;
+      more.querySelector("span:last-child").textContent = `Show all ${fmt(total)}`;
+    }
+    bindCovers(listEl);
+    listEl.querySelectorAll(".ev-rtitle").forEach((btn) => btn.addEventListener("click", () => ctx.openTitle?.(run.run_id, btn.dataset.tid)));
+  } catch {
+    if (listEl.isConnected) listEl.innerHTML = `<div class="ev-empty ev-empty-inline">Could not load the titles of this run.</div>`;
+  }
 }
 

@@ -1009,7 +1009,7 @@ html[data-cw-theme="flat-light"] .cw-shelfv-base::after{background:linear-gradie
   #page-editor .cw-mobile-sort label{color:var(--cw-theme-muted)}
   #page-editor .cw-mobile-sort label::after{border-right:2px solid currentColor;border-bottom:2px solid currentColor}
   #page-editor .cw-mobile-sort select{appearance:none}
-  #page-tracker .trk-table tbody tr.is-selected{background:var(--cw-page-selected-bg);box-shadow:inset 3px 0 0 var(--accent)}
+  #page-tracker .trk-table tbody tr.is-selected{background:var(--cw-page-selected-bg)}
   #page-tracker .trk-table tbody tr.trk-day{border:0;border-radius:0;background:transparent}
 
   #page-editor .cw-table tbody tr:has(input[type=checkbox]:checked),#page-tracker .cw-table tbody tr:has(input[type=checkbox]:checked){border-color:var(--accent)}
@@ -1223,7 +1223,7 @@ button.cw-mm-provider[data-ia-chip]:hover,button.cw-mm-provider[data-mm-episode]
 @media (max-width:560px){.cw-ia-pop.is-sheet.cw-page-item-actions{border-width:1px 0 0;border-radius:calc(var(--cw-page-overlay-radius) + 6px) calc(var(--cw-page-overlay-radius) + 6px) 0 0;box-shadow:0 0 0 100vmax var(--cw-page-overlay-dim)}.cw-ia-pop.is-sheet.cw-page-item-actions::before{border-radius:2px;background:var(--cw-theme-border-strong)}.cw-page-item-actions .cw-ia-sheet{border-radius:calc(var(--cw-page-overlay-radius) + 6px) calc(var(--cw-page-overlay-radius) + 6px) 0 0}}
 @media (prefers-reduced-motion:reduce){[data-ia-state="work"]::before,[data-ia-state="ok"],[data-ia-state="fail"],.cw-ia-toast.cw-page-item-actions .cw-ia-toast-icon.is-spinning .material-symbols-rounded{animation:none}.cw-ia-toast.cw-page-item-actions .cw-ia-toast-bar.is-progress{transition:none}}
 #page-tracker .trk-table tbody tr.is-selected>td{background:var(--cw-page-selected-bg)}
-@media(min-width:761px){#page-tracker .trk-table tbody tr.is-selected>td:first-child{box-shadow:inset 3px 0 0 var(--cw-theme-accent)}}
+@media(min-width:761px){}
 #page-tracker .trk-table tbody tr:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:-2px}
 #page-tracker :is(.trk-ep,.trk-detail-sub,.trk-detail-empty,.trk-progress-text,.trk-detail-kind){color:var(--cw-theme-muted)}
 #page-tracker .trk-health.is-ok,#page-tracker .trk-table .trk-health.is-ok .material-symbol{color:var(--cw-theme-good)}
@@ -2166,7 +2166,7 @@ html[data-cw-theme=flat-light] #page-events.cw-page-events{--ev-color-scheme:lig
 .ev-tsection{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ev-muted);background:var(--cw-theme-surface-raised);border-bottom:1px solid var(--ev-border-soft)}
 .ev-trow,.ev-rrow{border-bottom:1px solid var(--ev-border-soft)}
 .ev-trow:hover,.ev-rrow:hover{background:var(--cw-page-hover-bg)}
-.ev-trow.sel,.ev-rrow.sel{background:var(--ev-sel);box-shadow:inset 2px 0 0 var(--ev-accent)}
+.ev-trow.sel,.ev-rrow.sel{background:var(--ev-sel)}
 .ev-tcover{border-radius:6px;background:var(--ev-fill-2);color:var(--ev-muted);box-shadow:inset 0 0 0 1px var(--ev-border-soft)}
 .ev-tcover .material-symbols-rounded{font-size:20px}
 .ev-ttitle{font-size:13.5px;font-weight:600}
@@ -2175,6 +2175,9 @@ html[data-cw-theme=flat-light] #page-events.cw-page-events{--ev-color-scheme:lig
 .ev-pchip{font-size:12px;color:var(--ev-text)}
 .ev-pchip-inst{color:var(--ev-muted)}
 .ev-pchip-inst::before{content:"· "}
+.ev-dreason{color:var(--ev-muted);font-size:11.5px}
+.ev-dreason::before{content:"· "}
+.ev-dchip.fail .ev-dreason{color:var(--ev-err)}
 .ev-dchip{border:1px solid var(--ev-border);border-radius:7px;background:var(--ev-fill)}
 .ev-dchip>.material-symbols-rounded{font-size:14px;font-weight:700}
 .ev-dchip.ok{border-color:color-mix(in srgb,var(--ev-ok) 40%,transparent);background:var(--ev-ok-bg)}
@@ -2200,7 +2203,7 @@ html[data-cw-theme=flat-light] #page-events.cw-page-events{--ev-color-scheme:lig
 .ev-pdot.pending{border-color:color-mix(in srgb,var(--ev-warn) 45%,transparent);color:var(--ev-warn)}
 .ev-pline time,.ev-plink time,.ev-erow time{font-size:11.5px;color:var(--ev-muted);white-space:nowrap}
 .ev-pstep p{font-size:12.5px;color:var(--ev-muted)}
-.ev-pstep p.fail{color:var(--ev-err)}
+.ev-pstep p.ev-pfail{color:var(--ev-err)}
 .ev-plink{border:0;background:transparent;color:var(--ev-text);font-size:13px}
 .ev-plink:hover span{text-decoration:underline}
 .ev-origin-note{font-size:12px;color:var(--ev-muted)}
@@ -2242,15 +2245,13 @@ html[data-cw-theme=flat-light] #page-events.cw-page-events{--ev-color-scheme:lig
 .ev-rdot.info{background:var(--ev-warn)}
 .ev-rwhat{font-size:13px}
 .ev-rwhat.bad{color:var(--ev-err)}
-.ev-rpair{border:1px solid var(--ev-border);border-radius:7px;background:var(--ev-fill)}
+.ev-rsum{font-size:12.5px;color:var(--ev-muted)}
+.ev-rsum .bad{color:var(--ev-err)}
+.ev-rtitle{border:0;border-bottom:1px solid var(--ev-border-soft);border-radius:0;background:transparent}
+.ev-rtitle:hover{background:var(--ev-fill)}
+.ev-rtitle:focus-visible{outline:2px solid var(--ev-accent);outline-offset:-2px}
+.ev-rtitle-name{font-size:13.5px;font-weight:600}
 .ev-rdur,.ev-rfoot{font-size:12px;color:var(--ev-muted)}
-.ev-n{font-size:12px;font-weight:600}
-.ev-n.add{color:var(--ev-ok)}
-.ev-n.del,.ev-n.err{color:var(--ev-err)}
-.ev-n.upd{color:var(--ev-accent)}
-.ev-n.zero{color:var(--ev-muted);font-weight:400}
-.ev-rtr{border-bottom:1px solid var(--ev-border-soft);font-size:12.5px}
-.ev-rth{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ev-muted)}
 .ev-layout{border:1px solid var(--ev-border);border-radius:14px}
 .ev-col-detail{background:var(--ev-panel)}
 .ev-col-list{background:var(--ev-panel);border-right:1px solid var(--ev-border-soft)}
@@ -2276,7 +2277,7 @@ html[data-cw-theme=flat-light] #page-events.cw-page-events{--ev-color-scheme:lig
 .ev-row-child{background:color-mix(in srgb,var(--ev-text) 2.5%,transparent)}
 .ev-row-child::before{background:var(--ev-border-soft)}
 .ev-row:hover{background:var(--cw-page-hover-bg)}
-.ev-row.sel{background:var(--ev-sel);box-shadow:inset 2px 0 0 var(--ev-accent)}
+.ev-row.sel{background:var(--ev-sel)}
 .ev-row.acked .ev-summary{color:var(--ev-muted)}
 .ev-tl-dot{border-radius:50%;background:var(--ev-muted);box-shadow:0 0 0 3px var(--ev-bg)}
 .ev-tl-dot.info,.ev-tl-dot.rating{background:var(--ev-info)}
