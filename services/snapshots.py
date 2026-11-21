@@ -30,6 +30,7 @@ from cw_platform.provider_instances import (
 )
 from cw_platform.run_control import SyncCancelled
 from services.capture_statuses import capture_statuses, comparison_statuses, guard_feature_restore, restore_statuses, status_records
+from services.log_archive import logged_operation, job_message
 
 Feature = Literal["watchlist", "ratings", "history", "progress", "collection"]
 CreateFeature = Literal["watchlist", "ratings", "history", "progress", "collection", "all"]
@@ -55,6 +56,8 @@ def _progress_percent(feature_index: int, feature_total: int, stage_fraction: fl
 
 
 def _capture_progress_update(progress_id: str | None, **updates: Any) -> None:
+    if updates.get('stage') and updates.get('message'):
+        job_message(str(updates['message']))
     pid = str(progress_id or "").strip()
     if not pid:
         return
@@ -990,6 +993,7 @@ def _create_single_snapshot(
 
 
 
+@logged_operation('captures', lambda provider, feature, **kwargs: f'{provider} · {feature} capture')
 def create_snapshot(
     provider: str,
     feature: CreateFeature | str,
@@ -1185,6 +1189,7 @@ def _snapshot_sort_stamp(meta: Mapping[str, Any]) -> datetime:
     return datetime.fromtimestamp(0, tz=timezone.utc)
 
 
+@logged_operation('captures', 'Capture retention cleanup')
 def enforce_capture_retention(
     provider: str,
     feature: CreateFeature | str,
@@ -1561,6 +1566,7 @@ def _restore_message(result):
     return message
 
 
+@logged_operation('captures', 'Delete capture')
 def delete_snapshot(path: str, *, delete_children: bool = True) -> dict[str, Any]:
     rel, p = _resolve_snapshot_file(path)
     base = _snapshots_dir().resolve()
@@ -1611,6 +1617,7 @@ def delete_snapshot(path: str, *, delete_children: bool = True) -> dict[str, Any
     return {"ok": len(errors) == 0, "deleted": deleted, "errors": errors}
 
 
+@logged_operation('captures', 'Delete all captures')
 def delete_all_snapshots() -> dict[str, Any]:
     base = _snapshots_dir().resolve()
     deleted: list[str] = []
@@ -1655,6 +1662,7 @@ def delete_all_snapshots() -> dict[str, Any]:
         },
     }
 
+@logged_operation('captures', 'Restore capture')
 def restore_snapshot(
     path: str,
     *,
@@ -1735,6 +1743,7 @@ def restore_snapshot(
     except (Exception, SyncCancelled) as e:
         _capture_progress_error(progress_id, e)
         raise
+@logged_operation('captures', 'Provider cleanup')
 def clear_provider_features(
     provider: str,
     features: Iterable[Feature],

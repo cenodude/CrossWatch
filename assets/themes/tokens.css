@@ -144,3 +144,5 @@ html[data-cw-theme="flat-light"]{--cw-artwork-placeholder-bg:#e8edf5;--cw-artwor
   --cw-playing-mobile-shade: linear-gradient(90deg,#090d11 0%,#090d1bf0 24%,#090d1190 57%,#090d1144),linear-gradient(0deg,#090d11f5,transparent 65%);
 }
 html[data-cw-theme="flat-light"]{--cw-playing-backdrop-opacity:.08}
+
+:root{--cw-log-error:color-mix(in srgb,var(--cw-theme-danger) 75%,var(--cw-theme-text))}

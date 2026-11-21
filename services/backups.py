@@ -20,6 +20,7 @@ import uuid
 import zipfile
 
 from _logging import log as BASE_LOG
+from services.log_archive import logged_operation
 from _backup_bootstrap import application_database_target
 from cw_platform.config_base import CONFIG, _current_version_norm
 
@@ -377,6 +378,7 @@ def _error_text(err: Exception) -> str:
     return text if text != "no detail" else type(err).__name__
 
 
+@logged_operation('backups', 'Create backup')
 def create_backup(
     *,
     scope: BackupScope | str = "app_state",
@@ -613,6 +615,7 @@ def _read_manifest_from_zip(zf: zipfile.ZipFile) -> dict[str, Any]:
     return data
 
 
+@logged_operation('backups', 'Validate backup')
 def validate_backup(path: str, password: str = "") -> dict[str, Any]:
     with open_archive(path, password) as (rel, target):
         return _validate_archive(rel, target)
@@ -751,6 +754,7 @@ def list_backups() -> list[dict[str, Any]]:
     return out
 
 
+@logged_operation('backups', 'Delete backup')
 def delete_backup(path: str) -> dict[str, Any]:
     rel, target = _resolve_backup_file(path)
     LOG.info(f"deleting backup path={rel}")
@@ -811,6 +815,7 @@ def enforce_backup_retention(*, retention_days: int = 0, max_backups: int = 0, a
     return result
 
 
+@logged_operation('backups', 'Restore backup')
 def restore_backup(path: str, *, create_pre_restore: bool = True) -> dict[str, Any]:
     validation = validate_backup(path)
     if not validation.get("ok"):

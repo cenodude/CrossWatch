@@ -239,7 +239,7 @@ export function evidenceButtons(evidence, messageIndex) {
 
 export function openEvidence(ref) {
   if (!ref) return;
-  if (ref.kind === "log" && typeof ref.session_id === "string" && ["sync", "watcher", "debug"].includes(ref.channel)) window.openLogs?.({sessionId: ref.session_id, channel: ref.channel, runId: ref.run_id});
+  if (ref.kind === "log" && typeof ref.session_id === "string" && ["sync", "watcher", "debug", "captures", "backups", "audits", "system"].includes(ref.channel)) window.openLogs?.({sessionId: ref.session_id, channel: ref.channel, runId: ref.run_id});
   else if (ref.kind === "event" && Number.isSafeInteger(ref.group_id) && ref.group_id > 0) window.openEvents?.({groupId: ref.group_id, visibility: "all"});
   else if (ref.kind === "mappings") ACTIONS.open_mappings.run();
   else if (ref.kind === "anime") ACTIONS.open_anime_overrides.run();

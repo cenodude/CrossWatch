@@ -7,31 +7,17 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import {readFileSync} from 'node:fs';
 globalThis.window={addEventListener(){}};
-const {highlight,logsBackLink,savedLogFeatures,savedLogsTable}=await import('../assets/js/logs.js');
+const {highlight,logsBackLink,savedLogList}=await import('../assets/js/logs.js');
 
-test('saved features use the archived settings and respect the selected pair',()=>{
-  const pairs=[{id:'a',features:{watchlist:true,ratings:{enable:false},history:{enable:true}}},{id:'b',features:{ratings:{enabled:'on'},progress:true,playlists:'false',collection:1}}];
-  const session={pairs:JSON.stringify(pairs)};
-  assert.deepEqual(savedLogFeatures(session),[true,true,true,true,false,true]);
-  assert.deepEqual(savedLogFeatures(session,'a'),[true,false,true,false,false,false]);
-  assert.equal(savedLogFeatures(session,'missing'),null);
-  assert.equal(savedLogFeatures({pairs:'invalid'}),null);
-  assert.equal(savedLogFeatures({pairs:[{id:'old'}]}),null);
-  pairs[0].features.watchlist=false;
-  assert.equal(savedLogFeatures(session,'a')[0],true);
-});
-
-test('saved logs render columns, feature states, status badges and safe log labels',()=>{
-  const base={id:'one',label:'PLEX <script> to TRAKT',started:100,ended:102,status:'completed',errors:0,warnings:0,pairs:JSON.stringify([{id:'a',features:{ratings:true,history:true,progress:true}}])};
-  const html=savedLogsTable([base]);
-  for(const name of ['Sync pair','Features','Started','Duration','Status','Errors','Warnings'])assert.ok(html.includes(name));
-  assert.equal((html.match(/class="logs-feature-dot /g)||[]).length,6);
-  assert.equal((html.match(/class="logs-feature-dot \w+ on"/g)||[]).length,3);
-  assert.match(html,/logs-status-success/);assert.match(html,/>2s</);
-  assert.ok(html.includes('<strong>PLEX &lt;script&gt; to TRAKT</strong>'));
-  assert.match(savedLogsTable([{...base,status:'issues'}]),/logs-status-warning/);
-  assert.match(savedLogsTable([{...base,status:'__proto__'}]),/logs-status-neutral/);
-  assert.match(savedLogsTable([{...base,pairs:'[]'}]),/Feature settings unavailable/);
+test('session list shows selection and diagnostic metadata',()=>{
+  const base={id:'one',label:'PLEX to TRAKT',started:100,ended:102,status:'completed',lines:25,errors:0,warnings:0};
+  const html=savedLogList([base],'one');
+  assert.match(html,/aria-pressed="true"/);
+  assert.match(html,/25 records/);
+  assert.match(html,/2s/);
+  assert.match(html,/logs-status-success/);
+  assert.match(savedLogList([{...base,status:'issues',pinned:true}]),/Pinned/);
+  assert.match(savedLogList([{...base,status:'__proto__'}]),/logs-status-neutral/);
 });
 
 test('saved log labels escape tags and quotes in both text and attributes',()=>{
@@ -42,10 +28,10 @@ test('saved log labels escape tags and quotes in both text and attributes',()=>{
     ['<ScRiPt src="x">alert(1)</ScRiPt >','&lt;ScRiPt src=&quot;x&quot;&gt;alert(1)&lt;/ScRiPt &gt;'],
     ['" onmouseover="alert(1)" & \'quoted\'','&quot; onmouseover=&quot;alert(1)&quot; &amp; &#39;quoted&#39;'],
   ]) {
-    const html=savedLogsTable([{...base,label}]);
+    const html=savedLogList([{...base,label}]);
     assert.ok(html.includes(`<strong>${escaped}</strong>`));
     assert.ok(html.includes(`aria-label="Open log: ${escaped}"`));
-    assert.equal(html,savedLogsTable([{...base,label:'SAFE_LABEL'}]).replaceAll('SAFE_LABEL',escaped));
+    assert.equal(html,savedLogList([{...base,label:'SAFE_LABEL'}]).replaceAll('SAFE_LABEL',escaped));
   }
 });
 test('search highlights literal matches and escapes log HTML',()=>{

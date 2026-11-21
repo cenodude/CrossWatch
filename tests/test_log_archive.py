@@ -331,3 +331,161 @@ def test_pair_api_latest_run_counts_context_and_debug_run(monkeypatch, store):
         assert len(lines['items']) == 1
         assert lines['items'][0]['run_id'] == 'run-two'
         assert client.get('/api/logs/archive?pair_id=missing').json()['items'] == []
+
+
+def test_job_logs_keep_concurrent_operations_separate_and_nested_work_together(monkeypatch, store):
+    from threading import Barrier
+    from services import log_archive
+    from cw_platform.log_context import log_session
+
+    monkeypatch.setattr(log_archive, 'archive', lambda: store)
+    barrier = Barrier(2)
+
+    def worker(name):
+        with log_archive.job_log('captures', name) as sid:
+            barrier.wait(timeout=5)
+            log_archive.capture('PLEX', f'INFO {name} fetched')
+            with log_archive.job_log('captures', 'Nested feature') as child:
+                assert child == sid
+                log_archive.job_message(f'{name} saved')
+        assert log_session.get() is None
+        return sid
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        a, b = [future.result() for future in [pool.submit(worker, 'first'), pool.submit(worker, 'second')]]
+    assert a != b
+    assert len(store.sessions('captures')) == 2
+    for sid, own, other in [(a, 'first', 'second'), (b, 'second', 'first')]:
+        text = ''.join(store.export(sid, raw=True))
+        assert own in text and other not in text
+        assert store.session(sid)['status'] == 'completed'
+        assert {row['run_id'] for row in store.page(sid)['items']} == {sid}
+
+
+def test_job_failure_preserves_traceback_and_redacts_secrets(monkeypatch, store):
+    from services import log_archive
+    from cw_platform.log_context import log_session
+
+    monkeypatch.setattr(log_archive, 'archive', lambda: store)
+    with pytest.raises(ValueError):
+        with log_archive.job_log('backups', 'Backup') as sid:
+            raise ValueError('token=DO_NOT_EXPORT request failed')
+    assert log_session.get() is None
+    assert store.session(sid)['status'] == 'failed'
+    text = ''.join(store.export(sid, raw=True))
+    assert 'Traceback' in text and 'ValueError' in text
+    assert 'DO_NOT_EXPORT' not in text
+
+
+def test_new_channels_preserve_access_boundaries_and_raw_exports(monkeypatch, store):
+    from api import logsAPI
+    from services import log_archive
+
+    monkeypatch.setattr(logsAPI, 'archive', lambda: store)
+    monkeypatch.setattr(log_archive, 'archive', lambda: store)
+    monkeypatch.setattr(logsAPI, 'load_config', lambda: {})
+    with log_archive.job_log('captures', 'Plex history') as sid:
+        log_archive.job_message('Read page 1')
+        log_archive.job_message('Request failed', 'ERROR')
+    app = FastAPI()
+    app.include_router(logsAPI.router)
+    with TestClient(app) as client:
+        listed = client.get('/api/logs/archive?channel=captures').json()
+        assert listed['items'][0]['id'] == sid
+        assert {'captures', 'backups', 'audits', 'system'} <= set(listed['channels'])
+        raw = client.get(f'/api/logs/archive/{sid}/download?raw=true').text
+        assert raw == ''.join(store.export(sid, raw=True))
+        full = client.get(f'/api/logs/archive/{sid}/download?raw=true&header=true').text
+        assert 'Scope: Full retained session' in full
+        assert 'Read page 1' in full and 'Request failed' in full
+        excerpt = client.get(f'/api/logs/archive/{sid}/download?raw=true&header=true&level=ERROR').text
+        assert 'Scope: Filtered excerpt' in excerpt
+        assert 'Read page 1' not in excerpt and 'Request failed' in excerpt
+        monkeypatch.setattr(logsAPI, 'request_user', lambda request: {'is_admin': False})
+        for channel in ('captures', 'backups', 'audits', 'system'):
+            assert client.get(f'/api/logs/archive?channel={channel}').json()['items'] == []
+        assert client.get(f'/api/logs/archive/{sid}/download?raw=true').status_code == 404
+        assert client.get(f'/api/logs/archive/{sid}/lines').status_code == 404
+        assert client.get(f'/api/logs/archive/{sid}/context/1').status_code == 404
+        assert client.patch(f'/api/logs/archive/{sid}', json={'pinned': True}).status_code == 404
+        assert client.delete(f'/api/logs/archive/{sid}').status_code == 404
+        assert client.delete('/api/logs/archive?channel=captures').json()['deleted'] == 0
+
+
+def test_system_keeps_legacy_debug_access_rules(monkeypatch, store):
+    from api import logsAPI
+
+    store.append('system', 'APP', 'INFO Ready')
+    store.append('debug', 'DEBUG', 'DEBUG Older diagnostics')
+    monkeypatch.setattr(logsAPI, 'archive', lambda: store)
+    cfg = {}
+    monkeypatch.setattr(logsAPI, 'load_config', lambda: cfg)
+    app = FastAPI()
+    app.include_router(logsAPI.router)
+    with TestClient(app) as client:
+        assert len(client.get('/api/logs/archive?channel=system').json()['items']) == 1
+        cfg['runtime'] = {'debug': True}
+        assert len(client.get('/api/logs/archive?channel=system').json()['items']) == 2
+
+
+def test_audits_are_archived_as_structured_records(monkeypatch, store):
+    from services import log_archive
+    from cw_platform.event_archive import audit
+
+    monkeypatch.setattr(log_archive, 'archive', lambda: store)
+    monkeypatch.setattr(audit, 'record_events', lambda rows: 1)
+    assert audit.record_audit('login_failed', status='failed', message='Invalid credentials', fields={'token': 'SECRET'}) == 1
+    sid = store.sessions('audits')[0]['id']
+    row = store.page(sid, level='ERROR')['items'][0]
+    assert json.loads(row['text'])['event_type'] == 'audit_login_failed'
+    assert 'SECRET' not in row['text']
+
+
+def test_log_routing_keeps_provider_output_in_its_run(monkeypatch, store):
+    from services import log_archive
+
+    monkeypatch.setattr(log_archive, 'archive', lambda: store)
+    sid = store.start('run-route', [])
+    token = log_run_id.set('run-route')
+    try:
+        log_archive.capture('PLEX', '[PLEX:history] INFO fetched')
+    finally:
+        log_run_id.reset(token)
+    log_archive.capture('APP', 'INFO Ready')
+    assert 'fetched' in ''.join(store.export(sid, raw=True))
+    assert len(store.sessions('system')) == 1
+
+
+def test_capture_entry_point_records_failed_operation(monkeypatch, store):
+    from services import log_archive, snapshots
+
+    monkeypatch.setattr(log_archive, 'archive', lambda: store)
+    monkeypatch.setattr(snapshots, '_record_capture_event', lambda *args, **kwargs: None)
+    monkeypatch.setattr(snapshots, '_create_snapshot', lambda *args, **kwargs: {'ok': False, 'message': 'Snapshot could not be saved'})
+    result = snapshots.create_snapshot('PLEX', 'history')
+    assert result['ok'] is False
+    session = store.sessions('captures')[0]
+    assert session['status'] == 'failed'
+    assert session['label'] == 'PLEX · history capture'
+    assert 'Snapshot could not be saved' in ''.join(store.export(session['id'], raw=True))
+
+
+def test_raw_export_keeps_large_multiline_records(store):
+    sid = store.start('large-record', [])
+    text = 'INFO Request details\n' + '    frame\n' * 4000 + '    final frame'
+    store.append('sync', 'SYNC', text)
+    assert store.page(sid)['items'][0]['text'] == text
+    assert ''.join(store.export(sid, raw=True)) == text + '\n'
+
+
+def test_job_events_link_back_to_the_recorded_session(monkeypatch, store):
+    from services import log_archive
+    from cw_platform.event_archive import captures
+
+    monkeypatch.setattr(log_archive, 'archive', lambda: store)
+    recorded = []
+    monkeypatch.setattr(captures, 'record_events', lambda rows: recorded.extend(rows) or 1)
+    with log_archive.job_log('captures', 'Plex history') as sid:
+        captures.record_capture('PLEX', 'default', 'history', ok=True)
+    assert recorded[0]['run_id'] == sid
+    assert store.sessions('captures', run_id=recorded[0]['run_id'])[0]['id'] == sid

@@ -1,44 +1,17 @@
 /* assets/js/logs.js */
-/* CrossWatch - Live and saved diagnostic logs */
+/* CrossWatch - Raw diagnostic log reader and issue exports */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
 
-import {readableLogHTML} from './logs-format.js';
 import {pageBackLink} from './page-return.js';
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const icon = name => `<span class="material-symbols-rounded" aria-hidden="true">${name}</span>`;
-const date = ts => ts ? new Date(ts * 1000).toLocaleString() : 'Live';
-const logFeatures = [['watchlist','Watchlist','wl'],['ratings','Ratings','rt'],['history','History','hi'],['progress','Progress','pr'],['playlists','Playlists','pl'],['collection','Collections','co']];
-export function savedLogFeatures(session, pairId = '') {
-  let pairs;
-  try { pairs = typeof session.pairs === 'string' ? JSON.parse(session.pairs) : session.pairs; } catch { return null; }
-  if (!Array.isArray(pairs)) return null;
-  const selected = pairs.filter(p => p && (!pairId || String(p.id) === pairId));
-  if (!selected.length || selected.some(p => !p.features || typeof p.features !== 'object' || Array.isArray(p.features))) return null;
-  const enabled = value => {
-    if (value && typeof value === 'object') value = value.enable ?? value.enabled;
-    return value === true || value === 1 || ['true','1','on','yes'].includes(String(value).toLowerCase());
-  };
-  return logFeatures.map(([key]) => selected.some(p => enabled(p.features[key])));
-}
-export function savedLogsTable(sessions, pairId = '', channel = 'sync') {
-  const rows = sessions.map(s => {
-    const started = new Date(s.started * 1000);
-    const features = savedLogFeatures(s, pairId);
-    const enabledNames = features ? logFeatures.filter((_, i) => features[i]).map(([,name]) => name) : [];
-    const featureLabel = enabledNames.length ? `Enabled features: ${enabledNames.join(', ')}. Combined across pairs in this run.` : 'No enabled features';
-    const dots = features ? `<span class="logs-features" role="img" aria-label="${esc(featureLabel)}" title="${esc(featureLabel)}">${logFeatures.map(([,name,cls],i) => `<span class="logs-feature-dot ${cls}${features[i] ? ' on' : ''}" title="${name}: ${features[i] ? 'enabled' : 'disabled'}" aria-hidden="true"></span>`).join('')}</span>` : '<span class="logs-unavailable" title="Feature settings were not recorded for this log" aria-label="Feature settings unavailable">—</span>';
-    const status = String(s.status || 'unknown').toLowerCase();
-    const statuses = {completed:['Completed','check_circle','success'],complete:['Completed','check_circle','success'],issues:['Completed with issues','warning','warning'],failed:['Failed','error','error'],error:['Error','error','error'],cancelled:['Cancelled','cancel','warning'],interrupted:['Interrupted','warning','warning'],running:['Running','sync','active'],live:['Live','sensors','active'],saved:['Saved','inventory_2','neutral']};
-    const [label, symbol, tone] = Object.hasOwn(statuses,status) ? statuses[status] : [s.status || 'Unknown','info','neutral'];
-    const errors = Math.max(0, Number(s.errors) || 0), warnings = Math.max(0, Number(s.warnings) || 0);
-    const duration = s.ended == null ? 'Live' : `${Math.max(0,Math.round(s.ended-s.started))}s`;
-    return `<tr data-session="${esc(s.id)}"><td><button class="logs-saved-open" data-session="${esc(s.id)}" aria-label="${esc(`Open log: ${s.label}`)}">${icon(s.pinned ? 'push_pin' : 'description')}<strong>${esc(s.label)}</strong></button></td><td>${dots}</td><td><time datetime="${started.toISOString()}">${esc(started.toLocaleDateString())}<small>${esc(started.toLocaleTimeString())}</small></time></td><td>${duration}</td><td><span class="logs-status logs-status-${tone}">${icon(symbol)}${esc(label)}</span></td><td class="${errors ? 'logs-error' : ''}">${errors}</td><td class="${warnings ? 'logs-warn' : ''}">${warnings}</td><td class="logs-saved-arrow">${icon('chevron_right')}</td></tr>`;
-  }).join('');
-  return `<table class="logs-saved-table" aria-label="Saved logs"><thead><tr><th scope="col">${channel === 'sync' ? 'Sync pair' : 'Log'}</th><th scope="col">Features</th><th scope="col" aria-sort="descending">Started ${icon('arrow_downward')}</th><th scope="col">Duration</th><th scope="col">Status</th><th scope="col">Errors</th><th scope="col">Warnings</th><th scope="col"><span class="logs-sr-only">Open log</span></th></tr></thead><tbody>${rows}</tbody></table>`;
-}
+const channels = {sync:['Sync','sync'],watcher:['Watcher','sensors'],captures:['Captures','photo_camera'],backups:['Backups','backup'],audits:['Audits','policy'],system:['System','terminal']};
+const stamp = ts => ts ? new Date(ts * 1000).toLocaleString() : '';
+const statuses = {completed:['Completed','success'],complete:['Completed','success'],issues:['With issues','warning'],failed:['Failed','error'],error:['Error','error'],cancelled:['Cancelled','warning'],interrupted:['Interrupted','warning'],running:['Running','active'],live:['Live','active'],saved:['Saved','neutral']};
 export const logsBackLink = pageBackLink;
 export function highlight(text, query) {
+  text = String(text ?? '');
   if (!query) return esc(text);
   const lower = text.toLowerCase(), needle = query.toLowerCase();
   let pos = 0, result = '', found;
@@ -48,264 +21,173 @@ export function highlight(text, query) {
   }
   return result + esc(text.slice(pos));
 }
+export function savedLogList(sessions, selected = '') {
+  return sessions.map(s => {
+    const [label,tone] = Object.hasOwn(statuses,s.status) ? statuses[s.status] : [s.status || 'Unknown','neutral'];
+    const duration = s.ended == null ? 'Active' : `${Math.max(0,Math.round(s.ended-s.started))}s`;
+    return `<button type="button" class="logs-session" data-session="${esc(s.id)}" aria-pressed="${s.id===selected}" aria-label="${esc(`Open log: ${s.label}`)}"><span class="logs-session-top"><time>${esc(stamp(s.started))}</time><span class="logs-status-${tone}">${esc(label)}</span></span><strong>${esc(s.label)}</strong><small>${duration} · ${Number(s.lines)||0} records${s.errors ? ` · ${Number(s.errors)} errors` : ''}${s.warnings ? ` · ${Number(s.warnings)} warnings` : ''}${s.pinned ? ' · Pinned' : ''}</small></button>`;
+  }).join('');
+}
 
 let dispose = null, root = null;
 const LogsPage = {
   async mount(host) {
     dispose?.(); root = host;
     if (!host) return;
-    if (!document.getElementById('cw-logs-css')) {
-      const css = document.createElement('link'); css.id = 'cw-logs-css'; css.rel = 'stylesheet';
-      css.href = `/assets/css/logs.css?v=${encodeURIComponent(window.APP_VERSION || '1')}`; document.head.append(css);
-    }
     const route = new URLSearchParams(location.hash.split('?')[1] || '');
-    const back = logsBackLink(route.get('returnTo'), location.href);
-    let channel = ['sync','watcher','debug'].includes(route.get('channel')) ? route.get('channel') : 'sync';
-    let pairId = route.get('pairId') || '', latestRequested = route.get('latest') === '1', pairs = [], latestRunId = '';
-    if (channel === 'watcher') pairId = '';
-    let runId = route.get('runId') || '', mode = runId || latestRequested || route.get('sessionId') ? 'saved' : 'live', sid = route.get('sessionId') || '', sessions = [], current = null;
-    let alive = true, busy = false, sequence = 0, timer, searchTimer, offset = 0, total = 0, follow = mode === 'live', rows = [], matchIndex = -1;
-    let query = '', level = '', provider = '', listPage = 0, showingRuns = mode === 'saved', controller = null, pendingMatch = null;
-    let readable = true;
-    try { readable = window.localStorage.getItem('cw.logs.readable') !== 'off'; } catch {}
-    const visibleRows = new Map();
-    const copyFeedback = new Map();
+    const back = logsBackLink(route.get('returnTo'),location.href);
+    let channel = Object.hasOwn(channels,route.get('channel')) ? route.get('channel') : route.get('channel')==='debug' ? 'system' : 'sync';
+    let mode = route.get('mode')==='live' ? 'live' : 'saved';
+    let pairId = route.get('pairId') || '', runId = route.get('runId') || '', sid = route.get('sessionId') || '';
+    let latestRequested = route.get('latest')==='1', query = '', level = route.get('channel')==='debug' ? 'DEBUG' : '', provider = '';
+    if (channel!=='sync') pairId='';
+    let sessions = [], current = null, rows = [], pairs = [], latestRunId = '', listQuery = '', listFilter = '', listPage = 0;
+    let offset = 0, total = 0, snapshotLines = 0, follow = mode==='live', frozen = false, matchIndex = -1;
+    let alive = true, busy = false, queued = false, generation = 0, controller, timer, searchTimer, refreshLines = true;
+    const feedbackTimers = new Set();
     const profile = window.CW?.OverviewProfile?.id || '';
-    host.innerHTML = `<div class="logs-page"><a href="${esc(back.href)}" class="logs-back">${icon('arrow_back')}${esc(back.label)}</a>
-      <header class="logs-heading"><div><div class="logs-eyebrow">DIAGNOSTICS</div><h1>Logs</h1></div></header>
-      <div class="logs-toolbar logs-channels"><div class="logs-tabs" role="tablist" aria-label="Log channel">${['sync','watcher','debug'].map(c=>`<button data-channel="${c}" role="tab"${c === 'debug' ? ' hidden' : ''}>${icon({sync:"sync",watcher:"sensors",debug:"bug_report"}[c])}${c[0].toUpperCase()+c.slice(1)}</button>`).join('')}</div><span class="logs-connection" data-connection role="status">${icon('sensors')}<span data-connection-text>Connecting…</span></span></div>
-      <div class="logs-toolbar logs-controls"><div class="logs-tabs" role="tablist" aria-label="Log source"><button data-mode="live" role="tab">${icon("podcasts")}Live</button><button data-mode="saved" role="tab">${icon("inventory_2")}Saved logs</button></div><div class="logs-pair-controls" data-pair-controls><select data-pair aria-label="Sync pair"><option value="">All pairs</option></select><button data-latest title="Open the latest run for this selection">${icon('history')}Latest run</button></div><div class="logs-storage" data-storage hidden><div class="logs-storage-copy"><span>${icon("hard_drive")}<span data-storage-size></span></span><span data-retention></span></div><progress data-storage-meter max="100" value="0" aria-label="Log storage used"></progress></div></div>
-      <div class="logs-toolbar" data-filters><label class="logs-search">${icon('search')}<input data-query type="search" placeholder="Search logs…" aria-label="Search logs"></label><select data-level aria-label="Log level"><option value="">All levels</option><option value="ERROR">Errors</option><option value="WARN">Warnings</option><option value="INFO">Info</option><option value="DEBUG">Debug</option></select><input data-provider placeholder="Provider" aria-label="Filter by provider" list="log-providers"><datalist id="log-providers"></datalist><button data-prev-match title="Previous match" aria-label="Previous match">${icon('keyboard_arrow_up')}</button><button data-next-match title="Next match" aria-label="Next match">${icon('keyboard_arrow_down')}</button><button data-follow>${icon("podcasts")}<span>Follow live</span></button>
-      <label class="logs-readable-switch" title="Format log messages for easier reading"><input data-readable type="checkbox" role="switch" ${readable ? 'checked' : ''}><span class="logs-switch-track" aria-hidden="true"></span>Readable view</label>
-      <details class="logs-options"><summary>${icon("tune")}More</summary><div><label><input data-wrap type="checkbox" checked>Wrap lines</label><button data-copy>${icon("content_copy")}Copy filtered log</button><button data-copy-full>${icon("copy_all")}Copy full log</button><button data-download>${icon("download")}Download filtered log</button><button data-download-full>${icon("file_download")}Download full log</button></div></details></div>
-      <div class="logs-toolbar logs-runbar"><button data-back-runs hidden>${icon('arrow_back')}Saved logs</button><div class="logs-run-title">${icon("terminal")}<strong data-title></strong><span class="logs-run-count" data-run-count hidden></span></div><button data-errors class="logs-error">${icon("error_outline")}<span></span></button><button data-warnings class="logs-warn">${icon("warning")}<span></span></button><button data-ai-analyze data-ai-logs hidden title="Ask the assistant to explain this log">${icon("auto_awesome")}Analyze</button><button data-pin hidden>${icon("push_pin")}<span>Keep this log</span></button><button data-delete hidden>${icon('delete')}Delete</button><button data-clear hidden>${icon("delete_sweep")}Clear older logs</button></div>
-      <span class="logs-sr-only" data-copy-status role="status"></span><p class="logs-notice" data-notice role="status" hidden></p><div class="logs-content" tabindex="0" aria-label="Log output"><div data-output></div></div>
-      <footer class="logs-footer"><span data-count></span><button data-previous>${icon("chevron_left")}Previous</button><span data-page></span><button data-next>Next${icon("chevron_right")}</button></footer></div>`;
-    const $ = s => host.querySelector(s);
-    const content = $('.logs-content');
-    content.classList.toggle('logs-pretty', readable);
-    function resize() { const page=$('.logs-page'); if(alive && page)page.style.height = `${Math.max(260, window.innerHeight - host.getBoundingClientRect().top - 16)}px`; }
-    window.addEventListener('resize', resize); resize();
-    function url(path, values = {}) { const p = new URLSearchParams({...values, user_profile:profile}); return '/api/logs/archive' + path + '?' + p; }
-    const scope = () => ({pair_id:pairId, run_id:runId});
+    host.innerHTML = `<div class="logs-page cw-page-logs cw-themed-page"><a href="${esc(back.href)}" class="logs-back">${icon('arrow_back')}${esc(back.label)}</a>
+      <header class="logs-heading"><h1>Logs</h1><p>Read, search and share diagnostic logs.</p></header>
+      <div class="logs-navigation"><div class="logs-tabs logs-channels" aria-label="Log source">${Object.entries(channels).map(([key,[label,symbol]])=>`<button type="button" data-channel="${key}" aria-pressed="${channel===key}" hidden>${icon(symbol)}${label}</button>`).join('')}</div><div class="logs-tabs logs-modes" aria-label="Log mode"><button type="button" data-mode="saved">${icon('inventory_2')}Saved logs</button><button type="button" data-mode="live">${icon('podcasts')}Live</button></div></div>
+      <p class="logs-notice" data-notice role="status" hidden></p>
+      <div class="logs-workspace cw-page-panel"><aside class="logs-sidebar" aria-label="Log sessions"><div class="logs-list-controls"><strong data-list-count>Saved logs</strong><input data-session-query type="search" placeholder="Find a session…" aria-label="Find a session"><select data-session-filter aria-label="Session filter"><option value="">All sessions</option><option value="issues">With issues</option><option value="pinned">Pinned</option></select><div class="logs-pair-controls" data-pair-controls><select data-pair aria-label="Sync pair"><option value="">All pairs</option></select><button type="button" data-latest>Latest run</button></div><button type="button" data-all-runs hidden>All sessions</button></div><div class="logs-sessions" data-sessions></div><div class="logs-list-pages"><button type="button" data-list-prev aria-label="Previous sessions">${icon('chevron_left')}</button><small data-list-page></small><button type="button" data-list-next aria-label="Next sessions">${icon('chevron_right')}</button></div></aside>
+      <section class="logs-reader" aria-label="Raw log reader"><div class="logs-reader-heading"><div class="logs-reader-identity"><h2 data-title>Choose a session</h2><small data-meta></small></div><span data-status class="logs-status"></span><div class="logs-actions"><button type="button" data-copy-full class="logs-primary">${icon('copy_all')}Copy full log</button><button type="button" data-download-full>${icon('download')}Download .log</button><button type="button" data-copy hidden>${icon('content_copy')}Copy filtered log</button><button type="button" data-pin>${icon('push_pin')}<span>Pin</span></button><button type="button" data-follow hidden>${icon('pause')}<span>Pause display</span></button><button type="button" data-ai-analyze data-ai-logs hidden>${icon('auto_awesome')}Analyze</button><details class="logs-options"><summary aria-label="More log actions">${icon('more_horiz')}</summary><div><button type="button" data-download>Download filtered log</button><button type="button" data-delete>Delete session</button></div></details></div></div>
+      <div class="logs-filters"><input data-query maxlength="200" type="search" placeholder="Filter log text…" aria-label="Filter log text"><select data-level aria-label="Log level"><option value="">All levels</option><option value="ERROR">Errors</option><option value="WARN">Warnings</option><option value="INFO">Info</option><option value="DEBUG">Debug</option></select><input type="text" maxlength="80" data-provider placeholder="Provider" aria-label="Filter by provider" list="log-providers"><datalist id="log-providers"></datalist><label><input data-wrap type="checkbox" checked>Wrap</label><button type="button" data-prev-match aria-label="Previous matching record">${icon('keyboard_arrow_up')}</button><button type="button" data-next-match aria-label="Next matching record">${icon('keyboard_arrow_down')}</button></div>
+      <div class="logs-content" tabindex="0" aria-label="Raw log text"><div data-output></div></div>
+      <div class="logs-reader-footer"><span data-count></span><label><input data-report-header type="checkbox" checked>Include report header</label><div class="logs-pagination"><button type="button" data-previous aria-label="Previous log records">${icon('chevron_left')}</button><span data-page></span><button type="button" data-next aria-label="Next log records">${icon('chevron_right')}</button></div></div><div class="logs-reader-footer"><span data-copy-status role="status">Select text to copy an excerpt.</span><span data-connection role="status"></span></div></section></div>
+      <footer class="logs-storage"><span data-storage-size></span><span data-retention></span><details><summary>Storage &amp; retention</summary><p>Pinned sessions are kept. Unpinned sessions expire after the retention period, or sooner when storage fills.</p><button type="button" data-clear>Delete finished, unpinned logs</button></details></footer></div>`;
+    const $ = selector => host.querySelector(selector), content = $('.logs-content');
+    $('[data-level]').value=level;
+    const scope = () => ({pair_id:pairId,run_id:runId});
+    const filtered = () => Boolean(query||level||provider||pairId||runId);
+    const url = (path,values={}) => '/api/logs/archive'+path+'?'+new URLSearchParams({...values,user_profile:profile});
+    const notice = text => { $('[data-notice]').textContent=text; $('[data-notice]').hidden=!text; };
+    const setOutput = html => {if($('[data-output]').innerHTML!==html)$('[data-output]').innerHTML=html;};
+    const empty = (title,description) => `<div class="logs-empty"><h2>${esc(title)}</h2><p>${esc(description)}</p></div>`;
+    const listing = () => sessions.filter(s=>(!listQuery||`${s.label} ${stamp(s.started)} ${s.run_id||''}`.toLowerCase().includes(listQuery))&&(!listFilter||listFilter==='pinned'&&s.pinned||listFilter==='issues'&&(s.errors||s.warnings||['issues','failed','error','interrupted','cancelled'].includes(s.status))));
     function writeRoute() {
-      const params = new URLSearchParams({channel});
-      if(pairId)params.set('pairId',pairId);
-      if(runId)params.set('runId',runId);
-      if(sid && !showingRuns)params.set('sessionId',sid);
-      if(latestRequested)params.set('latest','1');
+      const params=new URLSearchParams({channel,mode});
+      if(pairId)params.set('pairId',pairId);if(runId)params.set('runId',runId);if(sid)params.set('sessionId',sid);
       if(route.has('returnTo'))params.set('returnTo',route.get('returnTo'));
       window.history.replaceState(null,'','#logs?'+params);
     }
-    function clearFilters() {
-      query=level=provider='';
-      for(const selector of ['[data-query]','[data-level]','[data-provider]'])$(selector).value='';
-      $('[data-level]').dispatchEvent(new Event('change',{bubbles:true}));
+    function renderSessions() {
+      const list=listing();listPage=Math.min(listPage,Math.max(0,Math.ceil(list.length/20)-1));
+      const html=savedLogList(list.slice(listPage*20,listPage*20+20),sid)||empty('No sessions',listQuery||listFilter?'Adjust the session filters.':'Logs appear when new activity is recorded.');
+      if($('[data-sessions]').innerHTML!==html)$('[data-sessions]').innerHTML=html;
+      $('[data-list-count]').textContent=`${list.length} sessions`;
+      $('[data-list-page]').textContent=`${listPage+1} / ${Math.max(1,Math.ceil(list.length/20))}`;
+      $('[data-list-prev]').disabled=listPage===0;$('[data-list-next]').disabled=(listPage+1)*20>=list.length;
     }
-    async function api(path, values = {}, options = {}) {
-      const res = await fetch(url(path, values), {cache:'no-store', signal:controller?.signal, ...options});
-      if (!res.ok) { let message = 'Could not load logs.'; try { message = (await res.json()).detail || message; } catch {} throw new Error(message); }
-      return res.json();
+    function paint() {
+      host.querySelectorAll('[data-channel]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.channel===channel)));
+      host.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
+      $('[data-title]').textContent=current?.label||'Choose a session';
+      $('[data-meta]').textContent=current?`${stamp(current.started)} · ${current.ended==null?'Active':Math.max(0,Math.round(current.ended-current.started))+'s'} · ${current.id}`:'';
+      const [label,tone]=current&&Object.hasOwn(statuses,current.status)?statuses[current.status]:['','neutral'];
+      $('[data-status]').textContent=label;$('[data-status]').className=`logs-status logs-status-${tone}`;
+      for(const selector of ['[data-copy-full]','[data-copy]','[data-download-full]','[data-download]','[data-pin]'])$(selector).disabled=!current;
+      $('[data-delete]').disabled=!current||current.ended==null;
+      $('[data-copy]').hidden=!filtered();$('[data-download]').hidden=!filtered();
+      $('[data-pin] span:not(.material-symbols-rounded)').textContent=current?.pinned?'Unpin':'Pin';
+      $('[data-pin]').setAttribute('aria-pressed',String(Boolean(current?.pinned)));
+      $('[data-follow]').hidden=mode!=='live';
+      $('[data-follow] span:not(.material-symbols-rounded)').textContent=follow?'Pause display':`Resume live${current&&current.lines>snapshotLines?' · '+(current.lines-snapshotLines)+' new':''}`;
+      $('[data-follow] .material-symbols-rounded').textContent=follow?'pause':'play_arrow';
+      $('[data-count]').textContent=`${total} ${filtered()?'matching':'retained'} records${current?.truncated?' · Incomplete':''}`;
+      $('[data-page]').textContent=`${Math.floor(offset/500)+1} / ${Math.max(1,Math.ceil(total/500))}`;
+      $('[data-previous]').disabled=offset===0;$('[data-next]').disabled=offset+500>=total;
+      $('[data-prev-match]').disabled=$('[data-next-match]').disabled=!query||!rows.length;
+      $('[data-pair-controls]').hidden=channel!=='sync';$('[data-all-runs]').hidden=!runId;$('[data-latest]').disabled=!latestRunId;
+      $('[data-clear]').hidden=Boolean(pairId||runId);
+      $('[data-ai-logs]').hidden=!current;
+      $('[data-ai-logs]').dataset.aiQuestion=current?`Analyze the ${channel} log session ${current.id} (${current.label}, started ${stamp(current.started)}). Explain any errors.`:'';
+      renderSessions();
     }
-    function connection(text, symbol = 'sensors', state = 'idle') {
-      $('[data-connection-text]').textContent = text;
-      $('[data-connection] .material-symbols-rounded').textContent = symbol;
-      $('[data-connection]').dataset.state = state;
+    function lineMarkup(row,context=false) {
+      const tone=['ERROR','WARN'].includes(row.level)?row.level.toLowerCase():'';
+      return `<div class="logs-line logs-${tone}${context?' logs-context-line':''}" ${context?'':`data-line="${Number(row.id)}"`}><pre class="logs-message">${highlight(row.text,query)}</pre>${context||!filtered()?'':`<button type="button" data-context="${Number(row.id)}" aria-label="Show surrounding records for ${Number(row.id)}">${icon('unfold_more')}</button>`}</div>`;
     }
-    function emptyState(symbol, title, detail, liveAction = false) {
-      return `<div class="logs-empty"><span class="logs-empty-icon">${icon(symbol)}</span><h2>${esc(title)}</h2><p>${esc(detail)}</p>${liveAction ? `<button data-mode="live" class="logs-empty-action">View live logs${icon('arrow_forward')}</button><small>${icon('info')}Logs are saved automatically on this server.</small>` : ''}</div>`;
-    }
-    function output(html) {
-      if ($('[data-output]').innerHTML !== html) $('[data-output]').innerHTML = html;
-    }
-    function notice(text = '') { $('[data-notice]').textContent = text; $('[data-notice]').hidden = !text; }
-    function copied(button) {
-      if (!alive) return;
-      const symbol = button.querySelector('.material-symbols-rounded');
-      const previous = copyFeedback.get(button);
-      clearTimeout(previous?.timer);
-      const original = previous?.original ?? symbol.textContent;
-      symbol.textContent = 'check';
-      button.classList.remove('logs-copied');
-      void button.offsetWidth;
-      button.classList.add('logs-copied');
-      $('[data-copy-status]').textContent = 'Log copied to clipboard.';
-      const timer = setTimeout(() => {
-        symbol.textContent = original;
-        button.classList.remove('logs-copied');
-        copyFeedback.delete(button);
-        if (!copyFeedback.size) $('[data-copy-status]').textContent = '';
-      }, 1800);
-      copyFeedback.set(button, {original, timer});
-    }
-    function revealMatch(index) {
-      matchIndex = Math.max(0, Math.min(rows.length - 1, index));
-      host.querySelectorAll('.logs-current-match').forEach(el=>el.classList.remove('logs-current-match'));
-      const line = host.querySelector(`[data-line="${rows[matchIndex]?.id}"]`);
-      line?.classList.add('logs-current-match');
-      line?.scrollIntoView({block:'center'});
-    }
-    function paintControls() {
-      host.querySelectorAll('[data-channel]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.channel===channel)));
-      host.querySelectorAll('[data-mode][role="tab"]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.mode===mode)));
-      $('[data-follow] span:not(.material-symbols-rounded)').textContent = follow ? 'Following live' : 'Resume live';
-      $('[data-follow]').hidden = mode !== 'live';
-      $('[data-filters]').hidden = showingRuns;
-      $('[data-back-runs]').hidden = showingRuns || mode === 'live';
-      $('[data-clear]').hidden = !showingRuns || !!pairId;
-      $('[data-pair-controls]').hidden = channel === 'watcher';
-      $('[data-latest]').disabled = !latestRunId;
-      $('[data-pin]').hidden = showingRuns || !current;
-      $('[data-ai-logs]').hidden = showingRuns || !current;
-      $('[data-ai-logs]').dataset.aiQuestion = current ? `Analyze the ${channel} log session ${current.id} (${current.label}, started ${date(current.started)}). Tell me what happened and whether anything went wrong.` : '';
-      $('[data-delete]').hidden = showingRuns || !current || current.ended === null;
-      $('[data-pin] span:not(.material-symbols-rounded)').textContent = current?.pinned ? 'Unpin log' : 'Keep this log';
-      $('[data-pin]').title = 'Keep the entire saved log, including any other pairs in it';
-      $('[data-errors]').hidden = showingRuns || !current;
-      $('[data-warnings]').hidden = showingRuns || !current;
-      $('[data-errors] span:not(.material-symbols-rounded)').textContent = `${current?.errors || 0} errors`;
-      $('[data-warnings] span:not(.material-symbols-rounded)').textContent = `${current?.warnings || 0} warnings`;
-      const pairLabel = pairs.find(p=>p.id===pairId)?.label;
-      $('[data-title]').textContent = showingRuns ? 'Saved logs' : current ? `${pairLabel || current.label} · ${date(current.started)}` : 'No log selected';
-      $('[data-run-count]').hidden = !showingRuns;
-      $('[data-run-count]').textContent = String(sessions.length);
-      $('.logs-run-title .material-symbols-rounded').textContent = showingRuns ? 'inventory_2' : 'terminal';
-      $('[data-count]').textContent = showingRuns ? `${sessions.length} saved logs` : `${total} matching lines`;
-      $('[data-page]').textContent = showingRuns ? `${listPage+1} / ${Math.max(1,Math.ceil(sessions.length/10))}` : `${Math.floor(offset/500)+1} / ${Math.max(1,Math.ceil(total/500))}`;
-      $('[data-previous]').disabled = showingRuns ? listPage === 0 : offset === 0;
-      $('[data-next]').disabled = showingRuns ? (listPage+1)*10 >= sessions.length : offset+500 >= total;
-      $('[data-prev-match]').disabled = $('[data-next-match]').disabled = !query || !total;
-    }
-    function renderRuns() {
-      listPage = Math.min(listPage, Math.max(0, Math.ceil(sessions.length / 10) - 1));
-      output(sessions.length ? savedLogsTable(sessions.slice(listPage*10,listPage*10+10), pairId, channel) : emptyState('manage_history', 'No saved logs yet', runId ? 'No saved log is available for this run.' : pairId ? 'Logs will appear after the next sync for this pair.' : 'Logs will appear here as new activity is recorded.', true));
-      paintControls();
-    }
-    function lineMarkup(row, context = false) {
-      visibleRows.set(String(row.id), row);
-      const message = readable ? readableLogHTML(row, highlight, query, window.CW?.ProviderMeta) : highlight(row.text,query);
-      return `<div class="logs-line logs-${row.level.toLowerCase()}${context?' logs-context-line':''}" data-log-id="${esc(row.id)}" ${context?'':`data-line="${row.id}"`}><time>${esc(new Date(row.ts*1000).toLocaleTimeString())}</time><span class="logs-level">${esc(row.level)}</span><span class="logs-provider">${esc(row.provider)}</span><div class="logs-message">${message}</div>${context?'':`<button data-context="${row.id}" aria-label="Show context for line ${row.id}" title="Show surrounding lines">${icon('unfold_more')}</button>`}</div>`;
+    async function api(path,values={},options={}) {
+      const response=await fetch(url(path,values),{cache:'no-store',signal:controller?.signal,...options});
+      if(!response.ok){let message='Could not load logs.';try{message=(await response.json()).detail||message;}catch{}throw new Error(message);}
+      return response.json();
     }
     async function refresh() {
-      if (busy || !alive) return;
-      busy = true; const token = sequence;
-      controller = new AbortController();
+      if(!alive)return;if(busy){queued=true;return;}busy=true;
+      const token=generation;controller=new AbortController();
       try {
-        let listing = await api('', {channel, ...scope()});
-        if (!alive || token !== sequence) return;
-        pairs=listing.pairs || [];latestRunId=listing.latest_run_id || '';
-        const options='<option value="">All pairs</option>'+pairs.map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('')+(pairId&&!pairs.some(p=>p.id===pairId)?`<option value="${esc(pairId)}" disabled>Pair unavailable</option>`:'');
-        if($('[data-pair]').innerHTML!==options){$('[data-pair]').innerHTML=options;$('[data-pair]').value=pairId;window.CW?.IconSelect?.enhance?.($('[data-pair]'),{className:'cw-plain-select',getOptionData:value=>{const pair=pairs.find(p=>p.id===value);return pair?.source?window.CW?.syncPairOptionData?.(pair)||null:null;}});$('[data-pair]').dispatchEvent(new Event('change'));}
-        if(latestRequested){
-          latestRequested=false;
-          if(latestRunId){runId=latestRunId;listing=await api('',{channel,...scope()});if(!alive||token!==sequence)return;}
-          writeRoute();
-        }
-        sessions = listing.items;
-        host.querySelectorAll('[data-channel]').forEach(b=>{b.hidden=!listing.channels.includes(b.dataset.channel)});
-        if (!listing.channels.includes(channel)) { channel='sync'; runId=''; latestRequested=false; showingRuns=mode==='saved'; clearFilters(); reset(); return; }
-        const used = Math.max(0, Number(listing.used_bytes) || 0), capacity = Math.max(0, Number(listing.max_bytes) || 0);
-        const percent = capacity ? Math.min(100, used / capacity * 100) : 0;
-        const size = bytes => (bytes / 1048576).toLocaleString(undefined, {maximumFractionDigits:1});
-        const storageText = `${size(used)} / ${size(capacity)} MB`;
-        $('[data-storage]').hidden = false;
-        $('[data-storage]').dataset.usage = percent >= 95 ? 'high' : percent >= 80 ? 'warning' : 'normal';
-        $('[data-storage-size]').textContent = storageText;
-        $('[data-retention]').textContent = `${listing.retention_days}-day retention`;
-        $('[data-storage-meter]').value = percent;
-        $('[data-storage-meter]').setAttribute('aria-valuetext', `${storageText} used`);
-        if (showingRuns) {
-          if (sid && sessions.some(session=>session.id===sid)) { showingRuns=false; }
-          else if (runId && sessions.length) { sid=sessions[0].id; showingRuns=false; }
-          else {renderRuns(); connection('Saved on this server', 'dns'); return;}
-        }
-        if (mode === 'live') {
-          const newest = sessions.find(s=>s.ended===null) || sessions[0];
-          if (newest && newest.id!==sid) {sid=newest.id;offset=0;}
-        }
-        current=sessions.find(s=>s.id===sid) || null;
-        if (!current) { rows=[];total=0;output(emptyState('sensors', 'Waiting for activity', 'New log lines will appear here automatically.'));connection('Waiting for activity');paintControls();return; }
-        let data=await api(`/${sid}/lines`,{q:query,level,provider,offset,limit:500,...scope()});
-        if (!alive || token!==sequence) return;
-        const nextOffset=follow?Math.max(0,Math.floor((data.total-1)/500)*500):Math.min(offset,Math.max(0,Math.floor((data.total-1)/500)*500));
-        if (nextOffset!==offset) {offset=nextOffset;data=await api(`/${sid}/lines`,{q:query,level,provider,offset,limit:500,...scope()});}
-        if (!alive || token!==sequence) return;
-        current=data.session;total=data.total;
-        // Keep expanded context and text selection intact when the page did not change.
-        if (!data.items.length || JSON.stringify(rows)!==JSON.stringify(data.items)) {
-          rows=data.items;
-          visibleRows.clear();
-          output(rows.map(r=>lineMarkup(r)).join('') || emptyState('search_off', 'No matching lines', 'Try another search or adjust the level and provider filters.'));
-          $('#log-providers').innerHTML=[...new Set(rows.map(r=>r.provider))].sort().map(p=>`<option value="${esc(p)}"></option>`).join('');
-          if(follow) content.scrollTop=content.scrollHeight;
-        }
-        if (pendingMatch !== null) {revealMatch(pendingMatch < 0 ? rows.length-1 : 0);pendingMatch=null;}
-        connection(mode==='live' ? current.ended ? 'Waiting for activity' : 'Live · updates every 2s' : 'Saved log', mode==='live' ? 'sensors' : 'dns', mode==='live' && !current.ended ? 'live' : 'idle');
-        if(current.truncated) notice('This log reached the storage limit. Some lines were not saved. Delete or unpin older logs to free space.');
-        paintControls();
-      } catch(error) {if(alive && token===sequence && error.name!=='AbortError'){notice(error.message);connection('Disconnected · retrying', 'cloud_off', 'error');}}
-      finally {busy=false;}
+        let data=await api('',{channel,...scope()});if(!alive||token!==generation)return;
+        const available=data.channels||['sync'];
+        host.querySelectorAll('[data-channel]').forEach(b=>{b.hidden=!available.includes(b.dataset.channel);});
+        if(!available.includes(channel)){channel='sync';pairId=runId='';reset();return;}
+        pairs=data.pairs||[];latestRunId=data.latest_run_id||'';
+        const options='<option value="">All pairs</option>'+pairs.map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');
+        if($('[data-pair]').innerHTML!==options){$('[data-pair]').innerHTML=options;$('[data-pair]').value=pairId;}
+        if(latestRequested){latestRequested=false;runId=latestRunId;if(runId)data=await api('',{channel,...scope()});if(!alive||token!==generation)return;}
+        sessions=data.items||[];
+        const size=n=>(Number(n||0)/1048576).toLocaleString(undefined,{maximumFractionDigits:1});
+        $('[data-storage-size]').textContent=`${size(data.used_bytes)} / ${size(data.max_bytes)} MB`;$('[data-retention]').textContent=`${data.retention_days}-day retention`;
+        if(mode==='live'&&follow){const next=sessions.find(s=>s.ended==null);if(next?.id!==sid){sid=next?.id||'';offset=0;rows=[];refreshLines=true;}}
+        else if(!sid)sid=listing()[0]?.id||'';
+        current=sessions.find(s=>s.id===sid)||null;
+        if(!current){rows=[];total=0;setOutput(empty(sid?'Log unavailable':mode==='live'?'Waiting for activity':'No saved logs yet',sid?'This log may have expired, been deleted, or be unavailable for this profile.':'New sessions will appear here automatically.'));$('[data-connection]').textContent='Connected';paint();return;}
+        if(mode==='live'&&!follow&&frozen&&!refreshLines){$('[data-connection]').textContent='Display paused · recording continues';paint();return;}
+        let page=await api(`/${encodeURIComponent(sid)}/lines`,{q:query,level,provider,offset,limit:500,...scope()});if(!alive||token!==generation)return;
+        const nextOffset=follow?Math.max(0,Math.floor((page.total-1)/500)*500):Math.min(offset,Math.max(0,Math.floor((page.total-1)/500)*500));
+        if(offset!==nextOffset){offset=nextOffset;page=await api(`/${encodeURIComponent(sid)}/lines`,{q:query,level,provider,offset,limit:500,...scope()});if(!alive||token!==generation)return;}
+        current=page.session;total=page.total;
+        if(JSON.stringify(rows)!==JSON.stringify(page.items)||refreshLines){rows=page.items;setOutput(rows.map(r=>lineMarkup(r)).join('')||empty('No matching records','Clear the text, severity or provider filter.'));if(follow)content.scrollTop=content.scrollHeight;}
+        snapshotLines=current.lines;frozen=true;refreshLines=false;
+        $('#log-providers').innerHTML=[...new Set(rows.map(r=>r.provider))].sort().map(p=>`<option value="${esc(p)}"></option>`).join('');
+        $('[data-connection]').textContent=mode==='live'?(follow?'Following live · updates every 2s':'Display paused · recording continues'):'Saved on this server';
+        notice(current.truncated?'Storage limit reached: this session is incomplete. Exports contain only retained records.':'');
+        paint();writeRoute();
+      } catch(error){if(alive&&token===generation&&error.name!=='AbortError'){notice(error.message);$('[data-connection]').textContent='Disconnected · retrying';}}
+      finally{busy=false;if(queued&&alive){queued=false;clearTimeout(searchTimer);searchTimer=setTimeout(refresh,0);}}
     }
-    function scheduleReload() {
-      sequence++; controller?.abort(); rows=[];matchIndex=-1;
-      clearTimeout(searchTimer); searchTimer=setTimeout(()=>{if(busy){scheduleReload();return;}refresh();},150);
+    function invalidate() {generation++;controller?.abort();refreshLines=true;matchIndex=-1;clearTimeout(searchTimer);searchTimer=setTimeout(refresh,120);}
+    function reset(clear=true) {sid='';sessions=[];current=null;offset=0;total=0;rows=[];frozen=false;listPage=0;if(clear){query=level=provider='';for(const s of ['[data-query]','[data-level]','[data-provider]'])$(s).value='';}notice('');setOutput(empty('Loading logs…',''));invalidate();paint();writeRoute();}
+    function copied(button,full) {
+      $('[data-copy-status]').textContent=full?'Full retained session copied, including records hidden by filters.':'Filtered log copied.';
+      button.classList.add('logs-copied');const timer=setTimeout(()=>{button.classList.remove('logs-copied');feedbackTimers.delete(timer);},1800);feedbackTimers.add(timer);
     }
-    function reset() {sid='';current=null;offset=0;total=0;listPage=0;rows=[];pendingMatch=null;$('[data-output]').replaceChildren();notice();scheduleReload();paintControls();writeRoute();}
-    host.addEventListener('click', onClick);
     async function onClick(event) {
-      const button=event.target.closest('button, tr[data-session]');if(!button)return;
+      const button=event.target.closest('button');if(!button)return;
       try {
-        if(button.dataset.channel){channel=button.dataset.channel;if(channel==='watcher'){runId='';pairId='';latestRequested=false;}showingRuns=mode==='saved';reset();}
-        else if(button.dataset.mode){mode=button.dataset.mode;showingRuns=mode==='saved';follow=mode==='live';runId='';latestRequested=false;reset();}
-        else if(button.hasAttribute('data-latest')){latestRequested=true;runId='';mode='saved';showingRuns=true;follow=false;clearFilters();reset();}
-        else if(button.dataset.session){sid=button.dataset.session;if(channel==='sync')runId=sessions.find(s=>s.id===sid)?.run_id||'';showingRuns=false;offset=0;rows=[];notice();scheduleReload();writeRoute();}
-        else if(button.hasAttribute('data-back-runs')){showingRuns=true;runId='';reset();}
-        else if(button.hasAttribute('data-follow')){follow=!follow;paintControls();if(follow){content.scrollTop=content.scrollHeight;scheduleReload();}}
-        else if(button.hasAttribute('data-errors')||button.hasAttribute('data-warnings')){level=button.hasAttribute('data-errors')?'ERROR':'WARN';$('[data-level]').value=level;follow=false;offset=0;scheduleReload();}
-        else if(button.hasAttribute('data-previous')||button.hasAttribute('data-next')){const delta=button.hasAttribute('data-next')?1:-1;follow=false;if(showingRuns){listPage+=delta;renderRuns();}else{offset=Math.max(0,offset+delta*500);scheduleReload();}content.scrollTop=0;}
-        else if(button.hasAttribute('data-next-match')||button.hasAttribute('data-prev-match')){
-          const delta=button.hasAttribute('data-next-match')?1:-1;
-          follow=false;
-          if(delta>0 && matchIndex>=rows.length-1 && offset+500<total){offset+=500;scheduleReload();pendingMatch=1;}
-          else if(delta<0 && matchIndex===0 && offset>0){offset-=500;scheduleReload();pendingMatch=-1;}
-          else revealMatch(matchIndex<0 ? (delta>0?0:rows.length-1) : matchIndex+delta);
-          paintControls();
-        }
-        else if(button.dataset.context){const container=button.closest('[data-line]');if(container.nextElementSibling?.classList.contains('logs-context')){container.nextElementSibling.remove();return;}const token=sequence, target=sid;const data=await api(`/${sid}/context/${button.dataset.context}`,scope());if(!alive||token!==sequence||target!==sid||!container.isConnected)return;const el=document.createElement('div');el.className='logs-context';el.innerHTML=data.items.map(r=>lineMarkup(r,true)).join('');container.after(el);}
-        else if(button.hasAttribute('data-pin')){await api(`/${sid}`,{}, {method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({pinned:!current.pinned})});scheduleReload();}
-        else if(button.hasAttribute('data-delete')){if(!window.confirm('Delete this entire saved log, including any other pairs in it?'))return;await api(`/${sid}`,{}, {method:'DELETE'});showingRuns=true;runId='';reset();}
-        else if(button.hasAttribute('data-clear')){if(!window.confirm('Delete completed, unpinned logs in this channel for the current profile?'))return;await api('',{channel},{method:'DELETE'});reset();}
+        if(button.dataset.channel){channel=button.dataset.channel;pairId=runId='';latestRequested=false;listQuery=listFilter='';$('[data-session-query]').value=$('[data-session-filter]').value='';reset();}
+        else if(button.dataset.mode){mode=button.dataset.mode;follow=mode==='live';reset(false);}
+        else if(button.dataset.session){sid=button.dataset.session;current=sessions.find(s=>s.id===sid)||null;mode='saved';follow=false;offset=0;total=0;rows=[];frozen=false;notice('');setOutput(empty('Loading logs…',''));invalidate();paint();writeRoute();}
+        else if(button.hasAttribute('data-latest')){mode='saved';follow=false;latestRequested=true;runId='';reset();}
+        else if(button.hasAttribute('data-all-runs')){runId='';reset();}
+        else if(button.hasAttribute('data-follow')){follow=!follow;if(!follow){generation++;controller?.abort();}if(follow){frozen=false;invalidate();}paint();}
+        else if(button.hasAttribute('data-list-prev')||button.hasAttribute('data-list-next')){listPage+=button.hasAttribute('data-list-next')?1:-1;renderSessions();}
+        else if(button.hasAttribute('data-previous')||button.hasAttribute('data-next')){offset=Math.max(0,offset+(button.hasAttribute('data-next')?500:-500));follow=false;invalidate();content.scrollTop=0;}
+        else if(button.hasAttribute('data-prev-match')||button.hasAttribute('data-next-match')){const step=button.hasAttribute('data-next-match')?1:-1;matchIndex=(matchIndex+step+rows.length)%rows.length;host.querySelectorAll('.logs-current-match').forEach(el=>el.classList.remove('logs-current-match'));const line=host.querySelector(`[data-line="${Number(rows[matchIndex]?.id)}"]`);line?.classList.add('logs-current-match');line?.scrollIntoView({block:'nearest'});}
+        else if(button.dataset.context){const line=button.closest('[data-line]');if(line.nextElementSibling?.classList.contains('logs-context')){line.nextElementSibling.remove();return;}const token=generation,target=sid;const result=await api(`/${encodeURIComponent(sid)}/context/${button.dataset.context}`,scope());if(!alive||token!==generation||sid!==target||!line.isConnected)return;const el=document.createElement('div');el.className='logs-context';el.innerHTML=result.items.map(r=>lineMarkup(r,true)).join('');line.after(el);}
+        else if(button.hasAttribute('data-pin')){await api(`/${encodeURIComponent(sid)}`,{},{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({pinned:!current.pinned})});invalidate();}
+        else if(button.hasAttribute('data-delete')){if(!window.confirm('Delete this entire saved session, including any other pairs in it?'))return;await api(`/${encodeURIComponent(sid)}`,{},{method:'DELETE'});reset(false);}
+        else if(button.hasAttribute('data-clear')){if(!window.confirm('Delete all finished, unpinned log sessions in this source for the current profile? Active and pinned sessions will be kept.'))return;await api('',{channel},{method:'DELETE'});reset(false);}
         else if(['data-copy','data-copy-full','data-download','data-download-full'].some(a=>button.hasAttribute(a))){
-          if(!sid)return; const full=button.hasAttribute('data-copy-full')||button.hasAttribute('data-download-full');
-          const load=fetch(url(`/${sid}/download`,{...scope(),...(full?{}:{q:query,level,provider})}),{cache:'no-store'}).then(res=>{if(!res.ok)throw new Error('Could not export this log.');return res.text();});
-          if(button.hasAttribute('data-copy')||button.hasAttribute('data-copy-full')){const ok=await (window.cwCopyTextFrom?.(load)??false);if(!alive)return;if(ok)copied(button);else throw new Error('Could not copy this log.');}
-          else {const text=await load;if(!alive)return;const link=document.createElement('a');const object=URL.createObjectURL(new Blob([text],{type:'text/plain'}));link.href=object;link.download=`crosswatch-${channel}-${sid}.log`;link.click();setTimeout(()=>URL.revokeObjectURL(object),1000);}
+          if(!sid)return;const full=button.hasAttribute('data-copy-full')||button.hasAttribute('data-download-full'),target=sid;
+          const downloadUrl=url(`/${encodeURIComponent(target)}/download`,{raw:'true',header:String($('[data-report-header]').checked),...(full?{}:{q:query,level,provider,...scope()})});
+          const load=fetch(downloadUrl,{cache:'no-store'}).then(res=>{if(!res.ok)throw new Error('Could not export this log.');return res.text();});
+          if(button.hasAttribute('data-copy')||button.hasAttribute('data-copy-full')){const ok=window.cwCopyTextFrom?await window.cwCopyTextFrom(load):await load.then(text=>navigator.clipboard.writeText(text).then(()=>true));if(alive){if(ok)copied(button,full);else notice('Could not copy. Download the log or select the text instead.');}}
+          else{const text=await load;if(!alive)return;const object=URL.createObjectURL(new Blob([text],{type:'text/plain'})),link=document.createElement('a');link.href=object;link.download=`crosswatch-${channel}-${target}.log`;link.click();setTimeout(()=>URL.revokeObjectURL(object),1000);}
         }
-      } catch(error){if(alive)notice(error.message);}
+      }catch(error){if(alive)notice(error.message);}
     }
-    for(const selector of ['[data-query]','[data-level]','[data-provider]']) $(selector).addEventListener('input',()=>{query=$('[data-query]').value;level=$('[data-level]').value;provider=$('[data-provider]').value.trim().toUpperCase();offset=0;follow=false;pendingMatch=null;notice();scheduleReload();});
-    $('[data-pair]').addEventListener('input',()=>{pairId=$('[data-pair]').value;runId='';latestRequested=mode==='saved';showingRuns=mode==='saved';follow=mode==='live';clearFilters();reset();});
-    $('[data-wrap]').onchange=()=>{
-      content.classList.toggle('logs-nowrap',!$('[data-wrap]').checked);
-      content.scrollLeft=0;
-      if(follow)content.scrollTop=content.scrollHeight;
-    };
-    $('[data-readable]').onchange=()=>{
-      readable=$('[data-readable]').checked;
-      try { window.localStorage.setItem('cw.logs.readable',readable ? 'on' : 'off'); } catch {}
-      const top=content.scrollTop;
-      content.classList.toggle('logs-pretty',readable);
-      host.querySelectorAll('[data-log-id]').forEach(line=>{
-        const row=visibleRows.get(line.dataset.logId);
-        if(row)line.querySelector('.logs-message').innerHTML=readable ? readableLogHTML(row,highlight,query,window.CW?.ProviderMeta) : highlight(row.text,query);
-      });
-      content.scrollTop=follow ? content.scrollHeight : top;
-    };
-    content.addEventListener('wheel',event=>{if(event.deltaY<0){follow=false;paintControls();}},{passive:true});
-    content.addEventListener('scroll',()=>{if(follow && content.scrollHeight-content.scrollTop-content.clientHeight>50){follow=false;paintControls();}});
-    timer=setInterval(refresh,2000);
-    dispose=()=>{alive=false;sequence++;controller?.abort();clearInterval(timer);clearTimeout(searchTimer);for(const feedback of copyFeedback.values())clearTimeout(feedback.timer);copyFeedback.clear();window.removeEventListener('resize',resize);host.removeEventListener('click',onClick);};
-    paintControls();await refresh();resize();
+    host.addEventListener('click',onClick);
+    $('[data-session-query]').addEventListener('input',()=>{listQuery=$('[data-session-query]').value.toLowerCase().trim();listPage=0;renderSessions();});
+    $('[data-session-filter]').addEventListener('change',()=>{listFilter=$('[data-session-filter]').value;listPage=0;renderSessions();});
+    $('[data-pair]').addEventListener('change',()=>{pairId=$('[data-pair]').value;runId='';reset();});
+    for(const selector of ['[data-query]','[data-level]','[data-provider]'])$(selector).addEventListener('input',()=>{query=$('[data-query]').value;level=$('[data-level]').value;provider=$('[data-provider]').value.trim().toUpperCase();offset=0;follow=false;content.scrollTop=0;invalidate();paint();});
+    $('[data-wrap]').addEventListener('change',()=>content.classList.toggle('logs-nowrap',!$('[data-wrap]').checked));
+    content.addEventListener('wheel',event=>{if(event.deltaY<0&&follow){follow=false;paint();}},{passive:true});
+    content.addEventListener('scroll',()=>{if(follow&&content.scrollHeight-content.scrollTop-content.clientHeight>50){follow=false;paint();}},{passive:true});
+    timer=setInterval(()=>{if(!busy&&!document.hidden)refresh();},2000);
+    dispose=()=>{alive=false;generation++;controller?.abort();clearInterval(timer);clearTimeout(searchTimer);for(const id of feedbackTimers)clearTimeout(id);host.removeEventListener('click',onClick);};
+    paint();await refresh();
   },
   hide(){dispose?.();dispose=null;},
   unmount(){this.hide();root?.replaceChildren();root=null;}

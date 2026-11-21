@@ -11,12 +11,16 @@ import sqlite3
 import threading
 import time
 import uuid
+import traceback
+from collections.abc import Callable
+from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 from datetime import datetime, timezone
 
 from _logging import _redact_log_text
 from cw_platform.local_db import crosswatch_db_path
-from cw_platform.log_context import log_pair_id, log_run_id
+from cw_platform.log_context import log_pair_id, log_run_id, log_session
 
 RETENTION_DAYS = 7
 MAX_BYTES = 100 * 1024 * 1024
@@ -25,7 +29,7 @@ LEVEL = re.compile(r"(?:^|\]\s+|\d{2}:\d{2}:\d{2}\s+|\[)(ERROR|CRITICAL|WARNING|
 
 
 def describe_line(text: str, tag: str) -> tuple[str, str, str]:
-    text = _redact_log_text(ANSI.sub("", str(text))).rstrip()[:32768]
+    text = _redact_log_text(ANSI.sub("", str(text))).rstrip()
     matches = LEVEL.findall(text)
     level = (matches[-1].upper() if matches else "WARN" if text.startswith("[!]") else "INFO")
     level = {"WARNING": "WARN", "CRITICAL": "ERROR", "SUCCESS": "INFO"}.get(level, level)
@@ -38,7 +42,7 @@ def describe_line(text: str, tag: str) -> tuple[str, str, str]:
         obj = json.loads(text[text.index("{"):])
         if isinstance(obj, dict):
             provider = str(obj.get("provider") or obj.get("dst") or obj.get("src") or provider).upper()
-            reported_level = str(obj.get('level') or '').upper()
+            reported_level = str(obj.get('level') or obj.get('severity') or '').upper()
             if reported_level in {'ERROR', 'CRITICAL', 'WARN', 'WARNING', 'INFO', 'DEBUG'}:
                 level = {'CRITICAL':'ERROR', 'WARNING':'WARN'}.get(reported_level, reported_level)
             if obj.get("event") == "debug":
@@ -143,6 +147,18 @@ class LogArchive:
                 del self.active['sync']
             self.flush()
 
+    def start_job(self, channel: str, label: str) -> str:
+        with self.lock:
+            if not self._room(512):
+                self.flush()
+                return ''
+            sid = uuid.uuid4().hex
+            self.db.execute("INSERT INTO sessions(id,run_id,channel,label,started,status,bytes) VALUES(?,?,?,?,?,'running',512)",
+                            (sid, sid, channel, _redact_log_text(label), time.time()))
+            self.used += 512
+            self.flush()
+            return sid
+
     def append(self, channel: str, tag: str, text: str):
         text, level, provider = describe_line(text, tag)
         if not text or '::CLEAR::' in text:
@@ -151,8 +167,10 @@ class LogArchive:
             now = time.time()
             if time.monotonic() - self.last_cleanup > 3600:
                 self.cleanup()
-            sid = self.active.get(channel)
-            if channel != 'sync' or not sid or sid.startswith('sync-'):
+            scoped = log_session.get()
+            sid = scoped[1] if scoped and scoped[0] == channel else self.active.get(channel, '')
+            job = self.session(sid) if scoped and scoped[0] == channel and sid else None
+            if not job and (channel != 'sync' or not sid or sid.startswith('sync-')):
                 day = time.strftime('%Y-%m-%d', time.gmtime(now))
                 sid = f'{channel}-{day}'
                 # Continuous logs close at midnight and resume the same day after a restart.
@@ -170,6 +188,8 @@ class LogArchive:
                     self.db.execute("UPDATE sessions SET ended=NULL,status='live' WHERE id=?", (sid,))
                     self.active[channel] = sid
             pair_id, run_id = log_pair_id.get(), log_run_id.get()
+            if job:
+                pair_id, run_id = '', job['run_id']
             if channel == 'sync':
                 session = self.session(sid)
                 if session is None:
@@ -240,7 +260,7 @@ class LogArchive:
             after = self.db.execute(f'SELECT * FROM lines WHERE {scope} AND id>? ORDER BY id LIMIT 5', args).fetchall()
             return [dict(r) for r in reversed(before)] + [dict(r) for r in after]
 
-    def export(self, sid: str, *, q: str = '', level: str = '', provider: str = '', pair_id: str = '', run_id: str = ''):
+    def export(self, sid: str, *, q: str = '', level: str = '', provider: str = '', pair_id: str = '', run_id: str = '', raw: bool = False):
         # Bound each read so exporting a long log does not copy the archive into memory.
         with self.lock:
             end = self.db.execute('SELECT COALESCE(MAX(id),0) FROM lines WHERE session_id=?', (sid,)).fetchone()[0]
@@ -255,7 +275,7 @@ class LogArchive:
                 return
             for row in rows:
                 timestamp = datetime.fromtimestamp(row['ts'], timezone.utc).isoformat(timespec='milliseconds')
-                yield f"{timestamp} [{row['provider']}] {row['level']} {row['text']}\n"
+                yield row['text'] + '\n' if raw else f"{timestamp} [{row['provider']}] {row['level']} {row['text']}\n"
             after = rows[-1]['id']
 
     def pin(self, sid: str, value: bool):
@@ -293,7 +313,71 @@ def archive() -> LogArchive:
 
 def capture(tag: str, text: str, *, watcher: bool = False):
     try:
-        archive().append('sync' if tag == 'SYNC' else 'watcher' if watcher else 'debug', tag, text)
+        scoped = log_session.get()
+        if scoped:
+            channel = scoped[0]
+        else:
+            channel = 'sync' if tag == 'SYNC' or log_run_id.get() else 'watcher' if watcher else 'backups' if tag == 'BACKUP' else 'system'
+        archive().append(channel, tag, text)
     except Exception:
         # Logging must never prevent a sync from completing.
         pass
+
+
+def job_message(message: str, level: str = 'INFO') -> None:
+    scoped = log_session.get()
+    if scoped:
+        capture(scoped[0].upper(), f'[{level}] {message}')
+
+
+@contextmanager
+def job_log(channel: str, label: str):
+    existing = log_session.get()
+    if existing and existing[0] == channel:
+        yield existing[1]
+        return
+    sid = ''
+    try:
+        sid = archive().start_job(channel, label)
+    except Exception:
+        pass
+    token = log_session.set((channel, sid))
+    status = 'completed'
+    try:
+        job_message(f'Started {label}')
+        yield sid
+    except BaseException as exc:
+        status = 'cancelled' if type(exc).__name__ in {'SyncCancelled', 'CancelledError', 'KeyboardInterrupt'} else 'failed'
+        job_message(traceback.format_exc(), 'ERROR' if status == 'failed' else 'WARN')
+        raise
+    finally:
+        try:
+            if sid:
+                item = archive().session(sid) or {}
+                if status == 'completed':
+                    status = 'failed' if item.get('errors') else 'issues' if item.get('warnings') else 'completed'
+                job_message(f'Finished {label}: {status}')
+                archive().finish(sid, status)
+        except Exception:
+            pass
+        log_session.reset(token)
+
+
+def logged_operation(channel: str, label: str | Callable[..., str]):
+    def decorate(function):
+        @wraps(function)
+        def wrapped(*args, **kwargs):
+            title = label(*args, **kwargs) if callable(label) else label
+            with job_log(channel, title):
+                result = function(*args, **kwargs)
+                if isinstance(result, dict):
+                    for child in result.get('children') or []:
+                        if isinstance(child, dict) and child.get('error'):
+                            job_message(f"{child.get('feature', 'Feature')}: {child['error']}", 'ERROR')
+                    if result.get('ok') is False or result.get('errors'):
+                        job_message(str(result.get('message') or result.get('errors') or 'Operation did not complete'), 'ERROR')
+                    elif result.get('path'):
+                        job_message(f"Saved {result['path']}")
+                return result
+        return wrapped
+    return decorate

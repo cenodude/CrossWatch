@@ -2243,6 +2243,7 @@ export default {
       const events = Array.isArray(detail.events) && detail.events.length ? detail.events : (eventOverride ? [eventOverride] : []);
       const e = eventOverride || events[events.length - 1] || g;
       const sv = sevOf(e);
+      const logRun = e.run_id || events.find(row => row.run_id)?.run_id;
       detailEl.innerHTML = `
         <div class="ev-dhead">
           <div class="ev-dhead-row">
@@ -2252,8 +2253,10 @@ export default {
           </div>
           <div class="ev-dtitle">${esc(g.summary || e.title || titleLine(e))}</div>
         </div>
+        ${logRun ? '<button class="ev-hbtn" type="button" data-job-logs><span class="material-symbols-rounded" aria-hidden="true">terminal</span>View logs</button>' : ''}
         <h4>${String(e.feature || "") === "backup" ? "Backup" : "Capture"}</h4><div class="ev-kv">${captureRowsHTML(e)}</div>
         <details class="ev-tech"><summary>Raw data</summary><div class="ev-tech-body"><pre>${esc(JSON.stringify({ group: detail.group || null, events }, null, 2))}</pre></div></details>`;
+      Q('[data-job-logs]', detailEl)?.addEventListener('click', () => window.openLogs?.({runId: logRun, channel: e.feature === 'backup' ? 'backups' : 'captures'}));
     };
 
     const renderAuditDetail = (detail, eventOverride = null) => {

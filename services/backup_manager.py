@@ -16,6 +16,7 @@ from typing import Any
 from cw_platform.config_base import _decrypt_secret, _get_cipher, load_config
 import _backup_crypto as backup_crypto
 from services import backup_destinations as destinations, backups
+from services.log_archive import logged_operation, job_message
 
 PLAN_ID = "app-backup-default"
 _LOCK = threading.RLock()
@@ -162,6 +163,10 @@ def status() -> dict[str, Any]:
 
 
 def _update(job_id: str, **fields: Any) -> dict[str, Any]:
+    if fields.get('stage'):
+        job_message(f"Backup {job_id}: {fields['stage']}")
+    if fields.get('warning'):
+        job_message(str(fields['warning']), 'WARN')
     with _LOCK:
         rows = _jobs()
         row = next(r for r in rows if r["id"] == job_id)
@@ -231,6 +236,7 @@ def _encrypt_archive(source: Path, target: Path, password: str, manifest: dict[s
         temp.unlink(missing_ok=True)
 
 
+@logged_operation('backups', lambda job: f"Backup · {job.get('trigger', 'manual')} · {job['id']}")
 def run_job(job: dict[str, Any]) -> None:
     ident = job["id"]
     unsaved = None
@@ -288,6 +294,7 @@ def run_job(job: dict[str, Any]) -> None:
         except Exception:
             _update(ident, warning="Backup saved. Old automatic copies could not be cleaned up. Check destination permissions and storage.")
     except Exception as exc:
+        job_message(f'{phase}: {type(exc).__name__}: {exc}', 'ERROR')
         if unsaved is not None:
             unsaved.unlink(missing_ok=True)
         current = next(r for r in _jobs() if r["id"] == ident)
@@ -318,6 +325,7 @@ def _record_upload(destination: str, *, ok: bool, trigger: Any, reason: str = ""
         pass
 
 
+@logged_operation('backups', 'Backup retention cleanup')
 def prune_local(*, retention_days: int = 0, max_backups: int = 0, auto_delete_old: bool = False, job_id: str | None = None, trigger: str = "manual") -> dict[str, Any]:
     with _LOCK:
         rows = _jobs()

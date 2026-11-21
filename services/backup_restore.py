@@ -18,6 +18,7 @@ from cryptography.fernet import Fernet, InvalidToken
 
 from cw_platform.config_base import _normalize_fernet_key
 from services import backup_manager as manager, backups
+from services.log_archive import logged_operation
 
 _MAPPING_DATABASE = ".cw_databases/crosswatch.sqlite3"
 _ANIME_RULES = ".cw_state/anime_mapping_overrides.json"
@@ -97,6 +98,7 @@ def inspect(path: str, password: str = "") -> dict[str, Any]:
     return validation
 
 
+@logged_operation('backups', 'Prepare backup restore')
 def prepare(path: str, password: str = "", *, mode: str = "replace") -> dict[str, Any]:
     if mode not in {"replace", "mappings", "anime_rules", "captures"}:
         raise ValueError("Choose a supported restore action.")

@@ -61,9 +61,13 @@ def _write(
 ) -> int:
     prov = _text(provider, 40).upper()
     clean = {k: (_safe(v, 300) if isinstance(v, str) else v) for k, v in dict(detail or {}).items() if v not in (None, "", [], {})}
+    from cw_platform.log_context import log_session
+
+    session = log_session.get()
     row = make_event(
         domain=BACKUP_DOMAIN if feature == "backup" else CAPTURE_DOMAIN,
         event_type=event_type,
+        run_id=session[1] if session else None,
         severity="info" if ok else "error",
         feature=feature,
         operation=_trigger(trigger),
