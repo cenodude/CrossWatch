@@ -82,6 +82,9 @@ def _load_watchlist_state(include_sync_users: bool = True) -> dict[str, Any]:
         state = StateStore(CONFIG).load_state_features({"watchlist"}, include_sync_users=include_sync_users)
         return state if isinstance(state, dict) else {}
     except Exception:
+        from services.view_cache import STRICT_READ
+        if STRICT_READ.get():
+            raise
         return {}
 
 

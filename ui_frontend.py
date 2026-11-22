@@ -133,7 +133,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "core.js", "details-log.js",
+    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "view-cache.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js", "month-bar.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
@@ -143,7 +143,7 @@ _APP_SCRIPTS = (
     "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js", "assistant-settings.js",
 )
 _USER_HELPER_SCRIPTS = (
-    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "core.js",
+    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "view-cache.js", "core.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js",
 )
 _USER_APP_SCRIPTS = (
@@ -3167,6 +3167,7 @@ def get_profile_html(user: dict | None = None) -> str:
 <script src="/assets/js/sync-reviews.js?v=__CW_VERSION__" defer></script>
 {shared_header_scripts}
 <script src="/assets/helpers/api.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/view-cache.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/notification-feed.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/media-meta.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/trailer.js?v=__CW_VERSION__" defer></script>

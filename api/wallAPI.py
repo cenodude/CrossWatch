@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from api.view_cache import background_view
+
 import hashlib
 import json
 import threading
@@ -102,6 +104,9 @@ def _load_state(include_sync_users: bool = True) -> dict[str, Any]:
         st = StateStore(CONFIG).load_state_features({"watchlist"}, include_sync_users=include_sync_users) or {}
         return st if isinstance(st, dict) else {}
     except Exception:
+        from services.view_cache import STRICT_READ
+        if STRICT_READ.get():
+            raise
         return {}
 
 
@@ -192,6 +197,7 @@ def _item_for_user_filter(item: dict[str, Any], user_filter: dict[str, list[str]
 
 def register_wall(app: FastAPI) -> None:
     @app.get("/api/state/wall", tags=["wall"])
+    @background_view
     def api_state_wall(
         request: Request = cast(Request, None),
         both_only: bool = Query(False, description="Keep only items present on multiple providers"),

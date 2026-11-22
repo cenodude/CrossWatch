@@ -12,6 +12,53 @@ from cw_platform.local_db.db import connect
 from cw_platform.orchestrator._state_store import StateStore
 
 
+def test_feature_fingerprint_tracks_changes_without_scanning_items(tmp_path) -> None:
+    item = {"type": "movie", "title": "One", "ids": {"tmdb": "1"}}
+    def save(items, **kwargs):
+        sqlite_state.save_feature_baseline(tmp_path, provider="PLEX", feature="collection", items=items, **kwargs)
+
+    save({"tmdb:1": item})
+    conn = get_conn(tmp_path)
+    statements = []
+    conn.set_trace_callback(statements.append)
+    try:
+        initial = sqlite_state.fingerprint(tmp_path, {"collection"})
+        sqlite_state.fingerprint(tmp_path)
+    finally:
+        conn.set_trace_callback(None)
+    assert not any("baseline_items" in sql.lower() for sql in statements)
+
+    save({"tmdb:1": item}, last_sync_epoch=123)
+    sqlite_state.save_feature_baseline(tmp_path, provider="PLEX", feature="history", items={"tmdb:1": item})
+    assert sqlite_state.fingerprint(tmp_path, {"collection"}) == initial
+
+    save({"tmdb:1": {**item, "title": "Changed"}})
+    updated = sqlite_state.fingerprint(tmp_path, {"collection"})
+    assert updated != initial
+    save({"tmdb:1": item, "tmdb:2": {**item, "ids": {"tmdb": "2"}}})
+    inserted = sqlite_state.fingerprint(tmp_path, {"collection"})
+    assert inserted != updated
+    sqlite_state.remove_baseline_items(tmp_path, "PLEX", "default", "collection", ["tmdb:2"])
+    removed = sqlite_state.fingerprint(tmp_path, {"collection"})
+    assert removed != inserted
+    sqlite_state.remove_baseline_items(tmp_path, "PLEX", "default", "collection", ["missing"])
+    assert sqlite_state.fingerprint(tmp_path, {"collection"}) == removed
+    sqlite_state.remove_feature_states(tmp_path, [("PLEX", "default", "collection")])
+    assert sqlite_state.fingerprint(tmp_path, {"collection"}) != removed
+
+
+def test_manual_removal_invalidates_loaded_state(tmp_path) -> None:
+    sqlite_state.save_feature_baseline(
+        tmp_path, provider="PLEX", feature="history",
+        items={"tmdb:1": {"type": "movie", "ids": {"tmdb": "1"}}},
+    )
+    before = sqlite_state.fingerprint(tmp_path)
+    assert sqlite_state.load_state(tmp_path)["providers"]["PLEX"]["history"]["baseline"]["items"]
+    sqlite_state.remove_baseline_items(tmp_path, "PLEX", "default", "history", ["tmdb:1"])
+    assert sqlite_state.fingerprint(tmp_path) != before
+    assert not sqlite_state.load_state(tmp_path)["providers"]["PLEX"]["history"]["baseline"]["items"]
+
+
 def test_state_database_preserves_current_sync_item_fields(tmp_path) -> None:
     item = {
         "type": "episode",

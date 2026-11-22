@@ -1035,6 +1035,8 @@ def _get_orchestrator() -> Orchestrator:
 # Startup sequence
 @asynccontextmanager
 async def _lifespan(app: Any) -> AsyncIterator[None]:
+    from services.view_cache import CACHE as view_cache
+    view_cache.start()
     app.state.watch_groups = {}
     app.state.watch_manager = None
     _apply_debug_env_from_config()
@@ -1182,6 +1184,8 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         yield
     finally:
         backup_manager.stop()
+        from services.view_cache import CACHE as view_cache
+        view_cache.stop()
         try:
             from services.notification_push import stop as _stop_notification_push
 
@@ -1237,6 +1241,12 @@ app.router.lifespan_context = _lifespan
 async def cache_headers_for_api(request: Request, call_next):
     resp = await call_next(request)
     path = request.url.path
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"} and resp.status_code < 400 and not path.endswith("/preview") and path.startswith(("/api/tracker/", "/api/manual/", "/api/profile/shelf", "/api/maintenance/", "/api/backups/restore", "/api/editor", "/api/watchlist/")):
+        from services.view_cache import CACHE as view_cache
+        if path.startswith(("/api/maintenance/", "/api/backups/restore")):
+            view_cache.invalidate(CONFIG_DIR)
+        else:
+            view_cache.mark_stale()
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "same-origin")

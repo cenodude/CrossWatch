@@ -280,10 +280,23 @@
       err.code = data?.error || detail;
       throw err;
     }
-    if (body !== undefined) {
+    const path = new URL(url, location.origin).pathname;
+    const mutation = body !== undefined && (path.startsWith("/api/tracker/") || path.startsWith("/api/provider-instances/"))
+      && !path.endsWith("/preview") && (path !== "/api/tracker/titles/remove" || !!body.token);
+    if (mutation) {
       try { sessionStorage.removeItem("cw.tracker.lists.v1"); sessionStorage.removeItem("cw.hub.lists.v1"); } catch {}
     }
     return data;
+  }
+
+  const trackerVisible = () => !document.hidden && !!state.root?.getClientRects().length;
+  function getViewJSON(url, body, signal, options = {}) {
+    if (!window.CW?.ViewCache || body !== undefined) return getJSON(url, body, signal);
+    const instance = state.instance, view = state.view;
+    const summary = /\/api\/tracker\/(summary|stats)\?/.test(url);
+    return window.CW.ViewCache.read(url, next => getJSON(next, undefined, signal), {
+      trackRevision:timelineOn() && url.startsWith("/api/tracker/items?"), ...options, signal, active:() => trackerVisible() && state.instance === instance && (summary || state.view === view),
+    });
   }
 
   const errorText = (err) => ERRORS[err?.code] || "The tracker could not be loaded. Try again in a moment.";
@@ -545,23 +558,17 @@
   function renderNavigation() {
     const overflow = navigationViews().map(v => `<button type="button" class="cw-btn" data-trk-view="${v.id}" hidden>${symbol(v.icon)}<span>${esc(v.label)}</span>${viewCount(v.id) ? `<small>${esc(num(viewCount(v.id)))}</small>` : ""}</button>`).join("");
     const attention = attentionTotal();
-    return `<div class="trk-navigation"><nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav><details class="trk-others${state.view === "cleanup" ? " is-active" : ""}"><summary aria-label="More Tracker views" class="trk-tab${state.view === "cleanup" ? " active" : ""}">${symbol("more_horiz")}<span>More</span>${attention ? `<small aria-label="${esc(plural(attention, "record needs", "records need"))} attention">${esc(num(attention))}</small>` : ""}${symbol("expand_more")}</summary><div class="trk-others-menu cw-page-panel"><div class="trk-overflow" hidden>${overflow}</div>${state.trackerOptions?.month_review !== false ? `<button type="button" class="cw-btn" data-trk-month-open>${symbol("auto_awesome")}<span>Month in review</span></button>` : ""}${state.trackerOptions?.wrapped !== false ? `<button type="button" class="cw-btn" data-trk-wrapped-open>${symbol("celebration")}<span>CrossWatch Wrapped</span></button>` : ""}${state.trackerOptions?.automatic_status !== false ? `<button type="button" class="cw-btn" data-trk-action="automation">${symbol("autorenew")}<span>Automatic statuses</span></button>` : ""}<button type="button" class="cw-btn" data-trk-view="cleanup"${state.view === "cleanup" ? ' aria-current="page"' : ""}>${symbol("health_and_safety")}<span>Clean up</span>${attention ? `<small>${esc(num(attention))}</small>` : ""}</button></div></details></div>`;
+    return `<div class="trk-navigation cw-page-navigation"><nav class="trk-tabs" role="tablist" aria-label="Tracker view">${renderTabs()}</nav><details class="trk-others trk-nav-menu${state.view === "cleanup" ? " is-active" : ""}"><summary aria-label="More Tracker views" class="trk-tab${state.view === "cleanup" ? " active" : ""}">${symbol("more_horiz")}<span>More</span>${attention ? `<small aria-label="${esc(plural(attention, "record needs", "records need"))} attention">${esc(num(attention))}</small>` : ""}${symbol("expand_more")}</summary><div class="trk-others-menu cw-page-panel"><div class="trk-overflow" hidden>${overflow}</div>${state.trackerOptions?.month_review !== false ? `<button type="button" class="cw-btn" data-trk-month-open>${symbol("auto_awesome")}<span>Month in review</span></button>` : ""}${state.trackerOptions?.wrapped !== false ? `<button type="button" class="cw-btn" data-trk-wrapped-open>${symbol("celebration")}<span>CrossWatch Wrapped</span></button>` : ""}${state.trackerOptions?.automatic_status !== false ? `<button type="button" class="cw-btn" data-trk-action="automation">${symbol("autorenew")}<span>Automatic statuses</span></button>` : ""}<button type="button" class="cw-btn" data-trk-view="cleanup"${state.view === "cleanup" ? ' aria-current="page"' : ""}>${symbol("health_and_safety")}<span>Clean up</span>${attention ? `<small>${esc(num(attention))}</small>` : ""}</button></div></details></div>`;
   }
 
   function fitNavigation() {
     const navigation = state.root?.querySelector(".trk-navigation");
     const controls = state.root?.querySelector('[data-trk-slot="controls"]');
     if (navigation && controls) {
-      if (mobile()) state.root.querySelector(".cw-media-hero").after(navigation);
-      else if (navigation.parentNode !== controls) controls.prepend(navigation);
+      state.root.querySelector(".cw-media-hero").after(navigation);
     }
     const source = state.root?.querySelector('[data-trk-slot="source"]');
-    const sourceHost = mobile() ? navigation?.querySelector('.trk-others-menu') : state.root?.querySelector('.cw-side');
-    if (source && sourceHost) {
-      if (source.parentNode !== sourceHost) sourceHost.prepend(source);
-      source.classList.toggle('ins-card', !mobile());
-      source.classList.toggle('cw-page-panel', !mobile());
-    }
+    if (source && navigation && source.parentNode !== navigation) navigation.append(source);
     const tools = state.root?.querySelector('.trk-secondary-actions');
     if (tools) {
       if (mobile()) navigation?.querySelector('.trk-others-menu')?.append(tools);
@@ -583,7 +590,7 @@
     const active = tabs.find(tab => tab.getAttribute("aria-selected") === "true");
     const priority = active ? [active, ...tabs.filter(tab => tab !== active)] : tabs;
     const visible = new Set();
-    let remaining = list.clientWidth;
+    let remaining = list.getBoundingClientRect().width + 1;
     for (const tab of priority) {
       const width = widths.get(tab) + (visible.size ? gap : 0);
       if (width <= remaining || tab === active) {
@@ -1202,7 +1209,7 @@
         const openKey = `${day.label}|${group.key}`;
         const expanded = many && state.open.has(openKey);
         const toggle = many ? `<button type="button" class="trk-fold" data-trk-fold="${esc(openKey)}" aria-expanded="${expanded}" aria-label="${expanded ? "Hide" : "Show"} episodes">${symbol(expanded ? "expand_less" : "expand_more")}</button>` : "";
-        const row = `<tr class="trk-play${selected ? " is-selected" : ""}" ${ref} tabindex="0" aria-selected="${!!selected}">
+        const row = `<tr class="trk-play${selected ? " is-selected" : ""}" ${ref} data-trk-day="${esc(day.label)}" tabindex="0" aria-selected="${!!selected}">
             <td class="trk-col-time">${esc(timeText(lead.date))}</td>
             <td class="cw-col-type">${typePill(group.kind === "show" ? { type: "show" } : lead)}</td>
             <td class="cw-col-title">${listIdentity(group.kind === "show" ? {...lead, type:"show", year:lead.series_year || lead.year} : lead, `<div class="cw-title-row"><strong class="cw-merged-title">${esc(cardTitle(lead))}</strong>${inline}${toggle}</div>`)}</td>
@@ -1662,8 +1669,10 @@
 
   function renderSource() {
     if (!state.instances.length) return "";
+    const selected = state.instances.find(i => i.id === state.instance) || state.instances[0];
     const instances = state.instances.map((i) => `<option value="${esc(i.id)}"${i.id === state.instance ? " selected" : ""}>${esc(i.label)}</option>`).join("");
-    return `<div class="trk-source-row"><div class="ins-kv"><label for="trk-instance">Tracker</label><select id="trk-instance" class="cw-select" data-trk-input="instance">${instances}</select></div></div>`;
+    const choices = state.instances.map(i => `<button type="button" class="cw-btn" role="menuitemradio" aria-checked="${i.id === state.instance}" data-trk-instance="${esc(i.id)}">${symbol("badge", "trk-source-badge")}<span>${esc(i.label)}</span>${i.id === state.instance ? symbol("check", "trk-source-check") : ""}</button>`).join("");
+    return `<select id="trk-instance" aria-label="Tracker" data-trk-input="instance" hidden>${instances}</select><details class="trk-source trk-nav-menu"><summary class="trk-tab" aria-label="Tracker: ${esc(selected.label)}" aria-haspopup="menu" title="${esc(selected.label)}">${symbol("badge", "trk-source-badge")}<span class="trk-source-label">${esc(selected.label)}</span>${symbol("expand_more")}</summary><div class="trk-source-options trk-others-menu cw-page-panel" role="menu" aria-label="Choose tracker">${choices}</div></details>`;
   }
 
   function heroContext() {
@@ -2194,9 +2203,9 @@
               <div data-trk-slot="main"></div>
             </div>
             <details class="cw-editor-filters" data-trk-slot="filters">
-              <summary>Title and tracker</summary>
+              <summary>Title details</summary>
               <aside class="cw-side">
-                <div class="ins-card cw-page-panel" data-trk-slot="source"></div>
+                <div data-trk-slot="source" hidden></div>
                 <div class="ins-card cw-page-panel trk-detail" data-trk-slot="title"></div>
                 <div class="ins-card cw-page-panel" data-trk-slot="health"></div>
               </aside>
@@ -2256,7 +2265,7 @@
         if (entry.contentRect.width === navigationWidth) return;
         navigationWidth = entry.contentRect.width;
         fitNavigation();
-      }).observe(root.querySelector('[data-trk-slot="controls"]'));
+      }).observe(root.querySelector('.cw-root'));
       document.fonts?.ready.then(() => { if (root === state.root && root.isConnected) fitNavigation(); });
       monthBar = null;
       bar()?.wire();
@@ -2267,14 +2276,25 @@
   function setSlot(name, html) {
     const slot = state.root?.querySelector(`[data-trk-slot="${name}"]`);
     if (!slot) return;
+    let sourceFocus;
     if (name === "controls") {
       const source = state.root.querySelector('[data-trk-slot="source"]');
+      if (source?.contains(document.activeElement)) sourceFocus = document.activeElement;
       if (source) state.root.querySelector('.cw-side').prepend(source);
       const navigation = state.root.querySelector(".trk-navigation");
       if (navigation && !slot.contains(navigation)) slot.prepend(navigation);
     }
-    if (slot.innerHTML !== html) slot.innerHTML = html;
-    if (name === "controls") fitNavigation();
+    if (name === "source") {
+      if (slot.dataset.rendered === html) return;
+      const focused = slot.contains(document.activeElement);
+      slot.innerHTML = html;
+      slot.dataset.rendered = html;
+      if (focused) slot.querySelector("summary")?.focus({preventScroll:true});
+    } else if (slot.innerHTML !== html) slot.innerHTML = html;
+    if (name === "controls") {
+      fitNavigation();
+      if (sourceFocus?.isConnected) sourceFocus.focus({preventScroll:true});
+    }
     if (name === "main") {
       window.CW?.Shelf?.popHide?.();
       wireTrackerShelfPop(slot);
@@ -2282,6 +2302,7 @@
       animateOverviewCards();
     }
     if (name === "source" || name === "health") slot.hidden = !html;
+    if (name === "source") fitNavigation();
   }
 
   function renderSlots(controls) {
@@ -2289,11 +2310,6 @@
     state.root.classList.toggle("trk-overview-page", state.view === "overview");
     const overview = state.view === "overview";
     if (overview && state.overview?.scope !== overviewCacheKey()) state.overview = overviewCache.get(overviewCacheKey()) || null;
-    const main = state.root.querySelector('.cw-main');
-    const wrap = state.root.querySelector('.cw-wrap');
-    const controlsSlot = state.root.querySelector('[data-trk-slot="controls"]');
-    if (overview && controlsSlot.parentNode !== wrap) wrap.prepend(controlsSlot);
-    if (!overview && controlsSlot.parentNode !== main) main.prepend(controlsSlot);
     state.root.querySelector('[data-trk-slot="filters"]').open = overview || !narrow();
     const selection = state.root.querySelector('[data-trk-slot="selection-bar"]');
     const focusedAction = selection?.contains(document.activeElement) ? document.activeElement.dataset.trkAction : "";
@@ -2369,7 +2385,7 @@
     let months = [];
     try {
       const params = new URLSearchParams({ feature: "history", provider_instance: state.instance, q: state.q, media: state.media, status: state.noteStatus, tag: state.noteTag, duplicates: String(state.duplicates) });
-      const data = await getJSON(`/api/tracker/months?${params}`);
+      const data = await getViewJSON(`/api/tracker/months?${params}`);
       months = Array.isArray(data.months) ? data.months : [];
     } catch {
       months = [];
@@ -2383,7 +2399,7 @@
 
   async function loadSummary() {
     const id = ++summaryRequest;
-    const data = await getJSON(`/api/tracker/summary?${inst()}`);
+    const data = await getViewJSON(`/api/tracker/summary?${inst()}`);
     if (id !== summaryRequest) throw Object.assign(new Error("stale"), { code: "stale" });
     state.instances = Array.isArray(data.instances) ? data.instances : [];
     state.instance = data.provider_instance || "default";
@@ -2397,7 +2413,7 @@
     state.noteFields = Array.isArray(data.note_fields) ? data.note_fields : [];
     state.tmdbKey = data.tmdb_key !== false;
     const scope = overviewCacheKey();
-    void getJSON(`/api/tracker/stats?${inst()}`).then(stats => {
+    void getViewJSON(`/api/tracker/stats?${inst()}`).then(stats => {
       if (id !== summaryRequest || scope !== overviewCacheKey()) return;
       state.stats = stats;
       setSlot("hero", renderHero());
@@ -2412,24 +2428,52 @@
     }
   }
 
-  async function loadMain(append = false) {
+  let timelineRefreshPending = false;
+
+  async function loadTimelineRange(params, count, request) {
+    const limit = Number(params.get("limit"));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const items = [];
+      let revision, total = 0, changed = false;
+      for (let offset = 0; offset < count; offset += limit) {
+        params.set("offset", String(offset));
+        const data = await getViewJSON(`/api/tracker/items?${params}`, undefined, undefined, {watch:false, fresh:true, refresh:attempt > 0});
+        if (request !== state.request) throw Object.assign(new Error("Cancelled"), {name:"AbortError"});
+        if (offset && revision !== data._view?.revision) { changed = true; break; }
+        revision = data._view?.revision;
+        total = Number(data.total || 0);
+        const rows = Array.isArray(data.items) ? data.items : [];
+        items.push(...rows);
+        if (!rows.length || items.length >= total) break;
+      }
+      if (!changed) {
+        params.set("offset", "0");
+        await getViewJSON(`/api/tracker/items?${params}`);
+        return {items, total};
+      }
+    }
+    throw new Error("History changed while refreshing. Please retry.");
+  }
+
+  async function loadMain(append = false, quiet = false) {
     stopOverview();
     const id = ++state.request;
     const cacheKey = listCacheKey();
-    const restored = !append && restoreList();
+    const restored = quiet || (!append && restoreList());
     let loaded = false;
     state.loading = true;
+    timelineRefreshPending = false;
     state.error = "";
     if (!append) {
       if (!restored) { state.items = []; state.shows = []; state.noteRows = []; }
       if (state.view === "overview") state.overview = overviewCache.get(overviewCacheKey()) || (state.overview?.scope === overviewCacheKey() ? state.overview : null);
     }
-    renderSlots(true);
+    if (!quiet) renderSlots(true);
     try {
       if (state.view === "overview") {
         const controller = overviewController = new AbortController();
         const previous = state.overview;
-        const data = await getJSON(`/api/tracker/overview?${inst()}&day=${today()}`, undefined, controller.signal);
+        const data = await getViewJSON(`/api/tracker/overview?${inst()}&day=${today()}`, undefined, controller.signal);
         if (id !== state.request) return;
         const saved = data.shows;
         state.overview = {...data, scope:overviewCacheKey(), instance:state.instance, day:today(), continue:data.continue || [], recent:data.recent || [], next:data.metadata_available === false ? [] : saved?.continue || previous?.next || [], airing:data.metadata_available === false ? [] : saved?.airing || previous?.airing || [], retained:!saved && !!previous, checking:!saved && data.metadata_available !== false, checked:saved?.checked || 0, total:saved?.total || 0, unavailable:saved?.unavailable || 0};
@@ -2445,19 +2489,19 @@
           offset: String(state.offset),
           limit: String(pageSize()),
         });
-        const data = await getJSON(`/api/tracker/notes?${params}`);
+        const data = await getViewJSON(`/api/tracker/notes?${params}`);
         if (id !== state.request) return;
         state.noteRows = Array.isArray(data.notes) ? data.notes : [];
         state.total = Number(data.total || 0);
         if (data.summary) state.notes = data.summary;
       } else if (["movies", "watched"].includes(state.view)) {
         const params = new URLSearchParams({provider_instance:state.instance, q:state.q, status:state.noteStatus, tag:state.noteTag, sort:state.sort, media:state.historyMedia, offset:String(state.offset), limit:String(pageSize())});
-        const data = await getJSON(`/api/tracker/history/titles?${params}`);
+        const data = await getViewJSON(`/api/tracker/history/titles?${params}`);
         if (id !== state.request) return;
         state.items = Array.isArray(data.items) ? data.items : [];
         state.total = Number(data.total || 0);
       } else if (state.view === "shows") {
-        const data = await getJSON(`/api/tracker/shows?${inst()}&q=${encodeURIComponent(state.q)}&offset=${state.offset}&limit=${pageSize()}&status=${encodeURIComponent(state.noteStatus)}&tag=${encodeURIComponent(state.noteTag)}${state.hideDropped ? "&hide_dropped=true" : ""}`);
+        const data = await getViewJSON(`/api/tracker/shows?${inst()}&q=${encodeURIComponent(state.q)}&offset=${state.offset}&limit=${pageSize()}&status=${encodeURIComponent(state.noteStatus)}&tag=${encodeURIComponent(state.noteTag)}${state.hideDropped ? "&hide_dropped=true" : ""}`);
         if (id !== state.request) return;
         state.shows = Array.isArray(data.shows) ? data.shows : [];
         state.total = Number(data.total || 0);
@@ -2479,10 +2523,13 @@
         if (state.view === "cleanup" && state.healthFilter) params.set("health", state.healthFilter);
         if (timeline && state.month) params.set("month", state.month);
         if (state.view === "collection" && state.layouts.collection === "shelf") params.set("shelf", "true");
-        const data = await getJSON(`/api/tracker/items?${params}`);
+        const limit = Number(params.get("limit"));
+        const range = timeline && (append || (quiet && state.items.length > limit));
+        const count = Math.max(limit, Math.ceil(state.items.length / limit) * limit) + (append ? limit : 0);
+        const data = range ? await loadTimelineRange(params, count, id) : await getViewJSON(`/api/tracker/items?${params}`);
         if (id !== state.request) return;
         const rows = Array.isArray(data.items) ? data.items : [];
-        state.items = append ? state.items.concat(rows) : rows;
+        state.items = append && !range ? state.items.concat(rows) : rows;
         state.total = Number(data.total || 0);
       }
       loaded = true;
@@ -2495,8 +2542,15 @@
         if (!append && loaded) rememberList(cacheKey);
         state.loading = false;
         void loadListHero();
+        const anchor = loaded && timelineOn() && (quiet || append) ? [...state.root.querySelectorAll('[data-trk-slot="main"] .trk-play')].find(row => row.getBoundingClientRect().bottom > 0) : null;
+        const attribute = anchor?.hasAttribute("data-trk-ref-key") ? "data-trk-ref-key" : "data-trk-ref-show";
+        const anchorKey = anchor?.getAttribute(attribute), anchorTop = anchor?.getBoundingClientRect().top;
         renderSlots(true);
         renderMonths();
+        const day = anchor?.dataset.trkDay;
+        const replacement = anchorKey ? state.root.querySelector(`[data-trk-slot="main"] [${attribute}="${CSS.escape(anchorKey)}"]${day ? `[data-trk-day="${CSS.escape(day)}"]` : ""}`) : null;
+        if (replacement) window.scrollBy({top:replacement.getBoundingClientRect().top - anchorTop, behavior:"instant"});
+        if (timelineRefreshPending && timelineOn()) void loadMain(false, true);
       }
     }
   }
@@ -5092,14 +5146,27 @@
     wireStatusMenu();
     document.addEventListener("click", (event) => {
       if (!event.target.closest?.(".trk-add-split")) setAddMenu(false, { focus: false });
-      if (!event.target.closest?.(".trk-others")) root.querySelector(".trk-others")?.removeAttribute("open");
+      root.querySelectorAll(".trk-nav-menu[open]").forEach(menu => { if (!menu.contains(event.target)) menu.open = false; });
     }, true);
     root.addEventListener("focusout", (event) => {
       if (event.target.closest?.(".trk-add-split") && !event.relatedTarget?.closest?.(".trk-add-split")) setAddMenu(false, { focus: false });
-      if (event.relatedTarget && event.target.closest?.(".trk-others") && !event.relatedTarget.closest?.(".trk-others")) root.querySelector(".trk-others")?.removeAttribute("open");
+      const menu = event.target.closest?.(".trk-nav-menu");
+      if (event.relatedTarget && menu && !menu.contains(event.relatedTarget)) menu.open = false;
     });
     root.addEventListener("click", (event) => {
       if (sheet.el?.contains(event.target)) return;
+      const instance = event.target.closest("[data-trk-instance]");
+      if (instance) {
+        const menu = instance.closest("details");
+        menu.open = false;
+        menu.querySelector("summary").focus({preventScroll:true});
+        const select = root.querySelector("#trk-instance");
+        if (select.value !== instance.dataset.trkInstance) {
+          select.value = instance.dataset.trkInstance;
+          select.dispatchEvent(new Event("change", {bubbles:true}));
+        }
+        return;
+      }
       const wrappedDismiss = event.target.closest("[data-trk-wrapped-dismiss]");
       if (wrappedDismiss) {
         const key = reviewDismissKey(true), year = wrappedDismiss.dataset.trkWrappedDismiss;
@@ -5323,7 +5390,7 @@
         root.querySelector('[data-trk-action="filters"]')?.focus();
         return;
       }
-      const others = event.target.closest?.(".trk-others");
+      const others = event.target.closest?.(".trk-nav-menu");
       if (others && event.key === "Escape") {
         event.preventDefault();
         others.removeAttribute("open");
@@ -5333,7 +5400,7 @@
       if (others && ["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
         event.preventDefault();
         others.open = true;
-        const items = [...others.querySelectorAll("button")].filter(button => button.getClientRects().length);
+        const items = [...others.querySelectorAll("button")].filter(button => !button.disabled && button.getClientRects().length);
         const at = items.indexOf(document.activeElement);
         const next = event.key === "Home" ? 0 : event.key === "End" || at < 0 && event.key === "ArrowUp" ? items.length - 1 : (at + (event.key === "ArrowUp" ? -1 : 1) + items.length) % items.length;
         items[next]?.focus();
@@ -5608,5 +5675,22 @@
     else if (reviewMonth || state.monthlyReview) openMonthlyReview({},reviewMonth || '',!!reviewMonth);
   }
 
-  window.TrackerPage = { mount, resume: () => { if (profileScope !== currentProfileScope() || expireView()) return mount(state.root); void refreshHeroPlayback(); } };
+  const refreshCachedView = url => {
+    const parsed = new URL(url, location.origin);
+    if (!trackerVisible() || !parsed.pathname.startsWith("/api/tracker/") || parsed.searchParams.get("provider_instance") !== state.instance) return;
+    if (parsed.pathname.endsWith("/summary") && state.error) return void refresh();
+    if (parsed.pathname.endsWith("/summary") || parsed.pathname.endsWith("/stats")) void loadSummary().then(() => renderSlots()).catch(() => {});
+    else if (parsed.pathname.endsWith("/months")) void loadMonths();
+    else if (timelineOn() && parsed.pathname.endsWith("/items")) {
+      if (state.loading) timelineRefreshPending = true;
+      else void loadMain(false, true);
+    }
+    else if (!state.loading) void loadMain(false, true);
+  };
+  window.addEventListener("cw:view-updated", event => refreshCachedView(event.detail.url));
+  window.addEventListener("cw:view-status", event => {
+    if (!event.detail.url.startsWith("/api/tracker/") || !trackerVisible()) return;
+    window.CW.ViewCache.status(state.root, event.detail.data, "tracker", () => { window.CW.ViewCache.retry(event.detail.url); refreshCachedView(event.detail.url); }, new URL(event.detail.url, location.origin).pathname);
+  });
+  window.TrackerPage = { mount, resume: () => { if (profileScope !== currentProfileScope() || expireView()) return mount(state.root); void refreshHeroPlayback(); void loadMain(false, true); } };
 })();

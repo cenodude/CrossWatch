@@ -109,6 +109,11 @@ async function fixture(t, theme, {realMedia = false, playback = false, touch = t
 }
 
 async function choose(page, selector, value) {
+  if (selector === '#trk-instance') {
+    await page.locator('.trk-source > summary').click();
+    await page.locator(`[data-trk-instance="${value}"]`).click();
+    return;
+  }
   if (selector === '#trk-mobile-view') {
     if (['month-review','wrapped','cleanup'].includes(value)) {
       await page.locator('.trk-others summary').click();
@@ -205,8 +210,8 @@ for (const invalidation of ['account','profile','permissions','instance','expire
 for (const width of [390,1440]) test(`Tracker shared navigation order and icons at ${width}px`, async t => {
   const {page} = await fixture(t, 'flat-dark', {width});
   const tabs = page.locator('.trk-tabs [data-trk-view]');
-  assert.deepEqual(await tabs.evaluateAll(nodes => nodes.map(node => node.dataset.trkView)), ['overview','watchlist','history','ratings','progress','collection','shows','titles']);
-  assert.deepEqual(await tabs.locator('.material-symbol').allTextContents(), ['space_dashboard','bookmark','history','star','play_circle','video_library','tv','bookmarks']);
+  assert.deepEqual(await tabs.evaluateAll(nodes => nodes.map(node => node.dataset.trkView)), ['overview','watchlist','history','ratings','progress','collection','titles']);
+  assert.deepEqual(await tabs.locator('.material-symbol').allTextContents(), ['space_dashboard','bookmark','history','star','play_circle','video_library','bookmarks']);
   if (width > 760) {
     const style = await tabs.first().locator('.material-symbol').evaluate(el => ({size:getComputedStyle(el).fontSize,axes:getComputedStyle(el).fontVariationSettings}));
     assert.equal(style.size, '19px');
@@ -378,24 +383,59 @@ for (const width of [390,1440]) test(`Tracker navigation expires the selected vi
   assert.equal(await page.locator('.trk-tabs [aria-selected="true"]').getAttribute('data-trk-view'),'overview');
 });
 
-test("Overview navigation and tracker selector have matching panel heights",async t => {
+test("Tracker navigation and badge selector share one flat row in every theme",async t => {
+  await mkdir('.tmp/tracker-navigation', {recursive:true});
   for (const theme of ['original','flat-dark','flat-light']) {
-    const {page}=await fixture(t,theme,{touch:false});
+    const {page,empty}=await fixture(t,theme,{touch:false});
     const panels=await page.evaluate(()=>{
       const box=selector=>{const r=document.querySelector(selector).getBoundingClientRect();return {top:r.top,height:r.height};};
-      return {nav:box('[data-trk-slot="controls"]'),tracker:box('[data-trk-slot="source"]')};
+      return {nav:box('.trk-navigation'),tracker:box('[data-trk-slot="source"]')};
     });
     assert.ok(Math.abs(panels.nav.top-panels.tracker.top)<1,`${theme}: ${JSON.stringify(panels)}`);
-    assert.ok(Math.abs(panels.nav.height-panels.tracker.height)<1,`${theme}: ${JSON.stringify(panels)}`);
+    assert.ok(Math.abs(panels.nav.height-panels.tracker.height)<=1,`${theme}: ${JSON.stringify(panels)}`);
     const tabs=await page.evaluate(()=>{
       const center=selector=>{const r=document.querySelector(selector).getBoundingClientRect();return r.top+r.height/2;};
       return {tab:center('.trk-tabs .trk-tab span:last-child'),others:center('.trk-others>summary span:nth-child(2)')};
     });
     assert.ok(Math.abs(tabs.tab-tabs.others)<1,`${theme}: ${JSON.stringify(tabs)}`);
+    const style = await page.evaluate(() => {
+      const properties = ['backgroundColor','backgroundImage','borderRadius','color','fontSize','fontWeight'];
+      const read = selector => Object.fromEntries(properties.map(key => [key,getComputedStyle(document.querySelector(selector))[key]]));
+      return {more:read('.trk-others > summary'),source:read('.trk-source > summary')};
+    });
+    assert.deepEqual(style.source,style.more);
+    assert.equal(style.source.backgroundColor,'rgba(0, 0, 0, 0)');
+    assert.equal(await page.locator('.trk-source > summary .trk-source-badge').textContent(),'badge');
+    await page.screenshot({path:`.tmp/tracker-navigation/${theme}-desktop.png`});
+    const source = page.locator('.trk-source > summary');
+    await source.focus();
+    await page.keyboard.press('ArrowDown');
+    await page.keyboard.press('End');
+    assert.equal(await page.locator('[data-trk-instance="other"]').evaluate(el=>el===document.activeElement),true);
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(()=>document.querySelector('#trk-instance')?.value==='other');
+    await page.locator('.trk-source > summary[aria-label="Tracker: Second tracker"]').waitFor();
+    await source.click();
+    await page.screenshot({path:`.tmp/tracker-navigation/${theme}-menu.png`});
+    await page.keyboard.press('Escape');
+    assert.equal(await source.evaluate(el=>el===document.activeElement),true);
+    await source.click();
+    await page.locator('[data-trk-instance="default"]').evaluate(el=>el.disabled=true);
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.locator('[data-trk-instance="other"]').evaluate(el=>el===document.activeElement),true);
+    await page.screenshot({path:`.tmp/tracker-navigation/${theme}-disabled.png`});
+    await page.keyboard.press('Escape');
+    empty(true);
+    await page.locator('[data-trk-action="refresh"]').click();
+    await page.getByText('Your recent watches will appear here once you log or sync them.',{exact:true}).waitFor();
+    await page.screenshot({path:`.tmp/tracker-navigation/${theme}-empty.png`});
     await page.setViewportSize({width:390,height:844});
-    await page.locator('.trk-others summary').click();
-    assert.ok(await page.locator('.trk-others-menu #trk-instance + .cw-icon-select').isVisible());
+    assert.ok(await page.locator('.trk-source > summary').isVisible());
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+    await source.click();
+    await page.screenshot({path:`.tmp/tracker-navigation/${theme}-mobile-menu.png`});
+    const menu = await page.locator('.trk-source-options').boundingBox();
+    assert.ok(menu.x>=0 && menu.x+menu.width<=390);
   }
 });
 
@@ -546,7 +586,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   for (const [width,height] of sizes) {
     await page.setViewportSize({width,height});
     await page.waitForTimeout(90);
-    assert.equal(await page.locator('[data-trk-slot="source"] .cw-icon-select-btn').isVisible(),width > 760,`${theme} ${width}x${height}: Tracker selector`);
+    assert.equal(await page.locator('.trk-source > summary').isVisible(),true,`${theme} ${width}x${height}: Tracker selector`);
     const layout = await page.evaluate(() => ({width:innerWidth,scroll:document.documentElement.scrollWidth,nested:[...document.querySelectorAll("#page-tracker *")].filter(el=>el.checkVisibility()&&/auto|scroll/.test(getComputedStyle(el).overflowY)&&el.scrollHeight>el.clientHeight+1).map(el=>el.className)}));
     assert.ok(layout.scroll<=width+1,`${theme} ${width}x${height}: ${JSON.stringify(layout)}`);
     assert.deepEqual(layout.nested,[],`${theme} ${width}x${height}`);
@@ -860,12 +900,12 @@ test("cached overview skips show rebuilding and shares the compact History cards
   await page.keyboard.press('Escape');
   assert.equal(requests.filter(path => path === "/api/tracker/overview/shows").length,streamCount);
   const positions = await page.evaluate(() => {
-    const controls = document.querySelector('[data-trk-slot="controls"]').getBoundingClientRect();
+    const controls = document.querySelector('.trk-navigation').getBoundingClientRect();
     const source = document.querySelector('[data-trk-slot="source"]').getBoundingClientRect();
     const main = document.querySelector('.cw-main').getBoundingClientRect();
-    return {aligned:Math.abs(controls.top-source.top)<2,separate:source.left>=controls.right,fullWidth:main.width>controls.width};
+    return {aligned:Math.abs(controls.top-source.top)<2,contained:source.left>=controls.left && source.right<=controls.right,fullWidth:Math.abs(main.width-controls.width)<2};
   });
-  assert.deepEqual(positions,{aligned:true,separate:true,fullWidth:true});
+  assert.deepEqual(positions,{aligned:true,contained:true,fullWidth:true});
   if (process.env.CW_OVERVIEW_SCREENSHOTS) {
     await mkdir(process.env.CW_OVERVIEW_SCREENSHOTS,{recursive:true});
     await page.evaluate(() => window.scrollTo(0,0));
@@ -915,10 +955,10 @@ test("Tracker navigation moves whole tabs into More and keeps the selected view 
   const tabs = page.locator('.trk-tabs');
   const more = page.locator('.trk-others summary');
   await page.locator('.trk-tabs [data-trk-view="history"]').click();
-  await page.waitForFunction(() => document.querySelectorAll('.trk-tabs [role="tab"]:not([hidden])').length === 8);
-  await page.evaluate(() => document.querySelector('[data-trk-slot="controls"]').style.maxWidth = '600px');
+  await page.waitForFunction(() => document.querySelectorAll('.trk-tabs [role="tab"]:not([hidden])').length === 7);
+  await page.setViewportSize({width:900,height:900});
   await page.waitForFunction(() => document.querySelector('.trk-tabs [data-trk-view="collection"]').hidden);
-  assert.deepEqual(await tabs.locator('[role="tab"]:visible').evaluateAll(items => items.slice(0,3).map(el => el.dataset.trkView)),['overview','history','shows']);
+  assert.deepEqual(await tabs.locator('[role="tab"]:visible').evaluateAll(items => items.slice(0,3).map(el => el.dataset.trkView)),['overview','watchlist','history']);
   assert.equal(await tabs.locator('[aria-selected="false"] .trk-tab-count').count(),0);
   const fits = () => tabs.evaluate(list => [...list.querySelectorAll('[role="tab"]:not([hidden])')].every(tab => tab.getBoundingClientRect().right <= list.getBoundingClientRect().right + 1));
   assert.equal(await fits(),true);
@@ -939,8 +979,8 @@ test("Tracker navigation moves whole tabs into More and keeps the selected view 
   assert.equal(await page.locator('.trk-others [data-trk-view="cleanup"]').evaluate(el => el === document.activeElement),true);
   await page.keyboard.press('Escape');
   assert.equal(await more.evaluate(el => el === document.activeElement),true);
-  await page.evaluate(() => document.querySelector('[data-trk-slot="controls"]').style.maxWidth = '');
-  await page.waitForFunction(() => document.querySelectorAll('.trk-tabs [role="tab"]:not([hidden])').length === 8);
+  await page.setViewportSize({width:1920,height:900});
+  await page.waitForFunction(() => document.querySelectorAll('.trk-tabs [role="tab"]:not([hidden])').length === 7);
   assert.equal(await page.locator('.trk-overflow').isHidden(),true);
 });
 
@@ -1470,12 +1510,12 @@ test('Mobile Tracker uses a sticky view bar, compact shelves and two-column card
   await page.screenshot({path:'.tmp/mobile-implementation/tracker-overview.png'});
 });
 
-test('Mobile Tracker keeps instance selection in More and restores the desktop selector', async t => {
+test('Tracker keeps its badge dropdown in the navigation across view and viewport changes', async t => {
   const {page,scopedReads} = await fixture(t,'flat-dark',{width:390});
   assert.equal(await page.locator('#trk-instance').count(),1);
   assert.equal(await page.locator('[data-trk-slot="filters"]').isVisible(),false);
   await page.locator('.trk-others summary').click();
-  assert.equal(await page.locator('.trk-others-menu #trk-instance + .cw-icon-select').isVisible(),true);
+  assert.equal(await page.locator('.trk-source > summary').isVisible(),true);
   await choose(page,'#trk-instance','other');
   await page.waitForFunction(()=>document.querySelector('#trk-instance')?.value === 'other');
   await page.waitForFunction(()=>document.querySelector('.trk-overview'));
@@ -1483,13 +1523,13 @@ test('Mobile Tracker keeps instance selection in More and restores the desktop s
   await page.locator('.trk-tabs [data-trk-view="history"]').click();
   assert.equal(await page.locator('#trk-instance').count(),1);
   await page.locator('.trk-others summary').click();
-  assert.equal(await page.locator('.trk-others-menu #trk-instance').inputValue(),'other');
+  assert.equal(await page.locator('.trk-navigation > [data-trk-slot="source"] #trk-instance').inputValue(),'other');
   await page.setViewportSize({width:1440,height:900});
-  await page.locator('.cw-side #trk-instance + .cw-icon-select').waitFor({state:'visible'});
+  await page.locator('.trk-source > summary').waitFor({state:'visible'});
   assert.equal(await page.locator('#trk-instance').count(),1);
   assert.equal(await page.locator('#trk-instance').inputValue(),'other');
   await page.setViewportSize({width:390,height:844});
-  await page.waitForFunction(()=>document.querySelector('.trk-others-menu #trk-instance'));
+  await page.waitForFunction(()=>document.querySelector('.trk-navigation > [data-trk-slot="source"] #trk-instance'));
   assert.equal(await page.locator('#trk-instance').count(),1);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth > innerWidth),false);
 });

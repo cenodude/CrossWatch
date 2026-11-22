@@ -479,10 +479,9 @@ def _replace_feature(
 
 
 def _fingerprint(conn: sqlite3.Connection) -> tuple[Any, ...]:
-    a = conn.execute("SELECT COUNT(*), COALESCE(MAX(updated_at),0) FROM provider_feature_state").fetchone()
-    b = conn.execute("SELECT COUNT(*), COALESCE(MAX(updated_at),0) FROM baseline_items").fetchone()
+    rows = conn.execute("SELECT id,updated_at FROM provider_feature_state ORDER BY id").fetchall()
     c = conn.execute("SELECT value_int,value_text,updated_at FROM state_meta WHERE key='last_sync_epoch'").fetchone()
-    return (a[0], a[1], b[0], b[1], tuple(c) if c else None)
+    return (tuple(tuple(row) for row in rows), tuple(c) if c else None)
 
 
 def fingerprint(base_path: str | Path, features: set[str] | list[str] | tuple[str, ...] | None = None) -> tuple[Any, ...] | None:
@@ -490,23 +489,18 @@ def fingerprint(base_path: str | Path, features: set[str] | list[str] | tuple[st
     with _LOCK:
         conn = get_conn(base_path)
         if conn is None:
+            from services.view_cache import STRICT_READ
+            if STRICT_READ.get():
+                raise RuntimeError("State database is unavailable")
             return None
         if not wanted:
             return _fingerprint(conn)
         placeholders = ",".join("?" for _ in wanted)
-        a = conn.execute(
-            f"SELECT COUNT(*), COALESCE(MAX(updated_at),0) FROM provider_feature_state WHERE feature IN ({placeholders})",
+        rows = conn.execute(
+            f"SELECT id,updated_at FROM provider_feature_state WHERE feature IN ({placeholders}) ORDER BY id",
             wanted,
-        ).fetchone()
-        b = conn.execute(
-            "SELECT COUNT(*), COALESCE(MAX(b.updated_at),0) "
-            "FROM baseline_items b "
-            "JOIN provider_feature_state p ON p.id=b.provider_state_id "
-            f"WHERE p.feature IN ({placeholders})",
-            wanted,
-        ).fetchone()
-        c = conn.execute("SELECT value_int,value_text,updated_at FROM state_meta WHERE key='last_sync_epoch'").fetchone()
-        return (tuple(wanted), a[0], a[1], b[0], b[1], tuple(c) if c else None)
+        ).fetchall()
+        return (str(Path(base_path).resolve()), tuple(wanted), tuple(tuple(row) for row in rows))
 
 
 def _invalidate() -> None:
@@ -555,12 +549,12 @@ def _build_state_from_feature_rows(
             items = conn.execute(
                 f"SELECT * FROM {table} WHERE provider_state_id=? ORDER BY {order_column} DESC LIMIT ?",
                 (int(pfs["id"]), int(recent_limit)),
-            ).fetchall()
+            )
         else:
             items = conn.execute(
                 f"SELECT * FROM {table} WHERE provider_state_id=? ORDER BY item_key",
                 (int(pfs["id"]),),
-            ).fetchall()
+            )
         for row in items:
             item = _row_to_item(row)
             feat_node["baseline"]["items"][str(row["item_key"])] = item
@@ -615,6 +609,9 @@ def load_state_features(
     with _LOCK:
         conn = get_conn(base_path)
         if conn is None:
+            from services.view_cache import STRICT_READ
+            if STRICT_READ.get():
+                raise RuntimeError("State database is unavailable")
             return {"providers": {}, "wall": [], "last_sync_epoch": None}
         placeholders = ",".join("?" for _ in wanted)
         rows = _without_sync_users(conn.execute(
@@ -779,11 +776,16 @@ def remove_baseline_items(base_path: str | Path, provider: str, instance: str, f
         if conn is None:
             raise RuntimeError("State database is unavailable")
         with conn:
-            conn.executemany(
+            removed = conn.executemany(
                 "DELETE FROM baseline_items WHERE item_key=? AND provider_state_id IN "
                 "(SELECT id FROM provider_feature_state WHERE provider=? AND instance=? AND feature=?)",
                 [(key, provider, instance, feature) for key in set(keys)],
             )
+            if removed.rowcount:
+                conn.execute(
+                    "UPDATE provider_feature_state SET updated_at=? WHERE provider=? AND instance=? AND feature=?",
+                    (_now(), provider, instance, feature),
+                )
         _invalidate()
 
 
