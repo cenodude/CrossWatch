@@ -7,8 +7,7 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import {chromium} from "playwright";
 
-const endpoints = ["/api/version", "/api/health/database", "/api/maintenance/jobs/current",
-  "/api/tracker/check/current", "/api/import/plex-recovery/active", "/api/interactive-sync"];
+const endpoints = ["/api/profile/notifications"];
 const read = path => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 const crosswatch = await read("assets/crosswatch.js");
 const bootstrap = crosswatch.slice(crosswatch.indexOf("async function _cwFetchBootstrapAuthState()"), crosswatch.indexOf("  // Bootstrap"));
@@ -26,7 +25,7 @@ async function fixture(t, {standalone = false, bootstrapDelay = 50, authDelay = 
   const user = {id: "alice", is_admin: !managed, profile_id: managed ? "home" : "",
     display_name: "Alice", permissions: {write: true}, preferences: {theme: "dark"}};
   let hold = true;
-  const expected = endpoints.filter(path => !managed || path !== "/api/maintenance/jobs/current");
+  const expected = endpoints;
   page.on("pageerror", error => errors.push(error.message));
   page.on("requestfailed", request => { if (endpoints.includes(new URL(request.url()).pathname)) failed.push(request.url()); });
   await page.addInitScript(paths => {
@@ -54,7 +53,7 @@ async function fixture(t, {standalone = false, bootstrapDelay = 50, authDelay = 
     if (path.startsWith("/api/")) {
       requests.push(path);
       if (endpoints.includes(path)) {
-        const reply = () => route.fulfill({json: {ok: true, sessions: [], job: null}});
+        const reply = () => route.fulfill({json: {ok: true, items: [], errors: [], poll: 10, state: null}});
         if (hold) { pending.push(reply); return; }
         return reply();
       }
@@ -67,10 +66,8 @@ async function fixture(t, {standalone = false, bootstrapDelay = 50, authDelay = 
       return route.fulfill({json: {ok: true}});
     }
     const scripts = ["/assets/helpers/auth-state.js", "/assets/helpers/notifications.js",
-      "/assets/helpers/update-notifications.js", "/assets/helpers/database-notifications.js",
       "/assets/helpers/api.js", ...(!standalone ? ["/bootstrap.js"] : []),
-      "/assets/js/overview-profile.js", "/assets/js/sync-reviews.js",
-      "/assets/js/plex-recovery-notifications.js", "/assets/js/tracker-notifications.js",
+      "/assets/js/overview-profile.js", "/assets/js/sync-reviews.js", "/assets/js/notification-feed.js",
       ...(!standalone ? ["/main-auth.js"] : [])];
     return route.fulfill({contentType: "text/html", body: `<!doctype html><html data-cw-role="${managed ? "user" : "admin"}" data-cw-perm-tracker="on" data-tab="main"><head>
       ${scripts.map(src => `<script src="${src}" defer></script>`).join("")}
@@ -95,7 +92,7 @@ for (const options of [
   {standalone: true},
   {managed: true},
 ]) {
-  test(`startup and overlapping refreshes keep one request per notification: ${JSON.stringify(options)}`, async t => {
+  test(`startup and overlapping refreshes keep one notification request: ${JSON.stringify(options)}`, async t => {
     const app = await fixture(t, options);
     await app.page.evaluate(() => {
       for (let i = 0; i < 3; i++) {
@@ -113,7 +110,7 @@ for (const options of [
     assert.deepEqual(app.failed, []);
     assert.deepEqual(app.errors, []);
     await app.page.evaluate(() => window.dispatchEvent(new CustomEvent("cw:notifications-refresh")));
-    await app.page.waitForFunction(expected => expected.every(path => window.notificationRequests.filter(request => request.path === path && request.done).length === 2), app.expected.filter(path => path !== "/api/version"));
+    await app.page.waitForFunction(expected => expected.every(path => window.notificationRequests.filter(request => request.path === path && request.done).length === 2), app.expected);
     assert.deepEqual(app.errors, []);
   });
 }
@@ -136,14 +133,10 @@ test("real account changes cancel old requests and start new ones", async t => {
   assert.deepEqual(app.errors, []);
 });
 
-test("job changes replace pending job status requests", async t => {
+for (const type of ["cw:maintenance-job-changed", "cw:tracker-check-changed", "cw:plex-recovery-changed"]) test(`${type} replaces the pending notification request`, async t => {
   const app = await fixture(t);
-  await app.page.evaluate(() => {
-    for (const type of ["cw:maintenance-job-changed", "cw:tracker-check-changed", "cw:plex-recovery-changed"]) {
-      window.dispatchEvent(new CustomEvent(type));
-    }
-  });
-  const changed = ["/api/maintenance/jobs/current", "/api/tracker/check/current", "/api/import/plex-recovery/active"];
+  await app.page.evaluate(name => window.dispatchEvent(new CustomEvent(name)), type);
+  const changed = ["/api/profile/notifications"];
   await app.page.waitForFunction(paths => paths.every(path => window.notificationRequests.filter(request => request.path === path).length === 2), changed);
   const entries = await app.page.evaluate(() => window.notificationRequests);
   assert.deepEqual(entries.filter(entry => entry.aborted).map(entry => entry.path).sort(), changed.sort());
@@ -154,7 +147,7 @@ test("job changes replace pending job status requests", async t => {
 test("profile switching replaces scoped notification requests", async t => {
   const app = await fixture(t);
   await app.page.evaluate(() => window.CW.OverviewProfile.setActive("home"));
-  const changed = ["/api/import/plex-recovery/active", "/api/interactive-sync"];
+  const changed = ["/api/profile/notifications"];
   await app.page.waitForFunction(paths => paths.every(path => window.notificationRequests.filter(request => request.path === path).length === 2), changed);
   const entries = await app.page.evaluate(() => window.notificationRequests);
   assert.deepEqual(entries.filter(entry => entry.aborted).map(entry => entry.path).sort(), changed.sort());
@@ -164,7 +157,7 @@ test("profile switching replaces scoped notification requests", async t => {
 
 test("hidden tabs cancel polling and resume when visible", async t => {
   const app = await fixture(t);
-  const polled = app.expected.filter(path => path !== "/api/version");
+  const polled = app.expected;
   await app.page.evaluate(() => {
     Object.defineProperty(document, "hidden", {configurable: true, value: true});
     document.dispatchEvent(new Event("visibilitychange"));

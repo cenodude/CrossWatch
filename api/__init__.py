@@ -40,6 +40,7 @@ from .assistantAPI import router as assistant_router
 from .providerInstancesAPI import router as provider_instances_router
 from .playbackProgressAPI import router as playback_progress_router
 from .profileAPI import router as profile_router
+from .notificationsAPI import router as notifications_router
 from .syncAPI import (
     router as sync_router,
     _is_sync_running,
@@ -81,6 +82,7 @@ __all__ = [
     "provider_instances_router",
     "playback_progress_router",
     "profile_router",
+    "notifications_router",
     "register_probes",
     "register_insights",
     "register_wall",
@@ -134,6 +136,7 @@ def register(
     app.include_router(provider_instances_router)
     app.include_router(playback_progress_router)
     app.include_router(profile_router)
+    app.include_router(notifications_router)
 
     register_probes(app, load_config)
     register_insights(app)

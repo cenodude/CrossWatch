@@ -133,21 +133,21 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js", "details-log.js",
+    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js", "month-bar.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
 _APP_SCRIPTS = (
-    "syncbar.js", "run-summary-stream.js", "overview-profile.js", "settings-scope.js", "sync-reviews.js", "plex-recovery-notifications.js", "tracker-notifications.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js", "scheduler-profiles.js",
+    "syncbar.js", "run-summary-stream.js", "overview-profile.js", "settings-scope.js", "sync-reviews.js", "notification-feed.js", "main.js", "connections.overlay.js", "connections.pairs.overlay.js", "scheduler.js", "scheduler-profiles.js",
     "schedulerbanner.js", "playingcard.js", "insights.js", "activity.js", "item-actions.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
     "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js", "assistant-settings.js",
 )
 _USER_HELPER_SCRIPTS = (
-    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "update-notifications.js", "database-notifications.js", "api.js", "core.js",
+    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "core.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js",
 )
 _USER_APP_SCRIPTS = (
-    "overview-profile.js", "sync-reviews.js", "plex-recovery-notifications.js", "main.js", "playingcard.js", "insights.js", "activity.js", "item-actions.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
+    "overview-profile.js", "sync-reviews.js", "notification-feed.js", "main.js", "playingcard.js", "insights.js", "activity.js", "item-actions.js", "profile-media-modal.js", "dashboard-widgets.js", "auth-dots.js", "main-status.js",
 )
 _FULL_USER_HELPER_SCRIPTS = tuple(dict.fromkeys((*_USER_HELPER_SCRIPTS, "details-log.js")))
 _FULL_USER_APP_SCRIPTS = tuple(dict.fromkeys(("syncbar.js", "run-summary-stream.js", "schedulerbanner.js", *_USER_APP_SCRIPTS)))
@@ -737,7 +737,6 @@ def _asset_block(include_admin: bool = True, user: dict | None = None) -> str:
         )
     if full_user and _managed_tracker_allowed(user):
         helper_scripts = (*helper_scripts, "month-bar.js")
-        app_scripts = (*app_scripts, "tracker-notifications.js")
     helper_tags = "\n".join(f'<script src="/assets/helpers/{name}?v=__CW_VERSION__" defer></script>' for name in helper_scripts)
     app_tags = "\n".join(f'<script src="/assets/js/{name}?v=__CW_VERSION__" defer></script>' for name in app_scripts)
     admin_only_tags = (
@@ -2547,8 +2546,6 @@ def get_profile_html(user: dict | None = None) -> str:
     shared_header_scripts = ""
     if is_admin:
         shared_header_scripts += '<script src="/assets/js/assistant-settings.js?v=__CW_VERSION__" defer></script>'
-    if is_admin or _managed_tracker_allowed(user):
-        shared_header_scripts += '<script src="/assets/js/tracker-notifications.js?v=__CW_VERSION__" defer></script>'
     perms = {"dashboard": True, "watchlist": True, "playback": True, "write": True} if is_admin else _managed_user_permissions(user)
     esc = lambda value: html_lib.escape(str(value or ""), quote=True)
     role = "admin" if is_admin else "user"
@@ -3166,13 +3163,11 @@ def get_profile_html(user: dict | None = None) -> str:
 <script src="/assets/helpers/pwa-install.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/account-menu.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/notifications.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/helpers/update-notifications.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/helpers/database-notifications.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/overview-profile.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/sync-reviews.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/plex-recovery-notifications.js?v=__CW_VERSION__" defer></script>
 {shared_header_scripts}
 <script src="/assets/helpers/api.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/notification-feed.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/media-meta.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/trailer.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/playing-card.js?v=__CW_VERSION__" defer></script>

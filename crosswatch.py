@@ -1170,9 +1170,24 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
     from services import backup_manager
     backup_manager.start()
     try:
+        from services.notification_push import start as _start_notification_push
+
+        _start_notification_push(load_config)
+    except Exception as e:
+        try:
+            _UIHostLogger("SYNC")(f"notification push startup error: {e}", level="ERROR")
+        except Exception:
+            pass
+    try:
         yield
     finally:
         backup_manager.stop()
+        try:
+            from services.notification_push import stop as _stop_notification_push
+
+            _stop_notification_push()
+        except Exception:
+            pass
         try:
             from services.tracker_storage_maintenance import stop as _stop_tracker_storage
             from services.tracker_month import stop as _stop_tracker_month

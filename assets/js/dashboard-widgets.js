@@ -701,8 +701,10 @@
         <div class="cw-mobile-widget-options">
           <h3>Visibility</h3>
           <label><input type="checkbox" data-mobile-playing-card><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">play_circle</span><span>Playing card</span><small>Show on this device's mobile layout</small></label>
-          <h3>Touch feedback</h3>
+          <h3>Notifications</h3>
           <label><input type="checkbox" data-mobile-notification-alerts><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">notifications_active</span><span>Notification alerts</span><small>Banner and vibration when supported, while open</small></label>
+          <label><input type="checkbox" data-mobile-push><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">smartphone</span><span>Push notifications</span><small>Get new notifications on this device even when CrossWatch is closed</small></label>
+          <h3>Touch feedback</h3>
           <label><input type="checkbox" data-mobile-haptics><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">vibration</span><span>Haptic feedback</span><small>Short vibration on menu taps</small></label>
           <h3>Dashboard widgets</h3><p>${ON_PROFILE_PAGE ? "Choose what appears on this device's mobile dashboard. Desktop settings stay separate." : "Media widgets are available in My Media Hub. Main focuses on sync activity."}</p>
           <label><input type="checkbox" data-mobile-sync-results><span class="material-symbols-rounded cw-mobile-widget-icon" aria-hidden="true">sync_alt</span><span>Sync results</span><small>Watchlist, ratings, history and other sync-result cards</small></label>
@@ -738,6 +740,26 @@
         try { localStorage.setItem('cw.mobile.notificationAlerts', notificationAlerts.checked ? '1' : '0'); } catch {}
         window.dispatchEvent(new CustomEvent('cw:mobile-notification-alerts-changed'));
       });
+      const push = picker.querySelector('[data-mobile-push]');
+      const pushNote = push.parentElement.querySelector('small');
+      const showPush = status => {
+        push.disabled = !status.available;
+        push.checked = !!status.on;
+        pushNote.textContent = status.note;
+      };
+      const refreshPush = async () => {
+        const api = window.CW?.Notifications?.push;
+        push.parentElement.hidden = !api;
+        if (api) showPush(await api.status());
+      };
+      push.addEventListener('change', async () => {
+        const api = window.CW?.Notifications?.push;
+        if (!api) return;
+        push.disabled = true;
+        showPush(await api.set(push.checked));
+      });
+      window.addEventListener('cw:notification-push-changed', () => { if (picker.open) void refreshPush(); });
+      picker.addEventListener('toggle', () => { if (picker.open) void refreshPush(); });
       const haptics = picker.querySelector('[data-mobile-haptics]');
       const supportsHaptics = typeof navigator.vibrate === 'function';
       haptics.disabled = !supportsHaptics;

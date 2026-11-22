@@ -25,6 +25,7 @@ from cw_platform.config_base import CONFIG as CONFIG_DIR, load_config, save_conf
 from cw_platform.access_policy import clean_managed_permissions
 from cw_platform.profile_preferences import clean_user_preferences
 from cw_platform.event_archive.audit import record_audit
+from cw_platform.notification_store import forget_user as forget_notification_state
 from cw_platform.provider_instances import list_user_profiles, normalize_overview_scope, normalize_user_profile_id
 
 __all__ = [
@@ -2223,6 +2224,11 @@ def api_users_delete(request: Request, user_id: str) -> JSONResponse:
 
     cfg, result = _update_config(_mutate)
     deleted, username = result
+    if deleted:
+        try:
+            forget_notification_state(uid)
+        except Exception:
+            pass
     _audit(request, "user_deleted", actor=token_actor or current_user(cfg, request.cookies.get(COOKIE_NAME)), target_type="managed_user", target_id=uid, message=f"Managed user {username} was deleted", fields={"username": username})
     return JSONResponse({"ok": True, "deleted": deleted}, headers={"Cache-Control": "no-store"})
 

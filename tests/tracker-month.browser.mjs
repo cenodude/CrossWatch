@@ -17,6 +17,7 @@ async function fixture(t,theme,width=1440,height=1000,{motion=false}={}) {
   const page = await browser.newPage({viewport:{width,height},hasTouch:width<1400,reducedMotion:motion?"no-preference":"reduce"});
   page.setDefaultTimeout(8000);
   let requests=0, mode="ready", savedReport=report;
+  const reviews=[];
   const errors=[];
   page.on("pageerror",e=>errors.push(e.message));
   t.after(()=>assert.deepEqual(errors,[]));
@@ -33,6 +34,7 @@ async function fixture(t,theme,width=1440,height=1000,{motion=false}={}) {
       try{return route.fulfill({body:await readFile(new URL(".."+path,import.meta.url)),contentType:path.endsWith(".css")?"text/css":path.endsWith(".woff2")?"font/woff2":"text/javascript"});}
       catch{return route.fulfill({status:404,body:""});}
     }
+    if(path==="/api/profile/notifications/reviews") { reviews.push(JSON.parse(route.request().postData()||"{}")); return route.fulfill({json:{ok:true}}); }
     if(path==="/api/tracker/overview/month") {
       requests++;
       if(mode==="denied") return route.fulfill({status:403,json:{detail:"profile_scope_denied"}});
@@ -49,7 +51,7 @@ async function fixture(t,theme,width=1440,height=1000,{motion=false}={}) {
   await page.locator("#entry").click();
   await page.locator(".mr-poster h1").waitFor();
   await page.evaluate(()=>document.fonts.ready);
-  return {page,requests:()=>requests,setMode:value=>{mode=value;},setReport:value=>{savedReport=value;}};
+  return {page,requests:()=>requests,reviews:()=>reviews,setMode:value=>{mode=value;},setReport:value=>{savedReport=value;}};
 }
 
 async function noOverflow(page,label) {
@@ -255,71 +257,27 @@ test("Monthly themes switch artwork, persist choices and keep controls accessibl
   assert.equal(await page.locator('.mr-themed-art').isVisible(),false);
 });
 
-test("Monthly completion notifications follow abandoned requests and stay profile scoped",async t=>{
-  const {page,setMode,requests}=await fixture(t,"flat-dark");
-  await page.evaluate(()=>{
-    window.notices=[];
-    window.CW={Notifications:{setSource:(name,data)=>{window.notices=data.items;},removeSource:()=>{window.notices=[];}}};
-  });
+test("Monthly reviews left while preparing ask the server to notify the requesting profile",async t=>{
+  const {page,setMode,requests,reviews}=await fixture(t,"flat-dark");
+  await page.evaluate(()=>{(window.CW||={}).Notifications={scope:()=>"home"};});
   await page.locator('.mr-nav [data-mr="back"]').click();
-  await page.evaluate(()=>window.dispatchEvent(new Event('cw:notifications-refresh')));
-  assert.equal(requests(),1);
-  assert.deepEqual(await page.evaluate(()=>window.notices),[]);
+  assert.deepEqual(reviews().filter(row=>row.action==="wait"),[]);
   setMode("pending");
   await page.evaluate(()=>window.openReview({month:"2026-08"}));
   await page.waitForResponse(response=>response.url().includes('month=2026-08'));
   await page.locator('.mr-nav [data-mr="back"]').click();
+  await page.waitForFunction(()=>!document.querySelector('.mr-page'));
+  const before=requests();
+  await page.waitForTimeout(400);
+  assert.equal(requests(),before);
+  const [wait]=reviews().filter(row=>row.action==="wait");
+  assert.deepEqual({...wait,label:""},{kind:"month",action:"wait",instance:"default",period:"2026-08",label:"",profile:"home"});
+  assert.ok(wait.label);
   setMode("ready");
-  await page.evaluate(()=>window.dispatchEvent(new Event('auth-changed')));
-  await page.evaluate(()=>window.dispatchEvent(new Event('cw:notifications-refresh')));
-  await page.waitForFunction(()=>window.notices.length===1);
-  const [notice]=await page.evaluate(()=>window.notices);
-  const monthName=await page.evaluate(()=>new Date('2026-08-02T12:00:00').toLocaleDateString(undefined,{month:'long'}));
-  assert.equal(notice.title,`Your ${monthName} review is ready`);
-  assert.equal(notice.href,'#tracker?instance=default&month=2026-08');
-  await page.evaluate(()=>{
-    window.addEventListener('auth-changed',()=>{window.notices=[];},{once:true});
-    window.dispatchEvent(new Event('auth-changed'));
-  });
-  assert.deepEqual(await page.evaluate(()=>window.notices),[notice]);
   await page.evaluate(()=>window.openReview({month:"2026-08"}));
   await page.locator('.mr-poster').waitFor();
-  assert.deepEqual(await page.evaluate(()=>window.notices),[]);
-  setMode("pending");
-  await page.evaluate(()=>window.openReview({month:"2026-07"}));
-  await page.waitForResponse(response=>response.url().includes('month=2026-07'));
-  await page.locator('.mr-nav [data-mr="back"]').click();
-  const before=requests();
-  await page.evaluate(()=>{
-    window.CW.AuthState={read:()=>({user:{id:'other'},profileId:'other'})};
-    window.dispatchEvent(new Event('cw:auth-state-changed'));
-    window.dispatchEvent(new Event('cw:notifications-refresh'));
-  });
-  assert.equal(requests(),before);
-  assert.deepEqual(await page.evaluate(()=>window.notices),[]);
-});
-
-test("Monthly notification polling is bounded and resumes when the bell opens",async t=>{
-  const {page,setMode,requests}=await fixture(t,"flat-dark");
-  setMode("pending");
-  await page.evaluate(()=>{
-    window.notices=[];
-    window.CW={Notifications:{setSource:(name,data)=>{window.notices=data.items;},removeSource:()=>{window.notices=[];}}};
-    const schedule=window.setTimeout;
-    window.setTimeout=(fn,delay,...args)=>schedule(fn,delay===10000?1:delay,...args);
-    window.openReview({month:'2026-06'});
-  });
-  await page.waitForResponse(response=>response.url().includes('month=2026-06'));
-  await page.locator('.mr-nav [data-mr="back"]').click();
-  await page.waitForFunction(()=>!document.querySelector('.mr-page'));
-  await page.waitForTimeout(1500);
-  assert.equal(requests(),32);
-  setMode('ready');
   await page.waitForTimeout(100);
-  assert.deepEqual(await page.evaluate(()=>window.notices),[]);
-  await page.evaluate(()=>window.dispatchEvent(new Event('cw:notifications-refresh')));
-  await page.waitForFunction(()=>window.notices.length===1);
-  assert.equal(requests(),33);
+  assert.ok(reviews().some(row=>row.action==="viewed"&&row.kind==="month"&&row.period==="2026-08"));
 });
 
 test("Disabled reports clear cached content and stop polling",async t=>{

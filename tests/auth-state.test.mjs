@@ -10,8 +10,7 @@ import {readFileSync} from "node:fs";
 const source = path => readFileSync(new URL(`../assets/${path}`, import.meta.url), "utf8");
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const status = () => ({authenticated: true, user: {id: "alice", is_admin: true, preferences: {theme: "dark"}}});
-const notificationScripts = ["helpers/update-notifications.js", "helpers/database-notifications.js",
-  "helpers/maintenance-notifications.js", "js/tracker-notifications.js"];
+const notificationScripts = ["js/notification-feed.js"];
 
 function setup({readyState = "complete"} = {}) {
   const listeners = new Map(), documentListeners = new Map(), events = [], requests = [];
@@ -102,21 +101,19 @@ test("unchanged auth preserves pending notification requests while account chang
   app.auth.apply(status());
   app.loadNotifications();
   await flush();
-  assert.deepEqual(app.requests.map(request => request.url).sort(), [
-    "/api/health/database", "/api/maintenance/jobs/current", "/api/tracker/check/current", "/api/version",
-  ]);
+  assert.deepEqual(app.requests.map(request => request.url), ["/api/profile/notifications?profile=all&view_profile="]);
   const original = [...app.requests];
   app.auth.apply(status());
   await flush();
-  assert.equal(app.requests.length, 4);
+  assert.equal(app.requests.length, 1);
   assert.ok(original.every(request => !request.signal.aborted));
   const next = status();
   next.user.id = "bob";
   app.auth.apply(next);
   await flush();
   assert.ok(original.every(request => request.signal.aborted));
-  assert.equal(app.requests.length, 8);
-  assert.ok(app.requests.slice(4).every(request => !request.signal.aborted));
+  assert.equal(app.requests.length, 2);
+  assert.ok(app.requests.slice(1).every(request => !request.signal.aborted));
 });
 
 for (const readyState of ["loading", "interactive", "complete"]) {
@@ -135,11 +132,11 @@ for (const readyState of ["loading", "interactive", "complete"]) {
     resolveBootstrap({status: status()});
     await flush();
     assert.equal(app.events.length, 1);
-    assert.equal(app.requests.length, 4);
+    assert.equal(app.requests.length, 1);
     assert.ok(app.requests.every(request => request.signal && !request.signal.aborted));
     app.auth.apply(status());
     await flush();
-    assert.equal(app.requests.length, 4);
+    assert.equal(app.requests.length, 1);
     assert.ok(app.requests.every(request => !request.signal.aborted));
   });
 }
@@ -149,7 +146,7 @@ test("standalone pages share one initial auth request before checking notificati
   app.loadNotifications();
   await flush();
   assert.equal(app.requests.filter(request => request.url === "/api/app-auth/status").length, 1);
-  assert.equal(app.requests.length, 5);
+  assert.equal(app.requests.length, 2);
   assert.ok(app.requests.slice(1).every(request => !request.signal.aborted));
 });
 
@@ -165,7 +162,7 @@ test("bootstrap readiness preserves auth already applied by another startup comp
   await flush();
   assert.equal(app.auth.user.id, "bob");
   assert.equal(app.events.length, 1);
-  assert.equal(app.requests.length, 4);
+  assert.equal(app.requests.length, 1);
   assert.ok(app.requests.every(request => !request.signal.aborted));
 });
 
