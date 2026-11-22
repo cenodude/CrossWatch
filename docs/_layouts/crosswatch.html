@@ -1,20 +1,28 @@
+<!-- docs/_layouts/crosswatch.html -->
+<!-- CrossWatch - Public showcase layout -->
+<!-- Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) -->
 <!doctype html>
 <html lang="{{ site.lang | default: 'en-US' }}">
   <head>
     <meta charset="utf-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ page.title | default: site.title }}</title>
-    <meta name="description" content="{{ site.description }}">
+    <title>{{ page.seo_title | default: site.seo_title | escape }}</title>
+    <meta name="description" content="{{ site.description | escape }}">
     <link rel="icon" href="{{ '/favicon.ico' | relative_url }}" sizes="any">
     <link rel="apple-touch-icon" href="{{ '/apple-touch-icon.png' | relative_url }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&amp;family=Manrope:wght@400;500;600;650;700;750;800&amp;display=swap">
     <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
+    <link rel="stylesheet" href="{{ '/assets/css/features.css' | relative_url }}">
+    <link rel="stylesheet" href="{{ '/assets/css/showcase.css' | relative_url }}">
     {% include head-custom.html %}
+    <script src="{{ '/assets/js/site.js' | relative_url }}" defer></script>
+    <script src="{{ '/assets/js/showcase.js' | relative_url }}" defer></script>
   </head>
-  <body>
-    <main id="content" class="main-content" role="main">
-      {{ content }}
-    </main>
-    <script src="{{ '/assets/js/cw-lightbox.js' | relative_url }}" defer></script>
+  <body data-image-base="{{ '/images' | relative_url }}">
+    <a class="skip-link" href="#main">Skip to content</a>
+    {{ content }}
   </body>
 </html>

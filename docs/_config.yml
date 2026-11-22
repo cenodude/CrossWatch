@@ -1,8 +1,9 @@
 title: CrossWatch
-description: Keep media servers and trackers in sync with CrossWatch. Review changes with Interactive Sync, correct mappings and explore sync routes, events and logs.
+seo_title: CrossWatch | Self-hosted Media Sync, Tracker & Backup
+description: Sync Plex, Jellyfin, Trakt and more with CrossWatch. Track what you watch, connect your media providers, and protect your data with backup and recovery.
 url: https://www.crosswatch.app
 logo: /images/CrossWatch.png
-image: /images/screenshots/cw8.png
+image: /images/screenshots/sync-hub.png
 theme: jekyll-theme-cayman
 markdown: kramdown
 kramdown:
