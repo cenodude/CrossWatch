@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 import hashlib
 import json
 import logging
@@ -30,7 +30,7 @@ from cw_platform.history_events import history_epoch_from_value
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.tracker_history_identity import PLEX_ORIGINS, TYPE_ORIGINS, event_identities, plex_origins, type_origins
 from cw_platform.provider_instances import build_provider_config_view, list_instance_ids, normalize_instance_id, provider_instance_uid_for
-from . import importer
+from . import importer, plex_recovery_store
 
 router = APIRouter(prefix="/api/import/plex-recovery", tags=["import"])
 RATE_WAIT_BUDGET = 900
@@ -39,9 +39,11 @@ JOBS: dict[str, Job] = {}
 UPLOADS: dict[str, dict[str, Any]] = {}
 LOG = logging.getLogger(__name__)
 AUTO_MATCH_INTERVAL = 0.5
+AUTO_MATCH_STORAGE_ERROR = "Auto match paused. Recovery storage could not be written. Suggestions are kept in this session; check disk space and storage permissions before continuing."
 RECOVERY_TTL_SECONDS = 24 * 60 * 60
 UPLOAD_TTL_SECONDS = 60 * 60
 DATABASE_FOLDER = Path(tempfile.gettempdir()) / "crosswatch-plex-recovery"
+_LOADED_STORE: Path | None = None
 
 
 class Start(BaseModel):
@@ -126,6 +128,7 @@ class Job:
     raw: list[dict[str, Any]] = field(default_factory=list)
     rows: list[dict[str, Any]] = field(default_factory=list)
     receipt: list[str] = field(default_factory=list)
+    pending_receipt: list[str] = field(default_factory=list)
     activity: dict[str, Any] = field(default_factory=dict)
     recent: list[dict[str, str]] = field(default_factory=list)
     match_cache: dict[str, Any] = field(default_factory=dict)
@@ -142,6 +145,7 @@ class Job:
     db_path: str = ""
     db_account: int | None = None
     ignore_live_tv: bool = True
+    restored: bool = False
 
     def public(self):
         return dict(id=self.id, import_id=self.id, status=self.status, message=self.message, stage=self.stage,
@@ -225,9 +229,51 @@ def _search_language(choice, language):
     return language if choice["catalog"] == "tmdb" or choice["route"]["provider"] == "TMDB" else ""
 
 
+def _save_job(job, *, raw=False):
+    if job.cancel.is_set():
+        plex_recovery_store.delete(job.id)
+        return
+    excluded = {"cancel", "auto_stop", "auto_thread", "raw", "rows", "db_folder", "db_path", "restored"}
+    data = {entry.name: getattr(job, entry.name) for entry in fields(Job) if entry.name not in excluded}
+    plex_recovery_store.save(data, job.raw if raw else None)
+
+
+def _save_review(job, candidate):
+    candidate.revision = job.revision + 1
+    _save_job(candidate, raw=True)
+    job.raw, job.rows, job.suggestions = candidate.raw, candidate.rows, candidate.suggestions
+    job.revision = candidate.revision
+
+
+def _restore_jobs():
+    global _LOADED_STORE
+    target = plex_recovery_store.path()
+    if _LOADED_STORE == target:
+        return
+    try:
+        saved = plex_recovery_store.load()
+        for data in saved:
+            job = Job(**data)
+            if job.id in JOBS:
+                continue
+            if job.status == "reading":
+                job.status, job.stage = "error", "interrupted"
+                job.message = "The scan was interrupted by a restart. Close this recovery and start a new scan. Nothing was imported."
+            if job.auto.get("status") == "running":
+                job.auto.update(status="paused", message="Auto match was interrupted by a restart. Saved suggestions are kept; run Auto match again to continue.")
+            job.restored = True
+            JOBS[job.id] = job
+    except (OSError, sqlite3.Error, ValueError, TypeError) as error:
+        LOG.exception("plex_recovery_restore_failed")
+        raise HTTPException(503, "Saved recovery could not be read. Check the recovery storage before starting another scan.") from error
+    _LOADED_STORE = target
+
+
 def _prune():
+    _restore_jobs()
     for key, job in list(JOBS.items()):
         if job.status != "reading" and not _auto_running(job) and time.time() - job.touched > RECOVERY_TTL_SECONDS:
+            plex_recovery_store.delete(key)
             del JOBS[key]
     _prune_uploads()
 
@@ -259,11 +305,16 @@ def _prune_uploads():
             shutil.rmtree(folder, ignore_errors=True)
 
 
-def _job(sid, request, cfg):
+def _owned_job(sid, request):
     _prune()
     job = JOBS.get(sid)
     if job is None or job.owner != _owner(request):
         raise HTTPException(404, "Recovery expired or not found. Start another scan.")
+    return job
+
+
+def _job(sid, request, cfg):
+    job = _owned_job(sid, request)
     _access(cfg, request, "PLEX", job.source)
     if job.tautulli:
         _access(cfg, request, "TAUTULLI", job.tautulli)
@@ -271,23 +322,78 @@ def _job(sid, request, cfg):
         _access(cfg, request, "TRACEARR", job.tracearr)
     _access(cfg, request, "CROSSWATCH", job.target)
     job.touched = time.time()
+    plex_recovery_store.touch(job.id, job.touched)
     return job
 
 
-def _history_identities(item):
-    item = id_minimal(item)
-    typ = item.get("type")
-    field = "show_ids" if typ in ("episode", "season") else "ids"
-    identities = {(typ, canonical_key(item))}
-    for namespace, value in (item.get(field) or {}).items():
-        if namespace in {"tmdb", "imdb", "tvdb"}:
-            alias = {**item, "ids": {}, field: {namespace: value}}
-            identities.add((typ, canonical_key(alias)))
-    return {identity for identity in identities if identity[1] != "unknown:"}
+def _check_target(job, cfg):
+    if job.target_hash and job.target_hash != _target_hash(cfg, job.target):
+        raise HTTPException(409, "Tracker settings changed. Start a new recovery scan.")
+
+
+def _review_rows(job, cfg):
+    _check_target(job, cfg)
+    if job.source_hash != _job_source_hash(cfg, job):
+        raise HTTPException(409, "Connection settings changed. Start a new recovery scan.")
+    if job.restored and job.status == "review":
+        _shape(job, cfg)
+        job.restored = False
+
+
+def _history_snapshot(cfg, target):
+    history = importer._existing_keys(cfg, target)["history"]
+    if not isinstance(history, dict):
+        raise HTTPException(503, "The tracker could not be read. Try again before continuing recovery.")
+    return history
+
+
+def _reconcile_receipt(job, cfg):
+    _check_target(job, cfg)
+    if not job.pending_receipt:
+        return
+    existing = _history_snapshot(cfg, job.target)
+    receipt = list(dict.fromkeys([*job.receipt, *(key for key in job.pending_receipt if key in existing)]))
+    candidate = replace(job, receipt=receipt, pending_receipt=[])
+    _save_job(candidate)
+    job.receipt, job.pending_receipt = candidate.receipt, candidate.pending_receipt
+
+
+def _recovery_title_key(raw, index):
+    item = raw["item"]
+    if raw["recovery_valid"] and not raw.get("recovery_requires_review"):
+        identity = canonical_key(id_minimal(item))
+    else:
+        source = raw.get("original_group") or (item.get("ids") or {}).get("plex") or raw.get("original_title")
+        identity = json.dumps([item.get("type"), source, raw.get("original_year"), item.get("season"), item.get("episode")])
+    if item.get("type") == "episode" and (item.get("season") is None or item.get("episode") is None):
+        identity = f"unresolved:{index}"
+    return identity
+
+
+def _fold_recovery_events(rows, raw):
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        index = int(row["id"])
+        grouped.setdefault(_recovery_title_key(raw[index], index), []).append(row)
+    folded = []
+    for events in grouped.values():
+        latest = max(events, key=lambda row: value if (value := history_epoch_from_value(row["item"].get("watched_at"))) is not None else float("-inf"))
+        pending = [row for row in events if row["status"] in {"ready", "needs_review"}]
+        status = next((row for row in pending if row["status"] == "ready"), None)
+        status = status or next(iter(pending), None) or next((row for row in events if row["status"] == "missing_identity"), None) or next((row for row in events if row["status"] == "exists"), latest)
+        folded.append({**latest, **{key: status[key] for key in ("status", "reason", "importable", "default_included")},
+                       "recovery_row_ids": [index for row in events for index in row["recovery_row_ids"]],
+                       "recovery_events": pending,
+                       "watch_count": len(events), "pending_watch_count": len(pending),
+                       "existing_watch_count": sum(row["status"] == "exists" for row in events),
+                       "missing_date_count": sum(history_epoch_from_value(row["item"].get("watched_at")) is None for row in events),
+                       "watch_details": [{"watched_at": row["item"].get("watched_at"), "status": row["status"],
+                                          "reason": row["reason"]} for row in events]})
+    return folded
 
 
 def _shape(job, cfg):
-    saved = importer._existing_keys(cfg, job.target)["history"]
+    saved = _history_snapshot(cfg, job.target)
     remembered = plex_origins(saved)
     block = build_provider_config_view(cfg, "PLEX", job.source).get("plex") or {}
     source_scope = [provider_instance_uid_for(cfg, "PLEX", job.source) or job.source,
@@ -298,26 +404,23 @@ def _shape(job, cfg):
         if raw.get("recovery_source") and not job.tautulli and not job.tracearr:
             origin = hashlib.sha256(json.dumps([source_scope, raw["recovery_source"]]).encode()).hexdigest()
             item[PLEX_ORIGINS] = [origin]
-        if raw["recovery_valid"] and not raw.get("recovery_requires_review"):
-            identity = canonical_key(id_minimal(item))
-        else:
-            source = raw.get("original_group") or (item.get("ids") or {}).get("plex") or raw.get("original_title")
-            identity = json.dumps([item.get("type"), source, raw.get("original_year"), item.get("season"), item.get("episode")])
-        if item.get("type") == "episode" and (item.get("season") is None or item.get("episode") is None):
-            identity = f"unresolved:{index}"
+        identity = _recovery_title_key(raw, index)
+        timestamp = history_epoch_from_value(item.get("watched_at"))
+        identity = json.dumps([identity, timestamp if timestamp is not None else f"undated:{index}"])
         if not plex_origins({"item": item}).isdisjoint(remembered):
             identity = f"remembered:{identity}"
         grouped.setdefault(identity, []).append(index)
     selected = [(max(indices, key=lambda i: history_epoch_from_value(job.raw[i]["item"].get("watched_at")) or 0), indices)
                 for indices in grouped.values()]
-    rows = importer._shape_rows([job.raw[index] for index, _ in selected], cfg, job.target, "plex_recovery")
+    order = sorted(range(len(selected)), key=lambda position: bool(not job.raw[selected[position][0]]["recovery_valid"]
+                   or job.raw[selected[position][0]].get("recovery_requires_review")))
+    shaped = importer._shape_rows([job.raw[selected[position][0]] for position in order], cfg, job.target, "plex_recovery")
+    rows = [row for _, row in sorted(zip(order, shaped))]
     corrected = type_origins(saved)
     existing_events: dict[str, set[str]] = {}
     for key, item in saved.items():
         for identity in event_identities(item):
             existing_events.setdefault(identity, set()).add(key)
-    existing = {identity for item in saved.values()
-                for identity in _history_identities(item)}
     for row, (index, indices) in zip(rows, selected):
         raw = job.raw[index]
         origins = type_origins({str(i): job.raw[i]["item"] for i in indices})
@@ -333,7 +436,7 @@ def _shape(job, cfg):
             row.update(status="missing_identity", reason="missing_identity", importable=False, default_included=False)
         elif row["status"] == "ready" and raw.get("recovery_requires_review", False):
             row.update(status="needs_review", reason="title_guess", default_included=False)
-        present = not event_identities(raw["item"]).isdisjoint(existing_events) if sources else not _history_identities(raw["item"]).isdisjoint(existing)
+        present = not event_identities(raw["item"]).isdisjoint(existing_events)
         if (sources and sources <= remembered) or (raw["recovery_valid"] and
                 (present or (corrected and not event_identities(raw["item"]).isdisjoint(corrected)))):
             row.update(status="exists", reason="already_exists", importable=False, default_included=False)
@@ -348,12 +451,15 @@ def _shape(job, cfg):
                 types = type_origins({"saved": saved[key], **{str(i): job.raw[i]["item"] for i in indices}})
                 if types:
                     row["item"][TYPE_ORIGINS] = sorted(types)
-    job.rows = rows
+    job.rows = _fold_recovery_events(rows, job.raw)
 
 
 def _scan_error(job, error):
     from providers.sync.plex._common import PlexRateLimited
 
+    if str(error).startswith(("tautulli_history_", "tracearr_history_")):
+        source = "Tautulli" if job.tautulli else "Tracearr"
+        return f"Recovery could not finish. {source} did not return complete, readable history. Check the connection and retry the scan. Nothing was imported."
     if isinstance(error, PlexRateLimited):
         return "Recovery could not finish. Plex kept limiting the lookups. Wait a few minutes, then retry. Nothing was imported."
     if job.database:
@@ -472,6 +578,7 @@ def _scan(job, cfg):
                 job.status = "review"
                 job.message = "Review the recovered watch events. Nothing has been imported."
                 job.revision += 1
+                _save_job(job, raw=True)
     except InterruptedError:
         with LOCK:
             job.status, job.message = "cancelled", "Recovery cancelled. Nothing was imported."
@@ -492,6 +599,12 @@ def _scan(job, cfg):
             shutil.rmtree(job.db_folder, ignore_errors=True)
         with LOCK:
             job.touched = time.time()
+            try:
+                _save_job(job, raw=job.status != "review")
+            except (OSError, sqlite3.Error):
+                LOG.exception("plex_recovery_save_failed")
+                job.status = "error"
+                job.message = "The recovery could not be saved. Check available disk space and storage permissions before retrying."
         rt = syncAPI._rt()
         with rt[2]:
             if rt[1].get("SYNC") is threading.current_thread():
@@ -597,6 +710,8 @@ def start(payload: Start, request: Request):
         _access(cfg, request, "TAUTULLI", tautulli)
         if not _tautulli_ready(_tautulli_block(cfg, tautulli)):
             raise HTTPException(409, "Connect Tautulli before recovering its history.")
+        if not str((_tautulli_block(cfg, tautulli).get("history") or {}).get("user_id") or "").strip():
+            raise HTTPException(409, "Choose your Tautulli user in the Tautulli settings before recovering its history.")
         if not _plex_token(cfg, source):
             raise HTTPException(409, "Connect a Plex account before recovering Tautulli history.")
     if tracearr:
@@ -633,10 +748,13 @@ def start(payload: Start, request: Request):
         job = Job(owner, source, target, _source_hash(cfg, source, tautulli, tracearr), target_hash=_target_hash(cfg, target),
                   tautulli=tautulli, tracearr=tracearr, database=database, message=message, ignore_live_tv=payload.ignore_live_tv)
         if database == "upload":
-            upload = UPLOADS.pop(payload.upload_id, None)
+            upload = UPLOADS.get(payload.upload_id)
             if upload is None:
                 raise HTTPException(404, "The uploaded database expired. Upload it again.")
             job.db_folder, job.db_path, job.db_account = upload["folder"], upload["path"], payload.db_account
+        _save_job(job, raw=True)
+        if database == "upload":
+            UPLOADS.pop(payload.upload_id, None)
         JOBS[job.id] = job
         thread = threading.Thread(target=_scan, args=(job, deepcopy(cfg)), daemon=True)
         rt[1]["SYNC"] = thread
@@ -661,7 +779,8 @@ def active(request: Request):
                     _access(cfg, request, "TRACEARR", job.tracearr)
                 _access(cfg, request, "CROSSWATCH", job.target)
             except HTTPException:
-                continue
+                return dict(job=dict(id=job.id, status="error", unavailable=True,
+                                     message="A connection used by this recovery is no longer accessible. Close this recovery before starting another scan."), busy=True)
             return dict(job=job.public(), busy=True)
         stopping = any(job.cancel.is_set() and (job.status == "reading" or _auto_running(job)) for job in JOBS.values())
         return dict(job=None, busy=stopping or any(not job.cancel.is_set() for job in JOBS.values()), **({"stopping": True} if stopping else {}))
@@ -676,7 +795,8 @@ def status(sid: str, request: Request):
 @router.delete("/{sid}")
 def close(sid: str, request: Request):
     with LOCK:
-        job = _job(sid, request, load_config() or {})
+        job = _owned_job(sid, request)
+        plex_recovery_store.delete(job.id)
         job.cancel.set()
         job.auto_stop.set()
         if job.status != "reading" and not _auto_running(job):
@@ -688,12 +808,16 @@ def close(sid: str, request: Request):
 def rows(sid: str, request: Request, q: str = Query("", max_length=1000), status: str = "all",
          limit: int = Query(50, ge=1, le=200), offset: int = Query(0, ge=0)):
     with LOCK:
-        job = _job(sid, request, load_config() or {})
+        cfg = load_config() or {}
+        job = _job(sid, request, cfg)
+        _review_rows(job, cfg)
         found = importer._filtered_rows(job.rows, features={"history"}, media_types=set(), status="all", q=q)
         filtered = [r for r in found if status == "all" or r["status"] == status]
         public = importer._public_rows(filtered, limit, offset)
         for item, row in zip(public, filtered[offset:offset + limit]):
             item.update(recovery_match=row["recovery_match"], original_title=row["original_title"])
+            if "watch_count" in row:
+                item.update({key: row[key] for key in ("watch_count", "pending_watch_count", "existing_watch_count", "missing_date_count", "watch_details")})
         return dict(**job.public(), rows=public, filtered_total=len(filtered), summary=importer._summary(found))
 
 
@@ -701,8 +825,7 @@ def _matching_job(sid, revision, request, cfg):
     job = _job(sid, request, cfg)
     if job.cancel.is_set() or job.status != "review" or job.revision != revision:
         raise HTTPException(409, "The recovery changed. Reopen matching.")
-    if job.source_hash != _job_source_hash(cfg, job) or (job.target_hash and job.target_hash != _target_hash(cfg, job.target)):
-        raise HTTPException(409, "Connection settings changed. Start a new recovery scan.")
+    _review_rows(job, cfg)
     return job
 
 
@@ -808,6 +931,7 @@ def _auto_match(job: Job, payload: AutoMatch, groups: list[dict[str, Any]], requ
                 job.auto["done"] += 1
                 job.auto["matched"] += int(suggestion is not None)
                 job.auto["cached"] += int(cached)
+                _save_job(job)
         with LOCK:
             job.auto.update(status="complete", message="Auto match finished. Review the suggestions, then save checked matches. Nothing was imported.")
     except InterruptedError:
@@ -816,10 +940,16 @@ def _auto_match(job: Job, payload: AutoMatch, groups: list[dict[str, Any]], requ
     except Exception as error:
         with LOCK:
             detail = str(error.detail) if isinstance(error, HTTPException) else "The search provider could not finish the request."
-            job.auto.update(status="paused", message=f"Auto match paused. {detail} Suggestions are kept; run Auto match again to continue.")
+            message = AUTO_MATCH_STORAGE_ERROR if isinstance(error, (OSError, sqlite3.Error)) else f"Auto match paused. {detail} Suggestions are kept; run Auto match again to continue."
+            job.auto.update(status="paused", message=message)
     finally:
         with LOCK:
             job.touched = time.time()
+            try:
+                _save_job(job)
+            except (OSError, sqlite3.Error):
+                LOG.exception("plex_recovery_auto_match_save_failed")
+                job.auto.update(status="paused", message=AUTO_MATCH_STORAGE_ERROR)
             if job.cancel.is_set():
                 JOBS.pop(job.id, None)
 
@@ -839,9 +969,11 @@ def start_auto_match(sid: str, payload: AutoMatch, request: Request):
         selected = [groups[key] for key in dict.fromkeys(payload.group_ids) if not job.suggestions.get(key, {}).get("match")]
         if not selected:
             return _auto_view(job)
+        candidate = replace(job, auto=dict(id=uuid.uuid4().hex, status="running", catalog=payload.catalog, language=payload.language, total=len(selected), done=0,
+                                          matched=0, searches=0, cached=0, current_title="", message="Starting Auto match"))
+        _save_job(candidate, raw=True)
         job.auto_stop.clear()
-        job.auto = dict(id=uuid.uuid4().hex, status="running", catalog=payload.catalog, language=payload.language, total=len(selected), done=0,
-                        matched=0, searches=0, cached=0, current_title="", message="Starting Auto match")
+        job.auto = candidate.auto
         fingerprint = _search_fingerprint(cfg, job, choice)
         thread = threading.Thread(target=_auto_match, args=(job, payload, deepcopy(selected), request, fingerprint), daemon=True)
         job.auto_thread = thread
@@ -990,13 +1122,11 @@ def save_group_matches(sid: str, payload: GroupMatches, request: Request):
                                  and {k: str(v) for k, v in candidate.get("ids", {}).items() if k in {"tmdb", "tvdb", "imdb"}} == ids), None)
                 if selected is None:
                     raise HTTPException(400, "Search again and select a movie match before saving.")
-            origins = sorted({origin for row_id in group["row_ids"]
-                              for origin in set(updated[int(row_id)]["item"].get(TYPE_ORIGINS) or [])
-                              | event_identities(updated[int(row_id)]["item"])}) if conversion else []
             for row_id in groups[edit.group_id]["row_ids"]:
                 raw = updated[int(row_id)]
                 item = raw["item"]
                 if selected is not None:
+                    origins = sorted(set(item.get(TYPE_ORIGINS) or []) | event_identities(item))
                     item = {key: item[key] for key in ("watched_at", "watched") if key in item}
                     item.update(type="movie", year=selected.get("year"))
                     if origins:
@@ -1013,10 +1143,9 @@ def save_group_matches(sid: str, payload: GroupMatches, request: Request):
             changed += groups[edit.group_id]["recovery_count"]
         candidate = replace(job, raw=updated, rows=[])
         _shape(candidate, cfg)
-        job.raw, job.rows = candidate.raw, candidate.rows
-        for edit in payload.edits:
-            job.suggestions.pop(edit.group_id, None)
-        job.revision += 1
+        edited = {edit.group_id for edit in payload.edits}
+        candidate.suggestions = {key: value for key, value in job.suggestions.items() if key not in edited}
+        _save_review(job, candidate)
         return dict(**job.public(), matched_events=changed)
 
 
@@ -1024,10 +1153,8 @@ def save_group_matches(sid: str, payload: GroupMatches, request: Request):
 def match(sid: str, payload: Match, request: Request):
     cfg = load_config() or {}
     with LOCK:
-        job = _job(sid, request, cfg)
+        job = _matching_job(sid, payload.revision, request, cfg)
         _require_idle_matching(job)
-        if job.status != "review" or payload.revision != job.revision:
-            raise HTTPException(409, "The recovery changed. Reload the preview.")
         row = next((r for r in job.rows if r["id"] == payload.row_id), None)
         if row is None:
             raise HTTPException(404, "Watch event not found")
@@ -1070,8 +1197,7 @@ def match(sid: str, payload: Match, request: Request):
             raw.update(recovery_valid=True, recovery_requires_review=False, recovery_manual_match=True, recovery_match="Manually matched")
         candidate = replace(job, raw=updated, rows=[])
         _shape(candidate, cfg)
-        job.raw, job.rows = candidate.raw, candidate.rows
-        job.revision += 1
+        _save_review(job, candidate)
         return job.public()
 
 
@@ -1089,8 +1215,7 @@ def accept_title_matches(sid: str, payload: AcceptTitleMatches, request: Request
             for row_id in row["recovery_row_ids"]:
                 candidate.raw[int(row_id)].update(recovery_requires_review=False, recovery_match="Confirmed title match")
         _shape(candidate, cfg)
-        job.raw, job.rows = candidate.raw, candidate.rows
-        job.revision += 1
+        _save_review(job, candidate)
         return dict(**job.public(), accepted=len(matches))
 
 
@@ -1112,7 +1237,9 @@ def commit(sid: str, payload: Commit, request: Request):
             raise HTTPException(409, ("Connection" if job.tautulli or job.tracearr else "Plex") + " settings changed. Start a new recovery scan.")
         if normalize_instance_id(payload.target_instance) != job.target or payload.import_id != sid:
             raise HTTPException(400, "The import destination changed. Start a new preview.")
+        _reconcile_receipt(job, cfg)
         _shape(job, cfg)
+        job.restored = False
         args = payload.model_dump(exclude={"revision"})
         args.update(features=["history"], media_types=["movie", "episode"], include_existing=False)
         explicit = set(payload.row_ids)
@@ -1121,9 +1248,11 @@ def commit(sid: str, payload: Commit, request: Request):
                     if r["id"] not in excluded
                     and ((r["status"] == "ready" and (payload.mode != "selected" or r["id"] in explicit))
                          or (r["status"] == "needs_review" and r["id"] in explicit))]
+        selected = [event for row in selected for event in row["recovery_events"]
+                    if event["status"] == "ready" or row["id"] in explicit]
         titles: dict[str, dict[str, Any]] = {}
         for row in selected:
-            identity = canonical_key(id_minimal(row["item"]))
+            identity = importer._key_for("history", row["item"])
             previous = titles.get(identity)
             if previous is None or (history_epoch_from_value(row["item"].get("watched_at")) or 0) > (history_epoch_from_value(previous["item"].get("watched_at")) or 0):
                 titles[identity] = row
@@ -1137,18 +1266,21 @@ def commit(sid: str, payload: Commit, request: Request):
                     winner = titles[identity]
                     titles[identity] = {**winner, "item": {**winner["item"], PLEX_ORIGINS: sorted(sources)}}
         selected = list(titles.values())
+        job.pending_receipt = [row["key"] for row in selected]
+        _save_job(job, raw=True)
         approved = [{**r, "status": "ready"} for r in selected]
         importer._PREVIEWS[job.id] = dict(created_at=time.time(), target_instance=job.target, rows=approved,
+                                        recovery_target_hash=job.target_hash or _target_hash(cfg, job.target),
                                         local_history_type_origins=True, local_plex_history_origins=True)
         args.update(mode="ready", row_ids=[], excluded_row_ids=[], status="all", q="")
         try:
             result = importer.api_import_commit(importer.ImportCommitRequest(**args), request=request)
         finally:
             importer._PREVIEWS.pop(job.id, None)
-        existing = importer._existing_keys(cfg, job.target)["history"]
-        job.receipt = list(dict.fromkeys([*job.receipt, *(r["key"] for r in selected if r["key"] in existing)]))
+        _reconcile_receipt(job, cfg)
         _shape(job, cfg)
         job.revision += 1
+        _save_job(job, raw=True)
         return dict(**result, revision=job.revision, receipt_id=job.id, imported_keys=job.receipt)
 
 
@@ -1157,4 +1289,5 @@ def receipt(sid: str, request: Request):
     cfg = load_config() or {}
     with LOCK:
         job = _job(sid, request, cfg)
+        _reconcile_receipt(job, cfg)
         return dict(provider="CROSSWATCH", instance=job.target, feature="history", keys=list(job.receipt))

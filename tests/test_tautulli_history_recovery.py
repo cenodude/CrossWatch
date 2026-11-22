@@ -29,7 +29,7 @@ def episode(rk, guid, number, show="50", **kwargs):
 class Tautulli:
     def __init__(self, rows, metadata=None, settings=None):
         self.rows, self.metadata, self.calls = rows, metadata or {}, []
-        self.cfg = {"tautulli": {"history": settings or {}}}
+        self.cfg = {"tautulli": {"history": {"user_id": "7", **(settings or {})}}}
         self.client = NS(call=self.call)
 
     def call(self, cmd, **params):
@@ -130,7 +130,7 @@ def test_history_filters_paging_and_user_scope_follow_the_instance_settings():
 def test_failed_history_read_cancel_and_row_limit_never_publish_results():
     def fail(*a, **kw): raise RuntimeError("HTTP 500")
     with pytest.raises(RuntimeError, match="HTTP 500"):
-        recovery.scan(NS(cfg={}, client=NS(call=fail)), resolve=lambda *a: {}, progress=lambda *a: None, check_cancel=lambda: None)
+        recovery.scan(NS(cfg={"tautulli": {"history": {"user_id": "7"}}}, client=NS(call=fail)), resolve=lambda *a: {}, progress=lambda *a: None, check_cancel=lambda: None)
     source = Tautulli([movie("1", "tmdb://1"), movie("2", "tmdb://2")])
     def cancelled(): raise InterruptedError()
     with pytest.raises(InterruptedError):
@@ -138,6 +138,48 @@ def test_failed_history_read_cancel_and_row_limit_never_publish_results():
     assert source.calls == []
     with pytest.raises(RuntimeError, match="Tautulli user"):
         scan(source, max_rows=1)
+
+
+@pytest.mark.parametrize("page", [{}, {"data": "bad"}, {"data": [None]}, {"data": [], "recordsFiltered": 3}])
+def test_incomplete_or_malformed_history_never_becomes_a_review(page):
+    source = Tautulli([], settings={"per_page": 1})
+    responses = iter([{"data": [movie("1", "tmdb://1")], "recordsFiltered": 3}, page])
+    source.client.call = lambda *a, **kw: next(responses)
+    with pytest.raises(RuntimeError, match="tautulli_history_(invalid_response|incomplete_read)"):
+        scan(source)
+
+
+def test_repeated_history_pages_fail_even_when_the_cycle_is_not_adjacent():
+    source = Tautulli([], settings={"per_page": 1})
+    pages = iter([[movie("1", "tmdb://1")], [movie("2", "tmdb://2")], [movie("1", "tmdb://1")]])
+    source.client.call = lambda *a, **kw: {"data": next(pages), "recordsFiltered": 4}
+    with pytest.raises(RuntimeError, match="tautulli_history_repeated_page"):
+        scan(source)
+
+
+def test_short_pages_continue_until_the_reported_history_is_complete():
+    source = Tautulli([], settings={"per_page": 100})
+    offsets = []
+    def read(*a, **kw):
+        offsets.append(kw["start"])
+        return {"data": [movie(str(kw["start"] + 1), f"tmdb://{kw['start'] + 1}")], "recordsFiltered": 3}
+    source.client.call = read
+    assert len(scan(source)[0]) == 3
+    assert offsets == [0, 1, 2]
+
+
+def test_recovery_requires_a_tautulli_user_before_reading():
+    source = Tautulli([], settings={"user_id": " "})
+    with pytest.raises(ValueError, match="tautulli_user_unknown"):
+        scan(source)
+    assert source.calls == []
+
+
+def test_short_pages_without_totals_do_not_truncate_history():
+    source = Tautulli([], settings={"per_page": 100})
+    pages = iter([{"data": [movie("1", "tmdb://1")]}, {"data": [movie("2", "tmdb://2")]}, {"data": []}])
+    source.client.call = lambda *a, **kw: next(pages)
+    assert len(scan(source)[0]) == 2
 
 
 def test_guid_resolver_checks_the_token_and_returns_only_external_ids(monkeypatch):
@@ -159,7 +201,7 @@ def test_guid_resolver_checks_the_token_and_returns_only_external_ids(monkeypatc
 def api(monkeypatch, config_base):
     from api import syncAPI
     from services import importer
-    cfg = {"plex": {"account_token": "token"}, "tautulli": {"server_url": "http://tautulli", "api_key": "key"},
+    cfg = {"plex": {"account_token": "token"}, "tautulli": {"server_url": "http://tautulli", "api_key": "key", "history": {"user_id": "7"}},
            "crosswatch": {"connected": True, "root_dir": str(config_base / "tracker")}}
     state = NS(cfg=cfg)
     monkeypatch.setattr(service, "load_config", lambda: deepcopy(state.cfg))
@@ -220,7 +262,7 @@ def test_tautulli_source_scans_into_the_shared_review_flow(api, monkeypatch):
 def test_tautulli_source_needs_tautulli_and_a_plex_account_and_reports_a_rejected_token(api, monkeypatch):
     api.cfg = {**api.cfg, "tautulli": {}}
     assert "Connect Tautulli" in run(api, dict(source="tautulli")).json()["detail"]
-    api.cfg = {**api.cfg, "tautulli": {"server_url": "http://tautulli", "api_key": "key"}, "plex": {}}
+    api.cfg = {**api.cfg, "tautulli": {"server_url": "http://tautulli", "api_key": "key", "history": {"user_id": "7"}}, "plex": {}}
     assert "Connect a Plex account" in run(api, dict(source="tautulli")).json()["detail"]
     assert not service.JOBS
     api.cfg = {**api.cfg, "plex": {"account_token": "token"}}
@@ -230,3 +272,11 @@ def test_tautulli_source_needs_tautulli_and_a_plex_account_and_reports_a_rejecte
     job = api.client.get("/api/import/plex-recovery/" + response.json()["id"]).json()
     assert job["status"] == "error" and "Plex rejected the account token" in job["message"]
     assert "SYNC" not in api.rt[1]
+
+
+def test_tautulli_recovery_rejects_all_users_before_starting_a_job(api):
+    api.cfg["tautulli"]["history"]["user_id"] = ""
+    response = run(api, dict(source="tautulli"))
+    assert response.status_code == 409
+    assert "Choose your Tautulli user" in response.json()["detail"]
+    assert not service.JOBS and not api.rt[1]

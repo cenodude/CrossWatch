@@ -8,6 +8,15 @@ const labels = {ready:"Ready to import",needs_review:"Review title match",exists
 const selectable = row => ["ready","needs_review"].includes(row.status);
 const option = (value, label) => `<option value="${esc(value)}">${esc(label)}</option>`;
 const field = (id, title) => `<label class="ie-field" for="${id}"><span id="${id}-label">${title}</span><select id="${id}" data-cw-native-select="true"></select></label>`;
+const watchDate = value => value ? new Date(value).toLocaleString() : "Missing watch date";
+function watchDetails(row) {
+  if (row.watch_count == null) return "";
+  const counts = [`${number(row.watch_count)} ${row.watch_count === 1 ? "watch" : "watches"}`, `${number(row.pending_watch_count)} new`];
+  if (row.existing_watch_count) counts.push(`${number(row.existing_watch_count)} existing`);
+  if (row.missing_date_count) counts.push(`${number(row.missing_date_count)} missing date`);
+  const details = (row.watch_details || []).map(watch => `<small>${esc(watchDate(watch.watched_at))} · ${esc(!watch.watched_at ? "Skipped: missing date" : labels[watch.status] || watch.status)}</small>`).join("");
+  return `<small>${counts.join(" · ")}</small>${details ? `<details><summary>Watch details</summary>${details}</details>` : ""}`;
+}
 
 export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOptions }) {
   host.innerHTML = `<section class="ie-panel cw-page-panel">
@@ -24,18 +33,18 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
         <li>Import your selection into the CW tracker. Scheduled pairs using that tracker can sync it afterward.</li>
       </ol>
       <p>Shared or managed-user connections may lack access to the server's full play history.</p>
-      <p>Recovery results expire after 24 hours of inactivity, when you choose Close recovery, or when CrossWatch restarts. Leaving this page or closing the matching dialog keeps your recovery available. Imported history stays in your tracker.</p>
+      <p>Recovery reviews and saved matches survive restarts and expire after 24 hours of inactivity or when you choose Close recovery. A scan interrupted by a restart needs to be started again. Imported history stays in your tracker.</p>
     </details>
     <div id="pr-message" class="ie-notice" role="status" hidden></div>
     <div id="pr-progress" class="ie-progress" role="status" hidden>
       <div class="ie-progress-copy"><strong id="pr-stage"></strong></div><div id="pr-bar" class="ie-progress-track" role="progressbar" aria-label="Recovery progress" aria-valuemin="0" aria-valuemax="100"><span></span></div><p id="pr-count"></p>
-      <div id="pr-activity" hidden><p><strong id="pr-current"></strong></p><p id="pr-live-counts"></p><p>Found records are candidates for review. Repeated records are combined using the most recent watch date. Nothing is imported during the scan.</p>
+      <div id="pr-activity" hidden><p><strong id="pr-current"></strong></p><p id="pr-live-counts"></p><p>Found records are candidates for review. Repeated watches appear under one item with the latest watch date. Nothing is imported during the scan.</p>
         <div id="pr-recent-wrap" class="ie-table-wrap" hidden><table><thead><tr><th>Recent item</th><th>Result</th></tr></thead><tbody id="pr-recent"></tbody></table></div>
       </div>
     </div>
   </section>
   <section id="pr-review" class="ie-panel cw-page-panel" hidden>
-    <div class="ie-review-heading"><div><h2>Recovered movies and episodes</h2><p>Review title guesses individually or use Accept all title matches. Select all matching skips unaccepted guesses. Repeated records are combined into one item using the most recent watch date.</p></div><button class="ie-button" id="pr-editor" hidden>Open imported items in Editor</button></div>
+    <div class="ie-review-heading"><div><h2>Recovered movies and episodes</h2><p>Review title guesses individually or use Accept all title matches. Select all matching skips unaccepted guesses. Repeated watches appear under one item with the latest watch date. Imports preserve all missing watch dates for each selected item. Expand Watch details to review existing or skipped watches.</p></div><button class="ie-button" id="pr-editor" hidden>Open imported items in Editor</button></div>
     <div id="pr-metrics" class="ie-metrics"></div>
     <div class="ie-filters"><label class="ie-search"><input id="pr-search" type="search" maxlength="1000" placeholder="Search recovered history" aria-label="Search recovered history"></label>${field("pr-result","Result")}</div>
     <div class="ie-list-bar"><span id="pr-range"></span><div class="ie-list-actions"><button class="ie-button" id="pr-bulk-match">Match unresolved items</button><button class="ie-button" id="pr-accept-titles" title="Accept suggested title identities across all pages of the current search. This does not import history." hidden>Accept all title matches</button><button class="ie-link" id="pr-all">Select all matching</button><button class="ie-link" id="pr-none">Clear selection</button></div></div>
@@ -60,7 +69,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
   let otherRecovery = false;
   let busy = false, reading = false, loading = false, all = false, chosen = new Set(), excluded = new Set();
   let timer, searchTimer, sequence = 0, editing = null, receipt = null, matchingWorkspace = null;
-  let pollSequence = 0, stoppingRecovery = false, matchSequence = 0, matchQuery = "", matchResults = [];
+  let pollSequence = 0, stoppingRecovery = false, matchSequence = 0, matchDialogSequence = 0, matchRevision = null, matchQuery = "", matchResults = [];
   async function request(path, body, method = body ? "POST" : "GET", signal = lifetime.signal) {
     const response = await fetch(api + path, {method, signal,
       ...(body ? {headers:{"Content-Type":"application/json"},body:JSON.stringify(body)} : {})});
@@ -103,7 +112,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
     host.querySelectorAll("button,input,select").forEach(el => { if (!el.closest("dialog")) el.disabled = busy || reading || (loading && !el.closest(".ie-filters")); });
     $("#pr-cancel").disabled = false;
     $("#pr-cancel").hidden = !reading;
-    $("#pr-start").disabled = locked || !!job || otherRecovery || !$("#pr-source").value || ($("#pr-kind").value === "tautulli" && !$("#pr-tautulli").value) || ($("#pr-kind").value === "tracearr" && !(options?.tracearr?.find(t=>t.id === $("#pr-tracearr").value)?.user)) || ($("#pr-kind").value === "plex_db" && $("#pr-db").value === "upload" && !(upload && $("#pr-db-account").value)) || !($("#pr-target").value === NEW_TRACKER || options?.targets?.find(t => t.id === $("#pr-target").value)?.connected);
+    $("#pr-start").disabled = locked || !!job || otherRecovery || !$("#pr-source").value || ($("#pr-kind").value === "tautulli" && !(options?.tautulli?.find(t=>t.id === $("#pr-tautulli").value)?.user)) || ($("#pr-kind").value === "tracearr" && !(options?.tracearr?.find(t=>t.id === $("#pr-tracearr").value)?.user)) || ($("#pr-kind").value === "plex_db" && $("#pr-db").value === "upload" && !(upload && $("#pr-db-account").value)) || !($("#pr-target").value === NEW_TRACKER || options?.targets?.find(t => t.id === $("#pr-target").value)?.connected);
     $("#pr-close").hidden = !job || reading;
     for (const id of ["pr-kind","pr-db","pr-tautulli","pr-tracearr","pr-source","pr-db-account","pr-target","pr-new-name","pr-browse","pr-live"]) $(`#${id}`).disabled = locked || !!job;
     $("#pr-new-name-wrap").hidden = !!job || $("#pr-target").value !== NEW_TRACKER;
@@ -113,7 +122,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
     $("#pr-bulk-match").textContent = job?.auto_match?.status === "running" ? "View Auto match progress" : job?.auto_match?.id ? "Review Auto matches" : "Match unresolved items";
     $("#pr-prev").disabled = locked || offset === 0;
     $("#pr-next").disabled = locked || offset + 50 >= (data?.filtered_total || 0);
-    $("#pr-selected").textContent = `${number(count())} watch ${count() === 1 ? "event" : "events"} selected`;
+    $("#pr-selected").textContent = `${number(count())} ${count() === 1 ? "item" : "items"} selected`;
     $("#pr-editor").hidden = !receipt?.keys?.length;
     rows.forEach(row => { const el = $(`[data-select="${row.id}"]`); if (el) el.disabled = locked || !selectable(row); });
   }
@@ -127,7 +136,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
       const title = row.media_type === "episode" ? row.title.replace(/ - (S\d+E\d+)$/, " | $1") : row.title;
       return `<tr${selected ? ' class="ie-row-selected"' : ''}><td><input type="checkbox" data-select="${esc(row.id)}" aria-label="${row.status === "needs_review" ? "Confirm title match and select" : "Select"} ${esc(row.title)}" ${selected ? "checked" : ""} ${!selectable(row) ? "disabled" : ""}></td>
       <td><strong>${esc(title)}</strong><small>Original: ${esc(row.original_title)}${row.media_type === "episode" ? ` · S${row.season ?? "?"} E${row.episode ?? "?"}` : ""}</small><small>${esc(row.recovery_match?.replaceAll(" — ", " | "))}</small><small>${esc(Object.entries(ids || {}).filter(([k]) => k !== "plex").map(([k,v])=>`${k}:${v}`).join(" · "))}</small></td>
-      <td>${esc(row.watched_at ? new Date(row.watched_at).toLocaleString() : "Missing watch date")}</td><td><span class="ie-status" data-status="${esc(row.status)}">${esc(labels[row.status] || row.status)}</span>${row.status === "duplicate" ? "<small>Same matched item and watch time as another event in this scan.</small>" : ""}</td>
+      <td>${esc(watchDate(row.watched_at))}${watchDetails(row)}</td><td><span class="ie-status" data-status="${esc(row.status)}">${esc(labels[row.status] || row.status)}</span>${row.status === "duplicate" ? "<small>Same matched item and watch time as another event in this scan.</small>" : ""}</td>
       <td><button class="ie-button" data-match="${esc(row.id)}">Edit match</button></td></tr>`;
     }).join("") || '<tr><td colspan="5" class="ie-empty">No recovered history matches this view.</td></tr>';
     const total = data?.filtered_total || 0;
@@ -138,11 +147,14 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
   async function page(start = 0) {
     if (!job) return;
     clearTimeout(searchTimer);
-    const ticket = ++sequence;
+    const ticket = ++sequence, revision = data?.revision ?? job.revision;
     loading = true; controls(); offset = start;
     try {
       const result = await request(`/${job.id}/rows?${new URLSearchParams({...filters(),offset,limit:50})}`);
       if (ticket !== sequence) return;
+      if (revision != null && result.revision != null && revision !== result.revision) {
+        all=false;chosen.clear();excluded.clear();
+      }
       data=result; job={...job,...result}; rows=result.rows || [];
     } catch (error) {
       if (ticket === sequence && !lifetime.signal.aborted) {
@@ -157,6 +169,9 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
     try {
       const current=await request(`/${id}`);
       if(ticket !== pollSequence || lifetime.signal.aborted)return;
+      if(data?.revision != null && current.revision != null && data.revision !== current.revision) {
+        all=false;chosen.clear();excluded.clear();
+      }
       job=current;
       const changed=!data || data.import_id !== job.id || data.status !== job.status || data.revision !== job.revision;
       reading = job.status === "reading";
@@ -175,7 +190,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
       if (reading) timer = setTimeout(poll,1000);
       else {
         const auto=job.auto_match;
-        message(auto?.id ? `${auto.message} ${number(auto.done)} / ${number(auto.total)} titles checked. Use ${auto.status === "running" ? "View Auto match progress" : "Review Auto matches"} to return to matching.` : job.imported ? `${number(job.imported)} ${job.imported === 1 ? "item" : "items"} imported into CrossWatch. Review the remaining items or open the imported items in Editor.` : job.message,job.status === "error");
+        message(auto?.id ? `${auto.message} ${number(auto.done)} / ${number(auto.total)} titles checked. Use ${auto.status === "running" ? "View Auto match progress" : "Review Auto matches"} to return to matching.` : job.imported ? `${number(job.imported)} ${job.imported === 1 ? "watch" : "watches"} imported into CrossWatch. Review the remaining items or open the imported items in Editor.` : job.message,job.status === "error");
         window.dispatchEvent(new CustomEvent("cw:plex-recovery-changed"));
         if (job.status === "review" && changed) {
           const imported=await request(`/${id}/receipt`);
@@ -188,7 +203,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
     } catch (error) {
       if (ticket === pollSequence && !lifetime.signal.aborted) {
         if ([403,404].includes(error.status)) resetRecovery();
-        else if (reading) timer=setTimeout(poll,5000);
+        else if (reading || !error.status || error.status === 429 || error.status >= 500) timer=setTimeout(poll,5000);
         message(error.message,true);controls();
       }
     }
@@ -243,6 +258,12 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
       return;
     }
     job=current.job;
+    if(job.unavailable) {
+      reading=false;data=null;rows=[];receipt=null;all=false;chosen.clear();excluded.clear();
+      $("#pr-progress").hidden=true;
+      render();message(job.message,true);
+      return;
+    }
     $("#pr-kind").value=job.source || "plex";
     if(job.database) $("#pr-db").value=job.database;
     if(job.tautulli_instance) $("#pr-tautulli").value=job.tautulli_instance;
@@ -270,63 +291,78 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
     finally {busy=false;$("#pr-file").value="";if(!lifetime.signal.aborted){updateScope();controls();}}
   }
   async function closeRecovery() {
+    const id=job.id;
+    let released=false;
     busy=true;clearTimeout(timer);++pollSequence;controls();
     try {
       await request(`/${job.id}`,null,"DELETE");
+      if(lifetime.signal.aborted || job?.id !== id)return;
+      released=true;
       resetRecovery();busy=true;controls();
       message("Recovery closed. Imported history stays in your CW tracker.");
       await resume();
-    } catch(error) {message(error.message,true);}
-    finally {busy=false;render();}
+    } catch(error) {if(!lifetime.signal.aborted && (released || job?.id === id))message(error.message,true);}
+    finally {if(!lifetime.signal.aborted && (released || job?.id === id)){busy=false;render();}}
   }
   async function commit() {
+    const id=job.id;
     busy=true;controls();message("Importing selected watch events into CrossWatch…");
     try {
-      const result=await request(`/${job.id}/commit`,{...filters(),import_id:job.id,revision:job.revision,target_instance:job.target_instance,
+      const result=await request(`/${job.id}/commit`,{...filters(),import_id:job.id,revision:data?.revision ?? job.revision,target_instance:job.target_instance,
         mode:all ? "ready" : "selected",row_ids:[...chosen],excluded_row_ids:[...excluded],features:["history"],media_types:["movie","episode"]},"POST",null);
       window.dispatchEvent(new CustomEvent("cw:plex-recovery-changed"));
-      if(lifetime.signal.aborted)return;
-      receipt = await request(`/${job.id}/receipt`);
+      if(lifetime.signal.aborted || job?.id !== id || result.revision < job.revision)return;
+      job.revision=result.revision;
+      receipt={provider:"CROSSWATCH",instance:job.target_instance,feature:"history",keys:result.imported_keys};
       message(`${result.ok ? "Import complete" : "Import finished with issues"}. ${number(result.applied)} watch ${result.applied === 1 ? "event" : "events"} applied. Open imported items in Editor to send just this recovery to another provider.`,!result.ok);
       chosen.clear();excluded.clear();all=false;await page();
-    } catch(error) {if(!lifetime.signal.aborted)message(`${error.message} Check the tracker before retrying.`,true);}
-    finally {busy=false;if(!lifetime.signal.aborted)controls();}
+    } catch(error) {
+      if(!lifetime.signal.aborted && job?.id === id) {
+        if(job && (!error.status || [409,429].includes(error.status) || error.status >= 500)) await poll();
+        if(!lifetime.signal.aborted && job?.id === id)message(`${error.message} Check the tracker before retrying.`,true);
+      }
+    }
+    finally {if(!lifetime.signal.aborted && job?.id === id){busy=false;controls();}}
   }
   async function acceptTitleMatches() {
+    const id=job.id;
     const total=data?.summary?.by_status?.needs_review || 0;
     if (!total || !window.confirm(`Accept all ${number(total)} suggested title matches across all pages of this search? Title guesses can be incorrect. Nothing will be imported until you select items and import them.`)) return;
     busy=true;controls();
     try {
-      const result=await request(`/${job.id}/accept-title-matches`,{revision:job.revision,q:filters().q});
-      if (lifetime.signal.aborted) return;
+      const result=await request(`/${job.id}/accept-title-matches`,{revision:data?.revision ?? job.revision,q:filters().q});
+      if (lifetime.signal.aborted || job?.id !== id || result.revision < job.revision) return;
       job={...job,...result};all=false;chosen.clear();excluded.clear();
       if (filters().status === "needs_review") {
         $("#pr-result").value="ready";
         $("#pr-result").dispatchEvent(new Event("change"));
       }
       await page();
+      if(lifetime.signal.aborted || job?.id !== id)return;
       message(`${number(result.accepted)} title matches accepted. Select the items you want to import. Nothing has been imported.`);
       window.dispatchEvent(new CustomEvent("cw:plex-recovery-changed"));
-    } catch(error) {if(!lifetime.signal.aborted)message(error.message,true);}
-    finally {busy=false;if(!lifetime.signal.aborted)controls();}
+    } catch(error) {if(!lifetime.signal.aborted && job?.id === id)message(error.message,true);}
+    finally {if(!lifetime.signal.aborted && job?.id === id){busy=false;controls();}}
   }
   async function bulkMatch() {
+    const id=job.id;
     busy=true;controls();
     try {
       const context=await request(`/${job.id}/match-groups?${new URLSearchParams({revision:job.revision,q:filters().q})}`);
+      if(lifetime.signal.aborted || job?.id !== id)return;
       if (!context.rows.length) {message("No unresolved movies or series match this search.");busy=false;controls();return;}
       const version=encodeURIComponent(window.APP_VERSION || "1");
       if (!document.querySelector('link[href*="/assets/css/interactive-sync.css"]')) {
         const style=document.createElement("link");style.rel="stylesheet";style.href=`/assets/css/interactive-sync.css?v=${version}`;document.head.append(style);
       }
       const {openMappingWorkspace}=await import(`/assets/js/interactive-sync-mapping.js?v=${version}`);
-      if (lifetime.signal.aborted) return;
-      const revision=context.revision, id=job.id;
+      if (lifetime.signal.aborted || job?.id !== id) return;
+      const revision=context.revision;
       matchingWorkspace=openMappingWorkspace({rows:context.rows,total:context.total,recovery:true,
         scope:"recovery",scopes:[{id:"recovery",label:"This recovery"}],
-        onClose:()=>{matchingWorkspace=null;busy=false;controls();},
+        onClose:()=>{if(!lifetime.signal.aborted && job?.id === id){matchingWorkspace=null;busy=false;controls();}},
         onSaved:async result=>{
-          if(lifetime.signal.aborted)return;
+          if(lifetime.signal.aborted || job?.id !== id || result.revision < job.revision)return;
           matchingWorkspace=null;job={...job,...result};all=false;chosen.clear();excluded.clear();busy=false;
           message(`${number(result.matched_events)} watch ${result.matched_events === 1 ? "event" : "events"} updated. Review the results before importing.`);
           await page();
@@ -335,6 +371,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
           catalogs:async()=>context,
           autoStart:async(group_ids,catalog,language)=>{
             const result=await request(`/${id}/auto-match`,{revision,group_ids,catalog,language});
+            if(lifetime.signal.aborted || job?.id !== id)return result;
             job.auto_match=result.auto_match;
             window.dispatchEvent(new CustomEvent("cw:plex-recovery-changed"));
             clearTimeout(timer);timer=setTimeout(poll,3000);
@@ -348,7 +385,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
             ids:Object.fromEntries(Object.entries(edit.item.ids || {}).filter(([key])=>["tmdb","tvdb","imdb"].includes(key)).map(([key,value])=>[key,String(value)]))}))})
         }
       });
-    } catch(error) {if(!lifetime.signal.aborted)message(error.message,true);busy=false;controls();}
+    } catch(error) {if(!lifetime.signal.aborted && job?.id === id){message(error.message,true);busy=false;controls();}}
   }
   function matchTypeChanged(clear = true) {
     const form = $("#pr-match form"), episode = form.elements.media_type.value === "episode";
@@ -362,25 +399,29 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
     if (clear) for (const key of ["tmdb","tvdb","imdb"]) form.elements[key].value="";
   }
   async function edit(row) {
-    editing=row; const form=$("#pr-match form"), ids=row.media_type === "episode" ? row.show_ids : row.ids;
+    editing=row;matchRevision=data?.revision ?? job.revision;
+    const dialogTicket=++matchDialogSequence, id=job.id;
+    const current=()=>!lifetime.signal.aborted && job?.id === id && matchDialogSequence === dialogTicket && $("#pr-match").open;
+    const form=$("#pr-match form"), ids=row.media_type === "episode" ? row.show_ids : row.ids;
     form.elements.media_type.value=row.media_type;
     form.elements.media_type.dispatchEvent(new Event("change"));
     form.elements.catalog.innerHTML="";
     for(const key of ["title","tmdb","tvdb","imdb","season","episode"]) form.elements[key].value = key === "title" ? row.original_title || row.title : ["season","episode"].includes(key) ? row[key] ?? "" : ids?.[key] || "";
     matchTypeChanged(false);
+    $("#pr-match-save").disabled=false;
     $("#pr-match-original").textContent=`Original Plex record: ${row.original_title}`;
     $("#pr-match-error").textContent="";$("#pr-match").showModal();
     try {
-      const context=await request(`/${job.id}/match-groups?${new URLSearchParams({revision:job.revision})}`);
-      if(editing!==row || !$("#pr-match").open)return;
+      const context=await request(`/${job.id}/match-groups?${new URLSearchParams({revision:matchRevision})}`);
+      if(!current())return;
       form.elements.catalog.innerHTML=context.catalogs.map(c=>option(c.id,c.label)).join("");
       $("#pr-match-search").disabled=!context.catalogs.length;
       if(!context.catalogs.length)$("#pr-match-error").textContent="Configure a search provider or TMDb metadata key to change media type.";
-    } catch(error) {if(editing===row && $("#pr-match").open)$("#pr-match-error").textContent=error.message;}
+    } catch(error) {if(current())$("#pr-match-error").textContent=error.message;}
   }
   on($("#pr-match form").elements.media_type,"change",()=>matchTypeChanged());
   on($("#pr-match form").elements.catalog,"change",()=>matchTypeChanged(false));
-  on($("#pr-match"),"close",()=>{++matchSequence;});
+  on($("#pr-match"),"close",()=>{++matchSequence;++matchDialogSequence;});
   on($("#pr-match-search"),"click",async()=>{
     const form=$("#pr-match form"), query=form.elements.title.value.trim(), ticket=++matchSequence;
     matchQuery="";matchResults=[];$("#pr-match-results").innerHTML="";
@@ -388,7 +429,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
     if(query.length>200){$("#pr-match-error").textContent="Use a search title of 200 characters or fewer.";return;}
     $("#pr-match-search").disabled=true;$("#pr-match-error").textContent="Searching…";
     try {
-      const result=await request(`/${job.id}/match-search?${new URLSearchParams({revision:job.revision,row_id:editing.id,
+      const result=await request(`/${job.id}/match-search?${new URLSearchParams({revision:matchRevision,row_id:editing.id,
         q:query,catalog:form.elements.catalog.value,media_type:form.elements.media_type.value})}`);
       if(ticket!==matchSequence)return;
       matchQuery=query;matchResults=result.results;
@@ -409,15 +450,22 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
   on($("#pr-match form"),"submit",async event=>{
     if (event.submitter?.value !== "save") return;
     event.preventDefault(); const form=event.currentTarget;
+    const id=job.id, target=editing, revision=matchRevision, ticket=matchSequence, dialogTicket=matchDialogSequence;
+    const sameDialog=()=>!lifetime.signal.aborted && job?.id === id && matchDialogSequence === dialogTicket;
+    const current=()=>sameDialog() && matchSequence === ticket;
     $("#pr-match-save").disabled=true;
     try {
       const values=Object.fromEntries(new FormData(form));
       values.season=values.season === "" ? null : Number(values.season);values.episode=values.episode === "" ? null : Number(values.episode);
       if(values.media_type==="movie")values.season=values.episode=null;
-      job=await request(`/${job.id}/match`,{...values,match_query:matchQuery,row_id:editing.id,revision:job.revision});
-      $("#pr-match").close();all=false;chosen.clear();excluded.clear();await page(offset);
-    } catch(error) {$("#pr-match-error").textContent=error.message;}
-    finally {$("#pr-match-save").disabled=false;}
+      const result=await request(`/${id}/match`,{...values,match_query:matchQuery,row_id:target.id,revision});
+      if(lifetime.signal.aborted || job?.id !== id || result.revision < job.revision)return;
+      job=result;
+      if(sameDialog())matchRevision=result.revision;
+      if(current())$("#pr-match").close();
+      all=false;chosen.clear();excluded.clear();await page(offset);
+    } catch(error) {if(current())$("#pr-match-error").textContent=error.message;}
+    finally {if(sameDialog())$("#pr-match-save").disabled=false;}
   });
   on(host,"click",async event=>{
     const button=event.target.closest("button");if(!button || button.disabled || button.closest("dialog")) return;
@@ -511,7 +559,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
     }
     if(kind() === "tautulli") {
       const tautulli=options?.tautulli?.find(t=>t.id === $("#pr-tautulli").value);
-      $("#pr-scope").textContent=tautulli ? `${tautulli.user ? `Tautulli user ID: ${tautulli.user}.` : "Reads the history of all Tautulli users."} Checks every watched movie and episode. Items Plex no longer knows need a manual match.` : "";
+      $("#pr-scope").textContent=tautulli ? `${tautulli.user ? `Tautulli user ID: ${tautulli.user}.` : "Choose your Tautulli user in Settings ? Connections ? Tautulli first."} Checks every watched movie and episode. Items Plex no longer knows need a manual match.` : "";
       return;
     }
     if(kind() === "tracearr") {

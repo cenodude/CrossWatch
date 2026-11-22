@@ -127,7 +127,13 @@ SYNC_STATE_PATTERNS = (
 )
 
 CW_STATE_KEEP_DIRS = {"id"}
-CW_STATE_KEEP_FILES: set[str] = {"anime_mapping_overrides.json"}
+CW_STATE_KEEP_FILES: set[str] = {
+    "anime_mapping_overrides.json",
+    "plex_recovery.sqlite3",
+    "plex_recovery.sqlite3-journal",
+    "plex_recovery.sqlite3-wal",
+    "plex_recovery.sqlite3-shm",
+}
 
 
 def _is_sync_state_file(name: str) -> bool:

@@ -21,8 +21,8 @@ function matchFixture() {
     return [key,node];
   }));
   $("#pr-match form").elements=elements;
-  const sandbox=vm.createContext({$,URLSearchParams,Event,editing:null,matchSequence:0,matchQuery:"",matchResults:[],
-    job:{id:"scan",revision:0},all:true,chosen:new Set(["0"]),excluded:new Set(),offset:0,
+  const sandbox=vm.createContext({$,URLSearchParams,Event,editing:null,matchSequence:0,matchDialogSequence:0,matchQuery:"",matchResults:[],
+    job:{id:"scan",revision:0},data:{revision:0},lifetime:{signal:{aborted:false}},matchRevision:null,all:true,chosen:new Set(["0"]),excluded:new Set(),offset:0,
     option:(value,label)=>`${value}:${label}`,esc:String,page:async()=>{},
     FormData:class {constructor(form){this.form=form;}*[Symbol.iterator](){for(const [key,node] of Object.entries(this.form.elements))yield [key,node.value];}},
     on(node,event,fn){if(!handlers.has(node))handlers.set(node,{});handlers.get(node)[event]=fn;},
@@ -53,6 +53,96 @@ test("individual recovery matching selects movie IDs and submits conversion with
   assert.equal(calls[2].body.season,null);assert.equal(calls[2].body.episode,null);
   assert.equal(s.job.revision,1);assert.equal(s.chosen.size,0);
   assert(!calls.some(call=>call.path.includes("commit")));
+});
+
+test("an open match form keeps the revision of the displayed item",async()=>{
+  const f=matchFixture();
+  await f.sandbox.edit({id:"0",media_type:"movie",original_title:"Original",ids:{tmdb:"42"}});
+  f.sandbox.job.revision=1;
+  await f.fire(f.$("#pr-match form"),"submit",{submitter:{value:"save"},currentTarget:f.$("#pr-match form"),preventDefault(){}});
+  assert.equal(f.calls.at(-1).path,"/scan/match");
+  assert.equal(f.calls.at(-1).body.revision,0);
+});
+
+for(const fail of [false,true]) {
+  test(`a late match ${fail ? "failure" : "success"} leaves a newer dialog intact`,async()=>{
+    const f=matchFixture();
+    await f.sandbox.edit({id:"0",media_type:"movie",original_title:"First",ids:{tmdb:"42"}});
+    const request=f.sandbox.request;
+    let finish;
+    f.sandbox.request=(path,body)=>path.endsWith("/match") ? new Promise((resolve,reject)=>{finish=fail ? reject : resolve;}) : request(path,body);
+    const pending=f.fire(f.$("#pr-match form"),"submit",{submitter:{value:"save"},currentTarget:f.$("#pr-match form"),preventDefault(){}});
+    f.fire(f.$("#pr-match"),"close");
+    await f.sandbox.edit({id:"1",media_type:"movie",original_title:"Second",ids:{tmdb:"99"}});
+    f.$("#pr-match-error").textContent="Second dialog";
+    finish(fail ? new Error("Old request failed") : {id:"scan",revision:1});
+    await pending;
+    assert.equal(f.$("#pr-match").open,true);
+    assert.equal(f.elements.title.value,"Second");
+    assert.equal(f.$("#pr-match-error").textContent,"Second dialog");
+  });
+}
+
+test("a late match response cannot replace a newer recovery",async()=>{
+  const f=matchFixture();
+  await f.sandbox.edit({id:"0",media_type:"movie",original_title:"First",ids:{tmdb:"42"}});
+  let finish;
+  f.sandbox.request=()=>new Promise(resolve=>{finish=resolve;});
+  const pending=f.fire(f.$("#pr-match form"),"submit",{submitter:{value:"save"},currentTarget:f.$("#pr-match form"),preventDefault(){}});
+  f.sandbox.job={id:"new-scan",revision:7};
+  finish({id:"scan",revision:1});
+  await pending;
+  assert.equal(f.sandbox.job.id,"new-scan");
+  assert.equal(f.sandbox.job.revision,7);
+});
+
+for(const fail of [false,true]) {
+  test(`changing match type during a save ${fail ? "failure" : "success"} keeps the form usable`,async()=>{
+    const f=matchFixture();
+    await f.sandbox.edit({id:"0",media_type:"movie",original_title:"First",ids:{tmdb:"42"}});
+    let finish;
+    f.sandbox.request=()=>new Promise((resolve,reject)=>{finish=fail ? reject : resolve;});
+    const pending=f.fire(f.$("#pr-match form"),"submit",{submitter:{value:"save"},currentTarget:f.$("#pr-match form"),preventDefault(){}});
+    f.elements.media_type.value="episode";
+    f.fire(f.elements.media_type,"change");
+    finish(fail ? new Error("Save failed") : {id:"scan",revision:1});
+    await pending;
+    assert.equal(f.$("#pr-match-save").disabled,false);
+    assert.equal(f.$("#pr-match").open,true);
+    assert.equal(f.elements.media_type.value,"episode");
+    assert.equal(f.sandbox.matchRevision,fail ? 0 : 1);
+  });
+}
+
+test("reopening the same row isolates pending saves",async()=>{
+  const f=matchFixture(),row={id:"0",media_type:"movie",original_title:"First",ids:{tmdb:"42"}};
+  await f.sandbox.edit(row);
+  const request=f.sandbox.request,finish=[];
+  f.sandbox.request=(path,body)=>path.endsWith("/match") ? new Promise((resolve,reject)=>{finish.push(reject);}) : request(path,body);
+  const submit=()=>f.fire(f.$("#pr-match form"),"submit",{submitter:{value:"save"},currentTarget:f.$("#pr-match form"),preventDefault(){}});
+  const first=submit();
+  f.fire(f.$("#pr-match"),"close");
+  await f.sandbox.edit(row);
+  const second=submit();
+  finish[0](new Error("First save failed"));await first;
+  assert.equal(f.$("#pr-match-save").disabled,true);
+  assert.equal(f.$("#pr-match-error").textContent,"");
+  finish[1](new Error("Second save failed"));await second;
+  assert.equal(f.$("#pr-match-save").disabled,false);
+  assert.equal(f.$("#pr-match-error").textContent,"Second save failed");
+});
+
+test("reopening the same row discards the old catalog response",async()=>{
+  const f=matchFixture(),row={id:"0",media_type:"movie",original_title:"First",ids:{tmdb:"42"}},finish=[];
+  f.sandbox.request=()=>new Promise(resolve=>{finish.push(resolve);});
+  const first=f.sandbox.edit(row);
+  f.fire(f.$("#pr-match"),"close");
+  const second=f.sandbox.edit(row);
+  finish[1]({catalogs:[{id:"new",label:"New catalog"}]});await second;
+  finish[0]({catalogs:[]});await first;
+  assert.equal(f.elements.catalog.innerHTML,"new:New catalog");
+  assert.equal(f.$("#pr-match-search").disabled,false);
+  assert.equal(f.$("#pr-match-error").textContent,"");
 });
 
 test("changing type or closing the dialog discards in-flight recovery search results",async()=>{
@@ -90,6 +180,43 @@ function fixture() {
   const check=(id,checked)=>handlers.change({target:{dataset:{select:id},checked}});
   const row=id=>$("#pr-rows").innerHTML.split("</tr>").find(html=>html.includes(`data-select="${id}"`));
   return {sandbox,click,check,row};
+}
+
+test("recovered rewatches stay in one selectable row with watch counts",()=>{
+  const {sandbox,row}=fixture();
+  sandbox.rows=[{id:"0",title:"Movie",status:"ready",watched_at:"2026-01-03T12:00:00Z",watch_count:3,pending_watch_count:2,existing_watch_count:1}];
+  sandbox.render();
+  assert.match(row("0"),/3 watches · 2 new · 1 existing/);
+  assert.equal((row("0").match(/data-select=/g) || []).length,1);
+});
+
+test("folded watch details expose missing dates without expanding the main list",()=>{
+  const {sandbox,row}=fixture();
+  sandbox.rows=[{id:"0",title:"Movie",status:"ready",watch_count:5,pending_watch_count:3,existing_watch_count:1,missing_date_count:1,
+    watch_details:[{watched_at:null,status:"invalid"},{watched_at:"2026-01-01T12:00:00Z",status:"exists"}]}];
+  sandbox.render();
+  assert.match(row("0"),/5 watches · 3 new · 1 existing · 1 missing date/);
+  assert.match(row("0"),/<details><summary>Watch details<\/summary>/);
+  assert.match(row("0"),/Skipped: missing date/);
+  assert.match(row("0"),/Already in tracker/);
+  assert.doesNotMatch(row("0"),/<details open/);
+});
+
+for (const provider of ["tautulli","tracearr"]) {
+  test(`${provider} recovery cannot start without a selected user`,()=>{
+    const nodes=new Map();
+    const $=key=>{if(!nodes.has(key))nodes.set(key,{value:"default"});return nodes.get(key);};
+    $("#pr-kind").value=provider;
+    const options={targets:[{id:"default",connected:true}],[provider]:[{id:"default",user:""}]};
+    const sandbox=vm.createContext({$,options,window:{},host:{querySelectorAll:()=>[]},busy:false,reading:false,loading:false,
+      job:null,otherRecovery:false,NEW_TRACKER:"new",upload:null,receipt:null,data:null,rows:[],offset:0,count:()=>0,number:String});
+    vm.runInContext(source.slice(source.indexOf("  function controls()"),source.indexOf("  function render()")),sandbox);
+    sandbox.controls();
+    assert.equal($("#pr-start").disabled,true);
+    options[provider][0].user="7";
+    sandbox.controls();
+    assert.equal($("#pr-start").disabled,false);
+  });
 }
 
 test("Select all skips title guesses; checking a guess adds only that explicit selection",async()=>{
@@ -134,6 +261,29 @@ test("bulk recovery sends the chosen media type and search evidence to the recov
   assert.deepEqual(JSON.parse(JSON.stringify(calls.at(-1).body)),{revision:4,edits:[{group_id:"group",title:"Miss Hokusai",
     ids:{tmdb:"267970"},media_type:"movie",catalog:"tmdb",match_query:"Miss Hokusai",language:"ja-JP"}]});
   assert.equal(calls.some(call=>call.path.endsWith("/commit")),false);
+  sandbox.job={id:"new",revision:9};sandbox.busy=true;
+  await sandbox.workspace.onSaved({id:"scan",revision:5,matched_events:1});
+  sandbox.workspace.onClose();
+  assert.equal(sandbox.job.id,"new");
+  assert.equal(sandbox.busy,true);
+});
+
+test("a delayed bulk matching context cannot open on a newer recovery",async()=>{
+  let finish;
+  const sandbox=vm.createContext({busy:false,controls(){},message(){},filters:()=>({q:""}),
+    job:{id:"scan",revision:4},window:{},document:{querySelector:()=>true},
+    lifetime:{signal:{aborted:false}},URLSearchParams,matchingWorkspace:null,
+    request:()=>new Promise(resolve=>{finish=resolve;}),
+    mappingModule:{openMappingWorkspace(){assert.fail("Old matching context must not open");}}});
+  const code=source.slice(source.indexOf("  async function bulkMatch()"),source.indexOf("  function matchTypeChanged("))
+    .replace(/await import\(`[^`]+`\)/,"mappingModule");
+  vm.runInContext(code,sandbox);
+  const pending=sandbox.bulkMatch();
+  sandbox.job={id:"new",revision:9};
+  finish({revision:4,rows:[{id:"old"}],total:1});
+  await pending;
+  assert.equal(sandbox.matchingWorkspace,null);
+  assert.equal(sandbox.busy,true);
 });
 
 test("bulk selection resets individual guesses and review-only bulk selection stays empty",async()=>{
@@ -151,11 +301,74 @@ test("bulk selection resets individual guesses and review-only bulk selection st
   assert.equal(sandbox.count(),0);
 });
 
+test("import uses its returned receipt and revision without another receipt request",async()=>{
+  const calls=[];
+  const sandbox=vm.createContext({busy:false,job:{id:"scan",revision:4,target_instance:"tracker"},
+    data:{revision:3},receipt:null,all:false,chosen:new Set(["0"]),excluded:new Set(),lifetime:{signal:{aborted:false}},
+    number:String,CustomEvent:function(){},window:{dispatchEvent(){}},filters:()=>({status:"all",q:""}),
+    controls(){},message(){},async page(){calls.push("page");},
+    async request(path,body){
+      calls.push(path);
+      assert.equal(body.revision,3);
+      if(path.endsWith("/receipt"))throw new Error("Tracker temporarily unavailable");
+      return {ok:true,applied:2,revision:5,imported_keys:["tmdb:1@1700000000","tmdb:1@1700100000"]};
+    }});
+  vm.runInContext(source.slice(source.indexOf("  async function commit()"),source.indexOf("  async function acceptTitleMatches()")),sandbox);
+  await sandbox.commit();
+  assert.deepEqual(calls,["/scan/commit","page"]);
+  assert.equal(sandbox.job.revision,5);
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.receipt)),{provider:"CROSSWATCH",instance:"tracker",feature:"history",
+    keys:["tmdb:1@1700000000","tmdb:1@1700100000"]});
+  assert.equal(sandbox.chosen.size,0);
+  assert.equal(sandbox.busy,false);
+});
+
+for(const action of ["commit","acceptTitleMatches"]) {
+  for(const fail of [false,true]) {
+    test(`a late ${action} ${fail ? "failure" : "success"} cannot change a newer recovery`,async()=>{
+      let finish;
+      const sandbox=vm.createContext({busy:false,job:{id:"old",revision:0,target_instance:"tracker"},
+        data:{revision:0,summary:{by_status:{needs_review:1}}},receipt:null,
+        all:false,chosen:new Set(["0"]),excluded:new Set(),lifetime:{signal:{aborted:false}},
+        number:String,CustomEvent:function(){},window:{dispatchEvent(){},confirm:()=>true},
+        controls(){},message(){},filters:()=>({status:"all",q:""}),
+        request:()=>new Promise((resolve,reject)=>{finish=fail ? reject : resolve;}),
+        page(){assert.fail("Old responses must not refresh a new recovery");},
+        poll(){assert.fail("Old failures must not poll a new recovery");}});
+      vm.runInContext(source.slice(source.indexOf("  async function commit()"),source.indexOf("  async function bulkMatch()")),sandbox);
+      const pending=sandbox[action]();
+      sandbox.job={id:"new",revision:9};
+      sandbox.busy=true;
+      finish(fail ? Object.assign(new Error("Old failure"),{status:503}) : {id:"old",ok:true,applied:1,revision:1,imported_keys:["old"],accepted:1});
+      await pending;
+      assert.equal(sandbox.job.id,"new");
+      assert.equal(sandbox.job.revision,9);
+      assert.equal(sandbox.receipt,null);
+      assert.equal(sandbox.busy,true);
+    });
+  }
+}
+
+test("an uncertain import result refreshes server state without repeating the import",async()=>{
+  const calls=[],messages=[];
+  const sandbox=vm.createContext({busy:false,job:{id:"scan",revision:4,target_instance:"tracker"},
+    data:{revision:4},all:false,chosen:new Set(["0"]),excluded:new Set(),lifetime:{signal:{aborted:false}},
+    controls(){},filters:()=>({status:"all",q:""}),message:text=>messages.push(text),
+    async request(path){calls.push(path);throw Object.assign(new Error("Connection lost"),{status:503});},
+    async poll(){calls.push("refresh");sandbox.job.revision=5;}});
+  vm.runInContext(source.slice(source.indexOf("  async function commit()"),source.indexOf("  async function acceptTitleMatches()")),sandbox);
+  await sandbox.commit();
+  assert.deepEqual(calls,["/scan/commit","refresh"]);
+  assert.equal(sandbox.job.revision,5);
+  assert.equal(sandbox.busy,false);
+  assert.match(messages.at(-1),/Connection lost/);
+});
+
 test("accepting title matches confirms the filtered batch without importing or selecting it",async()=>{
   const nodes=new Map(),calls=[];
   const $=id=>{if(!nodes.has(id))nodes.set(id,{value:"needs_review",dispatchEvent(){}});return nodes.get(id);};
   const sandbox=vm.createContext({$,Event,CustomEvent,number:String,busy:false,all:true,chosen:new Set(["old"]),excluded:new Set(["skip"]),
-    job:{id:"scan",revision:4},data:{summary:{by_status:{needs_review:125}}},lifetime:{signal:{aborted:false}},
+    job:{id:"scan",revision:5},data:{revision:4,summary:{by_status:{needs_review:125}}},lifetime:{signal:{aborted:false}},
     window:{confirm(text){calls.push(["confirm",text]);return true;},dispatchEvent(){}},controls(){},
     filters:()=>({q:"Antlers",status:$("#pr-result").value}),
     async request(path,body){calls.push([path,body]);return {revision:5,accepted:125};},
@@ -237,6 +450,22 @@ function searchFixture() {
     flush(){const tasks=[...timers.values()];timers.clear();return Promise.all(tasks.map(fn=>fn()));}};
 }
 
+for(const changed of [false,true]) {
+  test(`refreshing a ${changed ? "changed" : "unchanged"} review ${changed ? "clears" : "keeps"} previous approvals`,async()=>{
+    const f=searchFixture();
+    f.sandbox.job.revision=1;
+    f.sandbox.data.revision=1;
+    f.sandbox.all=true;
+    f.sandbox.excluded.add("excluded");
+    const pending=f.sandbox.page();
+    f.pending[0].resolve({revision:changed ? 2 : 1,rows:[],summary:{ready:1},filtered_total:1});
+    await pending;
+    assert.equal(f.sandbox.all,!changed);
+    assert.equal(f.sandbox.chosen.size,changed ? 0 : 1);
+    assert.equal(f.sandbox.excluded.size,changed ? 0 : 1);
+  });
+}
+
 test("search keeps focus during debounce and requests, and blocks stale selections",async()=>{
   const f=searchFixture(), search=f.$("#pr-search");
   search.focus();
@@ -306,6 +535,24 @@ test("returning restores the server recovery without starting or discarding it",
   assert.equal(sandbox.job,null);
 });
 
+test("an inaccessible owned recovery can be closed without loading its private rows",async()=>{
+  const nodes=new Map(),calls=[];
+  const $=id=>{if(!nodes.has(id))nodes.set(id,{});return nodes.get(id);};
+  const sandbox=vm.createContext({$,job:null,otherRecovery:false,stoppingRecovery:false,reading:true,data:{rows:["private"]},rows:["private"],receipt:{keys:["private"]},
+    all:true,chosen:new Set(["private"]),excluded:new Set(),
+    controls(){},render(){calls.push("render");},message(text){calls.push(text);},
+    request:async()=>({job:{id:"existing",status:"error",unavailable:true,message:"Close this recovery."},busy:true}),
+    poll(){assert.fail("Unavailable history must not be polled");},updateScope(){}});
+  vm.runInContext(source.slice(source.indexOf("  async function resume()"),source.indexOf("  async function closeRecovery()")),sandbox);
+  await sandbox.resume();
+  assert.equal(sandbox.job.id,"existing");
+  assert.equal(sandbox.reading,false);
+  assert.equal(sandbox.data,null);
+  assert.equal(sandbox.rows.length,0);
+  assert.equal(sandbox.receipt,null);
+  assert.ok(calls.includes("Close this recovery."));
+});
+
 test("opening a shortcut preserves the active recovery and its source",()=>{
   const sandbox=vm.createContext({window:{CW:{pendingPlexRecovery:{source_instance:"another"}}},
     job:{id:"existing"},options:{},busy:false,reading:true,loading:false,
@@ -333,6 +580,7 @@ function pollingFixture() {
   };
   const current={id:"scan",import_id:"scan",status:"review",revision:1,auto_match:{id:"auto",status:"running",done:1,total:300}};
   const sandbox=vm.createContext({$,job:{...current},data:{...current},offset:100,receipt:{keys:[]},
+    all:false,chosen:new Set(),excluded:new Set(),
     pollSequence:0,timer:null,reading:false,lifetime:{signal:{aborted:false}},
     window:{dispatchEvent(){}},CustomEvent:function(){},clearTimeout(){},setTimeout:()=>1,
     number:String,controls(){},renderActivity(){},message(){},render(){},
@@ -341,6 +589,23 @@ function pollingFixture() {
   vm.runInContext(source.slice(source.indexOf("  async function poll()"),source.indexOf("  function renderActivity()")),sandbox);
   return {sandbox,current,paths,pages};
 }
+
+test("a newer status clears old approvals before the delayed preview arrives",async()=>{
+  const f=pollingFixture();
+  f.sandbox.all=true;f.sandbox.chosen.add("old");f.sandbox.excluded.add("skip");
+  f.current.revision=2;
+  let finish, started;
+  const ready=new Promise(resolve=>{started=resolve;});
+  const request=f.sandbox.request;
+  f.sandbox.request=path=>path.endsWith("/receipt") ? new Promise(resolve=>{finish=resolve;started();}) : request(path);
+  const pending=f.sandbox.poll();
+  await ready;
+  assert.equal(f.sandbox.all,false);
+  assert.equal(f.sandbox.chosen.size,0);
+  assert.equal(f.sandbox.excluded.size,0);
+  finish({keys:[]});
+  await pending;
+});
 
 test("auto progress polling preserves page and fetches rows only when the preview changes",async()=>{
   const f=pollingFixture();
@@ -360,6 +625,28 @@ test("auto progress polling preserves page and fetches rows only when the previe
   await f.sandbox.poll();
   assert.deepEqual(f.pages,[100,100]);
 });
+
+for(const failure of ["status","receipt"]) {
+  test(`temporary ${failure} failure keeps review polling recoverable`,async()=>{
+    const f=pollingFixture(),timers=[];
+    f.sandbox.data=null;
+    f.sandbox.setTimeout=(fn,delay)=>{timers.push({fn,delay});return timers.length;};
+    const request=f.sandbox.request;
+    let fail=true;
+    f.sandbox.request=async path=>{
+      if(fail && (failure === "status" || path.endsWith("/receipt"))) {
+        fail=false;
+        throw Object.assign(new Error("Temporarily unavailable"),{status:503});
+      }
+      return request(path);
+    };
+    await f.sandbox.poll();
+    assert.equal(timers.length,1);
+    assert.equal(timers[0].delay,5000);
+    await timers[0].fn();
+    assert.deepEqual(f.pages,[100]);
+  });
+}
 
 test("title matching displays its phase, candidate count and accessible progress",async()=>{
   const f=pollingFixture();
@@ -468,6 +755,22 @@ test("an expired results page can start a new scan without remounting",async()=>
   assert.equal(f.$("#pr-start").disabled,true);
   assert.equal(f.calls.at(-1).options.method,"POST");
   assert.deepEqual(JSON.parse(f.calls.at(-1).options.body),{source_instance:"default",target_instance:"default"});
+});
+
+test("a delayed close response leaves a newer recovery untouched",async()=>{
+  let finish;
+  const sandbox=vm.createContext({job:{id:"old"},busy:false,timer:null,pollSequence:0,lifetime:{signal:{aborted:false}},
+    clearTimeout(){},controls(){},message(){},
+    request:()=>new Promise(resolve=>{finish=resolve;}),
+    resetRecovery(){assert.fail("The new recovery must remain open");},
+    render(){assert.fail("The old close must not render the new recovery");}});
+  vm.runInContext(source.slice(source.indexOf("  async function closeRecovery()"),source.indexOf("  async function commit()")),sandbox);
+  const pending=sandbox.closeRecovery();
+  sandbox.job={id:"new"};
+  finish({ok:true});
+  await pending;
+  assert.equal(sandbox.job.id,"new");
+  assert.equal(sandbox.busy,true);
 });
 
 test("closing an already expired recovery unlocks the next scan",async()=>{

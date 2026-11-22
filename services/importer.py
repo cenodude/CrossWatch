@@ -1143,7 +1143,8 @@ def _shape_rows(raw_rows: list[dict[str, Any]], cfg: Mapping[str, Any], target_i
                     reason = "rating_update"
                 else:
                     status, reason = STATUS_EXISTS, "already_exists"
-        seen.add((feature, key))
+        if status not in (STATUS_INVALID, STATUS_MISSING_IDENTITY, STATUS_UNSUPPORTED):
+            seen.add((feature, key))
         title = _display_title(item, key)
         row_id = hashlib.sha256(f"{source}|{feature}|{key}|{i}".encode("utf-8")).hexdigest()[:16]
         rows.append(
@@ -1415,6 +1416,11 @@ def api_import_commit(payload: ImportCommitRequest = Body(...), request: Request
     if not _target_connected(cfg, instance):
         raise _api_error(ERROR_TARGET_UNAVAILABLE, status_code=503, detail="Connect the CrossWatch tracker before importing.")
     cfg_view = build_provider_config_view(cfg, "CROSSWATCH", instance)
+    recovery_target_hash = preview.get("recovery_target_hash")
+    if recovery_target_hash:
+        target_hash = hashlib.sha256(json.dumps(cfg_view.get("crosswatch") or {}, sort_keys=True, default=str).encode()).hexdigest()
+        if target_hash != recovery_target_hash:
+            raise _api_error(ERROR_TARGET_UNAVAILABLE, status_code=409, detail="Tracker settings changed. Start a new recovery scan.")
     wanted_features = {str(f).strip() for f in payload.features if str(f).strip() in FEATURES}
     wanted_media = {str(m).strip() for m in payload.media_types if str(m).strip() in MEDIA_TYPES}
     selected = {str(x).strip() for x in payload.row_ids if str(x).strip()}
