@@ -37,7 +37,8 @@ from cw_platform.anime_mapping.simkl_catalog import (
     resolve_instance as simkl_resolve_instance,
     search as simkl_search,
 )
-from cw_platform.anime_mapping.storage import normalize_release_tag, rebuild_sqlite_from_mappings
+from cw_platform.anime_mapping.rebuild_process import rebuild_index
+from cw_platform.anime_mapping.storage import normalize_release_tag
 from cw_platform.anime_mapping.updater import status as mapping_status, update as mapping_update
 from cw_platform.config_base import ANIME_MAPPING_PAIRS_DEFAULT, load_config, save_config
 
@@ -231,7 +232,7 @@ def api_anime_mapping_rebuild_index(payload: dict[str, Any] | None = Body(defaul
     try:
         tag = _release_tag(payload)
         log("manual_rebuild_requested", level="debug", module="ANIME_MAPPING", extra={"release_tag": tag})
-        res = rebuild_sqlite_from_mappings(release_tag=tag)
+        res = rebuild_index(release_tag=tag)
         cfg = load_config() or {}
         log(
             "manual_rebuild_finished",

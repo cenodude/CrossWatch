@@ -21,6 +21,7 @@ import requests
 from _logging import log
 
 from . import cw_mappings
+from .rebuild_process import rebuild_index
 from .storage import (
     SCHEMA_VERSION,
     cw_mappings_current,
@@ -29,7 +30,6 @@ from .storage import (
     normalize_release_tag,
     paths,
     read_state,
-    rebuild_sqlite_from_mappings,
     write_json_atomic,
     write_state,
     _safe_existing_path,
@@ -300,7 +300,7 @@ def boot_check(*, cfg: Mapping[str, Any] | None = None, auto_repair: bool = True
         reason = "schema_outdated" if not index_schema_ok(tag) else ("index_missing" if not db_path.exists() else "index_not_ready")
     log("boot_reindex_started", level="debug", module="ANIME_MAPPING", extra={"release_tag": tag, "reason": reason})
     try:
-        rebuild = rebuild_sqlite_from_mappings(release_tag=tag)
+        rebuild = rebuild_index(release_tag=tag)
     except Exception as exc:
         log(
             "boot_reindex_failed",
@@ -433,7 +433,7 @@ def _update_locked(*, release_tag: str = "v3", force: bool = False) -> dict[str,
     if mappings_path.exists() and needs_rebuild:
         log("index_rebuild_started", level="debug", module="ANIME_MAPPING", extra={"release_tag": tag})
         try:
-            rebuild = rebuild_sqlite_from_mappings(release_tag=tag)
+            rebuild = rebuild_index(release_tag=tag)
         except Exception as exc:
             write_state(tag, {**patch, "error": f"Anime mapping index rebuild failed ({exc.__class__.__name__})"})
             raise

@@ -92,7 +92,7 @@ def test_identity_updates_without_anibridge_change(installed):
 def test_unchanged_identity_does_not_rebuild(installed, monkeypatch, http_status):
     _, remote = installed
     remote.identity = Response(identity(100), status=http_status)
-    monkeypatch.setattr(updater, "rebuild_sqlite_from_mappings", lambda **kwargs: pytest.fail("Unnecessary rebuild"))
+    monkeypatch.setattr(updater, "rebuild_index", lambda **kwargs: pytest.fail("Unnecessary rebuild"))
     result = updater.update()
     assert result["ok"] and not result["updated"] and not result["rebuilt"]
     assert remote.calls[-1][1]["If-None-Match"] == '"old"'
@@ -153,16 +153,16 @@ def test_failed_rebuild_is_retried_with_unchanged_download(installed, monkeypatc
     pp, remote = installed
     old_hash = storage.read_state("v3")["indexed_identity_sha256"]
     remote.identity = Response(identity(200))
-    real_rebuild = updater.rebuild_sqlite_from_mappings
+    real_rebuild = updater.rebuild_index
     def fail(**kwargs):
         raise RuntimeError("Index unavailable")
-    monkeypatch.setattr(updater, "rebuild_sqlite_from_mappings", fail)
+    monkeypatch.setattr(updater, "rebuild_index", fail)
     with pytest.raises(RuntimeError):
         updater.update()
     assert storage.read_state("v3")["indexed_identity_sha256"] == old_hash
     assert pp["identity"].read_bytes() == identity(200)
     remote.identity = Response(status=304)
-    monkeypatch.setattr(updater, "rebuild_sqlite_from_mappings", real_rebuild)
+    monkeypatch.setattr(updater, "rebuild_index", real_rebuild)
     result = updater.update()
     assert result["ok"] and result["identity_updated"] and not result["error"]
     assert storage.query_native_identity("v3", "mal", "1")["simkl"] == "200"

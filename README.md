@@ -178,6 +178,10 @@ Recover one tracker as a new instance, or restore only mappings and blocks, cust
 
 Add `-e CW_CLI_ONLY=1` to the Docker command, or `CW_CLI_ONLY: "1"` under `environment` in Compose. The API, CLI, webhooks and auth callbacks keep working.
 
+## Memory allocator
+
+The Docker image runs CW with jemalloc, memory used during a sync is returned afterwards. To use the default Python allocator instead, add `-e CW_ALLOCATOR=default` to the Docker command, or `CW_ALLOCATOR: "default"` under `environment` in Compose.
+
 ## Run once and exit
 
 For cron, Kubernetes CronJobs or another external scheduler, use `run-once`. Set up your accounts and sync pairs first:
