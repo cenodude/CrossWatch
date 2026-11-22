@@ -9,6 +9,7 @@ from typing import Any, Mapping, cast
 
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from providers.sync._mod_NUVIO import OPS as NUVIO_OPS
+from providers.scrobble._show_tmdb import fill_display_tmdb
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
 from .base import PlaybackProgressAdapter, enrich_parallel, public_failure, tmdb_metadata_provider
@@ -217,15 +218,17 @@ class NuvioPlaybackAdapter(PlaybackProgressAdapter):
             return PlaybackListResult(False, self.provider, instance_id, error_code="provider_error", message="Nuvio progress request failed.", retryable=True)
         metadata = tmdb_metadata_provider(config_view)
         pending = [(key, item) for key, item in dict(index).items() if isinstance(item, Mapping)]
-        items = enrich_parallel(pending, lambda entry: self._record(entry[0], entry[1], instance_id, instance_label, caps, metadata))
+        items = enrich_parallel(pending, lambda entry: self._record(entry[0], entry[1], instance_id, instance_label, caps, metadata, config_view))
         return PlaybackListResult(True, self.provider, instance_id, items=[item for item in items if item], refreshed_at=utc_now_iso())
 
-    def _record(self, key: Any, item: Mapping[str, Any], instance_id: str, instance_label: str, caps: PlaybackCapabilities, metadata: Any = None) -> PlaybackRecord | None:
+    def _record(self, key: Any, item: Mapping[str, Any], instance_id: str, instance_label: str, caps: PlaybackCapabilities, metadata: Any = None, config_view: Mapping[str, Any] | None = None) -> PlaybackRecord | None:
         mini = id_minimal(item)
         typ = str(mini.get("type") or item.get("type") or "").strip().lower()
         media_type = "episode" if typ == "episode" else "movie"
         ids = clean_mapping(_mapping(mini.get("ids") or item.get("ids")))
         show_ids = clean_mapping(_mapping(mini.get("show_ids") or item.get("show_ids")))
+        if metadata is not None and config_view is not None:
+            fill_display_tmdb(config_view, media_type, ids, show_ids)
         title = str(mini.get("title") or item.get("title") or item.get("series_title") or "").strip()
         series_title = str(mini.get("series_title") or item.get("series_title") or "").strip()
         if _is_placeholder_title(title):

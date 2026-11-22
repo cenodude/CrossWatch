@@ -293,3 +293,136 @@ def test_rows_without_imdb_titles_report_nothing(world: SimpleNamespace) -> None
     world.rows = []
     assert nuvio.sync_index(world.adapter) == {}
     assert events == []
+
+
+def library_row(content_id: str, content_type: str) -> dict[str, Any]:
+    return {"content_id": content_id, "content_type": content_type, "name": "A Title", "profile_id": 1}
+
+
+def progress_row(content_id: str, content_type: str, season: int | None = None, episode: int | None = None) -> dict[str, Any]:
+    video = f"{content_id}:{season}:{episode}" if season is not None else content_id
+    return {"content_id": content_id, "content_type": content_type, "title": "A Title", "season": season, "episode": episode,
+            "position": 600_000, "duration": 3_000_000, "last_watched": WATCHED_AT, "video_id": video, "profile_id": 1}
+
+
+@pytest.fixture()
+def library(world: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    world.library = [library_row(SHAWSHANK, "movie"), library_row(WESTWORLD, "series")]
+    world.progress = [progress_row(SHAWSHANK, "movie"), progress_row(WESTWORLD, "series", 1, 1), progress_row(BLEACH, "series", 2, 1)]
+    monkeypatch.setattr(nuvio_watchlist, "pull_library_rows", lambda _adapter: world.library)
+    monkeypatch.setattr(nuvio_progress, "pull_watch_progress_rows", lambda _adapter: world.progress)
+    return world
+
+
+def test_watchlist_gains_tmdb_ids_while_the_raw_index_keeps_nuvio_keys(library: SimpleNamespace) -> None:
+    index = nuvio_watchlist.sync_index(library.adapter)
+    assert sorted(index) == ["tmdb:278", "tmdb:63247#show"]
+    assert index["tmdb:63247#show"]["ids"] == {"imdb": WESTWORLD, "tmdb": "63247", "tvdb": "296762"}
+    assert index["tmdb:278"]["_nuvio_content_id"] == SHAWSHANK
+    assert sorted(nuvio_watchlist.build_index(library.adapter)) == [f"imdb:{SHAWSHANK}", f"imdb:{WESTWORLD}"]
+
+
+def test_progress_gains_verified_tmdb_ids_and_holds_back_mismatched_episodes(library: SimpleNamespace) -> None:
+    index = nuvio_progress.sync_index(library.adapter)
+    assert sorted(index) == [f"imdb:{BLEACH}#s02e01", "tmdb:278", "tmdb:63247#s01e01"]
+    assert index["tmdb:63247#s01e01"]["show_ids"]["tmdb"] == "63247"
+    assert index["tmdb:63247#s01e01"]["progress_ms"] == 600_000
+    assert all(key.startswith("imdb:") for key in nuvio_progress.build_index(library.adapter))
+
+
+def test_sync_reads_use_the_tmdb_indexes(library: SimpleNamespace) -> None:
+    assert "tmdb:278" in mod.NUVIOModule.build_index(library.adapter, "watchlist")
+    assert "tmdb:278" in mod.NUVIOModule.build_index(library.adapter, "progress")
+
+
+def test_without_a_tmdb_key_watchlist_and_progress_stay_imdb_only(library: SimpleNamespace) -> None:
+    library.adapter._stremio_tmdb_provider = None
+    assert all(key.startswith("imdb:") for key in nuvio_watchlist.sync_index(library.adapter))
+    assert all(key.startswith("imdb:") for key in nuvio_progress.sync_index(library.adapter))
+    assert library.tmdb.finds == []
+
+
+class _Ops:
+    def __init__(self, name: str, feature: str, read: Any = None) -> None:
+        self._name, self.feature, self.read = name, feature, read
+        self.adapter = SimpleNamespace(instance_id="default", config={})
+        self.rows: dict[str, dict[str, Any]] = {}
+        self.adds: list[str] = []
+        self.removes: list[str] = []
+
+    def name(self) -> str:
+        return self._name
+
+    def label(self) -> str:
+        return self._name.title()
+
+    def features(self) -> dict[str, bool]:
+        return {self.feature: True}
+
+    def capabilities(self) -> Any:
+        return mod.OPS.capabilities()
+
+    def is_configured(self, _cfg: Any) -> bool:
+        return True
+
+    def health(self, _cfg: Any, **_: Any) -> dict[str, Any]:
+        return {"ok": True, "status": "ok", "features": {self.feature: True}, "api": {}}
+
+    def build_index(self, _cfg: Any, *, feature: str, **_: Any) -> dict[str, dict[str, Any]]:
+        return self.read() if self.read else dict(self.rows)
+
+    def add(self, _cfg: Any, items: Any, *, feature: str, dry_run: bool = False, **_: Any) -> dict[str, Any]:
+        keys = [stremio_common.canonical_item_key(item) for item in items]
+        for key, item in zip(keys, items):
+            self.rows[key] = dict(item)
+        self.adds.extend(keys)
+        return {"ok": True, "count": len(keys), "confirmed_keys": keys}
+
+    def remove(self, _cfg: Any, items: Any, *, feature: str, dry_run: bool = False, **_: Any) -> dict[str, Any]:
+        keys = [stremio_common.canonical_item_key(item) for item in items]
+        for key in keys:
+            self.rows.pop(key, None)
+        self.removes.extend(keys)
+        return {"ok": True, "count": len(keys), "confirmed_keys": keys}
+
+
+@pytest.mark.parametrize("feature", ["watchlist", "progress"])
+@pytest.mark.parametrize("mode", ["one-way", "two-way"])
+def test_upgrade_to_tmdb_keys_removes_and_adds_nothing(library: SimpleNamespace, config_base: Path, monkeypatch: pytest.MonkeyPatch, mode: str, feature: str) -> None:
+    import sys
+
+    from cw_platform.orchestrator.facade import Orchestrator
+
+    for name, module in list(sys.modules.items()):
+        if name.startswith("cw_platform.orchestrator") and hasattr(module, "STATE_DIR"):
+            monkeypatch.setattr(module, "STATE_DIR", config_base / ".cw_state", raising=False)
+    monkeypatch.setattr("cw_platform.orchestrator._phantoms._DIR", str(config_base / ".cw_state"))
+    reader = nuvio_watchlist.sync_index if feature == "watchlist" else nuvio_progress.sync_index
+    source = _Ops("NUVIO", feature, lambda: reader(library.adapter))
+    target = _Ops("MDBLIST", feature)
+    monkeypatch.setattr("cw_platform.orchestrator._snapshots.provider_configured", lambda _cfg, _name: True)
+    monkeypatch.setattr("cw_platform.orchestrator.facade.load_sync_providers", lambda: {"NUVIO": source, "MDBLIST": target})
+    cfg = {
+        "runtime": {"debug": False, "snapshot_ttl_sec": 0, "apply_chunk_size": 0, "apply_chunk_pause_ms": 0},
+        "blackbox": {"enabled": True, "block_adds": True, "block_removes": True, "promote_after": 3, "pair_scoped": True},
+        "sync": {"dry_run": False, "enable_add": True, "enable_remove": True, "include_observed_deletes": True, "allow_mass_delete": True},
+        "pairs": [{"id": "p1", "enabled": True, "source": "NUVIO", "target": "MDBLIST", "mode": mode, "feature": feature,
+                   "features": {feature: {"enable": True, "add": True, "remove": True}}}],
+    }
+    provider = library.adapter._stremio_tmdb_provider
+    library.adapter._stremio_tmdb_provider = None
+    Orchestrator(cfg).run()
+    written = list(target.adds)
+    assert written and all(key.startswith("imdb:") for key in written)
+
+    library.adapter._stremio_tmdb_provider = provider
+    for _ in range(2):
+        Orchestrator(cfg).run()
+    assert (target.adds, target.removes, source.adds, source.removes) == (written, [], [], [])
+
+    if feature == "watchlist":
+        library.library = [row for row in library.library if row["content_id"] != SHAWSHANK]
+    else:
+        library.progress = [row for row in library.progress if row["content_id"] != SHAWSHANK]
+    Orchestrator(cfg).run()
+    assert target.removes == [f"imdb:{SHAWSHANK}"] and source.removes == []

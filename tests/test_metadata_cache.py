@@ -105,3 +105,35 @@ def test_empty_tmdb_result_is_not_cached_after_transient_failure(tmp_path, monke
     assert first == {}
     assert second["title"] == "Recovered title"
     assert calls == [("movie", "654"), ("movie", "654")]
+
+
+def _expired_entry(tmp_path, monkeypatch, provider_result):
+    calls: list[str] = []
+    monkeypatch.setattr(metaAPI, "_env", lambda: (None, tmp_path.parent, lambda: {}))
+    monkeypatch.setattr(metaAPI, "_meta_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(metaAPI, "_meta_cache_enabled", lambda: True)
+    monkeypatch.setattr(metaAPI, "_resolve_tmdb_cached", lambda *a: calls.append("memory") or {"title": "Memory"})
+    monkeypatch.setattr(metaAPI, "_provider_meta", lambda *a: calls.append("provider") or dict(provider_result))
+    write_metadata_cache(tmp_path, "movie", "777", "en-US", {"title": "Old title"})
+    path = metadata_cache_path(tmp_path, "movie", "777", "en-US")
+    payload = json.loads(path.read_text("utf-8"))
+    payload["fetched_at"] = 1
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return calls
+
+
+def test_expired_item_metadata_is_refreshed_through_the_provider(tmp_path, monkeypatch) -> None:
+    calls = _expired_entry(tmp_path, monkeypatch, {"title": "New title"})
+    result = metaAPI.get_meta("unused", "movie", "777", tmp_path, need={"title": True}, locale="en-US")
+    assert result["title"] == "New title"
+    assert calls == ["provider"]
+    again = metaAPI.get_meta("unused", "movie", "777", tmp_path, need={"title": True}, locale="en-US")
+    assert again["title"] == "New title"
+    assert calls == ["provider"]
+
+
+def test_expired_item_metadata_stays_available_when_tmdb_is_down(tmp_path, monkeypatch) -> None:
+    calls = _expired_entry(tmp_path, monkeypatch, {})
+    result = metaAPI.get_meta("unused", "movie", "777", tmp_path, need={"title": True}, locale="en-US")
+    assert result["title"] == "Old title"
+    assert calls == ["provider"]

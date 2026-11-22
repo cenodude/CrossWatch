@@ -11,8 +11,6 @@ from typing import Any
 
 import requests
 
-from cw_platform.app_version import user_agent as http_user_agent
-
 TMDB_FIND = "https://api.themoviedb.org/3/find"
 _SOURCES = (("tvdb", "tvdb_id"), ("imdb", "imdb_id"))
 _LOOKUPS = (("show", "tv_results", "id"), ("episode", "tv_episode_results", "show_id"))
@@ -51,28 +49,24 @@ def _find(api_key: str, source: str, external_id: str, bucket: str, field: str) 
     if hit and (hit[1] is not None or (time.time() - hit[0]) < _MISS_TTL_SECONDS):
         return hit[1]
 
+    from providers.metadata._meta_TMDB import TmdbProvider
+
+    provider = TmdbProvider(lambda: {"tmdb": {"api_key": api_key}}, lambda _: None)
+    found: int | None = None
     try:
-        r = requests.get(
-            f"{TMDB_FIND}/{external_id}",
-            params={"external_source": source, "api_key": api_key},
-            headers={"User-Agent": http_user_agent("Scrobble", override_env="CW_TMDB_UA"), "Accept": "application/json"},
-            timeout=10,
-        )
+        data = provider.get_response(f"{TMDB_FIND}/{external_id}", {"external_source": source},
+                                     quiet_404=True, timeout=10, max_retries=0, copy=False).data
+    except requests.exceptions.RequestException as exc:
+        if getattr(getattr(exc, "response", None), "status_code", None) != 404:
+            return None
+        data = {}
     except Exception:
         return None
-    if r.status_code not in (200, 404):
-        return None
-
-    found: int | None = None
-    if r.status_code == 200:
-        try:
-            rows = (r.json() or {}).get(bucket) or []
-        except Exception:
-            return None
-        for row in rows:
-            found = _positive_int(row.get(field)) if isinstance(row, Mapping) else None
-            if found:
-                break
+    rows = data.get(bucket) if isinstance(data, Mapping) else None
+    for row in rows if isinstance(rows, list) else []:
+        found = _positive_int(row.get(field)) if isinstance(row, Mapping) else None
+        if found:
+            break
 
     with _LOCK:
         if len(_CACHE) > _CACHE_MAX:
@@ -99,3 +93,58 @@ def show_tmdb_id(
             if found:
                 return found
     return None
+
+
+def tmdb_configured(cfg: Mapping[str, Any] | None) -> bool:
+    return bool(_api_key(cfg or {}))
+
+
+def movie_tmdb_id(cfg: Mapping[str, Any], ids: Mapping[str, Any] | None) -> int | None:
+    api_key = _api_key(cfg or {})
+    imdb = _clean("imdb", (ids or {}).get("imdb"))
+    if not api_key or not imdb:
+        return None
+    return _find(api_key, "imdb_id", imdb, "movie_results", "id")
+
+
+def fill_display_tmdb(cfg: Mapping[str, Any], media_type: str, ids: dict[str, Any], show_ids: dict[str, Any]) -> bool:
+    if not tmdb_configured(cfg):
+        return False
+    kind = str(media_type or "").strip().lower()
+    if kind in {"episode", "season"}:
+        if _positive_int(show_ids.get("tmdb")):
+            return False
+        shows = dict(show_ids)
+        if not _clean("imdb", shows.get("imdb")) and _clean("imdb", ids.get("imdb")):
+            shows["imdb"] = ids.get("imdb")
+        found = show_tmdb_id(cfg, shows, ids if kind == "episode" else {})
+        if found:
+            show_ids["tmdb"] = str(found)
+        return bool(found)
+    if _positive_int(ids.get("tmdb")):
+        return False
+    found = movie_tmdb_id(cfg, ids) if kind == "movie" else show_tmdb_id(cfg, ids, {}) if kind in {"show", "tv", "anime"} else None
+    if found:
+        ids["tmdb"] = str(found)
+    return bool(found)
+
+
+def tmdb_title(cfg: Mapping[str, Any], media_type: str, tmdb: Any) -> tuple[str, int | None]:
+    api_key = _api_key(cfg or {})
+    ident = _positive_int(tmdb)
+    if not api_key or not ident:
+        return "", None
+    from providers.metadata._meta_TMDB import TmdbProvider
+
+    movie = str(media_type or "").strip().lower() == "movie"
+    provider = TmdbProvider(lambda: {"tmdb": {"api_key": api_key}}, lambda _: None)
+    try:
+        data = provider.get_response(f"https://api.themoviedb.org/3/{'movie' if movie else 'tv'}/{ident}", {"language": "en-US"},
+                                     quiet_404=True, timeout=10, max_retries=0, copy=False).data
+    except Exception:
+        return "", None
+    if not isinstance(data, Mapping):
+        return "", None
+    title = str(data.get("title" if movie else "name") or "").strip()
+    year = _positive_int(str(data.get("release_date" if movie else "first_air_date") or "")[:4])
+    return title, year

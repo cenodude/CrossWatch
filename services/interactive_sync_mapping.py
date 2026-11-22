@@ -19,6 +19,21 @@ def _check_rate_limit(response):
                             headers={"Retry-After": str(response.headers.get("Retry-After") or "60")})
 
 
+def _tmdb_search(client, key, entity, query, language):
+    from providers.metadata._meta_TMDB import TmdbProvider
+
+    provider = TmdbProvider(lambda: {"tmdb": {"api_key": key}}, lambda _: None)
+    try:
+        return provider.get_response(f"https://api.themoviedb.org/3/search/{'movie' if entity == 'movie' else 'tv'}",
+                                     {"query": query, "include_adult": False, "language": language},
+                                     timeout=10, request=client.get, max_retries=0, copy=False).data
+    except requests.HTTPError as error:
+        if error.response is None:
+            raise
+        _check_rate_limit(error.response)
+        raise HTTPException(502, f"TMDB search returned HTTP {error.response.status_code}. Try again or use manual IDs.") from None
+
+
 def _candidate_ids(item, source):
     raw = item.get("ids")
     ids = dict(raw) if isinstance(raw, dict) else {}
@@ -217,9 +232,8 @@ def search_candidates(cfg, row, query, *, catalog="destination"):
                 key = block.get("api_key") if catalog == "destination" else (cfg.get("tmdb") or {}).get("api_key")
                 if not key:
                     raise HTTPException(409, "Add a TMDb API key in metadata settings to search this catalog.")
-                response = client.get(f"https://api.themoviedb.org/3/search/{'movie' if entity == 'movie' else 'tv'}",
-                                      params={"api_key": key, "query": query, "include_adult": False,
-                                              "language": row.get("metadata_language") or "en-US"}, timeout=10)
+                body = _tmdb_search(client, key, entity, query, row.get("metadata_language") or "en-US")
+                response = None
             else:
                 body = destination_rows(client, cfg, row, block, query, entity)
                 response = None

@@ -1396,8 +1396,38 @@ def build_profile_history_payload(
         page_size=page_size,
         include_keys=include_keys,
     )
+    _fill_history_tmdb(cfg, payload.get("items"))
     payload["version"] = version
     return payload
+
+
+def _fill_history_tmdb(cfg: dict[str, Any], rows: Any) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from providers.scrobble._show_tmdb import fill_display_tmdb, tmdb_configured
+    from services.dashboard_widgets import _media_type
+
+    if not tmdb_configured(cfg) or not isinstance(rows, list):
+        return
+
+    def fill(row: Any) -> None:
+        if not isinstance(row, dict):
+            return
+        ids = dict(row.get("ids") or {}) if isinstance(row.get("ids"), dict) else {}
+        show_ids = dict(ids.get("show_ids") or {}) if isinstance(ids.get("show_ids"), dict) else {}
+        kind = _media_type(row)
+        try:
+            if not fill_display_tmdb(cfg, kind, ids, show_ids):
+                return
+        except Exception:
+            return
+        if kind in {"episode", "season"}:
+            row["tmdb_show"] = show_ids["tmdb"]
+        else:
+            row["tmdb"] = ids["tmdb"]
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        list(pool.map(fill, rows))
 
 
 @router.get("/history")

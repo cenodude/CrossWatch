@@ -234,7 +234,9 @@ def test_tmdb_matches_localized_and_original_titles_without_country_filter(monke
             "release_date" if kind == "movie" else "first_air_date": "2001-01-01"}
     class Response:
         status_code = 200
+        headers = {}
         def json(self): return {"results": [item]}
+        def raise_for_status(self): pass
     def get(self, url, **kwargs):
         calls.append((url, kwargs["params"]))
         return Response()

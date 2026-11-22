@@ -42,3 +42,18 @@ def _isolated_plex_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(plex_common, "STATE_DIR", tmp_path / "plex_state")
     monkeypatch.setattr(plex_common, "_CLOUD_IDS", None)
     monkeypatch.setattr(plex_common, "_CLOUD_IDS_DIRTY", False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_tmdb_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.metadata import _meta_TMDB
+
+    original = _meta_TMDB.TmdbProvider._disk_cache_dir
+
+    def isolated(self):
+        if self._disk_dir is None:
+            self._disk_dir = tmp_path / "tmdb_cache"
+            self._disk_dir.mkdir(parents=True, exist_ok=True)
+        return original(self)
+
+    monkeypatch.setattr(_meta_TMDB.TmdbProvider, "_disk_cache_dir", isolated)

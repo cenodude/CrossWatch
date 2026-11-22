@@ -4,6 +4,7 @@
 from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -43,11 +44,12 @@ def test_existing_disk_record_keeps_original_fetch_time(providers, monkeypatch, 
     monkeypatch.setattr(tmdb.requests, "get", lambda *a, **k: response({"episodes": []}))
     provider.get_response(URL)
     path = next(tmp_path.glob("*.json"))
-    path.write_text(json.dumps({"ts": 123, "data": {"episodes": []}}), encoding="utf-8")
+    stamp = int(time.time()) - 60
+    path.write_text(json.dumps({"ts": stamp, "data": {"episodes": []}}), encoding="utf-8")
     monkeypatch.setattr(tmdb.requests, "get", lambda *a, **k: pytest.fail("Cache should not expire"))
     cached = providers().get_response(URL)
-    assert (cached.fetched_at, cached.source, cached.data) == (123, "cache", {"episodes": []})
-    assert json.loads(path.read_text("utf-8"))["ts"] == 123
+    assert (cached.fetched_at, cached.source, cached.data) == (stamp, "cache", {"episodes": []})
+    assert json.loads(path.read_text("utf-8"))["ts"] == stamp
 
 
 def test_status_metadata_peek_never_fetches_and_rejects_stale_data(providers, monkeypatch):
@@ -315,8 +317,9 @@ def test_loaded_disk_record_stays_in_memory_when_the_cache_is_full(providers, mo
     path = next(tmp_path.glob("*.json"))
     for season in (2, 3):
         provider.get_response(URL[:-1] + str(season))
-    path.write_text(json.dumps({"ts": 1, "data": {"old": True}}), encoding="utf-8")
-    assert provider.get_response(URL).fetched_at == 1
+    stamp = int(time.time()) - 60
+    path.write_text(json.dumps({"ts": stamp, "data": {"old": True}}), encoding="utf-8")
+    assert provider.get_response(URL).fetched_at == stamp
     monkeypatch.setattr(tmdb.TmdbProvider, "_disk_read", lambda *a: pytest.fail("Record should stay in memory"))
     assert provider.get_response(URL).data == {"old": True}
 

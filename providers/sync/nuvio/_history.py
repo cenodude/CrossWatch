@@ -121,21 +121,22 @@ def _videos_covering(adapter: Any, imdb: str, watched: set[str]) -> list[Mapping
     return videos
 
 
-def _add_tmdb_ids(adapter: Any, items: Iterable[dict[str, Any]], tick: Callable[[int], None], start: int) -> None:
+def add_tmdb_ids(adapter: Any, items: Iterable[dict[str, Any]], tick: Callable[[int], None], start: int) -> None:
     titles: dict[str, list[dict[str, Any]]] = {}
     for item in items:
         imdb = imdb_id(item.get("_nuvio_content_id"))
-        if imdb and item.get("type") in {"movie", "episode"}:
+        if imdb and item.get("type") in {"movie", "show", "episode"}:
             titles.setdefault(imdb, []).append(item)
     setattr(adapter, "_stremio_tmdb_lookup_failed", False)
     for done, (imdb, rows) in enumerate(titles.items(), start):
         tick(done)
         movies = [item for item in rows if item["type"] == "movie"]
+        shows = [item for item in rows if item["type"] == "show"]
         episodes = {f"{imdb}:{item['season']}:{item['episode']}": item for item in rows if item["type"] == "episode"}
         native = tmdb_ids_for_record(adapter, {"_id": imdb}, "movie" if movies else "tv")
         if not native:
             continue
-        for item in movies:
+        for item in movies + shows:
             item["ids"] = {**item["ids"], **native}
         if not episodes or movies:
             continue
@@ -153,7 +154,7 @@ def sync_index(adapter: Any) -> dict[str, dict[str, Any]]:
     total = len(rows) + len({imdb for row in rows if (imdb := imdb_id(row.get("content_id")))})
     tick = read_progress(adapter, "history", total)
     index = _index_rows(adapter, rows, tick)
-    _add_tmdb_ids(adapter, index.values(), tick, len(rows))
+    add_tmdb_ids(adapter, index.values(), tick, len(rows))
     tick(total)
     out: dict[str, dict[str, Any]] = {}
     for item in index.values():

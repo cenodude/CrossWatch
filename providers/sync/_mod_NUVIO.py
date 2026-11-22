@@ -200,11 +200,11 @@ class NUVIOModule:
     def build_index(self, feature: str, **kwargs: Any) -> dict[str, dict[str, Any]]:
         feature_name = str(feature or "").strip().lower()
         if feature_name == "progress":
-            return feat_progress.build_index(self, reporting=True)
+            return feat_progress.sync_index(self)
         if feature_name == "history":
             return feat_history.sync_index(self)
         if feature_name == "watchlist":
-            return feat_watchlist.build_index(self, reporting=True)
+            return feat_watchlist.sync_index(self)
         return {}
 
     def add(self, feature: str, items: Iterable[Mapping[str, Any]], *, dry_run: bool = False) -> dict[str, Any]:

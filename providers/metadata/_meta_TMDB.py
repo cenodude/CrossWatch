@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from concurrent.futures import Future
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from functools import lru_cache
 from pathlib import Path
@@ -53,6 +54,89 @@ class TmdbResponse:
 
 
 _INFLIGHT: dict[tuple[Any, ...], Future[TmdbResponse]] = {}
+
+DAY = 86400.0
+SETTLED_MAX_AGE = 30 * DAY
+_API_ROOT = "https://api.themoviedb.org/3/"
+_SETTLED_ROOTS = frozenset({"collection", "person", "watch", "configuration", "genre"})
+_SETTLED_PARTS = frozenset({
+    "images", "videos", "credits", "aggregate_credits", "content_ratings", "release_dates",
+    "keywords", "alternative_titles", "translations",
+})
+_FIND_BUCKETS = ("movie_results", "tv_results", "tv_episode_results", "tv_season_results", "person_results")
+_ENDED = frozenset({"ended", "canceled", "cancelled"})
+
+
+def _day_end(value: Any) -> float | None:
+    try:
+        day = datetime.fromisoformat(str(value or "")[:10]).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return day.timestamp() + DAY
+
+
+def _until(end: float, fetched_at: float) -> float:
+    return min(end - fetched_at, SETTLED_MAX_AGE) if end > fetched_at else DAY
+
+
+def _show_max_age(data: Any, fetched_at: float) -> float:
+    if not isinstance(data, Mapping):
+        return DAY
+    if str(data.get("status") or "").casefold() in _ENDED:
+        return SETTLED_MAX_AGE
+    upcoming = data.get("next_episode_to_air")
+    end = _day_end(upcoming.get("air_date")) if isinstance(upcoming, Mapping) else None
+    return _until(end, fetched_at) if end is not None else DAY
+
+
+def _episodes_max_age(data: Any, fetched_at: float) -> float:
+    if not isinstance(data, Mapping):
+        return DAY
+    rows = data.get("episodes") if "episodes" in data else [data]
+    if not isinstance(rows, list) or not rows:
+        return DAY
+    ends = [_day_end(row.get("air_date")) if isinstance(row, Mapping) else None for row in rows]
+    if any(end is None for end in ends):
+        return DAY
+    upcoming = [end for end in ends if end is not None and end > fetched_at]
+    if upcoming:
+        return _until(min(upcoming), fetched_at)
+    return SETTLED_MAX_AGE if max(end for end in ends if end is not None) <= fetched_at - SETTLED_MAX_AGE else DAY
+
+
+def _movie_max_age(data: Any, fetched_at: float) -> float:
+    end = _day_end(data.get("release_date")) if isinstance(data, Mapping) else None
+    return SETTLED_MAX_AGE if end is not None and end <= fetched_at - SETTLED_MAX_AGE else DAY
+
+
+def policy_max_age(url: str, data: Any, fetched_at: float) -> float:
+    if not url.startswith(_API_ROOT):
+        return DAY
+    parts = url[len(_API_ROOT):].split("/")
+    root = parts[0]
+    if root == "find":
+        found = isinstance(data, Mapping) and any(data.get(bucket) for bucket in _FIND_BUCKETS)
+        return float("inf") if found else DAY
+    if root in _SETTLED_ROOTS:
+        return SETTLED_MAX_AGE
+    if root not in {"movie", "tv"} or len(parts) < 2 or not parts[1].isdecimal():
+        return DAY
+    if len(parts) == 2:
+        return _movie_max_age(data, fetched_at) if root == "movie" else _show_max_age(data, fetched_at)
+    if parts[-1] == "external_ids":
+        return SETTLED_MAX_AGE if isinstance(data, Mapping) and data.get("imdb_id") else DAY
+    if parts[-1] in _SETTLED_PARTS:
+        return SETTLED_MAX_AGE
+    if root == "tv" and parts[2] == "season":
+        return _episodes_max_age(data, fetched_at)
+    return DAY
+
+
+def _stale_allowed(exc: BaseException) -> bool:
+    if not isinstance(exc, requests.exceptions.RequestException):
+        return False
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    return int(status or 0) != 404
 
 
 @lru_cache(maxsize=64)
@@ -233,7 +317,7 @@ class TmdbProvider:
         try:
             return self._get(url, params, quiet_404=quiet_404, fresh=True)
         except Exception:
-            return self._get(url, params, quiet_404=quiet_404)
+            return self.get_response(url, params, quiet_404=quiet_404, max_age=float("inf"), copy=False).data
 
     def _get(self, url: str, params: dict[str, Any] | None = None, *, quiet_404: bool = False, fresh: bool = False) -> Any:
         return self.get_response(url, params, quiet_404=quiet_404, fresh=fresh, copy=False).data
@@ -242,6 +326,7 @@ class TmdbProvider:
         self, url: str, params: dict[str, Any] | None = None, *, quiet_404: bool = False,
         fresh: bool = False, max_age: float | None = None, timeout: float = 15,
         request: Callable[..., Any] | None = None, max_retries: int | None = None, copy: bool = True,
+        stale: bool = True,
     ) -> TmdbResponse:
         q = dict(params or {})
         q["api_key"] = self._apikey()
@@ -251,6 +336,7 @@ class TmdbProvider:
         retries = self._backoff_params()[0] if max_retries is None else max(0, max_retries)
         identity = (scope, h, retries, timeout, request, quiet_404)
         lock = _REQUEST_LOCKS[hash((scope, h)) % len(_REQUEST_LOCKS)]
+        fallback: tuple[float, Any] | None = None
         with lock:
             with _PROVIDERS_LOCK:
                 shared = _INFLIGHT.get(identity)
@@ -263,15 +349,22 @@ class TmdbProvider:
                     self._publish(h, hit, scope)
             if hit is not None:
                 timestamp, data = hit
-                recent = max_age is None or (timestamp > 0 and time.time() - timestamp <= max(0, max_age))
-                if recent:
+                limit = policy_max_age(url, data, timestamp) if max_age is None else max_age
+                if timestamp > 0 and time.time() - timestamp <= max(0, limit):
                     return TmdbResponse(deepcopy(data) if copy else data, timestamp, "cache")
+                if stale and max_age is None:
+                    fallback = hit
             pending: Future[TmdbResponse] = shared if shared is not None else Future()
             if shared is None:
                 with _PROVIDERS_LOCK:
                     _INFLIGHT[identity] = pending
         if shared is not None:
-            result = shared.result()
+            try:
+                result = shared.result()
+            except Exception as exc:
+                if fallback is None or not _stale_allowed(exc):
+                    raise
+                return self._stale_response(url, fallback, copy)
             return TmdbResponse(deepcopy(result.data), result.fetched_at, "shared")
         try:
             result = self._fetch(url, q, h, scope, lock, quiet_404=quiet_404, timeout=timeout, request=request, retries=retries)
@@ -279,10 +372,16 @@ class TmdbProvider:
             return result
         except BaseException as exc:
             pending.set_exception(exc if isinstance(exc, Exception) else requests.ConnectionError("TMDb shared lookup was interrupted"))
-            raise
+            if fallback is None or not _stale_allowed(exc):
+                raise
+            return self._stale_response(url, fallback, copy)
         finally:
             with lock, _PROVIDERS_LOCK:
                 _INFLIGHT.pop(identity, None)
+
+    def _stale_response(self, url: str, record: tuple[float, Any], copy: bool) -> TmdbResponse:
+        self._debug_log("stale_fallback", url=url, fetched_at=record[0])
+        return TmdbResponse(deepcopy(record[1]) if copy else record[1], record[0], "cache")
 
     def _fetch(
         self, url: str, q: dict[str, Any], key: str, scope: str, lock: Any, *, quiet_404: bool,
@@ -346,7 +445,8 @@ class TmdbProvider:
         if episode is not None:
             path += f"/episode/{episode}"
         result = self.get_response(f"https://api.themoviedb.org/3/{path}", {"language": locale} if locale else None,
-                                   quiet_404=True, fresh=fresh, max_age=max_age, timeout=timeout, max_retries=max_retries)
+                                   quiet_404=True, fresh=fresh, max_age=max_age, timeout=timeout, max_retries=max_retries,
+                                   stale=False)
         data = result.data
         if not isinstance(data, dict) or not isinstance(data.get("id"), int) or isinstance(data["id"], bool) or data["id"] <= 0:
             raise ValueError("TMDb returned incomplete metadata")

@@ -27,7 +27,7 @@ def server(monkeypatch):
         "watched": [history(1), history(2), history(2, 2), history(3), history(3, 2)],
         "watched/shows": [{"tmdb_id": i, "watched_episodes": 1 if i == 1 else 2, "last_watched_at": "old"} for i in (1, 2, 3)],
         "resume": [], "dropped": [], "lists": [{"id": "watch", "name": "Watchlist", "type": "watchlist", "is_public": False}],
-        "lists/watch/items": []}, calls=[], writes=[], hook=None, ignore_write=False,
+        "lists/watch/items": []}, calls=[], writes=[], hook=None, ignore_write=False, lookups=[], cached_episodes={},
         details={i: {"status": "Ended" if i == 2 else "Returning Series", "number_of_seasons": 1, "number_of_episodes": 2,
                      "seasons": [{"season_number": 1, "episode_count": 2}]} for i in (1, 2, 3)},
         episodes={i: [{"episode_number": n, "air_date": "2020-01-01"} for n in (1, 2)] for i in (1, 2, 3)})
@@ -50,10 +50,12 @@ def server(monkeypatch):
             if method == "POST":
                 state.rows["dropped"].append({"id": f"drop-{ident}", "tmdb_id": ident, "media_type": "tv", "created": "new"})
         return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"success": True})
-    def lookup(entity, ident, *, season=None, fresh):
-        assert entity == "show" and fresh is True
+    def lookup(entity, ident, *, season=None, fresh=False):
+        assert entity == "show"
         ident = int(ident)
-        value = state.details[ident] if season is None else {"episodes": state.episodes[ident]}
+        state.lookups.append((ident, season, fresh))
+        episodes = state.cached_episodes.get(ident, state.episodes[ident]) if not fresh else state.episodes[ident]
+        value = state.details[ident] if season is None else {"episodes": episodes}
         return SimpleNamespace(data=deepcopy(value))
     state.module = SimpleNamespace(config={"publicmetadb": {}, "tmdb": {"api_key": "test"}},
                                    client=SimpleNamespace(read_json=read_json, request=request))
@@ -284,3 +286,17 @@ def test_inconsistent_show_progress_skips_only_that_show(server):
     assert list(skipped.values()) == ["publicmetadb_status_inconsistent_progress"]
     assert len(rows) == 3
     assert not server.writes
+
+
+def test_progress_reads_cached_metadata_before_fetching_fresh(server):
+    rows = server.adapter.read()
+    assert rows["show:2"].observation.status == Status.COMPLETED
+    assert server.lookups and not any(fresh for _, _, fresh in server.lookups)
+
+
+def test_progress_refetches_fresh_when_cached_seasons_do_not_add_up(server):
+    server.cached_episodes[2] = server.episodes[2][:1]
+    rows = server.adapter.read()
+    assert rows["show:2"].observation.status == Status.COMPLETED
+    show_two = [(season, fresh) for ident, season, fresh in server.lookups if ident == 2]
+    assert show_two == [(None, False), (1, False), (None, True), (1, True)]

@@ -166,3 +166,18 @@ def test_native_provider_missing_row_does_not_remove_peer(config_base, monkeypat
         caps[feature] = {**caps.get(feature, {}), "index_semantics": semantics}
     plan = deletion_plan(monkeypatch, feature, side, caps=caps, rows=rows)
     assert plan["rem_from_A"] == plan["rem_from_B"] == 0
+
+
+def test_shared_unsupported_ids_never_turn_a_deletion_into_a_rename():
+    prev = {"tmdb:1": {"type": "movie", "ids": {"tmdb": "1", "mdblist": "a"}}}
+    cur = {"tmdb:2": {"type": "movie", "ids": {"tmdb": "2", "mdblist": "b"}}}
+    assert _pairs_twoway._renamed_keys(prev, cur, {"tmdb:1"}) == set()
+
+
+def test_a_title_that_only_changed_its_key_is_a_rename():
+    prev = {"imdb:tt1": {"type": "movie", "ids": {"imdb": "tt1"}},
+            "imdb:tt9#s01e02": {"type": "episode", "season": 1, "episode": 2, "show_ids": {"imdb": "tt9"}}}
+    cur = {"tmdb:5": {"type": "movie", "ids": {"imdb": "tt1", "tmdb": "5"}},
+           "tmdb:7#s01e02": {"type": "episode", "season": 1, "episode": 2, "show_ids": {"imdb": "tt9", "tmdb": "7"}}}
+    assert _pairs_twoway._renamed_keys(prev, cur, set(prev)) == set(prev)
+    assert _pairs_twoway._renamed_keys(prev, {"tmdb:7#s01e03": {**cur["tmdb:7#s01e02"], "episode": 3}}, set(prev)) == set()
