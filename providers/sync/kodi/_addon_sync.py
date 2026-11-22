@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from cw_platform.provider_instances import list_sync_user_ids, normalize_instance_id, split_sync_user_id, sync_user_instance_id
+from cw_platform.provider_instances import _SYNC_USER_MARKER, list_sync_user_ids, normalize_instance_id, split_sync_user_id, sync_user_instance_id
 from providers.auth._auth_KODI import KodiAuthError
 
 VERSION = 1
@@ -42,6 +42,7 @@ RUN_RETRY_SECONDS = 30.0
 RUN_RETRIES = 60
 RUN_POLL_SECONDS = 5.0
 RUN_WAIT_SECONDS = 6 * 3600.0
+DELTA_RUN_DELAY = 60.0
 
 _MOVIE_FIELDS = ("movieid", "uniqueid", "title", "year", "file", "playcount", "lastplayed", "userrating", "resume", "dateadded")
 _EPISODE_FIELDS = ("episodeid", "tvshowid", "uniqueid", "title", "showtitle", "season", "episode", "file",
@@ -54,6 +55,7 @@ _META_FIELDS = ("uniqueid", "title", "year", "showtitle", "season", "episode", "
 _LOCK = threading.RLock()
 _PENDING_RUNS: set[str] = set()
 _RERUN: dict[str, list[str]] = {}
+_DELAYED: dict[str, threading.Timer] = {}
 _CACHE: dict[str, tuple[int, int, dict[str, Any]]] = {}
 _NEXT_CHANGE: dict[str, int] = {}
 
@@ -272,6 +274,33 @@ def _viewer_ids(info: Mapping[str, Any]) -> list[str]:
     return [str(v.get("viewer_id")) for v in info.get("viewers") or [] if isinstance(v, Mapping) and v.get("viewer_id")]
 
 
+def _parent_sync_users(cfg: Mapping[str, Any] | None, device: str) -> list[str]:
+    from providers.sync.kodi._common import pick_instance_id
+
+    users = list_sync_user_ids(dict(cfg or {}), "kodi", device)
+    if users or device == "default":
+        return users
+    block = _dict(_dict(cfg).get("kodi"))
+    if device in _dict(block.get("instances")) or normalize_instance_id(pick_instance_id(cfg)) != device:
+        return []
+    return [sync_user_instance_id(device, str(key).strip()) for key, entry in _dict(block.get("sync_users")).items()
+            if str(key).strip() and isinstance(entry, Mapping)]
+
+
+def _sync_users(cfg: Mapping[str, Any] | None, device: str) -> list[str]:
+    users = _parent_sync_users(cfg, device)
+    if users:
+        return users
+    block = _dict(_dict(cfg).get("kodi"))
+    key = _text(block.get(_SYNC_USER_MARKER), 80)
+    if not key:
+        return []
+    ref = split_sync_user_id(_dict(cfg).get("_cw_provider_instance"))
+    if ref is not None and (ref[0] != device or ref[1] != key):
+        return []
+    return [sync_user_instance_id(device, key)]
+
+
 def viewer_instance(cfg: Mapping[str, Any] | None, device: Any, viewer_id: Any, known: Iterable[str] | None = None) -> str | None:
     dev = normalize_instance_id(device)
     vid = _text(viewer_id, 80)
@@ -280,7 +309,7 @@ def viewer_instance(cfg: Mapping[str, Any] | None, device: Any, viewer_id: Any, 
     viewers = list(known) if known is not None else _viewer_ids(device_info(dev))
     if vid not in viewers:
         return None
-    users = list_sync_user_ids(dict(cfg or {}), "kodi", dev)
+    users = _sync_users(cfg, dev)
     candidate = sync_user_instance_id(dev, vid)
     if candidate in users:
         inst: str | None = candidate
@@ -960,10 +989,11 @@ def _positive(group: str, values: Mapping[str, Any]) -> bool:
 
 
 def _apply_rows(view: dict[str, Any], changes: dict[str, Any], rows: Mapping[str, Mapping[str, dict[str, Any]]],
-                shows: Mapping[str, Any], upload_seq: int, applied_seq: int) -> None:
+                shows: Mapping[str, Any], upload_seq: int, applied_seq: int) -> bool:
     entries = view["entries"]
     records = changes["records"]
     aliases = _aliases(view, attach=True)
+    changed = False
     for kind in ("movies", "episodes"):
         for row in _dict(rows.get(kind)).values():
             keys = _matching_keys(aliases, kind, row, shows)
@@ -980,6 +1010,7 @@ def _apply_rows(view: dict[str, Any], changes: dict[str, Any], rows: Mapping[str
                     continue
                 key = _rec_key(ident, group)
                 rec = records.get(key)
+                before = _state_fields(_effective(entry, records, ident))
                 if rec is not None:
                     seq = _int(rec.get("seq")) or 0
                     if rec.get("status") == "failed":
@@ -995,6 +1026,8 @@ def _apply_rows(view: dict[str, Any], changes: dict[str, Any], rows: Mapping[str
                 new_state = _row_group(group, row, state, upload_seq)
                 new_state["src"] = upload_seq
                 entry[group] = new_state
+                changed = changed or _state_fields(_effective(entry, records, ident)) != before
+    return changed
 
 
 def _effective(entry: Mapping[str, Any], records: Mapping[str, Any], ident: str) -> dict[str, dict[str, Any]]:
@@ -1101,8 +1134,12 @@ def receive_upload(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str
             inventory_bytes = _encode(inventory)
             if _row_count(inventory) > MAX_ROWS or len(inventory_bytes) > MAX_STORED_BYTES:
                 raise _too_large("library")
-            _apply_rows(view, changes, rows, _dict(inventory.get("tvshows")), upload_seq, applied_seq)
+            changed = _apply_rows(view, changes, rows, _dict(inventory.get("tvshows")), upload_seq, applied_seq)
             view_bytes = _check_view_size(view)
+            if changed:
+                _update_seq(dev, viewer_id, delta_changed=upload_seq)
+            else:
+                changed = _int(seq_state.get("delta_changed")) == upload_seq
             _write(inventory_path, inventory_bytes)
             _write(view_path, view_bytes)
             _save_changes(dev, viewer_id, changes)
@@ -1115,7 +1152,7 @@ def receive_upload(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str
                 else:
                     _write(staging_path, staged)
             _update_seq(dev, viewer_id, last_delta_seq=upload_seq, delta_pending=None)
-            return {"ok": True, "mode": "delta", "complete": True, "instance": inst}
+            return {"ok": True, "mode": "delta", "complete": True, "instance": inst, "changed": changed}
         upload_id = _text(body.get("upload_id"), 80)
         part = _int(body.get("part")) or 1
         parts = _int(body.get("parts")) or 1
@@ -1221,8 +1258,13 @@ def _inventory_for(cfg: Mapping[str, Any] | None, instance_id: Any) -> dict[str,
 
 
 def addon_ready(cfg: Mapping[str, Any] | None, instance_id: Any) -> bool:
+    inst = normalize_instance_id(instance_id)
     try:
-        return _inventory_for(cfg, instance_id) is not None
+        if _inventory_for(cfg, inst) is not None:
+            return True
+        if split_sync_user_id(inst) is not None:
+            return False
+        return any(_inventory_for(cfg, user) is not None for user in _parent_sync_users(cfg, inst))
     except Exception:
         return False
 
@@ -1543,7 +1585,8 @@ class AddonKodiClient:
         return list(self._snapshot()[0].get("sources") or [])
 
     def verify(self) -> dict[str, Any]:
-        self._snapshot()
+        if not addon_ready(self.config, self.instance_id):
+            self._snapshot()
         info = device_info(self.device)
         return {"kodi_version": info.get("kodi_version") or None, "jsonrpc_version": info.get("jsonrpc_version") or ""}
 
@@ -1650,8 +1693,34 @@ def run_with_retry(inst: str, ids: list[str]) -> bool:
                 _RERUN.pop(inst, None)
 
 
+def schedule_pair_runs(cfg: Mapping[str, Any] | None, instance_id: Any) -> bool:
+    inst = normalize_instance_id(instance_id)
+    if not pair_ids_for(cfg, inst):
+        return False
+    with _LOCK:
+        if inst in _DELAYED:
+            return True
+        timer = threading.Timer(DELTA_RUN_DELAY, _delayed_run, args=(cfg, inst))
+        timer.daemon = True
+        _DELAYED[inst] = timer
+    timer.start()
+    return True
+
+
+def _delayed_run(cfg: Mapping[str, Any] | None, inst: str) -> None:
+    with _LOCK:
+        if _DELAYED.get(inst) is not threading.current_thread():
+            return
+        _DELAYED.pop(inst, None)
+        trigger_pair_runs(cfg, inst)
+
+
 def trigger_pair_runs(cfg: Mapping[str, Any] | None, instance_id: Any) -> list[str]:
     inst = normalize_instance_id(instance_id)
+    with _LOCK:
+        delayed = _DELAYED.pop(inst, None)
+    if delayed is not None:
+        delayed.cancel()
     ids = pair_ids_for(cfg, inst)
     if not ids:
         return []
@@ -1679,6 +1748,7 @@ __all__ = [
     "receive_ack",
     "receive_upload",
     "run_with_retry",
+    "schedule_pair_runs",
     "sync_enabled",
     "to_utc",
     "trigger_pair_runs",

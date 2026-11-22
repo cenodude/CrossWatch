@@ -36,7 +36,10 @@ def _sync_root(config_base, monkeypatch: pytest.MonkeyPatch):
     addon_sync._NEXT_CHANGE.clear()
     _SEQ_BY_UPLOAD.clear()
     _SEQ_COUNTER[0] = 0
-    return config_base
+    yield config_base
+    for timer in list(addon_sync._DELAYED.values()):
+        timer.cancel()
+    addon_sync._DELAYED.clear()
 
 
 def make_cfg(**kodi: Any) -> dict[str, Any]:
@@ -161,6 +164,57 @@ def test_several_viewers_need_sync_users():
     assert [(v["viewer_id"], v["instance"], v["upload_seq"]) for v in ping(cfg, viewers)["viewers"]] == [
         ("kv-1", "default~kv-1", 0), ("kv-2", "default~kv-2", 0)]
     assert full(cfg)["instance"] == "default~kv-1"
+
+
+def test_sync_user_pairs_find_their_own_upload():
+    from cw_platform.provider_instances import build_pair_config_view, build_provider_config_view
+
+    cfg = make_cfg(sync_users={"kv-1": {"username": "user1"}, "kv-2": {"username": "user2"}})
+    ping(cfg, [{"viewer_id": "kv-1", "name": "user1"}, {"viewer_id": "kv-2", "name": "user2"}])
+    full(cfg)
+    full(cfg, viewer_id="kv-2", movies=[unwatched()], episodes=[], tvshows=[])
+    parent = build_provider_config_view(cfg, "KODI", "default")
+    assert mod.KODIModule({**parent, "_cw_provider_instance": "default"}).health()["ok"] is True
+    for inst, expected in (("default~kv-1", {"Fight Club", "Home"}), ("default~kv-2", {"Fight Club"})):
+        view = {**build_pair_config_view(cfg, "TRAKT", "default", "KODI", inst), "_cw_provider_instance": inst}
+        adapter = mod.KODIModule(view)
+        assert adapter.health()["ok"] is True
+        assert {row["title"] for row in adapter.build_index("history").values()} | {
+            row["title"] for row in adapter.build_index("collection").values()} >= expected
+    view = {**build_pair_config_view(cfg, "TRAKT", "default", "KODI", "default~kv-2"), "_cw_provider_instance": "default~kv-2"}
+    assert mod.KODIModule(view).add("ratings", [{"type": "movie", "ids": {"tmdb": "550"}, "rating": 9}])["count"] == 1
+    assert [c["params"]["userrating"] for c in queue(cfg, "kv-2")["changes"]] == [9]
+    assert queue(cfg)["changes"] == []
+    assert addon_sync.viewer_instance(view, "default", "kv-2") == "default~kv-2"
+    assert addon_sync.viewer_instance({**view, "_cw_provider_instance": "living~kv-2"}, "default", "kv-2") is None
+
+
+def test_sync_users_of_a_named_instance_pass_parent_health():
+    from cw_platform.provider_instances import build_pair_config_view, build_provider_config_view
+
+    cfg = {"runtime": {"kodi_addon_sync": True}, "security": {"webhook_ids": {"kodiwatcher:living": TOKEN}}, "pairs": [],
+           "kodi": {"instances": {"living": {"sync_users": {"kv-1": {"username": "user1"}, "kv-2": {"username": "user2"}}}}}}
+    viewers = [{"viewer_id": "kv-1", "name": "user1"}, {"viewer_id": "kv-2", "name": "user2"}]
+    addon_sync.handle_ping(cfg, "living", {"event": "ping", "device": {"id": "dev-1"},
+                                           "library_sync": {"version": 1, "enabled": True, "viewers": viewers, "library_id": "lib-1"}})
+    assert addon_sync.receive_upload(cfg, "living", full_body(), device_id="dev-1")["instance"] == "living~kv-1"
+    parent = {**build_provider_config_view(cfg, "KODI", "living"), "_cw_provider_instance": "living"}
+    assert mod.KODIModule(parent).health()["ok"] is True
+    view = {**build_pair_config_view(cfg, "TRAKT", "default", "KODI", "living~kv-1"), "_cw_provider_instance": "living~kv-1"}
+    assert {row["title"] for row in mod.KODIModule(view).build_index("history").values()} == {"Fight Club"}
+    other = {**build_provider_config_view(cfg, "KODI", "living"), "_cw_provider_instance": "default"}
+    assert addon_sync._parent_sync_users(other, "living") == []
+
+
+def test_sync_user_waits_while_only_its_sibling_uploaded():
+    from cw_platform.provider_instances import build_pair_config_view
+
+    cfg = make_cfg(sync_users={"kv-1": {"username": "user1"}, "kv-2": {"username": "user2"}})
+    ping(cfg, [{"viewer_id": "kv-1", "name": "user1"}, {"viewer_id": "kv-2", "name": "user2"}])
+    full(cfg)
+    view = {**build_pair_config_view(cfg, "TRAKT", "default", "KODI", "default~kv-2"), "_cw_provider_instance": "default~kv-2"}
+    assert not common.is_configured(view, "default~kv-2")
+    assert common.is_configured(cfg, "default")
 
 
 def test_not_ready_until_full_upload_and_read_never_empty():
@@ -767,6 +821,120 @@ def test_endpoints_auth_and_flow(client):
                                               "results": [{"seq": 1, "status": "applied", "change_id": changes[0]["change_id"]}]}, headers=headers)
     assert res.json() == {"ok": True, "applied": 1, "failed": 0}
     assert http.get(f"{base}/queue?viewer_id=kv-1", headers=headers).json()["changes"] == []
+
+
+def test_delta_with_a_person_change_starts_one_run_after_a_short_wait(client, monkeypatch: pytest.MonkeyPatch):
+    http, state = client
+    base = "/webhook/kodiwatcher/sync/v1"
+    headers = {"X-CrossWatch-Token": TOKEN, "X-CrossWatch-Device": "dev-1"}
+    runs: list[str] = []
+    fired = threading.Event()
+
+    def record(cfg, inst):
+        runs.append(inst)
+        fired.set()
+        return ["p1"]
+
+    monkeypatch.setattr(addon_sync, "trigger_pair_runs", record)
+    monkeypatch.setattr(addon_sync, "DELTA_RUN_DELAY", 0.2)
+    state["cfg"] = {**make_cfg(), "pairs": [{"id": "p1", "source": "TRAKT", "target": "KODI", "target_instance": "default"}]}
+    ping(state["cfg"])
+    assert http.post(f"{base}/upload", json=full_body(movies=[unwatched()], episodes=[], tvshows=[]), headers=headers).status_code == 200
+    assert runs == ["default"]
+    runs.clear()
+    fired.clear()
+
+    def send(row):
+        body = {"version": 1, "viewer_id": "kv-1", "mode": "delta", "upload_seq": next_seq(), "movies": [row]}
+        return http.post(f"{base}/upload", json=body, headers=headers).json()
+
+    assert send(unwatched())["changed"] is False
+    assert "default" not in addon_sync._DELAYED
+    assert send(unwatched(userrating=7))["changed"] is True
+    assert send(unwatched(userrating=8))["changed"] is True
+    assert runs == []
+    assert fired.wait(5)
+    assert runs == ["default"]
+    assert "default" not in addon_sync._DELAYED
+
+
+def test_full_upload_run_replaces_a_waiting_delta_run(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(addon_sync, "DELTA_RUN_DELAY", 30.0)
+    monkeypatch.setattr(addon_sync, "run_with_retry", lambda inst, ids: True)
+    cfg = {**make_cfg(), "pairs": [{"id": "p1", "source": "TRAKT", "target": "KODI", "target_instance": "default"}]}
+    assert addon_sync.schedule_pair_runs(cfg, "default") is True
+    timer = addon_sync._DELAYED["default"]
+    assert addon_sync.trigger_pair_runs(cfg, "default") == ["p1"]
+    assert "default" not in addon_sync._DELAYED
+    assert timer.finished.is_set()
+    assert addon_sync.schedule_pair_runs(make_cfg(), "default") is False
+
+
+def test_timer_that_already_fired_never_adds_a_second_run(monkeypatch: pytest.MonkeyPatch):
+    started: list[list[str]] = []
+    monkeypatch.setattr(addon_sync, "DELTA_RUN_DELAY", 30.0)
+    monkeypatch.setattr(addon_sync, "run_with_retry", lambda inst, ids: started.append(ids))
+    cfg = {**make_cfg(), "pairs": [{"id": "p1", "source": "TRAKT", "target": "KODI", "target_instance": "default"}]}
+    addon_sync.schedule_pair_runs(cfg, "default")
+    timer = addon_sync._DELAYED["default"]
+    addon_sync.trigger_pair_runs(cfg, "default")
+    late = threading.Thread(target=addon_sync._delayed_run, args=(cfg, "default"))
+    late.start()
+    late.join(5)
+    assert addon_sync._RERUN.get("default") is None
+    assert timer.finished.is_set()
+    addon_sync._PENDING_RUNS.discard("default")
+
+
+def test_full_upload_run_waits_until_a_firing_timer_has_started_its_run(monkeypatch: pytest.MonkeyPatch):
+    started: list[list[str]] = []
+    entered, release = threading.Event(), threading.Event()
+    real_pair_ids = addon_sync.pair_ids_for
+    monkeypatch.setattr(addon_sync, "DELTA_RUN_DELAY", 0.05)
+    monkeypatch.setattr(addon_sync, "run_with_retry", lambda inst, ids: started.append(ids))
+    cfg = {**make_cfg(), "pairs": [{"id": "p1", "source": "TRAKT", "target": "KODI", "target_instance": "default"}]}
+
+    def gated(cfg_, inst):
+        if isinstance(threading.current_thread(), threading.Timer):
+            entered.set()
+            release.wait(5)
+        return real_pair_ids(cfg_, inst)
+
+    monkeypatch.setattr(addon_sync, "pair_ids_for", gated)
+    addon_sync.schedule_pair_runs(cfg, "default")
+    assert entered.wait(5)
+    full_run = threading.Thread(target=addon_sync.trigger_pair_runs, args=(cfg, "default"))
+    full_run.start()
+    full_run.join(0.3)
+    assert full_run.is_alive()
+    release.set()
+    full_run.join(5)
+    assert not full_run.is_alive()
+    assert started == [["p1"]]
+    assert "default" not in addon_sync._DELAYED
+    addon_sync._PENDING_RUNS.discard("default")
+    addon_sync._RERUN.pop("default", None)
+
+
+def test_retried_delta_keeps_its_run_after_a_failed_commit(monkeypatch: pytest.MonkeyPatch):
+    cfg = make_cfg()
+    ping(cfg)
+    full(cfg, movies=[unwatched()], episodes=[], tvshows=[])
+    original = addon_sync._save_changes
+    calls = {"n": 0}
+
+    def flaky(*args, **kwargs):
+        if calls["n"] == 0:
+            calls["n"] += 1
+            raise OSError("disk full")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(addon_sync, "_save_changes", flaky)
+    seq = next_seq()
+    with pytest.raises(OSError):
+        delta(cfg, upload_seq=seq, movies=[unwatched(userrating=7)])
+    assert delta(cfg, upload_seq=seq, movies=[unwatched(userrating=7)])["changed"] is True
+    assert delta(cfg, movies=[unwatched(userrating=7)])["changed"] is False
 
 
 def test_oversized_streamed_body_is_refused(client, monkeypatch: pytest.MonkeyPatch):
