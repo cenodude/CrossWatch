@@ -52,7 +52,7 @@ def _query_keys(item: Mapping[str, Any], priority: list[str]) -> list[tuple[tupl
         return [(tuple(chosen), "Series")] if chosen else []
     keys: list[tuple[tuple[str, ...], str]] = []
     for pair in pairs:
-        if pair.partition(".")[0] in _EXACT_EPISODE_PROVIDERS:
+        if pair.partition(".")[0] in _EXACT_EPISODE_PROVIDERS and pair not in series_pairs:
             keys.append(((pair,), "Episode,Series"))
     if item.get("season") is not None and item.get("episode") is not None:
         keys.extend(((pair,), "Series") for pair in series_pairs)
