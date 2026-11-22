@@ -6,3 +6,4 @@ from contextvars import ContextVar
 
 log_run_id: ContextVar[str] = ContextVar('log_run_id', default='')
 log_pair_id: ContextVar[str] = ContextVar('log_pair_id', default='')
+log_session: ContextVar[tuple[str, str] | None] = ContextVar('log_session', default=None)

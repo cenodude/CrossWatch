@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -16,6 +17,7 @@ from cw_platform.config_base import load_config
 from services.log_archive import archive, MAX_BYTES, RETENTION_DAYS
 
 router = APIRouter(prefix='/api/logs/archive', tags=['logging'])
+LogChannel = Literal['sync', 'watcher', 'debug', 'captures', 'backups', 'audits', 'system']
 
 
 def debug_enabled(cfg: dict) -> bool:
@@ -51,9 +53,12 @@ def get_session(request: Request, sid: str) -> dict:
 
 
 @router.get('')
-def sessions(request: Request, channel: Literal['sync', 'watcher', 'debug'] = 'sync', run_id: str = Query('', max_length=160), pair_id: str = Query('', max_length=160)):
+def sessions(request: Request, channel: LogChannel = 'sync', run_id: str = Query('', max_length=160), pair_id: str = Query('', max_length=160)):
     store = archive()
     items = [item for item in store.sessions(channel, run_id, pair_id) if allowed(request, item)]
+    if channel == 'system':
+        items.extend(item for item in store.sessions('debug', run_id, pair_id) if allowed(request, item))
+        items.sort(key=lambda item: item['started'], reverse=True)
     sync_logs = [item for item in store.sessions('sync') if allowed(request, item)]
     choices = {}
     # Include configured pairs with no logs yet, and retained logs for removed pairs.
@@ -78,7 +83,7 @@ def sessions(request: Request, channel: Literal['sync', 'watcher', 'debug'] = 's
         items = [dict(item, **store.counts(item['id'], pair_id, run_id)) for item in items]
     user = request_user(request)
     admin = (not user or bool(user.get('is_admin'))) and not requested_view_as_profile(request)
-    channels = ['sync', 'watcher'] if admin else ['sync']
+    channels = ['sync', 'watcher', 'captures', 'backups', 'audits', 'system'] if admin else ['sync']
     if admin and debug_enabled(cfg):
         channels.append('debug')
     return dict(items=items, pairs=pairs, latest_run_id=latest, channels=channels, retention_days=RETENTION_DAYS,
@@ -124,9 +129,12 @@ def delete(request: Request, sid: str):
 
 
 @router.delete('')
-def clear_older(request: Request, channel: Literal['sync', 'watcher', 'debug'] = 'sync'):
+def clear_older(request: Request, channel: LogChannel = 'sync'):
     count = 0
-    for item in archive().sessions(channel):
+    items = archive().sessions(channel)
+    if channel == 'system':
+        items.extend(archive().sessions('debug'))
+    for item in items:
         if item['ended'] is not None and not item['pinned'] and allowed(request, item):
             archive().delete(item['id'])
             count += 1
@@ -135,7 +143,20 @@ def clear_older(request: Request, channel: Literal['sync', 'watcher', 'debug'] =
 
 @router.get('/{sid}/download', response_class=StreamingResponse)
 def download(request: Request, sid: str, q: str = Query('', max_length=200), level: str = Query('', pattern='^(|ERROR|WARN|INFO|DEBUG)$'), provider: str = Query('', max_length=80),
-             pair_id: str = Query('', max_length=160), run_id: str = Query('', max_length=160)):
-    get_session(request, sid)
-    return StreamingResponse(archive().export(sid, q=q, level=level, provider=provider, pair_id=pair_id, run_id=run_id), media_type='text/plain',
+             pair_id: str = Query('', max_length=160), run_id: str = Query('', max_length=160), raw: bool = False, header: bool = False):
+    item = get_session(request, sid)
+    def content():
+        if header:
+            from cw_platform.app_version import app_version
+
+            started = datetime.fromtimestamp(item['started'], timezone.utc).isoformat(timespec='seconds')
+            scope = 'Filtered excerpt' if any((q, level, provider, pair_id, run_id)) else 'Full retained session'
+            yield f"CrossWatch {app_version()}\nChannel: {item['channel']}\nSession: {sid}\nSource: {item['label']}\nStarted: {started}\nStatus: {item['status']}\nScope: {scope}\n"
+            if any((q, level, provider, pair_id, run_id)):
+                yield f"Filters: {json.dumps(dict(q=q, level=level, provider=provider, pair_id=pair_id, run_id=run_id), ensure_ascii=False)}\n"
+            if item['truncated']:
+                yield 'Incomplete: storage limit reached; some lines were not recorded.\n'
+            yield '\n'
+        yield from archive().export(sid, q=q, level=level, provider=provider, pair_id=pair_id, run_id=run_id, raw=raw)
+    return StreamingResponse(content(), media_type='text/plain',
                              headers={'Content-Disposition': f'attachment; filename="crosswatch-{sid}.log"', 'Cache-Control': 'no-store'})

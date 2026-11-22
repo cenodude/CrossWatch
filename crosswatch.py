@@ -938,11 +938,11 @@ def ansi_to_html(line: str) -> str:
 
     return "".join(out)
 
-def _append_log_to_buffer(tag: str, raw_line: str) -> None:
+def _append_log_to_buffer(tag: str, raw_line: str, *, archive_line: bool = True) -> None:
     global WATCH_LOG_NEXT_SEQ
     t = _norm_log_tag(tag)
     safe_line = _redact_secrets_in_text(raw_line)
-    if t in {"SYNC", DIAG_LOG_TAG} or t in WATCH_LOG_TAGS:
+    if archive_line:
         from services.log_archive import capture
         capture(t, safe_line, watcher=t in WATCH_LOG_TAGS)
     html = ansi_to_html(safe_line.rstrip("\n"))
@@ -964,7 +964,7 @@ def _append_log(tag: str, raw_line: str) -> None:
     _append_log_to_buffer(t, raw_line)
     if t != DIAG_LOG_TAG:
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        _append_log_to_buffer(DIAG_LOG_TAG, f"[{ts}] [{t}] {raw_line}")
+        _append_log_to_buffer(DIAG_LOG_TAG, f"[{ts}] [{t}] {raw_line}", archive_line=False)
 
 def _install_ui_log_forwarder() -> None:
     try:

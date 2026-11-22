@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 import secrets
 from collections.abc import Mapping
@@ -118,7 +119,16 @@ def record_audit(
         hash_extra=secrets.token_hex(12),
     )
     try:
-        return record_events([event])
+        recorded = record_events([event])
+        if recorded:
+            try:
+                from services.log_archive import archive
+                from _logging import _redact_log_value
+
+                archive().append('audits', 'AUDIT', json.dumps(_redact_log_value(event), ensure_ascii=False))
+            except Exception:
+                pass
+        return recorded
     except Exception as exc:
         _LOG.debug("audit write failed: %s", exc)
         return 0
