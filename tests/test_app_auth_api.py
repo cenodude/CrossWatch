@@ -1219,6 +1219,8 @@ def test_deleting_managed_user_clears_sessions_and_invalidates_token(monkeypatch
     }
     monkeypatch.setattr(auth, "load_config", lambda: cfg)
     monkeypatch.setattr(auth, "save_config", lambda *_args, **_kwargs: None)
+    forgotten = []
+    monkeypatch.setattr(auth, "forget_notification_state", forgotten.append)
 
     user = auth._public_user(user_id, cfg["app_auth"]["users"][user_id])
     token, _exp = auth._issue_session(cfg, _request("/api/app-auth/login"), user)
@@ -1235,6 +1237,7 @@ def test_deleting_managed_user_clears_sessions_and_invalidates_token(monkeypatch
     assert user_id not in cfg["app_auth"]["users"]
     assert cfg["app_auth"]["sessions"] == [s for s in cfg["app_auth"]["sessions"] if s.get("user_id") != user_id]
     assert auth.current_user(cfg, token) is None
+    assert forgotten == [user_id]
 
 
 def test_effective_user_profile_uses_managed_user_profile(monkeypatch) -> None:

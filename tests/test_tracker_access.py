@@ -172,7 +172,7 @@ def test_managed_shell_has_the_tracker_tab_only_with_an_assigned_instance(monkey
     with_tracker = ui_frontend.get_index_html(include_admin=False, user=ANN)
     assert 'id="tab-tracker"' in with_tracker and 'id="page-tracker"' in with_tracker
     assert 'data-cw-perm-tracker="on"' in with_tracker
-    assert "tracker-notifications.js" in with_tracker and "month-bar.js" in with_tracker
+    assert "notification-feed.js" in with_tracker and "month-bar.js" in with_tracker
     assert with_tracker.index('id="tab-playlists"') < with_tracker.index('id="tab-tracker"') < with_tracker.index('id="tab-editor"')
     assert 'data-cw-profile-menu-action="tracker"' in with_tracker
     profile = ui_frontend.get_profile_html(ANN)
@@ -185,7 +185,7 @@ def test_managed_shell_has_the_tracker_tab_only_with_an_assigned_instance(monkey
         html = ui_frontend.get_index_html(include_admin=False, user=user)
         assert 'id="tab-tracker"' not in html and 'id="page-tracker"' not in html
         assert 'data-cw-perm-tracker="off"' in html
-        assert "tracker-notifications.js" not in html
+        assert "notification-feed.js" in html and "month-bar.js" not in html
         assert 'data-cw-profile-menu-action="tracker"' not in html
         assert 'data-cw-profile-menu-action="tracker"' not in ui_frontend.get_profile_html(user)
         assert 'id="tab-tracker"' not in ui_frontend.get_profile_html(user)
@@ -199,10 +199,10 @@ def test_profile_header_loads_authorized_assistant_and_tracker_feeds(monkeypatch
     assert "location.href='/#tracker'" in admin
     assert "assistant-settings.js" in admin
     assert "ai-settings.css" in admin
-    assert "tracker-notifications.js" in admin
+    assert "notification-feed.js" in admin
     for profile, allowed in (("allowed", True), ("denied", False)):
         html = ui_frontend.get_profile_html({"is_admin": False, "username": "user", "profile_id": profile})
-        assert ("tracker-notifications.js" in html) is allowed
+        assert "notification-feed.js" in html and "tracker-notifications.js" not in html
         assert "assistant-settings.js" not in html
 
 

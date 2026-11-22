@@ -316,21 +316,8 @@ test("opening a shortcut preserves the active recovery and its source",()=>{
   assert.equal(sandbox.window.CW.pendingPlexRecovery,null);
 });
 
-test("recovery notification changes when ready or imported, with a resumable route",()=>{
-  const text=readFileSync(new URL("../assets/js/plex-recovery-notifications.js",import.meta.url),"utf8"),values=[];
-  const sandbox=vm.createContext({window:{CW:{Notifications:{setSource:(name,value)=>values.push({name,...value})}}}});
-  vm.runInContext(text.slice(text.indexOf("  function render("),text.indexOf("  async function refresh()")),sandbox);
-  sandbox.render({id:"one",status:"reading"});
-  sandbox.render({id:"one",status:"review"});
-  sandbox.render({id:"one",status:"review",imported:5});
-  assert.equal(values[0].items[0].action,"View progress");
-  assert.match(values[1].items[0].detail,/Ready to review/);
-  assert.notEqual(values[0].items[0].revision,values[1].items[0].revision);
-  assert.match(values[2].items[0].detail,/5 items imported/);
-  assert.notEqual(values[1].items[0].revision,values[2].items[0].revision);
-  assert.equal(values[2].items[0].href,"/#import_export?recovery=1");
-  sandbox.render();
-  assert.equal(values.at(-1).items.length,0);
+test("recovery notifications open a resumable route",()=>{
+  const sandbox=vm.createContext({window:{}});
   const core=readFileSync(new URL("../assets/helpers/core.js",import.meta.url),"utf8");
   vm.runInContext(core.slice(core.indexOf("  function routeHash("),core.indexOf("  function ",core.indexOf("  function routeHash(")+10)),sandbox);
   sandbox.window.location={hash:"#import_export?recovery=1"};

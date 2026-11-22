@@ -17,6 +17,7 @@ async function fixture(t,theme,width=1440,height=1000,{motion=false,keyboard=fal
   const page = await browser.newPage({viewport:{width,height},hasTouch:width<1400,reducedMotion:motion?"no-preference":"reduce"});
   page.setDefaultTimeout(8000);
   let requests=0, mode="ready", savedReport=report, generated=1;
+  const reviews=[];
   const errors=[];
   page.on("pageerror",e=>errors.push(e.message));
   t.after(()=>assert.deepEqual(errors,[]));
@@ -33,6 +34,7 @@ async function fixture(t,theme,width=1440,height=1000,{motion=false,keyboard=fal
       try{return route.fulfill({body:await readFile(new URL(".."+path,import.meta.url)),contentType:path.endsWith(".css")?"text/css":path.endsWith(".woff2")?"font/woff2":"text/javascript"});}
       catch{return route.fulfill({status:404,body:""});}
     }
+    if(path==="/api/profile/notifications/reviews") { reviews.push(JSON.parse(route.request().postData()||"{}")); return route.fulfill({json:{ok:true}}); }
     if(path==="/api/tracker/overview/wrapped") {
       requests++;
       if(mode==="denied") return route.fulfill({status:403,json:{detail:"profile_scope_denied"}});
@@ -50,7 +52,7 @@ async function fixture(t,theme,width=1440,height=1000,{motion=false,keyboard=fal
   else await page.locator("#entry").click();
   await page.locator(".wr-premiere h1").waitFor();
   await page.evaluate(()=>document.fonts.ready);
-  return {page,requests:()=>requests,setMode:value=>{mode=value;},setReport:value=>{savedReport=value;generated++;}};
+  return {page,requests:()=>requests,reviews:()=>reviews,setMode:value=>{mode=value;},setReport:value=>{savedReport=value;generated++;}};
 }
 
 
@@ -107,20 +109,19 @@ test('Keyboard, touch, title cards, PNG export and current-year preview',async t
   assert.equal(await page.locator('#entry').evaluate(el=>el===document.activeElement),true);
 });
 
-test('Preparing reviews stay nonblocking and notify only the requesting profile',async t=>{
-  const {page,setMode}=await fixture(t,'flat-dark');
+test('Preparing reviews stay nonblocking and ask the server to notify the requesting profile',async t=>{
+  const {page,setMode,requests,reviews}=await fixture(t,'flat-dark');
   await page.clock.install();
+  await page.evaluate(()=>{window.CW.Notifications.scope=()=>'home';});
   setMode('pending');await page.locator('[data-wr-year]').fill('2024');await page.locator('[data-wr-year]').press('Tab');
   await page.getByText('Preparing your premiere.',{exact:true}).waitFor();
   await page.locator('[data-wr="close"]').click();
-  setMode('ready');await page.clock.fastForward(10001);
-  await page.waitForFunction(()=>window.notices['cw-wrapped']?.items.length===1);
-  const notice=await page.evaluate(()=>window.notices['cw-wrapped'].items[0]);
-  assert.equal(notice.href,'#tracker?instance=default&year=2024');assert.equal(notice.title,'Your 2024 CrossWatch Wrapped is ready');
-  await page.evaluate(()=>{window.dispatchEvent(new CustomEvent('cw:auth-state-changed'));});
-  assert.equal(await page.evaluate(()=>window.notices['cw-wrapped'].items.length),1);
-  await page.evaluate(()=>{auth.profileId='different';window.dispatchEvent(new CustomEvent('cw:auth-state-changed'));});
-  assert.equal(await page.evaluate(()=>window.notices['cw-wrapped']?.items.length||0),0);
+  const before=requests();
+  setMode('ready');await page.clock.fastForward(30001);
+  assert.equal(requests(),before);
+  await page.waitForFunction(()=>true);
+  const [wait]=reviews().filter(row=>row.action==='wait');
+  assert.deepEqual(wait,{kind:'wrapped',action:'wait',instance:'default',period:'2024',label:'Pascal',profile:'home'});
 });
 
 test('Saved stories remain usable through failed updates and retry',async t=>{

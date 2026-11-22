@@ -317,12 +317,10 @@ def test_check_endpoints_need_write_access_for_managed_users():
 def test_bell_feeder_is_loaded_for_admins_and_managed_tracker_users():
     import ui_frontend
 
-    assert "tracker-notifications.js" in ui_frontend._APP_SCRIPTS
-    assert "tracker-notifications.js" not in ui_frontend._USER_APP_SCRIPTS
-    assert "tracker-notifications.js" not in ui_frontend._FULL_USER_APP_SCRIPTS
-    assert 'app_scripts = (*app_scripts, "tracker-notifications.js")' in (REPO / "ui_frontend.py").read_text("utf-8")
-    feeder = (REPO / "assets" / "js" / "tracker-notifications.js").read_text("utf-8")
-    assert "/api/tracker/check/current" in feeder and '"/#tracker?attention=1"' in feeder
+    for scripts in (ui_frontend._APP_SCRIPTS, ui_frontend._USER_APP_SCRIPTS, ui_frontend._FULL_USER_APP_SCRIPTS):
+        assert "notification-feed.js" in scripts and "tracker-notifications.js" not in scripts
+    feeder = (REPO / "services" / "notification_center.py").read_text("utf-8")
+    assert "tracker_check_current" in feeder and '"/#tracker?attention=1"' in feeder
     core = (REPO / "assets" / "helpers" / "core.js").read_text("utf-8")
     assert 'if (tab === "tracker") return "#tracker"' in core
 

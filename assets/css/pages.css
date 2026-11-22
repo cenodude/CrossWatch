@@ -2002,10 +2002,12 @@ body.cw-profile-page #dashboard-widgets-card .cw-hub-widget-providers{position:r
 }
 
 #cw-notification-alert{display:none}
+#cw-notification-alert:not([hidden]){display:flex;position:fixed;z-index:1000;top:72px;right:16px;width:min(360px,calc(100vw - 32px));gap:8px;padding:8px;box-sizing:border-box}
+#cw-notification-alert button{min-height:40px;min-width:40px;padding:8px 12px;font:inherit;cursor:pointer}
+#cw-notification-alert [data-alert-open]{flex:1;min-width:0;display:grid;gap:4px;text-align:left;overflow-wrap:anywhere}
 @media(max-width:760px){
-  #cw-notification-alert:not([hidden]){display:flex;position:fixed;z-index:1000;top:calc(env(safe-area-inset-top,0px) + 84px);left:12px;right:12px;gap:8px;padding:8px;box-sizing:border-box}
-  #cw-notification-alert button{min-height:44px;min-width:44px;padding:8px 12px;font:inherit;cursor:pointer}
-  #cw-notification-alert [data-alert-open]{flex:1;min-width:0;display:grid;gap:4px;text-align:left;overflow-wrap:anywhere}
+  #cw-notification-alert:not([hidden]){top:calc(env(safe-area-inset-top,0px) + 84px);left:12px;right:12px;width:auto}
+  #cw-notification-alert button{min-height:44px;min-width:44px}
 }
 @media(max-width:760px){
   #stats-card.card.cw-main-card{padding:12px}
