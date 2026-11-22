@@ -92,7 +92,7 @@ def test_a_full_last_page_ends_with_an_empty_page(count):
     assert source.calls[-1][1]["cursor"] == str(count)
 
 
-@pytest.mark.parametrize("payload", [None, {"data": "bad"}])
+@pytest.mark.parametrize("payload", [None, {"data": "bad"}, {"data": []}, {"data": [], "meta": "bad"}])
 def test_unreadable_history_fails_instead_of_returning_a_partial_scan(payload):
     source = Tracearr([movie("1")])
     source.client.get = lambda path, **params: payload
@@ -107,6 +107,25 @@ def test_repeated_cursor_and_row_limit_fail():
         scan(source)
     with pytest.raises(RuntimeError, match="More than 2"):
         scan(Tracearr([movie(str(i)) for i in range(1, 6)]), max_rows=2)
+
+
+def test_repeated_pages_with_changing_cursors_never_publish_partial_history():
+    source = Tracearr([])
+    pages = iter([{"data": [movie("1")], "meta": {"nextCursor": "one"}},
+                  {"data": [movie("2")], "meta": {"nextCursor": "two"}},
+                  {"data": [movie("1")], "meta": {"nextCursor": None}}])
+    source.client.get = lambda *args, **kwargs: next(pages)
+    with pytest.raises(RuntimeError, match="tracearr_history_repeated_page"):
+        scan(source)
+
+
+def test_empty_page_with_a_next_cursor_fails_instead_of_returning_partial_history():
+    source = Tracearr([])
+    pages = iter([{"data": [movie("1")], "meta": {"nextCursor": "next"}},
+                  {"data": [], "meta": {"nextCursor": "later"}}])
+    source.client.get = lambda *a, **kw: next(pages)
+    with pytest.raises(RuntimeError, match="tracearr_history_incomplete_read"):
+        scan(source)
 
 
 def test_recovery_has_no_default_50000_event_limit(monkeypatch):
@@ -145,6 +164,7 @@ def run(api, payload):
         thread = api.rt[1].get("SYNC")
         if thread is not None:
             thread.join(5)
+            assert not thread.is_alive()
     return response
 
 
@@ -172,12 +192,15 @@ def test_tracearr_source_scans_into_the_shared_review_flow(api, monkeypatch):
     assert changed.status_code == 409 and "settings changed" in changed.json()["detail"]
 
 
-def test_tracearr_source_needs_a_connection_and_a_known_user(api):
+def test_tracearr_source_needs_a_connection_and_a_known_user(api, monkeypatch):
+    monkeypatch.setattr(recovery, "scan", lambda *args, **kwargs: [])
     api.cfg = {**api.cfg, "tracearr": {}}
     assert "Connect Tracearr" in run(api, dict(source="tracearr")).json()["detail"]
     api.cfg = {**api.cfg, "tracearr": {"server_url": "http://tracearr", "api_key": "key"}}
     assert "Choose your Tracearr user" in run(api, dict(source="tracearr")).json()["detail"]
     assert api.cfg["plex"]["username"] == "Owner"
     api.cfg = {**api.cfg, "tracearr": {"server_url": "http://tracearr", "api_key": "key", "history": {"user_id": "u1"}}}
-    assert run(api, dict(source="tracearr", tracearr_instance="default")).status_code == 200
+    response = run(api, dict(source="tracearr", tracearr_instance="default"))
+    assert response.status_code == 200
+    assert api.client.get("/api/import/plex-recovery/" + response.json()["id"]).json()["status"] == "review"
     assert not api.client.get("/api/import/plex-recovery/options").json()["tautulli"]

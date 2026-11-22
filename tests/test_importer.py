@@ -52,6 +52,16 @@ def test_importer_still_rejects_excessive_zip_members() -> None:
     assert getattr(exc.value, "detail", {}).get("code") == importer.ERROR_ZIP_TOO_MANY_FILES
 
 
+def test_invalid_rating_does_not_hide_the_next_valid_rating(monkeypatch: pytest.MonkeyPatch) -> None:
+    import services.importer as importer
+
+    monkeypatch.setattr(importer, "_existing_keys", lambda _cfg, _inst: {f: {} for f in importer.FEATURES})
+    raw = [{"feature": "ratings", "item": {"type": "movie", "ids": {"tmdb": "42"}, "rating": rating}}
+           for rating in (None, 8, 8)]
+    rows = importer._shape_rows(raw, {}, "default", "trakt")
+    assert [row["status"] for row in rows] == ["invalid", "ready", "duplicate"]
+
+
 def test_letterboxd_preview_shapes_selectable_rows(monkeypatch: pytest.MonkeyPatch) -> None:
     import services.importer as importer
 

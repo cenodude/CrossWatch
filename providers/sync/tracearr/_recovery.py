@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 from typing import Any, Callable, Mapping
 
+from .._pagination import PageGuard
 from . import _history as history
 
 _KNOWN = "Known identity"
@@ -26,21 +27,27 @@ def _read(adapter: Any, user_id: str, progress: Callable[..., None], check_cance
     rows: list[Mapping[str, Any]] = []
     cursor: str | None = None
     seen: set[str] = set()
+    guard = PageGuard(RuntimeError, "tracearr_history_repeated_page", check_cancel=False)
     while True:
         check_cancel()
         params: dict[str, Any] = {"pageSize": 100, "cursor": cursor, "user_id": user_id or None, "server_id": server_id or None}
         payload = adapter.client.get("/history", **params)
         page = payload.get("data") if isinstance(payload, Mapping) else None
-        if not isinstance(page, list):
+        if not isinstance(page, list) or any(not isinstance(row, Mapping) for row in page):
             raise RuntimeError("tracearr_history_invalid_response")
-        rows.extend(row for row in page if isinstance(row, Mapping))
-        progress("history", "Reading Tracearr watch history", len(rows), 0)
         meta = payload.get("meta") if isinstance(payload, Mapping) else None
-        cursor = str((meta.get("nextCursor") if isinstance(meta, Mapping) else "") or "").strip() or None
-        if not cursor or not page:
-            return rows
+        if not isinstance(meta, Mapping):
+            raise RuntimeError("tracearr_history_invalid_response")
+        cursor = str(meta.get("nextCursor") or "").strip() or None
+        if cursor and not page:
+            raise RuntimeError("tracearr_history_incomplete_read")
         if cursor in seen:
             raise RuntimeError("tracearr_history_repeated_cursor")
+        guard.check(page)
+        rows.extend(page)
+        progress("history", "Reading Tracearr watch history", len(rows), 0)
+        if not cursor:
+            return rows
         seen.add(cursor)
 
 

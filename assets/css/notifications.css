@@ -54,4 +54,5 @@
 #cw-notifications-panel [data-push-test] { justify-self: start; border-color: var(--notice-line); }
 .cw-notifications-body li.is-new { background: var(--notice-hover); }
 .cw-notification-new { display: inline-block; margin-right: 8px; padding: 0 6px; border: 1px solid var(--notice-line); border-radius: 10px; color: var(--notice-muted); font-size: 11px; font-weight: 600; line-height: 18px; vertical-align: 1px; }
+@media (max-width: 760px) { #cw-notifications-panel [data-notifications-settings], #cw-notifications-panel .cw-notifications-settings { display: none; } }
 @media (prefers-reduced-motion: reduce) { #cw-notifications-button { transition: none; transform: none; } }

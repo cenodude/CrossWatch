@@ -7,6 +7,7 @@ import json
 from typing import Any, Callable, Mapping
 
 from cw_platform.id_map import ids_from_guid
+from .._pagination import PageGuard
 
 from . import _history as history
 
@@ -41,9 +42,12 @@ def _label(row: Mapping[str, Any], kind: str) -> str:
 
 def _read(adapter: Any, progress: Callable[..., None], check_cancel: Callable[[], None]) -> list[Mapping[str, Any]]:
     user_id = str(history._cfg_get(adapter, "tautulli.history.user_id", "") or "").strip()
+    if not user_id:
+        raise ValueError("tautulli_user_unknown")
     per_page = max(1, min(500, int(history._cfg_get(adapter, "tautulli.history.per_page", 100) or 100)))
     rows: list[Mapping[str, Any]] = []
-    previous: list[Any] | None = None
+    guard = PageGuard(RuntimeError, "tautulli_history_repeated_page", check_cancel=False)
+    expected: int | None = None
     start = 0
     while True:
         check_cancel()
@@ -51,19 +55,25 @@ def _read(adapter: Any, progress: Callable[..., None], check_cancel: Callable[[]
                                       grouping=1, include_activity=0)
         if user_id:
             params["user_id"] = user_id
-        payload = adapter.client.call("get_history", **params) or {}
+        payload = adapter.client.call("get_history", **params)
         block = payload.get("data") if isinstance(payload, Mapping) else None
         if isinstance(block, Mapping):
             payload, block = block, block.get("data")
-        page = list(block) if isinstance(block, list) else []
-        if not page or page == previous:
+        if not isinstance(block, list) or any(not isinstance(row, Mapping) for row in block):
+            raise RuntimeError("tautulli_history_invalid_response")
+        page = block
+        total = history._to_int_total(payload.get("recordsFiltered", payload.get("recordsTotal")))
+        if total is not None:
+            expected = max(expected or 0, total)
+        guard.check(page)
+        rows.extend(page)
+        progress("history", "Reading Tautulli watch history", len(rows), max(expected or 0, len(rows)))
+        start += len(page)
+        if not page:
+            if expected is not None and start < expected:
+                raise RuntimeError(f"tautulli_history_incomplete_read:{start}/{expected}")
             break
-        previous = page
-        rows.extend(row for row in page if isinstance(row, Mapping))
-        total = history._to_int_total(payload.get("recordsFiltered") or payload.get("recordsTotal"))
-        progress("history", "Reading Tautulli watch history", len(rows), max(total or 0, len(rows)))
-        start += per_page
-        if len(page) < per_page:
+        if expected is not None and start >= expected:
             break
     return rows
 

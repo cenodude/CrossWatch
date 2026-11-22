@@ -24,7 +24,12 @@ def test_clear_provider_cache_preserves_user_runtime_files(tmp_path, monkeypatch
     state_dir = tmp_path / ".cw_state"
     state_dir.mkdir()
 
-    preserved = set()
+    preserved = {
+        "plex_recovery.sqlite3",
+        "plex_recovery.sqlite3-journal",
+        "plex_recovery.sqlite3-wal",
+        "plex_recovery.sqlite3-shm",
+    }
     sync_recovery_state = {
         "auto_remove_seen.json",
         "watchlist_wl_autoremove.json",
@@ -53,6 +58,8 @@ def test_clear_provider_cache_preserves_user_runtime_files(tmp_path, monkeypatch
         lambda: (tmp_path / "cache", tmp_path, state_dir, None, None, None),
     )
 
+    inventory = maintenanceAPI._scan_provider_cache()
+    assert not preserved.intersection(item["name"] for item in inventory["files"])
     removed = set(maintenanceAPI._clear_cw_state_files())
 
     assert removed == sync_recovery_state

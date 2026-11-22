@@ -195,8 +195,10 @@ def test_exact_database_matches_survive_new_scans_and_keep_rewatches(api, monkey
     later = library(api.tmp / "later.db", views=[original, {**original, "viewed_at": DAY + 100}])
     fresh.raw = scan(later)[0]
     service._shape(fresh, api.cfg)
-    assert len(fresh.rows) == 2
-    assert [row["status"] for row in fresh.rows] == ["exists", "ready" if known_ids else "missing_identity"]
+    assert len(fresh.rows) == 1
+    assert fresh.rows[0]["status"] == ("ready" if known_ids else "missing_identity")
+    assert fresh.rows[0]["existing_watch_count"] == 1
+    assert fresh.rows[0]["watch_count"] == 2
     assert importer._existing_keys(api.cfg, "default")["history"] == stored
 
 
@@ -653,6 +655,27 @@ def test_uploaded_database_scans_the_chosen_account_and_is_deleted_afterwards(ap
     assert not folder.exists() and not service.UPLOADS
     again = run(api, dict(source="plex_db", upload_id=body["upload_id"], db_account=7))
     assert again.status_code == 404 and "expired" in again.json()["detail"]
+
+
+def test_failed_start_save_keeps_the_uploaded_database_for_retry(api, monkeypatch):
+    db = library(api.tmp / "lib.db", views=[movie("imdb://tt0000001")])
+    body = upload(api, db).json()
+    payload = dict(source="plex_db", upload_id=body["upload_id"], db_account=1)
+    original = service.plex_recovery_store.save
+    def fail(*args, **kwargs):
+        raise OSError("Disk full")
+    monkeypatch.setattr(service.plex_recovery_store, "save", fail)
+    with pytest.raises(OSError, match="Disk full"):
+        run(api, payload)
+    assert body["upload_id"] in service.UPLOADS
+    assert Path(service.UPLOADS[body["upload_id"]]["path"]).is_file()
+    assert not service.JOBS and not api.rt[1]
+    monkeypatch.setattr(service.plex_recovery_store, "save", original)
+    response = run(api, payload)
+    assert response.status_code == 200, response.text
+    job = api.client.get("/api/import/plex-recovery/" + response.json()["id"]).json()
+    assert job["status"] == "review"
+    assert not service.UPLOADS
 
 
 def test_bad_uploads_are_rejected_and_a_new_upload_replaces_the_previous_one(api):

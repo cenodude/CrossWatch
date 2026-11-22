@@ -220,6 +220,41 @@ def api(monkeypatch, config_base):
     service.JOBS.clear()
 
 
+@pytest.mark.parametrize("watched_at", ["1969-12-31T23:59:59Z", "1970-01-01T00:00:00Z", "2020-01-01T00:00:00Z"])
+def test_folded_dated_watch_takes_precedence_over_missing_dates(api, watched_at):
+    entry = deepcopy(api.job.raw[0])
+    api.job.raw = [{**deepcopy(entry), "item": {**entry["item"], "watched_at": date}}
+                   for date in (None, watched_at)]
+    service._shape(api.job, api.cfg)
+    preview = api.client.get(f"/api/import/plex-recovery/{api.job.id}/rows").json()
+    assert len(preview["rows"]) == 1
+    row = preview["rows"][0]
+    assert row["watched_at"] == watched_at
+    assert row["missing_date_count"] == 1
+    assert row["pending_watch_count"] == 1
+    response = api.client.post(f"/api/import/plex-recovery/{api.job.id}/commit",
+                               json=dict(import_id=api.job.id, revision=0, mode="ready"))
+    assert response.status_code == 200, response.text
+    assert response.json()["applied"] == 1
+    stored = service.importer._existing_keys(api.cfg, "default")["history"]
+    assert [item["watched_at"] for item in stored.values()] == [watched_at]
+
+
+@pytest.mark.parametrize("guess_first", [False, True])
+def test_unconfirmed_duplicate_never_blocks_a_known_watch(api, guess_first):
+    known = deepcopy(api.job.raw[0])
+    guess = {**deepcopy(known), "recovery_requires_review": True, "original_group": "guess"}
+    api.job.raw = [guess, known] if guess_first else [known, guess]
+    service._shape(api.job, api.cfg)
+    assert sum(row["status"] == "ready" for row in api.job.rows) == 1
+    response = api.client.post(f"/api/import/plex-recovery/{api.job.id}/commit",
+                               json=dict(import_id=api.job.id, revision=0, mode="ready"))
+    assert response.status_code == 200, response.text
+    assert response.json()["applied"] == 1
+    assert guess["recovery_requires_review"] is True
+    assert len(service.importer._existing_keys(api.cfg, "default")["history"]) == 1
+
+
 def test_import_only_selected_events_to_real_tracker_and_repeat_is_skipped(api):
     from services import importer
     url=f"/api/import/plex-recovery/{api.job.id}"
@@ -239,6 +274,80 @@ def test_import_only_selected_events_to_real_tracker_and_repeat_is_skipped(api):
     assert api.cfg["plex"]["fallback_GUID"] is True
 
 
+@pytest.mark.parametrize("source", ["tautulli", "tracearr", "plex", "plex_db"])
+@pytest.mark.parametrize("kind", ["movie", "episode"])
+def test_recovery_folds_rewatches_and_imports_every_missing_date(api, source, kind):
+    from services import importer
+
+    if source in {"tautulli", "tracearr"}:
+        setattr(api.job, source, "default")
+    elif source == "plex_db":
+        api.job.database = "server"
+    api.job.source_hash = service._job_source_hash(api.cfg, api.job)
+    raw = deepcopy(api.job.raw[0])
+    if kind == "episode":
+        raw["item"].update(type="episode", series_title="Series", season=1, episode=2,
+                           ids={}, show_ids={"tmdb": "42"})
+    dates = ["2020-01-01T12:00:00Z", "2020-01-02T12:00:00Z", "2020-01-03T12:00:00Z"]
+    api.job.raw = [{**deepcopy(raw), "item": {**deepcopy(raw["item"]), "watched_at": date}} for date in dates]
+    api.job.raw.extend([deepcopy(api.job.raw[0]), {**deepcopy(raw), "item": {**deepcopy(raw["item"]), "watched_at": None}}])
+    service._shape(api.job, api.cfg)
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    preview = api.client.get(url + "/rows").json()
+    assert preview["summary"]["total"] == 1
+    row = preview["rows"][0]
+    assert (row["watched_at"], row["watch_count"], row["pending_watch_count"], row["missing_date_count"]) == (dates[-1], 4, 3, 1)
+    assert any(watch["reason"] == "missing_watched_at" for watch in row["watch_details"])
+    assert len(api.job.rows[0]["recovery_row_ids"]) == 5
+    result = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=0, mode="selected", row_ids=[row["id"]]))
+    assert result.status_code == 200, result.text
+    assert result.json()["applied"] == 3
+    stored = importer._existing_keys(api.cfg, "default")["history"]
+    assert sorted(item["watched_at"] for item in stored.values()) == dates
+    assert set(result.json()["imported_keys"]) == set(stored)
+    preview = api.client.get(url + "/rows").json()
+    assert len(preview["rows"]) == 1
+    assert (preview["rows"][0]["status"], preview["rows"][0]["pending_watch_count"]) == ("exists", 0)
+    result = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=1, mode="ready"))
+    assert result.json()["applied"] == 0
+    api.job.raw.insert(0, {**deepcopy(raw), "item": {**deepcopy(raw["item"]), "watched_at": "2019-01-01T12:00:00Z"}})
+    service._shape(api.job, api.cfg)
+    preview = api.client.get(url + "/rows").json()
+    assert len(preview["rows"]) == 1
+    row = preview["rows"][0]
+    assert (row["status"], row["watched_at"], row["watch_count"], row["pending_watch_count"], row["existing_watch_count"]) == ("ready", dates[-1], 5, 1, 3)
+    result = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=2, mode="ready"))
+    assert result.json()["applied"] == 1
+    assert len(importer._existing_keys(api.cfg, "default")["history"]) == 4
+
+
+@pytest.mark.parametrize("source", ["tautulli", "tracearr"])
+def test_external_recovery_match_updates_every_folded_watch_and_exclusion_skips_the_group(api, source):
+    from services import importer
+
+    setattr(api.job, source, "default")
+    api.job.source_hash = service._job_source_hash(api.cfg, api.job)
+    raw = deepcopy(api.job.raw[0])
+    raw.update(recovery_valid=False, original_group="unresolved")
+    raw["item"]["ids"] = {}
+    api.job.raw = [{**deepcopy(raw), "item": {**deepcopy(raw["item"]), "watched_at": date}}
+                   for date in ("2020-01-01T12:00:00Z", "2021-01-01T12:00:00Z")]
+    service._shape(api.job, api.cfg)
+    assert len(api.job.rows) == 1
+    row = api.job.rows[0]
+    assert row["status"] == "missing_identity"
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    result = api.client.post(url + "/match", json=dict(revision=0, row_id=row["id"], title="Matched", tmdb="42"))
+    assert result.status_code == 200, result.text
+    assert len(api.job.rows) == 1
+    assert all(raw["item"]["ids"] == {"tmdb": "42"} for raw in api.job.raw)
+    result = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=1, mode="ready", excluded_row_ids=[row["id"]]))
+    assert result.json()["applied"] == 0
+    assert not importer._existing_keys(api.cfg, "default")["history"]
+    result = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=2, mode="ready"))
+    assert result.json()["applied"] == 2
+
+
 def test_large_recovery_commit_keeps_selection_and_receipt_without_row_id_limit(api, monkeypatch):
     from services import importer
 
@@ -252,7 +361,7 @@ def test_large_recovery_commit_keeps_selection_and_receipt_without_row_id_limit(
 
     def add(cfg, items, *, feature):
         assert feature == "history"
-        assert len(items) == count
+        assert len(items) == count + 1
         stored.update({importer._key_for(feature, item): item for item in items})
         return {"ok": True, "count": len(items)}
 
@@ -261,10 +370,10 @@ def test_large_recovery_commit_keeps_selection_and_receipt_without_row_id_limit(
     result = api.client.post(f"/api/import/plex-recovery/{api.job.id}/commit", json=dict(
         import_id=api.job.id, revision=0, mode="ready", excluded_row_ids=[str(count)]))
     assert result.status_code == 200, result.text
-    assert result.json()["applied"] == count
-    assert len(result.json()["imported_keys"]) == count
+    assert result.json()["applied"] == count + 1
+    assert len(result.json()["imported_keys"]) == count + 1
     assert {item["ids"]["tmdb"] for item in stored.values()} == {str(i + 1) for i in range(count)}
-    assert next(item for item in stored.values() if item["ids"]["tmdb"] == "1")["watched_at"] == "2021-01-01T12:00:00Z"
+    assert {item["watched_at"] for item in stored.values() if item["ids"]["tmdb"] == "1"} == {"2020-01-01T12:00:00Z", "2021-01-01T12:00:00Z"}
     assert api.job.id not in importer._PREVIEWS
 
 
@@ -403,10 +512,10 @@ def test_group_movie_conversion_requires_a_typed_match_and_preserves_history(api
     assert api.job.raw[2:] == before[2:]
     row = next(row for row in api.job.rows if row["item"]["ids"].get("tmdb") == "267970")
     result = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=1, mode="selected", row_ids=[row["id"]]))
-    assert result.status_code == 200 and result.json()["applied"] == 1, result.text
+    assert result.status_code == 200 and result.json()["applied"] == 2, result.text
     stored = list(importer._existing_keys(api.cfg, "default")["history"].values())
-    assert len(stored) == 1 and stored[0]["type"] == "movie"
-    assert stored[0]["watched_at"] == before[1]["item"]["watched_at"]
+    assert len(stored) == 2 and all(item["type"] == "movie" for item in stored)
+    assert sorted(item["watched_at"] for item in stored) == [raw["item"]["watched_at"] for raw in before[:2]]
     api.job.raw = before
     service._shape(api.job, api.cfg)
     assert next(row for row in api.job.rows if row["media_type"] == "episode")["status"] == "exists"
@@ -449,16 +558,16 @@ def test_collapsed_movie_keeps_all_conversion_origins_on_import_and_rescan(api, 
     selected = [row for row in api.job.rows if row["item"].get("ids", {}).get("tmdb") == "267970"]
     if newer != "suggested_movie":
         assert len(selected) == 1
-        assert set(selected[0]["item"][service.TYPE_ORIGINS]) == expected_origins
+        assert service.type_origins({r["id"]: r["item"] for r in selected[0]["recovery_events"]}) == expected_origins
         assert selected[0]["item"]["watched_at"] == before[1]["item"]["watched_at"]
     result = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=1,
         mode="selected", row_ids=[row["id"] for row in selected]))
-    assert result.status_code == 200 and result.json()["applied"] == 1, result.text
+    assert result.status_code == 200 and result.json()["applied"] == 2, result.text
     stored = list(importer._existing_keys(api.cfg, "default")["history"].values())
-    assert len(stored) == 1
-    assert set(stored[0][service.TYPE_ORIGINS]) == expected_origins
-    assert set(stored[0][service.PLEX_ORIGINS]) == expected_sources
-    assert stored[0]["watched_at"] == before[1]["item"]["watched_at"]
+    assert len(stored) == 2
+    assert service.type_origins({str(i): item for i, item in enumerate(stored)}) == expected_origins
+    assert service.plex_origins({str(i): item for i, item in enumerate(stored)}) == expected_sources
+    assert sorted(item["watched_at"] for item in stored) == [raw["item"]["watched_at"] for raw in before[:2]]
     assert api.job.raw[2] == before[2]
     api.job.raw = before
     service._shape(api.job, api.cfg)
@@ -524,6 +633,24 @@ def test_accept_title_matches_rejects_stale_or_unavailable_recovery(api, monkeyp
                                json=dict(revision=99 if block == "revision" else 0))
     assert response.status_code == (404 if block == "owner" else 409)
     assert api.job.raw[1]["recovery_requires_review"]
+
+
+def test_concurrent_commits_only_apply_one_revision(api):
+    from concurrent.futures import ThreadPoolExecutor
+
+    barrier = threading.Barrier(2)
+    def commit(row_id):
+        with TestClient(api.client.app) as client:
+            barrier.wait(timeout=5)
+            return client.post(f"/api/import/plex-recovery/{api.job.id}/commit", json=dict(
+                import_id=api.job.id, revision=0, mode="selected", row_ids=[row_id]))
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(commit, ["0", "1"]))
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    assert api.job.revision == 1
+    stored = service.importer._existing_keys(api.cfg, "default")["history"]
+    assert len(stored) == 1
+    assert set(api.client.get(f"/api/import/plex-recovery/{api.job.id}/receipt").json()["keys"]) == set(stored)
 
 
 def test_preview_and_cancel_do_not_write_tracker(api):
@@ -600,6 +727,23 @@ def test_changed_tracker_settings_require_a_new_preview(api):
     assert "Tracker settings changed" in response.json()["detail"]
 
 
+def test_tracker_change_during_import_handoff_cannot_redirect_recovery(api, monkeypatch):
+    from services import importer
+    original = importer.api_import_commit
+    reviewed_config = deepcopy(api.cfg)
+
+    def redirected_commit(*args, **kwargs):
+        api.cfg["crosswatch"]["root_dir"] += "-changed"
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(importer, "api_import_commit", redirected_commit)
+    response = api.client.post(f"/api/import/plex-recovery/{api.job.id}/commit",
+                               json=dict(import_id=api.job.id, revision=0, mode="ready"))
+    assert response.status_code == 409
+    assert not importer._existing_keys(reviewed_config, "default")["history"]
+    assert not importer._existing_keys(api.cfg, "default")["history"]
+
+
 def test_editing_match_preserves_watch_event_and_invalidates_revision(api):
     url=f"/api/import/plex-recovery/{api.job.id}"
     response=api.client.post(url+"/match",json=dict(revision=0,row_id="1",title="Corrected",tmdb="42"))
@@ -622,7 +766,7 @@ def test_cache_cleanup_preserves_legacy_recovery_memos(tmp_path,monkeypatch):
 
 
 @pytest.mark.parametrize("guessed", [False, True])
-def test_episode_recovery_keeps_distinct_episodes_with_only_the_latest_date(plex, api, monkeypatch, guessed):
+def test_episode_recovery_folds_each_episode_and_preserves_every_date(plex, api, monkeypatch, guessed):
     def episode(season, number, date=1664057618):
         return NS(type="episode", ratingKey=f"{season}-{number}", grandparentRatingKey="show-1",
                   title=f"Episode {number}", grandparentTitle="Better Call Saul", parentIndex=season,
@@ -645,8 +789,8 @@ def test_episode_recovery_keeps_distinct_episodes_with_only_the_latest_date(plex
     url=f"/api/import/plex-recovery/{api.job.id}"
     result=api.client.post(url+"/commit",json=dict(import_id=api.job.id,revision=0,mode="selected",row_ids=[str(i) for i in range(6)]))
     assert result.status_code==200,result.text
-    assert result.json()["applied"]==4
-    assert len(api.client.get(url+"/receipt").json()["keys"])==4
+    assert result.json()["applied"]==5
+    assert len(api.client.get(url+"/receipt").json()["keys"])==5
 
 
 def test_season_number_fallback_does_not_reuse_another_seasons_match(plex, api):
@@ -697,7 +841,7 @@ def test_bulk_groups_original_series_across_seasons_and_rewatches(unresolved_ser
     remaining=api.client.get(url+"/match-groups",params=dict(revision=1)).json()
     assert len(remaining["rows"])==1
     result=api.client.post(url+"/commit",json=dict(import_id=api.job.id,revision=1,mode="ready"))
-    assert result.json()["applied"]==2
+    assert result.json()["applied"]==3
 
 
 def test_bulk_match_is_atomic_and_rejects_stale_or_foreign_groups(unresolved_series):
@@ -835,12 +979,12 @@ def test_movie_recovery_combines_dates_and_manual_match_keeps_them_combined(api,
     assert len(api.job.rows)==1
     assert all(not r["recovery_requires_review"] for r in api.job.raw)
     result=api.client.post(url+"/commit",json=dict(import_id=api.job.id,revision=1,mode="ready"))
-    assert result.json()["applied"]==1
+    assert result.json()["applied"]==3
     from services import importer
     stored=importer._existing_keys(api.cfg,"default")["history"]
-    assert len(stored)==1
-    assert next(iter(stored.values()))["watched_at"]==dates[2]
-    assert api.client.get(url+"/receipt").json()["keys"]==list(stored)
+    assert len(stored)==3
+    assert {item["watched_at"] for item in stored.values()} == set(filter(None, dates))
+    assert set(api.client.get(url+"/receipt").json()["keys"])==set(stored)
 
 
 def test_bulk_matches_merge_different_sources_resolving_to_same_movie(api):
@@ -853,22 +997,22 @@ def test_bulk_matches_merge_different_sources_resolving_to_same_movie(api):
     assert result.status_code==200,result.text
     assert len(api.job.rows)==1
     assert api.job.rows[0]["item"]["watched_at"]=="2020-01-03T12:00:00Z"
-    assert api.client.post(url+"/commit",json=dict(import_id=api.job.id,revision=1,mode="ready")).json()["applied"]==1
+    assert api.client.post(url+"/commit",json=dict(import_id=api.job.id,revision=1,mode="ready")).json()["applied"]==3
 
 
-def test_title_already_in_tracker_is_not_recovered_again_with_another_date(api):
+def test_title_already_in_tracker_can_recover_another_date(api):
     from services import importer
     url=f"/api/import/plex-recovery/{api.job.id}"
     result=api.client.post(url+"/commit",json=dict(import_id=api.job.id,revision=0,mode="selected",row_ids=["0"]))
     assert result.json()["applied"]==1
     api.job.raw[0]["item"]["watched_at"]="2025-01-01T00:00:00Z"
     service._shape(api.job,api.cfg)
-    assert api.job.rows[0]["status"]=="exists"
+    assert api.job.rows[0]["status"]=="ready"
     result=api.client.post(url+"/commit",json=dict(import_id=api.job.id,revision=1,mode="selected",row_ids=["0"]))
-    assert result.json()["applied"]==0
+    assert result.json()["applied"]==1
     stored=importer._existing_keys(api.cfg,"default")["history"]
-    assert len(stored)==1
-    assert next(iter(stored.values()))["watched_at"]=="2020-01-01T12:00:00Z"
+    assert len(stored)==2
+    assert {item["watched_at"] for item in stored.values()} == {"2020-01-01T12:00:00Z", "2025-01-01T00:00:00Z"}
 
 
 @pytest.mark.parametrize("endpoint", ["replace", "edit-title"])
@@ -895,7 +1039,6 @@ def test_imdb_database_import_is_recognized_after_tmdb_match(api, monkeypatch, e
         "item": {"type": "movie", "title": "Heat", "year": 1995, "ids": {"tmdb": "949"}},
     })
     assert response.status_code == 200, response.text
-    api.job.raw[0]["item"]["watched_at"] = "2025-01-01T00:00:00Z"
     service._shape(api.job, api.cfg)
     preview = api.client.get(url + "/rows").json()
     assert preview["rows"][0]["status"] == "exists"
@@ -915,7 +1058,7 @@ def test_imdb_database_import_is_recognized_after_tmdb_match(api, monkeypatch, e
 def test_recovery_external_id_aliases_respect_type_episode_and_part(api, monkeypatch, kind, episode, part, expected):
     from services import importer
 
-    item = {"type": kind, "title": "Title", "ids": {"tmdb": "1", "imdb": "tt1234567"}}
+    item = {"type": kind, "title": "Title", "ids": {"tmdb": "1", "imdb": "tt1234567"}, "watched_at": "2020-01-01T12:00:00Z"}
     incoming = {"type": "movie", "title": "Title", "ids": {"imdb": "tt1234567"}, "watched_at": "2020-01-01T12:00:00Z"}
     if kind == "episode":
         item.update(ids={}, show_ids={"tmdb": "1", "tvdb": "2"}, season=1, episode=2)
@@ -928,7 +1071,7 @@ def test_recovery_external_id_aliases_respect_type_episode_and_part(api, monkeyp
     assert api.job.rows[0]["status"] == expected
 
 
-def test_explicit_guesses_for_same_title_import_only_latest_selected_date(api):
+def test_explicit_guesses_for_same_title_import_every_selected_date(api):
     from services import importer
     for index,raw in enumerate(api.job.raw):
         raw.update(original_group=f"source-{index}",recovery_requires_review=True)
@@ -938,10 +1081,10 @@ def test_explicit_guesses_for_same_title_import_only_latest_selected_date(api):
     url=f"/api/import/plex-recovery/{api.job.id}"
     result=api.client.post(url+"/commit",json=dict(import_id=api.job.id,revision=0,mode="selected",row_ids=["0","1","2"]))
     assert result.status_code==200,result.text
-    assert result.json()["applied"]==1
+    assert result.json()["applied"]==3
     stored=importer._existing_keys(api.cfg,"default")["history"]
-    assert len(stored)==1
-    assert next(iter(stored.values()))["watched_at"]=="2020-01-03T12:00:00Z"
+    assert len(stored)==3
+    assert sorted(item["watched_at"] for item in stored.values()) == [raw["item"]["watched_at"] for raw in api.job.raw]
     assert api.client.get(url+"/receipt").json()["keys"]==list(stored)
 
 
@@ -969,10 +1112,30 @@ def test_resume_does_not_extend_expiry_or_expose_another_users_recovery(api, mon
 def test_resume_respects_instance_access_and_expiry(api, monkeypatch):
     url = "/api/import/plex-recovery/active"
     monkeypatch.setattr(service, "user_can_access_instance", lambda *a: False)
-    assert api.client.get(url).json() == {"job":None, "busy":True}
+    state = api.client.get(url).json()
+    assert state["busy"] and state["job"]["id"] == api.job.id
+    assert state["job"]["unavailable"] is True
     monkeypatch.setattr(service, "user_can_access_instance", lambda *a: True)
     api.job.touched -= service.RECOVERY_TTL_SECONDS + 1
     assert api.client.get(url).json() == {"job":None, "busy":False}
+
+
+@pytest.mark.parametrize("restart", [False, True])
+def test_owner_can_close_an_inaccessible_recovery_without_exposing_history(api, monkeypatch, restart):
+    api.job.recent = [{"title": "Private title", "result": "Found"}]
+    service._save_job(api.job, raw=True)
+    if restart:
+        service.JOBS.clear()
+        service._LOADED_STORE = None
+    monkeypatch.setattr(service, "user_can_access_instance", lambda *args: False)
+    state = api.client.get("/api/import/plex-recovery/active").json()
+    assert state["job"]["id"] == api.job.id and state["job"]["unavailable"] is True
+    assert "Private title" not in str(state)
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    assert api.client.get(url + "/rows").status_code == 403
+    assert api.client.delete(url).status_code == 200
+    assert api.client.get("/api/import/plex-recovery/active").json() == {"job": None, "busy": False}
+    assert service.plex_recovery_store.load() == []
 
 
 def test_recovery_expires_after_24_idle_hours_and_review_activity_renews_it(api, monkeypatch):
@@ -1014,6 +1177,280 @@ def test_close_recovery_discards_preview_before_expiry(api):
     assert api.client.get("/api/import/plex-recovery/active").json() == {"job": None, "busy": False}
     assert api.client.get(url + "/rows").status_code == 404
     assert service.importer._existing_keys(api.cfg, "default") == before
+
+
+def test_folded_items_report_each_undated_watch(api):
+    raw = deepcopy(api.job.raw[0])
+    api.job.raw = [raw, {**deepcopy(raw), "item": {**deepcopy(raw["item"]), "watched_at": None}},
+                   {**deepcopy(raw), "item": {**deepcopy(raw["item"]), "watched_at": None}}]
+    service._shape(api.job, api.cfg)
+    result = api.client.get(f"/api/import/plex-recovery/{api.job.id}/rows").json()
+    assert len(result["rows"]) == 1
+    row = result["rows"][0]
+    assert (row["watch_count"], row["pending_watch_count"], row["missing_date_count"]) == (3, 1, 2)
+
+
+def test_interrupted_import_restores_its_receipt_without_reimporting(api, monkeypatch):
+    from services import importer
+
+    commit = importer.api_import_commit
+    def interrupted(*args, **kwargs):
+        commit(*args, **kwargs)
+        raise RuntimeError("interrupted after writing")
+    monkeypatch.setattr(importer, "api_import_commit", interrupted)
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    with pytest.raises(RuntimeError, match="interrupted after writing"):
+        api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=0, mode="selected", row_ids=["0"]))
+    stored = importer._existing_keys(api.cfg, "default")["history"]
+    assert len(stored) == 1
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    assert set(api.client.get(url + "/receipt").json()["keys"]) == set(stored)
+    monkeypatch.setattr(importer, "api_import_commit", commit)
+    result = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=0, mode="selected", row_ids=["0"]))
+    assert result.json()["applied"] == 0
+
+
+@pytest.mark.parametrize("kind", ["movie", "episode"])
+def test_partial_import_restart_and_title_confirmation_preserve_every_watch_once(api, monkeypatch, kind):
+    base = deepcopy(api.job.raw[0])
+    if kind == "episode":
+        base["item"].update(type="episode", ids={}, show_ids={"tmdb": "42"}, season=1, episode=2, series_title="Series")
+    dates = [f"2020-01-0{day}T12:00:00Z" for day in range(1, 5)]
+    api.job.raw = [{**deepcopy(base), "item": {**deepcopy(base["item"]), "watched_at": date}}
+                   for date in [*dates[:3], dates[1], None, dates[3]]]
+    api.job.raw[-1].update(recovery_requires_review=True, original_group="unconfirmed")
+    service._shape(api.job, api.cfg)
+    write = service.importer.api_import_commit
+    def partial(payload, **kwargs):
+        preview = service.importer._PREVIEWS[payload.import_id]
+        preview["rows"] = preview["rows"][:1]
+        write(payload, **kwargs)
+        raise RuntimeError("interrupted after first watch")
+    monkeypatch.setattr(service.importer, "api_import_commit", partial)
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    payload = dict(import_id=api.job.id, revision=0, mode="ready")
+    with pytest.raises(RuntimeError, match="interrupted after first watch"):
+        api.client.post(url + "/commit", json=payload)
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    assert len(api.client.get(url + "/receipt").json()["keys"]) == 1
+    preview = api.client.get(url + "/rows").json()
+    assert len(preview["rows"]) == 2
+    assert sorted(row["pending_watch_count"] for row in preview["rows"]) == [1, 2]
+    monkeypatch.setattr(service.importer, "api_import_commit", write)
+    result = api.client.post(url + "/commit", json=payload).json()
+    assert result["applied"] == 2 and len(result["imported_keys"]) == 3
+    preview = api.client.get(url + "/rows").json()
+    assert preview["summary"]["by_status"]["needs_review"] == 1
+    accepted = api.client.post(url + "/accept-title-matches", json=dict(revision=result["revision"])).json()
+    assert accepted["accepted"] == 1
+    result = api.client.post(url + "/commit", json={**payload, "revision": accepted["revision"]}).json()
+    assert result["applied"] == 1 and len(result["imported_keys"]) == 4
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    preview = api.client.get(url + "/rows").json()
+    assert len(preview["rows"]) == 1
+    assert (preview["rows"][0]["watch_count"], preview["rows"][0]["pending_watch_count"], preview["rows"][0]["missing_date_count"]) == (5, 0, 1)
+    stored = service.importer._existing_keys(api.cfg, "default")["history"]
+    assert sorted(item["watched_at"] for item in stored.values()) == dates
+    assert set(api.client.get(url + "/receipt").json()["keys"]) == set(stored)
+
+
+def test_saved_matches_and_import_receipts_survive_restart(api):
+    from services import importer
+
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    response = api.client.post(url + "/match", json=dict(revision=0, row_id="0", title="Correct title", tmdb="42"))
+    assert response.status_code == 200, response.text
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    assert api.client.get("/api/import/plex-recovery/active").json()["job"]["id"] == api.job.id
+    preview = api.client.get(url + "/rows").json()
+    assert preview["revision"] == 1
+    assert preview["rows"][0]["title"] == "Correct title"
+    assert not importer._existing_keys(api.cfg, "default")["history"]
+    result = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=1, mode="selected", row_ids=["0"]))
+    assert result.json()["applied"] == 1
+    receipt = api.client.get(url + "/receipt").json()
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    assert api.client.get(url + "/receipt").json() == receipt
+    preview = api.client.get(url + "/rows").json()
+    assert next(row for row in preview["rows"] if row["id"] == "0")["status"] == "exists"
+    result = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=2, mode="selected", row_ids=["0"]))
+    assert result.json()["applied"] == 0
+
+
+def test_cache_cleanup_preserves_saved_recovery_after_restart(api, monkeypatch):
+    from api import maintenanceAPI
+
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    response = api.client.post(url + "/match", json=dict(revision=0, row_id="0", title="Correct title", tmdb="42"))
+    assert response.status_code == 200
+    monkeypatch.setattr(maintenanceAPI, "_cw", lambda: (api.base / "cache", api.base, api.base / ".cw_state", None, None, None))
+    maintenanceAPI.clear_cache()
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    response = api.client.get(url + "/rows")
+    assert response.status_code == 200
+    assert response.json()["revision"] == 1
+    assert response.json()["rows"][0]["title"] == "Correct title"
+
+
+@pytest.mark.parametrize("state", ["reading", "auto_match"])
+def test_restart_marks_interrupted_work_without_resuming_or_importing(api, state):
+    service._save_job(api.job, raw=True)
+    if state == "reading":
+        api.job.status = "reading"
+    else:
+        api.job.auto = dict(status="running", id="auto", done=1, total=2)
+        api.job.suggestions = {"group": {"match": {"title": "Saved suggestion", "ids": {"tmdb": "42"}}}}
+    service._save_job(api.job)
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    restored = api.client.get("/api/import/plex-recovery/active").json()["job"]
+    if state == "reading":
+        assert restored["status"] == "error" and "restart" in restored["message"]
+    else:
+        assert restored["auto_match"]["status"] == "paused"
+        assert service.JOBS[api.job.id].suggestions == api.job.suggestions
+        assert service.JOBS[api.job.id].raw == api.job.raw
+    assert not service.importer._existing_keys(api.cfg, "default")["history"]
+
+
+@pytest.mark.parametrize("remove", ["close", "expiry"])
+def test_discarded_reviews_do_not_reappear_after_restart(api, remove):
+    if remove == "expiry":
+        api.job.touched -= service.RECOVERY_TTL_SECONDS + 1
+    service._save_job(api.job, raw=True)
+    if remove == "close":
+        assert api.client.delete(f"/api/import/plex-recovery/{api.job.id}").status_code == 200
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    assert api.client.get("/api/import/plex-recovery/active").json() == {"job": None, "busy": False}
+    assert service.plex_recovery_store.load() == []
+
+
+def test_restored_reviews_keep_owner_and_connection_checks(api, monkeypatch):
+    service._save_job(api.job, raw=True)
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    monkeypatch.setattr(service, "request_user", lambda _: {"id": "other", "is_admin": True})
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    assert api.client.get(url + "/rows").status_code == 404
+    assert api.client.get("/api/import/plex-recovery/active").json() == {"job": None, "busy": True}
+    monkeypatch.setattr(service, "request_user", lambda _: None)
+    api.cfg["plex"]["token"] = "changed"
+    result = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=0, mode="ready"))
+    assert result.status_code == 409 and "settings changed" in result.json()["detail"]
+
+
+def test_unreadable_saved_reviews_block_new_scans(api):
+    target = service.plex_recovery_store.path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"unreadable")
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    result = api.client.post("/api/import/plex-recovery", json={})
+    assert result.status_code == 503 and "Saved recovery could not be read" in result.json()["detail"]
+
+
+def test_restored_review_can_be_closed_when_the_tracker_is_unreadable(api, monkeypatch):
+    service._save_job(api.job, raw=True)
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    monkeypatch.setattr(service.importer, "_existing_keys", lambda *a: {"history": set()})
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    assert api.client.get(url).status_code == 200
+    response = api.client.get(url + "/rows")
+    assert response.status_code == 503
+    assert "tracker" in response.json()["detail"].lower()
+    assert api.client.delete(url).status_code == 200
+    assert not service.plex_recovery_store.load()
+
+
+def test_restored_pending_receipt_never_reads_a_changed_destination(api, monkeypatch):
+    api.job.pending_receipt = [service.importer._key_for("history", api.job.raw[0]["item"])]
+    service._save_job(api.job, raw=True)
+    service.JOBS.clear()
+    service._LOADED_STORE = None
+    api.cfg["crosswatch"]["root_dir"] += "-different"
+    monkeypatch.setattr(service.importer, "_existing_keys", lambda *a: pytest.fail("Changed destination must not be read"))
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    assert api.client.get(url + "/receipt").status_code == 409
+    assert api.client.get(url + "/rows").status_code == 409
+    assert service.plex_recovery_store.load()[0]["pending_receipt"] == api.job.pending_receipt
+    assert api.client.delete(url).status_code == 200
+
+
+def test_individual_match_rejects_changed_connection_before_editing(api):
+    before = deepcopy(api.job.raw)
+    api.cfg["plex"]["token"] = "changed"
+    response = api.client.post(f"/api/import/plex-recovery/{api.job.id}/match", json=dict(
+        revision=0, row_id="0", title="Changed", tmdb="42"))
+    assert response.status_code == 409
+    assert api.job.raw == before and api.job.revision == 0
+
+
+def test_failed_import_verification_keeps_pending_receipt_until_the_tracker_recovers(api, monkeypatch):
+    from services import importer
+
+    commit, read = importer.api_import_commit, importer._existing_keys
+    state = NS(unreadable=False)
+    def write_then_unavailable(*args, **kwargs):
+        result = commit(*args, **kwargs)
+        state.unreadable = True
+        return result
+    monkeypatch.setattr(importer, "api_import_commit", write_then_unavailable)
+    monkeypatch.setattr(importer, "_existing_keys", lambda *a: {"history": set()} if state.unreadable else read(*a))
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    response = api.client.post(url + "/commit", json=dict(import_id=api.job.id, revision=0, mode="selected", row_ids=["0"]))
+    assert response.status_code == 503
+    assert api.job.pending_receipt
+    assert service.plex_recovery_store.load()[0]["pending_receipt"] == api.job.pending_receipt
+    state.unreadable = False
+    stored = read(api.cfg, "default")["history"]
+    assert set(api.client.get(url + "/receipt").json()["keys"]) == set(stored)
+    assert not api.job.pending_receipt
+
+
+def test_failed_close_keeps_the_review_available_for_retry(api, monkeypatch):
+    service._save_job(api.job, raw=True)
+    delete = service.plex_recovery_store.delete
+    def fail(*a):
+        raise service.sqlite3.OperationalError("disk full")
+    monkeypatch.setattr(service.plex_recovery_store, "delete", fail)
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    with pytest.raises(service.sqlite3.OperationalError):
+        api.client.delete(url)
+    assert not api.job.cancel.is_set()
+    assert api.client.get("/api/import/plex-recovery/active").json()["job"]["id"] == api.job.id
+    monkeypatch.setattr(service.plex_recovery_store, "delete", delete)
+    assert api.client.delete(url).status_code == 200
+    assert not service.plex_recovery_store.load()
+
+
+@pytest.mark.parametrize("endpoint", ["match", "match-groups", "accept-title-matches"])
+def test_failed_match_save_keeps_the_previous_review_and_revision(api, monkeypatch, endpoint):
+    api.job.raw[0].update(recovery_requires_review=True, original_group="original")
+    service._shape(api.job, api.cfg)
+    service._save_job(api.job, raw=True)
+    before = deepcopy(api.job.raw)
+    url = f"/api/import/plex-recovery/{api.job.id}"
+    payload = dict(revision=0)
+    if endpoint == "match":
+        payload.update(row_id="0", title="Changed", tmdb="42")
+    elif endpoint == "match-groups":
+        group = api.client.get(url + "/match-groups", params={"revision": 0}).json()["rows"][0]
+        payload["edits"] = [dict(group_id=group["id"], title="Changed", ids={"tmdb": "42"})]
+    def fail(*a, **kw):
+        raise service.sqlite3.OperationalError("disk full")
+    monkeypatch.setattr(service.plex_recovery_store, "save", fail)
+    with pytest.raises(service.sqlite3.OperationalError):
+        api.client.post(url + "/" + endpoint, json=payload)
+    assert api.job.revision == 0 and api.job.raw == before
+    assert service.plex_recovery_store.load()[0]["raw"] == before
 
 
 def test_background_scan_can_be_resumed_from_another_client_and_imported(api, monkeypatch):
@@ -1075,6 +1512,41 @@ def auto_api(unresolved_series, monkeypatch):
     api.job.auto_stop.set()
     if api.job.auto_thread:
         api.job.auto_thread.join(3)
+
+
+def test_failed_auto_match_save_does_not_leave_an_unstarted_worker_running(auto_api, monkeypatch):
+    api = auto_api
+    before = deepcopy(api.job.auto)
+    def fail(*a, **kw):
+        raise service.sqlite3.OperationalError("disk full")
+    monkeypatch.setattr(service.plex_recovery_store, "save", fail)
+    with pytest.raises(service.sqlite3.OperationalError):
+        api.client.post(api.auto_url, json=api.auto_payload)
+    assert api.job.auto == before
+    assert api.job.auto_thread is None
+    assert api.calls == []
+
+
+@pytest.mark.parametrize("final_only", [False, True])
+def test_auto_match_storage_failure_pauses_without_crashing_the_worker(auto_api, monkeypatch, final_only):
+    api = auto_api
+    original = service.plex_recovery_store.save
+    failures = []
+    def save(data, raw=None):
+        if data["auto"].get("status") == "complete" or (not final_only and data["auto"].get("done", 0)):
+            raise service.sqlite3.OperationalError("disk full")
+        return original(data, raw)
+    monkeypatch.setattr(service.plex_recovery_store, "save", save)
+    monkeypatch.setattr(threading, "excepthook", lambda args: failures.append(args.exc_value))
+    response = api.client.post(api.auto_url, json=api.auto_payload)
+    assert response.status_code == 200, response.text
+    api.job.auto_thread.join(3)
+    assert not api.job.auto_thread.is_alive()
+    assert not failures
+    assert api.job.auto["status"] == "paused"
+    assert "storage" in api.job.auto["message"].lower()
+    assert api.job.suggestions
+    assert not service.importer._existing_keys(api.cfg, "default")["history"]
 
 
 def test_background_auto_match_groups_shows_and_retains_only_reviewable_suggestions(auto_api):
