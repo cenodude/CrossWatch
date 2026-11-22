@@ -128,6 +128,60 @@ def test_tracker_episode_ids_reach_destination_id_resolver(monkeypatch, provider
     assert common.resolve_item_id(adapter, prepared) == target_id
 
 
+def test_emby_episode_ignores_show_ids_copied_into_episode_ids(monkeypatch):
+    common = import_module("providers.sync.emby._common")
+    show_ids = {"tmdb": "211684", "imdb": "tt13062500", "tvdb": "427464"}
+    series = {"Id": "series", "Type": "Series", "ProviderIds": {"Tmdb": "211684"}}
+    collided = {"Id": "e1", "Type": "Episode", "SeriesId": "series", "ProviderIds": {"Tmdb": "211684"},
+                "ParentIndexNumber": 1, "IndexNumber": 1}
+    wanted = {"Id": "e3", "Type": "Episode", "SeriesId": "series", "ParentIndexNumber": 1, "IndexNumber": 3}
+    kinds = []
+
+    def query(http, uid, pairs, kind, scope):
+        kinds.append(kind)
+        return [series] if kind == "Series" else [collided, series]
+
+    monkeypatch.setattr(common, "_direct_query_by_pairs", query)
+    monkeypatch.setattr(common, "_series_episodes_cached", lambda *a, **kw: [collided, wanted])
+    adapter = SimpleNamespace(client=SimpleNamespace(), cfg=SimpleNamespace(user_id="user", strict_id_matching=True))
+    item = {"type": "episode", "season": 1, "episode": 3, "ids": {**show_ids, "plex": "97354"}, "show_ids": show_ids}
+    assert common.resolve_item_id(adapter, item) == "e3"
+    assert "Episode,Series" not in kinds
+
+
+@pytest.mark.parametrize("targeted", [True, False])
+def test_jellyfin_episode_ignores_show_ids_copied_into_episode_ids(monkeypatch, targeted):
+    common = import_module("providers.sync.jellyfin._common")
+    id_lookup = import_module("providers.sync.jellyfin._id_lookup")
+    show_ids = {"tmdb": "211684", "imdb": "tt13062500", "tvdb": "427464"}
+    series = {"Id": "series", "Type": "Series", "ProviderIds": {"Tmdb": "211684"}}
+    collided = {"Id": "e1", "Type": "Episode", "SeriesId": "series", "ProviderIds": {"Tmdb": "211684"},
+                "ParentIndexNumber": 1, "IndexNumber": 1}
+    wanted = {"Id": "e3", "Type": "Episode", "SeriesId": "series", "ProviderIds": {},
+              "ParentIndexNumber": 1, "IndexNumber": 3}
+    monkeypatch.setattr(id_lookup, "find", lambda *a, **kw: [series])
+    monkeypatch.setattr(common, "get_series_episodes", lambda *a, **kw: {"Items": [collided, wanted]})
+    monkeypatch.setattr(common, "build_provider_index", lambda *a, **kw: {"tmdb.211684": [series, collided]})
+    monkeypatch.setattr(common, "fetch_item_pages", lambda *a, **kw: [collided, wanted])
+    adapter = SimpleNamespace(client=SimpleNamespace(), cfg=SimpleNamespace(
+        user_id="user", strict_id_matching=True, targeted_lookup=targeted))
+    item = {"type": "episode", "season": 1, "episode": 3, "ids": {**show_ids, "plex": "97354"}, "show_ids": show_ids}
+    assert common.resolve_item_id(adapter, item) == "e3"
+
+
+@pytest.mark.parametrize("ids,expected", [
+    ({"tmdb": "10", "tvdb": "20"}, []),
+    ({"tmdb": "10", "tvdb": "99"}, [(("tvdb.99",), "Episode,Series")]),
+])
+def test_emby_presence_skips_show_ids_as_episode_lookups(ids, expected):
+    from providers.sync.emby import _presence
+
+    item = {"type": "episode", "season": 1, "episode": 2, "ids": ids, "show_ids": {"tmdb": "10", "tvdb": "20"}}
+    keys = _presence._query_keys(item, ["tmdb", "imdb", "tvdb"])
+    assert [key for key in keys if key[1] == "Episode,Series"] == expected
+    assert (("tmdb.10",), "Series") in keys
+
+
 @pytest.mark.parametrize("provider", ["jellyfin", "emby"])
 @pytest.mark.parametrize("ids", [None, {}, {"imdb": "tt1234567"}])
 def test_history_write_preserves_metadata_without_episode_ids(provider, ids):

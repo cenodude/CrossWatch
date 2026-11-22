@@ -1770,12 +1770,12 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
     series_ids = dict(it.get("show_ids") or {})
     prio = _merged_guid_priority(adapter)
     ep_pairs = all_ext_pairs(ids, prio)
+    series_pairs = all_ext_pairs(series_ids, prio) if series_ids else []
     exact_episode_pairs = [
         pref
         for pref in ep_pairs
-        if pref.partition(".")[0] in ("tmdb", "imdb", "tvdb")
+        if pref.partition(".")[0] in ("tmdb", "imdb", "tvdb") and pref not in series_pairs
     ]
-    series_pairs = all_ext_pairs(series_ids, prio) if series_ids else []
     allowed_libs = sorted(selected_libs)
     hint_lib = str(
         it.get("library_id")

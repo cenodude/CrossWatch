@@ -1823,8 +1823,8 @@ def resolve_item_id(adapter: Any, it: Mapping[str, Any], *, feature: str = "hist
         return path_iid
 
     prio = _merged_guid_priority(adapter)
-    episode_pairs = all_ext_pairs(ids, prio)
     series_pairs = all_ext_pairs(show_ids, prio) if show_ids else []
+    episode_pairs = [p for p in all_ext_pairs(ids, prio) if p not in series_pairs]
     pairs = list(episode_pairs)
 
     if series_pairs:
@@ -2113,10 +2113,11 @@ def resolve_item_ids(adapter: Any, it: Mapping[str, Any], *, feature: str = "his
                 pairs.append(p)
 
     if _targeted_enabled(adapter):
+        series_pairs = all_ext_pairs(show_ids, prio) if show_ids else []
         found = _targeted_lookup_item_ids(
             adapter, it, feature=feature, pairs=pairs,
-            episode_pairs=all_ext_pairs(ids, prio),
-            series_pairs=all_ext_pairs(show_ids, prio) if show_ids else [],
+            episode_pairs=[p for p in all_ext_pairs(ids, prio) if p not in series_pairs],
+            series_pairs=series_pairs,
             selected_libs=selected_libs,
         )
         # Retain a validated native item even if a title search cannot find it.
