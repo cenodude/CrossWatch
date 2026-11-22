@@ -388,7 +388,7 @@ def handle_ping(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str, A
         for vid, inst in mapping:
             if inst:
                 viewers.append({"viewer_id": vid, "instance": inst, "upload_seq": last_upload_seq(dev, vid),
-                                "next_change": _change_floor(dev, vid), "run_pending": inst in _PENDING_RUNS})
+                                "next_change": _change_floor(dev, vid), "run_pending": _run_pending(inst)})
                 pending += len(pending_changes(cfg, inst))
         return {"version": VERSION, "enabled": device_active(cfg, dev), "viewers": viewers, "queue_pending": pending}
     except Exception:
@@ -1125,7 +1125,8 @@ def receive_upload(cfg: Mapping[str, Any] | None, device: Any, body: Mapping[str
                 raise SyncRequestError(409, "upload_incomplete", "Send a full upload first.")
             if upload_seq <= max_seq:
                 if upload_seq == _int(seq_state.get("last_delta_seq")):
-                    return {"ok": True, "mode": "delta", "complete": True, "instance": inst}
+                    return {"ok": True, "mode": "delta", "complete": True, "instance": inst,
+                            "changed": _int(seq_state.get("delta_changed")) == upload_seq}
                 if not (upload_seq == max_seq and upload_seq == _int(seq_state.get("delta_pending"))):
                     raise _stale()
             _update_seq(dev, viewer_id, max_seq=upload_seq, delta_pending=upload_seq)
@@ -1715,16 +1716,20 @@ def _delayed_run(cfg: Mapping[str, Any] | None, inst: str) -> None:
         trigger_pair_runs(cfg, inst)
 
 
+def _run_pending(inst: str) -> bool:
+    with _LOCK:
+        return inst in _PENDING_RUNS or inst in _DELAYED
+
+
 def trigger_pair_runs(cfg: Mapping[str, Any] | None, instance_id: Any) -> list[str]:
     inst = normalize_instance_id(instance_id)
+    ids = pair_ids_for(cfg, inst)
     with _LOCK:
         delayed = _DELAYED.pop(inst, None)
-    if delayed is not None:
-        delayed.cancel()
-    ids = pair_ids_for(cfg, inst)
-    if not ids:
-        return []
-    with _LOCK:
+        if delayed is not None:
+            delayed.cancel()
+        if not ids:
+            return []
         if inst in _PENDING_RUNS:
             _RERUN[inst] = ids
             return []

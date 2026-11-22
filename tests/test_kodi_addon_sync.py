@@ -836,7 +836,7 @@ def test_delta_with_a_person_change_starts_one_run_after_a_short_wait(client, mo
         return ["p1"]
 
     monkeypatch.setattr(addon_sync, "trigger_pair_runs", record)
-    monkeypatch.setattr(addon_sync, "DELTA_RUN_DELAY", 0.2)
+    monkeypatch.setattr(addon_sync, "DELTA_RUN_DELAY", 30.0)
     state["cfg"] = {**make_cfg(), "pairs": [{"id": "p1", "source": "TRAKT", "target": "KODI", "target_instance": "default"}]}
     ping(state["cfg"])
     assert http.post(f"{base}/upload", json=full_body(movies=[unwatched()], episodes=[], tvshows=[]), headers=headers).status_code == 200
@@ -844,15 +844,27 @@ def test_delta_with_a_person_change_starts_one_run_after_a_short_wait(client, mo
     runs.clear()
     fired.clear()
 
-    def send(row):
-        body = {"version": 1, "viewer_id": "kv-1", "mode": "delta", "upload_seq": next_seq(), "movies": [row]}
+    def send(row, seq=None):
+        body = {"version": 1, "viewer_id": "kv-1", "mode": "delta", "upload_seq": seq or next_seq(), "movies": [row]}
         return http.post(f"{base}/upload", json=body, headers=headers).json()
 
-    assert send(unwatched())["changed"] is False
+    quiet = next_seq()
+    assert send(unwatched(), quiet)["changed"] is False
+    assert send(unwatched(), quiet)["changed"] is False
     assert "default" not in addon_sync._DELAYED
+    assert ping(state["cfg"])["viewers"][0]["run_pending"] is False
     assert send(unwatched(userrating=7))["changed"] is True
-    assert send(unwatched(userrating=8))["changed"] is True
+    rated = next_seq()
+    assert send(unwatched(userrating=8), rated)["changed"] is True
+    assert send(unwatched(userrating=8), rated)["changed"] is True
+    assert ping(state["cfg"])["viewers"][0]["run_pending"] is True
     assert runs == []
+    waiting = addon_sync._DELAYED["default"]
+    waiting.cancel()
+    now = threading.Timer(0, addon_sync._delayed_run, args=waiting.args)
+    with addon_sync._LOCK:
+        addon_sync._DELAYED["default"] = now
+    now.start()
     assert fired.wait(5)
     assert runs == ["default"]
     assert "default" not in addon_sync._DELAYED
@@ -901,16 +913,22 @@ def test_full_upload_run_waits_until_a_firing_timer_has_started_its_run(monkeypa
         return real_pair_ids(cfg_, inst)
 
     monkeypatch.setattr(addon_sync, "pair_ids_for", gated)
+    ping(cfg)
     addon_sync.schedule_pair_runs(cfg, "default")
     assert entered.wait(5)
     full_run = threading.Thread(target=addon_sync.trigger_pair_runs, args=(cfg, "default"))
     full_run.start()
+    pings: list[dict[str, Any]] = []
+    pinger = threading.Thread(target=lambda: pings.append(ping(cfg)))
+    pinger.start()
     full_run.join(0.3)
-    assert full_run.is_alive()
+    assert full_run.is_alive() and pinger.is_alive()
     release.set()
     full_run.join(5)
+    pinger.join(5)
     assert not full_run.is_alive()
     assert started == [["p1"]]
+    assert pings[0]["viewers"][0]["run_pending"] is True
     assert "default" not in addon_sync._DELAYED
     addon_sync._PENDING_RUNS.discard("default")
     addon_sync._RERUN.pop("default", None)
