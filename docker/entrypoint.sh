@@ -168,6 +168,38 @@ run_as() {
   fi
 }
 
+ALLOC_ENV=()
+ALLOC_NAME="default"
+
+select_allocator() {
+  local mode lib
+  mode="${CW_ALLOCATOR:-jemalloc}"
+  mode="${mode,,}"
+  case "${mode}" in
+    jemalloc) ;;
+    default|system|pymalloc|off|none) return 0 ;;
+    *)
+      warn "Unknown CW_ALLOCATOR '${CW_ALLOCATOR}'; using the default allocator"
+      return 0
+      ;;
+  esac
+  if [[ -n "${LD_PRELOAD:-}" || -n "${PYTHONMALLOC:-}" ]]; then
+    ALLOC_NAME="custom"
+    return 0
+  fi
+  for lib in /usr/lib/*/libjemalloc.so.2 /usr/lib/libjemalloc.so.2; do
+    [[ -r "${lib}" ]] || continue
+    ALLOC_ENV=(
+      "LD_PRELOAD=${lib}"
+      "PYTHONMALLOC=malloc"
+      "MALLOC_CONF=${MALLOC_CONF:-background_thread:true,dirty_decay_ms:1000,muzzy_decay_ms:0,narenas:2}"
+    )
+    ALLOC_NAME="jemalloc"
+    return 0
+  done
+  warn "jemalloc was not found; using the default allocator"
+}
+
 run_identity() {
   if [[ "$(id -u)" -eq 0 ]]; then
     echo "${APP_USER}:${APP_GROUP} (${APP_UID}:${APP_GID})"
@@ -192,8 +224,10 @@ main() {
     run_as "$@"
   else
     # Default: start FastAPI server (reload mode if requested)
+    select_allocator
+    echo "[ENTRYPOINT] Memory allocator: ${ALLOC_NAME}"
     if [[ "${RELOAD:-no}" == "yes" ]]; then
-      run_as watchmedo auto-restart \
+      run_as env "${ALLOC_ENV[@]}" watchmedo auto-restart \
         --pattern="*.py" \
         --recursive \
         -- \
@@ -201,7 +235,7 @@ main() {
         --host "${WEB_HOST}" \
         --port "${WEB_PORT}"
     else
-      run_as python -m crosswatch --host "${WEB_HOST}" --port "${WEB_PORT}"
+      run_as env "${ALLOC_ENV[@]}" python -m crosswatch --host "${WEB_HOST}" --port "${WEB_PORT}"
     fi
   fi
 }

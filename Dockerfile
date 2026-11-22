@@ -32,7 +32,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # --- minimal OS deps ---
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates tzdata bash curl util-linux nano \
+ && apt-get install -y --no-install-recommends ca-certificates tzdata bash curl util-linux nano libjemalloc2 \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -69,6 +69,7 @@ ENV RUNTIME_DIR=/config \
     WEB_HOST=0.0.0.0 \
     WEB_PORT=8787 \
     CW_CLI_ONLY=0 \
+    CW_ALLOCATOR=jemalloc \
     DEV_SHELL_ON_FAIL=yes \
     EDITOR=nano \
     VISUAL=nano

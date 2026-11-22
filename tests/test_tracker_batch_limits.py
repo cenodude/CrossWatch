@@ -34,6 +34,17 @@ def test_tracker_batch_defaults_migrate_without_changing_credentials():
     assert old["flicklist"]["write_batch_size"] == 100
 
 
+@pytest.mark.parametrize("runtime,expected", [
+    ({"apply_chunk_size": 100, "apply_chunk_size_by_provider": {"PLEX": 500}}, 5000),
+    ({"apply_chunk_size": 100}, 5000),
+    ({"apply_chunk_size": 100, "apply_chunk_size_by_provider": {"CROSSWATCH": 250}}, 250),
+    ({"apply_chunk_size": 0}, 0),
+])
+def test_crosswatch_tracker_writes_use_large_chunks(runtime, expected):
+    assert effective_chunk_size(SimpleNamespace(**runtime), "CROSSWATCH") == expected
+    assert effective_chunk_size(SimpleNamespace(**runtime), "TRAKT") == runtime["apply_chunk_size"]
+
+
 @pytest.mark.parametrize("feature", ["history", "progress", "watchlist", "playlists"])
 @pytest.mark.parametrize("configured,expected", [(None, 500), (1000, 500), (50, 50)])
 def test_publicmetadb_page_limits_and_complete_reads(feature, configured, expected):

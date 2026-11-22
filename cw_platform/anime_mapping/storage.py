@@ -164,10 +164,7 @@ def close_readers() -> None:
     _READERS.entry = None
 
 
-def _init_schema(con: sqlite3.Connection) -> None:
-    con.executescript(
-        """
-        PRAGMA journal_mode=WAL;
+_SCHEMA_TABLES = """
         CREATE TABLE IF NOT EXISTS mapping_edges (
           source_provider TEXT NOT NULL,
           source_id TEXT NOT NULL,
@@ -182,18 +179,10 @@ def _init_schema(con: sqlite3.Connection) -> None:
           reverse INTEGER NOT NULL DEFAULT 0,
           origin TEXT NOT NULL DEFAULT 'anibridge'
         );
-        CREATE INDEX IF NOT EXISTS idx_mapping_source
-          ON mapping_edges(source_provider, source_id);
-        CREATE INDEX IF NOT EXISTS idx_mapping_source_scope
-          ON mapping_edges(source_provider, source_id, source_scope);
-        CREATE INDEX IF NOT EXISTS idx_mapping_target
-          ON mapping_edges(target_provider, target_id);
         CREATE TABLE IF NOT EXISTS show_pairs (
           tvdb_id TEXT NOT NULL,
           tmdb_id TEXT NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_show_pairs_tvdb ON show_pairs(tvdb_id);
-        CREATE INDEX IF NOT EXISTS idx_show_pairs_tmdb ON show_pairs(tmdb_id);
         CREATE TABLE IF NOT EXISTS native_identity (
           namespace TEXT NOT NULL,
           native_id TEXT NOT NULL,
@@ -201,16 +190,26 @@ def _init_schema(con: sqlite3.Connection) -> None:
           kitsu_id TEXT NOT NULL DEFAULT '',
           PRIMARY KEY (namespace, native_id)
         );
-        CREATE INDEX IF NOT EXISTS idx_native_identity_simkl
-          ON native_identity(simkl_id);
-        CREATE INDEX IF NOT EXISTS idx_native_identity_kitsu
-          ON native_identity(kitsu_id);
         CREATE TABLE IF NOT EXISTS meta (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL
         );
-        """
-    )
+"""
+
+_SCHEMA_INDEXES = """
+        CREATE INDEX IF NOT EXISTS idx_mapping_source
+          ON mapping_edges(source_provider, source_id);
+        CREATE INDEX IF NOT EXISTS idx_mapping_source_scope
+          ON mapping_edges(source_provider, source_id, source_scope);
+        CREATE INDEX IF NOT EXISTS idx_mapping_target
+          ON mapping_edges(target_provider, target_id);
+        CREATE INDEX IF NOT EXISTS idx_show_pairs_tvdb ON show_pairs(tvdb_id);
+        CREATE INDEX IF NOT EXISTS idx_show_pairs_tmdb ON show_pairs(tmdb_id);
+        CREATE INDEX IF NOT EXISTS idx_native_identity_simkl
+          ON native_identity(simkl_id);
+        CREATE INDEX IF NOT EXISTS idx_native_identity_kitsu
+          ON native_identity(kitsu_id);
+"""
 
 
 def _collect_show_pair(
@@ -419,11 +418,16 @@ def rebuild_sqlite_from_mappings(
                 cw_edge_count += 2
         edge_count += cw_edge_count
 
+        del data
         pairs = _unambiguous_pairs(tv_to_tm, tm_to_tv)
+        tv_to_tm.clear()
+        tm_to_tv.clear()
         identity_rows = _load_identity_rows(root, identity_path or pp["identity"])
         con = _connect(tmp)
         try:
-            _init_schema(con)
+            con.execute("PRAGMA journal_mode=OFF")
+            con.execute("PRAGMA synchronous=OFF")
+            con.executescript(_SCHEMA_TABLES)
             con.executemany(
                 """
                 INSERT INTO mapping_edges (
@@ -434,11 +438,13 @@ def rebuild_sqlite_from_mappings(
                 """,
                 rows,
             )
+            rows.clear()
             con.executemany("INSERT INTO show_pairs (tvdb_id, tmdb_id) VALUES (?, ?)", pairs)
             con.executemany(
                 "INSERT OR REPLACE INTO native_identity (namespace, native_id, simkl_id, kitsu_id) VALUES (?, ?, ?, ?)",
                 identity_rows,
             )
+            con.executescript(_SCHEMA_INDEXES)
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("identity_count", str(len(identity_rows))))
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("pair_count", str(len(pairs))))
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("schema_version", str(SCHEMA_VERSION)))
@@ -448,6 +454,7 @@ def rebuild_sqlite_from_mappings(
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("cw_revision", patch.revision))
             con.execute("INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)", ("cw_edge_count", str(cw_edge_count)))
             con.commit()
+            con.execute("PRAGMA journal_mode=WAL")
         finally:
             con.close()
 
