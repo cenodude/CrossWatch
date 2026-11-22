@@ -7,6 +7,54 @@ import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
 
+for (const theme of ['original', 'flat-dark', 'flat-light']) test(`earlier activity badges stay below the summary: ${theme}`, async t => {
+  const browser = await chromium.launch({headless: true});
+  t.after(() => browser.close());
+  const page = await browser.newPage({viewport: {width: 1200, height: 900}});
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route('http://earlier.test/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith('/assets/')) {
+      const ext = url.pathname.split('.').at(-1);
+      return route.fulfill({body: await readFile(new URL('..' + url.pathname, import.meta.url)), contentType: {css: 'text/css', svg: 'image/svg+xml', woff2: 'font/woff2'}[ext] || 'text/javascript'});
+    }
+    return route.fulfill({contentType: 'text/html', body: `<!doctype html><html${theme === 'original' ? '' : ` data-cw-theme="${theme}"`}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/assets/themes/tokens.css"><link rel="stylesheet" href="/assets/css/pages.css"><link rel="stylesheet" href="/assets/css/page-theme.css"><style>@font-face{font-family:Material Symbols Rounded;src:url('/assets/fonts/material-symbols-rounded-full-v355.woff2')}body{margin:16px;background:var(--cw-theme-bg,#080a0d);font-family:Arial,sans-serif}*{box-sizing:border-box}.material-symbols-rounded{font-family:Material Symbols Rounded;font-weight:normal;font-style:normal;font-size:20px;line-height:1;display:inline-block;white-space:nowrap;font-feature-settings:'liga'}</style></head><body><main id="page-events" class="ev-app cw-page-events"><div id="ev-detail" style="width:720px;max-width:100%"></div></main></body></html>`});
+  });
+  await page.goto('http://earlier.test');
+  await page.evaluate(async () => {
+    window.CW = {};
+    await import('/assets/helpers/provider-meta.js');
+    window.openedTitles = [];
+    const {renderTitleDetail} = await import('/assets/js/events/titles.js');
+    const destinations = ['CROSSWATCH', 'MDBLIST', 'SIMKL', 'TRAKT'].map(provider => ({provider, instance: 'default', feature: 'ratings', state: ['SIMKL', 'MDBLIST'].includes(provider) ? 'skip' : 'ok', reason: ['SIMKL', 'MDBLIST'].includes(provider) ? 'episode ratings unsupported' : ''}));
+    renderTitleDetail(document.querySelector('#ev-detail'), {id: 1, title: 'The Institute', media_type: 'episode', season: 2, episode: 2, domain: 'sync', kinds: ['ratings:add'], rating: 6, last_event_at: 1795388400,
+      session_list: [{started_at: 1795130000, last_at: 1795130300, progress: 1}],
+      related: [{id: 2, domain: 'scrobble', kinds: ['scrobble:rating'], rating: 6, last_event_at: 1795130000, destinations}, {id: 3, domain: 'scrobble', kinds: ['scrobble:watch'], progress: 1, last_event_at: 1795130000, destinations: destinations.filter(d => d.state === 'ok')}]},
+      {tab: 'earlier', tmdbOn: false, openTitle: id => window.openedTitles.push(id)});
+  });
+  await page.evaluate(() => document.fonts.ready);
+  for (const [viewport, width] of [[1200, 720], [1200, 420], [390, 358], [320, 288]]) {
+    await page.setViewportSize({width: viewport, height: 900});
+    await page.locator('#ev-detail').evaluate((el, width) => { el.style.width = `${width}px`; }, width);
+    const measurements = await page.locator('[data-pane="earlier"] .ev-erow').evaluateAll(rows => rows.map(row => {
+      const main = row.querySelector('.ev-erow-main').getBoundingClientRect(), time = row.querySelector('time').getBoundingClientRect(), dests = row.querySelector('.ev-tdests').getBoundingClientRect(), bounds = row.getBoundingClientRect();
+      return {separate: dests.top >= Math.max(main.bottom, time.bottom), textFits: main.right <= time.left, contained: [...row.querySelectorAll('.ev-dchip')].every(chip => { const box = chip.getBoundingClientRect(); return box.left >= bounds.left && box.right <= bounds.right; })};
+    }));
+    assert.ok(measurements.every(row => row.separate && row.textFits && row.contained), JSON.stringify({viewport, width, measurements}));
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    if (process.env.CW_EVENTS_SCREENSHOTS && [720, 288].includes(width)) {
+      await mkdir(process.env.CW_EVENTS_SCREENSHOTS, {recursive: true});
+      await page.screenshot({path: `${process.env.CW_EVENTS_SCREENSHOTS}/earlier-${theme}-${width}.png`, fullPage: true});
+    }
+  }
+  await page.locator('[data-pane="earlier"] [data-tid="2"]').click();
+  assert.deepEqual(await page.evaluate(() => window.openedTitles), ['2']);
+  await page.locator('[data-tab="sessions"]').click();
+  assert.match(await page.locator('[data-pane="sessions"]').innerText(), /Stopped at 1%/);
+  assert.deepEqual(errors, []);
+});
+
 for (const theme of ['original', 'flat-dark', 'flat-light']) test(`run pair selection follows headings and detail controls: ${theme}`, async t => {
   const browser = await chromium.launch({headless: true});
   t.after(() => browser.close());
