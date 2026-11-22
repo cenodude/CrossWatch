@@ -1,0 +1,30 @@
+{
+  "sync": {
+    "src": "/images/screenshots/sync-hub.webp",
+    "alt": "CrossWatch Sync Hub showing sync status, feature controls, provider statistics, scheduling and the synced watchlist.",
+    "caption": "Your sync engine at a glance: features, providers, schedules and recent results.",
+    "width": 2226,
+    "height": 1177
+  },
+  "tracker": {
+    "src": "/images/screenshots/tracker.webp",
+    "alt": "CrossWatch local Tracker with continue watching, playback progress, upcoming episodes and watch history navigation.",
+    "caption": "Your local tracker brings watched history, ratings, playback progress and upcoming episodes together.",
+    "width": 2235,
+    "height": 1236
+  },
+  "hub": {
+    "src": "/images/screenshots/hub.webp",
+    "alt": "CrossWatch Hub showing playback progress across providers, recently added watchlist titles and recent sync activity.",
+    "caption": "One view across your connected services, with shared progress, watchlists and recent sync activity.",
+    "width": 2242,
+    "height": 1231
+  },
+  "editor": {
+    "src": "/images/screenshots/editor.webp",
+    "alt": "CrossWatch Editor with editable history records, title IDs, provider selection, mapping and block rules.",
+    "caption": "Inspect the records behind a sync. Edit history, correct mappings and manage what CrossWatch syncs.",
+    "width": 2214,
+    "height": 1237
+  }
+}

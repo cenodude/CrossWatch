@@ -1,15 +1,52 @@
-<link rel="canonical" href="https://www.crosswatch.app/">
-<meta name="robots" content="index, follow">
-<meta name="theme-color" content="#070a10">
+<!-- docs/_includes/head-custom.html -->
+<!-- CrossWatch - Public showcase metadata -->
+<!-- Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) -->
+<link rel="canonical" href="{{ page.url | absolute_url }}">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta name="theme-color" content="#090b10">
 
 <meta property="og:site_name" content="CrossWatch">
-<meta property="og:title" content="CrossWatch">
-<meta property="og:description" content="Sync Plex, Jellyfin, Emby, Kodi and your trackers from one local web UI.">
+<meta property="og:title" content="{{ page.seo_title | default: site.seo_title | escape }}">
+<meta property="og:description" content="{{ site.description | escape }}">
 <meta property="og:type" content="website">
-<meta property="og:url" content="https://www.crosswatch.app/">
-<meta property="og:image" content="https://www.crosswatch.app/images/screenshots/cw8.png">
+<meta property="og:url" content="{{ page.url | absolute_url }}">
+<meta property="og:image" content="{{ site.image | absolute_url }}">
+<meta property="og:image:width" content="2226">
+<meta property="og:image:height" content="1177">
+<meta property="og:image:alt" content="CrossWatch Sync Hub with connected providers, sync controls and watchlists">
 
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="CrossWatch">
-<meta name="twitter:description" content="Sync Plex, Jellyfin, Emby, Kodi and your trackers from one local web UI.">
-<meta name="twitter:image" content="https://www.crosswatch.app/images/screenshots/cw8.png">
+<meta name="twitter:title" content="{{ page.seo_title | default: site.seo_title | escape }}">
+<meta name="twitter:description" content="{{ site.description | escape }}">
+<meta name="twitter:image" content="{{ site.image | absolute_url }}">
+<meta name="twitter:image:alt" content="CrossWatch Sync Hub with connected providers, sync controls and watchlists">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": {{ '/#website' | absolute_url | jsonify }},
+      "name": "CrossWatch",
+      "url": {{ '/' | absolute_url | jsonify }},
+      "description": {{ site.description | jsonify }},
+      "inLanguage": "en"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": {{ '/#software' | absolute_url | jsonify }},
+      "name": "CrossWatch",
+      "url": {{ '/' | absolute_url | jsonify }},
+      "description": {{ site.description | jsonify }},
+      "applicationCategory": "MultimediaApplication",
+      "operatingSystem": "Docker-compatible host",
+      "isAccessibleForFree": true,
+      "license": "https://github.com/cenodude/CrossWatch/blob/main/LICENSE",
+      "downloadUrl": "https://github.com/cenodude/CrossWatch/releases/latest",
+      "sameAs": "https://github.com/cenodude/CrossWatch",
+      "screenshot": {{ site.image | absolute_url | jsonify }},
+      "featureList": ["Automatic Sync", "Interactive Sync", "Automation", "Local tracker", "Central hub", "Backup and recovery"]
+    }
+  ]
+}
+</script>

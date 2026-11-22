@@ -1,0 +1,1735 @@
+[
+  {
+    "key": "hub",
+    "title": "Your providers. One place.",
+    "category": "CENTRAL HUB",
+    "description": "Bring the services you already use into one view. Browse your media across connected accounts and see what has changed.",
+    "tags": [
+      "Watchlists",
+      "History",
+      "Ratings",
+      "Progress",
+      "Collections"
+    ],
+    "highlights": [
+      [
+        "A combined view",
+        "Find titles across your connected provider accounts without opening every service."
+      ],
+      [
+        "Pick up where you left off",
+        "See unfinished playback alongside the providers that hold your progress."
+      ],
+      [
+        "Follow your activity",
+        "Keep recent syncs and newly added titles close to the rest of your media."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/navigation/profile",
+    "related": [
+      "tracker",
+      "automatic",
+      "events"
+    ],
+    "shot": "hub",
+    "aliases": []
+  },
+  {
+    "key": "automatic",
+    "title": "Set it up. Let it sync.",
+    "category": "AUTOMATIC SYNC",
+    "description": "Choose your provider pairs and the features you want to share. CrossWatch applies your configured rules on a recurring schedule.",
+    "tags": [
+      "Recurring runs",
+      "Provider pairs",
+      "Per-feature control"
+    ],
+    "highlights": [
+      [
+        "Choose what moves",
+        "Select history, watchlists, ratings and other supported features for each pair."
+      ],
+      [
+        "Choose the rhythm",
+        "Run hourly, daily or at a custom interval that suits your setup."
+      ],
+      [
+        "Keep track of results",
+        "Use the dashboard and activity views to see how each run went."
+      ]
+    ],
+    "route": "/crosswatch/settings/scheduling#standard-scheduling",
+    "related": [
+      "interactive",
+      "automation",
+      "pairs"
+    ],
+    "shot": "sync",
+    "aliases": [
+      "/crosswatch/settings/scheduling"
+    ]
+  },
+  {
+    "key": "interactive",
+    "title": "See the changes. Make the call.",
+    "category": "INTERACTIVE SYNC",
+    "description": "Review a proposed sync before applying it. Inspect additions, updates and removals, correct matches, and choose which changes to keep.",
+    "tags": [
+      "Preview changes",
+      "Resolve matches",
+      "Apply your selection"
+    ],
+    "highlights": [
+      [
+        "Understand the plan",
+        "See what CrossWatch proposes for the source and destination."
+      ],
+      [
+        "Correct the match",
+        "Resolve title and episode mappings before the selected changes are applied."
+      ],
+      [
+        "Stay in control",
+        "Select the changes you want and leave the rest out of that run."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/interactive-sync",
+    "related": [
+      "automatic",
+      "mappings",
+      "analyzer"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "automation",
+    "title": "Make the steps work together.",
+    "category": "AUTOMATION",
+    "description": "Go beyond a recurring sync. Build a plan around the order of your pairs, scheduled captures and playback activity.",
+    "tags": [
+      "Ordered sync steps",
+      "Scheduled captures",
+      "Event triggers"
+    ],
+    "highlights": [
+      [
+        "Run in sequence",
+        "Arrange pair runs and start a step after another one finishes."
+      ],
+      [
+        "Capture on a schedule",
+        "Create provider restore points at the times and on the days you choose."
+      ],
+      [
+        "React to activity",
+        "Trigger a sync pair from Watcher or webhook events."
+      ]
+    ],
+    "route": "/crosswatch/settings/scheduling#advanced-scheduling",
+    "related": [
+      "automatic",
+      "captures",
+      "watcher"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "tracker",
+    "title": "A tracker you can call your own.",
+    "category": "LOCAL TRACKER",
+    "description": "Keep your media history on your own server. Browse your watches, ratings and progress in CrossWatch, and bring in activity from connected services.",
+    "tags": [
+      "Watch history",
+      "Ratings",
+      "Playback progress",
+      "Notes"
+    ],
+    "highlights": [
+      [
+        "Your record of what you watch",
+        "Browse movies and episodes and keep your viewing history together."
+      ],
+      [
+        "Keep the details",
+        "Add watches, keep notes and correct records when needed."
+      ],
+      [
+        "Connected to your setup",
+        "Import activity and use the local tracker alongside your other providers."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/navigation/cw-tracker",
+    "related": [
+      "hub",
+      "quickadd",
+      "backup"
+    ],
+    "shot": "tracker",
+    "aliases": []
+  },
+  {
+    "key": "backup",
+    "title": "Keep a way back.",
+    "category": "BACKUP & RECOVERY",
+    "description": "Protect the CrossWatch setup you have built. Back up selected configuration and data, then recover the parts you need.",
+    "tags": [
+      "Scheduled backups",
+      "Selective restore",
+      "Encrypted extra copy"
+    ],
+    "highlights": [
+      [
+        "Save your setup",
+        "Include configuration, mappings, blocks, selected local trackers and captures."
+      ],
+      [
+        "Keep another copy",
+        "Store an optional encrypted copy through WebDAV, Nextcloud or a mounted folder."
+      ],
+      [
+        "Recover what matters",
+        "Restore selected data or recover a tracker into a new instance."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/tools/backup-and-restore",
+    "related": [
+      "captures",
+      "tracker",
+      "automation"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "captures",
+    "title": "A point in time. Ready to revisit.",
+    "category": "CAPTURES",
+    "description": "Save a provider dataset at a moment you choose. Browse captures, compare changes over time and restore captured data to a provider profile.",
+    "tags": [
+      "Provider snapshots",
+      "Capture comparison",
+      "Restore"
+    ],
+    "highlights": [
+      [
+        "Choose the scope",
+        "Capture watchlists, ratings, history or progress for a provider profile."
+      ],
+      [
+        "See what changed",
+        "Compare two captures to inspect added, removed and updated records."
+      ],
+      [
+        "Make it routine",
+        "Schedule captures and manage their retention alongside your setup."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/navigation/captures",
+    "related": [
+      "backup",
+      "automation",
+      "analyzer"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "mappings",
+    "title": "Get the right titles together.",
+    "category": "EDITOR & MAPPINGS",
+    "description": "Make the data behind your sync easier to understand. Inspect records, correct matches and handle different episode numbering.",
+    "tags": [
+      "Title mappings",
+      "Episode groups",
+      "Block rules"
+    ],
+    "highlights": [
+      [
+        "Inspect the records",
+        "Browse provider data, title IDs, watch dates, ratings and progress."
+      ],
+      [
+        "Save the right match",
+        "Correct mismatched titles and reuse your mappings in future syncs."
+      ],
+      [
+        "Handle episode differences",
+        "Map split or combined episodes and manage the items you want to block."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/navigation/editor/mappings-and-episode-groups",
+    "related": [
+      "anime",
+      "interactive",
+      "analyzer"
+    ],
+    "shot": "editor",
+    "aliases": [
+      "/crosswatch/main-dashboard/navigation/editor"
+    ]
+  },
+  {
+    "key": "watcher",
+    "title": "Playback happens. Tracking follows.",
+    "category": "WATCHER",
+    "description": "Send playback activity from your media servers and supported clients to your chosen trackers, with separate routes for different users.",
+    "tags": [
+      "Playback tracking",
+      "Multiple routes",
+      "Household users"
+    ],
+    "highlights": [
+      [
+        "Connect your routes",
+        "Choose a playback source and the destinations that should receive its activity."
+      ],
+      [
+        "Keep people separate",
+        "Route each user to their own tracker accounts."
+      ],
+      [
+        "Ready for everyday watching",
+        "Watcher works without Plex Pass or Emby Premiere."
+      ]
+    ],
+    "route": "/crosswatch/settings/scrobbler/watcher",
+    "related": [
+      "profiles",
+      "automation",
+      "hub"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "profiles",
+    "title": "One installation. Everyone included.",
+    "category": "PROFILES & MANAGED USERS",
+    "description": "Give each person a place in CrossWatch while keeping their accounts and activity separate.",
+    "tags": [
+      "Separate accounts",
+      "Personal pairs",
+      "Personal schedules"
+    ],
+    "highlights": [
+      [
+        "A setup for each person",
+        "Scope provider connections and sync pairs to the right profile."
+      ],
+      [
+        "Their routes and routines",
+        "Keep Watcher routes and schedules aligned with each user."
+      ],
+      [
+        "Shared installation",
+        "Manage your household in one place with optional user logins."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/profiles",
+    "related": [
+      "hub",
+      "watcher",
+      "tracker"
+    ],
+    "shot": null,
+    "aliases": [
+      "/crosswatch/settings/connections/managed-users"
+    ]
+  },
+  {
+    "key": "playlists",
+    "title": "Put your lists to work.",
+    "category": "PLAYLISTS & PUBLISHED LISTS",
+    "description": "Connect lists across services and publish them for the tools in your media setup.",
+    "tags": [
+      "Playlist sync",
+      "Published lists",
+      "External tools"
+    ],
+    "highlights": [
+      [
+        "Connect your lists",
+        "Map a source list to a destination and choose its synchronization behavior."
+      ],
+      [
+        "Keep collections useful",
+        "Bring provider list management into the same setup as your other sync tasks."
+      ],
+      [
+        "Publish for your tools",
+        "Use published lists with tools such as Kometa, Radarr and Sonarr."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/navigation/playlists/published-lists",
+    "related": [
+      "automation",
+      "hub",
+      "pairs"
+    ],
+    "shot": null,
+    "aliases": [
+      "/crosswatch/main-dashboard/navigation/playlists"
+    ]
+  },
+  {
+    "key": "events",
+    "title": "See what happened across your setup.",
+    "category": "ACTIVITY",
+    "description": "Follow your media activity from individual titles to complete sync runs, with results for each destination.",
+    "tags": [
+      "Titles",
+      "Sync runs",
+      "Raw events"
+    ],
+    "highlights": [
+      [
+        "Start with a title",
+        "Explore the activity associated with a movie or episode."
+      ],
+      [
+        "Inspect the run",
+        "See which provider pairs participated and what changed."
+      ],
+      [
+        "Keep the context",
+        "Follow watching, ratings, captures and backups alongside sync results."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/tools/events",
+    "related": [
+      "logs",
+      "hub",
+      "analyzer"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "logs",
+    "title": "The details, when you need them.",
+    "category": "DIAGNOSTIC LOGS",
+    "description": "Read the raw logs behind CrossWatch activity and share useful diagnostics when investigating an issue.",
+    "tags": [
+      "Live logs",
+      "Saved runs",
+      "Copy & download"
+    ],
+    "highlights": [
+      [
+        "Find the right run",
+        "Browse saved sessions and filter the output you need."
+      ],
+      [
+        "Read the raw output",
+        "Inspect diagnostic messages with their run context."
+      ],
+      [
+        "Share the evidence",
+        "Copy or download logs to include with an issue report."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/tools/logs",
+    "related": [
+      "events",
+      "analyzer",
+      "backup"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "analyzer",
+    "title": "Understand the differences.",
+    "category": "SYNC ANALYZER",
+    "description": "Explore saved sync data to find missing records, mismatches and items waiting for another attempt.",
+    "tags": [
+      "Snapshot differences",
+      "Pending retries",
+      "System health"
+    ],
+    "highlights": [
+      [
+        "Compare both sides",
+        "See records found in one saved snapshot but not confirmed in the other."
+      ],
+      [
+        "Investigate an item",
+        "Inspect its IDs, matching information and the reason it needs attention."
+      ],
+      [
+        "Prepare a correction",
+        "Use mapping and blocking tools to improve a future run."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/tools/analyzer",
+    "related": [
+      "mappings",
+      "interactive",
+      "logs"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "topology",
+    "title": "See how your services connect.",
+    "category": "TOPOLOGY ADVISOR",
+    "description": "Take a wider view of your sync routes and understand how data moves through your setup.",
+    "tags": [
+      "Provider routes",
+      "Sync directions",
+      "Topology review"
+    ],
+    "highlights": [
+      [
+        "Follow the connections",
+        "Visualize the enabled routes between your provider accounts."
+      ],
+      [
+        "Understand the flow",
+        "See how one-way and two-way pairs fit together."
+      ],
+      [
+        "Refine your setup",
+        "Identify overlapping routes and loops as your provider network grows."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/tools/sync-topology-advisor",
+    "related": [
+      "pairs",
+      "automatic",
+      "analyzer"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "quickadd",
+    "title": "Keep the watches outside your server, too.",
+    "category": "QUICK ADD",
+    "description": "Log activity that happened elsewhere and send it to the providers you choose.",
+    "tags": [
+      "History",
+      "Ratings",
+      "Watchlists"
+    ],
+    "highlights": [
+      [
+        "Find the title",
+        "Look up the movie or show you want to add activity for."
+      ],
+      [
+        "Choose the activity",
+        "Record a watch, a rating or a watchlist action."
+      ],
+      [
+        "Choose the destinations",
+        "Send the action to one or more of your connected providers."
+      ]
+    ],
+    "route": "/crosswatch/main-dashboard/navigation/quick-add",
+    "related": [
+      "tracker",
+      "hub",
+      "events"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "ai",
+    "title": "Ask about your own setup.",
+    "category": "OPTIONAL AI ASSISTANCE",
+    "description": "Bring your own AI model to CrossWatch for help understanding your installation, or connect an AI app with read-only access.",
+    "tags": [
+      "Ask CrossWatch",
+      "Your own model",
+      "Read-only MCP access"
+    ],
+    "highlights": [
+      [
+        "Ask in CrossWatch",
+        "Use the built-in assistant to explore questions about your setup."
+      ],
+      [
+        "Bring your own model",
+        "Configure the AI connection you want to use."
+      ],
+      [
+        "Use your preferred app",
+        "Connect tools such as Claude, Codex or Cursor through read-only MCP access."
+      ]
+    ],
+    "route": "/crosswatch/settings/ui-settings/ai-help",
+    "related": [
+      "logs",
+      "analyzer",
+      "setup"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "setup",
+    "title": "Make CrossWatch your own.",
+    "category": "GETTING STARTED",
+    "description": "Bring the hub online, connect your first services and build your setup a little at a time.",
+    "tags": [
+      "Docker",
+      "Connected accounts",
+      "First sync"
+    ],
+    "highlights": [
+      [
+        "Start the container",
+        "Run CrossWatch with persistent storage for its configuration and data."
+      ],
+      [
+        "Connect your services",
+        "Add your accounts and metadata, then configure a first provider pair."
+      ],
+      [
+        "See it working",
+        "Try a dry run or Interactive Sync, inspect the result and add your schedule."
+      ]
+    ],
+    "route": "/getting-started/first-time-setup",
+    "related": [
+      "docker",
+      "pairs",
+      "interactive"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "docker",
+    "title": "A home on your own server.",
+    "category": "DOCKER INSTALLATION",
+    "description": "Run CrossWatch in a container with its web interface, sync engine and local data together.",
+    "tags": [
+      "Docker Compose",
+      "Port 8787",
+      "Persistent /config"
+    ],
+    "highlights": [
+      [
+        "Save the configuration",
+        "Use the Compose example on this page as your starting point."
+      ],
+      [
+        "Keep your data",
+        "Mount persistent storage at /config so settings and local data survive container updates."
+      ],
+      [
+        "Open CrossWatch",
+        "Start the container, open the web interface and connect your services."
+      ]
+    ],
+    "route": "/getting-started/installation/docker-setup",
+    "related": [
+      "setup",
+      "backup",
+      "pairs"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "unraid",
+    "title": "CrossWatch on your Unraid server.",
+    "category": "UNRAID",
+    "description": "Add CrossWatch to the server you already use for your media and manage it alongside your other containers.",
+    "tags": [
+      "Unraid Apps",
+      "Persistent app data",
+      "Web interface"
+    ],
+    "highlights": [
+      [
+        "Install from Apps",
+        "Find CrossWatch through Unraid Community Apps."
+      ],
+      [
+        "Keep the data persistent",
+        "Configure your app data and container settings for your installation."
+      ],
+      [
+        "Connect your setup",
+        "Open the CrossWatch interface and add your providers."
+      ]
+    ],
+    "route": "/getting-started/installation/unraid-apps",
+    "related": [
+      "setup",
+      "backup",
+      "pairs"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "pairs",
+    "title": "Connect the accounts your way.",
+    "category": "PROVIDER PAIRS",
+    "description": "A pair describes where data comes from, where it goes, and which features should stay in sync.",
+    "tags": [
+      "Source & destination",
+      "Sync direction",
+      "Feature selection"
+    ],
+    "highlights": [
+      [
+        "Pick the accounts",
+        "Connect media servers, trackers or supported clients in the combination you need."
+      ],
+      [
+        "Choose the features",
+        "Enable the supported datasets you want that pair to synchronize."
+      ],
+      [
+        "Choose how it runs",
+        "Use recurring syncs, review a plan interactively or include the pair in an automation."
+      ]
+    ],
+    "route": "/crosswatch/settings/configure-pairs",
+    "related": [
+      "automatic",
+      "interactive",
+      "automation"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "integrations",
+    "title": "Bring your services together.",
+    "category": "INTEGRATIONS",
+    "description": "CrossWatch connects media servers, clients, trackers and companion tools in one self-hosted setup.",
+    "tags": [
+      "Media servers",
+      "Trackers",
+      "Players",
+      "Companion tools"
+    ],
+    "highlights": [
+      [
+        "Start with your services",
+        "Connect the accounts and servers you already use."
+      ],
+      [
+        "Give each connection a role",
+        "Use provider pairs for sync or routes for playback tracking."
+      ],
+      [
+        "Grow your setup",
+        "Add more providers and personal profiles as you need them."
+      ]
+    ],
+    "route": "/getting-started/support-matrix",
+    "related": [
+      "pairs",
+      "watcher",
+      "profiles"
+    ],
+    "shot": null,
+    "aliases": [
+      "/getting-started/support-matrix/providers"
+    ]
+  },
+  {
+    "key": "anime",
+    "title": "Keep the same story across different IDs.",
+    "category": "ANIME MAPPING",
+    "description": "Connect anime trackers with the rest of your media setup and match titles across different catalogs and episode numbering.",
+    "tags": [
+      "Anime IDs",
+      "Episode numbering",
+      "Custom mappings"
+    ],
+    "highlights": [
+      [
+        "Connect anime trackers",
+        "Bring AniList, Kitsu or MyAnimeList into your setup."
+      ],
+      [
+        "Bridge the catalogs",
+        "Use anime ID mapping to connect different provider identities."
+      ],
+      [
+        "Refine the match",
+        "Keep custom title and episode mappings for the matches you want."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/metadata/anime-id-mapping",
+    "related": [
+      "mappings",
+      "interactive",
+      "tracker"
+    ],
+    "shot": null,
+    "aliases": []
+  },
+  {
+    "key": "provider-plex",
+    "title": "Plex",
+    "category": "MEDIA SERVER",
+    "description": "Bring Plex into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add Plex to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/media-servers/plex",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "PLEX.svg",
+    "aliases": [],
+    "provider": {
+      "group": "server",
+      "category": "Media server"
+    }
+  },
+  {
+    "key": "provider-jellyfin",
+    "title": "Jellyfin",
+    "category": "MEDIA SERVER",
+    "description": "Bring Jellyfin into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add Jellyfin to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/media-servers/jellyfin",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "JELLYFIN.svg",
+    "aliases": [],
+    "provider": {
+      "group": "server",
+      "category": "Media server"
+    }
+  },
+  {
+    "key": "provider-emby",
+    "title": "Emby",
+    "category": "MEDIA SERVER",
+    "description": "Bring Emby into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add Emby to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/media-servers/emby",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "EMBY.svg",
+    "aliases": [],
+    "provider": {
+      "group": "server",
+      "category": "Media server"
+    }
+  },
+  {
+    "key": "provider-trakt",
+    "title": "Trakt",
+    "category": "TRACKER",
+    "description": "Bring Trakt into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add Trakt to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/trakt",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "TRAKT.svg",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Tracker"
+    }
+  },
+  {
+    "key": "provider-simkl",
+    "title": "SIMKL",
+    "category": "TRACKER",
+    "description": "Bring SIMKL into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add SIMKL to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/simkl",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "SIMKL.svg",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Tracker"
+    }
+  },
+  {
+    "key": "provider-crosswatch",
+    "title": "CrossWatch",
+    "category": "LOCAL TRACKER",
+    "description": "Keep your media history on your own server. Browse your watches, ratings and progress in CrossWatch, and bring in activity from connected services.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Your record of what you watch",
+        "Browse movies and episodes and keep your viewing history together."
+      ],
+      [
+        "Keep the details",
+        "Add watches, keep notes and correct records when needed."
+      ],
+      [
+        "Connected to your setup",
+        "Import activity and use the local tracker alongside your other providers."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/crosswatch",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": "tracker",
+    "logo": "CROSSWATCH.svg",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Local tracker"
+    }
+  },
+  {
+    "key": "provider-anilist",
+    "title": "AniList",
+    "category": "ANIME TRACKER",
+    "description": "Connect AniList to keep your anime lists, ratings and watched status alongside the rest of your media setup.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Anime mapping"
+    ],
+    "highlights": [
+      [
+        "Your anime account",
+        "Connect your AniList account in CrossWatch."
+      ],
+      [
+        "Shared title identities",
+        "Use anime mapping to connect catalogs and episode numbering."
+      ],
+      [
+        "Your own routines",
+        "Include the account in the sync pairs and schedules you choose."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/anilist",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "ANILIST.svg",
+    "aliases": [],
+    "provider": {
+      "group": "tracker anime",
+      "category": "Anime tracker"
+    }
+  },
+  {
+    "key": "provider-myanimelist",
+    "title": "MyAnimeList",
+    "category": "ANIME TRACKER",
+    "description": "Connect MyAnimeList to keep your anime lists, ratings and watched status alongside the rest of your media setup.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Anime mapping"
+    ],
+    "highlights": [
+      [
+        "Your anime account",
+        "Connect your MyAnimeList account in CrossWatch."
+      ],
+      [
+        "Shared title identities",
+        "Use anime mapping to connect catalogs and episode numbering."
+      ],
+      [
+        "Your own routines",
+        "Include the account in the sync pairs and schedules you choose."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/myanimelist-mal",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "MYANIMELIST.svg",
+    "aliases": [],
+    "provider": {
+      "group": "tracker anime",
+      "category": "Anime tracker"
+    }
+  },
+  {
+    "key": "provider-kitsu",
+    "title": "Kitsu",
+    "category": "ANIME TRACKER",
+    "description": "Connect Kitsu to keep your anime lists, ratings and watched status alongside the rest of your media setup.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Anime mapping"
+    ],
+    "highlights": [
+      [
+        "Your anime account",
+        "Connect your Kitsu account in CrossWatch."
+      ],
+      [
+        "Shared title identities",
+        "Use anime mapping to connect catalogs and episode numbering."
+      ],
+      [
+        "Your own routines",
+        "Include the account in the sync pairs and schedules you choose."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/kitsu",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "KITSU.svg",
+    "aliases": [],
+    "provider": {
+      "group": "tracker anime",
+      "category": "Anime tracker"
+    }
+  },
+  {
+    "key": "provider-mdblist",
+    "title": "MDBList",
+    "category": "TRACKER",
+    "description": "Bring MDBList into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add MDBList to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/mdblist",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "MDBLIST.svg",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Tracker"
+    }
+  },
+  {
+    "key": "provider-tmdb",
+    "title": "TMDB",
+    "category": "TRACKER & METADATA",
+    "description": "Bring TMDB into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add TMDB to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/tmdb",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "TMDB.svg",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Tracker & metadata"
+    }
+  },
+  {
+    "key": "provider-publicmetadb",
+    "title": "PublicMetaDB",
+    "category": "TRACKER",
+    "description": "Bring PublicMetaDB into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add PublicMetaDB to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/publicmetadb",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "PUBLICMETADB.svg",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Tracker"
+    }
+  },
+  {
+    "key": "provider-floppy",
+    "title": "Floppy",
+    "category": "TRACKER",
+    "description": "Bring Floppy into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add Floppy to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/floppy",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "FLOPPY.png",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Tracker"
+    }
+  },
+  {
+    "key": "provider-bingebase",
+    "title": "BingeBase",
+    "category": "TRACKER",
+    "description": "Send movie and TV playback activity to BingeBase from your CrossWatch playback routes.",
+    "tags": [
+      "Watcher",
+      "Webhook activity"
+    ],
+    "highlights": [
+      [
+        "Connect BingeBase",
+        "Add your account as a playback destination."
+      ],
+      [
+        "Choose a route",
+        "Send Watcher or webhook activity from your supported sources."
+      ],
+      [
+        "Keep watching",
+        "Let your playback activity reach your tracker as you use your media setup."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/bingebase",
+    "related": [
+      "watcher",
+      "automation",
+      "profiles"
+    ],
+    "shot": null,
+    "logo": "BINGEBASE.png",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Tracker"
+    }
+  },
+  {
+    "key": "provider-punchplay",
+    "title": "PunchPlay",
+    "category": "TRACKER",
+    "description": "Bring PunchPlay into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add PunchPlay to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/punchplay",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "PUNCHPLAY.png",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Tracker"
+    }
+  },
+  {
+    "key": "provider-scrob",
+    "title": "Scrob",
+    "category": "TRACKER",
+    "description": "Bring Scrob into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add Scrob to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/scrob",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "SCROB.png",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Tracker"
+    }
+  },
+  {
+    "key": "provider-flicklist",
+    "title": "FlickList",
+    "category": "TRACKER",
+    "description": "Bring FlickList into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add FlickList to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/flicklist",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "FLICKLIST.png",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Tracker"
+    }
+  },
+  {
+    "key": "provider-wetrakr",
+    "title": "WeTrakr",
+    "category": "TRACKER",
+    "description": "Bring WeTrakr into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add WeTrakr to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/trackers/wetrakr",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "WETRAKR.svg",
+    "aliases": [],
+    "provider": {
+      "group": "tracker",
+      "category": "Tracker"
+    }
+  },
+  {
+    "key": "provider-kodi",
+    "title": "Kodi",
+    "category": "MEDIA CLIENT",
+    "description": "Bring Kodi into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add Kodi to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/media-clients/kodi",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "KODI.png",
+    "aliases": [],
+    "provider": {
+      "group": "player",
+      "category": "Media client"
+    }
+  },
+  {
+    "key": "provider-stremio",
+    "title": "Stremio",
+    "category": "MEDIA CLIENT",
+    "description": "Bring Stremio into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings into Stremio",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add Stremio to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/media-clients/stremio",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "STREMIO.png",
+    "aliases": [],
+    "provider": {
+      "group": "player",
+      "category": "Media client"
+    }
+  },
+  {
+    "key": "provider-nuvio",
+    "title": "Nuvio",
+    "category": "MEDIA CLIENT",
+    "description": "Bring Nuvio into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add Nuvio to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/media-clients/nuvio",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "NUVIO.png",
+    "aliases": [],
+    "provider": {
+      "group": "player",
+      "category": "Media client"
+    }
+  },
+  {
+    "key": "provider-silo",
+    "title": "Silo",
+    "category": "MEDIA SERVER",
+    "description": "Bring Silo into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "Ratings",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add Silo to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/media-servers/silo",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "SILO.svg",
+    "aliases": [],
+    "provider": {
+      "group": "server",
+      "category": "Media server"
+    }
+  },
+  {
+    "key": "provider-tofa",
+    "title": "Tofa",
+    "category": "MEDIA SERVER",
+    "description": "Bring Tofa into your CrossWatch setup and keep your media activity connected to the other services you use.",
+    "tags": [
+      "Watchlist",
+      "History",
+      "Progress"
+    ],
+    "highlights": [
+      [
+        "Connect the account",
+        "Add Tofa to your provider connections in CrossWatch."
+      ],
+      [
+        "Choose what to share",
+        "Select the features you want to use when configuring your provider pairs."
+      ],
+      [
+        "Keep it together",
+        "Browse your connected media through the central hub."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/media-servers/tofa",
+    "related": [
+      "hub",
+      "pairs",
+      "automatic"
+    ],
+    "shot": null,
+    "logo": "TOFA.svg",
+    "aliases": [],
+    "provider": {
+      "group": "server",
+      "category": "Media server"
+    }
+  },
+  {
+    "key": "provider-tautulli",
+    "title": "Tautulli",
+    "category": "COMPANION",
+    "description": "Bring retained viewing activity from Tautulli into your CrossWatch history workflows.",
+    "tags": [
+      "History import"
+    ],
+    "highlights": [
+      [
+        "Connect the source",
+        "Add Tautulli as a history source in CrossWatch."
+      ],
+      [
+        "Bring history across",
+        "Read existing watch activity into a history sync workflow."
+      ],
+      [
+        "Keep the context",
+        "Review imported activity alongside your connected media data."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/others/tautulli",
+    "related": [
+      "tracker",
+      "events",
+      "backup"
+    ],
+    "shot": null,
+    "logo": "TAUTULLI.svg",
+    "aliases": [],
+    "provider": {
+      "group": "other",
+      "category": "Companion"
+    }
+  },
+  {
+    "key": "provider-tracearr",
+    "title": "Tracearr",
+    "category": "COMPANION",
+    "description": "Bring retained viewing activity from Tracearr into your CrossWatch history workflows.",
+    "tags": [
+      "History import"
+    ],
+    "highlights": [
+      [
+        "Connect the source",
+        "Add Tracearr as a history source in CrossWatch."
+      ],
+      [
+        "Bring history across",
+        "Read existing watch activity into a history sync workflow."
+      ],
+      [
+        "Keep the context",
+        "Review imported activity alongside your connected media data."
+      ]
+    ],
+    "route": "/crosswatch/settings/connections/others/tracearr",
+    "related": [
+      "tracker",
+      "events",
+      "backup"
+    ],
+    "shot": null,
+    "logo": "TRACEARR.png",
+    "aliases": [],
+    "provider": {
+      "group": "other",
+      "category": "Companion"
+    }
+  }
+]

@@ -1,0 +1,227 @@
+/* docs/assets/css/showcase.css */
+/* CrossWatch - Feature and provider showcase dialogs */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+
+#showcase-dialog {
+  width: min(1020px, calc(100% - 32px));
+  max-height: 90dvh;
+  padding: 0;
+  overflow: auto;
+  border-color: #3c4355;
+  background: #11151e;
+}
+.showcase-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 28px;
+  border-bottom: 1px solid #2c3342;
+  background: #141923;
+}
+.showcase-toolbar > div {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+.showcase-toolbar span {
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  color: #9eabc1;
+}
+#showcase-back {
+  background: transparent;
+  border: 0;
+  color: #c4b7fb;
+  font-size: 14px;
+  padding: 6px 0;
+}
+.showcase-content {
+  padding: 40px 44px;
+}
+.showcase-heading {
+  position: relative;
+  padding-right: 74px;
+}
+.showcase-icon {
+  position: absolute;
+  right: 0;
+  top: 0;
+  object-fit: contain;
+}
+.showcase-heading .eyebrow {
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: #b5a6f2;
+}
+.showcase-title {
+  font-size: clamp(30px, 4vw, 46px);
+  line-height: 1.15;
+  letter-spacing: -0.045em;
+  margin-bottom: 20px;
+  overflow-wrap: anywhere;
+}
+.showcase-description {
+  font-size: 18px;
+  line-height: 1.75;
+  max-width: 760px;
+  color: #aeb9cc;
+}
+.showcase-title:focus {
+  outline: none;
+}
+.showcase-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 24px;
+}
+.showcase-tags span {
+  font-size: 13px;
+  padding: 7px 12px;
+  border: 1px solid #344052;
+  border-radius: 6px;
+  background: #19212e;
+  color: #b8cee3;
+}
+.showcase-figure {
+  margin: 30px 0 0;
+}
+.showcase-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid #31394a;
+  border-radius: 8px;
+}
+.showcase-image-caption {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #8e9bb2;
+  padding-top: 12px;
+}
+.showcase-highlights {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px;
+  margin-top: 34px;
+}
+.showcase-highlights article {
+  border-top: 1px solid #4b4266;
+  padding-top: 19px;
+}
+.showcase-highlights h3 {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.45;
+  margin-bottom: 10px;
+}
+.showcase-highlights p {
+  font-size: 15px;
+  color: #a7b2c6;
+  line-height: 1.8;
+}
+.showcase-related {
+  margin-top: 36px;
+  padding-top: 25px;
+  border-top: 1px solid #2c3342;
+}
+.showcase-related > span {
+  font-size: 10px;
+  color: #92a0b8;
+  letter-spacing: 0.16em;
+}
+.showcase-related-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 15px;
+}
+.showcase-related-links button {
+  padding: 9px 14px;
+  background: transparent;
+  border: 1px solid #3a4255;
+  border-radius: 6px;
+  color: #c3cbe0;
+  font-size: 13px;
+}
+.showcase-related-links button:hover {
+  background: #25233a;
+  border-color: #8471b8;
+  color: #e0d5ff;
+}
+.showcase-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 20px 44px;
+  border-top: 1px solid #303748;
+  background: #141923;
+}
+#showcase-docs {
+  color: #aebbd1;
+  font-size: 13px;
+  text-underline-offset: 5px;
+}
+#showcase-docs:hover {
+  color: #d5c7ff;
+  text-decoration: underline;
+}
+#showcase-back[hidden],
+.showcase-panel[hidden] {
+  display: none;
+}
+@media (max-width: 680px) {
+  #showcase-dialog {
+    width: calc(100% - 20px);
+    max-height: 94dvh;
+  }
+  .showcase-toolbar {
+    padding: 14px 20px;
+  }
+  .showcase-toolbar > div {
+    gap: 12px;
+  }
+  .showcase-toolbar span {
+    font-size: 9px;
+    letter-spacing: 0.09em;
+  }
+  .showcase-content {
+    padding: 28px 22px;
+  }
+  .showcase-heading {
+    padding-right: 0;
+  }
+  .showcase-icon {
+    position: static;
+    margin-bottom: 22px;
+    width: 40px;
+    height: 40px;
+  }
+  .showcase-description {
+    font-size: 16px;
+  }
+  .showcase-highlights {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+  .showcase-footer {
+    padding: 16px 22px;
+    flex-wrap: wrap;
+    gap: 14px;
+  }
+  .showcase-footer .button {
+    min-height: 44px;
+    padding: 10px 18px;
+  }
+}
+
+.showcase-related-links button {
+  text-transform: capitalize;
+}

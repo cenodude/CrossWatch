@@ -1,0 +1,30 @@
+<!-- docs/_includes/showcase-panels.html -->
+<!-- CrossWatch - Server-rendered feature and provider overviews -->
+<!-- Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) -->
+{% for feature in site.data.showcase %}
+{% assign logo = feature.logo | default: 'CROSSWATCH.svg' %}
+<section class="showcase-panel" id="feature-{{ feature.key }}" data-key="{{ feature.key }}" data-route="{{ feature.route | escape }}" data-aliases="{{ feature.aliases | jsonify | escape }}" data-kind="{% if feature.logo %}provider{% else %}feature{% endif %}" hidden>
+  <header class="showcase-heading">
+    <img class="showcase-icon" src="{{ '/images/providers/' | append: logo | relative_url }}" width="48" height="48" alt="" loading="lazy" decoding="async">
+    <p class="eyebrow">{{ feature.category | escape }}</p>
+    <h2 class="showcase-title" id="feature-title-{{ feature.key }}" tabindex="-1">{{ feature.title | escape }}</h2>
+    <p class="showcase-description" id="feature-description-{{ feature.key }}">{{ feature.description | escape }}</p>
+  </header>
+  <div class="showcase-tags">{% for tag in feature.tags %}<span>{{ tag | escape }}</span>{% endfor %}</div>
+  {% if feature.shot %}{% assign shot = site.data.screenshots[feature.shot] %}
+  <figure class="showcase-figure">
+    <img class="showcase-image" src="{{ shot.src | relative_url }}" alt="{{ shot.alt | escape }}" width="{{ shot.width }}" height="{{ shot.height }}" loading="lazy" decoding="async">
+    <figcaption class="showcase-image-caption">{{ shot.caption | escape }}</figcaption>
+  </figure>
+  {% endif %}
+  <div class="showcase-highlights">
+    {% for highlight in feature.highlights %}<article><h3>{{ highlight[0] | escape }}</h3><p>{{ highlight[1] | escape }}</p></article>{% endfor %}
+  </div>
+  <div class="showcase-related">
+    <span>KEEP EXPLORING</span>
+    <div class="showcase-related-links">
+      {% for key in feature.related %}{% assign related = site.data.showcase | where: 'key', key | first %}<button data-related="{{ key }}">{{ related.category | downcase | escape }}</button>{% endfor %}
+    </div>
+  </div>
+</section>
+{% endfor %}

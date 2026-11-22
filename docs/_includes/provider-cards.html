@@ -1,0 +1,9 @@
+<!-- docs/_includes/provider-cards.html -->
+<!-- CrossWatch - Server-rendered integration cards -->
+<!-- Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) -->
+{% for feature in site.data.showcase %}{% if feature.provider %}
+<a class="integration-card" href="https://wiki.crosswatch.app{{ feature.route }}" aria-label="Explore {{ feature.title | escape }}" aria-haspopup="dialog" data-provider-group="{{ feature.provider.group }}">
+  <img src="{{ '/images/providers/' | append: feature.logo | relative_url }}" alt="" width="36" height="36" loading="lazy" decoding="async">
+  <span><strong>{{ feature.title | escape }}</strong><small>{{ feature.provider.category | escape }}</small></span>
+</a>
+{% endif %}{% endfor %}
