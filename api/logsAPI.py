@@ -10,11 +10,11 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cw_platform.access_policy import request_user, pair_refs, user_can_access_instance, requested_view_as_profile, profile_instances_map, profile_allows_instance
 from cw_platform.config_base import load_config
-from services.log_archive import archive, MAX_BYTES, RETENTION_DAYS
+from services.log_archive import archive, MIN_STORAGE_MB, MAX_STORAGE_MB
 
 router = APIRouter(prefix='/api/logs/archive', tags=['logging'])
 LogChannel = Literal['sync', 'watcher', 'debug', 'captures', 'backups', 'audits', 'system']
@@ -86,8 +86,22 @@ def sessions(request: Request, channel: LogChannel = 'sync', run_id: str = Query
     channels = ['sync', 'watcher', 'captures', 'backups', 'audits', 'system'] if admin else ['sync']
     if admin and debug_enabled(cfg):
         channels.append('debug')
-    return dict(items=items, pairs=pairs, latest_run_id=latest, channels=channels, retention_days=RETENTION_DAYS,
-                max_bytes=MAX_BYTES, used_bytes=archive().used if admin else sum(item['bytes'] for item in items))
+    return dict(items=items, pairs=pairs, latest_run_id=latest, channels=channels, retention_days=store.retention_days,
+                max_bytes=store.max_bytes, used_bytes=store.used if admin else sum(item['bytes'] for item in items), can_manage_storage=bool(admin))
+
+
+class StorageSettings(BaseModel):
+    max_mb: int = Field(ge=MIN_STORAGE_MB, le=MAX_STORAGE_MB, strict=True)
+
+
+@router.put('/settings')
+def update_storage(request: Request, body: StorageSettings):
+    user = request_user(request)
+    if (user and not user.get('is_admin')) or requested_view_as_profile(request):
+        raise HTTPException(403, 'Only server administrators can change log storage settings.')
+    store = archive()
+    store.set_max_bytes(body.max_mb * 1024 * 1024)
+    return dict(ok=True, max_bytes=store.max_bytes, used_bytes=store.used, retention_days=store.retention_days)
 
 
 @router.get('/{sid}/lines')

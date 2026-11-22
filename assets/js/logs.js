@@ -44,10 +44,11 @@ const LogsPage = {
     let sessions = [], current = null, rows = [], pairs = [], latestRunId = '', listQuery = '', listFilter = '', listPage = 0;
     let offset = 0, total = 0, snapshotLines = 0, follow = mode==='live', frozen = false, matchIndex = -1;
     let alive = true, busy = false, queued = false, generation = 0, controller, timer, searchTimer, refreshLines = true;
+    let storageDirty = false, savingStorage = false, canManageStorage = false;
     const feedbackTimers = new Set();
     const profile = window.CW?.OverviewProfile?.id || '';
     host.innerHTML = `<div class="logs-page cw-page-logs cw-themed-page"><a href="${esc(back.href)}" class="logs-back">${icon('arrow_back')}${esc(back.label)}</a>
-      <header class="logs-heading"><h1>Logs</h1><p>Read, search and share diagnostic logs.</p></header>
+      <header class="logs-heading"><h1>Logs</h1></header>
       <div class="logs-navigation"><div class="logs-tabs logs-channels" aria-label="Log source">${Object.entries(channels).map(([key,[label,symbol]])=>`<button type="button" data-channel="${key}" aria-pressed="${channel===key}" hidden>${icon(symbol)}${label}</button>`).join('')}</div><div class="logs-tabs logs-modes" aria-label="Log mode"><button type="button" data-mode="saved">${icon('inventory_2')}Saved logs</button><button type="button" data-mode="live">${icon('podcasts')}Live</button></div></div>
       <p class="logs-notice" data-notice role="status" hidden></p>
       <div class="logs-workspace cw-page-panel"><aside class="logs-sidebar" aria-label="Log sessions"><div class="logs-list-controls"><strong data-list-count>Saved logs</strong><input data-session-query type="search" placeholder="Find a session…" aria-label="Find a session"><select data-session-filter aria-label="Session filter"><option value="">All sessions</option><option value="issues">With issues</option><option value="pinned">Pinned</option></select><div class="logs-pair-controls" data-pair-controls><select data-pair aria-label="Sync pair"><option value="">All pairs</option></select><button type="button" data-latest>Latest run</button></div><button type="button" data-all-runs hidden>All sessions</button></div><div class="logs-sessions" data-sessions></div><div class="logs-list-pages"><button type="button" data-list-prev aria-label="Previous sessions">${icon('chevron_left')}</button><small data-list-page></small><button type="button" data-list-next aria-label="Next sessions">${icon('chevron_right')}</button></div></aside>
@@ -55,7 +56,10 @@ const LogsPage = {
       <div class="logs-filters"><input data-query maxlength="200" type="search" placeholder="Filter log text…" aria-label="Filter log text"><select data-level aria-label="Log level"><option value="">All levels</option><option value="ERROR">Errors</option><option value="WARN">Warnings</option><option value="INFO">Info</option><option value="DEBUG">Debug</option></select><input type="text" maxlength="80" data-provider placeholder="Provider" aria-label="Filter by provider" list="log-providers"><datalist id="log-providers"></datalist><label><input data-wrap type="checkbox" checked>Wrap</label><button type="button" data-prev-match aria-label="Previous matching record">${icon('keyboard_arrow_up')}</button><button type="button" data-next-match aria-label="Next matching record">${icon('keyboard_arrow_down')}</button></div>
       <div class="logs-content" tabindex="0" aria-label="Raw log text"><div data-output></div></div>
       <div class="logs-reader-footer"><span data-count></span><label><input data-report-header type="checkbox" checked>Include report header</label><div class="logs-pagination"><button type="button" data-previous aria-label="Previous log records">${icon('chevron_left')}</button><span data-page></span><button type="button" data-next aria-label="Next log records">${icon('chevron_right')}</button></div></div><div class="logs-reader-footer"><span data-copy-status role="status">Select text to copy an excerpt.</span><span data-connection role="status"></span></div></section></div>
-      <footer class="logs-storage"><span data-storage-size></span><span data-retention></span><details><summary>Storage &amp; retention</summary><p>Pinned sessions are kept. Unpinned sessions expire after the retention period, or sooner when storage fills.</p><button type="button" data-clear>Delete finished, unpinned logs</button></details></footer></div>`;
+      <section class="logs-storage" aria-label="Log storage"><div class="logs-storage-summary"><span data-storage-size></span><span data-retention></span><button type="button" data-storage-toggle aria-expanded="false" aria-controls="logs-storage-panel">Storage &amp; retention${icon('expand_more')}</button></div><div id="logs-storage-panel" class="logs-storage-panel cw-page-panel" hidden>
+        <form data-storage-form hidden><label for="logs-max-size">Archive size limit (MB)<input id="logs-max-size" data-storage-limit type="number" min="10" max="10240" step="1" required aria-describedby="logs-storage-help"></label><button type="submit" data-save-storage class="logs-primary" disabled>Save limit</button><span data-storage-status role="status"></span></form>
+        <p id="logs-storage-help">Applies to all log sources on this server. Choose 10–10,240 MB. Lowering the limit removes the oldest finished, unpinned logs first.</p><p data-storage-admin hidden>Storage settings are managed by your server administrator.</p><p>Unpinned sessions expire after <span data-retention-days>7</span> days, or sooner when storage fills. Pinned and active sessions are kept.</p><p data-storage-over-limit hidden>Pinned or active sessions exceed this limit. New records may be skipped until space is freed or the limit is increased.</p><div class="logs-storage-cleanup"><span>Remove finished, unpinned logs from this source.</span><button type="button" data-clear>Delete finished, unpinned logs</button></div>
+      </div></section></div>`;
     const $ = selector => host.querySelector(selector), content = $('.logs-content');
     $('[data-level]').value=level;
     const scope = () => ({pair_id:pairId,run_id:runId});
@@ -64,6 +68,18 @@ const LogsPage = {
     const notice = text => { $('[data-notice]').textContent=text; $('[data-notice]').hidden=!text; };
     const setOutput = html => {if($('[data-output]').innerHTML!==html)$('[data-output]').innerHTML=html;};
     const empty = (title,description) => `<div class="logs-empty"><h2>${esc(title)}</h2><p>${esc(description)}</p></div>`;
+    function paintStorage(data) {
+      const size=n=>(Number(n||0)/1048576).toLocaleString(undefined,{maximumFractionDigits:1});
+      $('[data-storage-size]').textContent=`${size(data.used_bytes)} / ${size(data.max_bytes)} MB`;
+      $('[data-retention]').textContent=`${data.retention_days}-day retention`;
+      $('[data-retention-days]').textContent=data.retention_days;
+      if(Object.hasOwn(data,'can_manage_storage'))canManageStorage=Boolean(data.can_manage_storage);
+      $('[data-storage-form]').hidden=!canManageStorage;
+      $('[data-storage-admin]').hidden=canManageStorage;
+      if(!storageDirty&&!savingStorage)$('[data-storage-limit]').value=String(Math.round(data.max_bytes/1048576));
+      $('[data-save-storage]').disabled=!canManageStorage||savingStorage||!storageDirty;
+      $('[data-storage-over-limit]').hidden=!canManageStorage||data.used_bytes<=data.max_bytes;
+    }
     const listing = () => sessions.filter(s=>(!listQuery||`${s.label} ${stamp(s.started)} ${s.run_id||''}`.toLowerCase().includes(listQuery))&&(!listFilter||listFilter==='pinned'&&s.pinned||listFilter==='issues'&&(s.errors||s.warnings||['issues','failed','error','interrupted','cancelled'].includes(s.status))));
     function writeRoute() {
       const params=new URLSearchParams({channel,mode});
@@ -99,7 +115,7 @@ const LogsPage = {
       $('[data-previous]').disabled=offset===0;$('[data-next]').disabled=offset+500>=total;
       $('[data-prev-match]').disabled=$('[data-next-match]').disabled=!query||!rows.length;
       $('[data-pair-controls]').hidden=channel!=='sync';$('[data-all-runs]').hidden=!runId;$('[data-latest]').disabled=!latestRunId;
-      $('[data-clear]').hidden=Boolean(pairId||runId);
+      $('.logs-storage-cleanup').hidden=Boolean(pairId||runId);
       $('[data-ai-logs]').hidden=!current;
       $('[data-ai-logs]').dataset.aiQuestion=current?`Analyze the ${channel} log session ${current.id} (${current.label}, started ${stamp(current.started)}). Explain any errors.`:'';
       renderSessions();
@@ -126,8 +142,7 @@ const LogsPage = {
         if($('[data-pair]').innerHTML!==options){$('[data-pair]').innerHTML=options;$('[data-pair]').value=pairId;}
         if(latestRequested){latestRequested=false;runId=latestRunId;if(runId)data=await api('',{channel,...scope()});if(!alive||token!==generation)return;}
         sessions=data.items||[];
-        const size=n=>(Number(n||0)/1048576).toLocaleString(undefined,{maximumFractionDigits:1});
-        $('[data-storage-size]').textContent=`${size(data.used_bytes)} / ${size(data.max_bytes)} MB`;$('[data-retention]').textContent=`${data.retention_days}-day retention`;
+        paintStorage(data);
         if(mode==='live'&&follow){const next=sessions.find(s=>s.ended==null);if(next?.id!==sid){sid=next?.id||'';offset=0;rows=[];refreshLines=true;}}
         else if(!sid)sid=listing()[0]?.id||'';
         current=sessions.find(s=>s.id===sid)||null;
@@ -155,7 +170,8 @@ const LogsPage = {
     async function onClick(event) {
       const button=event.target.closest('button');if(!button)return;
       try {
-        if(button.dataset.channel){channel=button.dataset.channel;pairId=runId='';latestRequested=false;listQuery=listFilter='';$('[data-session-query]').value=$('[data-session-filter]').value='';reset();}
+        if(button.hasAttribute('data-storage-toggle')){const open=button.getAttribute('aria-expanded')!=='true';button.setAttribute('aria-expanded',String(open));button.querySelector('.material-symbols-rounded').textContent=open?'expand_less':'expand_more';$('#logs-storage-panel').hidden=!open;if(open)$('#logs-storage-panel').scrollIntoView({block:'nearest'});}
+        else if(button.dataset.channel){channel=button.dataset.channel;pairId=runId='';latestRequested=false;listQuery=listFilter='';$('[data-session-query]').value=$('[data-session-filter]').value='';reset();}
         else if(button.dataset.mode){mode=button.dataset.mode;follow=mode==='live';reset(false);}
         else if(button.dataset.session){sid=button.dataset.session;current=sessions.find(s=>s.id===sid)||null;mode='saved';follow=false;offset=0;total=0;rows=[];frozen=false;notice('');setOutput(empty('Loading logs…',''));invalidate();paint();writeRoute();}
         else if(button.hasAttribute('data-latest')){mode='saved';follow=false;latestRequested=true;runId='';reset();}
@@ -178,6 +194,18 @@ const LogsPage = {
       }catch(error){if(alive)notice(error.message);}
     }
     host.addEventListener('click',onClick);
+    $('[data-storage-limit]').addEventListener('input',()=>{storageDirty=true;$('[data-storage-status]').textContent='';$('[data-save-storage]').disabled=!canManageStorage||savingStorage;});
+    $('[data-storage-form]').addEventListener('submit',async event=>{
+      event.preventDefault();
+      if(!canManageStorage||savingStorage||!event.target.reportValidity())return;
+      savingStorage=true;$('[data-save-storage]').disabled=true;$('[data-storage-limit]').disabled=true;$('[data-storage-status]').textContent='Saving…';
+      try {
+        const data=await api('/settings',{},{method:'PUT',signal:undefined,headers:{'Content-Type':'application/json'},body:JSON.stringify({max_mb:Number($('[data-storage-limit]').value)})});
+        if(!alive)return;
+        storageDirty=false;paintStorage(data);$('[data-storage-status]').textContent='Storage limit saved.';invalidate();
+      } catch(error){if(alive)$('[data-storage-status]').textContent=error.message;}
+      finally{savingStorage=false;if(alive){$('[data-storage-limit]').disabled=false;$('[data-save-storage]').disabled=!canManageStorage||!storageDirty;}}
+    });
     $('[data-session-query]').addEventListener('input',()=>{listQuery=$('[data-session-query]').value.toLowerCase().trim();listPage=0;renderSessions();});
     $('[data-session-filter]').addEventListener('change',()=>{listFilter=$('[data-session-filter]').value;listPage=0;renderSessions();});
     $('[data-pair]').addEventListener('change',()=>{pairId=$('[data-pair]').value;runId='';reset();});

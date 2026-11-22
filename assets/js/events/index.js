@@ -592,7 +592,7 @@ export default {
     let titleTab = ls("cw.events.titletab", "path");
     let tmdbOn = false;
     const checked = new Set();
-    const state = { items: [], page: 0, total: 0, selected: null, relExpanded: false, collapsed: new Set(), childLoading: new Set(), didInitialSelect: false, runs: [], preparing: false };
+    const state = { items: [], page: 0, total: 0, selected: null, selectedPair: "", relExpanded: false, collapsed: new Set(), childLoading: new Set(), didInitialSelect: false, runs: [], preparing: false };
     const dropdowns = [];
 
     root.innerHTML = `
@@ -1311,6 +1311,7 @@ export default {
       ++selectionSequence;
       layoutEl.classList.remove("show-detail");
       state.selected = null;
+      state.selectedPair = "";
       const what = titles() ? "a title to see where it went" : runsMode() ? "a run to see what it changed" : grouped() ? "an activity to see details and current context" : "an event to see details and current context";
       detailEl.innerHTML = `<div class="ev-empty ev-empty-detail"><span class="material-symbols-rounded" aria-hidden="true">touch_app</span><div>Select ${what}.</div></div>`;
     };
@@ -1400,7 +1401,7 @@ export default {
     const visibleRuns = () => state.runs.filter((run) => runMatches(run, qEl.value.trim().toLowerCase()));
 
     const bindTitleRows = () => {
-      listEl.querySelectorAll(".ev-trow[data-tid], .ev-rrow[data-run]").forEach((el) => {
+      listEl.querySelectorAll(".ev-trow[data-tid], .ev-rrow[data-run], .ev-rghead[data-run]").forEach((el) => {
         const id = el.dataset.tid || el.dataset.run;
         const open = () => select(id, el);
         el.addEventListener("click", open);
@@ -1429,7 +1430,7 @@ export default {
         Q("#ev-next-top", root).disabled = true;
         listEl.innerHTML = selectedDay == null
           ? `<div class="ev-empty ev-empty-list"><span class="material-symbols-rounded" aria-hidden="true">calendar_month</span><div class="ev-empty-head">No sync runs yet.</div><div class="ev-empty-hint">Runs appear here after the first sync.</div></div>`
-          : `<div class="ev-runs">${runRowsHTML(runs, { selected: state.selected, open: openQuietRuns, openAll: !!qEl.value.trim() })}</div>`;
+          : `<div class="ev-runs">${runRowsHTML(runs, { selected: state.selected, selectedPair: state.selectedPair, open: openQuietRuns, openAll: !!qEl.value.trim() })}</div>`;
         bindTitleRows();
         return;
       }
@@ -1509,8 +1510,8 @@ export default {
             updateHidden();
             if (state.runs.some((run) => String(run.run_id) === id)) await select(id, null, { reveal: true });
           }
-          const firstRun = listEl.querySelector(".ev-rrow[data-run]")?.dataset.run;
-          if (!state.selected && firstRun && wideDetail()) await select(firstRun, null, { reveal: false });
+          const firstRun = listEl.querySelector(".ev-rrow[data-run]");
+          if (!state.selected && firstRun && wideDetail()) await select(firstRun.dataset.run, firstRun, { reveal: false });
         } catch (err) {
           if (!alive || sequence !== loadSequence) return;
           listEl.innerHTML = `<div class="ev-empty ev-empty-list"><span class="material-symbols-rounded" aria-hidden="true">error</span><div class="ev-empty-head">Failed to load runs</div><div class="ev-empty-hint">${esc(err.message)}</div></div>`;
@@ -2379,22 +2380,27 @@ export default {
       showRun: (item) => showRun(item),
     });
 
-    const select = async (id, el, { reveal = true } = {}) => {
+    const select = async (id, el, { reveal = true, pair = el?.dataset.pair ?? (state.selected === String(id) ? state.selectedPair : "") } = {}) => {
       const sequence = ++selectionSequence;
       if (reveal) {
         if (!layoutEl.classList.contains("show-detail")) listReturnPosition = window.scrollY;
         layoutEl.classList.add("show-detail");
       }
       state.selected = String(id);
+      state.selectedPair = runsMode() ? pair : "";
       state.relExpanded = false;
       listEl.querySelectorAll(".ev-row.sel, .ev-trow.sel, .ev-rrow.sel").forEach((n) => n.classList.remove("sel"));
       const rowSel = titles() ? `.ev-trow[data-tid="${CSS.escape(String(id))}"]` : runsMode() ? `.ev-rrow[data-run="${CSS.escape(String(id))}"]` : `.ev-row[data-id="${CSS.escape(String(id))}"]`;
       if (runsMode()) listEl.querySelectorAll(rowSel).forEach((n) => n.classList.add("sel"));
       else (el || listEl.querySelector(rowSel))?.classList.add("sel");
       if (runsMode()) {
+        if (pair && !listEl.querySelector(`${rowSel}[data-pair="${CSS.escape(pair)}"]`)) openQuietRuns.add(pair);
+        renderList();
         const run = state.runs.find((r) => String(r.run_id) === String(id));
         if (run) renderRunDetail(detailEl, run, {
           tmdbOn,
+          pair,
+          selectPair: key => select(id, null, {reveal: false, pair: key}),
           fetchJson: fjson,
           showTitles: (runId) => showTitles(runId),
           openTitle: (runId, tid) => { showTitles(runId); void select(tid); },

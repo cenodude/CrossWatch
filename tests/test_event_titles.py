@@ -79,6 +79,27 @@ def test_history_event_keys_match_their_items(conn):
     assert titles.list_titles(domain="sync", conn=conn)["total"] == 1
 
 
+def test_run_titles_filter_both_pair_directions_and_instances_before_paging(conn):
+    routes = [
+        (("PLEX", "default"), ("TRAKT", "default")),
+        (("TRAKT", "default"), ("PLEX", "default")),
+        (("PLEX", "default"), ("SIMKL", "default")),
+        (("PLEX", "other"), ("TRAKT", "default")),
+        (("PLEX", "default"), ("TRAKT", "other")),
+    ]
+    for index, (source, destination) in enumerate(routes):
+        titles.record_successes(conn, run_id="pair-run", source=source, destination=destination,
+                                feature="watchlist", op="add", at=1700000000 + index,
+                                items=[{"key": f"tmdb:{index}", "title": f"Title {index}"}])
+    page = titles.list_titles(run_id="pair-run", pair="PLEX|default>TRAKT|default", limit=1, conn=conn)
+    assert page["total"] == 2
+    assert [item["title"] for item in page["items"]] == ["Title 1"]
+    page = titles.list_titles(run_id="pair-run", pair="TRAKT|default>PLEX|default", offset=1, conn=conn)
+    assert [item["title"] for item in page["items"]] == ["Title 0"]
+    assert titles.list_titles(run_id="pair-run", pair="PLEX|default>TRAKT|other", conn=conn)["total"] == 1
+    assert titles.list_titles(run_id="pair-run", pair="invalid", conn=conn)["total"] == 0
+
+
 def test_success_records_are_capped_per_destination(conn):
     items = [_movie(n) for n in range(titles.SUCCESS_CAP + 40)]
     rec = RunRecorder(lambda *a, **kw: None, run_id="run-big", conn=conn)

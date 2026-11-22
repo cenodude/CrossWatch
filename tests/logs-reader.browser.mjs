@@ -24,7 +24,7 @@ async function open(t,theme='original',hash='') {
     for(const child of layout.children)child.classList.toggle('hidden',child.id!=='page-logs');
     return doc.documentElement.outerHTML;
   },{source,theme});
-  const state={empty:false,active:false,count:620,requests:[],exports:[],deleted:[],delay:0};
+  const state={empty:false,active:false,count:620,requests:[],exports:[],deleted:[],delay:0,maxMb:100,canManageStorage:true,storageRequests:[],storageError:false};
   const session=id=>({id,run_id:id,channel:'sync',label:id==='a'?'PLEX → TRAKT <script>':'PLEX → SIMKL',started:1795344842,ended:state.active?null:1795344854,status:state.active?'running':'failed',pinned:false,errors:1,warnings:0,lines:state.count,truncated:0,pairs:'[]'});
   await page.route('http://logs.test/**',async route=>{
     const url=new URL(route.request().url()),path=url.pathname,params=Object.fromEntries(url.searchParams);
@@ -35,7 +35,13 @@ async function open(t,theme='original',hash='') {
     if(path==='/api/logs/archive'){
       if(route.request().method()==='DELETE')return route.fulfill({json:{ok:true,deleted:0}});
       state.requests.push(params);
-      return route.fulfill({json:{items:state.empty?[]:[session('a'),session('b')],pairs:[{id:'pair-a',label:'Plex → Trakt'}],latest_run_id:'a',channels:['sync','watcher','captures','backups','audits','system'],used_bytes:1024,max_bytes:104857600,retention_days:7}});
+      return route.fulfill({json:{items:state.empty?[]:[session('a'),session('b')],pairs:[{id:'pair-a',label:'Plex → Trakt'}],latest_run_id:'a',channels:['sync','watcher','captures','backups','audits','system'],used_bytes:1024,max_bytes:state.maxMb*1048576,retention_days:7,can_manage_storage:state.canManageStorage}});
+    }
+    if(path==='/api/logs/archive/settings'){
+      state.storageRequests.push(route.request().postDataJSON());
+      if(state.storageError)return route.fulfill({status:500,json:{detail:'Could not save storage settings.'}});
+      state.maxMb=state.storageRequests.at(-1).max_mb;
+      return route.fulfill({json:{ok:true,max_bytes:state.maxMb*1048576,used_bytes:1024,retention_days:7}});
     }
     if(path.endsWith('/download')){state.exports.push(params);return route.fulfill({contentType:'text/plain',body:params.level?'[ERROR] original failure\n':'[INFO] original first line\n[ERROR] original failure\n'});}
     if(path.endsWith('/lines')){
@@ -94,6 +100,39 @@ test('live pause freezes output while recording continues and source changes dis
   assert.equal(state.requests.at(-1).channel,'captures');
 });
 
+test('log storage saves the limit, preserves edits during polling and reports failures',async t=>{
+  const {page,state}=await open(t);
+  await page.locator('[data-storage-toggle]').click();
+  assert.equal(await page.locator('[data-storage-limit]').inputValue(),'100');
+  assert.equal(await page.locator('[data-save-storage]').isDisabled(),true);
+  await page.locator('[data-storage-limit]').fill('250');
+  await page.waitForResponse(response=>new URL(response.url()).pathname==='/api/logs/archive');
+  assert.equal(await page.locator('[data-storage-limit]').inputValue(),'250');
+  await page.locator('[data-save-storage]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-storage-status]').textContent==='Storage limit saved.');
+  assert.deepEqual(state.storageRequests,[{max_mb:250}]);
+  assert.match(await page.locator('[data-storage-size]').innerText(),/250 MB/);
+  await page.reload();
+  await page.evaluate(async()=>{
+    window.CW={OverviewProfile:{id:''}};
+    await (await import('/assets/js/logs.js')).default.mount(document.querySelector('#page-logs'));
+  });
+  await page.locator('[data-storage-toggle]').click();
+  assert.equal(await page.locator('[data-storage-limit]').inputValue(),'250');
+  await page.locator('[data-storage-limit]').fill('9');
+  await page.locator('[data-save-storage]').click();
+  assert.equal(state.storageRequests.length,1);
+  state.storageError=true;
+  await page.locator('[data-storage-limit]').fill('500');
+  await page.locator('[data-save-storage]').click();
+  await page.waitForFunction(()=>document.querySelector('[data-storage-status]').textContent.includes('Could not save'));
+  assert.match(await page.locator('[data-storage-size]').innerText(),/250 MB/);
+  assert.equal(await page.locator('[data-save-storage]').isEnabled(),true);
+  state.canManageStorage=false;
+  await page.waitForFunction(()=>document.querySelector('[data-storage-form]').hidden);
+  assert.equal(await page.locator('[data-storage-limit]').isVisible(),false);
+});
+
 for(const theme of ['original','flat-dark','flat-light'])test(`logs layout and states: ${theme}`,async t=>{
   const {page,state}=await open(t,theme);
   for(const width of [1440,760,390,320]){
@@ -107,6 +146,20 @@ for(const theme of ['original','flat-dark','flat-light'])test(`logs layout and s
   await page.locator('.logs-options summary').click();assert.ok(await page.locator('[data-delete]').isVisible());
   page.once('dialog',dialog=>dialog.dismiss());await page.locator('[data-delete]').click();assert.equal(state.deleted.length,0);
   await page.locator('.logs-options summary').click();
+  await page.locator('[data-storage-toggle]').click();
+  assert.equal(await page.locator('[data-storage-toggle]').getAttribute('aria-expanded'),'true');
+  for(const width of [1440,390,320]){
+    await page.setViewportSize({width,height:1000});
+    await page.locator('[data-storage-limit]').scrollIntoViewIfNeeded();
+    assert.equal(await page.locator('[data-storage-limit]').isVisible(),true);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    const summary=await page.locator('.logs-storage-summary').boundingBox(),panel=await page.locator('#logs-storage-panel').boundingBox();
+    assert.ok(panel.y>=summary.y+summary.height);
+    if(process.env.CW_LOG_SCREENSHOTS&&width!==320){await mkdir(process.env.CW_LOG_SCREENSHOTS,{recursive:true});await page.screenshot({path:`${process.env.CW_LOG_SCREENSHOTS}/storage-${theme}-${width}.png`,fullPage:true});}
+  }
+  await page.locator('[data-storage-toggle]').click();
+  assert.equal(await page.locator('#logs-storage-panel').isVisible(),false);
+  await page.setViewportSize({width:1440,height:1000});
   if(process.env.CW_LOG_SCREENSHOTS){await mkdir(process.env.CW_LOG_SCREENSHOTS,{recursive:true});await page.screenshot({path:`${process.env.CW_LOG_SCREENSHOTS}/logs-${theme}.png`,fullPage:true});}
   state.empty=true;await page.locator('[data-channel="backups"]').click();
   await page.waitForFunction(()=>document.querySelector('[data-output]').textContent.includes('No saved logs yet'));

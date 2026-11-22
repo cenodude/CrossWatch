@@ -7,6 +7,69 @@ import assert from 'node:assert/strict';
 import {readFile, mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
 
+for (const theme of ['original', 'flat-dark', 'flat-light']) test(`run pair selection follows headings and detail controls: ${theme}`, async t => {
+  const browser = await chromium.launch({headless: true});
+  t.after(() => browser.close());
+  const page = await browser.newPage({viewport: {width: 1440, height: 960}});
+  page.setDefaultTimeout(10000);
+  const errors = [], queries = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const now = Math.floor(Date.now() / 1000), day = Math.floor(now / 86400);
+  const pair = (dst, added = 0) => ({src_provider: 'PLEX', src_instance: 'default', dst_provider: dst, dst_instance: 'default', feature: 'watchlist', added});
+  const run = {run_id: 'shared-run', started_at: now - 30, duration: 4, status: 'ok', changes: 6, errors: 0,
+    pair_rows: [pair('CROSSWATCH', 4), pair('TRAKT', 2)], plans: [pair('CROSSWATCH'), pair('TRAKT'), pair('SIMKL')]};
+  await page.route('http://pairs.test/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname.startsWith('/assets/')) return route.fulfill({body: await readFile(new URL('..' + url.pathname, import.meta.url)), contentType: url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript'});
+    let json = {ok: true, items: [], pairs: []};
+    if (url.pathname === '/api/events/calendar') json = {days: [{d: day, runs: 1, changes: 6}], totals: {runs: 1, changes: 6}};
+    if (url.pathname === '/api/events/calendar/day') json = {runs: [run]};
+    if (url.pathname === '/api/events/titles') {
+      const params = Object.fromEntries(url.searchParams);
+      queries.push(params);
+      const dest = params.pair?.includes('TRAKT') ? 'TRAKT' : 'CROSSWATCH';
+      json = {ok: true, total: 1, items: [{id: dest, title: `${dest} title`, domain: 'sync', run_id: run.run_id, source_provider: 'PLEX', source_instance: 'default', kinds: ['watchlist:add'], destinations: [{provider: dest, instance: 'default', state: 'ok'}]}]};
+    }
+    if (url.pathname.startsWith('/api/')) return route.fulfill({json});
+    return route.fulfill({contentType: 'text/html', body: `<!doctype html><html data-tab="events"${theme === 'original' ? '' : ` data-cw-theme="${theme}"`}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="stylesheet" href="/assets/themes/tokens.css"><link rel="stylesheet" href="/assets/css/pages.css"><link rel="stylesheet" href="/assets/css/page-theme.css"><style>body{margin:16px;background:var(--cw-theme-bg,#080a0d);font-family:Arial,sans-serif}*{box-sizing:border-box}.material-symbols-rounded{font-size:0!important}</style></head><body><main id="page-events"></main></body></html>`});
+  });
+  await page.goto('http://pairs.test');
+  await page.evaluate(async () => {
+    window.CW = {AuthState: {read: () => ({isAdmin: true})}};
+    const view = (await import('/assets/js/events/index.js')).default;
+    await view.mount(document.querySelector('#page-events'), {domain: 'sync', mode: 'runs'});
+  });
+  const trakt = 'PLEX|default>TRAKT|default', simkl = 'PLEX|default>SIMKL|default', crosswatch = 'CROSSWATCH|default>PLEX|default';
+  await page.locator(`.ev-rghead[data-pair="${trakt}"]`).click();
+  await page.waitForFunction(() => document.querySelector('#ev-run-list').textContent.includes('TRAKT title'));
+  assert.match(await page.locator('#ev-detail .ev-outcome').innerText(), /2 added to watchlist/);
+  assert.equal(await page.locator('.ev-rchild.sel').count(), 1);
+  assert.equal(await page.locator('.ev-rchild.sel').getAttribute('data-pair'), trakt);
+  assert.equal(queries.at(-1).pair, trakt);
+  await page.locator(`[data-run-pair="${simkl}"]`).click();
+  assert.match(await page.locator('#ev-detail .ev-dtitle').innerText(), /SIMKL/);
+  assert.match(await page.locator('#ev-detail .ev-outcome').innerText(), /No changes/);
+  assert.equal(await page.locator('#ev-run-list .ev-rtitle').count(), 0);
+  assert.equal(await page.locator('.ev-rchild.sel').getAttribute('data-pair'), simkl);
+  await page.locator(`.ev-rquiet[data-group="${simkl}"]`).click();
+  assert.equal(await page.locator(`.ev-rquiet[data-group="${simkl}"]`).getAttribute('aria-expanded'), 'false');
+  await page.locator(`.ev-rghead[data-pair="${crosswatch}"]`).focus();
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.querySelector('#ev-run-list').textContent.includes('CROSSWATCH title'));
+  await page.locator('[data-run-pair=""]').click();
+  assert.match(await page.locator('#ev-detail .ev-outcome').innerText(), /6 changes/);
+  await page.locator(`[data-run-pair="${trakt}"]`).click();
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({width, height: 960});
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${width}px`);
+    if (process.env.CW_EVENTS_SCREENSHOTS && width !== 320) {
+      await mkdir(process.env.CW_EVENTS_SCREENSHOTS, {recursive: true});
+      await page.screenshot({path: `${process.env.CW_EVENTS_SCREENSHOTS}/pairs-${theme}-${width}.png`, fullPage: true});
+    }
+  }
+  assert.deepEqual(errors, []);
+});
+
 for (const scenario of ['clear_review_filter', 'clear_profile_filter', 'stale_overview', 'merged_playback']) {
   test(`activity regression: ${scenario}`, async t => {
     const browser = await chromium.launch({headless: true});

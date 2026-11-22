@@ -800,6 +800,7 @@ def events_titles(
     destination: str | None = Query(None, max_length=40),
     what: str | None = Query(None, max_length=20),
     run_id: str | None = Query(None, max_length=120),
+    pair: str | None = Query(None, max_length=300),
     since: int | None = None,
     until: int | None = None,
     order: str = Query("newest"),
@@ -814,7 +815,7 @@ def events_titles(
     row_filter = (lambda row: _event_row_allowed(cfg, request, row)) if _title_scoped(request) else None
     payload = _titles.list_titles(
         domain=dom, q=q, outcome=outcome, review=review, attention=attention, source=source,
-        destination=destination, what=what, run_id=run_id, since=since, until=until, order=order,
+        destination=destination, what=what, run_id=run_id, pair=pair, since=since, until=until, order=order,
         limit=limit, offset=offset, row_filter=row_filter,
     )
     return _ok({"ok": True, **payload})

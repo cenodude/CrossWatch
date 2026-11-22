@@ -133,4 +133,9 @@ test('sync runs are grouped per pair with quiet runs folded', async () => {
   const open = runRowsHTML(runs, {open: new Set([groups[1].key])});
   assert.equal((open.match(/class="ev-rrow/g) || []).length, 3);
   assert.match(open, /aria-expanded="true"/);
+  const selected = runRowsHTML(runs, {selected: 'busy', selectedPair: groups[1].key, open: new Set([groups[1].key])});
+  assert.equal((selected.match(/ev-rchild sel/g) || []).length, 1);
+  assert.match(selected, /ev-rchild sel" data-run="busy" data-pair="SIMKL\|default&gt;TRAKT\|default"/);
+  const collapsed = runRowsHTML(runs, {selected: 'busy', selectedPair: groups[1].key});
+  assert.doesNotMatch(collapsed, /aria-expanded="true"/);
 });
