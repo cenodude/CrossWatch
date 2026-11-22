@@ -365,6 +365,28 @@ def _minimal_keep_progress(it: Mapping[str, Any]) -> dict[str, Any]:
         pass
     return out
 
+def _alias_keys(it: Any) -> set[str]:
+    if not isinstance(it, Mapping):
+        return set()
+    show_ids = it.get("show_ids")
+    field = "show_ids" if _norm_type(it.get("type")) in ("episode", "season") and isinstance(show_ids, Mapping) and show_ids else "ids"
+    ids = it.get(field)
+    if not isinstance(ids, Mapping):
+        return set()
+    base = {k: it[k] for k in ("type", "season", "episode") if k in it}
+    keys = {(str(k).lower(), _ck({**base, field: {k: v}})) for k, v in ids.items() if v}
+    return {key for namespace, key in keys if key.startswith(f"{namespace}:")}
+
+
+def _renamed_keys(prev: Mapping[str, Any], cur: Mapping[str, Any], keys: set[str]) -> set[str]:
+    if not keys:
+        return set()
+    aliases: set[str] = set(cur or {})
+    for it in (cur or {}).values():
+        aliases |= _alias_keys(it)
+    return {k for k in keys if ({k} | _alias_keys((prev or {}).get(k))) & aliases}
+
+
 def _confirmed(res: dict) -> int:
     return int((res or {}).get("confirmed", (res or {}).get("count", 0)) or 0)
 
@@ -796,6 +818,9 @@ def _two_way_sync(  # pyright: ignore[reportGeneralTypeIssues]
             obsA = {k for k in prevA.keys() if k not in (A_cur or {})}
         if include_obs_B and not B_suspect:
             obsB = {k for k in prevB.keys() if k not in (B_cur or {})}
+        if not (feature == "history" and history_event_mode):
+            obsA -= _renamed_keys(prevA, A_cur, obsA)
+            obsB -= _renamed_keys(prevB, B_cur, obsB)
         newly = (obsA | obsB) - tomb
 
         if newly:

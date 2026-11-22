@@ -234,6 +234,14 @@ def build_index(adapter: Any, *, reporting: bool = False) -> dict[str, dict[str,
     return out
 
 
+def sync_index(adapter: Any) -> dict[str, dict[str, Any]]:
+    from ._history import add_tmdb_ids
+
+    index = build_index(adapter, reporting=True)
+    add_tmdb_ids(adapter, index.values(), lambda _done: None, 0)
+    return {canonical_item_key(item): item for item in index.values()}
+
+
 def _pull_remote_by_key(adapter: Any) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     rows = pull_library_rows(adapter)
     items: dict[str, dict[str, Any]] = {}

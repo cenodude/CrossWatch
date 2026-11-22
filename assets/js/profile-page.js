@@ -264,7 +264,7 @@
     if (src) return src;
     const episode = isEpisodeItem(item);
     const id = episode ? showTmdbId(item) : tmdbId(item);
-    if (!id) return "/assets/img/placeholder_poster.svg?v=2";
+    if (!id) return [item?.poster_url, item?.backdrop_url].find((value) => typeof value === "string" && value.trim()) || "/assets/img/placeholder_poster.svg?v=2";
     const kind = mediaType(item) ? "tv" : "movie";
     const title = !isEpisodeItem(item) && (item?.series_title || item?.title) ? `&title=${encodeURIComponent(String(item?.series_title || item?.title))}` : "";
     const year = !mediaType(item) && item?.year ? `&year=${encodeURIComponent(String(item.year))}` : "";

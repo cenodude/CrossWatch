@@ -153,6 +153,37 @@ def _tmdb_provider() -> Any:
     return TmdbProvider(lambda: _cfg(), lambda _: None)
 
 
+def _fill_display_tmdb(rows: list[dict[str, Any]]) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from providers.scrobble._show_tmdb import fill_display_tmdb, tmdb_configured, tmdb_title
+
+    cfg = _cfg()
+    if not rows or not tmdb_configured(cfg):
+        return
+
+    def fill(row: dict[str, Any]) -> None:
+        kind = str(row.get("type") or "").lower()
+        ids, show_ids = dict(row["ids"]), dict(row["show_ids"])
+        try:
+            if not fill_display_tmdb(cfg, kind, ids, show_ids):
+                return
+            if row.get("art") is None:
+                row["art"] = _art({**row, "ids": ids, "show_ids": show_ids})
+            if kind in {"episode", "season"}:
+                if not row.get("series_title"):
+                    row["series_title"], year = tmdb_title(cfg, "show", show_ids.get("tmdb"))
+                    row["series_year"] = row.get("series_year") or year
+            elif not row.get("title"):
+                row["title"], year = tmdb_title(cfg, kind, ids.get("tmdb"))
+                row["year"] = row.get("year") or year
+        except Exception:
+            return
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        list(pool.map(fill, rows))
+
+
 def _row(key: str, item: Any, feature: str | None = None) -> dict[str, Any]:
     data = item if isinstance(item, Mapping) else {}
     typ = str(data.get("type") or "").lower() or None
@@ -766,6 +797,7 @@ def tracker_items(
         row["check"] = _check_row(checks.get(key))
         row["status"] = (notes.get(note_keys[key]) or {}).get("status")
         items.append(row)
+    _fill_display_tmdb(items)
     return {
         "ok": True,
         "provider_instance": inst,

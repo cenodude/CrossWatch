@@ -7,11 +7,9 @@ import hashlib
 import json
 import logging
 import os
-import random
 import re
 import threading
 import time
-from email.utils import parsedate_to_datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from pathlib import Path
@@ -227,52 +225,25 @@ def _tmdb_retry_policy() -> tuple[int, float, float]:
     return max(0, max_retries), max(0.05, base_s), max(0.1, max_s)
 
 
-def _tmdb_retry_after_seconds(header: str | None) -> float | None:
-    text = str(header or "").strip()
-    if not text:
-        return None
-    if text.isdigit():
-        return float(text)
-    try:
-        return max(0.0, parsedate_to_datetime(text).timestamp() - time.time())
-    except Exception:
-        return None
-
-
 def _tmdb_get_json(
     url: str,
     params: dict[str, Any] | None = None,
     *,
     timeout: float = 20.0,
 ) -> Any | None:
-    max_retries, base_s, max_s = _tmdb_retry_policy()
-    attempt = 0
-    while True:
-        try:
-            r = requests.get(url, params=params or {}, timeout=timeout)
-            status = r.status_code
-            if status == 429 or 500 <= status < 600:
-                if attempt >= max_retries:
-                    return None
-                if status == 429:
-                    wait = _tmdb_retry_after_seconds(r.headers.get("Retry-After"))
-                else:
-                    wait = None
-                if wait is None:
-                    wait = min(max_s, base_s * (2**attempt)) + random.uniform(0.0, 0.25)
-                time.sleep(wait)
-                attempt += 1
-                continue
-            if not r.ok:
-                return None
-            return r.json()
-        except requests.exceptions.RequestException:
-            if attempt >= max_retries:
-                return None
-            time.sleep(min(max_s, base_s * (2**attempt)) + random.uniform(0.0, 0.25))
-            attempt += 1
-        except Exception:
-            return None
+    from providers.metadata._meta_TMDB import TmdbProvider
+
+    query = dict(params or {})
+    api_key = str(query.pop("api_key", "") or "").strip()
+    retries, base_s, max_s = _tmdb_retry_policy()
+    cfg = {
+        "tmdb": {"api_key": api_key},
+        "metadata": {"backoff_max_retries": retries, "backoff_base_ms": int(base_s * 1000), "backoff_max_ms": int(max_s * 1000)},
+    }
+    try:
+        return TmdbProvider(lambda: cfg, lambda _: None).get_response(url, query, quiet_404=True, timeout=timeout).data
+    except Exception:
+        return None
 
 
 def _tmdb_fetch_posters(api_key: str, typ: str, tmdb_id: str, locale: str | None) -> list[dict[str, Any]]:
@@ -596,6 +567,7 @@ def _entity_from_kind(kind: Any) -> str:
 
 
 _RESOLVED_ENTITY_MEMO: dict[str, str] = {}
+_META_CACHE_MAX_AGE = 30 * 86400
 
 
 class _NoMetadataResult(RuntimeError):
@@ -722,11 +694,11 @@ def _resolve_tmdb_cached(
     return result
 
 
-def _fresh_show_meta(entity: str, tmdb_id: str, locale: str | None, need_key: tuple[str, ...]) -> dict[str, Any]:
+def _provider_meta(entity: str, tmdb_id: str, locale: str | None, need_key: tuple[str, ...]) -> dict[str, Any]:
     provider = _tmdb_provider()
     if provider is None:
         raise _NoMetadataResult("TMDb provider not available")
-    result = provider.fetch(entity=entity, ids={"tmdb": tmdb_id}, locale=locale, need={k: True for k in need_key}, fresh=True) or {}
+    result = provider.fetch(entity=entity, ids={"tmdb": tmdb_id}, locale=locale, need={k: True for k in need_key}) or {}
     if not isinstance(result, dict) or not result:
         raise _NoMetadataResult("empty metadata result")
     return result
@@ -775,10 +747,12 @@ def get_meta(
         locale=eff_locale,
     )
     cached = None
+    expired = False
     live = entity == "show" and bool(eff_need.get("seasons"))
     if _meta_cache_enabled():
         cached = _read_meta_cache(entity, tmdb_id, eff_locale or "en-US")
-        if cached and not live and _need_satisfied(cached, eff_need):
+        expired = bool(cached) and time.time() - float(cached.get("fetched_at") or 0) > _META_CACHE_MAX_AGE
+        if cached and not live and not expired and _need_satisfied(cached, eff_need):
             _meta_debug(
                 "meta_cache_hit",
                 type=entity,
@@ -795,7 +769,7 @@ def get_meta(
         )
 
     try:
-        res = (_fresh_show_meta if live else _resolve_tmdb_cached)(entity, str(tmdb_id), eff_locale, need_key) or {}
+        res = (_provider_meta if live or expired else _resolve_tmdb_cached)(entity, str(tmdb_id), eff_locale, need_key) or {}
     except _NoMetadataResult:
         res = {}
     except Exception as e:
@@ -822,7 +796,7 @@ def get_meta(
         except Exception:
             pass
 
-    if not res and live and cached and _need_satisfied(cached, eff_need):
+    if not res and (live or expired) and cached and _need_satisfied(cached, eff_need):
         res = cached
     if res:
         res["resolved_type"] = entity
@@ -1368,8 +1342,8 @@ def _lookup_tmdb_id(api_key: str, t: str, ns: str, value: str, episode: bool = F
         return None
     rows = [] if episode else (data or {}).get("movie_results" if t == "movie" else "tv_results") or []
     if t == "tv" and not rows:
-        episode = ((data or {}).get("tv_episode_results") or [{}])[0]
-        show = episode.get("show_id") if isinstance(episode, dict) else None
+        episode_row = ((data or {}).get("tv_episode_results") or [{}])[0]
+        show = episode_row.get("show_id") if isinstance(episode_row, dict) else None
         rows = [{"id": show}] if show else []
     found = rows[0].get("id") if rows and isinstance(rows[0], dict) else None
     tmdb_id = int(found) if isinstance(found, int) or (isinstance(found, str) and found.isdigit()) else None
@@ -1913,7 +1887,7 @@ def api_tmdb_season(
         return JSONResponse({"ok": False, "error": "metadata_unavailable"})
     eff_locale = locale or _cfg_ui_locale() or "en-US"
     try:
-        data = provider.get_latest(
+        data = provider._get(
             f"https://api.themoviedb.org/3/tv/{tmdb}/season/{season}",
             {"language": eff_locale},
             quiet_404=True,

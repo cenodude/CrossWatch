@@ -170,6 +170,18 @@ def build_index(adapter: Any, *, reporting: bool = False) -> dict[str, dict[str,
     return out
 
 
+def sync_index(adapter: Any) -> dict[str, dict[str, Any]]:
+    from ._history import add_tmdb_ids
+
+    index = build_index(adapter, reporting=True)
+    add_tmdb_ids(adapter, index.values(), lambda _done: None, 0)
+    out: dict[str, dict[str, Any]] = {}
+    for item in index.values():
+        key = canonical_item_key(item)
+        out[key], _action = select_progress_record(out.get(key), item)
+    return out
+
+
 def _payload_for_item(adapter: Any, item: Mapping[str, Any], current_rows: Any = None) -> tuple[dict[str, Any] | None, str | None]:
     it = dict(item or {})
     mini = id_minimal(it)

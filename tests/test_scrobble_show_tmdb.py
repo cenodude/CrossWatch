@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import requests
 
 from providers.scrobble import _show_tmdb
 from providers.scrobble.emby import watch as emby_watch
@@ -15,9 +16,14 @@ class ResponseStub:
     def __init__(self, status_code: int = 200, payload: Any = None) -> None:
         self.status_code = status_code
         self._payload = payload
+        self.headers: dict[str, str] = {}
 
     def json(self) -> Any:
         return self._payload
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise requests.HTTPError(response=self)
 
 
 @pytest.fixture(autouse=True)
@@ -122,3 +128,106 @@ def test_plex_watch_fills_tmdb_show_from_tvdb_only_show(monkeypatch: pytest.Monk
     assert out.ids["tvdb_show"] == "389492"
     assert out.ids["tmdb_show"] == "113988"
     assert out.title == "Monster (2022)"
+
+
+def test_imdb_only_episode_gets_its_show_tmdb_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install(monkeypatch, {("tt4063800", "imdb_id"): {"tv_results": [{"id": 62476}]}})
+    ids, show_ids = {"imdb": "tt4063800"}, {}
+    assert _show_tmdb.fill_display_tmdb(CFG, "episode", ids, show_ids) is True
+    assert show_ids == {"tmdb": "62476"}
+    assert ids == {"imdb": "tt4063800"}
+
+
+def test_imdb_only_movie_gets_its_tmdb_id(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _install(monkeypatch, {("tt33764258", "imdb_id"): {"movie_results": [{"id": 1368337}]}})
+    ids: dict[str, Any] = {"imdb": "tt33764258"}
+    assert _show_tmdb.fill_display_tmdb(CFG, "movie", ids, {}) is True
+    assert ids["tmdb"] == "1368337"
+    assert _show_tmdb.fill_display_tmdb(CFG, "movie", ids, {}) is False
+    assert calls == [("tt33764258", "imdb_id")]
+
+
+def test_fill_never_runs_without_a_tmdb_key_or_with_known_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _install(monkeypatch, {})
+    assert _show_tmdb.fill_display_tmdb({}, "movie", {"imdb": "tt1"}, {}) is False
+    assert _show_tmdb.fill_display_tmdb(CFG, "episode", {"imdb": "tt1"}, {"tmdb": "5"}) is False
+    assert _show_tmdb.fill_display_tmdb(CFG, "movie", {"imdb": "tt1", "tmdb": "7"}, {}) is False
+    assert _show_tmdb.tmdb_title({}, "movie", 7) == ("", None)
+    assert calls == []
+
+
+def test_tmdb_title_reads_movie_and_show_names(monkeypatch: pytest.MonkeyPatch) -> None:
+    bodies = {"movie/1368337": {"title": "The Odyssey", "release_date": "2026-07-15"},
+              "tv/62476": {"name": "The Bureau", "first_air_date": "2015-04-27"}}
+    monkeypatch.setattr(_show_tmdb.requests, "get", lambda url, **_: ResponseStub(200, bodies[url.split("/3/", 1)[1]]))
+    assert _show_tmdb.tmdb_title(CFG, "movie", "1368337") == ("The Odyssey", 2026)
+    assert _show_tmdb.tmdb_title(CFG, "show", 62476) == ("The Bureau", 2015)
+
+
+def test_hub_history_rows_get_display_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    from api import profileAPI
+
+    _install(monkeypatch, {("tt4063800", "imdb_id"): {"tv_results": [{"id": 62476}]},
+                           ("tt33764258", "imdb_id"): {"movie_results": [{"id": 1368337}]}})
+    rows = [{"type": "episode", "season": 1, "episode": 2, "ids": {"imdb": "tt4063800"}},
+            {"type": "movie", "ids": {"imdb": "tt33764258"}},
+            {"type": "movie", "ids": {"tmdb": "9"}}]
+    profileAPI._fill_history_tmdb(CFG, rows)
+    assert rows[0]["tmdb_show"] == "62476" and rows[0]["ids"] == {"imdb": "tt4063800"}
+    assert rows[1]["tmdb"] == "1368337" and rows[1]["ids"] == {"imdb": "tt33764258"}
+    assert rows[2] == {"type": "movie", "ids": {"tmdb": "9"}}
+    untouched = [{"type": "movie", "ids": {"imdb": "tt33764258"}}]
+    profileAPI._fill_history_tmdb({}, untouched)
+    assert untouched == [{"type": "movie", "ids": {"imdb": "tt33764258"}}]
+
+
+def test_tracker_rows_get_display_ids_and_missing_titles(monkeypatch: pytest.MonkeyPatch) -> None:
+    from api import trackerAPI
+
+    finds = {("tt33764258", "imdb_id"): {"movie_results": [{"id": 1368337}]}}
+    details = {"movie/1368337": {"title": "The Odyssey", "release_date": "2026-07-15"}}
+
+    def get(url: str, params: dict[str, Any], **_: Any) -> ResponseStub:
+        path = url.split("/3/", 1)[1]
+        if path.startswith("find/"):
+            return ResponseStub(200, finds.get((path[5:], params["external_source"])) or {})
+        return ResponseStub(200, details[path])
+
+    monkeypatch.setattr(_show_tmdb.requests, "get", get)
+    monkeypatch.setattr(trackerAPI, "_cfg", lambda: CFG)
+    rows = [{"type": "movie", "title": None, "year": None, "ids": {"imdb": "tt33764258"}, "show_ids": {}, "art": None}]
+    trackerAPI._fill_display_tmdb(rows)
+    assert rows[0]["ids"] == {"imdb": "tt33764258"}
+    assert rows[0]["art"] == {"kind": "movie", "tmdb": "1368337"}
+    assert (rows[0]["title"], rows[0]["year"]) == ("The Odyssey", 2026)
+    monkeypatch.setattr(trackerAPI, "_cfg", lambda: {})
+    bare = [{"type": "movie", "title": None, "year": None, "ids": {"imdb": "tt33764258"}, "show_ids": {}, "art": None}]
+    trackerAPI._fill_display_tmdb(bare)
+    assert bare[0]["title"] is None and bare[0]["art"] is None
+
+
+def test_tracker_episode_keeps_its_stored_show_key_but_gets_art(monkeypatch: pytest.MonkeyPatch) -> None:
+    from api import trackerAPI
+
+    _install(monkeypatch, {("tt4063800", "imdb_id"): {"tv_results": [{"id": 62476}]}})
+    monkeypatch.setattr(trackerAPI, "_cfg", lambda: CFG)
+    row = {"type": "episode", "title": "Episode 2", "series_title": "The Bureau", "series_year": 2015, "season": 1, "episode": 2,
+           "ids": {}, "show_ids": {"imdb": "tt4063800"}, "art": None}
+    trackerAPI._fill_display_tmdb([row])
+    assert row["show_ids"] == {"imdb": "tt4063800"}
+    assert row["art"]["kind"] == "tv" and row["art"]["tmdb"] == "62476"
+
+
+def test_stremio_progress_episode_gets_show_tmdb_for_artwork(monkeypatch: pytest.MonkeyPatch) -> None:
+    from services.playback_progress.adapters import stremio
+    from services.playback_progress.models import PlaybackCapabilities
+
+    _install(monkeypatch, {("tt4063800", "imdb_id"): {"tv_results": [{"id": 62476}]}})
+    caps = PlaybackCapabilities(provider="stremio", provider_label="Stremio", instance_id="default", instance_label="Default", configured=True, read=True)
+    item = {"type": "episode", "title": "The Bureau", "series_title": "The Bureau", "season": 1, "episode": 2,
+            "ids": {"imdb": "tt4063800"}, "show_ids": {"imdb": "tt4063800"}, "poster": "https://images.example/p.jpg",
+            "progress_percent": 100}
+    record = stremio.StremioPlaybackAdapter()._record("k", item, "default", "Default", caps, object(), CFG)
+    assert record is not None
+    assert record.provider_metadata["show_ids"]["tmdb"] == "62476"
+    assert "tmdb" not in record.ids

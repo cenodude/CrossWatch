@@ -4245,23 +4245,6 @@ def _rekey(b: dict[str, Any], old_key: str, it: dict[str, Any]) -> str:
     b.pop(old_key, None)
     return new_key
 
-def _tmdb(path: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-    k = _tmdb_key()
-    if not k:
-        raise HTTPException(400, "tmdb.api_key missing in config.json")
-
-    query: dict[str, Any] = {}
-    if params:
-        query.update(params)
-    query["api_key"] = k
-    r = requests.get(
-        f"https://api.themoviedb.org/3{path}",
-        params=query,
-        timeout=8,
-    )
-    r.raise_for_status()
-    return r.json()
-
 def _trakt(path: str, params: dict[str, Any]) -> list[dict[str, Any]]:
     h = _trakt_headers()
     if not h.get("trakt-api-key"):
@@ -4283,22 +4266,19 @@ def _tmdb_bulk(ids: list[int]) -> dict[int, dict[str, Any]]:
     key = _tmdb_key()
     if not key:
         return {}
+    from providers.metadata._meta_TMDB import TmdbProvider
+
+    provider = TmdbProvider(lambda: {"tmdb": {"api_key": key}}, lambda _: None)
+    params = {"language": "en-US", "append_to_response": "release_dates"}
     out: dict[int, dict[str, Any]] = {}
-    for chunk_start in range(0, len(ids), 20):
-        chunk = ids[chunk_start : chunk_start + 20]
-        url = "https://api.themoviedb.org/3/movie"
-        params = {
-            "api_key": key,
-            "language": "en-US",
-            "append_to_response": "release_dates",
-        }
-        for mid in chunk:
-            try:
-                r = requests.get(f"{url}/{mid}", params=params, timeout=10)
-                if r.ok:
-                    out[mid] = r.json()
-            except Exception:
-                continue
+    for mid in ids:
+        try:
+            data = provider.get_response(f"https://api.themoviedb.org/3/movie/{mid}", params,
+                                         quiet_404=True, timeout=10, max_retries=1, copy=False).data
+        except Exception:
+            continue
+        if isinstance(data, dict):
+            out[mid] = data
     return out
 
 def _tmdb_region_dates(meta: dict[int, dict[str, Any]]) -> dict[int, dict[str, Any]]:

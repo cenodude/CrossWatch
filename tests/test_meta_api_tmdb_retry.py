@@ -7,6 +7,8 @@ import requests
 
 from api import metaAPI
 
+KEY = {"api_key": "key"}
+
 
 class FakeResponse:
     def __init__(self, status: int, payload: Any = None, headers: dict[str, str] | None = None) -> None:
@@ -20,6 +22,10 @@ class FakeResponse:
 
     def json(self) -> Any:
         return self._payload
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise requests.HTTPError(response=self)
 
 
 def _patch(monkeypatch, responses: list[Any]) -> list[float]:
@@ -46,26 +52,26 @@ def test_429_honours_retry_after_then_succeeds(monkeypatch) -> None:
             FakeResponse(200, {"posters": [{"file_path": "/a.jpg"}]}),
         ],
     )
-    data = metaAPI._tmdb_get_json("https://api.themoviedb.org/3/movie/8392/images")
+    data = metaAPI._tmdb_get_json("https://api.themoviedb.org/3/movie/8392/images", KEY)
     assert data == {"posters": [{"file_path": "/a.jpg"}]}
     assert slept == [2.0]
 
 
 def test_500_backs_off_then_gives_up(monkeypatch) -> None:
     slept = _patch(monkeypatch, [FakeResponse(500) for _ in range(4)])
-    assert metaAPI._tmdb_get_json("https://api.themoviedb.org/3/movie/1/images") is None
+    assert metaAPI._tmdb_get_json("https://api.themoviedb.org/3/movie/1/images", KEY) is None
     assert len(slept) == 3
 
 
 def test_404_returns_none_without_retrying(monkeypatch) -> None:
     slept = _patch(monkeypatch, [FakeResponse(404)])
-    assert metaAPI._tmdb_get_json("https://api.themoviedb.org/3/movie/1/images") is None
+    assert metaAPI._tmdb_get_json("https://api.themoviedb.org/3/movie/1/images", KEY) is None
     assert slept == []
 
 
 def test_network_error_retries_then_gives_up(monkeypatch) -> None:
     slept = _patch(monkeypatch, [requests.exceptions.ConnectionError() for _ in range(4)])
-    assert metaAPI._tmdb_get_json("https://api.themoviedb.org/3/movie/1/images") is None
+    assert metaAPI._tmdb_get_json("https://api.themoviedb.org/3/movie/1/images", KEY) is None
     assert len(slept) == 3
 
 

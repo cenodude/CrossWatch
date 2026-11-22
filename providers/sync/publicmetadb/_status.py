@@ -76,7 +76,14 @@ def progress(adapter, ident, watched):
         return None
     try:
         provider = _tmdb_metadata_provider(adapter)
-        details = provider.lookup("show", ident, fresh=True).data
+    except Exception:
+        return None
+    return _progress(provider, ident, watched, fresh=False) or _progress(provider, ident, watched, fresh=True)
+
+
+def _progress(provider, ident, watched, *, fresh):
+    try:
+        details = provider.lookup("show", ident, fresh=fresh).data
         seasons = details.get("seasons")
         if not isinstance(seasons, list) or not isinstance(details.get("status"), str):
             return None
@@ -96,7 +103,7 @@ def progress(adapter, ident, watched):
             if number == 0:
                 continue
             raise_if_cancelled()
-            season = provider.lookup("show", ident, season=number, fresh=True).data
+            season = provider.lookup("show", ident, season=number, fresh=fresh).data
             episodes = season.get("episodes")
             expected = next(row.get("episode_count") for row in seasons if row["season_number"] == number)
             if not isinstance(episodes, list) or type(expected) is not int or len(episodes) != expected:
