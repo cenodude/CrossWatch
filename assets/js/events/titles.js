@@ -602,13 +602,13 @@ const entryParts = (group, entry) => {
   return routes.flatMap((route) => route.parts.map((p) => ({ ...p, text: named ? `${providerLabel(route.dst)}: ${p.text}` : p.text })));
 };
 
-const childRowHTML = (group, entry, selected) => {
+const childRowHTML = (group, entry, selected, selectedPair) => {
   const { run } = entry;
   const status = entry.errors ? "error" : run.status === "running" ? "info" : entry.changes ? "ok" : "idle";
   const parts = entry.active ? entryParts(group, entry) : [];
   const what = parts.length ? parts.map((p) => `<span${p.bad ? ` class="bad"` : ""}>${esc(p.text)}</span>`).join("")
     : esc(entry.errors ? `${fmt(entry.errors)} failed` : entry.changes ? `${fmt(entry.changes)} changes` : run.status === "running" ? "Running" : "No changes");
-  return `<div class="ev-rrow ev-rchild${String(selected) === String(run.run_id) ? " sel" : ""}" data-run="${esc(run.run_id)}" tabindex="0" role="button">
+  return `<div class="ev-rrow ev-rchild${String(selected) === String(run.run_id) && (!selectedPair || selectedPair === group.key) ? " sel" : ""}" data-run="${esc(run.run_id)}" data-pair="${esc(group.key)}" tabindex="0" role="button">
       <span class="ev-rbranch" aria-hidden="true"></span>
       <span class="ev-rtime">${esc(runTime(run.started_at))}</span>
       <span class="ev-rdot ${status}" aria-hidden="true"></span>
@@ -617,7 +617,7 @@ const childRowHTML = (group, entry, selected) => {
     </div>`;
 };
 
-export function runRowsHTML(runs, { selected = "", open = new Set(), openAll = false } = {}) {
+export function runRowsHTML(runs, { selected = "", selectedPair = "", open = new Set(), openAll = false } = {}) {
   if (!runs.length) return `<div class="ev-empty ev-empty-inline">No sync runs on this day.</div>`;
   return runGroups(runs).map((group) => {
     const active = group.runs.filter((e) => e.active);
@@ -625,37 +625,41 @@ export function runRowsHTML(runs, { selected = "", open = new Set(), openAll = f
     const features = [...group.features].map((f) => FEATURE_LABEL[f] || f).join(", ");
     const count = `${fmt(group.runs.length)} ${group.runs.length === 1 ? "run" : "runs"}`;
     const meta = [features, active.length ? count : `${count}, no changes`].filter(Boolean).join(" · ");
-    const shown = openAll || open.has(group.key) || quiet.some((e) => String(e.run.run_id) === String(selected));
+    const shown = openAll || open.has(group.key);
     const quietLine = quiet.length ? `<button type="button" class="ev-rquiet" data-group="${esc(group.key)}" aria-expanded="${shown}">
         <span class="ev-rbranch" aria-hidden="true"></span>
         <span class="ev-rquiet-text">${esc(`${fmt(quiet.length)} ${quiet.length === 1 ? "run" : "runs"} without changes`)}</span>
         <span class="ev-rquiet-act">${shown ? "Hide" : "Show"}</span>
       </button>` : "";
     return `<div class="ev-rgroup">
-      <div class="ev-rghead">${groupRouteHTML(group)}<span class="ev-rgmeta">${esc(meta)}</span></div>
-      ${active.map((e) => childRowHTML(group, e, selected)).join("")}
+      <div class="ev-rghead" data-run="${esc(group.runs[0].run.run_id)}" data-pair="${esc(group.key)}" tabindex="0" role="button">${groupRouteHTML(group)}<span class="ev-rgmeta">${esc(meta)}</span></div>
+      ${active.map((e) => childRowHTML(group, e, selected, selectedPair)).join("")}
       ${quietLine}
-      ${shown ? `<div class="ev-rquiet-list">${quiet.map((e) => childRowHTML(group, e, selected)).join("")}</div>` : ""}
+      ${shown ? `<div class="ev-rquiet-list">${quiet.map((e) => childRowHTML(group, e, selected, selectedPair)).join("")}</div>` : ""}
     </div>`;
   }).join("");
 }
 
 export function renderRunDetail(host, run, ctx) {
-  const routes = runRoutes(run);
   const groups = runGroups([run]).filter((g) => g.key);
-  const lead = groups.find((g) => g.runs[0]?.active) || groups[0];
-  const single = groups.length === 1 && routes.length <= 1;
+  const pair = groups.find((g) => g.key === ctx.pair);
+  const entry = pair?.runs[0];
+  const scopedRun = entry ? {...run, pair_rows: entry.rows, changes: entry.changes, errors: entry.errors} : run;
+  const routes = runRoutes(scopedRun);
+  const lead = pair || groups.find((g) => g.runs[0]?.active) || groups[0];
+  const single = (pair || groups.length === 1) && routes.length <= 1;
   const result = single && routes.length ? routes[0].parts.map((p) => p.text).join(", ")
-    : run.changes ? `${fmt(run.changes)} changes` : run.status === "running" ? "Running" : "No changes";
-  const failed = run.errors && !(single && routes.length) ? `${fmt(run.errors)} failed` : "";
+    : scopedRun.changes ? `${fmt(scopedRun.changes)} changes` : run.status === "running" ? "Running" : "No changes";
+  const failed = scopedRun.errors && !(single && routes.length) ? `${fmt(scopedRun.errors)} failed` : "";
   const outcome = [result, failed, runDur(run.duration) ? `took ${runDur(run.duration)}` : "", run.dry_run ? "dry run" : ""].filter(Boolean).join(" · ");
   const summary = !single && routes.length ? `<div class="ev-rsums">${routes.map(routeLineHTML).join("")}</div>` : "";
-  const status = run.errors ? "error" : run.status === "running" ? "info" : "ok";
+  const status = scopedRun.errors ? "error" : run.status === "running" ? "info" : "ok";
   host.innerHTML = `
     <div class="ev-dhead">
-      <div class="ev-dhead-row"><span class="ev-badge ${status}">${esc(run.errors ? "Had failures" : run.status === "running" ? "Running" : "Finished")}</span><span class="ev-dhead-spacer"></span><span class="ev-dtime">${esc(fullTime(run.started_at))}</span></div>
-      <div class="ev-dtitle ev-rdtitle">${lead ? groupRouteHTML(lead) : "Sync run"}${groups.length > 1 ? `<span class="ev-rdmore">${esc(`+${fmt(groups.length - 1)} more`)}</span>` : ""}</div>
+      <div class="ev-dhead-row"><span class="ev-badge ${status}">${esc(scopedRun.errors ? "Had failures" : run.status === "running" ? "Running" : "Finished")}</span><span class="ev-dhead-spacer"></span><span class="ev-dtime">${esc(fullTime(run.started_at))}</span></div>
+      <div class="ev-dtitle ev-rdtitle">${lead ? groupRouteHTML(lead) : "Sync run"}${!pair && groups.length > 1 ? `<span class="ev-rdmore">${esc(`+${fmt(groups.length - 1)} more`)}</span>` : ""}</div>
       <p class="ev-outcome">${esc(outcome.charAt(0).toUpperCase() + outcome.slice(1))}</p>
+      ${groups.length > 1 ? `<div class="ev-path-acts" role="group" aria-label="Pairs in this run"><button type="button" class="ev-tbtn" data-run-pair="" aria-pressed="${!pair}">All pairs</button>${groups.map(g => `<button type="button" class="ev-tbtn" data-run-pair="${esc(g.key)}" aria-pressed="${g === pair}">${groupRouteHTML(g)}</button>`).join("")}</div>` : ""}
     </div>
     ${summary}
     <h4>Titles <span class="ev-h4-note" id="ev-run-total"></span></h4>
@@ -666,19 +670,25 @@ export function renderRunDetail(host, run, ctx) {
     </div>`;
   host.querySelector("#ev-run-titles")?.addEventListener("click", () => ctx.showTitles?.(run.run_id));
   host.querySelector("#ev-run-logs")?.addEventListener("click", () => window.openLogs?.({ runId: run.run_id, channel: "sync" }));
-  void loadRunTitles(host, run, ctx);
+  host.querySelectorAll("[data-run-pair]").forEach(button => button.addEventListener("click", () => ctx.selectPair?.(button.dataset.runPair)));
+  void loadRunTitles(host, scopedRun, {...ctx, pair: pair?.key || ""});
 }
 
 async function loadRunTitles(host, run, ctx) {
   const listEl = host.querySelector("#ev-run-list");
   if (!listEl || !ctx.fetchJson) return;
-  const query = (extra = "") => ctx.fetchJson(`/api/events/titles?domain=sync&run_id=${encodeURIComponent(run.run_id)}&limit=${RUN_TITLE_LIMIT}${extra}`);
+  const query = (extra = "") => ctx.fetchJson(`/api/events/titles?domain=sync&run_id=${encodeURIComponent(run.run_id)}&limit=${RUN_TITLE_LIMIT}${ctx.pair ? `&pair=${encodeURIComponent(ctx.pair)}` : ""}${extra}`);
   try {
-    const [all, failed] = await Promise.all([query(), run.errors ? query("&outcome=failed") : Promise.resolve(null)]);
+    const [all, failed] = ctx.pair && !run.changes && !run.errors ? [{ok: true, items: [], total: 0}, null] : await Promise.all([query(), run.errors ? query("&outcome=failed") : Promise.resolve(null)]);
     if (!listEl.isConnected) return;
     if (!all?.ok) throw new Error("failed");
     const seen = new Set();
-    const items = [...(failed?.items || []), ...(all.items || [])].filter((it) => !seen.has(String(it.id)) && seen.add(String(it.id))).slice(0, RUN_TITLE_LIMIT);
+    const items = [...(failed?.items || []), ...(all.items || [])].filter((it) => !seen.has(String(it.id)) && seen.add(String(it.id))).slice(0, RUN_TITLE_LIMIT).map(item => {
+      if (!ctx.pair) return item;
+      const source = endpointKey(item.source_provider, item.source_instance);
+      const destination = ctx.pair.split(">").find(endpoint => endpoint !== source);
+      return {...item, destinations: (item.destinations || []).filter(d => endpointKey(d.provider, d.instance) === destination)};
+    });
     const total = Number(all.total || 0);
     listEl.innerHTML = items.length
       ? items.map((it) => runTitleHTML(it, ctx.tmdbOn)).join("")
@@ -688,7 +698,7 @@ async function loadRunTitles(host, run, ctx) {
     const more = host.querySelector("#ev-run-titles");
     if (more && total > items.length) {
       more.hidden = false;
-      more.querySelector("span:last-child").textContent = `Show all ${fmt(total)}`;
+      more.querySelector("span:last-child").textContent = ctx.pair ? "Show all titles in run" : `Show all ${fmt(total)}`;
     }
     bindCovers(listEl);
     listEl.querySelectorAll(".ev-rtitle").forEach((btn) => btn.addEventListener("click", () => ctx.openTitle?.(run.run_id, btn.dataset.tid)));

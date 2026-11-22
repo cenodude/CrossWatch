@@ -690,6 +690,7 @@ _WHAT_KINDS = {
 def _filters(
     domain: str, q: str | None, outcome: str | None, review: str | None, attention: bool, source: str | None,
     destination: str | None, what: str | None, run_id: str | None, since: int | None, until: int | None,
+    pair: str | None = None,
 ) -> tuple[list[str], list[Any]]:
     clauses = ["t.domain=?", "t.last_event_at IS NOT NULL"]
     params: list[Any] = [str(domain or "sync")]
@@ -719,6 +720,16 @@ def _filters(
     if run_id:
         clauses.append("t.run_id=?")
         params.append(str(run_id))
+    if pair:
+        endpoints = [part.partition("|") for part in pair.split(">")]
+        if len(endpoints) != 2 or any(not provider or not separator or not instance for provider, separator, instance in endpoints):
+            clauses.append("0")
+        else:
+            directions = []
+            for source_endpoint, destination_endpoint in (endpoints, endpoints[::-1]):
+                directions.append("(UPPER(t.source_provider)=? AND LOWER(COALESCE(NULLIF(t.source_instance,''),'default'))=? AND instr(LOWER(t.routes),?)>0)")
+                params.extend([source_endpoint[0].upper(), source_endpoint[2].lower(), f"|{destination_endpoint[0].lower()}/{destination_endpoint[2].lower()}|"])
+            clauses.append("(" + " OR ".join(directions) + ")")
     if since not in (None, ""):
         clauses.append("t.last_event_at>=?")
         params.append(int(since))
@@ -739,6 +750,7 @@ def list_titles(
     destination: str | None = None,
     what: str | None = None,
     run_id: str | None = None,
+    pair: str | None = None,
     since: int | None = None,
     until: int | None = None,
     order: str | None = "newest",
@@ -759,7 +771,7 @@ def list_titles(
         refresh_dirty(c)
     preparing = not ensure_ready(c)
 
-    clauses, params = _filters(domain, q, outcome, review, attention, source, destination, what, run_id, since, until)
+    clauses, params = _filters(domain, q, outcome, review, attention, source, destination, what, run_id, since, until, pair)
     fn = "cw_title_allowed"
     if row_filter:
         cache: dict[tuple[Any, ...], bool] = {}
@@ -767,7 +779,7 @@ def list_titles(
         clauses.append(f"{fn}(t.source_provider, t.source_instance, t.routes)=1")
     where = " WHERE " + " AND ".join(clauses)
     dir_ = "ASC" if str(order or "").strip().lower() in ("oldest", "asc") else "DESC"
-    attn_clauses, attn_params = _filters(domain, q, outcome, review, True, source, destination, None, run_id, since, until)
+    attn_clauses, attn_params = _filters(domain, q, outcome, review, True, source, destination, None, run_id, since, until, pair)
     if row_filter:
         attn_clauses.append(f"{fn}(t.source_provider, t.source_instance, t.routes)=1")
     try:

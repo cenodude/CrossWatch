@@ -24,6 +24,8 @@ from cw_platform.log_context import log_pair_id, log_run_id, log_session
 
 RETENTION_DAYS = 7
 MAX_BYTES = 100 * 1024 * 1024
+MIN_STORAGE_MB = 10
+MAX_STORAGE_MB = 10240
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 LEVEL = re.compile(r"(?:^|\]\s+|\d{2}:\d{2}:\d{2}\s+|\[)(ERROR|CRITICAL|WARNING|WARN|DEBUG|INFO|SUCCESS)\b", re.I)
 
@@ -59,10 +61,9 @@ def describe_line(text: str, tag: str) -> tuple[str, str, str]:
 
 
 class LogArchive:
-    def __init__(self, path: Path, *, max_bytes: int = MAX_BYTES, retention_days: int = RETENTION_DAYS):
+    def __init__(self, path: Path, *, max_bytes: int | None = None, retention_days: int = RETENTION_DAYS):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
-        self.max_bytes = max_bytes
         self.retention_days = retention_days
         self.db = sqlite3.connect(path, check_same_thread=False, timeout=5)
         self.db.row_factory = sqlite3.Row
@@ -81,7 +82,11 @@ class LogArchive:
             ts REAL NOT NULL, level TEXT NOT NULL, provider TEXT NOT NULL, text TEXT NOT NULL);
           CREATE INDEX IF NOT EXISTS lines_session ON lines(session_id,id);
           CREATE INDEX IF NOT EXISTS sessions_run ON sessions(run_id);
+          CREATE TABLE IF NOT EXISTS archive_settings (
+            id INTEGER PRIMARY KEY CHECK(id=1), max_bytes INTEGER NOT NULL CHECK(max_bytes>0));
         """)
+        settings = self.db.execute('SELECT max_bytes FROM archive_settings WHERE id=1').fetchone()
+        self.max_bytes = max_bytes if max_bytes is not None else int(settings['max_bytes']) if settings else MAX_BYTES
         columns = {row['name'] for row in self.db.execute('PRAGMA table_info(lines)')}
         for name in ('pair_id', 'run_id'):
             if name not in columns:
@@ -121,6 +126,15 @@ class LogArchive:
             if self.used + size <= self.max_bytes:
                 return True
         return False
+
+    def set_max_bytes(self, max_bytes: int) -> None:
+        if max_bytes <= 0:
+            raise ValueError('Log storage size must be positive.')
+        with self.lock:
+            self.db.execute('INSERT INTO archive_settings(id,max_bytes) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET max_bytes=excluded.max_bytes', (max_bytes,))
+            self.max_bytes = max_bytes
+            self._room(0)
+            self.flush()
 
     def start(self, run_id: str, pairs: list[dict]) -> str:
         with self.lock:

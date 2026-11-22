@@ -138,6 +138,64 @@ def test_old_unpinned_log_is_evicted_to_make_room(tmp_path):
         log.close()
 
 
+def test_storage_limit_persists_after_restart(tmp_path):
+    path = tmp_path / 'logs.db'
+    log = LogArchive(path)
+    assert log.max_bytes == 100 * 1024 * 1024
+    log.set_max_bytes(250 * 1024 * 1024)
+    log.close()
+    reopened = LogArchive(path)
+    try:
+        assert reopened.max_bytes == 250 * 1024 * 1024
+    finally:
+        reopened.close()
+
+
+def test_reducing_storage_keeps_pinned_and_active_sessions(store):
+    old = store.start('old', [])
+    store.append('sync', 'SYNC', 'old record')
+    store.finish(old, 'completed')
+    keep = store.start('pinned', [])
+    store.finish(keep, 'completed')
+    store.pin(keep, True)
+    active = store.start('active', [])
+    store.set_max_bytes(512)
+    assert store.session(old) is None
+    assert store.session(keep) is not None
+    assert store.session(active)['ended'] is None
+    store.append('sync', 'SYNC', 'no room')
+    assert store.session(active)['truncated'] == 1
+    assert store.page(active)['total'] == 0
+    store.set_max_bytes(4096)
+    store.append('sync', 'SYNC', 'recording resumed')
+    assert store.page(active)['items'][0]['text'] == 'recording resumed'
+
+
+def test_storage_api_validates_limits_and_requires_server_admin(monkeypatch, store):
+    from api import logsAPI
+
+    monkeypatch.setattr(logsAPI, 'archive', lambda: store)
+    monkeypatch.setattr(logsAPI, 'load_config', lambda: {})
+    app = FastAPI()
+    app.include_router(logsAPI.router)
+    with TestClient(app) as client:
+        assert client.get('/api/logs/archive').json()['can_manage_storage'] is True
+        response = client.put('/api/logs/archive/settings', json={'max_mb': 250})
+        assert response.status_code == 200
+        assert response.json()['max_bytes'] == 250 * 1024 * 1024
+        assert client.get('/api/logs/archive').json()['max_bytes'] == store.max_bytes
+        for value in (0, 9, 10241, 50.5, True, '250'):
+            assert client.put('/api/logs/archive/settings', json={'max_mb': value}).status_code == 422
+        assert store.max_bytes == 250 * 1024 * 1024
+        monkeypatch.setattr(logsAPI, 'request_user', lambda request: {'is_admin': False})
+        assert client.get('/api/logs/archive').json()['can_manage_storage'] is False
+        assert client.put('/api/logs/archive/settings', json={'max_mb': 100}).status_code == 403
+        monkeypatch.setattr(logsAPI, 'request_user', lambda request: {'is_admin': True})
+        monkeypatch.setattr(logsAPI, 'requested_view_as_profile', lambda request: 'a' * 32)
+        assert client.put('/api/logs/archive/settings', json={'max_mb': 100}).status_code == 403
+        assert store.max_bytes == 250 * 1024 * 1024
+
+
 def test_daily_channels_and_completed_run_remain_separate(store):
     sid=store.start('sync', [])
     store.append('sync','SYNC','INFO run')
