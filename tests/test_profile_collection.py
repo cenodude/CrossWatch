@@ -1,10 +1,88 @@
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+import threading
+
+import pytest
 
 from api import profileAPI
 
 
 def _baseline(items: dict) -> dict:
     return {"collection": {"baseline": {"items": items}}}
+
+
+def test_collection_cache_survives_unrelated_writes_and_refreshes_changes(tmp_path, monkeypatch) -> None:
+    from cw_platform.local_db import state as sqlite_state
+
+    monkeypatch.setattr(profileAPI, "CONFIG_DIR", tmp_path)
+    profileAPI._COLLECTION_INDEX_CACHE.clear()
+    item = {"type": "movie", "title": "One", "ids": {"tmdb": "1"}}
+    sqlite_state.save_feature_baseline(tmp_path, provider="PLEX", feature="collection", items={"tmdb:1": item})
+    loads = []
+
+    def payload():
+        def loader():
+            loads.append(1)
+            return sqlite_state.load_state_features(tmp_path, {"collection"})
+        return profileAPI.build_profile_collection_payload(loader, {}, cache_key=profileAPI.collection_cache_fingerprint())
+
+    assert payload()["items"][0]["title"] == "One"
+    sqlite_state.save_feature_baseline(tmp_path, provider="PLEX", feature="history", items={"tmdb:1": item}, last_sync_epoch=123)
+    assert payload()["total"] == 1
+    assert len(loads) == 1
+    sqlite_state.save_feature_baseline(tmp_path, provider="PLEX", feature="collection", items={"tmdb:1": {**item, "title": "Updated"}})
+    assert payload()["items"][0]["title"] == "Updated"
+    assert len(loads) == 2
+    (tmp_path / "config.json").write_text("{}")
+    payload()
+    assert len(loads) == 3
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_collection_concurrent_requests_share_build_and_retry_failure(monkeypatch, fail) -> None:
+    entered = threading.Event()
+    waiting = threading.Event()
+    release = threading.Event()
+    loads = []
+    profileAPI._COLLECTION_INDEX_CACHE.clear()
+    original_result = profileAPI.Future.result
+
+    def result(future, *args, **kwargs):
+        waiting.set()
+        return original_result(future, *args, **kwargs)
+
+    monkeypatch.setattr(profileAPI.Future, "result", result)
+
+    def loader():
+        loads.append(1)
+        entered.set()
+        assert release.wait(5)
+        if fail:
+            raise ValueError("failed build")
+        return {"providers": {"PLEX": _baseline({"tmdb:1": {"type": "movie", "ids": {"tmdb": "1"}}})}}
+
+    def load():
+        return profileAPI._collection_index(loader, {}, "", ("concurrent", fail))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(load)
+        try:
+            assert entered.wait(5)
+            second = pool.submit(load)
+            assert waiting.wait(5)
+        finally:
+            release.set()
+        if fail:
+            for task in (first, second):
+                with pytest.raises(ValueError, match="failed build"):
+                    task.result()
+        else:
+            assert first.result() == second.result()
+    assert len(loads) == 1
+    assert not profileAPI._COLLECTION_BUILDS
+    if fail:
+        recovered = profileAPI._collection_index({}, {}, "", ("concurrent", fail))
+        assert recovered[1]["all"] == 0
 
 
 def test_profile_collection_merges_owned_sources_for_user_profile() -> None:

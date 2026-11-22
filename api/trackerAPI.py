@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from api.view_cache import background_view
+
 import math
 import re
 import time
@@ -705,6 +707,7 @@ def _change(batch: ChangeBatch) -> dict[str, Any]:
 
 
 @router.get("/summary", dependencies=_READY)
+@background_view
 def tracker_summary(request: Request, provider_instance: str | None = Query("default")) -> Any:
     cfg, inst, store = _store(provider_instance, request, fallback=True)
     with store.session():
@@ -741,6 +744,7 @@ def tracker_summary(request: Request, provider_instance: str | None = Query("def
 
 
 @router.get("/items", dependencies=_READY)
+@background_view
 def tracker_items(
     request: Request,
     feature: str = Query("history"),
@@ -809,6 +813,7 @@ def tracker_items(
 
 
 @router.get("/history/titles", dependencies=_READY)
+@background_view
 def tracker_history_titles(
     request: Request,
     provider_instance: str | None = Query("default"),
@@ -856,6 +861,7 @@ def _month_end(month: str) -> str:
 
 
 @router.get("/months", dependencies=_READY)
+@background_view
 def tracker_months(
     request: Request,
     feature: str = Query("history"),
@@ -1542,6 +1548,7 @@ def tracker_title(
 
 
 @router.get("/shows", dependencies=_READY)
+@background_view
 def tracker_shows(
     request: Request,
     provider_instance: str | None = Query("default"),
@@ -1633,6 +1640,7 @@ def tracker_wrapped(request: Request, provider_instance: str | None = Query("def
 
 
 @router.get("/overview", dependencies=_READY)
+@background_view
 def tracker_overview(request: Request, provider_instance: str | None = Query("default"), day: str = Query("", max_length=10)) -> Any:
     cfg, inst, store = _store(provider_instance, request)
     try:
@@ -1696,6 +1704,7 @@ def tracker_overview_shows(request: Request, provider_instance: str | None = Que
 
 
 @router.get("/notes", dependencies=_READY)
+@background_view
 def tracker_notes(
     request: Request,
     provider_instance: str | None = Query("default"),
@@ -1910,6 +1919,7 @@ def tracker_seasons(request: Request, provider_instance: str | None = Query("def
 
 
 @router.get("/stats", dependencies=_READY)
+@background_view
 def tracker_stats(request: Request, provider_instance: str | None = Query("default")) -> Any:
     _, inst, store = _store(provider_instance, request)
     now = datetime.now(timezone.utc)

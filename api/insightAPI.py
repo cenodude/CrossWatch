@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
+from api.view_cache import background_view
+
 import datetime as _dt
 import json
 import re
@@ -85,6 +87,9 @@ def _load_state_features(features: set[str] | list[str] | tuple[str, ...], inclu
         state = StateStore(CONFIG).load_state_features(features, include_sync_users=include_sync_users)
         return state if isinstance(state, dict) else {}
     except Exception:
+        from services.view_cache import STRICT_READ
+        if STRICT_READ.get():
+            raise
         return {}
 
 
@@ -159,10 +164,6 @@ def _provider_instances(
     return out
 
 
-def _generation_of(key: Any) -> Any:
-    return key[0] if isinstance(key, tuple) and key else key
-
-
 def _lru_get(cache: "OrderedDict[Any, Any]", key: Any) -> Any:
     if key is None:
         return None
@@ -177,8 +178,7 @@ def _lru_put(cache: "OrderedDict[Any, Any]", limit: int, key: Any, value: Any) -
     if key is None:
         return
     with _DERIVED_LOCK:
-        gen = _generation_of(key)
-        for stale in [k for k in cache if _generation_of(k) != gen]:
+        for stale in [k for k in cache if isinstance(k, tuple) and isinstance(key, tuple) and k[1:] == key[1:]]:
             cache.pop(stale, None)
         cache[key] = value
         cache.move_to_end(key)
@@ -487,6 +487,7 @@ def register_insights(app: FastAPI) -> None:
         return {"ok": True, "feature": feature, "snapshot": snapshot, "provider_instance": inst}
 
     @app.get("/api/insights", tags=["insight"])
+    @background_view
     def api_insights(
         request: Request,
         limit_samples: int = Query(60),

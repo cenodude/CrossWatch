@@ -3,6 +3,8 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+from api.view_cache import background_view
+
 import copy
 import hashlib
 import json
@@ -210,6 +212,7 @@ def _dashboard_widgets_version(
 
 
 @router.get("/widgets")
+@background_view
 def dashboard_widgets(
     request: Request = cast(Request, None),
     history_limit: int = Query(8, ge=1, le=24),

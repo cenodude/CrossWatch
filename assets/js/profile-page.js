@@ -69,13 +69,27 @@
     scope: scopeUrl,
   };
 
+  function cachedViewHost(url) {
+    const parsed = new URL(url, location.origin);
+    if (parsed.pathname === "/api/dashboard/widgets" && parsed.searchParams.get("view") === "hero") {
+      return document.querySelector("#profile-panel-overview.active") ? null : document.querySelector("#profile-hero");
+    }
+    const section = parsed.pathname.startsWith("/api/profile/") && !parsed.searchParams.has("summary_only") ? parsed.pathname.split("/").pop() : "overview";
+    return document.querySelector(`#profile-panel-${section}.active`);
+  }
+
   const api = async (url, opt = {}, ms = API_TIMEOUT_MS) => {
+    const {viewCache = true, ...fetchOptions} = opt;
+    const scoped = scopeUrl(url);
+    if (viewCache && !opt.method && window.CW?.ViewCache?.supported(scoped)) {
+      return window.CW.ViewCache.read(scoped, next => api(next, {...fetchOptions, viewCache:false}, ms), {signal:opt.signal, active:() => !document.hidden && !!cachedViewHost(scoped)});
+    }
     const controller = typeof AbortController === "function" ? new AbortController() : null;
     const timer = controller ? window.setTimeout(() => controller.abort("timeout"), ms) : 0;
     let res;
     try {
       const method = String(opt.method || "GET").toUpperCase();
-      res = await fetch(method === "GET" ? scopeUrl(url) : url, { cache: "no-store", credentials: "same-origin", signal: controller?.signal, ...opt });
+      res = await fetch(method === "GET" ? scopeUrl(url) : url, { cache: "no-store", credentials: "same-origin", signal: controller?.signal, ...fetchOptions });
     } finally {
       if (timer) window.clearTimeout(timer);
     }
@@ -119,7 +133,7 @@
     };
     const saved = read().find(entry => entry.key === key);
     if (!saved && host) listPaints.delete(host);
-    const fingerprint = data => JSON.stringify({...data, refreshed_at:undefined});
+    const fingerprint = data => JSON.stringify({...data, refreshed_at:undefined, _view:undefined});
     let signature = saved ? fingerprint(saved.data) : "";
     const render = data => {
       const value = fingerprint(data);
@@ -1365,7 +1379,7 @@
       api(`/api/state/wall?limit=${mobilePaging.matches ? 4 : 8}`).then(value => update("wall", value)),
       api("/api/insights?limit_samples=0&history=0&runtime=0&include_events=0").then(value => update("insights", value)),
       api("/api/status").then(value => update("status", value)),
-      api("/api/profile/collection?page=1&page_size=1").then(value => update("collection", {counts:value?.counts || {}, total:Number(value?.total) || 0})),
+      api("/api/profile/collection?summary_only=true").then(value => update("collection", {counts:value?.counts || {}, total:Number(value?.total) || 0})),
       refreshOverviewProgress(current, update),
     ]);
     if (current()) renderOverview({...next, widgets:next.widgets || {}, wall:next.wall || {items:[]}});
@@ -1384,11 +1398,11 @@
     if (overviewProgressResume) overviewLoadingTimer = setTimeout(() => overviewProgressResume?.(), 1500);
   }
 
-  async function loadHeroPreview() {
+  async function loadHeroPreview({quiet = false} = {}) {
     const key = profileCacheKey(mobilePaging.matches ? "overview.mobile" : "overview");
     const cached = readCache(key, SNAPSHOT_RETENTION_MS);
-    if (cached?.widgets) renderHero(cached.widgets.recent_scrobble?.items || [], cached.widgets.recent_history?.items || []);
-    const widgets = await api("/api/dashboard/widgets?include=history,scrobble&history_limit=1&scrobble_limit=1");
+    if (!quiet && cached?.widgets) renderHero(cached.widgets.recent_scrobble?.items || [], cached.widgets.recent_history?.items || []);
+    const widgets = await api("/api/dashboard/widgets?include=history,scrobble&history_limit=1&scrobble_limit=1&view=hero");
     if (key !== profileCacheKey(mobilePaging.matches ? "overview.mobile" : "overview") || $("#profile-panel-overview")?.classList.contains("active")) return;
     renderHero(widgets.recent_scrobble?.items || [], widgets.recent_history?.items || []);
   }
@@ -2351,6 +2365,7 @@
         (grid?.querySelector(`[data-timeline-month="${month}"]`) || grid)?.scrollIntoView({ block: "start", behavior: "auto" });
       }
     } catch (e) {
+      if (e?.name === "AbortError") return;
       const grid = $("#profile-collection-grid");
       if (grid && !snapshot.restored && snapshot.current()) grid.innerHTML = empty("Collections could not be loaded.");
       renderCollectionPager({ total: collectionState.total, page: collectionState.page, page_size: collectionState.pageSize });
@@ -3759,6 +3774,7 @@
           panel()?.scrollIntoView({ block: "start", behavior: "smooth" });
         }
       } catch (e) {
+        if (e?.name === "AbortError") return;
         if (seq !== state.seq || !snapshot.current()) return;
         if (host && !snapshot.restored) host.innerHTML = empty(`${meta().title} could not be loaded.`);
         renderPager({ total: state.total, page: state.page, page_size: state.pageSize });
@@ -3811,6 +3827,7 @@
         syncSourceUi();
         writeHash();
         if (!state.loaded) void load({ reset: true });
+        else void load({quiet:true});
       }
       if (fromHash) $(".cw-profile-tabs")?.scrollIntoView({ block: "start", behavior: "smooth" });
     }
@@ -3945,7 +3962,7 @@
       wireResponsivePaging(q("page-size"), state, TIMELINE_PAGE_SIZES, savePrefs, () => void load({reset:true}));
     }
 
-    return { open, wire, invalidate: () => { state.loaded = false; } };
+    return { open, wire, refresh: () => load({quiet:true}), invalidate: () => { state.loaded = false; } };
   }
 
   const coverageTiles = (stats, tile, count) => {
@@ -5140,13 +5157,15 @@
       document.querySelectorAll(".cw-profile-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `profile-panel-${key}`));
       document.body.dataset.profileView = key;
       if (mobilePaging.matches && tabs) tabs.scrollLeft = Math.max(0, btn.offsetLeft - tabs.offsetLeft - 12);
-      if (key === "overview" && (!overviewPayload || overviewPagingDirty || Date.now() - overviewStartedAt >= 60000)) {
+      if (key === "overview") {
+        $("#profile-hero > [data-view-status]")?.remove();
+        if (!overviewPayload || overviewPagingDirty || Date.now() - overviewStartedAt >= 60000) void loadProfileActivity({preserve:true}).catch(() => {});
         overviewPagingDirty = false;
         void loadOverview().catch(() => {});
-        void loadProfileActivity({preserve:true}).catch(() => {});
       }
       if (key === "overview" && overviewProgressResume) { clearTimeout(overviewLoadingTimer); overviewProgressResume(); }
-      if (key === "collection" && !collectionState.loaded) void loadCollection({ reset: true });
+      if (key !== "overview") void loadHeroPreview().catch(() => {});
+      if (key === "collection") void loadCollection({ reset: !collectionState.loaded, quiet: collectionState.loaded });
       if (key === "history") historyPanel.open(opts);
       if (key === "ratings") ratingsPanel.open(opts);
       if (key === "playback") playbackPanel.open(opts);
@@ -5919,6 +5938,21 @@
   }
 
   async function init() {
+    const refreshView = url => {
+      const parsed = new URL(url, location.origin);
+      const host = cachedViewHost(url);
+      if (!host) return;
+      if (host.id === "profile-hero") return void loadHeroPreview({quiet:true}).catch(() => {});
+      if (host.id === "profile-panel-overview") return void loadOverview().catch(() => {});
+      if (parsed.pathname.endsWith("/collection")) return void loadCollection({quiet:true});
+      const panels = {history:historyPanel, ratings:ratingsPanel, watchlist:watchlistPanel};
+      void panels[parsed.pathname.split("/").pop()]?.refresh();
+    };
+    window.addEventListener("cw:view-status", event => {
+      const {url, data} = event.detail;
+      window.CW?.ViewCache?.status(cachedViewHost(url), data, "items", () => { window.CW.ViewCache.retry(url); refreshView(url); }, new URL(url, location.origin).pathname);
+    });
+    window.addEventListener("cw:view-updated", event => refreshView(event.detail.url));
     await resolveViewAs();
     const account = window.CW?.AuthState?.read?.()?.user;
     if (account) renderProfile({user:account});
@@ -5954,7 +5988,6 @@
       } else if (overviewProgressResume) { clearTimeout(overviewLoadingTimer); overviewProgressResume(); }
     });
     void refreshNowPlaying();
-    if (!$("#profile-panel-overview")?.classList.contains("active")) void loadHeroPreview().catch(() => {});
     void refreshPlexStatus();
     void refreshOidcStatus();
   }

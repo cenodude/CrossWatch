@@ -234,3 +234,23 @@ def test_insights_collection_counts_actual_collection_types(monkeypatch) -> None
         "anime": 0,
         "episodes": 2,
     }
+
+
+def test_insight_caches_keep_other_feature_sets_and_profiles() -> None:
+    from collections import OrderedDict
+
+    cache = OrderedDict()
+    history = (("history", 1), ("history",), (), ())
+    collection = (("collection", 1), ("collection",), (), ())
+    scoped = (("history", 1), ("history",), (), (("PLEX", ("alice",)),))
+    refreshed = (("history", 2), *history[1:])
+    for key in (history, collection, scoped):
+        insight_api._lru_put(cache, 3, key, {"key": key})
+    assert len(cache) == 3
+    insight_api._lru_put(cache, 3, refreshed, {"key": refreshed})
+    assert history not in cache
+    assert set(cache) == {collection, scoped, refreshed}
+    assert insight_api._lru_get(cache, collection) == {"key": collection}
+    extra = (("ratings", 1), ("ratings",), (), ())
+    insight_api._lru_put(cache, 3, extra, {})
+    assert set(cache) == {collection, refreshed, extra}

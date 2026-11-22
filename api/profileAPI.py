@@ -3,13 +3,17 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
+from api.view_cache import background_view
+
 from collections import OrderedDict
+from concurrent.futures import Future
 from typing import Any
 
 import base64
 import hashlib
 import re
 import secrets
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -350,6 +354,9 @@ def _collection_state(include_sync_users: bool = True) -> dict[str, Any]:
         state = StateStore(CONFIG_DIR).load_state_features({"collection"}, include_sync_users=include_sync_users) or {}
         return state if isinstance(state, dict) else {}
     except Exception:
+        from services.view_cache import STRICT_READ
+        if STRICT_READ.get():
+            raise
         return {}
 
 
@@ -562,6 +569,8 @@ def _collection_finalize_group(key: str, group: dict[str, Any]) -> dict[str, Any
 
 _COLLECTION_INDEX_CACHE: "OrderedDict[tuple, tuple[list[dict[str, Any]], dict[str, int], dict[str, int]]]" = OrderedDict()
 _COLLECTION_INDEX_CACHE_MAX = 8
+_COLLECTION_CACHE_LOCK = threading.Lock()
+_COLLECTION_BUILDS: dict[tuple, Future] = {}
 
 
 def _build_collection_index(
@@ -602,43 +611,46 @@ def _collection_index(
     if cache_key is None:
         return _build_collection_index(_as_dict(state() if callable(state) else state), cfg, profile_id)
     key = (profile_id, *cache_key)
-    hit = _COLLECTION_INDEX_CACHE.get(key)
+    with _COLLECTION_CACHE_LOCK:
+        hit = _COLLECTION_INDEX_CACHE.get(key)
+        if hit is not None:
+            _COLLECTION_INDEX_CACHE.move_to_end(key)
+        future = _COLLECTION_BUILDS.get(key)
+        build = hit is None and future is None
+        if build:
+            future = Future()
+            _COLLECTION_BUILDS[key] = future
     if hit is None:
-        hit = _build_collection_index(_as_dict(state() if callable(state) else state), cfg, profile_id)
-        _COLLECTION_INDEX_CACHE[key] = hit
-        while len(_COLLECTION_INDEX_CACHE) > _COLLECTION_INDEX_CACHE_MAX:
-            _COLLECTION_INDEX_CACHE.popitem(last=False)
-    else:
-        _COLLECTION_INDEX_CACHE.move_to_end(key)
+        assert future is not None
+        if build:
+            try:
+                hit = _build_collection_index(_as_dict(state() if callable(state) else state), cfg, profile_id)
+                with _COLLECTION_CACHE_LOCK:
+                    _COLLECTION_INDEX_CACHE[key] = hit
+                    while len(_COLLECTION_INDEX_CACHE) > _COLLECTION_INDEX_CACHE_MAX:
+                        _COLLECTION_INDEX_CACHE.popitem(last=False)
+                future.set_result(hit)
+            except BaseException as exc:
+                future.set_exception(exc)
+                raise
+            finally:
+                with _COLLECTION_CACHE_LOCK:
+                    _COLLECTION_BUILDS.pop(key, None)
+        else:
+            hit = future.result()
     items, counts, provider_counts = hit
     return list(items), dict(counts), dict(provider_counts)
 
 
 def collection_cache_fingerprint() -> tuple:
-    """Cheap signature of the collection inputs: sync epoch, db writes, config."""
-    epoch = None
-    try:
-        epoch = StateStore(CONFIG_DIR).last_sync_epoch()
-    except Exception:
-        epoch = None
-    stamp = 0.0
-    try:
-        from cw_platform.local_db.db import crosswatch_db_path
+    from cw_platform.local_db import state as sqlite_state
 
-        db = Path(str(crosswatch_db_path(CONFIG_DIR)))
-        for candidate in (db, db.with_name(db.name + "-wal")):
-            try:
-                stamp = max(stamp, candidate.stat().st_mtime)
-            except OSError:
-                continue
-    except Exception:
-        stamp = 0.0
-    cfg_stamp = 0.0
+    stamp = sqlite_state.fingerprint(CONFIG_DIR, {"collection"})
     try:
-        cfg_stamp = (Path(CONFIG_DIR) / "config.json").stat().st_mtime
+        cfg_stamp = (Path(CONFIG_DIR) / "config.json").stat().st_mtime_ns
     except OSError:
-        cfg_stamp = 0.0
-    return (epoch, round(stamp, 3), round(cfg_stamp, 3))
+        cfg_stamp = 0
+    return (stamp, cfg_stamp)
 
 
 def _collection_month(item: dict[str, Any], display_tz: str = "UTC") -> str:
@@ -951,6 +963,7 @@ def _collection_selection_entry(item: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.get("/collection")
+@background_view
 def api_profile_collection(
     request: Request,
     media_type: str = Query("all", alias="type"),
@@ -965,12 +978,18 @@ def api_profile_collection(
     display_tz: str = Query("UTC", max_length=128),
     shelf: str = Query("synced", max_length=16),
     shelf_filter: str = Query("", max_length=80),
+    summary_only: bool = Query(False),
 ) -> JSONResponse:
     ctx = _profile_context(request)
     if isinstance(ctx, JSONResponse):
         return ctx
     cfg, _a, _uid, _raw, _user, token = ctx
     profile_id = effective_user_profile_id(cfg, token, user_profile)
+    if summary_only is True:
+        items, counts, providers = _collection_index(_collection_state, cfg, profile_id, collection_cache_fingerprint())
+        return JSONResponse({"ok": True, "total": len(items), "counts": counts,
+                             "providers": [{"provider": key, "count": value} for key, value in sorted(providers.items())]},
+                            headers={"Cache-Control": "no-store"})
     watched = None
     if str(shelf or "").strip().lower() == "unwatched":
         try:
@@ -1143,6 +1162,9 @@ def _feature_state(feature: str, include_sync_users: bool = True) -> dict[str, A
         state = StateStore(CONFIG_DIR).load_state_features({feature}, include_sync_users=include_sync_users) or {}
         return state if isinstance(state, dict) else {}
     except Exception:
+        from services.view_cache import STRICT_READ
+        if STRICT_READ.get():
+            raise
         return {}
 
 
@@ -1164,6 +1186,9 @@ def _watchlist_items(cfg: dict[str, Any], user_filter: dict[str, Any]) -> list[d
     try:
         items = build_watchlist(scope_state_to_instances(MediaScope(cfg).state(_load_watchlist_state()), user_filter), tmdb_ok=bool(_tmdb_api_key(cfg))) or []
     except Exception:
+        from services.view_cache import STRICT_READ
+        if STRICT_READ.get():
+            raise
         return []
     if not user_filter:
         return items
@@ -1241,18 +1266,20 @@ def _collection_tmdb_keys(item: dict[str, Any]) -> set[str]:
 
 def _collection_lookup(cfg: dict[str, Any], profile_id: str, cache_key: tuple) -> dict[str, list[dict[str, Any]]]:
     key = (profile_id, *cache_key)
-    hit = _COLLECTION_LOOKUP_CACHE.get(key)
-    if hit is not None:
-        _COLLECTION_LOOKUP_CACHE.move_to_end(key)
-        return hit
+    with _COLLECTION_CACHE_LOCK:
+        hit = _COLLECTION_LOOKUP_CACHE.get(key)
+        if hit is not None:
+            _COLLECTION_LOOKUP_CACHE.move_to_end(key)
+            return hit
     items, _counts, _providers = _collection_index(_collection_state, cfg, profile_id, cache_key)
     lookup: dict[str, list[dict[str, Any]]] = {}
     for item in items:
         for token in _collection_tmdb_keys(item):
             lookup.setdefault(token, []).append(item)
-    _COLLECTION_LOOKUP_CACHE[key] = lookup
-    while len(_COLLECTION_LOOKUP_CACHE) > _COLLECTION_INDEX_CACHE_MAX:
-        _COLLECTION_LOOKUP_CACHE.popitem(last=False)
+    with _COLLECTION_CACHE_LOCK:
+        _COLLECTION_LOOKUP_CACHE[key] = lookup
+        while len(_COLLECTION_LOOKUP_CACHE) > _COLLECTION_INDEX_CACHE_MAX:
+            _COLLECTION_LOOKUP_CACHE.popitem(last=False)
     return lookup
 
 
@@ -1431,6 +1458,7 @@ def _fill_history_tmdb(cfg: dict[str, Any], rows: Any) -> None:
 
 
 @router.get("/history")
+@background_view
 def api_profile_history(
     request: Request,
     source: str = Query("synced"),
@@ -1466,6 +1494,7 @@ def api_profile_history(
 
 
 @router.get("/watchlist")
+@background_view
 def api_profile_watchlist(
     request: Request,
     media_type: str = Query("all", alias="type"),
@@ -1504,6 +1533,7 @@ def api_profile_watchlist(
 
 
 @router.get("/ratings")
+@background_view
 def api_profile_ratings(
     request: Request,
     media_type: str = Query("all", alias="type"),

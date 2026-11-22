@@ -42,8 +42,9 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   const asNum = (v, fb = 0) => Number.isFinite(+v) ? +v : fb;
   const tickUrl = url => `${url}${url.includes("?") ? "&" : "?"}_ts=${Date.now()}`;
   const pendingReads = new Map();
-  const fetchJSON = url => {
+  const fetchJSON = (url, background = true) => {
     if (authSetupPending()) throw new Error("auth setup pending");
+    if (background && w.CW?.ViewCache?.supported(url)) return w.CW.ViewCache.read(url, next => fetchJSON(next, false), {active:() => !d.hidden && !!$("#stat-providers")?.getClientRects().length});
     const key = `${_scopeRevision}:${url}`;
     if (pendingReads.has(key)) return pendingReads.get(key);
     const pending = fetch(tickUrl(url), { credentials: "same-origin", cache: "no-store" }).then(res => {
@@ -724,6 +725,17 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       refreshInsights(force);
     }, 180);
   }
+
+  w.addEventListener("cw:view-updated", event => {
+    const parsed = new URL(event.detail.url, location.origin);
+    if (parsed.pathname !== "/api/insights" || (parsed.searchParams.get("user_profile") || "") !== (overviewProfileId() || "")) return;
+    if (!$("#stat-providers")?.getClientRects().length) return;
+    void renderFromData(event.detail.data, parsed.searchParams.get("include_events") === "0", false);
+  });
+  w.addEventListener("cw:view-status", event => {
+    if (!event.detail.url.startsWith("/api/insights") || !$("#stat-providers")?.getClientRects().length) return;
+    w.CW.ViewCache.status($("#stat-providers")?.parentElement, event.detail.data, "statistics", () => { w.CW.ViewCache.retry(event.detail.url); refreshInsightsFastThenFull(true); });
+  });
 
   function clearInsightsState(clearAll = false) {
     _scopeRevision++;
