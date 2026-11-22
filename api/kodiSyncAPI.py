@@ -105,6 +105,8 @@ async def kodi_sync_upload(request: Request) -> JSONResponse:
             result = {}
         if result.get("mode") == "full" and result.get("complete") is True and result.get("instance"):
             addon_sync.trigger_pair_runs(cfg, result["instance"])
+        elif result.get("mode") == "delta" and result.get("changed") is True and result.get("instance"):
+            addon_sync.schedule_pair_runs(cfg, result["instance"])
     return response
 
 
