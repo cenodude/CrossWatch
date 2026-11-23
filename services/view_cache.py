@@ -97,6 +97,7 @@ class ViewCache:
                 "version": entry["version"] if entry else "",
                 "revision": entry["revision"] if entry else "",
                 "updated_at": entry["generated"] if entry else None,
+                "checked_at": (entry.get("checked") or entry["generated"]) if entry else None,
                 "error": "refresh_failed" if failed else None,
                 "retry_after": 30 if failed else 2,
             }

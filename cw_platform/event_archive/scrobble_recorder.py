@@ -315,6 +315,11 @@ def record_watch(
         severity = "error"
         outcome = "failed"
     try:
+        if status == "ok" and action == "stop":
+            from services.playback_progress import get_service
+
+            get_service().mark_stale(source_provider, source_instance)
+            get_service().mark_stale(destination_provider, destination_instance)
         from .playback_recorder import archive_event
 
         ev = archive_event(ev)

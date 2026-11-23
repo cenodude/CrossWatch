@@ -212,3 +212,26 @@ def test_confirmed_completion_outranks_a_skipped_delivery(archive):
     dispatcher.dispatch(event("stop", progress=95))
     correlate(conn=c)
     assert list_groups(domain="scrobble", conn=c)["items"][0]["status"] == "completed"
+
+
+@pytest.mark.parametrize("action,delivery,expected", [("stop", "succeeded", True), ("pause", "succeeded", True), ("start", "succeeded", False), ("stop", "failed", False)])
+def test_successful_playback_marks_only_route_instances_stale(archive, monkeypatch, action, delivery, expected):
+    from types import SimpleNamespace
+    import services.playback_progress
+
+    c, cfg, clock = archive
+    calls = []
+    monkeypatch.setattr(services.playback_progress, "get_service", lambda: SimpleNamespace(mark_stale=lambda *args: calls.append(args)))
+    cfg["scrobble"]["watch"]["route_sink_instance"] = "family"
+    playback_recorder.record_playback(event(action), cfg, delivery=delivery)
+    assert calls == ([("jellyfin", "default"), ("trakt", "family")] if expected else [])
+
+
+def test_completed_watch_marks_crosswatch_route_stale(archive, monkeypatch):
+    from types import SimpleNamespace
+    import services.playback_progress
+
+    calls = []
+    monkeypatch.setattr(services.playback_progress, "get_service", lambda: SimpleNamespace(mark_stale=lambda *args: calls.append(args)))
+    scrobble_recorder.record_watch(event("stop"), action="stop", source_provider="plex", source_instance="home", destination_provider="crosswatch", destination_instance="family")
+    assert calls == [("plex", "home"), ("crosswatch", "family")]

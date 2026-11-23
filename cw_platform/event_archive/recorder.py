@@ -207,6 +207,7 @@ class RunRecorder:
         self._scope = ""
         self._sync_user = ""
         self._pair_stats: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._hub_changes: set[tuple[str, str]] = set()
 
     def emit(self, event: str, **fields: Any):
         try:
@@ -333,6 +334,11 @@ class RunRecorder:
                 summary={k: f.get(k) for k in ("added", "removed", "updated", "unresolved", "blocked", "errors")},
                 conn=self._conn,
             )
+            from services.hub_changes import mark_changed
+
+            for provider, instance in self._hub_changes:
+                mark_changed(provider, instance)
+            self._hub_changes.clear()
             return
 
         if event in ("health", "provider_health"):
@@ -455,6 +461,16 @@ class RunRecorder:
             pair_src, pair_dst = self._ctx_providers()
             attempted = int(f.get("attempted") or 0)
             errors = int(f.get("errors") or 0)
+            if not f.get("dry_run") and (f.get("count") or f.get("added") or f.get("removed") or f.get("updated") or (attempted > errors and not f.get("skipped"))):
+                self._hub_changes.add((dst, di))
+                if self._feature in {"progress", "history"}:
+                    from services.playback_progress import get_service
+
+                    get_service().mark_stale(dst, di)
+                else:
+                    from services.hub_changes import mark_changed
+
+                    mark_changed(dst, di)
             self._bump_pair_stats(
                 src=pair_src or "",
                 dst=pair_dst or "",

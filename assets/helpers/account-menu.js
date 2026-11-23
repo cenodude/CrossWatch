@@ -107,10 +107,12 @@
     };
     const shortcuts = readShortcuts();
     const routeBase = window.location.pathname === '/' ? '' : document.documentElement.dataset.cwRole === 'user' ? '/?main=1' : '/';
-    const link = ([route, icon, label], extra = '') => `<a href="${route === 'profile/overview' ? '/hub' : `${routeBase}#${route}`}" data-mobile-route="${route}" ${extra}><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><span>${label}</span></a>`;
+    const link = ([route, icon, label], extra = '', iconOnly = false) => `<a href="${route === 'profile/overview' ? '/hub' : `${routeBase}#${route}`}" data-mobile-route="${route}" aria-label="${esc(label)}" ${extra}><span class="material-symbols-rounded" aria-hidden="true">${icon}</span>${iconOnly ? '' : `<span>${label}</span>`}</a>`;
     nav.innerHTML =
-      '<button id="cw-mobile-more" type="button" aria-controls="cw-mobile-navigation" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span><span>More</span></button>';
+      '<button id="cw-mobile-more" type="button" aria-label="More" aria-controls="cw-mobile-navigation" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span></button><a id="cw-mobile-profile" href="/profile#account" aria-label="Profile"><span id="cw-mobile-profile-avatar" aria-hidden="true"></span></a>';
     document.body.appendChild(nav);
+    const accountAvatar = $('cw-nav-profile-avatar');
+    setAvatarNode($('cw-mobile-profile-avatar'), accountAvatar?.dataset.cwAvatarUrl || accountAvatar?.querySelector('img')?.getAttribute('src') || '');
     document.body.classList.add('cw-has-bottom-nav');
     const icons = {'tab-main':'home','tab-snapshots':'photo_library','tab-playlists':'queue_music','tab-tracker':'inventory_2','tab-tools':'handyman','tab-settings':'tune','tab-profile':'bar_chart'};
     document.querySelectorAll('#cw-mobile-navigation .tab').forEach(tab => {
@@ -180,11 +182,50 @@
       node.classList.add('cw-mobile-tools-back');
       return node;
     };
+    const contextual = document.createElement('div');
+    contextual.className = 'cw-mobile-context-destinations';
+    navPanel.prepend(contextual);
+    const renderContext = () => {
+      const onHub = window.location.pathname === '/hub';
+      const onTracker = window.location.pathname === '/' && window.location.hash.slice(1).split('?')[0] === 'tracker';
+      const root = onHub ? document.querySelector('.cw-profile-tabs') : onTracker ? document.querySelector('#page-tracker .trk-navigation') : null;
+      const attributes = onHub ? ['data-profile-tab'] : ['data-trk-view', 'data-trk-month-open', 'data-trk-wrapped-open', 'data-trk-action'];
+      const seen = new Set();
+      const items = [...(root?.querySelectorAll(onHub ? '[data-profile-tab]' : '.trk-tabs [data-trk-view], .trk-others-menu > button') || [])].map(source => {
+        const attribute = attributes.find(name => source.hasAttribute(name));
+        if (!attribute) return null;
+        const value = source.getAttribute(attribute);
+        const key = `${attribute}:${value}`;
+        if (seen.has(key)) return null;
+        seen.add(key);
+        const label = source.querySelector('[data-tab-label], span:not(.material-symbols-rounded):not(.material-symbol)')?.textContent.trim();
+        if (!label) return null;
+        const node = tileNode('button', source.querySelector('.material-symbols-rounded, .material-symbol')?.textContent.trim() || 'view_list', label);
+        node.type = 'button';
+        node.disabled = source.disabled || source.getAttribute('aria-disabled') === 'true';
+        const active = source.classList.contains('active') || source.getAttribute('aria-current') === 'page';
+        node.classList.toggle('active', active);
+        if (active) node.setAttribute('aria-current', 'page');
+        node.addEventListener('click', () => {
+          const currentRoot = document.querySelector(onHub ? '.cw-profile-tabs' : '#page-tracker .trk-navigation');
+          const target = [...(currentRoot?.querySelectorAll(`[${attribute}]`) || [])].find(item => item.getAttribute(attribute) === value);
+          if (!target || target.disabled || target.getAttribute('aria-disabled') === 'true') return;
+          if ($('cw-mobile-more').getAttribute('aria-expanded') === 'true') $('cw-mobile-nav-toggle').click();
+          target.click();
+        });
+        return node;
+      }).filter(Boolean);
+      contextual.replaceChildren(...items);
+      navPanel.classList.toggle('cw-mobile-context-open', items.length > 0);
+    };
+    $('cw-mobile-nav-toggle').addEventListener('click', () => {
+      if ($('cw-mobile-nav-toggle').getAttribute('aria-expanded') === 'true') renderContext();
+    });
     nav.addEventListener('click', openMediaHub);
     const renderShortcuts = () => {
       const items = [...fixed, ...shortcuts.map(route => choices.find(item => item[0] === route)).filter(Boolean)];
-      nav.querySelectorAll('a').forEach(node => node.remove());
-      $('cw-mobile-more').insertAdjacentHTML('beforebegin', items.map(item => link(item)).join(''));
+      nav.querySelectorAll('a[data-mobile-route]').forEach(node => node.remove());
+      $('cw-mobile-more').insertAdjacentHTML('beforebegin', items.map(item => link(item, '', true)).join(''));
       extra.innerHTML = choices.filter(item => !$(item[0] === 'profile/overview' ? 'tab-profile' : `tab-${item[0]}`) && !shortcuts.includes(item[0])).map(item => link(item, 'class="tab"')).join('');
       tools.replaceChildren(toolsBack(), ...toolItems().filter(item => !shortcuts.includes(item[0])).map(toolTile));
       for (const route of ['main', 'tracker', 'snapshots', 'playlists', 'editor']) {
@@ -201,7 +242,7 @@
       if (!picker || picker.querySelector('.cw-mobile-shortcuts') || choices.length < 2) return;
       const controls = document.createElement('div');
       controls.className = 'cw-mobile-shortcuts';
-      controls.innerHTML = `<h3>Navigation shortcuts</h3><p>${fixed.map(item => item[2]).join(', ')} and More stay fixed. Choose two shortcuts for this browser.</p>` + [0, 1].map(index => `<label for="cw-mobile-shortcut-${index}">Shortcut ${index + 1}</label><select id="cw-mobile-shortcut-${index}" data-cw-native-select="true">${choices.map(([route, , label]) => `<option value="${route}">${label}</option>`).join('')}</select>`).join('');
+      controls.innerHTML = `<h3>Navigation shortcuts</h3><p>${fixed.map(item => item[2]).join(', ')}, More and Profile stay fixed. Choose two shortcuts for this browser.</p>` + [0, 1].map(index => `<label for="cw-mobile-shortcut-${index}">Shortcut ${index + 1}</label><select id="cw-mobile-shortcut-${index}" data-cw-native-select="true">${choices.map(([route, , label]) => `<option value="${route}">${label}</option>`).join('')}</select>`).join('');
       picker.querySelector('summary').after(controls);
       const selects = [...controls.querySelectorAll('select')];
       const sync = () => selects.forEach((select, index) => {
@@ -241,7 +282,12 @@
       else hub?.removeAttribute('aria-current');
       const profileTab = document.querySelector('[data-profile-tab].active')?.dataset.profileTab || window.location.hash.slice(1).split('?')[0] || 'overview';
       const route = window.location.pathname === '/' ? window.location.hash.slice(1).split('?')[0] || 'main' : window.location.pathname === '/hub' && profileTab === 'overview' ? 'profile/overview' : '';
-      let matched = false;
+      const onProfile = window.location.pathname === '/profile';
+      const profile = $('cw-mobile-profile');
+      profile.classList.toggle('active', onProfile);
+      if (onProfile) profile.setAttribute('aria-current', 'page');
+      else profile.removeAttribute('aria-current');
+      let matched = onProfile;
       document.querySelectorAll('[data-mobile-route]').forEach(link => {
         const active = link.dataset.mobileRoute === route;
         if (active) link.setAttribute('aria-current', 'page');
@@ -327,6 +373,7 @@
 
   function setAvatarNode(node, value) {
     if (!node) return;
+    if (node.id === 'cw-nav-profile-avatar' && !button()?.classList.contains('is-viewing-as')) setAvatarNode($('cw-mobile-profile-avatar'), value);
     const url = normalizeAvatarUrl(value);
     const existing = node.querySelector("img")?.getAttribute("src") || "";
     const isNavAvatar = node.id === "cw-nav-profile-avatar";

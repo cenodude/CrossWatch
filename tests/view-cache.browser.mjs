@@ -115,7 +115,7 @@ for (const direct of [false, true]) test(`${direct ? "Direct Collection" : "Hub 
   assert.ok(heroQueries.every(query => query.background === "1"));
   await page.locator("#profile-panel-collection[data-view-loading]").waitFor();
   assert.equal(await page.locator(".cw-page-progress").count(), 0);
-  assert.equal(await page.locator("#profile-collection-refresh .material-symbols-rounded").evaluate(node => getComputedStyle(node).animationName), "cwRefreshSpin");
+  assert.equal(await page.locator("#profile-hub-refresh .material-symbols-rounded").evaluate(node => getComputedStyle(node).animationName), "cwRefreshSpin");
   assert.equal(await page.getByText("Collections could not be loaded.", {exact:true}).count(), 0);
   phase = "cached";
   await page.getByText("Cached collection movie", {exact:true}).first().waitFor();
@@ -125,7 +125,16 @@ for (const direct of [false, true]) test(`${direct ? "Direct Collection" : "Hub 
   phase = "fresh";
   await page.locator('#profile-panel-collection [data-view-status] button').click();
   await page.getByText("Fresh collection movie", {exact:true}).first().waitFor();
-  if (!direct) assert.ok(queries.some(query => query.summary_only === "true"));
+  await page.evaluate(() => {
+    window.retainedCollection = document.querySelector('#profile-collection-grid').firstElementChild;
+    retainedCollection.querySelector('img').dispatchEvent(new Event('error'));
+  });
+  const unchangedCollection = page.waitForResponse(response => new URL(response.url()).pathname === '/api/profile/collection');
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('cw:view-updated', {detail:{url:'/api/profile/collection'}})));
+  await unchangedCollection;
+  await page.waitForTimeout(100);
+  assert.equal(await page.evaluate(() => retainedCollection === document.querySelector('#profile-collection-grid').firstElementChild), true);
+  assert.equal(queries.some(query => query.summary_only === "true"), false);
   assert.ok(queries.some(query => query.retry_view === "1"));
   const collectionReload = page.waitForResponse(response => new URL(response.url()).pathname === "/api/profile/collection");
   await page.locator("[data-collection-actions]").first().click();

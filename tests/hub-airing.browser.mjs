@@ -51,9 +51,10 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
         if (url.pathname === "/api/playback_progress/items") json = {items:[{provider:"crosswatch", instance_id:"default", canonical_key:"tmdb:42", media_type:"movie", title:"Almost finished", ids:{tmdb:"42"}, progress_percent:99, remaining_seconds:24}], total:1};
         if (url.pathname === "/api/profile/airing") {
           reads++;
+          if (phase === "retry" && url.searchParams.get("retry_view") === "1") phase = "fresh";
           assert.equal(url.searchParams.get("background"), "1");
           assert.equal(url.searchParams.get("day"), "2026-11-22");
-          json = phase === "cold" ? {ok:true, _view:{ready:false, refreshing:true, retry_after:1}} : {ok:true, metadata_available:phase !== "unconfigured", airing:phase === "empty" || phase === "unconfigured" ? [] : rows, _view:{ready:true, refreshing:phase === "cached", version:phase, error:phase === "failed" ? "refresh_failed" : null, retry_after:1}};
+          json = phase === "cold" ? {ok:true, _view:{ready:false, refreshing:true, retry_after:1}} : {ok:true, metadata_available:phase !== "unconfigured", airing:phase === "empty" || phase === "unconfigured" ? [] : rows, _view:{ready:true, refreshing:phase === "cached", version:phase, error:["failed", "retry"].includes(phase) ? "refresh_failed" : null, retry_after:1}};
         }
         return route.fulfill({json});
       }
@@ -82,14 +83,21 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
     await section.getByRole("button", {name:"Next days", exact:true}).click();
     assert.ok(await calendar.evaluate(node => node.scrollLeft > 0));
     const scrolled = await calendar.evaluate(node => node.scrollLeft);
+    await page.evaluate(() => { window.retainedReleases = [...document.querySelectorAll('.cw-airing-card')]; });
     phase = "failed";
     await section.getByText(/Refresh failed/).waitFor();
     assert.equal(await calendar.locator('.trk-calendar-release').count(), 3);
     assert.equal(await calendar.evaluate(node => node.scrollLeft), scrolled);
-    phase = "fresh";
-    if (theme === "original" && width === 1440) await page.clock.runFor(30001);
-    else await section.getByRole("button", {name:"Retry"}).click();
+    if (theme === "original" && width === 1440) {
+      phase = "fresh";
+      await page.clock.runFor(30001);
+    } else {
+      await section.getByRole("button", {name:"Retry"}).evaluate(node => node.scrollIntoView({block:"center", behavior:"instant"}));
+      phase = "retry";
+      await section.getByRole("button", {name:"Retry"}).click();
+    }
     await section.locator('[data-view-status]').waitFor({state:"hidden"});
+    assert.equal(await page.evaluate(() => retainedReleases.every(node => node.isConnected)), true);
     await section.getByRole("button", {name:"Today", exact:true}).click();
     assert.equal(await calendar.evaluate(node => node.scrollLeft), 0);
     await mkdir(".tmp/hub-airing", {recursive:true});

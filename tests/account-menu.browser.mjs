@@ -18,7 +18,7 @@ const assets = new Map();
 before(async () => { browser = await ({chromium, webkit})[process.env.CW_MENU_BROWSER || 'chromium'].launch({headless:true}); });
 after(async () => { await browser?.close(); });
 
-async function fixture(t, {shell='main', role='admin', theme='flat-dark', width=1440, height=900}={}) {
+async function fixture(t, {shell='main', role='admin', theme='flat-dark', width=1440, height=900, avatar=''}={}) {
   const context = await browser.newContext({viewport:{width,height},hasTouch:width<=1024,isMobile:width<=760,reducedMotion:'reduce'});
   t.after(() => context.close());
   const page = await context.newPage();
@@ -26,18 +26,27 @@ async function fixture(t, {shell='main', role='admin', theme='flat-dark', width=
   const errors = [], writes = [];
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
-  const html = await page.evaluate(({source,theme}) => {
+  const html = await page.evaluate(({source,theme,avatar}) => {
     const doc = new DOMParser().parseFromString(source, 'text/html');
     doc.querySelectorAll('script').forEach(node => node.remove());
     doc.getElementById('cw-main-loading')?.remove();
     doc.documentElement.className = theme === 'original' ? 'cw-theme-original' : `cw-theme-${theme === 'flat-light' ? 'light' : 'dark'}`;
     if (theme !== 'original') doc.documentElement.dataset.cwTheme = theme;
     doc.getElementById(theme === 'original' ? 'cw-theme-flat-css' : 'cw-theme-original-css')?.remove();
+    if (avatar) {
+      const node = doc.getElementById('cw-nav-profile-avatar');
+      const img = doc.createElement('img');
+      img.src = avatar;
+      img.alt = '';
+      node.replaceChildren(img);
+      node.dataset.cwAvatarUrl = avatar;
+      node.classList.remove('material-symbols-rounded');
+    }
     const script = doc.createElement('script');
     script.src = '/assets/helpers/account-menu.js';
     doc.body.append(script);
     return '<!doctype html>' + doc.documentElement.outerHTML;
-  }, {source:templates[role][shell], theme});
+  }, {source:templates[role][shell], theme, avatar});
   await page.route('https://account-menu.test/**', async route => {
     const path = new URL(route.request().url()).pathname;
     if (path.startsWith('/assets/')) {
@@ -57,12 +66,60 @@ async function fixture(t, {shell='main', role='admin', theme='flat-dark', width=
   return {page,writes};
 }
 
+for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: mobile Profile keeps the account avatar and glass navigation`,async t=>{
+  const avatar = 'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#8063ff"/><circle cx="20" cy="15" r="9" fill="#fff"/><path d="M4 40a16 16 0 0132 0" fill="#fff"/></svg>');
+  const {page} = await fixture(t,{theme,width:390,height:844,avatar});
+  const mobile = page.locator('#cw-mobile-profile-avatar');
+  assert.equal(await mobile.locator('img').getAttribute('src'),avatar);
+  await page.waitForFunction(()=>document.querySelector('#cw-mobile-profile-avatar img').naturalWidth>0);
+  const glass = await page.locator('#cw-mobile-bottom-nav').evaluate(node=>({background:getComputedStyle(node).backgroundColor,blur:getComputedStyle(node).backdropFilter}));
+  assert.match(glass.blur,/blur\(18px\)/);
+  assert.match(glass.background,/0\.78/);
+  await page.locator('#cw-mobile-more').click();
+  if (process.env.CW_MENU_SCREENSHOTS) {
+    await mkdir(process.env.CW_MENU_SCREENSHOTS,{recursive:true});
+    await page.screenshot({path:`${process.env.CW_MENU_SCREENSHOTS}/${theme}-mobile-profile-glass.png`});
+  }
+  await page.keyboard.press('Escape');
+  await page.evaluate(()=>{
+    document.getElementById('cw-nav-profile-link').classList.add('is-viewing-as');
+    CW.AccountMenu.setAvatarNode(document.getElementById('cw-nav-profile-avatar'),'');
+  });
+  assert.equal(await mobile.locator('img').getAttribute('src'),avatar);
+  await page.evaluate(()=>{
+    document.getElementById('cw-nav-profile-link').classList.remove('is-viewing-as');
+    CW.AccountMenu.setAvatarUrl('');
+  });
+  assert.equal(await mobile.textContent(),'person');
+  await page.evaluate(avatar=>CW.AccountMenu.setAvatarUrl(avatar),avatar);
+  assert.equal(await mobile.locator('img').getAttribute('src'),avatar);
+  await page.evaluate(()=>CW.AccountMenu.setAvatarUrl('/assets/missing-avatar.png'));
+  await page.waitForFunction(()=>document.getElementById('cw-mobile-profile-avatar').textContent==='person');
+  await page.setViewportSize({width:1440,height:900});
+  assert.equal(await page.locator('#cw-nav-profile-link').isVisible(),true);
+  assert.equal(await page.locator('#cw-mobile-bottom-nav').isVisible(),false);
+});
+
 for (const theme of ['original','flat-dark','flat-light']) {
   for (const shell of ['main','profile']) {
     for (const [width,height] of [[320,740],[390,844],[740,360],[768,1024],[1024,768],[1440,900]]) {
       test(`${theme}: ${shell} account menu at ${width}x${height}`, async t => {
         const {page} = await fixture(t, {theme,shell,width,height});
         const toggle = page.locator('#cw-nav-profile-link');
+        if (width <= 760) {
+          assert.equal(await toggle.isVisible(),false);
+          const nav = page.locator('#cw-mobile-bottom-nav');
+          assert.equal(await nav.locator(':scope > a, :scope > button').count(),5);
+          for (const item of await nav.locator(':scope > a, :scope > button').all()) {
+            assert.ok(await item.getAttribute('aria-label'));
+            assert.ok((await item.boundingBox()).width >= 44);
+            assert.equal(await item.locator('span:not([aria-hidden="true"])').count(),0);
+          }
+          await nav.getByRole('link',{name:'Profile',exact:true}).click();
+          await page.waitForURL('https://account-menu.test/profile#account');
+          assert.equal(await page.locator('#cw-mobile-profile').getAttribute('aria-current'),'page');
+          return;
+        }
         await toggle.click();
         const menu = page.locator('#cw-profile-menu');
         assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
@@ -112,7 +169,7 @@ for (const theme of ['original','flat-dark','flat-light']) {
   }
 }
 
-for (const shell of ['main','hub']) test(`${shell}: mobile page tabs stay below the account menu`, async t => {
+for (const shell of ['main','hub']) test(`${shell}: mobile page tabs stay below the More menu`, async t => {
   const {page} = await fixture(t,{shell,width:390,height:844});
   await page.evaluate(shell => {
     let tabs = document.querySelector('.cw-profile-tabs');
@@ -132,21 +189,15 @@ for (const shell of ['main','hub']) test(`${shell}: mobile page tabs stay below 
     tabs.scrollIntoView();
     window.scrollBy(0,-260);
   },shell);
-  await page.locator('#cw-nav-profile-link').click();
+  await page.locator('#cw-mobile-more').click();
   const tabs = page.locator(shell === 'main' ? '#page-tracker .trk-navigation' : '.cw-profile-tabs');
-  const layering=await tabs.evaluate(node => {
-    const tab = node.getBoundingClientRect();
-    const menu = document.getElementById('cw-profile-menu');
-    const box = menu.getBoundingClientRect();
-    const x = (Math.max(tab.left,box.left)+Math.min(tab.right,box.right))/2;
-    const y = (Math.max(tab.top,box.top)+Math.min(tab.bottom,box.bottom))/2;
-    return {covered:y>=tab.top && y<=tab.bottom && y>=box.top && y<=box.bottom && menu.contains(document.elementFromPoint(x,y)),tab:tab.toJSON(),menu:box.toJSON(),top:document.elementFromPoint(x,y)?.outerHTML.slice(0,200)};
-  });
-  assert.equal(layering.covered,true,JSON.stringify(layering));
-  await page.locator('#cw-profile-menu [data-cw-account-view="help"]').click();
-  assert.equal(await page.locator('[data-cw-account-panel="help"]').isVisible(),true);
+  const covered = await page.locator('#cw-mobile-navigation .tab:visible').evaluateAll(nodes=>nodes.filter(node=>{
+    const rect=node.getBoundingClientRect();
+    return !node.contains(document.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2));
+  }).map(node=>node.textContent));
+  assert.deepEqual(covered,[]);
   await page.keyboard.press('Escape');
-  assert.equal(await page.locator('#cw-profile-menu').isVisible(),false);
+  assert.equal(await page.locator('#cw-mobile-navigation').isVisible(),false);
   assert.equal(await tabs.isVisible(),true);
 });
 
@@ -243,7 +294,8 @@ for (const shell of ['main','profile']) {
   for (const role of ['reader','writer']) {
     test(`${shell}: ${role} menu permissions`, async t => {
       const {page} = await fixture(t, {shell,role,width:390,height:844});
-      await page.locator('#cw-nav-profile-link').click();
+      assert.equal(await page.locator('#cw-nav-profile-link').isVisible(),false);
+      assert.equal(await page.locator('#cw-mobile-profile').getAttribute('href'),'/profile#account');
       for (const action of ['account','help','about','logout']) assert.equal(await page.locator(`[data-cw-profile-menu-action="${action}"]`).count(), 1);
       assert.equal(await page.locator('[data-cw-profile-menu-action="preferences"]').count(), 0);
       assert.equal(await page.locator('#tab-tracker').count(), role === 'writer' ? 1 : 0);

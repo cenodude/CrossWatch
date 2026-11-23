@@ -128,6 +128,31 @@ for (const theme of ['original','flat-dark','flat-light']) for (const width of [
   assert.equal(await card.getAttribute('data-airing-open'),'');
 });
 
+for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: mobile More follows Tracker views and restores default destinations`, async t => {
+  const {page} = await fixture(t,theme,{width:390,trackerOptions:{month_review:false,wrapped:false}});
+  const more = page.getByRole('button',{name:'More',exact:true});
+  await more.click();
+  const menu = page.locator('.cw-mobile-context-destinations');
+  assert.equal(await menu.getByRole('button',{name:'Watchlist',exact:true}).isVisible(),true);
+  if (process.env.CW_MENU_SCREENSHOTS) {
+    await mkdir(process.env.CW_MENU_SCREENSHOTS,{recursive:true});
+    await page.screenshot({path:`${process.env.CW_MENU_SCREENSHOTS}/${theme}-tracker-context.png`});
+  }
+  assert.equal(await menu.getByRole('button',{name:'Month in review',exact:true}).count(),0);
+  assert.equal(await menu.getByRole('button',{name:'CrossWatch Wrapped',exact:true}).count(),0);
+  await menu.getByRole('button',{name:'Ratings',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.trk-tabs [data-trk-view="ratings"]').classList.contains('active'));
+  assert.equal(await more.getAttribute('aria-expanded'),'false');
+  await more.click();
+  assert.equal(await menu.getByRole('button',{name:'Ratings',exact:true}).getAttribute('aria-current'),'page');
+  assert.equal(await menu.evaluate(node=>[...node.children].every(item=>item.getBoundingClientRect().right<=innerWidth)),true);
+  await page.keyboard.press('Escape');
+  await page.evaluate(()=>{location.hash='main';});
+  await more.click();
+  assert.equal(await page.locator('#tab-snapshots').isVisible(),true);
+  assert.equal(await menu.getByRole('button').count(),0);
+});
+
 async function fixture(t, theme, {realMedia = false, playback = false, touch = true, width = 1440, motion = "reduce", profiles = null, managed = false, airing = episodes, continuing = rows, next = episodes.slice(0,2), wrapped = {}, trackerOptions = {}, clock = false} = {}) {
   const browser = await ({chromium,webkit})[process.env.CW_AUDIT_BROWSER || "chromium"].launch({headless:true});
   t.after(() => browser.close());
@@ -909,6 +934,32 @@ test("airing cards share available width according to release density", async t 
   await page.locator('[data-trk-action="refresh"]').click();
   await page.waitForFunction(() => !document.querySelector('.trk-calendar-release'));
   assert.equal(await page.locator('.trk-calendar-day').count(),30);
+});
+
+test("unchanged background refresh keeps Tracker cards and an open episode card mounted", async t => {
+  const {page} = await fixture(t, "flat-dark", {touch:false});
+  await page.locator('.cw-airing-front').first().click();
+  const statistics = page.waitForResponse(response => new URL(response.url()).pathname === '/api/tracker/stats');
+  await page.evaluate(() => {
+    window.retainedCards = [...document.querySelectorAll('.trk-overview-card,.trk-grid-card,.cw-airing-card')];
+    window.retainedFront = document.querySelector('.cw-airing-front');
+    window.dispatchEvent(new CustomEvent('cw:view-updated', {detail:{url:'/api/tracker/stats?provider_instance=default'}}));
+  });
+  await statistics;
+  await page.waitForTimeout(100);
+  assert.equal(await page.evaluate(() => retainedCards.every(node => node.isConnected)), true);
+  assert.equal(await page.locator('.cw-airing-card').first().getAttribute('data-airing-open'), '');
+  const shows = page.waitForResponse(response => new URL(response.url()).pathname === '/api/tracker/overview/shows');
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('cw:view-updated', {detail:{url:'/api/tracker/overview/shows?provider_instance=default'}})));
+  await shows;
+  await page.waitForTimeout(100);
+  assert.equal(await page.evaluate(() => retainedCards.every(node => node.isConnected)), true);
+  assert.equal(await page.evaluate(() => retainedFront === document.querySelector('.cw-airing-front')), true);
+  const overview = page.waitForResponse(response => new URL(response.url()).pathname === '/api/tracker/overview');
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('cw:view-updated', {detail:{url:'/api/tracker/overview?provider_instance=default'}})));
+  await overview;
+  await page.waitForTimeout(100);
+  assert.equal(await page.evaluate(() => retainedCards.every(node => node.isConnected)), true);
 });
 
 test("background episode refresh preserves cards and scroll, retries and resumes after navigation", async t => {

@@ -906,7 +906,7 @@ def test_profile_overview_has_media_sections_and_statistics() -> None:
     assert "Continue watching" in html
     assert "Recently added to watchlist" in html
     assert 'id="profile-activity"' in html
-    assert 'id="profile-quick-stats"' in html
+    assert 'id="profile-hub-summary"' in html
     assert 'class="cw-hub-secondary"' in html
     # the old duplicated blocks are gone, the Main widget grid took over
     assert 'id="profile-history"' not in html

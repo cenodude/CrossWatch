@@ -2692,11 +2692,6 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
           </div>
         </div>
       </div>
-    </div>
-    <div id="profile-hero-media" class="cw-media-hero-context" aria-live="polite">
-      <span class="cw-media-hero-heading"><strong>Everything you watch, across your providers</strong><img class="cw-media-hero-logo" alt="" hidden></span>
-      <div class="cw-media-hero-details"><span id="profile-hero-summary"></span><span id="profile-hero-extra" class="cw-media-hero-extra"></span></div>
-    </div>
     <article class="cw-profile-last hidden" role="button" tabindex="0" aria-label="Show last watched details">
       <div class="cw-profile-last-copy">
         <div class="cw-profile-last-head">
@@ -2706,6 +2701,19 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
         </div>
       </div>
     </article>
+    </div>
+    <div id="profile-hero-media" class="cw-media-hero-context" aria-live="polite">
+      <span class="cw-media-hero-heading"><strong>Everything you watch, across your providers</strong><img class="cw-media-hero-logo" alt="" hidden></span>
+      <div class="cw-media-hero-details"><span id="profile-hero-summary"></span><span id="profile-hero-extra" class="cw-media-hero-extra"></span></div>
+    </div>
+    <div id="profile-hub-summary" class="cw-hub-summary" aria-label="Hub summary">
+      <div id="profile-hub-metrics" class="cw-hub-summary-metrics"></div>
+      <div class="cw-hub-summary-tools">
+        <span id="profile-hub-freshness" role="status">Not checked yet</span>
+        <button id="profile-hub-refresh" type="button" class="cw-btn" aria-label="Refresh Overview"><span class="material-symbols-rounded" aria-hidden="true">refresh</span><span>Refresh</span></button>
+        <details id="profile-hub-issues" hidden><summary></summary><div></div></details>
+      </div>
+    </div>
     <div id="profile-now" class="cw-profile-now hidden" aria-live="polite">
       <div class="cw-profile-now-copy">
         <div class="cw-profile-now-head">
@@ -2750,11 +2758,10 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
         <div id="profile-watchlist"></div>
       </article>
       <article class="cw-hub-section">
-        <div class="cw-hub-section-head"><h2>Recent activity</h2><button id="profile-activity-view-all" type="button">View all</button></div>
+        <div class="cw-hub-section-head"><h2><span class="material-symbols-rounded cw-profile-activity-icon" aria-hidden="true">layers</span>Recent activity</h2><button id="profile-activity-view-all" type="button">View all</button></div>
         <div id="profile-activity" class="cw-profile-activity-list"></div>
       </article>
     </div>
-    <div id="profile-quick-stats" class="cw-hub-stats" aria-label="Media statistics"></div>
   <section id="dashboard-widgets-card" class="cw-dashboard-widgets hidden" aria-label="Media widgets">
     <article id="recent-history-widget" class="cw-dash-widget cw-dash-widget--history">
       <div class="cw-dash-widget-head">
