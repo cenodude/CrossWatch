@@ -45,7 +45,7 @@ export class ModalHost {
     this.shell = s;
     document.body.dataset.cxModalOpen = '1';
 
-    this._resize = () => this._clamp();
+    this._resize = () => { this._position(); this._clamp(); };
     window.addEventListener('resize', this._resize, { passive: true });
 
     this._esc = (e) => {
@@ -123,9 +123,8 @@ export class ModalHost {
       this.shell.setAttribute('aria-label', heading?.textContent?.trim() || props.title || 'CrossWatch dialog');
 
       // center then clamp
-      this.shell.style.left = '50%';
-      this.shell.style.top = '50%';
-      this.shell.style.transform = 'translate(-50%,-50%)';
+      this._mobile = null;
+      this._position();
 
       if (!window.CW?.DialogFocus && typeof trapFocus === 'function') trapFocus(this.shell);
       this.shell.focus?.({ preventScroll: true });
@@ -138,7 +137,7 @@ export class ModalHost {
   }
 
   unmount() {
-    window.CW?.DialogFocus?.deactivate(this.shell);
+    const dismissed = window.CW?.DialogFocus?.deactivate(this.shell);
     try { this.api?.unmount?.(); } catch {}
     this.api = null;
 
@@ -158,10 +157,21 @@ export class ModalHost {
     delete document.body.dataset.cxModalOpen;
     if (this._returnFocus?.isConnected) this._returnFocus.focus?.({ preventScroll: true });
     this._returnFocus = null;
+    return dismissed;
+  }
+
+  _position() {
+    if (!this.shell) return;
+    const mobile = !!window.CW?.MobileUI?.mobile();
+    if (this._mobile === mobile) return;
+    this._mobile = mobile;
+    this.shell.style.left = mobile ? '' : '50%';
+    this.shell.style.top = mobile ? '' : '50%';
+    this.shell.style.transform = mobile ? '' : 'translate(-50%,-50%)';
   }
 
   _clamp() {
-    if (!this.shell || this.shell.classList.contains('cw-page-dialog')) return;
+    if (!this.shell || window.CW?.MobileUI?.mobile() || this.shell.classList.contains('cw-page-dialog')) return;
     requestAnimationFrame(() => {
       if (!this.shell) return;
       const r = this.shell.getBoundingClientRect();

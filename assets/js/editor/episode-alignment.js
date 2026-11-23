@@ -100,7 +100,7 @@ export async function openEpisodeAlignment(trigger, {pairId, showIds, onSaved} =
     controller.abort(); dialog.remove(); trigger?.focus();
     if (changed) onSaved?.();
   }, {once:true});
-  dialog.showModal();
+  window.CW?.MobileUI?.openDialog(dialog) || dialog.showModal();
   try {
     proposal = await request("", {pair_id:pairId, show_ids:showIds});
     $(".eg-status").textContent = "";

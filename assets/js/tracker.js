@@ -268,6 +268,39 @@
     } catch {}
   }
 
+  const mobileViewFields = ['q', 'media', 'sort', 'noteStatus', 'noteTag', 'healthFilter', 'cleanFeature', 'duplicates', 'offset', 'scrollTop', 'month'];
+  let mobileHistoryView = null;
+  function changeMobileView(wanted, back = false) {
+    const ui = window.CW?.MobileUI;
+    if (!ui?.mobile()) return false;
+    clearTimeout(searchTimer);
+    const search = state.root?.querySelector('[data-trk-input="q"]');
+    if (search) state.q = search.value;
+    const key = `tracker-sections.${overviewCacheKey()}`;
+    const saved = ui.recall(key) || {};
+    saved[state.view] = Object.fromEntries(mobileViewFields.map(field => [field, field === 'scrollTop' ? window.scrollY : state[field]]));
+    ui.remember(key, saved);
+    if (!back) {
+      history.replaceState({...history.state, cwTrackerView:state.view}, '', location.href);
+      history.pushState({...history.state, cwTrackerView:wanted}, '', location.href);
+    }
+    state.view = wanted;
+    mobileHistoryView = wanted;
+    Object.assign(state, {q:'', media:wanted === 'history' ? state.historyMedia : '', sort:'recent', noteStatus:'', noteTag:'', healthFilter:'attention', cleanFeature:'history', duplicates:false, offset:0, scrollTop:0, month:''});
+    for (const field of mobileViewFields) if (typeof saved[wanted]?.[field] === typeof state[field]) state[field] = saved[wanted][field];
+    state.filtersOpen = false;
+    state.picked.clear();
+    state.ref = null;
+    state.title = null;
+    rememberView();
+    const top = state.scrollTop;
+    const instance = state.instance;
+    loadMonths();
+    void loadMain();
+    ui.restoreScroll(top, () => state.view === wanted && state.instance === instance && trackerVisible());
+    return true;
+  }
+
   async function getJSON(url, body, signal) {
     const init = body === undefined
       ? { cache: "no-store", credentials: "same-origin" }
@@ -284,6 +317,7 @@
     const mutation = body !== undefined && (path.startsWith("/api/tracker/") || path.startsWith("/api/provider-instances/"))
       && !path.endsWith("/preview") && (path !== "/api/tracker/titles/remove" || !!body.token);
     if (mutation) {
+      window.CW?.ViewCache?.discard();
       try { sessionStorage.removeItem("cw.tracker.lists.v1"); sessionStorage.removeItem("cw.hub.lists.v1"); } catch {}
     }
     return data;
@@ -295,6 +329,7 @@
     const instance = state.instance, view = state.view;
     const summary = /\/api\/tracker\/(summary|stats)\?/.test(url);
     return window.CW.ViewCache.read(url, next => getJSON(next, undefined, signal), {
+      interval:300000, maxAge:300000, cacheScope:overviewCacheKey(),
       trackRevision:timelineOn() && url.startsWith("/api/tracker/items?"), ...options, signal, active:() => trackerVisible() && state.instance === instance && (summary || state.view === view),
     });
   }
@@ -1052,7 +1087,7 @@
             </div>
           </div>
         </div>
-      </div>${renderExtraFilters()}`;
+      </div>${window.CW?.MobileUI?.mobile() ? '' : renderExtraFilters()}`;
   }
 
   function pager() {
@@ -1444,6 +1479,7 @@
       if (shelfLayoutOn()) setSlot("main", renderMain());
       return;
     }
+    window.CW?.ViewCache?.discard();
     if (shelfLayoutOn()) void reload();
   });
 
@@ -2327,6 +2363,7 @@
       const focusedHistoryMedia = document.activeElement?.dataset?.trkHistoryMedia;
       const focusedView = document.activeElement?.closest(".trk-navigation") && document.activeElement.dataset.trkView;
       setSlot("controls", renderControls());
+      if (sheet.mode === 'filters' && !sheet.el?.hidden) renderSheet();
       if (focusedView) state.root.querySelector('.trk-tabs [aria-selected="true"]')?.focus({preventScroll:true});
       if (focusedHistoryMedia !== undefined) state.root.querySelector(`[data-trk-history-media="${focusedHistoryMedia}"]`)?.focus({preventScroll:true});
       if (["q", "view", "note-status", "note-tag", "sort", "history-group", "duplicates", "hide-dropped", "status-labels"].includes(focused)) {
@@ -2680,6 +2717,7 @@
   }
 
   async function refresh() {
+    window.CW?.ViewCache?.discard();
     stopOverview();
     const position = {view:state.view,instance:state.instance,top:state.scrollTop || 0};
     pickRequest += 1;
@@ -3917,12 +3955,14 @@
     dialog.classList.toggle('trk-title-sheet', sheet.mode === 'title');
     const scroll = dialog.scrollTop;
     const active = dialog.contains(document.activeElement) ? document.activeElement : null;
+    const filterFocus = sheet.mode === 'filters' ? active?.dataset?.trkInput : '';
     const logFocus = sheet.mode === "log" && !focusFirst && active ? Array.from(active.attributes).find(a => a.name.startsWith("data-trk-log-") || a.name === "data-trk-watch-pick") : null;
     const keep = ["data-trk-log-q", "data-trk-note-tag", "data-trk-change-q"].find((name) => active?.hasAttribute?.(name));
     const editValues = sheet.mode === "edit" && !focusFirst
       ? Array.from(dialog.querySelectorAll("[data-trk-edit], [data-trk-id]"), input => [input.hasAttribute("data-trk-edit") ? "data-trk-edit" : "data-trk-id", input.dataset.trkEdit || input.dataset.trkId, input.value])
       : [];
     const renderers = {
+      filters: () => `${sheetHead('filter_list', 'Filters', '')}<div class="trk-form">${renderExtraFilters()}<footer class="trk-sheet-foot"><button type="button" class="cw-btn primary" data-trk-sheet="close">Done</button></footer></div>`,
       edit: renderEdit, delete: renderDelete, rate: renderRate, log: renderLog, title: renderTitleSheet,
       views: renderSavedViews, "title-remove": renderTitleRemoval, automation: renderAutomation,
       origin: () => `${sheetHead("alt_route", "Where does this come from?", "Tracker")}<div class="trk-form"><div class="cw-origin-body" data-trk-origin>Looking this up...</div></div>`,
@@ -3934,6 +3974,7 @@
       if (input) input.value = value;
     }
     dialog.scrollTop = focusFirst ? 0 : scroll;
+    if (filterFocus) dialog.querySelector(`[data-trk-input="${CSS.escape(filterFocus)}"]`)?.focus({preventScroll:true});
     if (sheet.mode === "rate" || (sheet.mode === "edit" && sheet.feature === "ratings")) wireRatingPreview(dialog);
     if (el.hidden) {
       el.hidden = false;
@@ -3953,6 +3994,8 @@
     else changesObserver?.disconnect();
   }
 
+  let mobileSheetLayer = null;
+  let mobileTitleLayer = null;
   function openSheet(mode, extra = {}) {
     clearTimeout(reviewTimer);
     if (!sheet.el || sheet.el.hidden) {
@@ -3966,10 +4009,15 @@
     Object.assign(sheet, { mode, item: null, statusTouched: false, feature: "history", busy: false, error: "", keys: [], token: sheet.token + 1 }, extra);
     if (mode === "rate") { sheet.communityRating = ""; sheet.communityScore = null; }
     renderSheet(true);
+    if (window.CW?.MobileUI?.mobile()) {
+      if (!mobileSheetLayer) mobileSheetLayer = window.CW.MobileUI.layer(() => { mobileSheetLayer = null; mobileTitleLayer = null; closeSheet(false, true); });
+      else if (sheet.returnToTitle && !mobileTitleLayer) mobileTitleLayer = window.CW.MobileUI.layer(() => { mobileTitleLayer = null; closeSheet(true, true); });
+    }
     if (mode === "rate") loadCommunityRating(sheet.token);
   }
 
-  function closeSheet(returnToTitle = true) {
+  function closeSheet(returnToTitle = true, fromBack = false) {
+    if (!fromBack && mobileSheetLayer) return (returnToTitle && mobileTitleLayer ? mobileTitleLayer : mobileSheetLayer).dismiss();
     clearTimeout(reviewTimer);
     if (!sheet.el || sheet.el.hidden) return;
     if (returnToTitle && sheet.returnToTitle && state.ref && narrow()) {
@@ -3981,7 +4029,9 @@
     changesObserver?.disconnect();
     changesObserver = null;
     sheet.el.hidden = true;
+    const wasFilters = sheet.mode === 'filters';
     sheet.mode = "";
+    if (wasFilters) { state.filtersOpen = false; setSlot('controls', renderControls()); }
     sheet.returnToTitle = false;
     document.documentElement.classList.remove("cw-ia-sheet-open");
     const focus = sheet.lastFocus?.isConnected ? sheet.lastFocus : state.root?.querySelector('.trk-play.is-selected');
@@ -5145,6 +5195,10 @@
   function wire(root) {
     if (state.wired) return;
     state.wired = true;
+    window.addEventListener('popstate', () => {
+      const wanted = history.state?.cwTrackerView;
+      if (trackerVisible() && wanted && wanted !== mobileHistoryView && VIEWS.some(view => view.id === wanted)) changeMobileView(wanted, true);
+    });
     new MutationObserver(() => { if (root.classList.contains("hidden") || root.hidden) { stopOverview(); closeSheet(false); } }).observe(root, {attributes:true, attributeFilter:["class", "hidden"]});
     wireStatusMenu();
     document.addEventListener("click", (event) => {
@@ -5157,7 +5211,7 @@
       if (event.relatedTarget && menu && !menu.contains(event.relatedTarget)) menu.open = false;
     });
     root.addEventListener("click", (event) => {
-      if (sheet.el?.contains(event.target)) return;
+      if (sheet.el?.contains(event.target) && sheet.mode !== 'filters') return;
       const instance = event.target.closest("[data-trk-instance]");
       if (instance) {
         const menu = instance.closest("details");
@@ -5247,6 +5301,7 @@
         root.querySelector(".trk-others")?.removeAttribute("open");
         const wanted = view.dataset.trkView === "history" && view.closest(".trk-navigation") ? preferredHistoryView() : view.dataset.trkView;
         if (wanted === state.view) return;
+        if (changeMobileView(wanted)) return;
         state.view = wanted;
         if (wanted === "history") state.media = state.historyMedia;
         rememberView();
@@ -5360,6 +5415,11 @@
         renderSlots(false);
       }
       else if (action === "filters") {
+        if (window.CW?.MobileUI?.mobile()) {
+          state.filtersOpen = true;
+          openSheet('filters');
+          return;
+        }
         state.filtersOpen = !state.filtersOpen;
         renderSlots(true);
         state.root.querySelector('[data-trk-action="filters"]')?.focus();

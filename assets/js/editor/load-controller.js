@@ -36,7 +36,7 @@
       wrap.style.display = hide ? "none" : "";
     }
     select.onchange = async () => {
-      if (ctx.state.loading || ctx.state.saving || (ctx.state.hasChanges && !window.confirm("Discard unsaved Editor changes and switch mapping scope?"))) {
+      if (ctx.state.loading || ctx.state.saving || (ctx.state.hasChanges && !(await (window.CW?.MobileUI?.ask || window.confirm)("Discard unsaved Editor changes and switch mapping scope?")))) {
         select.value = ctx.state.mappingPair || "";
         return;
       }

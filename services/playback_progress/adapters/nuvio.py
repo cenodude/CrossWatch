@@ -3,7 +3,6 @@
 # Copyright (c) 2025-2026 CrossWatch / Cenodude
 from __future__ import annotations
 
-import re
 from datetime import datetime, timezone
 from typing import Any, Mapping, cast
 
@@ -12,7 +11,7 @@ from providers.sync._mod_NUVIO import OPS as NUVIO_OPS
 from providers.scrobble._show_tmdb import fill_display_tmdb
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, enrich_parallel, public_failure, tmdb_metadata_provider
+from .base import PlaybackProgressAdapter, enrich_parallel, is_placeholder_title, public_failure, tmdb_metadata_provider
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -160,13 +159,6 @@ def _metadata_detail(provider: Any, *, media_type: str, ids: Mapping[str, Any], 
     return out
 
 
-def _is_placeholder_title(value: Any) -> bool:
-    text = str(value or "").strip()
-    if not text:
-        return True
-    return bool(re.fullmatch(r"(?i)(?:tmdb|trakt):\d+|tt\d+|untitled", text))
-
-
 class NuvioPlaybackAdapter(PlaybackProgressAdapter):
     provider = "nuvio"
     provider_label = "Nuvio"
@@ -231,9 +223,9 @@ class NuvioPlaybackAdapter(PlaybackProgressAdapter):
             fill_display_tmdb(config_view, media_type, ids, show_ids)
         title = str(mini.get("title") or item.get("title") or item.get("series_title") or "").strip()
         series_title = str(mini.get("series_title") or item.get("series_title") or "").strip()
-        if _is_placeholder_title(title):
+        if is_placeholder_title(title):
             title = ""
-        if media_type == "episode" and _is_placeholder_title(series_title):
+        if media_type == "episode" and is_placeholder_title(series_title):
             series_title = ""
         has_art = bool(str(item.get("poster") or item.get("poster_url") or "").strip()) and bool(
             str(item.get("background") or item.get("backdrop") or item.get("backdrop_url") or "").strip()

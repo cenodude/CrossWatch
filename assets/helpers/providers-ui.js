@@ -718,8 +718,10 @@
     const form = overlay.querySelector("#cw-auth-provider-form");
     const title = overlay.querySelector("#cw-auth-dialog-title");
     const kicker = overlay.querySelector("#cw-auth-dialog-kicker");
-    if (overlay.classList.contains("hidden")) overlay.__cwReturnFocus = document.activeElement;
-    window.CW?.DialogFocus?.activate(overlay.querySelector(".cw-auth-dialog"), closeAuthProviderOverlay);
+    if (overlay.classList.contains("hidden")) {
+      overlay.__cwReturnFocus = document.activeElement;
+      window.CW?.DialogFocus?.activate(overlay.querySelector(".cw-auth-dialog"), closeAuthProviderOverlay);
+    }
     overlay.classList.remove("hidden");
     overlay.classList.toggle("cw-auth-picker-open", mode !== "form");
     overlay.setAttribute("aria-hidden", "false");
@@ -1658,6 +1660,7 @@
     nav.style.gridTemplateRows = cardVisible ? `repeat(${tabCount}, 92px) auto` : `repeat(${tabCount}, 92px)`;
     if (cardVisible) profileCard.style.gridRow = String(tabCount + 1);
     panel.classList.toggle("cw-connection-no-nav", !!info.hideNav && !cardVisible);
+    window.CW?.MobileUI?.sectionPicker(nav);
     return nav;
   }
 
@@ -1676,6 +1679,7 @@
     const wanted = String(sub).toLowerCase();
     panel.querySelectorAll(".cw-subtile[data-sub]").forEach((node) => node.classList.toggle("active", String(node.dataset.sub || "").toLowerCase() === wanted));
     panel.querySelectorAll(".cw-subpanel[data-sub]").forEach((node) => node.classList.toggle("active", String(node.dataset.sub || "").toLowerCase() === wanted));
+    window.CW?.MobileUI?.sectionPicker(panel.querySelector(":scope > .cw-subtiles"));
     applyConnectionModalOrder(panel, info);
     syncConnectionModalCopy(panel, info, overlay);
     resetConnectionModalScroll(panel);
@@ -2175,6 +2179,10 @@
     form.appendChild(section);
     section.classList.add("open");
     section.querySelector(":scope > .head")?.setAttribute("aria-expanded", "true");
+    if (overlay.classList.contains("hidden")) {
+      overlay.__cwReturnFocus = document.activeElement;
+      window.CW?.DialogFocus?.activate(overlay.querySelector(".cw-auth-dialog"), closeAuthProviderOverlay);
+    }
     overlay.classList.remove("hidden");
     overlay.setAttribute("aria-hidden", "false");
     overlay.classList.remove("cw-auth-picker-open");

@@ -128,6 +128,32 @@ for (const theme of ['original','flat-dark','flat-light']) for (const width of [
   assert.equal(await card.getAttribute('data-airing-open'),'');
 });
 
+for(const theme of ['original','flat-dark','flat-light']) test(`${theme}: Tracker secondary actions and Mobile settings use separate sheets`,async t=>{
+  const {page} = await fixture(t,theme,{width:390});
+  await page.locator('#cw-mobile-more').click();
+  const panel = page.locator('#cw-mobile-navigation');
+  const main = panel.locator('.cw-mobile-context-destinations');
+  const secondary = panel.locator('.cw-mobile-secondary-destinations');
+  assert.equal(await main.getByRole('button',{name:'Month in review',exact:true}).count(),0);
+  assert.equal(await secondary.getByRole('button',{name:'Month in review',exact:true}).isVisible(),false);
+  if(process.env.CW_MENU_SCREENSHOTS) {
+    await mkdir(process.env.CW_MENU_SCREENSHOTS,{recursive:true});
+    await page.screenshot({path:`${process.env.CW_MENU_SCREENSHOTS}/${theme}-tracker-main-sheet.png`});
+  }
+  await main.getByRole('button',{name:'More',exact:true}).click();
+  assert.equal(await panel.getAttribute('data-mobile-view'),'more');
+  assert.equal(await main.getByRole('button',{name:'Watchlist',exact:true}).isVisible(),false);
+  for(const name of ['Month in review','CrossWatch Wrapped','Automatic statuses','Clean up']) assert.equal(await secondary.getByRole('button',{name,exact:true}).isVisible(),true);
+  if(process.env.CW_MENU_SCREENSHOTS) await page.screenshot({path:`${process.env.CW_MENU_SCREENSHOTS}/${theme}-tracker-more-sheet.png`});
+  await panel.locator('#cw-mobile-widgets > summary').click();
+  assert.equal(await panel.locator('[data-mobile-haptics]').isVisible(),true);
+  await panel.locator('.cw-mobile-sheet-back').click();
+  assert.equal(await panel.getAttribute('data-mobile-view'),'more');
+  await secondary.getByRole('button',{name:'Clean up',exact:true}).click();
+  assert.equal(await page.locator('#cw-mobile-more').getAttribute('aria-expanded'),'false');
+  await page.locator('.trk-others [data-trk-view="cleanup"][aria-current="page"]').waitFor({state:'attached'});
+});
+
 for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: mobile More follows Tracker views and restores default destinations`, async t => {
   const {page} = await fixture(t,theme,{width:390,trackerOptions:{month_review:false,wrapped:false}});
   const more = page.getByRole('button',{name:'More',exact:true});
@@ -238,7 +264,7 @@ async function fixture(t, theme, {realMedia = false, playback = false, touch = t
       await page.addScriptTag({url:'/assets/js/profile-media-modal.js'});
     }
     if (playback) for (const file of ['helpers/playing-card','js/playingcard']) await page.addScriptTag({url:`/assets/${file}.js`});
-    for (const file of ["helpers/view-cache","helpers/account-menu","helpers/icon-select","helpers/selection-bar","helpers/card-actions", "helpers/airing-card","js/tracker"]) await page.addScriptTag({url:`/assets/${file}.js`});
+    for (const file of ["helpers/mobile-experience","helpers/view-cache","helpers/account-menu","helpers/mobile-settings","helpers/icon-select","helpers/selection-bar","helpers/card-actions", "helpers/airing-card","js/tracker"]) await page.addScriptTag({url:`/assets/${file}.js`});
     if (profiles !== null) for (const file of ['helpers/api','helpers/profile-select','js/overview-profile']) await page.addScriptTag({url:`/assets/${file}.js`});
     if (!wait) { await page.evaluate(() => { void TrackerPage.mount(document.querySelector("#page-tracker")); }); return; }
     await page.evaluate(() => TrackerPage.mount(document.querySelector("#page-tracker")));
@@ -999,7 +1025,7 @@ test("background episode refresh preserves cards and scroll, retries and resumes
     scroll:window.calendarNode.scrollLeft,
   })),{recent:true,continuing:true,calendar:true,release:true,scroll:60});
   phase = "failed";
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent('cw:view-status',{detail:{url:'/api/tracker/overview/shows?provider_instance=default',data:{ready:true,error:'refresh_failed'}}})));
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('cw:view-status',{detail:{url:'/api/tracker/overview/shows?provider_instance=default&day=2026-11-10',data:{ready:true,error:'refresh_failed'}}})));
   await page.getByRole('button',{name:'Retry',exact:true}).click();
   await page.getByText('Refresh failed. Showing saved results.',{exact:true}).waitFor();
   assert.equal(await page.locator('.trk-calendar-release').count(),12);
@@ -1425,7 +1451,7 @@ for (const width of [1440,390]) test(`Tracker grid action menus preserve editing
     const before = await card.boundingBox();
     await trigger.click();
     await menu.waitFor();
-    assert.equal(await menu.getByRole('menuitem',{name:label,exact:true}).count(),1);
+    assert.equal(await menu.getByRole('menuitem',{name:label,exact:true}).count(),1,`${view}: ${await menu.textContent()}`);
     const bounds = await menu.boundingBox();
     assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width && bounds.y >= 0 && bounds.y + bounds.height <= 900);
     assert.deepEqual(await card.boundingBox(),before);
@@ -1746,7 +1772,7 @@ for (const width of [390,320]) test(`Mobile Tracker toolbar stays in two rows at
   assert.ok(actions[0].y >= search.y + search.height);
   await page.locator('[data-trk-action="filters"]').click();
   await page.locator('#trk-extra-filters').waitFor({state:'visible'});
-  await page.locator('[data-trk-action="filters"]').click();
+  await page.locator('.trk-sheet').getByRole('button',{name:'Done',exact:true}).click();
   await page.locator('.trk-others summary').click();
   for (const action of ['views','changes','import']) assert.equal(await page.locator(`.trk-others-menu [data-trk-action="${action}"]`).isVisible(),true);
   await page.locator('.trk-others-menu [data-trk-action="views"]').click();
@@ -1811,6 +1837,7 @@ for (const width of [1440,390]) test(`Tracker cards keep routine statuses quiet 
   await page.locator('.trk-tabs [data-trk-view="history"]').evaluate(el=>el.click());
   await page.locator('[data-trk-layout="grid"]').click();
   await page.locator('.trk-grid-status-icon').first().waitFor();
+  if (width <= 760) await page.locator('[data-trk-action="filters"]').click();
   await page.locator('[data-trk-input="status-labels"]').evaluate(el=>el.click());
   assert.equal(await page.locator('.trk-grid-status-icon,.trk-grid-status').count(),0);
 });
@@ -1857,4 +1884,80 @@ test('Tracker overview does not wait for slow statistics on a cold load',async t
   await boot({wait:false});
   await page.locator('[data-trk-overview-open="airing:0"]').waitFor();
   release();
+});
+
+
+test("Tracker tab returns reuse fresh results while manual refresh still reads", async t => {
+  const {page} = await fixture(t, "flat-dark", {touch:false,clock:true});
+  const reads = [];
+  await page.route("**/api/tracker/items?**", route => {
+    const feature = new URL(route.request().url()).searchParams.get("feature");
+    reads.push(feature);
+    return route.fulfill({json:{ok:true,items:rows,total:rows.length,_view:{ready:true,refreshing:false,version:feature,revision:"1"}}});
+  });
+  for (const view of ["watchlist", "ratings"]) {
+    await page.locator(`.trk-tabs [data-trk-view="${view}"]`).click();
+    await page.waitForFunction(() => !document.querySelector('#page-tracker').hasAttribute('data-view-loading'));
+    await page.locator('[data-trk-slot="main"]').getByText('Movie 1', {exact:true}).first().waitFor();
+  }
+  await page.clock.runFor(2000);
+  await page.evaluate(() => {
+    window.loadingSeen = false;
+    new MutationObserver(() => { loadingSeen ||= document.querySelector('#page-tracker').hasAttribute('data-view-loading'); }).observe(document.querySelector('#page-tracker'), {attributes:true});
+  });
+  await page.locator('.trk-tabs [data-trk-view="watchlist"]').click();
+  await page.waitForFunction(() => document.querySelector('.trk-tabs [data-trk-view="watchlist"]').classList.contains('active'));
+  await page.clock.runFor(100);
+  assert.deepEqual(reads, ["watchlist", "ratings"]);
+  assert.equal(await page.evaluate(() => loadingSeen), false);
+  await page.evaluate(() => TrackerPage.resume());
+  await page.clock.runFor(100);
+  assert.equal(reads.length, 2);
+  await page.locator('[data-trk-action="refresh"]').click();
+  await page.waitForFunction(() => !document.querySelector('#page-tracker').hasAttribute('data-view-loading'));
+  assert.equal(reads.length, 3);
+});
+
+test('Mobile Tracker restores each section search and scroll, and Back closes filters first', async t => {
+  const {page} = await fixture(t,'flat-dark',{width:390,touch:true});
+  await page.route('**/api/tracker/items?**', route => route.fulfill({json:{items:Array.from({length:20},(_,i)=>({...rows[i % rows.length],key:`movie:${i}`})),total:20}}));
+  await page.locator('.trk-tabs [data-trk-view="watchlist"]').click();
+  const search = page.locator('[data-trk-input="q"]');
+  await search.fill('Movie');
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem('cw.tracker.view.v3')).q === 'Movie');
+  await page.waitForFunction(() => document.querySelectorAll('[data-trk-slot="main"] .trk-play').length >= 20);
+  await page.evaluate(() => window.scrollTo(0,300));
+  await page.waitForFunction(() => scrollY >= 299);
+  await page.locator('.trk-tabs [data-trk-view="ratings"]').evaluate(node => node.click());
+  await page.waitForFunction(() => document.querySelector('.trk-tabs [data-trk-view="ratings"]').classList.contains('active'));
+  assert.equal(await search.inputValue(),'');
+  await page.locator('[data-trk-action="filters"]').click();
+  await page.locator('.trk-sheet:visible').waitFor();
+  await page.goBack();
+  await page.waitForFunction(() => !document.querySelector('.cw-ia-sheet-wrap:not([hidden])'));
+  assert.equal(await page.locator('.trk-tabs [data-trk-view="ratings"]').getAttribute('aria-selected'),'true');
+  await page.goBack();
+  await page.waitForFunction(() => document.querySelector('.trk-tabs [data-trk-view="watchlist"]').classList.contains('active'));
+  assert.equal(await search.inputValue(),'Movie');
+  await page.waitForFunction(() => Math.abs(scrollY-300)<3);
+});
+
+for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: Tracker filters use a reachable mobile sheet`, async t => {
+  const {page} = await fixture(t,theme,{width:390,touch:true});
+  await page.locator('.trk-tabs [data-trk-view="watchlist"]').click();
+  await page.locator('[data-trk-action="filters"]').click();
+  const sheet = page.locator('.trk-sheet:visible');
+  await sheet.waitFor();
+  await sheet.locator('[data-trk-media="movie"]').click();
+  await page.waitForFunction(() => document.querySelector('.trk-sheet [data-trk-media="movie"]').getAttribute('aria-pressed') === 'true');
+  const bounds = await sheet.boundingBox();
+  assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 390 && bounds.y >= 0 && bounds.y + bounds.height <= 901);
+  if (process.env.CW_MOBILE_SCREENSHOTS) {
+    await mkdir(process.env.CW_MOBILE_SCREENSHOTS,{recursive:true});
+    await page.screenshot({path:`${process.env.CW_MOBILE_SCREENSHOTS}/${theme}-tracker-filters.png`});
+  }
+  await sheet.getByRole('button',{name:'Done',exact:true}).click();
+  await page.waitForFunction(() => !history.state?.cwMobileLayer);
+  assert.equal(await sheet.count(),0);
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('cw.tracker.view.v3')).media),'movie');
 });

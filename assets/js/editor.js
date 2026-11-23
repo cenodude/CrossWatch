@@ -644,7 +644,7 @@
       loadSnapshots,
       isPolicySource,
       isProviderPickerSource,
-      confirm: message => window.confirm(message),
+      confirm: async message => (await (window.CW?.MobileUI?.ask || window.confirm)(message)),
     };
   }
 
@@ -1444,12 +1444,14 @@
     if (activePopup.onResize) window.removeEventListener("resize", activePopup.onResize);
     if (activePopup.repositionFrame) cancelAnimationFrame(activePopup.repositionFrame);
     if (activePopup.node && activePopup.node.parentNode) {
+      if (activePopup.node instanceof HTMLDialogElement) activePopup.node.close();
       activePopup.node.parentNode.removeChild(activePopup.node);
     }
     activePopup = null;
   }
 
   function positionPopup(pop, anchor) {
+    if (pop instanceof HTMLDialogElement && window.CW?.MobileUI?.mobile()) return;
     const rect = anchor.getBoundingClientRect();
     const margin = 8;
     const viewportWidth = document.documentElement.clientWidth;
@@ -1472,7 +1474,8 @@
 
   function openPopup(anchor, builder, opts = {}) {
     closePopup();
-    const pop = document.createElement("div");
+    const isMobile = window.CW?.MobileUI?.mobile();
+    const pop = document.createElement(isMobile ? "dialog" : "div");
     pop.className = "cw-pop";
     document.body.appendChild(pop);
 
@@ -1481,7 +1484,7 @@
     }
 
     builder(pop, doClose);
-    positionPopup(pop, anchor);
+    if (!isMobile) positionPopup(pop, anchor);
 
     const onDoc = ev => {
       if (pop.contains(ev.target) || anchor.contains(ev.target)) return;
@@ -1503,11 +1506,21 @@
         positionPopup(pop, anchor);
       });
     };
-    if (opts.trackAnchorOnScroll === true) {
+    if (!isMobile && opts.trackAnchorOnScroll === true) {
       popupState.onScroll = onReposition;
       popupState.onResize = onReposition;
     }
     activePopup = popupState;
+    if (isMobile) {
+      const done = document.createElement('button');
+      done.type = 'button';
+      done.className = 'cw-btn';
+      done.textContent = 'Done';
+      done.addEventListener('click', doClose);
+      if (![...pop.querySelectorAll('button')].some(button => /^(Close|Done)$/.test(button.textContent.trim()))) pop.append(done);
+      pop.addEventListener('close', () => { if (activePopup === popupState) closePopup(); anchor.focus({preventScroll:true}); }, {once:true});
+      window.CW.MobileUI.openDialog(pop);
+    }
     if (opts.closeOnOutside !== false) document.addEventListener("mousedown", onDoc);
     document.addEventListener("keydown", onKey);
     if (popupState.onScroll) document.addEventListener("scroll", popupState.onScroll, true);
@@ -2478,7 +2491,7 @@ if (importProviderSel) {
   on(addBtn, "click", addRow);
   on(saveBtn, "click", saveState);
   on(discardBtn, "click", async () => {
-    if (!window.confirm("Discard all unsaved changes?")) return;
+    if (!(await (window.CW?.MobileUI?.ask || window.confirm)("Discard all unsaved changes?"))) return;
     state.hasChanges = false;
     clearSelection();
     await loadState();
@@ -2529,7 +2542,7 @@ if (importProviderSel) {
   async function openRecoveredHistory() {
     const receipt = window.CW?.pendingRecovery;
     if (!recoveryReady || !receipt || state.loading || state.saving) return;
-    if (state.hasChanges && !window.confirm("Discard unsaved Editor changes and open recovered history?")) return;
+    if (state.hasChanges && !(await (window.CW?.MobileUI?.ask || window.confirm)("Discard unsaved Editor changes and open recovered history?"))) return;
     window.CW.pendingRecovery = null;
     try {
       state.source = "state"; state.snapshot = "CROSSWATCH"; state.instance = receipt.instance;

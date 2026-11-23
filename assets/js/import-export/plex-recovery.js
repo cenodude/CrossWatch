@@ -327,7 +327,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
   async function acceptTitleMatches() {
     const id=job.id;
     const total=data?.summary?.by_status?.needs_review || 0;
-    if (!total || !window.confirm(`Accept all ${number(total)} suggested title matches across all pages of this search? Title guesses can be incorrect. Nothing will be imported until you select items and import them.`)) return;
+    if (!total || !(await (window.CW?.MobileUI?.ask || window.confirm)(`Accept all ${number(total)} suggested title matches across all pages of this search? Title guesses can be incorrect. Nothing will be imported until you select items and import them.`))) return;
     busy=true;controls();
     try {
       const result=await request(`/${job.id}/accept-title-matches`,{revision:data?.revision ?? job.revision,q:filters().q});
@@ -410,7 +410,7 @@ export function mountPlexRecovery(host, { NEW_TRACKER, createTracker, trackerOpt
     matchTypeChanged(false);
     $("#pr-match-save").disabled=false;
     $("#pr-match-original").textContent=`Original Plex record: ${row.original_title}`;
-    $("#pr-match-error").textContent="";$("#pr-match").showModal();
+    $("#pr-match-error").textContent="";window.CW?.MobileUI?.openDialog($("#pr-match")) || $("#pr-match").showModal();
     try {
       const context=await request(`/${job.id}/match-groups?${new URLSearchParams({revision:matchRevision})}`);
       if(!current())return;

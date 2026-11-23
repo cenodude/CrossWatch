@@ -52,7 +52,7 @@ window.closeAbout = async () => {
 };
 
 window.openAnalyzer = () => window.showTab ? window.showTab('analyzer') : (location.hash = 'analyzer');
-window.openLogs = (props = {}) => {
+window.openLogs = async (props = {}) => {
   const query = new URLSearchParams({channel: props.channel || 'sync'});
   if (props.runId) query.set('runId', props.runId);
   if (props.sessionId) query.set('sessionId', props.sessionId);
@@ -63,12 +63,13 @@ window.openLogs = (props = {}) => {
     : location.pathname + location.search + location.hash;
   if (returnTo) query.set('returnTo', returnTo);
   const hash = '#logs?' + query;
-  ModalRegistry.close();
+  await window.CW?.MobileUI?.beforeNavigate();
+  await ModalRegistry.close();
   if (!document.getElementById('page-logs') || !window.showTab) { location.href = '/?main=1' + hash; return; }
   if (location.hash !== hash) history.pushState(null, '', hash);
   return window.showTab('logs');
 };
-window.openEvents = (props = {}) => {
+window.openEvents = async (props = {}) => {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries({ groupId: props.groupId || props.eventGroupId, runId: props.runId || props.run_id, domain: props.domain, visibility: props.visibility, mode: props.mode })) {
     if (value) query.set(key, String(value));
@@ -77,7 +78,8 @@ window.openEvents = (props = {}) => {
   const returnTo = previous ? previous.get('returnTo') : location.pathname + location.search + location.hash;
   if (returnTo) query.set('returnTo', returnTo);
   const hash = '#events' + (query.size ? `?${query}` : '');
-  ModalRegistry.close();
+  await window.CW?.MobileUI?.beforeNavigate();
+  await ModalRegistry.close();
   if (!document.getElementById('page-events') || !window.showTab) {
     location.href = '/?main=1' + hash;
     return;
@@ -85,7 +87,7 @@ window.openEvents = (props = {}) => {
   if (location.hash !== hash) history.pushState(null, '', hash);
   return window.showTab('events');
 };
-window.openExporter = (props = {}) => {
+window.openExporter = async (props = {}) => {
   const previous = location.hash.split('?')[0] === '#import_export'
     ? new URLSearchParams(location.hash.split('?')[1] || '') : null;
   const query = new URLSearchParams();
@@ -93,13 +95,14 @@ window.openExporter = (props = {}) => {
   if (returnTo) query.set('returnTo', returnTo);
   if (props.recovery || previous?.has('recovery')) query.set('recovery', '1');
   const hash = '#import_export' + (query.size ? `?${query}` : '');
-  ModalRegistry.close();
+  await window.CW?.MobileUI?.beforeNavigate();
+  await ModalRegistry.close();
   if (!document.getElementById('page-import_export') || !window.showTab) { location.href = '/?main=1' + hash; return; }
   if (location.hash !== hash) history.pushState(null, '', hash);
   return window.showTab('import_export');
 };
 
-window.openMaintenance = (props = {}) => {
+window.openMaintenance = async (props = {}) => {
   const previous = location.hash.split('?')[0] === '#maintenance'
     ? new URLSearchParams(location.hash.split('?')[1] || '') : null;
   const query = new URLSearchParams();
@@ -107,7 +110,8 @@ window.openMaintenance = (props = {}) => {
   if (returnTo) query.set('returnTo', returnTo);
   if (props.group || props.target) query.set('group', String(props.group || props.target));
   const hash = '#maintenance' + (query.size ? `?${query}` : '');
-  ModalRegistry.close();
+  await window.CW?.MobileUI?.beforeNavigate();
+  await ModalRegistry.close();
   if (!document.getElementById('page-maintenance') || !window.showTab) { location.href = '/?main=1' + hash; return; }
   if (location.hash !== hash) history.pushState(null, '', hash);
   return window.showTab('maintenance');

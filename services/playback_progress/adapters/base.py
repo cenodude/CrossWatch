@@ -18,6 +18,11 @@ _T = TypeVar("_T")
 _R = TypeVar("_R")
 
 
+def is_placeholder_title(value: Any) -> bool:
+    text = str(value or "").strip()
+    return not text or bool(re.fullmatch(r"(?i)(?:tmdb|trakt):\d+|(?:imdb:)?tt\d+|untitled", text))
+
+
 class PlaybackProgressAdapter:
     provider = ""
     provider_label = ""

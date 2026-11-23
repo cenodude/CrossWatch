@@ -66,7 +66,7 @@ from cw_platform.provider_instances import instances_for_user_profile, list_user
 from api.dashboardAPI import _dashboard_widgets_version
 from api.watchlistAPI import _item_for_user_filter as _watchlist_item_for_user_filter
 from api.watchlistAPI import _load_watchlist_state, _tmdb_api_key, _watchlist_version
-from cw_platform.access_policy import clean_managed_permissions, scope_state_to_instances
+from cw_platform.access_policy import clean_managed_permissions, managed_user_can_write, scope_state_to_instances
 from services import profile_history
 from services.media_scope import MediaScope
 from services.dashboard_widgets import _tracker_feature_items
@@ -1493,6 +1493,7 @@ def api_profile_history(
     page: int = Query(1, ge=1),
     page_size: int = Query(48, ge=1, le=profile_history.PAGE_SIZE_MAX),
     user_profile: str = Query(""),
+    include_keys: bool = Query(False),
 ) -> JSONResponse:
     ctx = _profile_context(request)
     if isinstance(ctx, JSONResponse):
@@ -1511,8 +1512,38 @@ def api_profile_history(
         display_tz=display_tz,
         page=page,
         page_size=page_size,
+        include_keys=include_keys,
     )
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/history/scrobbles/remove")
+def api_profile_scrobbles_remove(request: Request, payload: dict[str, Any] = Body(...)) -> JSONResponse:
+    if not _origin_allowed(request):
+        return _origin_blocked_response()
+    ctx = _profile_context(request)
+    if isinstance(ctx, JSONResponse):
+        return ctx
+    cfg, _a, _uid, _raw, user, token = ctx
+    if not managed_user_can_write(user):
+        return _json_error("profile_scope_denied", 403)
+    event_ids = payload.get("ids")
+    if not isinstance(event_ids, list) or not 1 <= len(event_ids) <= profile_history.SELECTION_MAX or any(not isinstance(key, str) or not key.strip() or len(key) > 128 for key in event_ids):
+        return _json_error("invalid_ids", 400)
+    from services.activity import remove_scrobble_events
+    from services.dashboard_widgets import _activity_row, _sources_match_user
+    from services.view_cache import CACHE
+
+    profile_id = str(effective_user_profile_id(cfg, token, "") or "").strip()
+    user_filter = _history_user_filter(cfg, profile_id)
+    try:
+        result = remove_scrobble_events(event_ids, allowed=lambda item: _sources_match_user(_activity_row(item).get("sources"), user_filter))
+    except PermissionError:
+        return _json_error("profile_scope_denied", 403)
+    if result["events_removed"]:
+        profile_history.clear_history_cache()
+        CACHE.invalidate(Path(CONFIG_DIR))
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
 @router.get("/watchlist")

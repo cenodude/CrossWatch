@@ -34,7 +34,7 @@ function fixture(href, mounted = true) {
   return {context, location, navigations, link, host, back() { context.updateBackLink(host); return link; }};
 }
 
-test('recovery shortcut retains the exact sync report and selected Plex instance', () => {
+test('recovery shortcut retains the exact sync report and selected Plex instance', async () => {
   const caller = 'http://localhost/?main=1#interactive_sync?session=report-123';
   const f = fixture(caller);
   f.context.session = {pair: {source: 'SIMKL', target: 'PLEX', target_instance: 'second'}};
@@ -42,6 +42,7 @@ test('recovery shortcut retains the exact sync report and selected Plex instance
   const start = interactive.indexOf('    if (name === "recover-plex")');
   const end = interactive.indexOf('    if (name === "refresh")', start);
   vm.runInContext('(function () {' + interactive.slice(start, end) + '})()', f.context);
+  await new Promise(resolve => setImmediate(resolve));
   const route = new URLSearchParams(f.location.hash.split('?')[1]);
   assert.equal(route.get('recovery'), '1');
   assert.equal(route.get('returnTo'), '/?main=1#interactive_sync?session=report-123');
@@ -54,19 +55,19 @@ test('recovery shortcut retains the exact sync report and selected Plex instance
   assert.equal(refreshed.back().href, f.link.href);
 });
 
-test('reopening Import and Export preserves its original caller without a return loop', () => {
+test('reopening Import and Export preserves its original caller without a return loop', async () => {
   const f = fixture('http://localhost/#settings/maintenance');
-  f.context.window.openExporter();
-  f.context.window.openExporter({recovery: true});
-  f.context.window.openExporter();
+  await f.context.window.openExporter();
+  await f.context.window.openExporter({recovery: true});
+  await f.context.window.openExporter();
   assert.equal(f.back().href, '#settings/maintenance');
   assert.match(f.link.innerHTML, /Maintenance$/);
   assert.equal(new URLSearchParams(f.location.hash.split('?')[1]).get('recovery'), '1');
 });
 
-test('navigation from another shell preserves the caller and opens the recovery tab', () => {
+test('navigation from another shell preserves the caller and opens the recovery tab', async () => {
   const f = fixture('http://localhost/profile', false);
-  f.context.window.openExporter({recovery: true});
+  await f.context.window.openExporter({recovery: true});
   assert.equal(f.location.pathname, '/');
   assert.equal(f.location.search, '?main=1');
   assert.equal(f.back().href, '/profile');

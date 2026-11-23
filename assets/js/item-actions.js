@@ -1021,6 +1021,7 @@
     let lastFocus = null;
     let loadSeq = 0;
     const playNotes = new Map();
+    let mobileLayer = null;
 
     function ensure() {
       if (root) return root;
@@ -1080,7 +1081,9 @@
       return [...map.values()].sort((a, b) => providerName(a.provider).localeCompare(providerName(b.provider), undefined, { sensitivity: "base" }) || accountName(a, list).localeCompare(accountName(b, list)));
     }
 
-    function close() {
+    function close(fromBack = false) {
+      if (!fromBack && mobileLayer) return mobileLayer.dismiss();
+      mobileLayer = null;
       if (!root || root.hidden) return;
       root.hidden = true;
       loadSeq += 1;
@@ -1414,6 +1417,7 @@
       playNotes.clear();
       root.hidden = false;
       document.documentElement.classList.add("cw-ia-sheet-open");
+      if (!mobileLayer && window.CW?.MobileUI?.mobile()) mobileLayer = window.CW.MobileUI.layer(() => close(true));
       render();
       dialog()?.focus({ preventScroll: true });
       void load();

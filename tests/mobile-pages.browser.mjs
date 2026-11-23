@@ -62,7 +62,7 @@ async function fixture(t, kind, theme = "flat-dark", width = 390, options = {}) 
     const attrs=theme==="original"?'class="cw-theme-original"':`data-cw-theme="${theme}" class="cw-theme-${theme==="flat-light"?"light":"dark"}"`;
     const scripts=kind==="editor"?[...editorModules.map(name=>"editor/"+name),"editor.js"]:kind==="tracker"?["tracker.js"]:[];
     const mount=kind==="analyzer"?`import('/assets/js/analyzer/index.js').then(()=>Analyzer.mount(document.querySelector('#page-analyzer')))` :kind==="events"?`import('/assets/js/events/index.js').then(m=>m.default.mount(document.querySelector('#page-events'),{mode:'raw'}))`:kind==="tracker"?`TrackerPage.mount(document.querySelector('#page-tracker'))`:"Promise.resolve()";
-    return route.fulfill({contentType:"text/html",body:`<!doctype html><html ${attrs} data-tab="${kind}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${[...styles,theme==="original"?"themes/original-coverage":"themes/flat"].map(file=>`<link rel="stylesheet" href="/assets/${file}.css">`).join("")}</head><body><main id="layout"><section id="page-${kind}" class="cw-themed-page"></section></main><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/provider-meta.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/helpers/dialog-focus.js"></script>${scripts.map(file=>`<script src="/assets/js/${file}"></script>`).join("")}<script>window.ready=${mount};</script></body></html>`});
+    return route.fulfill({contentType:"text/html",body:`<!doctype html><html ${attrs} data-tab="${kind}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${[...styles,theme==="original"?"themes/original-coverage":"themes/flat"].map(file=>`<link rel="stylesheet" href="/assets/${file}.css">`).join("")}</head><body><main id="layout"><section id="page-${kind}" class="cw-themed-page"></section></main><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/provider-meta.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/helpers/mobile-experience.js"></script><script src="/assets/helpers/dialog-focus.js"></script>${scripts.map(file=>`<script src="/assets/js/${file}"></script>`).join("")}<script>window.ready=${mount};</script></body></html>`});
   });
   await page.goto("https://mobile-pages.test/");
   await page.evaluate(() => window.ready);
@@ -73,6 +73,7 @@ async function fixture(t, kind, theme = "flat-dark", width = 390, options = {}) 
 
 async function screenshot(page, name) {
   if (!process.env.CW_MOBILE_PAGES_SCREENSHOTS) return;
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(animation => animation.effect?.getTiming().iterations !== Infinity).map(animation => animation.finished.catch(() => {}))));
   await mkdir(process.env.CW_MOBILE_PAGES_SCREENSHOTS,{recursive:true});
   await page.screenshot({path:`${process.env.CW_MOBILE_PAGES_SCREENSHOTS}/${name}.png`,fullPage:true});
 }
@@ -314,8 +315,9 @@ for(const theme of ["original","flat-dark","flat-light"]) {
           for(const id of ['#ev-more','#ev-refresh']) assert.ok((await page.locator(id).boundingBox()).height>=44,id);
           await page.locator('#ev-more').tap();
           assert.equal(await page.locator('#ev-morefilters').isVisible(),true);
+          await page.locator('#ev-morefilters').evaluate(el=>Promise.all(el.getAnimations().map(animation=>animation.finished)));
           const sheet=await page.locator('#ev-morefilters').boundingBox();
-          assert.ok(Math.abs(sheet.y+sheet.height-height)<=1&&sheet.width>=width-1);
+          assert.ok(Math.abs(sheet.y+sheet.height-height)<=1&&sheet.width>=width-1, JSON.stringify(sheet));
           assert.equal(await page.locator('#ev-cat').isVisible(),false);
           assert.equal(await page.locator('#ev-mode').isVisible(),true);
           await noOverflow(page);
@@ -327,7 +329,8 @@ for(const theme of ["original","flat-dark","flat-light"]) {
           assert.equal(await page.locator('.ev-toolbar').isVisible(),false);
           await noOverflow(page);
           await screenshot(page,`${theme}-${kind}-${width}-detail`);
-          await page.locator('#ev-detail-back').tap();
+          await page.goBack();
+          await page.locator('.ev-col-list').waitFor();
           assert.equal(await page.locator('.ev-col-list').isVisible(),true);
           state.eventTotal=1000;
           await page.locator('#ev-refresh').tap();
@@ -343,7 +346,7 @@ for(const theme of ["original","flat-dark","flat-light"]) {
           await page.locator('#an-mobile-filters').tap();
           assert.equal(await page.locator('#an-feature').isVisible(),true);
           await page.locator('#an-feature').selectOption('history');
-          await page.locator('#an-mobile-filters').tap();
+          await page.locator('.cw-page-panel-sheet').getByRole('button',{name:'Done',exact:true}).tap();
           assert.equal(await page.locator('#an-feature').inputValue(),'history');
           assert.equal(await page.locator('#an-mobile-view').isVisible(),true);
           assert.equal(await page.locator('#an-detail').isVisible(),false);
@@ -360,7 +363,8 @@ for(const theme of ["original","flat-dark","flat-light"]) {
           assert.equal(await page.locator('#an-close-detail').isVisible(),true);
           await noOverflow(page);
           await screenshot(page,`${theme}-${kind}-${width}-detail`);
-          await page.locator('#an-close-detail').tap();
+          await page.goBack();
+          await page.locator('.an-list-column').waitFor();
           assert.equal(await page.locator('.an-list-column').isVisible(),true);
           assert.ok(Math.abs(await page.evaluate(()=>scrollY)-scroll)<3);
           assert.equal(await page.evaluate(()=>document.activeElement?.dataset.row),'1');

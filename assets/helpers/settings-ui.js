@@ -250,7 +250,7 @@ window.cwAppAuthPlexLink = async function cwAppAuthPlexLink() {
 };
 
 window.cwAppAuthPlexUnlink = async function cwAppAuthPlexUnlink() {
-  const ok = window.confirm("Unlink Plex sign-in from this CrossWatch admin?");
+  const ok = (await (window.CW?.MobileUI?.ask || window.confirm)("Unlink Plex sign-in from this CrossWatch admin?"));
   if (!ok) return;
   try {
     const r = await fetch("/api/app-auth/plex/unlink", {
@@ -474,7 +474,7 @@ window.cwAppAuthOidcLink = async function cwAppAuthOidcLink() {
 };
 
 window.cwAppAuthOidcUnlink = async function cwAppAuthOidcUnlink() {
-  const ok = window.confirm("Unlink OIDC sign-in from this CrossWatch admin?");
+  const ok = (await (window.CW?.MobileUI?.ask || window.confirm)("Unlink OIDC sign-in from this CrossWatch admin?"));
   if (!ok) return;
   try {
     const r = await fetch("/api/app-auth/oidc/unlink", {

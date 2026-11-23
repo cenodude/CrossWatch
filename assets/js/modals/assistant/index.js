@@ -78,9 +78,9 @@ export const ACTIONS = {
   run_sync: {
     label: "Run sync",
     icon: "sync",
-    run: () => {
+    run: async () => {
       if (window.syncBar?.isRunning?.()) return toast("A sync is already running");
-      if (!window.confirm("Start a sync of all pairs now?")) return;
+      if (!(await (window.CW?.MobileUI?.ask || window.confirm)("Start a sync of all pairs now?"))) return;
       window.showTab?.("main");
       window.runSync?.();
     },

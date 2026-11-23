@@ -137,6 +137,7 @@ def _scrobble_rows(user_filter: Mapping[str, Any] | None) -> list[dict[str, Any]
         if not isinstance(item, Mapping) or str(item.get("kind") or "").strip().lower() not in _SCROBBLE_KINDS:
             continue
         row = dw._activity_row(item)
+        row["key"] = f"scrobble:{row['id']}"
         if dw._sources_match_user(row.get("sources"), user_filter):
             rows.append(row)
     return rows
@@ -639,7 +640,7 @@ def title_play_summary(state: Any, tracker_items: Any, user_filter: Mapping[str,
 
 
 SELECTION_MAX = 1000
-_SELECTION_FIELDS = ("type", "title", "year", "season", "episode", "ids")
+_SELECTION_FIELDS = ("id", "type", "title", "year", "season", "episode", "ids")
 
 
 def selection_entry(row: Mapping[str, Any]) -> dict[str, Any]:

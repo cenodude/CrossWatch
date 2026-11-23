@@ -25,7 +25,7 @@ async function fixture(t) {
       ${["themes/tokens","css/base","crosswatch","css/layout","css/components","css/auth-providers","css/pages","css/page-theme","fonts/material-symbols-rounded","ui-shell","themes/flat","themes/original-coverage"].map(file=>`<link rel="stylesheet" href="/assets/${file}.css">`).join("")}
       </head><body><section id="page-settings"><button id="add" onclick="openAddConnection()">Add provider</button><div class="cw-settings-panel cw-settings-shell active"><div id="auth-providers"></div></div><div id="meta-provider-panel"><section class="section" id="sec-meta-tmdb"><div class="body"></div></section></div></section>
       <script>window.CW={HelpLinks:{url:()=>"#"}};window._cfgCache={};window.cwEnsureAuthSection=async()=>{};window.__CW_PROVIDER_STATUS__={providers:{plex:{connected:true},jellyfin:{connected:false,instances:{default:{connected:false}}}}};</script>
-      <script src="/assets/helpers/provider-meta.js"></script><script src="/assets/helpers/dialog-focus.js"></script>
+      <script src="/assets/helpers/mobile-experience.js"></script><script src="/assets/helpers/provider-meta.js"></script><script src="/assets/helpers/dialog-focus.js"></script>
       <script>
       CW.API={Config:{load:async()=>window._cfgCache},j:async()=>{
         const groups=new Map();
@@ -41,7 +41,7 @@ async function fixture(t) {
 
 test("category Add buttons open their matching providers and generic Add resets filters",async t=>{
   const {page,picker}=await fixture(t);
-  for(const [category,count] of [["sec-auth-media",5],["sec-auth-trackers",15],["sec-auth-clients",3],["sec-auth-metadata",2]]) {
+  for(const [category,count] of [["sec-auth-media",5],["sec-auth-trackers",15],["sec-auth-clients",3],["sec-auth-metadata",3]]) {
     await page.locator(`[data-cw-auth-category="${category}"]`).click();
     assert.equal(await picker.locator(`[data-cw-picker-category="${category}"]`).getAttribute("aria-selected"),"true");
     assert.equal(await picker.locator(".cw-auth-picker-row").count(),count);
@@ -92,8 +92,9 @@ test("picker fits desktop, tablet and mobile in every theme",async t=>{
       document.documentElement.dataset.cwTheme=theme==="original"?"":theme;
       document.documentElement.className=theme==="original"?"cw-theme-original":theme==="flat-light"?"cw-theme-light":"";
     },theme);
+    await dialog.evaluate(el=>el.getAnimations().forEach(animation=>animation.finish()));
     const box=await dialog.boundingBox();
-    assert.ok(box.x>=0&&box.x+box.width<=width&&box.y>=0&&box.y+box.height<=height);
+    assert.ok(box.x>=0&&box.x+box.width<=width&&box.y>=0&&box.y+box.height<=height,JSON.stringify({theme,width,height,box}));
     assert.equal(await picker.evaluate(el=>el.scrollWidth<=el.clientWidth),true);
     assert.equal(await picker.locator(".cw-auth-picker-results").evaluate(el=>el.scrollWidth<=el.clientWidth),true);
     const inputBox=await picker.getByRole("searchbox").boundingBox();
@@ -125,4 +126,24 @@ test("mobile opening keeps the keyboard closed and keyboard focus stays in the p
   assert.equal(await picker.locator(".cw-auth-picker-row").count(),0);
   await dialog.getByRole("button",{name:"Close",exact:true}).click();
   assert.equal(await dialog.isVisible(),false);
+});
+
+test("mobile provider and metadata forms close on Back without leaving Settings",async t=>{
+  const {page,dialog}=await fixture(t);
+  await page.setViewportSize({width:390,height:844});
+  await page.waitForFunction(()=>CW.MobileUI.mobile());
+  for(const [method,key] of [["openAuthProviderForm","PLEX"],["openMetadataProviderForm","TMDB_METADATA"]]) {
+    await page.evaluate(async ({method,key})=>{await window[method](key)},{method,key});
+    await dialog.waitFor();
+    await page.waitForFunction(()=>history.state?.cwMobileLayer);
+    if(key==="PLEX") {
+      const picker=page.locator('.cw-mobile-section-picker select');
+      await picker.selectOption({label:"Settings"});
+      assert.equal(await page.locator('.cw-subtile.active').getAttribute('data-sub'),'settings');
+    }
+    await page.goBack();
+    await dialog.waitFor({state:'hidden'});
+    await page.waitForFunction(()=>!history.state?.cwMobileLayer);
+    assert.equal(page.url(),'https://picker.test/');
+  }
 });

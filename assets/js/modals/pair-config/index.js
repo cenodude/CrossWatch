@@ -2973,11 +2973,11 @@ export default{
     hostEl.__doSave=async()=>{
       const payload=buildPayload(state,wrap);
       if(same(payload.source,payload.target)&&(!payload.target_instance||payload.source_instance===payload.target_instance)){
-        alert("Choose two different instances to create a sync pair.");
+        (window.CW?.MobileUI?.notice || window.alert)("Choose two different instances to create a sync pair.");
         return;
       }
       if(scopedPairView()&&(!state.src_instance||!state.dst_instance)){
-        alert("Choose a connected account for both source and target.");
+        (window.CW?.MobileUI?.notice || window.alert)("Choose a connected account for both source and target.");
         return;
       }
       await saveConfigBits(state);
@@ -2985,12 +2985,12 @@ export default{
       const feats=payload.features||{};
       const enabledKeys=Object.keys(feats).filter(k=>feats[k]?.enable);
       if(!enabledKeys.length){
-        const ok=window.confirm("This pair has no enabled features.\nIt will not transfer any data.\nSave anyway?");
+        const ok=(await (window.CW?.MobileUI?.ask || window.confirm)("This pair has no enabled features.\nIt will not transfer any data.\nSave anyway?"));
         if(!ok)return;
       }
 
       const res=await savePair(payload);
-      if(!res.ok){alert(res.error==="same_provider_instance"?"Choose two different instances to create a sync pair.":res.error==="not_found"?"This pair no longer exists. Close the editor and create a new pair.":res.error==="profile_scope_denied"?"Choose accounts that belong to this profile.":String(res.error||"").toLowerCase().includes("status")||res.error==="Planned remains managed by Watchlist"?res.error:"Save failed");return;}
+      if(!res.ok){(window.CW?.MobileUI?.notice || window.alert)(res.error==="same_provider_instance"?"Choose two different instances to create a sync pair.":res.error==="not_found"?"This pair no longer exists. Close the editor and create a new pair.":res.error==="profile_scope_denied"?"Choose accounts that belong to this profile.":String(res.error||"").toLowerCase().includes("status")||res.error==="Planned remains managed by Watchlist"?res.error:"Save failed");return;}
 
       try{
         if(typeof window.loadPairs==="function"){await window.loadPairs(true)}

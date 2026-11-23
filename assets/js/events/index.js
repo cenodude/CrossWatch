@@ -699,6 +699,16 @@ export default {
     let loadSequence = 0;
     let scrollPosition = null;
     let listReturnPosition = null;
+    let detailLayer = null;
+    const closeMobileDetail = () => {
+      ++selectionSequence;
+      const layer = detailLayer;
+      detailLayer = null;
+      void layer?.dismiss();
+      layoutEl.classList.remove('show-detail');
+      if (listReturnPosition !== null) window.scrollTo({top:listReturnPosition, behavior:'instant'});
+      listEl.querySelector('.ev-row.sel, .ev-trow.sel, .ev-rrow.sel')?.focus({preventScroll:true});
+    };
     const pageVisible = () => document.documentElement.dataset.tab === "events";
     const revealSection = element => {
       if (!pageVisible()) return;
@@ -712,11 +722,7 @@ export default {
     showView = () => {
       if (scrollPosition !== null && pageVisible()) window.scrollTo({ top: scrollPosition, behavior: "instant" });
     };
-    Q("#ev-detail-back", root).addEventListener("click", () => {
-      layoutEl.classList.remove("show-detail");
-      if (listReturnPosition !== null) window.scrollTo({ top: listReturnPosition, behavior: "instant" });
-      listEl.querySelector(".ev-row.sel")?.focus({ preventScroll: true });
-    });
+    Q("#ev-detail-back", root).addEventListener("click", closeMobileDetail);
     Q("#ev-back", root).addEventListener("click", async event => {
       if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
@@ -1308,6 +1314,7 @@ export default {
     };
 
     const clearDetail = () => {
+      if (detailLayer) closeMobileDetail();
       ++selectionSequence;
       layoutEl.classList.remove("show-detail");
       state.selected = null;
@@ -2385,6 +2392,7 @@ export default {
       if (reveal) {
         if (!layoutEl.classList.contains("show-detail")) listReturnPosition = window.scrollY;
         layoutEl.classList.add("show-detail");
+        if (window.CW?.MobileUI?.mobile()) detailLayer ||= window.CW.MobileUI.layer(closeMobileDetail);
       }
       state.selected = String(id);
       state.selectedPair = runsMode() ? pair : "";
@@ -2503,7 +2511,7 @@ export default {
 
     const reviewAll = async () => {
       const total = state.total || 0;
-      if (!total || !window.confirm(`Mark ${total.toLocaleString()} ${total === 1 ? "title" : "titles"} that need attention as reviewed?\n\nOnly failed destinations matching the current filters are marked.`)) return;
+      if (!total || !(await (window.CW?.MobileUI?.ask || window.confirm)(`Mark ${total.toLocaleString()} ${total === 1 ? "title" : "titles"} that need attention as reviewed?\n\nOnly failed destinations matching the current filters are marked.`))) return;
       const btn = Q("#ev-review-all", quickEl);
       if (btn) btn.disabled = true;
       const query = Object.fromEntries(new URLSearchParams(titlesQuery(0)));
@@ -2589,9 +2597,17 @@ export default {
     untilEl.addEventListener("change", () => load(0));
 
     const setFiltersOpen = (open) => {
+      if (open === !moreWrap.hidden) return;
       moreWrap.hidden = !open;
       moreBtn.setAttribute("aria-expanded", String(open));
       moreBtn.classList.toggle("on", open);
+      if (open && window.CW?.MobileUI?.mobile()) {
+        window.CW?.DialogFocus?.activate(moreWrap, () => setFiltersOpen(false));
+        moreWrap.focus({preventScroll:true});
+      } else if (!open) {
+        for (const dd of dropdowns) dd.close();
+        window.CW?.DialogFocus?.deactivate(moreWrap);
+      }
     };
     moreBtn.addEventListener("click", () => setFiltersOpen(moreWrap.hidden));
     const onFiltersDown = (event) => {
@@ -2612,7 +2628,7 @@ export default {
     Q("#ev-refresh", root).addEventListener("click", () => doRefresh());
     Q("#ev-clear", root)?.addEventListener("click", async () => {
       const label = domain === "audit" ? "audit" : domain === "capture" ? "capture" : domain === "backup" ? "backup" : (domain === "scrobble" ? "scrobble" : "sync");
-      if (!window.confirm(`Delete all ${label} events from the archive?\n\nThis clears the ${label} activity history.\nThis cannot be undone.`)) return;
+      if (!(await (window.CW?.MobileUI?.ask || window.confirm)(`Delete all ${label} events from the archive?\n\nThis clears the ${label} activity history.\nThis cannot be undone.`))) return;
       const btn = Q("#ev-clear", root);
       btn?.classList.add("busy");
       try {
@@ -2627,12 +2643,16 @@ export default {
     Q("#ev-prev-top", root).addEventListener("click", () => { if (state.page > 0) load(state.page - 1); });
     Q("#ev-next-top", root).addEventListener("click", () => { if (state.page < pageCount() - 1) load(state.page + 1); });
     hideView = () => {
+      setFiltersOpen(false);
+      if (detailLayer) closeMobileDetail();
       scrollPosition = window.scrollY;
       endSplit();
       for (const dd of [...dropdowns, ddSort]) dd.close();
     };
 
     cleanup = () => {
+      setFiltersOpen(false);
+      if (detailLayer) closeMobileDetail();
       alive = false;
       clearTimeout(searchTimer);
       clearTimeout(toastTimer);

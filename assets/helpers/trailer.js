@@ -76,11 +76,15 @@
     frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
     stageEl.appendChild(frame);
     modal.classList.add("show");
+    if (window.CW?.MobileUI?.mobile() && !modal.mobileLayer) modal.mobileLayer = window.CW.MobileUI.overlay(modal, close);
     closeBtn.focus();
   }
 
   function close() {
     if (!modal?.classList.contains("show")) return;
+    const layer = modal.mobileLayer;
+    modal.mobileLayer = null;
+    void layer?.dismiss();
     modal.classList.remove("show");
     if (returnFocus?.isConnected) returnFocus.focus({preventScroll:true});
     returnFocus = null;

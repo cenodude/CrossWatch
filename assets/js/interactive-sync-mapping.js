@@ -160,7 +160,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     <label class="is-map-scope" ${recovery ? "hidden" : ""}>Use this fix for<select data-mapping-scope ${scopes.length < 2 ? "disabled hidden" : ""}>${scopes.map(option => `<option value="${esc(option.id)}" ${option.id === scope ? "selected" : ""}>${esc(option.label)}</option>`).join("")}</select>${scopes.length < 2 ? `<strong>${esc(scopes[0]?.label || "")}</strong>` : ""}<small data-scope-note></small></label>
     </div><footer class="is-map-save"><div><strong data-count>No changes yet</strong><p data-error role="alert"></p></div><button class="is-btn is-primary" data-save disabled>${recovery ? "Save checked matches" : staged ? (direct ? "Save fix" : "Use correction") : "Save mappings"}</button></footer>`;
   document.body.append(dialog);
-  dialog.showModal();
+  window.CW?.MobileUI?.openDialog(dialog) || dialog.showModal();
   const $ = selector => dialog.querySelector(selector);
   function refreshSearchSelects() {
     if (!recovery) return;
@@ -619,7 +619,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     const selected = drafts.filter(d => d.checked && (!recovery || !d.dirty || d.review));
     if (!selected.length) { status(recovery ? "All checked titles already have suggestions. Review and save them, or edit a title to change its match." : "Select the items you want to match first."); return; }
     if(recovery && api.autoStart) {
-      if(!window.confirm(`Auto match ${selected.length} movie/show titles? This can generate heavy API traffic and consume your provider's request quota. Extra detail requests and retries may increase traffic. Suggestions will be kept for review; nothing is imported.`))return;
+      if(!(await (window.CW?.MobileUI?.ask || window.confirm)(`Auto match ${selected.length} movie/show titles? This can generate heavy API traffic and consume your provider's request quota. Extra detail requests and retries may increase traffic. Suggestions will be kept for review; nothing is imported.`)))return;
       background=true;searching=true;lock(true);
       try {syncBackground(await api.autoStart(selected.map(d=>d.row.id),$("[data-catalog]").value,metadataLanguage()));}
       catch(error) {status(error.message);backgroundTimer=setTimeout(pollBackground,1500);}
@@ -681,9 +681,9 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
     drafts.forEach(d => { d.checked = checked; });
     selectionChanged();
   };
-  function close() {
+  async function close() {
     if (saving || (searching && !background)) return;
-    if (drafts.some(d => d.dirty && JSON.stringify(d.item) !== d.persisted) && !window.confirm("Discard unsaved mapping corrections?")) return;
+    if (drafts.some(d => d.dirty && JSON.stringify(d.item) !== d.persisted) && !(await (window.CW?.MobileUI?.ask || window.confirm)("Discard unsaved mapping corrections?"))) return;
     dismiss();
   }
   function dismiss() {
@@ -737,7 +737,7 @@ export function openMappingWorkspace({rows, session = {}, json, post, onSaved, o
           button.textContent = "Remove saved mapping: " + label + " (" + scopeLabel + ")";
           button.onclick = async () => {
             if (saving || searching || closed) return;
-            if (!window.confirm("Remove the saved mapping for " + label + " from " + scopeLabel + "? Its automatic original-item block will also be removed. Other mappings may apply again. This does not undo synced media changes. Unsaved edits in this dialog will be discarded.")) return;
+            if (!(await (window.CW?.MobileUI?.ask || window.confirm)("Remove the saved mapping for " + label + " from " + scopeLabel + "? Its automatic original-item block will also be removed. Other mappings may apply again. This does not undo synced media changes. Unsaved edits in this dialog will be discarded."))) return;
             saving = true; lock(true); button.disabled = true;
             try {
               const identity = {...Object.fromEntries(["provider", "instance", "feature", "key", "pair_id"].map(key => [key, rule[key]])), entry_type:"mapping"};

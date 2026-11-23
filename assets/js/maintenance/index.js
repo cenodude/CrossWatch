@@ -977,37 +977,37 @@ const MaintenancePage = {
       } = options;
       if (manageLock && operationBusy) return false;
 
-      if (kind === "state" && !confirm("Reset all sync baselines, including obsolete pair scopes?\n\nThe next sync starts fresh. Previous deletions will not propagate, and two-way pairs can add missing items back. Create a backup first.")) {
+      if (kind === "state" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Reset all sync baselines, including obsolete pair scopes?\n\nThe next sync starts fresh. Previous deletions will not propagate, and two-way pairs can add missing items back. Create a backup first."))) {
         setStatus("Cancelled.", "");
         return false;
       }
 
-      if (kind === "captures" && !confirm("Delete all saved captures? This cannot be undone.")) {
+      if (kind === "captures" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Delete all saved captures? This cannot be undone."))) {
         setStatus("Cancelled.", "");
         return false;
       }
 
-      if (kind === "events-purge" && !confirm("Clear all event data?\n\nThis empties every event category (sync, scrobble, audits) and the sync activity calendar.\n\nNothing else in the local database is touched. This cannot be undone.")) {
+      if (kind === "events-purge" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Clear all event data?\n\nThis empties every event category (sync, scrobble, audits) and the sync activity calendar.\n\nNothing else in the local database is touched. This cannot be undone."))) {
         setStatus("Cancelled.", "");
         return false;
       }
 
-      if (kind === "events-rebuild" && !confirm("Clear the event archive and start it empty?\n\nHistorical events will be removed. Runtime baselines, configuration and other database tables are preserved.")) {
+      if (kind === "events-rebuild" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Clear the event archive and start it empty?\n\nHistorical events will be removed. Runtime baselines, configuration and other database tables are preserved."))) {
         setStatus("Cancelled.", "");
         return false;
       }
 
-      if (kind === "state-file" && !confirm("Create an app-state backup and compact the sync state database?")) {
+      if (kind === "state-file" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Create an app-state backup and compact the sync state database?"))) {
         setStatus("Cancelled.", "");
         return false;
       }
 
-      if (kind === "state-file-prune" && !confirm("Create an app-state backup and prune stale sync state?\n\nThis removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes, plus unresolved, blackbox and flap files left behind by removed pairs.")) {
+      if (kind === "state-file-prune" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Create an app-state backup and prune stale sync state?\n\nThis removes provider or instance baselines that are no longer referenced by configured sync pairs or scrobbler routes, plus unresolved, blackbox and flap files left behind by removed pairs."))) {
         setStatus("Cancelled.", "");
         return false;
       }
 
-      if (kind === "database-rebuild" && !confirm("Rebuild the local database?\n\nThe current database files are moved to .cw_databases/backups and a fresh database is created.\n\nSync baselines, Editor mappings and blocks, Events, statistics, sync reports and hidden watchlist items start empty. config.json and provider logins stay.\n\nThe next sync works like a first sync: nothing is deleted, but a two-way pair can add back items removed on one side.")) {
+      if (kind === "database-rebuild" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Rebuild the local database?\n\nThe current database files are moved to .cw_databases/backups and a fresh database is created.\n\nSync baselines, Editor mappings and blocks, Events, statistics, sync reports and hidden watchlist items start empty. config.json and provider logins stay.\n\nThe next sync works like a first sync: nothing is deleted, but a two-way pair can add back items removed on one side."))) {
         setStatus("Cancelled.", "");
         return false;
       }
@@ -1061,7 +1061,7 @@ const MaintenancePage = {
             finishActionFeedback(btn, "error");
             return false;
           }
-          if (!confirm(`Reset sync state for pair ${pair.label}?\n\nFeatures: ${features.join(", ")}\n\nThe next sync reads fresh provider data for this pair. Deletions made since the last sync are not propagated, and a two-way pair adds items back that are missing on one side.\n\nOther pairs keep their state.`)) {
+          if (!(await (window.CW?.MobileUI?.ask || window.confirm)(`Reset sync state for pair ${pair.label}?\n\nFeatures: ${features.join(", ")}\n\nThe next sync reads fresh provider data for this pair. Deletions made since the last sync are not propagated, and a two-way pair adds items back that are missing on one side.\n\nOther pairs keep their state.`))) {
             setStatus("Cancelled.", "");
             finishActionFeedback(btn, "cancel");
             return false;
@@ -1083,14 +1083,14 @@ const MaintenancePage = {
             "Are you absolutely sure you want to continue?"
           ].join("\n");
 
-          if (!confirm(warn)) {
+          if (!(await (window.CW?.MobileUI?.ask || window.confirm)(warn))) {
             setStatus("Cancelled.", "");
             finishActionFeedback(btn, "cancel");
             return false;
           }
 
           {
-            const typed = prompt("Type RESET to continue");
+            const typed = (await (window.CW?.MobileUI?.prompt || window.prompt)("Type RESET to continue"));
             if (String(typed || "").trim().toUpperCase() !== "RESET") {
               setStatus("Cancelled.", "");
               finishActionFeedback(btn, "cancel");
@@ -1166,7 +1166,7 @@ const MaintenancePage = {
         const op = OPS_BY_KEY[row.dataset.op];
         return `${op.title}: ${op.desc}`;
       }).join("\n\n");
-      if (!confirm(`Run ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"} in ${group.title}?\n\n${taskList}`)) return;
+      if (!(await (window.CW?.MobileUI?.ask || window.confirm)(`Run ${tasks.length} ${tasks.length === 1 ? "task" : "tasks"} in ${group.title}?\n\n${taskList}`))) return;
       const container = button.closest("details");
       if (container) container.open = true;
       const label = button.querySelector("span:last-child");

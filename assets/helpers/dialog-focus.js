@@ -4,6 +4,7 @@
 (function () {
   const bound = new WeakSet();
   const active = [];
+  const mobileLayers = new Map();
   const NS = (window.CW ||= {});
   const prune = () => {
     for (let i = active.length - 1; i >= 0; i--) {
@@ -34,10 +35,18 @@
       root.tabIndex = -1;
       this.trap(root);
       active.push({root, close});
+      const surface = root.matches('[role="dialog"]') ? root : root.querySelector('[role="dialog"]') || root;
+      surface.classList.add('cw-page-mobile-surface');
+      if (NS.MobileUI?.mobile()) {
+        mobileLayers.set(root, NS.MobileUI.overlay(root, close));
+      }
     },
     deactivate(root) {
+      const layer = mobileLayers.get(root);
+      mobileLayers.delete(root);
       const index = active.findIndex(entry => entry.root === root);
       if (index >= 0) active.splice(index, 1);
+      return layer?.dismiss();
     },
     trap(root) {
       if (!root || bound.has(root)) return;

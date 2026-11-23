@@ -456,6 +456,7 @@
     if (root.hidden) state.lastFocus = document.activeElement;
     root.querySelectorAll("details[open]").forEach((details) => { details.open = false; });
     root.hidden = false;
+    if (window.CW?.MobileUI?.mobile() && !root.mobileLayer) root.mobileLayer = window.CW.MobileUI.overlay(root, close);
     document.documentElement.classList.add("cw-mm-open");
     root.querySelector(".cw-mm-hero-art").style.backgroundImage = `url("${backdropUrl(item)}")`;
     root.querySelector(".cw-mm-body").scrollTop = 0;
@@ -502,6 +503,9 @@
     window.CW?.ArtworkPicker?.close?.();
     window.CW?.ShelfEditor?.close?.();
     if (!root || root.hidden) return;
+    const layer = root.mobileLayer;
+    root.mobileLayer = null;
+    void layer?.dismiss();
     state.seq += 1;
     root.hidden = true;
     state.tracker = null;

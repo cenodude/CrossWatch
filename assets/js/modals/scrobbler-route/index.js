@@ -400,10 +400,10 @@ function routePanel(r) {
   `;
 }
 
-function addFilterEntry(id, addLabel) {
+async function addFilterEntry(id, addLabel) {
   const ta = root?.querySelector(`#${id}`);
   if (!ta) return;
-  const val = (window.prompt(`Add ${addLabel}`) || "").trim();
+  const val = ((await (window.CW?.MobileUI?.prompt || window.prompt)(`Add ${addLabel}`)) || "").trim();
   if (val) {
     const lines = ta.value.split("\n").map((s) => s.trim()).filter(Boolean);
     if (!lines.some((l) => l.toLowerCase() === val.toLowerCase())) lines.push(val);
@@ -743,6 +743,7 @@ function ensureVisiblePanel(tab = activeTab) {
     n.classList.toggle("active", on);
     n.style.display = on ? "grid" : "none";
   });
+  window.CW?.MobileUI?.sectionPicker(root?.querySelector(".scrm-nav"));
 }
 
 function preserveVisiblePanel(tab) {

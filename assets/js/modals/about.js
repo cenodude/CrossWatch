@@ -294,7 +294,9 @@ function applyOpenState() {
 
 export function closeAboutModal() {
   if (!activeModal) return;
-  const { overlay, restoreOpenState, onKeyDown } = activeModal;
+  const { overlay, restoreOpenState, onKeyDown, mobileLayer } = activeModal;
+  activeModal = null;
+  void mobileLayer?.dismiss();
   document.removeEventListener("keydown", onKeyDown, true);
   restoreOpenState?.();
   overlay.remove();
@@ -326,6 +328,7 @@ export async function openAboutModal(props = {}) {
   document.body.appendChild(overlay);
 
   activeModal = { overlay, restoreOpenState, onKeyDown };
+  if (window.CW?.MobileUI?.mobile()) activeModal.mobileLayer = window.CW.MobileUI.overlay(overlay, closeAboutModal);
   shadow.querySelector(".about-panel")?.focus({ preventScroll: true });
   return overlay;
 }

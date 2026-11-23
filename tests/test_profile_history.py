@@ -336,16 +336,16 @@ def test_profile_timeline_ui_is_registered() -> None:
     assert 'data-timeline-source="scrobble"' in html
     assert 'id="profile-ratings-scores"' in html
     assert 'value="mismatch"' in html
-    assert 'data-cw-profile-menu-action="ratings"' in html
+    assert 'data-cw-profile-menu-action="account"' in html
     assert "/api/profile/history" in js
     assert "/api/profile/ratings" in js
     assert "historyPanel.wire();" in js
     assert "ratingsPanel.wire();" in js
     assert ".cw-hist-timeline" in css
-    assert ".cw-hist-scores" in css
+    assert ".cw-hist-scores" in (root / "assets/css/pages.css").read_text(encoding="utf-8")
     assert "/hub#history/synced" in widgets
     assert "/hub#history/scrobble" in widgets
-    assert "/profile#ratings" in widgets
+    assert "/hub#ratings" in widgets
 
 
 @pytest.mark.parametrize("provider", ["NUVIO", "MDBLIST", "TRAKT", "PLEX", "SIMKL", "WETRAKR"])

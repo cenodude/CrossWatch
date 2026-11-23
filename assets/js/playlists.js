@@ -825,9 +825,9 @@
     const row = publishedRow(key);
     if (!row) return;
     if (action === "publish-show") return openPublishedModal(row, btn);
-    if (action === "publish-key" && !confirm("Create a new access key? Kometa, Radarr, Sonarr and Kodi stop reading this list until you paste the new addresses.")) return;
-    if (action === "publish-off" && !confirm("Stop publishing this list? The addresses stop working.")) return;
-    if (action === "publish-delete" && !confirm(`Delete ${row.name || "this list"}? The list and its items are removed from CrossWatch${row.feed ? " and the addresses stop working" : ""}.`)) return;
+    if (action === "publish-key" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Create a new access key? Kometa, Radarr, Sonarr and Kodi stop reading this list until you paste the new addresses."))) return;
+    if (action === "publish-off" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Stop publishing this list? The addresses stop working."))) return;
+    if (action === "publish-delete" && !(await (window.CW?.MobileUI?.ask || window.confirm)(`Delete ${row.name || "this list"}? The list and its items are removed from CrossWatch${row.feed ? " and the addresses stop working" : ""}.`))) return;
     btn.disabled = true;
     try {
       if (action === "publish-on") await API.publish(row.instance, row.list_id);
@@ -1020,6 +1020,7 @@
     document.body.classList.add("cx-modal-open");
     const ctx = { modal, opts, dirty: false, saving: false, initial: "" };
     state.modal = ctx;
+    window.CW?.DialogFocus?.activate(modal.querySelector('.pl-dialog'), () => closeModal(false));
     const formRoot = $(".pl-dialog-body", modal);
     ctx.initial = snapshot(formRoot);
     modal.addEventListener("input", () => { ctx.dirty = snapshot(formRoot) !== ctx.initial; });
@@ -1061,18 +1062,26 @@
   }
 
   function onModalKey(e) {
-    if (e.key === "Escape") closeModal(false);
+    if (e.key === "Escape" && !e.defaultPrevented && !document.querySelector('dialog[open]')) closeModal(false);
   }
 
-  function closeModal(force) {
+  async function closeModal(force) {
     const ctx = state.modal;
     if (!ctx) return true;
-    if (!force && ctx.dirty && !confirm("Discard unsaved changes?")) return false;
+    if (!force && (ctx.saving || ctx.confirming)) return false;
+    if (!force && ctx.dirty) {
+      ctx.confirming = true;
+      const discard = await (window.CW?.MobileUI?.ask || window.confirm)("Discard unsaved changes?");
+      ctx.confirming = false;
+      if (!discard || state.modal !== ctx) return false;
+    }
+    const dismissed = window.CW?.DialogFocus?.deactivate(ctx.modal.querySelector('.pl-dialog'));
     document.removeEventListener("keydown", onModalKey);
     ctx.modal.remove();
     document.body.classList.remove("cx-modal-open");
     state.modal = null;
-    if (ctx.opts && ctx.opts.trigger && typeof ctx.opts.trigger.focus === "function") ctx.opts.trigger.focus();
+    await dismissed;
+    if (!state.modal && ctx.opts && ctx.opts.trigger && typeof ctx.opts.trigger.focus === "function") ctx.opts.trigger.focus();
     if (!force && ctx.opts && ctx.opts.onCancel) ctx.opts.onCancel();
     return true;
   }
@@ -2638,8 +2647,8 @@
         await refreshOverview();
       },
     });
-    $("[data-sync-advanced]", ctx.modal)?.addEventListener("click", () => {
-      if (closeModal(false)) openMappingModal({ mapping, trigger });
+    $("[data-sync-advanced]", ctx.modal)?.addEventListener("click", async () => {
+      if (await closeModal(false)) openMappingModal({ mapping, trigger });
     });
   }
 
