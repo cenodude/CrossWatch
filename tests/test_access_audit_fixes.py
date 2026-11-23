@@ -847,7 +847,7 @@ def test_settings_oidc_security_form_uses_two_column_layout() -> None:
 def test_profile_page_hosts_the_main_widget_grid() -> None:
     import ui_frontend
 
-    html = ui_frontend.get_profile_html(
+    html = ui_frontend.get_hub_html(
         {"is_admin": False, "username": "P", "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True}}
     )
     main_html = ui_frontend.get_index_html(include_admin=True)
@@ -880,7 +880,7 @@ def test_profile_widget_layout_is_stored_separately_from_main() -> None:
 def _profile_html() -> str:
     import ui_frontend
 
-    return ui_frontend.get_profile_html(
+    return ui_frontend.get_hub_html(
         {"is_admin": False, "username": "P", "created_at": 1770000000,
          "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True}}
     )
@@ -916,9 +916,10 @@ def test_profile_overview_has_media_sections_and_statistics() -> None:
 
 
 def test_profile_settings_tab_and_panel_exist() -> None:
-    html = _profile_html()
+    import ui_frontend
 
-    assert 'data-profile-tab="account"' in html
+    html = ui_frontend.get_profile_html({"is_admin": True, "username": "admin"})
+    assert 'data-profile-tab="account"' not in html
     assert 'id="profile-panel-account"' in html
     assert 'data-profile-tab="security"' not in html
     assert 'data-profile-tab="preferences"' not in html
@@ -1113,12 +1114,12 @@ def test_settings_interface_limits_read_only_users_to_display_preferences() -> N
 
     for html in (page(is_admin=True, username="a"),
                  page(is_admin=False, username="f", permissions=full)):
-        assert 'data-profile-tab="account"' in html
+        assert 'id="profile-panel-account"' in html
         assert 'id="settings-interface"' in html
         assert 'data-settings-nav="interface"' in html
 
     ro = page(is_admin=False, username="r", permissions=readonly)
-    assert 'data-profile-tab="account"' in ro
+    assert 'id="profile-panel-account"' in ro
     assert 'id="settings-security"' in ro
     assert 'id="settings-interface"' in ro
     assert 'data-settings-nav="interface"' in ro
@@ -1132,8 +1133,8 @@ def test_profile_view_as_is_admin_only() -> None:
     import ui_frontend
 
     full = {"dashboard": True, "watchlist": True, "playback": True, "write": True}
-    admin = ui_frontend.get_profile_html({"is_admin": True, "username": "a"})
-    user = ui_frontend.get_profile_html({"is_admin": False, "username": "u", "permissions": full})
+    admin = ui_frontend.get_hub_html({"is_admin": True, "username": "a"})
+    user = ui_frontend.get_hub_html({"is_admin": False, "username": "u", "permissions": full})
 
     assert 'id="cw-view-as-select"' not in admin
     assert 'id="profile-view-as-banner"' in admin

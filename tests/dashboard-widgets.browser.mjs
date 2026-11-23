@@ -8,7 +8,7 @@ import {execFileSync} from 'node:child_process';
 import {readFile,mkdir} from 'node:fs/promises';
 import {chromium} from 'playwright';
 
-const profileHTML=execFileSync('python',['-c',"import ui_frontend; print(ui_frontend.get_profile_html({'is_admin':True,'username':'preview'}))"],{encoding:'utf8',maxBuffer:1024*1024});
+const profileHTML=execFileSync('python',['-c',"import ui_frontend; print(ui_frontend.get_hub_html({'is_admin':True,'username':'preview'}))"],{encoding:'utf8',maxBuffer:1024*1024});
 const mainSource=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
 const mainHTML=mainSource.slice(mainSource.indexOf('<!doctype html>'),mainSource.indexOf('</html>',mainSource.indexOf('<!doctype html>'))+7);
 

@@ -8,10 +8,10 @@
   let statuses = new WeakMap();
   let generation = 0;
   const paths = new Set([
-    "/api/profile/collection", "/api/profile/history", "/api/profile/ratings", "/api/profile/watchlist",
+    "/api/profile/collection", "/api/profile/history", "/api/profile/ratings", "/api/profile/watchlist", "/api/profile/airing",
     "/api/insights", "/api/dashboard/widgets", "/api/state/wall",
     "/api/tracker/summary", "/api/tracker/items", "/api/tracker/history/titles", "/api/tracker/months",
-    "/api/tracker/shows", "/api/tracker/overview", "/api/tracker/notes", "/api/tracker/stats",
+    "/api/tracker/shows", "/api/tracker/overview", "/api/tracker/overview/shows", "/api/tracker/notes", "/api/tracker/stats",
   ]);
   const supported = url => {
     const parsed = new URL(url, location.origin);
@@ -41,7 +41,25 @@
     const scope = generation;
     let previous = "";
     let delivered = false;
+    let ready = false;
+    let recovering = false;
     const usable = () => scope === generation && sessions.get(group) === session && !signal?.aborted;
+    const schedule = delay => {
+      if (!watch || !usable()) return;
+      clearTimeout(jobs.get(key));
+      jobs.set(key, setTimeout(() => {
+        jobs.delete(key);
+        void poll().catch(failed);
+      }, delay));
+    };
+    const failed = error => {
+      if (error.name === "AbortError" || !usable()) return;
+      delivered = true;
+      recovering = true;
+      if (error.code === "view_refresh_failed") return;
+      announce("cw:view-status", url, {ready, error:"refresh_failed"});
+      schedule(30000);
+    };
     const poll = async () => {
       if (!usable()) throw abort();
       if (document.hidden) await new Promise((resolve, reject) => {
@@ -64,24 +82,20 @@
       const meta = data?._view;
       announce("cw:view-status", url, meta || {});
       if (!meta) return data;
+      ready = !!meta.ready;
+      if (meta.error) recovering = true;
       if (meta.ready) {
         const version = trackRevision ? `${meta.version}:${meta.revision || ""}` : meta.version;
-        if (delivered && previous !== version) announce("cw:view-updated", url, data);
+        if (delivered && (previous !== version || recovering && !meta.error)) announce("cw:view-updated", url, data);
         previous = version;
+        recovering = !!meta.error;
       }
       if (!usable()) return data;
-      if (!meta.error) {
+      if (meta.error) {
+        schedule(Math.max(1, Number(meta.retry_after) || 30) * 1000);
+      } else {
         if (meta.ready && (!fresh || !meta.refreshing)) {
-          if (watch) {
-            const timer = setTimeout(() => {
-              jobs.delete(key);
-              void poll().catch(error => {
-                if (error.name !== "AbortError" && usable()) announce("cw:view-status", url, {ready:true, error:"refresh_failed"});
-              });
-            }, meta.refreshing ? Math.max(1, Number(meta.retry_after) || 2) * 1000 : 30000);
-            clearTimeout(jobs.get(key));
-            jobs.set(key, timer);
-          }
+          schedule(meta.refreshing ? Math.max(1, Number(meta.retry_after) || 2) * 1000 : 30000);
         } else {
           await new Promise(resolve => setTimeout(resolve, Math.max(1, Number(meta.retry_after) || 2) * 1000));
           return poll();
@@ -92,6 +106,7 @@
       return data;
     };
     try { return await poll(); }
+    catch (error) { failed(error); throw error; }
     finally { if (!watch && sessions.get(group) === session) sessions.delete(group); }
   }
 
@@ -111,22 +126,38 @@
     let current = statuses.get(host);
     if (!current) { current = new Map(); statuses.set(host, current); }
     current.set(source, {meta, retry});
-    const selected = [...current.values()].find(value => value.meta.error) || [...current.values()].find(value => value.meta.refreshing);
+    const selected = [...current.values()].find(value => value.meta.error) || [...current.values()].find(value => value.meta.refreshing && !value.meta.ready);
     meta = selected?.meta || {};
     retry = selected?.retry;
+    host.classList.add("cw-view-host");
     let node = host.querySelector(":scope > [data-view-status]");
     if (!node) {
-      node = document.createElement("p");
+      node = document.createElement("div");
       node.dataset.viewStatus = "";
+      node.className = "cw-view-status";
       node.setAttribute("role", "status");
       host.prepend(node);
     }
-    node.hidden = !meta.refreshing && !meta.error;
-    node.textContent = meta.error ? "Refresh failed. Your last available results are still shown. " : meta.ready ? "Refreshing…" : `Preparing ${label}…`;
-    if (meta.error && !meta.ready) node.textContent = `Could not prepare ${label}. `;
+    node.hidden = !selected;
+    node.replaceChildren();
+    if (!selected) return;
+    node.dataset.state = meta.error ? "error" : "loading";
+    const message = meta.error ? meta.ready ? "Refresh failed. Showing saved results." : `Could not load ${label}.` : `Loading ${label}…`;
+    const text = document.createElement("span");
+    text.className = "cw-view-status-label";
+    text.textContent = message;
+    node.append(text);
+    if (meta.refreshing && !meta.error) {
+      const progress = document.createElement("div");
+      progress.className = "cw-page-progress";
+      progress.setAttribute("role", "progressbar");
+      progress.setAttribute("aria-label", message);
+      node.append(progress);
+    }
     if (meta.error && retry) {
       const button = document.createElement("button");
       button.type = "button";
+      button.className = "cw-btn";
       button.textContent = "Retry";
       button.addEventListener("click", retry, {once:true});
       node.append(button);

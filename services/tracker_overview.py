@@ -1,61 +1,13 @@
 # services/tracker_overview.py
-# CrossWatch - Episode suggestions and upcoming dates for the tracker overview
+# CrossWatch - Tracker inputs for shared episode suggestions and upcoming dates
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
 from __future__ import annotations
 
-import asyncio
-import json
-import time
-from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
-from threading import Event, Lock
+from datetime import date
 from typing import Any
 
 from cw_platform.tracker_store import TrackerStore
-
-
-_WORKERS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="tracker-overview")
-_AIRING_MAX_AGE = 24 * 60 * 60
-_RESULTS: OrderedDict[tuple[str, str | None, bool], tuple[str, date, float, dict[str, Any]]] = OrderedDict()
-_RESULTS_LOCK = Lock()
-
-
-def cached_overview(store: TrackerStore, today: date) -> dict[str, Any] | None:
-    key = (str(store.db_path.resolve()), store.scope, store.chained)
-    revision = store.revision()
-    with _RESULTS_LOCK:
-        entry = _RESULTS.get(key)
-        if entry and entry[0] == revision and entry[1] == today and time.time() - entry[2] < _AIRING_MAX_AGE:
-            _RESULTS.move_to_end(key)
-            return entry[3]
-    return None
-
-
-def _save_overview(store: TrackerStore, today: date, revision: str, result: dict[str, Any]) -> None:
-    if store.revision() != revision or result.get("unavailable") or result.get("error"):
-        return
-    key = (str(store.db_path.resolve()), store.scope, store.chained)
-    with _RESULTS_LOCK:
-        _RESULTS[key] = (revision, today, time.time(), result)
-        _RESULTS.move_to_end(key)
-        while len(_RESULTS) > 32:
-            _RESULTS.popitem(last=False)
-
-
-def _ongoing(detail: dict[str, Any]) -> bool:
-    return str(detail.get("status") or "").casefold() not in {"ended", "canceled", "cancelled"} and detail.get("in_production") is not False
-
-
-def _airing_lookup(provider: Any, tmdb: str, cached: Any, result: dict[str, Any], *, season: int | None = None) -> dict[str, Any]:
-    fetched_at = getattr(cached, "fetched_at", 0)
-    if fetched_at > 0 and fetched_at >= time.time() - _AIRING_MAX_AGE:
-        return cached.data
-    try:
-        return provider.lookup("show", tmdb, season=season, max_age=_AIRING_MAX_AGE, timeout=5, max_retries=0).data
-    except Exception:
-        result["unavailable"] = 1
-        return cached.data
+from services.episode_overview import episode_payload
 
 
 def _inputs(store: TrackerStore, offset: int) -> tuple[int, list[tuple[dict[str, Any], set[tuple[int, int]]]]]:
@@ -69,146 +21,14 @@ def _inputs(store: TrackerStore, offset: int) -> tuple[int, list[tuple[dict[str,
     return total, [(show, watched.get(show["key"], set())) for show in shows]
 
 
-async def overview_events(store: TrackerStore, provider: Any, today: date, disconnected: Any):
-    cached = await asyncio.to_thread(cached_overview, store, today)
-    if cached is not None:
-        yield json.dumps(cached) + "\n"
-        return
-    revision = await asyncio.to_thread(store.revision)
-    collected: dict[str, Any] = {"continue": [], "airing": [], "unavailable": 0}
-    cancelled = Event()
-    offset = 0
-    pending: dict[str, Any] = {"continue": [], "airing": [], "unavailable": 0}
-    flushed = 0.0
-    loop = asyncio.get_running_loop()
-    try:
-        while not await disconnected():
-            total, inputs = await asyncio.to_thread(_inputs, store, offset)
-            if await disconnected():
+def overview_payload(store: TrackerStore, provider: Any, today: date) -> dict[str, Any]:
+    def shows():
+        offset = 0
+        while True:
+            total, batch = _inputs(store, offset)
+            yield from batch
+            offset += len(batch)
+            if not batch or offset >= total:
                 return
-            if not inputs:
-                collected.update(total=total, checked=offset, done=True)
-                await asyncio.to_thread(_save_overview, store, today, revision, collected)
-                yield json.dumps({**pending, "total": total, "checked": offset, "done": True}) + "\n"
-                return
-            for start in range(0, len(inputs), 4):
-                if await disconnected():
-                    return
-                batch = inputs[start:start + 4]
-                results = await asyncio.gather(*(loop.run_in_executor(_WORKERS, show_overview, show, watched, provider, today, cancelled) for show, watched in batch))
-                if await disconnected():
-                    return
-                offset += len(batch)
-                for result in results:
-                    collected["continue"].extend(result["continue"])
-                    collected["airing"].extend(result["airing"])
-                    collected["unavailable"] += result["unavailable"]
-                    pending["continue"].extend(result["continue"])
-                    pending["airing"].extend(result["airing"])
-                    pending["unavailable"] += result["unavailable"]
-                done = offset >= total
-                if done:
-                    collected.update(total=total, checked=offset, done=True)
-                    await asyncio.to_thread(_save_overview, store, today, revision, collected)
-                if done or time.monotonic() - flushed >= .15:
-                    yield json.dumps({**pending, "total": total, "checked": offset, "done": done}) + "\n"
-                    pending = {"continue": [], "airing": [], "unavailable": 0}
-                    flushed = time.monotonic()
-                if done:
-                    return
-    except asyncio.CancelledError:
-        raise
-    except Exception:
-        yield json.dumps({"error": "overview_unavailable", "done": True}) + "\n"
-    finally:
-        cancelled.set()
 
-
-def show_overview(show: dict[str, Any], watched: set[tuple[int, int]], provider: Any, today: date, cancelled: Event | None = None) -> dict[str, Any]:
-    result: dict[str, Any] = {"continue": [], "airing": [], "unavailable": 0}
-    if cancelled is not None and cancelled.is_set():
-        return result
-    tmdb = show["key"].removeprefix("tmdb:")
-    if not show["key"].startswith("tmdb:") or not tmdb.isascii() or not tmdb.isdecimal():
-        result["unavailable"] = 1
-        return result
-    try:
-        cached = provider.lookup("show", tmdb, timeout=5, max_retries=0)
-        detail = cached.data
-        if cancelled is not None and cancelled.is_set():
-            return result
-        if _ongoing(detail):
-            detail = _airing_lookup(provider, tmdb, cached, result)
-        seasons = {int(row["season_number"]): int(row.get("episode_count") or 0) for row in detail.get("seasons", []) if row.get("season_number", 0) > 0}
-    except Exception:
-        result["unavailable"] = 1
-        return result
-    latest = max((pair for pair in watched if 0 < pair[1] <= seasons.get(pair[0], 0)), default=(0, 0))
-    nxt = next(((s, e) for s in sorted(seasons) for e in range(1, seasons[s] + 1) if (s, e) > latest), None)
-    end = today + timedelta(days=29)
-    wanted = {nxt[0]} if nxt and show.get("status") != "completed" else set()
-    airing = set()
-    ongoing = _ongoing(detail)
-    latest_season = max(seasons, default=0)
-    for key in ("next_episode_to_air", "last_episode_to_air"):
-        row = detail.get(key) or {}
-        aired = str(row.get("air_date") or "")
-        if aired and not today.isoformat() <= aired <= end.isoformat():
-            continue
-        if isinstance(row.get("season_number"), int) and row["season_number"] > 0:
-            wanted.add(int(row["season_number"]))
-            airing.add(int(row["season_number"]))
-    for row in detail.get("seasons", []):
-        if today.isoformat() <= str(row.get("air_date") or "") <= end.isoformat() and isinstance(row.get("season_number"), int) and row["season_number"] > 0:
-            wanted.add(int(row["season_number"]))
-            airing.add(int(row["season_number"]))
-        if ongoing and latest_season > 0 and row.get("season_number") == latest_season and str(row.get("air_date") or "") <= end.isoformat():
-            wanted.add(int(row["season_number"]))
-            airing.add(int(row["season_number"]))
-    aired_left: dict[int, int] = {}
-    for season in sorted(wanted):
-        if cancelled is not None and cancelled.is_set():
-            return result
-        try:
-            cached = provider.lookup("show", tmdb, season=season, timeout=5, max_retries=0)
-            data = cached.data
-            if cancelled is not None and cancelled.is_set():
-                return result
-            if ongoing and season in airing:
-                data = _airing_lookup(provider, tmdb, cached, result, season=season)
-        except Exception:
-            result["unavailable"] = 1
-            continue
-        episodes = data.get("episodes", [])
-        numbers = {ep.get("episode_number") for ep in episodes if type(ep.get("episode_number")) is int and 1 <= ep["episode_number"] <= seasons.get(season, 0)}
-        if seasons.get(season, 0) > 0 and len(numbers) == seasons[season] and len(episodes) == len(numbers):
-            aired_left[season] = 0
-        for episode in episodes:
-            number = episode.get("episode_number")
-            try:
-                aired = date.fromisoformat(str(episode.get("air_date") or ""))
-            except ValueError:
-                continue
-            if type(number) is not int or number < 1:
-                continue
-            if season in aired_left and aired <= today and (season, number) not in watched:
-                aired_left[season] += 1
-            row = {
-                "key": f"{show['key']}:{season}:{number}", "ref": {"show": show["key"]},
-                "type": "episode", "title": show.get("title") or detail.get("name") or "Untitled show",
-                "year": show.get("year"), "season": season, "episode": number,
-                "episode_title": episode.get("name") or "", "air_date": aired.isoformat(),
-                "date": show.get("last_watched"), "show_ids": {"tmdb": tmdb},
-                "art": {"kind": "tv", "tmdb": tmdb}, "has_still": bool(episode.get("still_path")),
-            }
-            if (season, number) == nxt and aired <= today and show.get("status") != "completed":
-                result["continue"].append(row)
-            if today <= aired <= end and (season, number) not in watched:
-                result["airing"].append(row)
-    needed = {season for season, count in seasons.items() if any((season, number) not in watched for number in range(1, count + 1))}
-    if seasons and all(count > 0 for count in seasons.values()) and needed <= aired_left.keys():
-        remaining = sum(aired_left[season] for season in needed)
-        for row in result["continue"]:
-            if remaining > 0:
-                row["aired_episodes_left"] = remaining
-    return result
+    return episode_payload(shows(), provider, today)

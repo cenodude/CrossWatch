@@ -107,7 +107,7 @@
     };
     const shortcuts = readShortcuts();
     const routeBase = window.location.pathname === '/' ? '' : document.documentElement.dataset.cwRole === 'user' ? '/?main=1' : '/';
-    const link = ([route, icon, label], extra = '') => `<a href="${route === 'profile/overview' ? '/profile#overview' : `${routeBase}#${route}`}" data-mobile-route="${route}" ${extra}><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><span>${label}</span></a>`;
+    const link = ([route, icon, label], extra = '') => `<a href="${route === 'profile/overview' ? '/hub' : `${routeBase}#${route}`}" data-mobile-route="${route}" ${extra}><span class="material-symbols-rounded" aria-hidden="true">${icon}</span><span>${label}</span></a>`;
     nav.innerHTML =
       '<button id="cw-mobile-more" type="button" aria-controls="cw-mobile-navigation" aria-expanded="false"><span class="material-symbols-rounded" aria-hidden="true">menu</span><span>More</span></button>';
     document.body.appendChild(nav);
@@ -124,7 +124,7 @@
     extra.className = 'cw-mobile-extra-destinations';
     $('cw-mobile-navigation').prepend(extra);
     const openMediaHub = event => {
-      if (window.location.pathname !== '/profile' || !event.target.closest('[data-mobile-route="profile/overview"]')) return;
+      if (window.location.pathname !== '/hub' || !event.target.closest('[data-mobile-route="profile/overview"]')) return;
       event.preventDefault();
       openProfileTab('overview');
     };
@@ -235,12 +235,12 @@
     });
     const update = () => {
       const hub = $('tab-profile');
-      const onProfile = window.location.pathname === '/profile';
-      hub?.classList.toggle('active', onProfile);
-      if (onProfile) hub?.setAttribute('aria-current', 'page');
+      const onHub = window.location.pathname === '/hub';
+      hub?.classList.toggle('active', onHub);
+      if (onHub) hub?.setAttribute('aria-current', 'page');
       else hub?.removeAttribute('aria-current');
       const profileTab = document.querySelector('[data-profile-tab].active')?.dataset.profileTab || window.location.hash.slice(1).split('?')[0] || 'overview';
-      const route = window.location.pathname === '/' ? window.location.hash.slice(1).split('?')[0] || 'main' : window.location.pathname === '/profile' && profileTab === 'overview' ? 'profile/overview' : '';
+      const route = window.location.pathname === '/' ? window.location.hash.slice(1).split('?')[0] || 'main' : window.location.pathname === '/hub' && profileTab === 'overview' ? 'profile/overview' : '';
       let matched = false;
       document.querySelectorAll('[data-mobile-route]').forEach(link => {
         const active = link.dataset.mobileRoute === route;
@@ -269,7 +269,7 @@
     const blocked = () => !mobile.matches || !nav.getClientRects().length || (window.visualViewport?.scale || 1) > 1.05 ||
       document.querySelector('.cw-nav-open, .cw-card-sheet-open, .cw-ia-sheet-open, .cw-mm-open, .cx-modal-open') ||
       [...document.querySelectorAll('dialog[open], [aria-modal="true"], [role="dialog"], [popover]:popover-open')].some(node => node.getClientRects().length);
-    const currentRoute = () => window.location.pathname === '/profile' ? 'profile/overview' :
+    const currentRoute = () => window.location.pathname === '/hub' ? 'profile/overview' :
       window.location.pathname === '/' ? window.location.hash.slice(1).split('?')[0] || 'main' : '';
     const destination = dx => {
       const links = [...nav.querySelectorAll('a[data-mobile-route]')];
@@ -390,8 +390,7 @@
 
   function markCurrentPage() {
     const onProfile = window.location.pathname === '/profile';
-    const tab = document.querySelector('[data-profile-tab].active')?.dataset.profileTab || window.location.hash.slice(1).split('?')[0] || 'overview';
-    const current = onProfile && ['account','security','preferences'].includes(tab) ? 'account' : '';
+    const current = onProfile ? 'account' : '';
     menu()?.querySelectorAll('[data-cw-profile-menu-action]').forEach(item => {
       if (item.dataset.cwProfileMenuAction === current) item.setAttribute('aria-current', 'page');
       else item.removeAttribute('aria-current');
@@ -425,7 +424,8 @@
   }
 
   function openProfileTab(tab) {
-    if (window.location?.pathname === "/profile") {
+    const path = ["overview", "collection", "history", "ratings", "playback", "watchlist"].includes(tab) ? "/hub" : "/profile";
+    if (window.location?.pathname === path) {
       if (window.location.hash !== `#${tab}`) window.location.hash = tab;
       else {
         try { window.dispatchEvent(new HashChangeEvent("hashchange")); }
@@ -433,7 +433,7 @@
       }
       return;
     }
-    window.location.href = `/profile#${tab}`;
+    window.location.href = `${path}#${tab}`;
   }
 
   async function logout() {

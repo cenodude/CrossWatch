@@ -1841,13 +1841,13 @@
   }
 
   const HISTORY_PAGE_LINKS = {
-    history: { href: "/profile#history/synced", label: "Open synced history" },
-    scrobble: { href: "/profile#history/scrobble", label: "Open all scrobbles" },
-    ratings: { href: "/profile#ratings", label: "Open all ratings" },
+    history: { href: "/hub#history/synced", label: "Open synced history" },
+    scrobble: { href: "/hub#history/scrobble", label: "Open all scrobbles" },
+    ratings: { href: "/hub#ratings", label: "Open all ratings" },
   };
 
   function historyPageLink(kind) {
-    const link = HISTORY_PAGE_LINKS[kind] || (ON_PROFILE_PAGE ? {progress:{href:"/profile#playback",label:"View all progress"},playlists:{href:"/#playlists",label:"View all playlists"}}[kind] : null);
+    const link = HISTORY_PAGE_LINKS[kind] || (ON_PROFILE_PAGE ? {progress:{href:"/hub#playback",label:"View all progress"},playlists:{href:"/#playlists",label:"View all playlists"}}[kind] : null);
     if (!link || !(ON_PROFILE_PAGE || document.getElementById("cw-nav-profile-link"))) return "";
     if (ON_PROFILE_PAGE) return `<a class="cw-hub-widget-more" href="${esc(link.href)}" aria-label="${esc(link.label)}">View all<span aria-hidden="true"> →</span></a>`;
     return `<a class="cw-dash-see-more cw-dash-history-link" href="${esc(link.href)}">

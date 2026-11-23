@@ -1,4 +1,18 @@
 /*Page-owned styles */
+.cw-view-host{position:relative}
+.cw-view-status{position:absolute;inset:0 0 auto;z-index:2;pointer-events:none}
+.cw-view-status[hidden]{display:none}
+.cw-view-status[data-state="loading"]>.cw-view-status-label{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.cw-view-status[data-state="error"]{position:relative;inset:auto;display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;padding:10px 14px;pointer-events:auto}
+.cw-view-status[data-state="error"][hidden]{display:none}
+.cw-view-status .cw-btn{margin-left:auto;min-height:32px;padding:4px 12px}
+.cw-page-progress{position:relative;overflow:hidden;width:100%;height:3px}
+.cw-page-progress::after{content:"";display:block;width:35%;height:100%;animation:cwPageProgress 1.6s ease-in-out infinite}
+#page-tracker .cw-page-loading{align-content:center;gap:18px;min-height:160px}
+.cw-page-loading .cw-page-progress{width:min(240px,75%)}
+.cw-view-host:has(.cw-page-loading)>.cw-view-status[data-state="loading"]{display:none}
+@keyframes cwPageProgress{from{transform:translateX(-110%)}to{transform:translateX(390%)}}
+@media(prefers-reduced-motion:reduce){.cw-page-progress::after{animation:none;width:100%;opacity:.45}}
 html:not([data-tab="main"])#placeholder-card{display:none !important}:is(#page-settings .cw-conn-hero-summary){align-self:end;justify-self:end;display:inline-flex;align-items:stretch;min-height:58px;border-radius:14px;border:1px solid rgba(218,227,245,0.13);background:rgba(29,35,54,0.84);box-shadow:none;overflow:hidden;position:relative;z-index:1;isolation:isolate}
 :is(#page-settings .cw-conn-hero-summary):before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:linear-gradient(180deg,rgba(40,47,74,0.94),rgba(31,37,56,0.92))}:is(#page-settings .cw-conn-hero-summary)>*{position:relative;z-index:1}html[data-cw-theme="flat-light"]:is(#page-settings .cw-conn-hero-summary){background:rgba(255,255,255,0.82);border-color:rgba(78,96,180,0.2);color:#475467}
 html[data-cw-theme="flat-light"]:is(#page-settings .cw-conn-hero-summary):before{background:linear-gradient(180deg,rgba(255,255,255,0.94),rgba(246,248,255,0.9))}
@@ -1875,6 +1889,8 @@ body.cw-profile-page .cw-profile-tabs button{display:inline-flex;align-items:cen
 .cw-hub-section-head h2{margin:0}
 .cw-hub-section-head :is(a,button){flex-shrink:0;padding:6px 0}
 .cw-hub-continue{margin-bottom:30px}
+#profile-airing{min-width:0;margin-bottom:30px}
+#profile-airing-notice{margin:12px 0 0}
 .cw-hub-secondary{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:32px;align-items:start}
 #profile-progress{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
 .cw-cw-card{display:flex;flex-direction:column;min-width:0;padding:0;overflow:hidden;text-align:left;cursor:pointer}
@@ -2622,27 +2638,27 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-overview-menu{position:absolute;top:8px;left:8px;z-index:2;width:36px;height:36px;margin:0;border:0;border-radius:8px}
 #page-tracker .trk-overview-menu .material-symbols-rounded{font-size:24px}
 @media(pointer:coarse){#page-tracker .trk-overview-menu{width:44px;height:44px}}
-#page-tracker .trk-calendar-actions{display:flex;align-items:center;gap:6px}
-#page-tracker .trk-calendar-actions .cw-btn{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;padding:0 10px;cursor:pointer}
-#page-tracker .trk-calendar{container-type:inline-size;display:flex;gap:10px;min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain;border-radius:14px}
-#page-tracker .trk-calendar::-webkit-scrollbar{display:none}
-#page-tracker .trk-calendar-day{position:relative;display:flex;flex:0 0 52px;flex-direction:column;align-items:center;min-width:0;height:210px;border-radius:14px;box-sizing:border-box}
-#page-tracker .trk-calendar-day>time{display:grid;gap:4px;padding-top:14px;text-align:center}
-#page-tracker .trk-calendar-day time span{font-size:12px}
-#page-tracker .trk-calendar-day time strong{font-size:22px;line-height:1.1}
-#page-tracker .trk-calendar-today{position:absolute;bottom:14px;writing-mode:vertical-rl;transform:rotate(180deg);font-size:12px;font-weight:600}
-#page-tracker .trk-calendar-day.has-releases{flex:0 0 auto;flex-direction:row;gap:10px}
-#page-tracker .trk-calendar-release{position:relative;isolation:isolate;display:block;flex:0 0 auto;width:clamp(240px,calc((100cqw - var(--calendar-empty-days,13)*62px + 10px)/var(--calendar-releases,1) - 10px),960px);height:100%;padding:16px;border:0;border-radius:14px;overflow:hidden;text-align:left;font:inherit;cursor:pointer}
-#page-tracker .trk-calendar-release img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
-#page-tracker .trk-calendar-release img[hidden]{display:none}
-#page-tracker .trk-calendar-release::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none}
-#page-tracker .trk-calendar-date{position:absolute;top:14px;left:16px;right:16px;display:flex;align-items:center;gap:10px}
-#page-tracker .trk-calendar-date time{display:flex;flex-direction:row-reverse;align-items:center;gap:6px}
-#page-tracker .trk-calendar-date small{font-size:12px}
-#page-tracker .trk-calendar-copy{position:absolute;left:16px;right:16px;bottom:16px;display:grid;gap:5px}
-#page-tracker .trk-calendar-copy strong{font-size:16px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-#page-tracker .trk-calendar-copy>span{font-size:13px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-@media(max-width:760px){#page-tracker .trk-calendar-day{height:190px}#page-tracker .trk-calendar-release{width:min(300px,calc(100vw - 76px))}}
+:is(#page-tracker,#profile-airing) .trk-calendar-actions{display:flex;align-items:center;gap:6px}
+:is(#page-tracker,#profile-airing) .trk-calendar-actions .cw-btn{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;padding:0 10px;cursor:pointer}
+:is(#page-tracker,#profile-airing) .trk-calendar{container-type:inline-size;display:flex;gap:10px;min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain;border-radius:14px}
+:is(#page-tracker,#profile-airing) .trk-calendar::-webkit-scrollbar{display:none}
+:is(#page-tracker,#profile-airing) .trk-calendar-day{position:relative;display:flex;flex:0 0 52px;flex-direction:column;align-items:center;min-width:0;height:210px;border-radius:14px;box-sizing:border-box}
+:is(#page-tracker,#profile-airing) .trk-calendar-day>time{display:grid;gap:4px;padding-top:14px;text-align:center}
+:is(#page-tracker,#profile-airing) .trk-calendar-day time span{font-size:12px}
+:is(#page-tracker,#profile-airing) .trk-calendar-day time strong{font-size:22px;line-height:1.1}
+:is(#page-tracker,#profile-airing) .trk-calendar-today{position:absolute;bottom:14px;writing-mode:vertical-rl;transform:rotate(180deg);font-size:12px;font-weight:600}
+:is(#page-tracker,#profile-airing) .trk-calendar-day.has-releases{flex:0 0 auto;flex-direction:row;gap:10px}
+:is(#page-tracker,#profile-airing) .trk-calendar-release{position:relative;isolation:isolate;display:block;flex:0 0 auto;width:clamp(240px,calc((100cqw - var(--calendar-empty-days,13)*62px + 10px)/var(--calendar-releases,1) - 10px),960px);height:100%;padding:16px;border:0;border-radius:14px;overflow:hidden;text-align:left;font:inherit;cursor:pointer}
+:is(#page-tracker,#profile-airing) .trk-calendar-release img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:-2}
+:is(#page-tracker,#profile-airing) .trk-calendar-release img[hidden]{display:none}
+:is(#page-tracker,#profile-airing) .trk-calendar-release::after{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none}
+:is(#page-tracker,#profile-airing) .trk-calendar-date{position:absolute;top:14px;left:16px;right:16px;display:flex;align-items:center;gap:10px}
+:is(#page-tracker,#profile-airing) .trk-calendar-date time{display:flex;flex-direction:row-reverse;align-items:center;gap:6px}
+:is(#page-tracker,#profile-airing) .trk-calendar-label{font-size:12px}
+:is(#page-tracker,#profile-airing) .trk-calendar-copy{position:absolute;left:16px;right:16px;bottom:16px;display:grid;gap:5px}
+:is(#page-tracker,#profile-airing) .trk-calendar-copy strong{font-size:16px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+:is(#page-tracker,#profile-airing) .trk-calendar-copy>span{font-size:13px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:760px){:is(#page-tracker,#profile-airing) .trk-calendar-day{height:190px}:is(#page-tracker,#profile-airing) .trk-calendar-release{width:min(300px,calc(100vw - 76px))}}
 #page-tracker .trk-overview-progress{position:absolute;z-index:1;left:0;bottom:0;right:0;height:4px}
 #page-tracker .trk-overview-progress i{display:block;height:100%}
 #page-tracker .trk-overview-empty{padding:28px 20px;border-radius:14px;font-size:14px;line-height:1.6;margin:0}
@@ -4478,3 +4494,28 @@ html[data-cw-theme=flat-light] .ev-date input::-webkit-calendar-picker-indicator
 @media(max-width:1000px){.cw-page-logs .logs-workspace{grid-template-columns:220px minmax(0,1fr)}.cw-page-logs .logs-channels{gap:12px}}
 @media(max-width:760px){.cw-page-logs{padding:8px 0}.cw-page-logs .logs-workspace{display:flex;flex-direction:column;height:auto;min-height:0;overflow:visible}.cw-page-logs .logs-sidebar{max-height:none}.cw-page-logs .logs-list-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.cw-page-logs .logs-list-controls>strong,.cw-page-logs .logs-pair-controls{grid-column:1/-1}.cw-page-logs .logs-sessions{min-height:100px;max-height:220px}.cw-page-logs .logs-content{flex:none;height:55dvh;min-height:250px}.cw-page-logs .logs-filters,.cw-page-logs .logs-reader-heading{padding:10px}.cw-page-logs .logs-actions{gap:6px}.cw-page-logs .logs-reader-footer label{white-space:normal}.cw-page-logs .logs-channels{gap:8px}.cw-page-logs .logs-channels button{padding:8px 3px}.cw-page-logs .logs-reader-footer{gap:8px;padding:8px 10px}}
 @media(pointer:coarse){.cw-page-logs button,.cw-page-logs summary{min-height:44px}}
+
+body.cw-account-page .cw-profile-shell{max-width:1280px;padding:28px 28px 40px}
+.cw-account-header{display:flex;align-items:center;gap:24px;padding:28px 32px;margin-bottom:28px}
+.cw-account-picture{position:relative;flex:0 0 88px;width:88px;height:88px}
+.cw-account-avatar{display:grid;place-items:center;width:100%;height:100%;overflow:hidden;border-radius:50%}
+.cw-account-avatar img{width:100%;height:100%;object-fit:cover}
+.cw-account-avatar>.material-symbols-rounded{font-size:48px}
+.cw-account-camera{position:absolute;right:-4px;bottom:-4px;display:grid;place-items:center;width:34px;height:34px;padding:0;border-radius:50%;cursor:pointer}
+.cw-account-camera .material-symbols-rounded{font-size:19px}
+.cw-account-identity{min-width:0}
+.cw-account-identity h1{margin:0 0 10px;font-size:28px;line-height:1.2;overflow-wrap:anywhere}
+.cw-account-meta{display:flex;align-items:center;flex-wrap:wrap;gap:12px}
+.cw-account-remove{display:block;margin-top:10px;padding:0;font:inherit;font-size:12px;cursor:pointer}
+.cw-account-remove[hidden]{display:none}
+.cw-account-page .cw-set-main{grid-template-columns:minmax(0,1fr)}
+.cw-account-page .cw-set-col{display:contents}
+.cw-account-page .cw-set-nav{top:100px}
+@media(max-width:900px){.cw-account-page .cw-set-nav{position:static}.cw-account-page .cw-set-nav button{flex:0 0 auto}}
+@media(max-width:600px){
+  body.cw-account-page .cw-profile-shell{padding:16px 12px 32px}
+  .cw-account-header{gap:18px;padding:20px 18px;margin-bottom:20px}
+  .cw-account-picture{flex-basis:64px;width:64px;height:64px}
+  .cw-account-identity h1{font-size:21px}
+  .cw-account-meta{gap:8px}
+}

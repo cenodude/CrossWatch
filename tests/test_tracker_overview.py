@@ -1,10 +1,9 @@
 # tests/test_tracker_overview.py
 # CrossWatch - Overview history, resumable items, episode dates and instance access
 # Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch)
-import asyncio
-import json
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 from threading import Event, Lock
 from types import SimpleNamespace
@@ -15,7 +14,8 @@ from fastapi.testclient import TestClient
 
 from api import trackerAPI
 from cw_platform.tracker_store import TrackerStore
-from services.tracker_overview import cached_overview, overview_events, show_overview
+from services.tracker_overview import overview_payload
+from services.episode_overview import show_overview
 from providers.metadata import _meta_TMDB as tmdb
 
 
@@ -168,20 +168,18 @@ def test_episode_dates_cover_the_whole_window_and_new_seasons():
     assert not any(row["season"] == 1 and row["episode"] == 3 for row in future["airing"])
 
 
-def test_shows_stream_in_one_request_and_dropped_titles_are_not_queried(app, monkeypatch):
+def test_episode_snapshot_uses_bulk_inputs_and_excludes_dropped_titles(app, monkeypatch):
     client, store, _, meta = app
-    store.write_state("history", {str(i): episode(str(i), day=i) for i in range(1, 7)})
+    store.write_state("history", {str(i): episode(str(i)) for i in range(1, 41)})
     store.save_note("show:tmdb:6", {"type": "show", "title": "Show 6", "status": "dropped"})
-    monkeypatch.setattr(TrackerStore, "related", lambda *args, **kwargs: pytest.fail("The stream must use bulk episode coordinates"))
+    monkeypatch.setattr(TrackerStore, "related", lambda *args, **kwargs: pytest.fail("Use bulk episode coordinates"))
     response = client.get("/api/tracker/overview/shows?day=2026-11-10")
-    assert response.headers["content-type"].startswith("application/x-ndjson")
-    events = [json.loads(line) for line in response.text.splitlines()]
-    assert events[0]["total"] == 5 and events[0]["checked"] == 4
-    assert events[-1]["checked"] == 5 and events[-1]["done"] is True
-    assert sum(len(event["continue"]) for event in events) == 5
+    data = response.json()
+    assert response.headers["content-type"].startswith("application/json")
+    assert data["total"] == data["checked"] == 39
+    assert data["done"] is True and len(data["continue"]) == 39
     assert "6" not in {call[0] for call in meta.calls}
     assert client.get("/api/tracker/overview/shows?day=2026-99-01").status_code == 400
-
 
 def test_missing_metadata_and_failed_lookups_are_explicit(app):
     client, store, cfg, meta = app
@@ -192,7 +190,7 @@ def test_missing_metadata_and_failed_lookups_are_explicit(app):
     assert not meta.calls
     cfg["tmdb"] = {"api_key": "test"}
     meta.lookup = lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError())
-    data = json.loads(client.get("/api/tracker/overview/shows").text.splitlines()[-1])
+    data = client.get("/api/tracker/overview/shows").json()
     assert data["unavailable"] == 1 and data["airing"] == [] and data["continue"] == []
 
 
@@ -204,41 +202,6 @@ def test_overview_enforces_instance_access_before_loading_data(app, monkeypatch,
     assert response.status_code == 403
     assert response.json()["detail"] == "profile_scope_denied"
     assert not meta.calls
-
-
-def test_stream_stops_scheduling_on_disconnect(app):
-    _, store, _, meta = app
-    store.write_state("history", {str(i): episode(str(i)) for i in range(1, 41)})
-
-    async def run():
-        stopped = False
-
-        async def disconnected():
-            return stopped
-
-        stream = overview_events(store, meta, DAY, disconnected)
-        first = json.loads(await anext(stream))
-        assert first["checked"] == 4
-        calls = len(meta.calls)
-        stopped = True
-        assert [event async for event in stream] == []
-        assert len(meta.calls) == calls
-
-    asyncio.run(run())
-
-
-def test_cancelled_lookup_does_not_start_another_season():
-    meta, cancelled = Metadata(), Event()
-    lookup = meta.lookup
-
-    def cancel_after_show(*args, **kwargs):
-        result = lookup(*args, **kwargs)
-        cancelled.set()
-        return result
-
-    meta.lookup = cancel_after_show
-    show_overview({"key": "tmdb:1"}, {(1, 1)}, meta, DAY, cancelled)
-    assert len(meta.calls) == 1
 
 
 def test_bulk_watched_coordinates_are_scoped_and_not_capped(app):
@@ -263,7 +226,7 @@ def test_completed_shows_do_not_fetch_seasons_outside_the_calendar_window():
     assert show_overview({"key": "tmdb:1", "status": "completed"}, {(1, 10)}, meta, DAY) == {"continue": [], "airing": [], "unavailable": 0}
 
 
-def test_concurrent_streams_share_the_four_lookup_limit(app):
+def test_hub_and_tracker_share_the_four_lookup_limit(app):
     _, store, _, meta = app
     store.write_state("history", {str(i): episode(str(i)) for i in range(1, 9)})
     active = peak = 0
@@ -283,14 +246,13 @@ def test_concurrent_streams_share_the_four_lookup_limit(app):
 
     meta.lookup = delayed
 
-    async def run():
-        async def disconnected(): return False
-        async def scan():
-            return [json.loads(line) async for line in overview_events(TrackerStore(store.root), meta, DAY, disconnected)]
-        streams = await asyncio.gather(scan(), scan())
-        assert all(events[-1]["checked"] == 8 and events[-1]["done"] for events in streams)
+    from services.hub_airing import airing_payload
 
-    asyncio.run(run())
+    indices = [{"rows": [{"_type": "show", "ids": {"tmdb": str(i)}} for i in range(1, 9)]}]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        tracker = pool.submit(overview_payload, TrackerStore(store.root), meta, DAY)
+        hub = pool.submit(airing_payload, indices, {}, meta, DAY)
+        assert tracker.result()["checked"] == hub.result()["checked"] == 8
     assert 1 < peak <= 4
 
 
@@ -360,41 +322,6 @@ def test_failed_daily_airing_refresh_keeps_cached_dates():
     assert {(row["season"], row["episode"]) for row in data["airing"]} == {(1, 3), (1, 4), (2, 1)}
 
 
-def test_finished_overview_reuses_results_until_revision_or_day_changes(app, monkeypatch):
-    client, store, _, meta = app
-    store.write_state("history", {"one": episode()})
-
-    def fetch(day=DAY):
-        response = client.get(f"/api/tracker/overview/shows?day={day.isoformat()}")
-        assert response.status_code == 200
-        return [json.loads(line) for line in response.text.splitlines()]
-
-    first = fetch()
-    calls = len(meta.calls)
-    assert calls > 0
-    with monkeypatch.context() as patch:
-        from services import tracker_overview
-        patch.setattr(tracker_overview, "_inputs", lambda *args: pytest.fail("Cached results must skip rebuilding the show list"))
-        assert fetch() == first
-    assert len(meta.calls) == calls
-    data = client.get(f"/api/tracker/overview?day={DAY.isoformat()}").json()
-    assert data["shows"] == first[0]
-    revision = client.get("/api/tracker/overview/revision").json()["revision"]
-    store.save_note("show:tmdb:1", {"type": "show", "title": "Show 1", "status": "dropped"})
-    assert store.revision() != revision
-    assert cached_overview(store, DAY) is None
-    assert fetch()[0]["airing"] == []
-    assert cached_overview(store, DAY + timedelta(days=1)) is None
-
-
-def test_failed_metadata_is_not_saved_as_a_finished_overview(app):
-    client, store, _, meta = app
-    store.write_state("history", {"one": episode()})
-    meta.lookup = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("offline"))
-    client.get(f"/api/tracker/overview/shows?day={DAY.isoformat()}")
-    assert cached_overview(store, DAY) is None
-
-
 def test_overview_hero_prefers_watching_and_scrobbles_then_recent(app, monkeypatch):
     from cw_platform import event_archive
 
@@ -416,16 +343,168 @@ def test_overview_hero_prefers_watching_and_scrobbles_then_recent(app, monkeypat
         conn.close()
 
 
-def test_overview_cache_is_scoped_and_rejects_results_changed_during_build(app, tmp_path):
-    from services.tracker_overview import _save_overview
+@pytest.fixture()
+def cached_app(app, tmp_path, monkeypatch):
+    from api import view_cache
+    from services.view_cache import ViewCache
 
-    _, store, _, _ = app
+    client, store, cfg, meta = app
+    cache = ViewCache()
+    monkeypatch.setattr(view_cache, "AIRING_CACHE", cache)
+    monkeypatch.setattr(view_cache, "_context", lambda request, arguments: (tmp_path, "tracker", store.revision))
+    yield client, store, cfg, meta, cache
+    cache.stop()
+
+
+def test_background_episode_build_finishes_after_the_request_and_survives_restart(cached_app):
+    client, store, _, meta, cache = cached_app
     store.write_state("history", {"one": episode()})
-    result = {"continue": [], "airing": [], "done": True}
-    revision = store.revision()
-    _save_overview(store, DAY, revision, result)
-    assert cached_overview(store, DAY) == result
-    assert cached_overview(TrackerStore(tmp_path / "other"), DAY) is None
-    store.write_state("history", {"two": episode(number=2)})
-    _save_overview(store, DAY, revision, result)
-    assert cached_overview(store, DAY) is None
+    started, release = Event(), Event()
+    lookup = meta.lookup
+
+    def delayed(*args, **kwargs):
+        started.set()
+        assert release.wait(5)
+        return lookup(*args, **kwargs)
+
+    meta.lookup = delayed
+    url = "/api/tracker/overview/shows?day=2026-11-10&background=1"
+    try:
+        assert client.get(url).json()["_view"]["ready"] is False
+        assert started.wait(3)
+        assert client.get(url).json()["_view"]["ready"] is False
+    finally:
+        release.set()
+    cache.pool.submit(lambda: None).result(timeout=5)
+    ready = client.get(url).json()
+    assert ready["done"] and ready["airing"]
+    calls = len(meta.calls)
+    cache.entries.clear()
+    assert client.get(url).json()["airing"] == ready["airing"]
+    cache.pool.submit(lambda: None).result(timeout=5)
+    assert len(meta.calls) == calls
+
+
+def test_episode_refresh_keeps_saved_results_and_rebuilds_for_new_history(cached_app, monkeypatch):
+    client, store, _, _, cache = cached_app
+    store.write_state("history", {"one": episode()})
+    url = "/api/tracker/overview/shows?day=2026-11-10&background=1"
+    client.get(url)
+    cache.pool.submit(lambda: None).result(timeout=5)
+    saved = client.get(url).json()
+    store.save_note("show:tmdb:1", {"type": "show", "status": "dropped"})
+    started, release = Event(), Event()
+    build = trackerAPI.overview_payload
+
+    def delayed(*args):
+        started.set()
+        assert release.wait(5)
+        return build(*args)
+
+    monkeypatch.setattr(trackerAPI, "overview_payload", delayed)
+    cache.mark_stale()
+    try:
+        stale = client.get(url).json()
+        assert stale["airing"] == saved["airing"] and stale["_view"]["refreshing"]
+        assert started.wait(3)
+    finally:
+        release.set()
+    cache.pool.submit(lambda: None).result(timeout=5)
+    assert client.get(url).json()["airing"] == []
+    assert not client.get(url.replace("2026-11-10", "2026-11-11")).json()["_view"]["ready"]
+    cache.pool.submit(lambda: None).result(timeout=5)
+
+
+@pytest.mark.parametrize("failure", ["all", "show", "season", "rate_limit", "server_error"])
+def test_failed_episode_refresh_preserves_snapshot(cached_app, monkeypatch, failure):
+    client, store, _, meta, cache = cached_app
+    store.write_state("history", {"one": episode(), "other": episode(tmdb="2")})
+    url = "/api/tracker/overview/shows?day=2026-11-10&background=1"
+    client.get(url)
+    cache.pool.submit(lambda: None).result(timeout=5)
+    saved = client.get(url).json()
+    assert saved["continue"] and saved["airing"]
+    store.write_state("history", {"two": episode(number=2), "other": episode(tmdb="2")})
+    lookup = meta.lookup
+
+    def unavailable(kind, tmdb, *, season=None, **kwargs):
+        if tmdb == "1" and failure in {"rate_limit", "server_error"}:
+            raise http_error(429 if failure == "rate_limit" else 503)
+        if failure == "all" or (tmdb == "1" and (season is None if failure == "show" else season == 1)):
+            raise TimeoutError("Metadata request timed out")
+        return lookup(kind, tmdb, season=season, **kwargs)
+
+    monkeypatch.setattr(meta, "lookup", unavailable)
+    cache.mark_stale()
+    client.get(url)
+    cache.pool.submit(lambda: None).result(timeout=5)
+    failed = client.get(url).json()
+    assert failed["continue"] == saved["continue"]
+    assert failed["airing"] == saved["airing"]
+    assert failed["_view"]["version"] == saved["_view"]["version"]
+    assert failed["_view"]["error"] == "refresh_failed"
+    cache.entries.clear()
+    assert client.get(url).json()["airing"] == saved["airing"]
+
+    monkeypatch.setattr(meta, "lookup", lookup)
+    client.get(url + "&retry_view=1")
+    cache.pool.submit(lambda: None).result(timeout=5)
+    recovered = client.get(url).json()
+    assert recovered["_view"]["error"] is None
+    assert recovered["_view"]["version"] != saved["_view"]["version"]
+    assert next(row for row in recovered["continue"] if row["show_ids"]["tmdb"] == "1")["episode"] == 3
+
+
+def http_error(status):
+    response = tmdb.requests.Response()
+    response.status_code = status
+    return tmdb.requests.HTTPError(response=response)
+
+
+@pytest.mark.parametrize("warm", [False, True])
+@pytest.mark.parametrize("daily", [False, True])
+@pytest.mark.parametrize("missing_season", [None, 1])
+def test_missing_metadata_does_not_block_other_episodes(cached_app, monkeypatch, warm, daily, missing_season):
+    client, store, _, meta, cache = cached_app
+    store.write_state("history", {"one": episode(), "other": episode(tmdb="2")})
+    url = "/api/tracker/overview/shows?day=2026-11-10&background=1"
+    if warm:
+        client.get(url)
+        cache.pool.submit(lambda: None).result(timeout=5)
+        assert client.get(url).json()["_view"]["ready"]
+        store.write_state("history", {"one": episode(number=2), "other": episode(tmdb="2")})
+        cache.mark_stale()
+    lookup = meta.lookup
+
+    def missing(kind, identifier, *, season=None, **kwargs):
+        if identifier == "1" and season == missing_season and (not daily or kwargs.get("max_age") is not None):
+            raise http_error(404)
+        return lookup(kind, identifier, season=season, **kwargs)
+
+    monkeypatch.setattr(meta, "lookup", missing)
+    client.get(url)
+    cache.pool.submit(lambda: None).result(timeout=5)
+    data = client.get(url).json()
+    assert data["_view"]["ready"] and data["_view"]["error"] is None
+    assert data["unavailable"] == 1
+    assert any(row["show_ids"]["tmdb"] == "2" for row in data["continue"])
+    assert any(row["show_ids"]["tmdb"] == "2" for row in data["airing"])
+    assert not any(row["show_ids"]["tmdb"] == "1" and (missing_season is None or row["season"] == missing_season)
+                   for row in data["continue"] + data["airing"])
+
+
+def test_all_missing_metadata_publishes_an_empty_snapshot(cached_app, monkeypatch):
+    client, store, _, meta, cache = cached_app
+    store.write_state("history", {"one": episode()})
+
+    def missing(*args, **kwargs):
+        raise http_error(404)
+
+    monkeypatch.setattr(meta, "lookup", missing)
+    url = "/api/tracker/overview/shows?day=2026-11-10&background=1"
+    client.get(url)
+    cache.pool.submit(lambda: None).result(timeout=5)
+    data = client.get(url).json()
+    assert data["_view"]["ready"] and data["_view"]["error"] is None
+    assert data["airing"] == data["continue"] == []
+    assert data["unavailable"] == 1

@@ -3,7 +3,7 @@
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
 import test from "node:test";
 import assert from "node:assert/strict";
-import {readFile} from "node:fs/promises";
+import {mkdir, readFile} from "node:fs/promises";
 import {execFileSync} from "node:child_process";
 import {chromium} from "playwright";
 
@@ -12,7 +12,7 @@ for (const direct of [false, true]) test(`${direct ? "Direct Collection" : "Hub 
   t.after(() => browser.close());
   const page = await browser.newPage({viewport:{width:1440, height:900}});
   page.setDefaultTimeout(8000);
-  const template = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_profile_html({'is_admin':True,'username':'preview'}))"], {encoding:"utf8", maxBuffer:1024*1024});
+  const template = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_hub_html({'is_admin':True,'username':'preview'}))"], {encoding:"utf8", maxBuffer:1024*1024});
   const html = await page.evaluate(source => {
     const doc = new DOMParser().parseFromString(source, "text/html");
     doc.querySelectorAll("script").forEach(node => node.remove());
@@ -58,7 +58,7 @@ for (const direct of [false, true]) test(`${direct ? "Direct Collection" : "Hub 
     }
     return route.fulfill({contentType:"text/html", body:html});
   });
-  await page.goto(`https://hub-cache.test/profile${direct ? "#collection" : ""}`);
+  await page.goto(`https://hub-cache.test/hub${direct ? "#collection" : ""}`);
   if (!direct) {
     await page.locator("#profile-hero-media strong").getByText("Cached overview movie", {exact:true}).waitFor();
     await page.locator('[data-profile-tab="collection"]').click();
@@ -68,7 +68,7 @@ for (const direct of [false, true]) test(`${direct ? "Direct Collection" : "Hub 
   await page.locator("#profile-hero-media strong").getByText("Fresh hero movie", {exact:true}).waitFor();
   assert.ok(heroQueries.length >= 2);
   assert.ok(heroQueries.every(query => query.background === "1"));
-  await page.locator('#profile-panel-collection [data-view-status]').getByText("Preparing items…").waitFor();
+  await page.locator('#profile-panel-collection [data-view-status]').getByRole("progressbar", {name:"Loading items…"}).waitFor();
   assert.equal(await page.getByText("Collections could not be loaded.", {exact:true}).count(), 0);
   phase = "cached";
   await page.getByText("Cached collection movie", {exact:true}).first().waitFor();
@@ -179,7 +179,7 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
     await page.addInitScript(() => localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"history", viewSelectedAt:Date.now(), layouts:{history:"list"}})));
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
-    let version = "cached";
+    let version = "cold";
     let reads = 0;
     await page.route("https://view-cache.test/**", async route => {
       const url = new URL(route.request().url());
@@ -195,16 +195,30 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
           assert.equal(url.searchParams.get("background"), "1");
           reads++;
           json = {ok:true, total:1, items:[{key:"movie:1", type:"movie", title:version === "cached" ? "Cached movie" : "Updated movie", year:2026, date:"2026-11-08T12:00:00Z"}], _view:{ready:true, refreshing:version === "cached", version, retry_after:1}};
+          if (version === "cold") json = {ok:true, _view:{ready:false, refreshing:true, retry_after:1}};
         }
         return route.fulfill({json});
       }
       const attrs = theme === "original" ? 'class="cw-theme-original"' : `data-cw-theme="${theme}"`;
       const css = ["fonts/material-symbols-rounded", "themes/tokens", "css/base", "crosswatch", "css/layout", "css/components", "css/pages", "css/page-theme", "ui-shell", theme === "original" ? "themes/original-coverage" : "themes/flat"];
-      return route.fulfill({contentType:"text/html", body:`<!doctype html><html ${attrs}><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(file => `<link rel="stylesheet" href="/assets/${file}.css">`).join("")}</head><body><main id="layout"><section id="page-tracker" class="cw-themed-page"></section></main><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
+      return route.fulfill({contentType:"text/html", body:`<!doctype html><html ${attrs} data-tab="tracker"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(file => `<link rel="stylesheet" href="/assets/${file}.css">`).join("")}</head><body><main id="layout" class="full"><section id="page-tracker" class="card tab-page cw-themed-page"></section></main><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
     });
     await page.goto("https://view-cache.test/");
+    const loading = page.locator('[data-trk-slot="main"] .cw-page-loading');
+    await loading.getByRole("progressbar").waitFor();
+    assert.equal(await page.locator('.cw-main > [data-view-status]').isVisible(), false);
+    const initialHeroTop = await page.locator('.cw-media-hero').evaluate(node => node.getBoundingClientRect().top);
+    await mkdir('.tmp/view-loading', {recursive:true});
+    await page.screenshot({path:`.tmp/view-loading/${theme}-${width}-cold.png`, fullPage:true});
+    version = "cached";
     await page.getByText("Cached movie", {exact:true}).first().waitFor();
-    assert.match(await page.locator("[data-view-status]").innerText(), /Refreshing/);
+    assert.equal(await page.locator('.cw-main > [data-view-status]').isHidden(), true);
+    assert.equal(await page.locator('.cw-main > [data-view-status]').textContent(), "");
+    await page.screenshot({path:`.tmp/view-loading/${theme}-${width}-refresh.png`, fullPage:true});
+    assert.equal(await page.locator('#page-tracker > [data-view-status]').count(), 0);
+    const heroTop = await page.locator('.cw-media-hero').evaluate(node => node.getBoundingClientRect().top);
+    assert.equal(heroTop, initialHeroTop);
+    const controlsTop = await page.locator('[data-trk-slot="controls"]').evaluate(node => node.getBoundingClientRect().top);
     await page.locator('[data-trk-pick="0"]').check();
     await page.locator('.trk-source > summary').click();
     await page.keyboard.press('ArrowDown');
@@ -214,6 +228,8 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
     assert.equal(await page.locator('.trk-source').evaluate(el => el.open), true);
     assert.equal(await page.locator('[data-trk-instance="default"]').evaluate(el => el === document.activeElement), true);
     assert.equal(await page.locator("[data-view-status]").isHidden(), true);
+    assert.equal(await page.locator('.cw-media-hero').evaluate(node => node.getBoundingClientRect().top), heroTop);
+    assert.equal(await page.locator('[data-trk-slot="controls"]').evaluate(node => node.getBoundingClientRect().top), controlsTop);
     assert.ok(reads >= 2);
     assert.deepEqual(errors, []);
   });
@@ -341,6 +357,44 @@ test("obsolete requests cannot repaint", async t => {
   assert.deepEqual(result, ["AbortError", "new"]);
 });
 
+for (const ready of [false, true]) for (const failure of ["response", "network"]) for (const changed of [false, true]) test(`${ready ? "Cached" : "Cold"} views recover automatically after a ${failure} failure with ${changed ? "changed" : "unchanged"} results`, async t => {
+  const browser = await chromium.launch({headless:true});
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.route("https://recovery.test/", route => route.fulfill({contentType:"text/html", body:"<main></main>"}));
+  await page.goto("https://recovery.test/");
+  await page.clock.install();
+  await page.addScriptTag({content:await readFile(new URL("../assets/helpers/view-cache.js", import.meta.url), "utf8")});
+  await page.evaluate(async ({ready, failure, changed}) => {
+    window.reads = [];
+    window.updates = [];
+    window.statuses = [];
+    window.phase = ready ? "cached" : "failed";
+    window.addEventListener("cw:view-updated", event => updates.push(event.detail.data.items));
+    window.addEventListener("cw:view-status", event => statuses.push(event.detail.data));
+    window.initial = await CW.ViewCache.read("/api/tracker/overview/shows", async url => {
+      reads.push(url);
+      if (phase === "failed" && failure === "network") throw new TypeError("Failed to fetch");
+      return {items:[changed && phase === "fresh" ? "updated" : "saved"], _view:{ready:ready || phase === "fresh", refreshing:phase === "cached", version:changed && phase === "fresh" ? "new" : "old", error:phase === "failed" ? "refresh_failed" : null, retry_after:phase === "failed" ? 30 : 1}};
+    }).catch(error => error.code || error.message);
+  }, {ready, failure, changed});
+  if (ready) {
+    assert.deepEqual(await page.evaluate(() => initial.items), ["saved"]);
+    await page.evaluate(() => { phase = "failed"; });
+    await page.clock.runFor(1001);
+  }
+  assert.equal(await page.evaluate(() => statuses.at(-1).error), "refresh_failed");
+  assert.deepEqual(await page.evaluate(() => updates), []);
+  await page.evaluate(() => { phase = "fresh"; });
+  await page.clock.runFor(30001);
+  assert.deepEqual(await page.evaluate(() => updates), [[changed ? "updated" : "saved"]]);
+  assert.equal(await page.evaluate(() => statuses.at(-1).error), null);
+  assert.equal(await page.evaluate(() => reads.some(url => url.includes("retry_view"))), false);
+  const before = await page.evaluate(() => { CW.ViewCache.invalidate(); return reads.length; });
+  await page.clock.runFor(60001);
+  assert.equal(await page.evaluate(() => reads.length), before);
+});
+
 test("Range reads wait for rebuilt snapshots and reject failed refreshes", {timeout:10000}, async t => {
   const browser = await chromium.launch({headless:true});
   t.after(() => browser.close());
@@ -439,14 +493,15 @@ for (const initial of ["failed", "empty", "summary-failed"]) test(`Tracker timel
   });
   await page.goto("https://timeline.test/");
   const status = page.locator("[data-view-status]");
-  await status.waitFor();
+  await status.waitFor({state:"attached"});
   if (initial !== "empty") {
     const retry = status.getByRole("button", {name:"Retry"});
     await retry.waitFor();
     phase = "fresh";
     await retry.click();
   } else {
-    await status.getByText(/Refreshing/).waitFor();
+    await page.locator('[data-trk-slot="main"] .cw-empty').waitFor();
+    assert.equal(await status.isHidden(), true);
     phase = "fresh";
   }
   await page.getByText("Recovered movie", {exact:true}).first().waitFor();

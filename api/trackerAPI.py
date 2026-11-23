@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 
 from cw_platform.access_policy import request_user, user_can_access_instance
 from cw_platform.anime_mapping.history_coords import alias_context, tmdb_coordinate
@@ -38,7 +38,7 @@ from cw_platform.tracker_store import (
 )
 from cw_platform.value_coercion import coerce_bool
 from services import tracker_check, tracker_import, tracker_migration, tracker_storage_maintenance
-from services.tracker_overview import cached_overview, overview_events
+from services.tracker_overview import overview_payload
 from services.tracker_month import available_month, available_wrapped, get_report as month_report
 
 router = APIRouter(prefix="/api/tracker", tags=["tracker"])
@@ -1685,12 +1685,12 @@ def tracker_overview(request: Request, provider_instance: str | None = Query("de
                 continuing.append(row)
     except TrackerUnreadable:
         return _unreadable()
-    cached = cached_overview(store, today) if _tmdb_key(cfg) else None
-    return {"ok": True, "provider_instance": inst, "revision": store.revision(), "hero": _overview_hero(store, recent, continuing, inst), "shows": cached, "recent": recent, "continue": continuing,
+    return {"ok": True, "provider_instance": inst, "revision": store.revision(), "hero": _overview_hero(store, recent, continuing, inst), "recent": recent, "continue": continuing,
             "history_more": history_total > 200, "progress_more": progress_total > 200, "metadata_available": bool(_tmdb_key(cfg)), "review_month": available_month(store, cfg), "wrapped": available_wrapped(store, cfg)}
 
 
 @router.get("/overview/shows", dependencies=_READY)
+@background_view
 def tracker_overview_shows(request: Request, provider_instance: str | None = Query("default"), day: str = Query("", max_length=10)) -> Any:
     cfg, inst, store = _store(provider_instance, request)
     try:
@@ -1699,8 +1699,7 @@ def tracker_overview_shows(request: Request, provider_instance: str | None = Que
         return _error("invalid_date", 400)
     if not _tmdb_key(cfg):
         return {"ok": True, "provider_instance": inst, "continue": [], "airing": [], "done": True, "total": 0, "unavailable": 0, "metadata_available": False}
-    return StreamingResponse(overview_events(store, _tmdb_provider(), today, request.is_disconnected),
-                             media_type="application/x-ndjson", headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+    return {**overview_payload(store, _tmdb_provider(), today), "provider_instance": inst}
 
 
 @router.get("/notes", dependencies=_READY)

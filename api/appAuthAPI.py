@@ -1533,7 +1533,7 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
         }}
       }}catch(e){{ safe = '/'; }}
       if(safe && safe !== '/' && safe !== '/login' && safe !== '/logout') return safe;
-      return data && data.user && data.user.is_admin === false ? '/profile' : '/';
+      return data && data.user && data.user.is_admin === false ? '/hub' : '/';
     }}
     function setHelp(data){{
       const url=(data&&data.forgot_help_url)||'https://wiki.crosswatch.app/';

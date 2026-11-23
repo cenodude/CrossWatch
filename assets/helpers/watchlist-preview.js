@@ -424,7 +424,7 @@
     previewCard = window.CW.PlayingCard.mount({
       id: "cw-wall-preview-detail",
       variant: "watchlist",
-      tabScope: document.documentElement?.dataset?.cwPage === "profile" ? "" : "main",
+      tabScope: document.documentElement?.dataset?.cwPage === "hub" ? "" : "main",
       label: "Watchlist preview details",
       width: "min(860px,calc(100vw - 32px))",
       onClose: closePreviewDrawer,

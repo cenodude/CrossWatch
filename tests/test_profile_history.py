@@ -324,9 +324,9 @@ def test_profile_timeline_ui_is_registered() -> None:
     js = (root / "assets/js/profile-page.js").read_text(encoding="utf-8")
     css = (root / "assets/css/profile-page.css").read_text(encoding="utf-8")
     widgets = (root / "assets/js/dashboard-widgets.js").read_text(encoding="utf-8")
-    from ui_frontend import get_profile_html
+    from ui_frontend import get_hub_html
 
-    html = get_profile_html(user={"is_admin": True, "username": "admin"})
+    html = get_hub_html(user={"is_admin": True, "username": "admin"})
 
     assert 'data-profile-tab="history"' in html
     assert 'data-profile-tab="ratings"' in html
@@ -343,8 +343,8 @@ def test_profile_timeline_ui_is_registered() -> None:
     assert "ratingsPanel.wire();" in js
     assert ".cw-hist-timeline" in css
     assert ".cw-hist-scores" in css
-    assert "/profile#history/synced" in widgets
-    assert "/profile#history/scrobble" in widgets
+    assert "/hub#history/synced" in widgets
+    assert "/hub#history/scrobble" in widgets
     assert "/profile#ratings" in widgets
 
 

@@ -2,6 +2,7 @@
 /* CrossWatch managed user profile page */
 /* Copyright (c) 2025-2026 CrossWatch / Cenodude */
 (function () {
+  const accountPage = document.documentElement.dataset.cwPage === "profile";
   const $ = (sel, root = document) => root.querySelector(sel);
   const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[m]));
   const mobilePaging = window.matchMedia("(max-width:760px)");
@@ -48,7 +49,7 @@
   const DISPLAY_TIME_PATHS = new Set(["/api/profile/collection", "/api/profile/history", "/api/profile/ratings", "/api/profile/watchlist", "/api/playback_progress/items"]);
   const VIEW_AS_PARAM = "as";
   const VIEW_AS_PATHS = [
-    "/api/profile/collection", "/api/profile/history", "/api/profile/ratings", "/api/profile/watchlist", "/api/profile/title",
+    "/api/profile/collection", "/api/profile/history", "/api/profile/ratings", "/api/profile/watchlist", "/api/profile/title", "/api/profile/airing",
     "/api/playback_progress/", "/api/watch/currently_watching", "/api/state/wall", "/api/insights", "/api/status",
     "/api/dashboard/widgets", "/api/events/feed",
   ];
@@ -71,6 +72,7 @@
 
   function cachedViewHost(url) {
     const parsed = new URL(url, location.origin);
+    if (parsed.pathname === "/api/profile/airing") return document.querySelector("#profile-panel-overview.active #profile-airing");
     if (parsed.pathname === "/api/dashboard/widgets" && parsed.searchParams.get("view") === "hero") {
       return document.querySelector("#profile-panel-overview.active") ? null : document.querySelector("#profile-hero");
     }
@@ -171,9 +173,12 @@
     const raw = String(window.location?.hash || "");
     if (!raw) return false;
     const tab = profileRouteSegment(raw.replace(/^#\/?/, "").split("?")[0].split("/")[0]);
-    if (tab === "playback_progress") {
-      window.history.replaceState(null, "", "/profile#playback");
-      return false;
+    if (["overview", "collection", "history", "ratings", "playback", "playback_progress", "watchlist"].includes(tab)) {
+      const url = new URL(window.location.href);
+      url.pathname = "/hub";
+      if (tab === "playback_progress") url.hash = "playback";
+      window.location.replace(`${url.pathname}${url.search}${url.hash}`);
+      return true;
     }
     const appTabs = new Set(["main", "snapshots", "playlists", "editor", "settings"]);
     if (!appTabs.has(tab)) return false;
@@ -622,6 +627,8 @@
   function setAvatar(url) {
     const normalized = window.CW?.AccountMenu?.normalizeAvatarUrl?.(url) || String(url || "").trim();
     const nodes = [$("#profile-hero-avatar"), viewingAs() ? null : $("#cw-nav-profile-avatar"), $("#profile-settings-avatar")].filter(Boolean);
+    const remove = $("#profile-avatar-remove");
+    if (remove) remove.hidden = !normalized;
     for (const node of nodes) {
       if (window.CW?.AccountMenu?.setAvatarNode) {
         window.CW.AccountMenu.setAvatarNode(node, normalized);
@@ -636,6 +643,7 @@
 
   function updateSharedProfile(user) {
     if (!window.CW?.AuthState?.user) return;
+    window.CW.AuthState.user.display_name = user?.display_name || "";
     window.CW.AuthState.user.avatar_url = String(user?.avatar_url || "");
     window.CW.AuthState.user.preferences = user?.preferences || {};
     try {
@@ -739,7 +747,8 @@
     $("#profile-display-name").textContent = display;
     $("#profile-username").textContent = viewed ? `Opened by @${profile.username || ""}` : `@${profile.username || ""}`;
     $("#profile-role").textContent = viewed ? "Profile" : (profile.is_admin ? "Administrator" : "Managed User");
-    $("#profile-display-input").value = display;
+    const input = $("#profile-display-input");
+    if (input) input.value = display;
     renderTwoFactor(!!profile.totp_enabled);
     setAvatar(profile.avatar_url || "");
     renderMemberSince(viewingAs() ? {} : profile);
@@ -793,6 +802,11 @@
   function renderPreferences(user) {
     const prefs = user?.preferences || {};
     window.CW?.ProfileMediaModal?.setStyle?.(prefs.media_card);
+    const mediaCard = $("#profile-media-card");
+    if (mediaCard) {
+      mediaCard.value = prefs.media_card || "full";
+      window.CW.IconSelect?.enhance?.(mediaCard, { className: "cw-plain-select" });
+    }
     const card = $("#profile-pref-playing-card");
     const quick = $("#profile-pref-quick-add");
     if (card) card.checked = prefs.playing_card !== false;
@@ -1313,6 +1327,71 @@
     renderOverviewCards($("#profile-progress"), progressItems.slice(0, mobilePaging.matches ? 3 : 4), progressCard, "No recent progress yet.");
   }
 
+  let airingRequest = 0;
+  let airingSignature = "";
+  const airingDay = () => {
+    const day = new Date();
+    return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+  };
+
+  function renderAiring(data = {}, day = airingDay()) {
+    const host = $("#profile-airing-days");
+    if (!host) return;
+    const signature = JSON.stringify([profileCacheKey("airing"), day, data]);
+    if (signature === airingSignature) return;
+    airingSignature = signature;
+    const scroll = host.scrollLeft;
+    const focused = host.contains(document.activeElement) ? document.activeElement.dataset.airingKey : null;
+    for (const node of host.querySelectorAll('[data-profile-poster-key]')) posterItems.delete(node.dataset.profilePosterKey);
+    const byDay = new Map();
+    for (const row of data.airing || []) {
+      if (!byDay.has(row.air_date)) byDay.set(row.air_date, []);
+      byDay.get(row.air_date).push(row);
+    }
+    const dates = Array.from({length:30}, (_, offset) => {
+      const date = new Date(`${day}T12:00:00`);
+      date.setDate(date.getDate() + offset);
+      const iso = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      return {date, iso};
+    });
+    host.innerHTML = dates.map(({date, iso}, offset) => {
+      const start = Math.min(16, Math.floor(offset / 14) * 14);
+      const counts = dates.slice(start, start + 14).map(({iso}) => byDay.get(iso)?.length || 0);
+      const time = `<time datetime="${iso}"><span>${esc(date.toLocaleDateString(undefined, {weekday:"short"}))}</span><strong>${date.getDate()}</strong></time>`;
+      const rows = byDay.get(iso) || [];
+      const cards = rows.map(row => {
+        const tmdb = row.show_ids?.tmdb || row.art?.tmdb;
+        const image = tmdb ? `/art/tmdb/tv/${encodeURIComponent(tmdb)}?fallback=2&av=${encodeURIComponent(document.documentElement.dataset.cwArt || "t")}&size=w780&kind=${row.has_still ? `still&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : "backdrop"}` : "";
+        const episode = `S${String(row.season).padStart(2, "0")} · E${String(row.episode).padStart(2, "0")}`;
+        const label = offset === 0 ? "Today" : row.episode === 1 ? "Season premiere" : offset === 1 ? "Tomorrow" : `In ${offset} days`;
+        const key = storePosterItem({...row, type:"show", tmdb, ids:{tmdb}, episode_label:episode});
+        return `<button type="button" class="trk-calendar-release" data-profile-poster-key="${esc(key)}" data-airing-key="${esc(row.key)}" aria-label="${esc(`${date.toLocaleDateString()}: ${row.title}, ${episode}`)}">${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-calendar-date">${time}<span class="trk-calendar-label">${esc(label)}</span></span><span class="trk-calendar-copy"><strong>${esc(row.title)}</strong><span>${esc([episode, row.episode_title].filter(Boolean).join(" · "))}</span></span></button>`;
+      }).join("");
+      return `<div class="trk-calendar-day${rows.length ? " has-releases" : ""}${offset === 0 ? " is-today" : ""}" data-calendar-date="${iso}" style="--calendar-releases:${Math.max(1, counts.reduce((sum, n) => sum + n, 0))};--calendar-empty-days:${counts.filter(n => !n).length}">${cards || time + (offset === 0 ? '<span class="trk-calendar-today">Today</span>' : "")}</div>`;
+    }).join("");
+    host.scrollLeft = scroll;
+    if (focused) [...host.querySelectorAll('[data-airing-key]')].find(node => node.dataset.airingKey === focused)?.focus({preventScroll:true});
+    const notice = $("#profile-airing-notice");
+    notice.textContent = data.metadata_available === false ? "Add a TMDB API key in Settings to see upcoming episodes." : data.unavailable ? "Episode dates are unavailable for some shows." : Array.isArray(data.airing) && !data.airing.length ? "No episodes scheduled in the next 30 days." : "";
+    notice.hidden = !notice.textContent;
+  }
+
+  async function loadAiring() {
+    const request = ++airingRequest;
+    const day = airingDay();
+    const key = profileCacheKey(`airing.${day}`);
+    const cached = readCache(key, SNAPSHOT_RETENTION_MS);
+    renderAiring(cached || {}, day);
+    try {
+      const data = await api(`/api/profile/airing?day=${day}`);
+      if (request !== airingRequest || key !== profileCacheKey(`airing.${airingDay()}`)) return;
+      renderAiring(data, day);
+      if (data?.ok) writeCache(key, data);
+    } catch (error) {
+      if (error.name !== "AbortError" && request === airingRequest && key === profileCacheKey(`airing.${airingDay()}`)) window.CW?.ViewCache?.status($("#profile-airing"), {ready:!!cached, error:"refresh_failed"}, "upcoming episodes", () => { window.CW.ViewCache.retry(`/api/profile/airing?day=${day}`); void loadAiring(); }, "/api/profile/airing");
+    }
+  }
+
   let overviewPayload = null;
   let overviewPagingDirty = false;
   let overviewRequest = 0;
@@ -1346,6 +1425,7 @@
   }
 
   async function loadOverview() {
+    void loadAiring();
     clearTimeout(overviewLoadingTimer);
     overviewStartedAt = Date.now();
     overviewProgressResume = null;
@@ -2556,7 +2636,7 @@
     syncCollectionViewButtons();
   }
 
-  const TIMELINE_ZOOM_STEPS = window.CW.MonthBar.ZOOM_STEPS;
+  const TIMELINE_ZOOM_STEPS = accountPage ? [] : window.CW.MonthBar.ZOOM_STEPS;
   const TIMELINE_PAGE_SIZES = [24, 48, 96];
   const TIMELINE_COVERAGE = ["partial", "full", "mismatch"];
 
@@ -2752,7 +2832,7 @@
     return `<img data-src="${esc(art)}" data-fallback="${esc(fallback)}" alt="" decoding="async" onerror="const f=this.dataset.fallback;this.dataset.fallback='';if(f){this.src=f}else{this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'}">`;
   }
 
-  const timelineImages = (() => {
+  const timelineImages = accountPage ? null : (() => {
     const MAX_ACTIVE = 6;
     const queue = new Set();
     const inflight = new Map();
@@ -2893,7 +2973,7 @@
     return { load, get };
   })();
 
-  const recordRemoval = (() => {
+  const recordRemoval = accountPage ? null : (() => {
     const NOTES = {
       history: { main: "Removes the watched status of the selected titles on the chosen providers.", detail: "Every watch is removed, FLOPPY removes one watch per title. Other sync sources can restore them." },
       ratings: { main: "Removes the selected ratings from the chosen providers.", detail: "Other sync sources can restore them." },
@@ -3973,7 +4053,7 @@
     ];
   };
 
-  const historyPanel = createTimelinePanel({
+  const historyPanel = accountPage ? null : createTimelinePanel({
     key: "history",
     title: "History",
     endpoint: "/api/profile/history",
@@ -4019,7 +4099,7 @@
     },
   });
 
-  const ratingsPanel = createTimelinePanel({
+  const ratingsPanel = accountPage ? null : createTimelinePanel({
     key: "ratings",
     endpoint: "/api/profile/ratings",
     prefsKey: "cw.profile.ratings",
@@ -4049,7 +4129,7 @@
     },
   });
 
-  const watchlistPanel = createTimelinePanel({
+  const watchlistPanel = accountPage ? null : createTimelinePanel({
     key: "watchlist",
     endpoint: "/api/profile/watchlist",
     removeMode: "watchlist",
@@ -4080,7 +4160,7 @@
 
   const PLAYBACK_PROVIDER_KEYS = ["crosswatch", "trakt", "simkl", "mdblist", "publicmetadb", "wetrakr", "punchplay", "flicklist", "plex", "emby", "jellyfin", "nuvio", "kodi", "stremio", "floppy", "silo", "tofa"];
 
-  const playbackPanel = (() => {
+  const playbackPanel = accountPage ? null : (() => {
     const DEFAULT_TIMEOUT = 20;
     const PAGE_SIZES = [24, 48, 96];
     const doc = document.documentElement;
@@ -5174,15 +5254,14 @@
     };
     document.querySelectorAll("[data-profile-tab]").forEach((btn) => {
       btn.addEventListener("click", () => {
-        selectTab(btn.dataset.profileTab);
+        window.location.hash = btn.dataset.profileTab;
       });
     });
-    $("#profile-hero-avatar")?.addEventListener("click", event => {
-      if (viewingAs() || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
-      event.preventDefault();
-      selectTab("account");
-    });
     window.addEventListener("hashchange", () => {
+      if (["account", "security", "preferences"].includes(location.hash.slice(1))) {
+        location.href = `/profile${location.hash}`;
+        return;
+      }
       const key = tabFromHash();
       if (key) selectTab(key, { fromHash: true });
     });
@@ -5604,24 +5683,29 @@
     const nav = $(".cw-set-nav");
     if (!nav) return;
     const buttons = [...nav.querySelectorAll("[data-settings-nav]")];
-    const mark = (key) => buttons.forEach((btn) => btn.classList.toggle("active", btn.dataset.settingsNav === key));
-    nav.addEventListener("click", (event) => {
+    const select = () => {
+      const hash = location.hash.slice(1);
+      const key = ({account:"profile", preferences:"interface", devices:"sessions"})[hash] || hash || "profile";
+      const section = buttons.some(btn => btn.dataset.settingsNav === key) ? key : "profile";
+      buttons.forEach(btn => {
+        const active = btn.dataset.settingsNav === section;
+        btn.classList.toggle("active", active);
+        if (active) btn.setAttribute("aria-current", "page");
+        else btn.removeAttribute("aria-current");
+      });
+      document.querySelectorAll("[data-settings-section]").forEach(node => { node.hidden = node.dataset.settingsSection !== section; });
+      window.scrollTo({top:0});
+    };
+    nav.addEventListener("click", event => {
       const btn = event.target?.closest?.("[data-settings-nav]");
-      if (!btn) return;
-      mark(btn.dataset.settingsNav);
-      document.getElementById(`settings-${btn.dataset.settingsNav}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+      if (btn) location.hash = btn.dataset.settingsNav === "profile" ? "account" : btn.dataset.settingsNav;
     });
-    if (!("IntersectionObserver" in window)) return;
-    const observer = new IntersectionObserver((entries) => {
-      const hit = entries
-        .filter((entry) => entry.isIntersecting)
-        .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-      if (hit) mark(hit.target.dataset.settingsSection);
-    }, { rootMargin: "-20% 0px -65% 0px" });
-    document.querySelectorAll("[data-settings-section]").forEach((section) => observer.observe(section));
+    window.addEventListener("hashchange", select);
+    select();
   }
 
   function refreshTimeDisplays() {
+    if (accountPage) return;
     [historyPanel, ratingsPanel, watchlistPanel, playbackPanel].forEach((panel) => panel.invalidate());
     collectionState.loaded = false;
     const active = document.querySelector("[data-profile-tab].active")?.dataset.profileTab;
@@ -5937,11 +6021,26 @@
     });
   }
 
+  async function initAccount() {
+    wireSettingsNav();
+    wirePreferences();
+    wireAvatar();
+    wireForms();
+    wireSecurity();
+    wirePlexSso();
+    wireOidcSso();
+    await refreshProfile().catch(error => toast(error.message || "Profile could not be loaded", true));
+    void refreshPlexStatus();
+    void refreshOidcStatus();
+  }
+
   async function init() {
+    if (accountPage) return initAccount();
     const refreshView = url => {
       const parsed = new URL(url, location.origin);
       const host = cachedViewHost(url);
       if (!host) return;
+      if (host.id === "profile-airing") return void loadAiring();
       if (host.id === "profile-hero") return void loadHeroPreview({quiet:true}).catch(() => {});
       if (host.id === "profile-panel-overview") return void loadOverview().catch(() => {});
       if (parsed.pathname.endsWith("/collection")) return void loadCollection({quiet:true});
@@ -5950,7 +6049,9 @@
     };
     window.addEventListener("cw:view-status", event => {
       const {url, data} = event.detail;
-      window.CW?.ViewCache?.status(cachedViewHost(url), data, "items", () => { window.CW.ViewCache.retry(url); refreshView(url); }, new URL(url, location.origin).pathname);
+      const host = cachedViewHost(url);
+      if (host?.id === "profile-hero") return;
+      window.CW?.ViewCache?.status(host, data, host?.id === "profile-airing" ? "upcoming episodes" : "items", () => { window.CW.ViewCache.retry(url); refreshView(url); }, new URL(url, location.origin).pathname);
     });
     window.addEventListener("cw:view-updated", event => refreshView(event.detail.url));
     await resolveViewAs();
@@ -5962,15 +6063,15 @@
     playbackPanel.wire();
     watchlistPanel.wire();
     wireTabs();
+    $("#profile-airing")?.addEventListener("click", event => {
+      const action = event.target.closest("[data-hub-calendar]")?.dataset.hubCalendar;
+      if (!action) return;
+      const calendar = $("#profile-airing-days");
+      calendar.scrollTo({left:action === "today" ? 0 : calendar.scrollLeft + calendar.clientWidth * (action === "next" ? .8 : -.8), behavior:matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth"});
+    });
+    $("#profile-airing-days")?.addEventListener("error", event => { if (event.target.tagName === "IMG") event.target.hidden = true; }, true);
     wireCollection();
     wireMobileRecordTools();
-    wirePreferences();
-    wireAvatar();
-    wireForms();
-    wireSecurity();
-    wireSettingsNav();
-    wirePlexSso();
-    wireOidcSso();
     wirePosterOverlay();
     wireProfileActivity();
     void openUpgradeNotice();
@@ -5988,8 +6089,6 @@
       } else if (overviewProgressResume) { clearTimeout(overviewLoadingTimer); overviewProgressResume(); }
     });
     void refreshNowPlaying();
-    void refreshPlexStatus();
-    void refreshOidcStatus();
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });

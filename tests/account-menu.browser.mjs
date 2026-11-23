@@ -11,7 +11,7 @@ const templates = JSON.parse(execFileSync('python', ['-c', `
 import json, ui_frontend as ui
 ui._managed_tracker_allowed = lambda user: bool((user or {}).get('tracker'))
 users = {'admin': {'is_admin': True, 'username': 'admin'}, 'reader': {'is_admin': False, 'username': 'reader', 'permissions': {'write': False, 'watchlist': False, 'playback': False}}, 'writer': {'is_admin': False, 'username': 'writer', 'tracker': True, 'permissions': {'write': True, 'watchlist': True, 'playback': True}}}
-print(json.dumps({name: {'main': ui.get_index_html(include_admin=name == 'admin', user=user), 'profile': ui.get_profile_html(user)} for name, user in users.items()}))
+print(json.dumps({name: {'main': ui.get_index_html(include_admin=name == 'admin', user=user), 'profile': ui.get_profile_html(user), 'hub': ui.get_hub_html(user)} for name, user in users.items()}))
 `], {encoding:'utf8', maxBuffer:4*1024*1024}));
 let browser;
 const assets = new Map();
@@ -52,7 +52,7 @@ async function fixture(t, {shell='main', role='admin', theme='flat-dark', width=
     }
     return route.fulfill({contentType:'text/html',body:html});
   });
-  await page.goto(`https://account-menu.test/${shell === 'profile' ? 'profile' : ''}`);
+  await page.goto(`https://account-menu.test/${shell === 'main' ? '' : shell}`);
   await page.evaluate(() => document.fonts.ready);
   return {page,writes};
 }
@@ -80,7 +80,7 @@ for (const theme of ['original','flat-dark','flat-light']) {
         assert.equal(dangerStyle.fill, dangerStyle.color);
         for (const item of await menu.getByRole('menuitem').all()) assert.ok((await item.boundingBox()).height >= (width <= 1024 ? 44 : 34));
         if (width === 1440) assert.ok(bounds.width <= 240 && bounds.height <= 450, JSON.stringify(bounds));
-        const expectedCurrent = null;
+        const expectedCurrent = shell === 'profile' ? 'account' : null;
         assert.equal(await menu.locator('[aria-current]').count(), expectedCurrent ? 1 : 0);
         if (expectedCurrent) assert.equal(await menu.locator('[aria-current]').getAttribute('data-cw-profile-menu-action'), expectedCurrent);
         if (process.env.CW_MENU_SCREENSHOTS) {
@@ -112,7 +112,7 @@ for (const theme of ['original','flat-dark','flat-light']) {
   }
 }
 
-for (const shell of ['main','profile']) test(`${shell}: mobile page tabs stay below the account menu`, async t => {
+for (const shell of ['main','hub']) test(`${shell}: mobile page tabs stay below the account menu`, async t => {
   const {page} = await fixture(t,{shell,width:390,height:844});
   await page.evaluate(shell => {
     let tabs = document.querySelector('.cw-profile-tabs');
@@ -231,8 +231,8 @@ for (const shell of ['main','profile']) {
 
   test(`${shell}: profile settings and logout`, async t => {
     const {page,writes} = await fixture(t, {shell});
-    const start = `https://account-menu.test/${shell === 'profile' ? 'profile' : ''}`;
-    for (const [action,path] of Object.entries({account:'/profile#account',preferences:'/profile#preferences',logout:'/login'})) {
+    const start = `https://account-menu.test/${shell === 'main' ? '' : shell}`;
+    for (const [action,path] of Object.entries({account:'/profile#account',logout:'/login'})) {
       await page.goto(start);
       await page.locator('#cw-nav-profile-link').click();
       await page.locator(`[data-cw-profile-menu-action="${action}"]`).click();
@@ -245,7 +245,7 @@ for (const shell of ['main','profile']) {
       const {page} = await fixture(t, {shell,role,width:390,height:844});
       await page.locator('#cw-nav-profile-link').click();
       for (const action of ['account','help','about','logout']) assert.equal(await page.locator(`[data-cw-profile-menu-action="${action}"]`).count(), 1);
-      assert.equal(await page.locator('[data-cw-profile-menu-action="preferences"]').count(), role === 'writer' ? 1 : 0);
+      assert.equal(await page.locator('[data-cw-profile-menu-action="preferences"]').count(), 0);
       assert.equal(await page.locator('#tab-tracker').count(), role === 'writer' ? 1 : 0);
       assert.equal(await page.locator('#tab-profile').count(), 1);
       assert.equal(await page.locator('#tab-settings-menu').count(), 0);
@@ -273,7 +273,7 @@ for (const shell of ['main','profile']) test(`${shell}: primary order and deskto
   await page.setViewportSize({width:1440,height:900});
   assert.equal(await page.locator('#tab-tools').isVisible(),true);
   await page.locator('#tab-profile').click();
-  await page.waitForURL('https://account-menu.test/profile#overview');
+  await page.waitForURL('https://account-menu.test/hub');
 });
 
 for (const shell of ['main','profile']) test(`${shell}: Help and About use local dialogs`, async t => {

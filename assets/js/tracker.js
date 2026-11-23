@@ -515,7 +515,7 @@
       const signature = JSON.stringify([name, user?.avatar_url]);
       if (identity.dataset.signature !== signature) {
         identity.dataset.signature = signature;
-        identity.innerHTML = `<a class="cw-media-hero-avatar" href="/profile#account" aria-label="Open user settings" title="User settings">${symbol("person")}${user?.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="" onerror="this.hidden=true">` : ""}</a><span>${esc(name)}</span>`;
+        identity.innerHTML = `<a class="cw-media-hero-avatar" href="/profile" aria-label="Open user settings" title="User settings">${symbol("person")}${user?.avatar_url ? `<img src="${esc(user.avatar_url)}" alt="" onerror="this.hidden=true">` : ""}</a><span>${esc(name)}</span>`;
       }
     }
   }
@@ -652,7 +652,7 @@
         const title = cardTitle(row), art = row.art;
         const url = art?.tmdb ? `/art/tmdb/tv/${encodeURIComponent(art.tmdb)}?fallback=2&av=${document.documentElement.dataset.cwArt || "t"}&size=w780&kind=${row.has_still ? `still&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : "backdrop"}` : "";
         const label = offset === 0 ? "Today" : row.episode === 1 ? "Season premiere" : offset === 1 ? "Tomorrow" : `In ${offset} days`;
-        return `<button type="button" class="trk-calendar-release" data-trk-overview-open="airing:${index}" aria-label="${esc(`${dayText(iso)}: ${title}, ${episodeLabel(row)}`)}">${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-calendar-date">${day}<small>${esc(label)}</small></span><span class="trk-calendar-copy"><strong>${esc(title)}</strong><span>${esc([episodeLabel(row), row.episode_title].filter(Boolean).join(" · "))}</span></span></button>`;
+        return `<button type="button" class="trk-calendar-release" data-trk-overview-open="airing:${index}" aria-label="${esc(`${dayText(iso)}: ${title}, ${episodeLabel(row)}`)}">${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-calendar-date">${day}<span class="trk-calendar-label">${esc(label)}</span></span><span class="trk-calendar-copy"><strong>${esc(title)}</strong><span>${esc([episodeLabel(row), row.episode_title].filter(Boolean).join(" · "))}</span></span></button>`;
       }).join("");
       return `<div class="trk-calendar-day${releases.length ? " has-releases" : ""}${offset === 0 ? " is-today" : ""}" data-calendar-date="${iso}"${releases.length ? ` style="--calendar-releases:${density.releases};--calendar-empty-days:${density.empty}"` : ""}>${cards || `${day}${offset === 0 ? '<span class="trk-calendar-today">Today</span>' : ""}`}</div>`;
     }).join("");
@@ -663,7 +663,7 @@
 
   function renderOverview(kinds = ["continue", "airing", "recent"]) {
     const data = state.overview;
-    if (!data) return `<div class="cw-empty" role="status">${esc(state.loading ? "Loading your overview…" : "Your overview is unavailable. Refresh to try again.")}</div>`;
+    if (!data) return emptyState(state.loading ? "Loading your overview…" : "Your overview is unavailable. Refresh to try again.", state.loading ? "hourglass_empty" : "info");
     const playback = data.continue.length > 0;
     const sections = [["continue", "Continue watching", playback ? "progress" : "shows", playback ? "Playback progress" : "View shows"], ["airing", "Airing soon", "", ""], ["recent", "Recently watched", "history", "View history"]];
     const reviewMonth = data.review_month || "";
@@ -874,59 +874,33 @@
     overviewController = null;
   }
 
+  function applyOverviewShows(page) {
+    const data = state.overview;
+    if (!data || page?._view?.ready === false) return;
+    data.next = page.continue || [];
+    data.airing = page.airing || [];
+    data.unavailable = page.unavailable || 0;
+    data.total = page.total || 0;
+    data.checked = page.checked ?? data.total;
+    data.metadata_available = page.metadata_available !== false;
+    data.checking = false;
+    data.calendar_error = !!page._view?.error;
+    renderOverviewSlot(true);
+    rememberOverview();
+  }
+
   async function loadOverviewShows(id, instance, controller) {
     const data = state.overview;
-    const retain = !!data.retained;
-    const next = [], airing = [];
-    const active = () => !controller.signal.aborted && id === state.request && state.view === "overview" && instance === state.instance && !state.root.classList.contains("hidden");
-    let paint = 0;
-    const flush = () => { clearTimeout(paint); paint = 0; if (active()) { renderOverviewSlot(true); rememberOverview(); } };
-    const receive = page => {
-      if (!active()) return;
-      if (page.error || page.ok === false) throw new Error(page.error || "overview_unavailable");
-      next.push(...(page.continue || []));
-      airing.push(...(page.airing || []));
-      if (!retain || page.done) { data.next = next; data.airing = airing; }
-      data.unavailable += page.unavailable || 0;
-      data.total = page.total || 0;
-      data.metadata_available = page.metadata_available !== false;
-      data.checked = page.checked ?? data.total;
-      data.checking = !page.done;
-      if (page.done) data.retained = false;
-      if (!paint) paint = setTimeout(flush, 100);
-    };
+    const active = () => !controller.signal.aborted && id === state.request && state.overview === data && state.view === "overview" && instance === state.instance;
     try {
-      if (!active()) return;
-      const response = await fetch(`/api/tracker/overview/shows?provider_instance=${encodeURIComponent(instance)}&day=${today()}`, {cache:"no-store", credentials:"same-origin", signal:controller.signal});
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      if (response.headers.get("content-type")?.includes("application/json")) {
-        receive({...await response.json(), done:true});
-      } else {
-        const reader = response.body.getReader(), decoder = new TextDecoder();
-        let pending = "";
-        try {
-          while (active()) {
-            const chunk = await reader.read();
-            pending += decoder.decode(chunk.value, {stream:!chunk.done});
-            let end;
-            while ((end = pending.indexOf("\n")) >= 0) {
-              const line = pending.slice(0, end);
-              pending = pending.slice(end + 1);
-              if (line.trim()) receive(JSON.parse(line));
-            }
-            if (chunk.done) {
-              if (pending.trim()) receive(JSON.parse(pending));
-              if (data.checking) throw new Error("overview_incomplete");
-              break;
-            }
-          }
-        } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
-      }
+      const page = await getViewJSON(`/api/tracker/overview/shows?provider_instance=${encodeURIComponent(instance)}&day=${today()}`, undefined, controller.signal);
+      if (active()) applyOverviewShows(page);
     } catch (error) {
       if (!active() || error.name === "AbortError") return;
       data.checking = false;
       data.calendar_error = true;
-    } finally { flush(); }
+      renderOverviewSlot(true);
+    }
   }
 
   async function overviewOpen(kind, index) {
@@ -1141,6 +1115,7 @@
   }
 
   function emptyState(text, symbolName = "table_rows") {
+    if (symbolName === "hourglass_empty") return `<div class="cw-empty cw-page-loading" role="status"><div class="cw-empty-text">${esc(text)}</div><div class="cw-page-progress" role="progressbar" aria-label="${esc(text)}"></div></div>`;
     return `<div class="cw-empty" role="status">${icon(symbolName)}<div class="cw-empty-text">${esc(text)}</div></div>`;
   }
 
@@ -2476,10 +2451,10 @@
         const data = await getViewJSON(`/api/tracker/overview?${inst()}&day=${today()}`, undefined, controller.signal);
         if (id !== state.request) return;
         const saved = data.shows;
-        state.overview = {...data, scope:overviewCacheKey(), instance:state.instance, day:today(), continue:data.continue || [], recent:data.recent || [], next:data.metadata_available === false ? [] : saved?.continue || previous?.next || [], airing:data.metadata_available === false ? [] : saved?.airing || previous?.airing || [], retained:!saved && !!previous, checking:!saved && data.metadata_available !== false, checked:saved?.checked || 0, total:saved?.total || 0, unavailable:saved?.unavailable || 0};
+        state.overview = {...data, scope:overviewCacheKey(), instance:state.instance, day:today(), continue:data.continue || [], recent:data.recent || [], next:data.metadata_available === false ? [] : saved?.continue || previous?.next || [], airing:data.metadata_available === false ? [] : saved?.airing || previous?.airing || [], checking:!saved && !previous && data.metadata_available !== false, checked:saved?.checked || 0, total:saved?.total || 0, unavailable:saved?.unavailable || 0};
         void loadOverviewHero(state.overview);
         rememberOverview();
-        if (state.overview.checking) void loadOverviewShows(id, state.instance, controller);
+        if (data.metadata_available !== false) void loadOverviewShows(id, state.instance, controller);
       } else if (state.view === "titles") {
         const params = new URLSearchParams({
           provider_instance: state.instance,
@@ -5675,9 +5650,15 @@
     else if (reviewMonth || state.monthlyReview) openMonthlyReview({},reviewMonth || '',!!reviewMonth);
   }
 
-  const refreshCachedView = url => {
+  const refreshCachedView = (url, data) => {
     const parsed = new URL(url, location.origin);
     if (!trackerVisible() || !parsed.pathname.startsWith("/api/tracker/") || parsed.searchParams.get("provider_instance") !== state.instance) return;
+    if (parsed.pathname === "/api/tracker/overview/shows") {
+      if (state.view !== "overview" || !overviewController) return;
+      if (data) applyOverviewShows(data);
+      else void loadOverviewShows(state.request, state.instance, overviewController);
+      return;
+    }
     if (parsed.pathname.endsWith("/summary") && state.error) return void refresh();
     if (parsed.pathname.endsWith("/summary") || parsed.pathname.endsWith("/stats")) void loadSummary().then(() => renderSlots()).catch(() => {});
     else if (parsed.pathname.endsWith("/months")) void loadMonths();
@@ -5687,10 +5668,16 @@
     }
     else if (!state.loading) void loadMain(false, true);
   };
-  window.addEventListener("cw:view-updated", event => refreshCachedView(event.detail.url));
+  window.addEventListener("cw:view-updated", event => refreshCachedView(event.detail.url, event.detail.data));
   window.addEventListener("cw:view-status", event => {
     if (!event.detail.url.startsWith("/api/tracker/") || !trackerVisible()) return;
-    window.CW.ViewCache.status(state.root, event.detail.data, "tracker", () => { window.CW.ViewCache.retry(event.detail.url); refreshCachedView(event.detail.url); }, new URL(event.detail.url, location.origin).pathname);
+    if (new URL(event.detail.url, location.origin).pathname === "/api/tracker/overview/shows") {
+      const host = state.root.querySelector('[aria-labelledby="trk-overview-airing"]');
+      const meta = {...event.detail.data, ready:event.detail.data.ready || state.overview?.checking === false};
+      window.CW.ViewCache.status(host, meta, "upcoming episodes", () => { window.CW.ViewCache.retry(event.detail.url); refreshCachedView(event.detail.url); }, "episodes");
+      return;
+    }
+    window.CW.ViewCache.status(state.root.querySelector(".cw-main"), event.detail.data, "tracker", () => { window.CW.ViewCache.retry(event.detail.url); refreshCachedView(event.detail.url); }, new URL(event.detail.url, location.origin).pathname);
   });
   window.TrackerPage = { mount, resume: () => { if (profileScope !== currentProfileScope() || expireView()) return mount(state.root); void refreshHeroPlayback(); void loadMain(false, true); } };
 })();

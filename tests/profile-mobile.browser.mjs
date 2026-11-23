@@ -7,7 +7,7 @@ import {execFileSync} from "node:child_process";
 import {readFile, mkdir} from "node:fs/promises";
 import {chromium, webkit} from "playwright";
 
-const template = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_profile_html({'is_admin':True,'username':'mobile','display_name':'Mobile preview'}))"], {encoding:"utf8",maxBuffer:1024*1024});
+const template = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_hub_html({'is_admin':True,'username':'mobile','display_name':'Mobile preview'}))"], {encoding:"utf8",maxBuffer:1024*1024});
 const items = ["The Grand Budapest Hotel", "A long episode title with plenty of words", "Arrival"].map((title,index)=>({key:`movie:tmdb:${index+1}`,type:"movie",title,year:2014,ids:{tmdb:String(index+1)},tmdb:String(index+1),sort_epoch:1793989800,watched_at:"2026-11-06T18:30:00Z",last_collected_at:1793989800,rating:8.5,watch_count:3,watch_epochs:[1793989800],providers:["PLEX","TRAKT"],sources_by_provider:{PLEX:["default"],TRAKT:["default"]},progress:45,can_update_progress:true,can_mark_watched:true,can_remove_progress:true,provider:"PLEX",provider_instance:"default",duration:120,remaining_minutes:66,media:{resolution:"4k",hdr:"dolby_vision",audio:"truehd"}}));
 
 async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=false,playback=false,library=false,liveRoutes=false}={}) {
@@ -99,7 +99,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
     }
     return route.fulfill({contentType:'text/html',body:html.replace('data-username="mobile"',`data-username="${state.username}"`)});
   });
-  await page.goto('https://profile-mobile.test/profile');
+  await page.goto('https://profile-mobile.test/hub');
   await page.locator('.cw-profile-tabs').waitFor({state:'attached'});
   await page.evaluate(()=>document.fonts.ready);
   return {page,state};
@@ -1103,7 +1103,7 @@ test('Hub shows observed live destinations without inventing resume actions', as
 test('Hub direct history navigation loads only the selected list and hero preview',async t=>{
   const {page,state}=await fixture(t,'flat-dark',390,{history:true});
   state.queries=[];
-  await page.goto('https://profile-mobile.test/profile?direct=1#history');
+  await page.goto('https://profile-mobile.test/hub?direct=1#history');
   await page.locator('#profile-panel-history .cw-hist-card').first().waitFor();
   await page.waitForFunction(()=>document.querySelector('#profile-display-name').textContent==='Mobile preview');
   const paths=state.queries.map(query=>query.path);
