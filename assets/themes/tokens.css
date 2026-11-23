@@ -27,7 +27,8 @@ html[data-cw-theme=flat-light]{--cw-disabled-opacity:1;--cw-content-opacity:1;--
   --cw-selection-art-accent: #c4bdd4;
   --cw-selection-art-border: #514463;
   --cw-dialog-header-bg: color-mix(in srgb,var(--cw-theme-bg) 60%,var(--cw-theme-surface));
-  --cw-mobile-nav-panel: var(--cw-theme-surface);
+  --cw-mobile-nav-panel: color-mix(in srgb,var(--cw-theme-surface) 78%,transparent);
+  --cw-mobile-nav-blur: 18px;
   --cw-mobile-nav-tile: color-mix(in srgb,var(--cw-theme-text) 5%,var(--cw-theme-surface));
   --cw-mobile-nav-border: var(--cw-theme-border-strong);
   --cw-mobile-nav-text: var(--cw-theme-text);

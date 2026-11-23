@@ -11,6 +11,29 @@ const template = execFileSync("python", ["-c", "import ui_frontend; print(ui_fro
 const profileTemplate = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_profile_html({'is_admin':True,'username':'mobile','display_name':'Mobile preview'}))"], {encoding:"utf8",maxBuffer:1024*1024});
 const items = ["The Grand Budapest Hotel", "A long episode title with plenty of words", "Arrival"].map((title,index)=>({key:`movie:tmdb:${index+1}`,type:"movie",title,year:2014,ids:{tmdb:String(index+1)},tmdb:String(index+1),sort_epoch:1793989800,watched_at:"2026-11-06T18:30:00Z",last_collected_at:1793989800,rating:8.5,watch_count:3,watch_epochs:[1793989800],providers:["PLEX","TRAKT"],sources_by_provider:{PLEX:["default"],TRAKT:["default"]},progress:45,can_update_progress:true,can_mark_watched:true,can_remove_progress:true,provider:"PLEX",provider_instance:"default",duration:120,remaining_minutes:66,media:{resolution:"4k",hdr:"dolby_vision",audio:"truehd"}}));
 
+for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: mobile More opens the available Hub tabs`, async t => {
+  const {page} = await fixture(t,theme,390);
+  const more = page.getByRole('button',{name:'More',exact:true});
+  assert.equal(await more.locator('span:not(.material-symbols-rounded)').count(),0);
+  await more.click();
+  const menu = page.locator('.cw-mobile-context-destinations');
+  assert.deepEqual(await menu.getByRole('button').allTextContents(),await page.locator('.cw-profile-tabs [data-profile-tab]').evaluateAll(nodes=>nodes.map(node=>node.querySelector('.material-symbols-rounded').textContent+node.querySelector('[data-tab-label]').textContent)));
+  assert.equal(await page.locator('#tab-tools').isVisible(),false);
+  if (process.env.CW_MENU_SCREENSHOTS) {
+    await mkdir(process.env.CW_MENU_SCREENSHOTS,{recursive:true});
+    await page.screenshot({path:`${process.env.CW_MENU_SCREENSHOTS}/${theme}-hub-context.png`});
+  }
+  await menu.getByRole('button',{name:'History',exact:true}).click();
+  await page.waitForFunction(()=>document.body.dataset.profileView==='history');
+  assert.equal(await more.getAttribute('aria-expanded'),'false');
+  await more.click();
+  assert.equal(await menu.getByRole('button',{name:'History',exact:true}).getAttribute('aria-current'),'page');
+  assert.equal(await menu.evaluate(node=>[...node.children].every(item=>item.getBoundingClientRect().right<=innerWidth)),true);
+  await page.setViewportSize({width:1440,height:900});
+  assert.equal(await menu.getByRole('button',{name:'History',exact:true}).isVisible(),false);
+  assert.equal(await page.locator('#tab-tools').isVisible(),true);
+});
+
 async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=false,playback=false,library=false,liveRoutes=false}={}) {
   const browser=await (process.env.CW_PROFILE_BROWSER === "webkit" ? webkit : chromium).launch({headless:true});
   t.after(()=>browser.close());
@@ -58,7 +81,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
       if(path==='/api/profile') json={user:{is_admin:true,username:'mobile',display_name:'Mobile preview',permissions:{write:true},preferences:{},sessions:[]}};
       if(hero && path==='/api/app-auth/status') json={authenticated:true,user:{is_admin:true,username:'mobile',display_name:'Mobile preview'}};
       if(hero && path==='/api/user-profiles') json={items:[{id:'family',label:'Family'}]};
-      if(path==='/api/watch/currently_watching') json={streams:state.playing?[state.playing]:[]};
+      if(path==='/api/watch/currently_watching') json={streams:state.playing?[state.playing]:[],hub_revision:state.hubRevision || 'initial'};
       if(['/api/profile/collection','/api/profile/history','/api/profile/ratings','/api/profile/watchlist'].includes(path)) json={items:list,total:list.length,page:1,page_size:24,pages:1,counts:{total:list.length,movies:list.length},providers:['PLEX','TRAKT'],months:[]};
       if(history && path==='/api/profile/history') Object.assign(json,{
         items:list.map(item=>({...item,present:[{provider:'PLEX',instance:'default'}],missing:[{provider:'TRAKT',instance:'default'}],source:{provider:'PLEX',instance:'default'},targets:[{provider:'TRAKT',instance:'default'}],method:'watcher'})),
@@ -269,7 +292,35 @@ async function openRecordTools(panel) {
   if(await panel.evaluate(el=>el.classList.contains('has-mobile-tools')) && !await panel.locator('.cw-hub-mobile-sheet').evaluate(el=>el.open)) await panel.locator('.cw-hub-mobile-filter').click();
 }
 
+async function pullHub(page,{dx=0,dy=100,scroll=0}={}) {
+  await page.evaluate(({dx,dy,scroll})=>{
+    window.scrollTo(0,scroll);
+    const target=document.querySelector('.cw-profile-shell');
+    const start=new Touch({identifier:1,target,clientX:150,clientY:100});
+    const end=new Touch({identifier:1,target,clientX:150+dx,clientY:100+dy});
+    for(const [type,touches,changedTouches] of [['touchstart',[start],[start]],['touchmove',[end],[end]],['touchend',[],[end]]]) {
+      target.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,touches,targetTouches:touches,changedTouches}));
+    }
+  },{dx,dy,scroll});
+}
+
 async function clickRecordControl(panel,selector) {
+  if(selector.endsWith("-refresh")) {
+    if(panel.page().viewportSize().width<=760) {
+      const sheet=panel.locator('.cw-hub-mobile-sheet');
+      if(await sheet.evaluate(el=>el.open)) await sheet.getByRole('button',{name:'Done',exact:true}).click();
+      await pullHub(panel.page());
+    } else await panel.page().locator("#profile-hub-refresh").click();
+    return;
+  }
+  if(await panel.page().locator('#profile-hub-metrics').locator(selector).count()) {
+    if(panel.page().viewportSize().width<=760) {
+      await openRecordTools(panel);
+      await panel.locator('#profile-playback-progress').selectOption('90:100',{force:true});
+      await panel.locator('.cw-hub-mobile-sheet').getByRole('button',{name:'Done',exact:true}).click();
+    } else await panel.page().locator('#profile-hub-metrics').locator(selector).click();
+    return;
+  }
   const mobile=await panel.evaluate(el=>el.classList.contains('has-mobile-tools'));
   const sheet=panel.locator('.cw-hub-mobile-sheet');
   if(!mobile && selector.includes('filters-toggle')) {
@@ -740,14 +791,20 @@ for (const width of [390,1440]) test(`Hub shared navigation order and icons at $
 
 for (const width of [390,1440]) test(`Account menu opens dedicated Profile and returns to Hub at ${width}px`, async t => {
   const {page} = await fixture(t,'flat-dark',width);
-  await page.locator('#cw-nav-profile-link').click();
-  await page.locator('[data-cw-profile-menu-action="account"]').click();
+  if (width <= 760) await page.locator('#cw-mobile-profile').click();
+  else {
+    await page.locator('#cw-nav-profile-link').click();
+    await page.locator('[data-cw-profile-menu-action="account"]').click();
+  }
   await page.locator('#profile-panel-account.active').waitFor();
   assert.equal(new URL(page.url()).pathname, '/profile');
   assert.equal(await page.locator('.cw-profile-tabs').count(),0);
-  await page.locator('#cw-nav-profile-link').click();
-  assert.equal(await page.locator('[data-cw-profile-menu-action="account"]').getAttribute('aria-current'), 'page');
-  await page.keyboard.press('Escape');
+  if (width <= 760) assert.equal(await page.locator('#cw-mobile-profile').getAttribute('aria-current'),'page');
+  else {
+    await page.locator('#cw-nav-profile-link').click();
+    assert.equal(await page.locator('[data-cw-profile-menu-action="account"]').getAttribute('aria-current'), 'page');
+    await page.keyboard.press('Escape');
+  }
   await page.locator(width<=760?'[data-mobile-route="profile/overview"]':'#tab-profile').click();
   await page.locator('#profile-panel-overview.active').waitFor();
   assert.equal(new URL(page.url()).pathname, '/hub');
@@ -882,7 +939,7 @@ for (const width of [390,1440,2250]) test(`Hub Overview keeps provider actions a
     assert.ok(Math.abs(hubCard.height-reference.height)<=2,JSON.stringify({hubCard,reference}));
     const activity=await page.locator('#profile-activity').boundingBox();
     assert.ok(Math.abs(watchlist.y-activity.y)<2);
-    assert.ok(activity.height<=watchlist.height+40,JSON.stringify({activity,watchlist}));
+    assert.ok(Math.abs(activity.height-watchlist.height)<2,JSON.stringify({activity,watchlist}));
   }
   await page.evaluate(()=>{window.CW.ProfileMediaModal={canOpen:()=>true,open:item=>window.__openedMedia=item};});
   await page.locator('.cw-hub-poster').first().click();
@@ -890,7 +947,7 @@ for (const width of [390,1440,2250]) test(`Hub Overview keeps provider actions a
   await page.locator('.cw-cw-card').first().click();
   assert.equal(await page.evaluate(()=>window.__openedMedia.progress),45);
   assert.equal(await page.locator('.cw-cw-title').first().evaluate(el=>getComputedStyle(el).fontWeight),'500');
-  assert.equal(await page.locator('.cw-profile-activity-row strong').first().evaluate(el=>getComputedStyle(el).fontWeight),'500');
+  assert.equal(await page.locator('.cw-profile-activity-row strong').first().evaluate(el=>getComputedStyle(el).fontWeight),'600');
   const avatar=page.getByRole('link',{name:'Open user settings'});
   assert.equal(await avatar.getAttribute('href'),'/profile');
   await avatar.click();
@@ -1130,6 +1187,40 @@ test('Hub direct history navigation loads only the selected list and hero previe
   assert.ok(state.queries.some(query=>query.path==='/api/dashboard/widgets' && query.params.include==='history,scrobble'));
 });
 
+test('Hub Progress keeps cached providers available and reserves warnings for failures',async t=>{
+  const {page}=await fixture(t,'flat-dark',1440);
+  let phase='loading',reads=0;
+  await page.route('**/api/playback_progress/items?**',route=>{
+    reads++;
+    if(phase==='offline') return route.abort('failed');
+    return route.fulfill({json:{
+      items, total:items.length,
+      providers:[{provider:'PLEX',instance_id:'default',configured:true,read:true,included:true}],
+      loading:phase==='loading'?[{provider:'PLEX',instance_id:'default',cached:true}]:[],
+      errors:phase==='failed'?[{provider:'PLEX',instance_id:'default',error_code:'provider_timeout',message:'Provider timed out',retryable:true}]:[],
+    }});
+  });
+  await page.locator('[data-profile-tab="playback"]').click();
+  await page.locator('#profile-playback-list [data-profile-poster-key]').first().waitFor();
+  assert.equal(await page.locator('#profile-playback-errors').isVisible(),false);
+  assert.equal(await page.getByText('Providers loading',{exact:true}).count(),0);
+  assert.match(await page.locator('#profile-playback-metrics').innerText(),/1\/1/);
+  assert.equal(await page.locator('#profile-hub-refresh').evaluate(node=>node.classList.contains('is-spinning')),true);
+  phase='offline';
+  await page.waitForFunction(()=>document.querySelector('#profile-playback-sync').dataset.state==='failed');
+  assert.equal(await page.locator('#profile-hub-refresh').evaluate(node=>node.classList.contains('is-spinning')),false);
+  assert.equal(await page.locator('#profile-playback-list .cw-play-card').count(),items.length);
+  phase='failed';
+  await page.locator('#profile-hub-refresh').click();
+  await page.locator('#profile-playback-errors').getByText(/Timed out/).waitFor();
+  assert.ok(reads>=2);
+  phase='ready';
+  await page.locator('#profile-hub-refresh').click();
+  await page.waitForFunction(()=>!document.querySelector('#profile-hub-refresh').classList.contains('is-spinning'));
+  assert.equal(await page.locator('#profile-playback-errors').isVisible(),false);
+  assert.match(await page.locator('#profile-playback-metrics').innerText(),/1\/1/);
+});
+
 test('Hub overview polls unfinished provider reads without replacing cached cards',async t=>{
   const {page}=await fixture(t,'flat-dark',390);
   await page.locator('#profile-progress [data-profile-poster-key]').first().waitFor();
@@ -1144,4 +1235,166 @@ test('Hub overview polls unfinished provider reads without replacing cached card
   await page.evaluate(()=>{window.progressCard=document.querySelector('#profile-progress [data-profile-poster-key]');});
   await page.waitForResponse(response=>new URL(response.url()).pathname==='/api/playback_progress/items' && reads>=2);
   assert.equal(await page.evaluate(()=>window.progressCard===document.querySelector('#profile-progress [data-profile-poster-key]')),true);
+});
+
+for(const theme of ['original','flat-dark','flat-light']) for(const width of [1440]) test(`${theme} ${width}: Hub summary owns tab metrics and refresh`,async t=>{
+  const {page,state}=await fixture(t,theme,width,{hero:true,library:true});
+  const bar=page.locator('#profile-hub-summary');
+  await page.locator('.cw-profile-last:not(.hidden)').waitFor();
+  assert.equal(await page.locator('.cw-media-hero-topbar .cw-profile-last').count(),1);
+  await page.locator('[data-profile-tab="watchlist"]').click();
+  await bar.getByText('Everywhere',{exact:true}).waitFor();
+  assert.equal(await page.locator('#profile-watchlist-metrics').isVisible(),false);
+  assert.equal(await page.locator('#profile-watchlist-refresh').isVisible(),false);
+  assert.equal(await bar.getByRole('button',{name:/Refresh/i}).isVisible(),true);
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  assert.equal(await bar.evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
+  await bar.getByRole('button').filter({hasText:'Everywhere'}).click();
+  await page.waitForFunction(()=>document.querySelector('#profile-watchlist-metrics button.active') && document.querySelector('#profile-hub-metrics button.active'));
+  assert.equal(await bar.locator('button.active').count(),1);
+  if(process.env.CW_PROFILE_SCREENSHOTS) await page.locator('#profile-hero').screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/summary-${theme}-${width}.png`});
+  state.empty=true;
+  await page.locator('#profile-hub-refresh').click();
+  await page.waitForFunction(()=>!document.querySelector('#profile-hub-refresh').disabled);
+  assert.equal(await bar.evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
+  if(process.env.CW_PROFILE_SCREENSHOTS) await page.locator('#profile-hero').screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/summary-empty-${theme}-${width}.png`});
+  assert.equal(state.queries.some(query=>query.params.summary_only || query.path==='/api/insights'),false);
+  await page.route('**/api/playback_progress/items?**',route=>route.fulfill({json:{items,total:items.length,providers:[],loading:[],errors:[{provider:'TRAKT',instance_id:'default',message:'Provider timed out. Showing saved results.'}],checked_at:(Date.now()-600000)/1000}}));
+  await page.locator('[data-profile-tab="playback"]').click();
+  await page.locator('#profile-hub-issues summary').getByText(/^1 provider couldn.t refresh$/).waitFor();
+  await page.locator('#profile-hub-issues summary').click();
+  const issue=await page.locator('#profile-hub-issues>div').boundingBox();
+  const heroBounds=await page.locator('#profile-hero').boundingBox();
+  assert.ok(issue.x>=heroBounds.x && issue.x+issue.width<=heroBounds.x+heroBounds.width+1);
+  assert.ok(issue.y>=heroBounds.y && issue.y+issue.height<=heroBounds.y+heroBounds.height+1);
+  if(process.env.CW_PROFILE_SCREENSHOTS) await page.locator('#profile-hero').screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/summary-errors-${theme}-${width}.png`});
+});
+
+test('Hub summary checks visible Progress every five minutes and supports immediate refresh',async t=>{
+  const {page}=await fixture(t,'flat-dark',1440,{hero:true});
+  const queries=[];
+  await page.route('**/api/playback_progress/items?**',async route=>{
+    queries.push(Object.fromEntries(new URL(route.request().url()).searchParams));
+    await route.fulfill({json:{items,total:items.length,summary:{total:items.length,stale:1},providers:[],loading:[],errors:[],checked_at:await page.evaluate(()=>Date.now()/1000)}});
+  });
+  await page.locator('[data-profile-tab="playback"]').click();
+  await page.locator('#profile-panel-playback.active .cw-play-card').first().waitFor();
+  await page.locator('#profile-hub-freshness').getByText('Last checked just now',{exact:true}).waitFor();
+  assert.equal(queries.length,1);
+  await page.evaluate(()=>window.retainedProgressCard=document.querySelector('#profile-playback-list .cw-play-card'));
+  await page.clock.fastForward(60000);
+  assert.equal(queries.length,1);
+  await page.clock.fastForward(239000);
+  assert.equal(queries.length,1);
+  const automatic=page.waitForResponse(response=>response.url().includes('/api/playback_progress/items'));
+  await page.clock.fastForward(31000);
+  await automatic;
+  assert.equal(queries.length,2);
+  assert.notEqual(queries[1].force_refresh,'true');
+  await page.locator('#profile-hub-refresh').click();
+  await page.waitForFunction(()=>!document.querySelector('#profile-hub-refresh').disabled);
+  assert.equal(queries.length,3);
+  assert.equal(queries[2].force_refresh,'true');
+  assert.equal(await page.evaluate(()=>window.retainedProgressCard===document.querySelector('#profile-playback-list .cw-play-card')),true);
+  await page.evaluate(()=>{Object.defineProperty(document,'hidden',{value:true,configurable:true});document.dispatchEvent(new Event('visibilitychange'));});
+  await page.clock.fastForward(330000);
+  assert.equal(queries.length,3);
+  const visible=page.waitForResponse(response=>response.url().includes('/api/playback_progress/items'));
+  await page.evaluate(()=>{Object.defineProperty(document,'hidden',{value:false,configurable:true});document.dispatchEvent(new Event('visibilitychange'));});
+  await visible;
+  await page.waitForFunction(()=>!document.querySelector('#profile-hub-refresh').disabled);
+  assert.equal(queries.length,4);
+});
+
+
+for(const theme of ['original','flat-dark','flat-light']) test(`${theme}: Mobile Hub hides summary and refreshes by pulling down`,async t=>{
+  const {page,state}=await fixture(t,theme,390,{hero:true});
+  await page.locator('#profile-progress [data-profile-poster-key]').first().waitFor();
+  assert.equal(await page.locator('#profile-hub-summary').isVisible(),false);
+  await page.locator('[data-profile-tab="playback"]').click();
+  await page.locator('#profile-panel-playback.active .cw-play-card').first().waitFor();
+  assert.equal(await page.locator('#profile-hero').isVisible(),false);
+  const before=state.queries.filter(query=>query.path==='/api/playback_progress/items').length;
+  await pullHub(page,{dy:35});
+  await pullHub(page,{dx:30,dy:20});
+  await page.evaluate(()=>document.body.style.minHeight='2000px');
+  await pullHub(page,{scroll:150});
+  assert.equal(state.queries.filter(query=>query.path==='/api/playback_progress/items').length,before);
+  let release;
+  state.gates.set('/api/playback_progress/items',new Promise(resolve=>release=resolve));
+  await pullHub(page);
+  await page.locator('.cw-hub-pull-refresh.is-spinning').waitFor();
+  assert.equal(state.queries.filter(query=>query.path==='/api/playback_progress/items').at(-1).params.force_refresh,'true');
+  assert.equal(await page.locator('#profile-hub-summary').isVisible(),false);
+  if(process.env.CW_PROFILE_SCREENSHOTS) await page.screenshot({path:`${process.env.CW_PROFILE_SCREENSHOTS}/mobile-pull-${theme}.png`});
+  release();
+  await page.locator('.cw-hub-pull-refresh').waitFor({state:'hidden'});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+});
+
+
+for (const tab of ['playback', 'watchlist']) test(`Hub refreshes ${tab} on local changes without forcing provider reads`, async t => {
+  const {page,state}=await fixture(t,'flat-dark',1440,{hero:true,library:true});
+  await page.locator('[data-profile-tab="'+tab+'"]').click();
+  await page.locator('#profile-panel-'+tab+' .cw-play-card, #profile-panel-'+tab+' .cw-hist-card').first().waitFor();
+  const path=tab==='playback'?'/api/playback_progress/items':'/api/profile/watchlist';
+  const reads=()=>state.queries.filter(query=>query.path===path);
+  const before=reads().length;
+  const initial=page.waitForResponse(response=>response.url().includes('/api/watch/currently_watching'));
+  await page.clock.runFor(15000);
+  await (await initial).finished();
+  await page.clock.runFor(1000);
+  assert.equal(reads().length,before);
+  state.hubRevision='watch-or-sync-completed';
+  const changed=page.waitForResponse(response=>new URL(response.url()).pathname===path);
+  const notice=page.waitForResponse(response=>response.url().includes('/api/watch/currently_watching'));
+  await page.clock.runFor(15000);
+  await (await notice).finished();
+  await page.clock.runFor(1000);
+  await changed;
+  await page.waitForFunction(()=>!document.querySelector('#profile-hub-refresh').disabled);
+  assert.equal(reads().length,before+1);
+  assert.notEqual(reads().at(-1).params.force_refresh,'true');
+  await page.clock.runFor(30000);
+  assert.equal(reads().length,before+1);
+  await page.evaluate(()=>{Object.defineProperty(document,'hidden',{value:true,configurable:true});document.dispatchEvent(new Event('visibilitychange'));});
+  state.hubRevision='completed-while-hidden';
+  await page.clock.runFor(30000);
+  assert.equal(reads().length,before+1);
+  const resumed=page.waitForResponse(response=>new URL(response.url()).pathname===path);
+  const resumeNotice=page.waitForResponse(response=>response.url().includes('/api/watch/currently_watching'));
+  await page.evaluate(()=>{Object.defineProperty(document,'hidden',{value:false,configurable:true});document.dispatchEvent(new Event('visibilitychange'));});
+  await (await resumeNotice).finished();
+  await page.clock.runFor(1000);
+  await resumed;
+  await page.waitForFunction(()=>!document.querySelector('#profile-hub-refresh').disabled);
+  assert.equal(reads().length,before+2);
+});
+
+
+test('Hub rechecks inactive Progress after a known change without fetching it in the background', async t => {
+  const {page,state}=await fixture(t,'flat-dark',1440,{hero:true,library:true});
+  await page.locator('[data-profile-tab="playback"]').click();
+  await page.locator('#profile-panel-playback .cw-play-card').first().waitFor();
+  await page.locator('[data-profile-tab="watchlist"]').click();
+  await page.locator('#profile-panel-watchlist .cw-hist-card').first().waitFor();
+  const reads=()=>state.queries.filter(query=>query.path==='/api/playback_progress/items');
+  const before=reads().length;
+  const initial=page.waitForResponse(response=>response.url().includes('/api/watch/currently_watching'));
+  await page.clock.runFor(15000);
+  await (await initial).finished();
+  await page.clock.runFor(1000);
+  state.hubRevision='watched-while-browsing-watchlist';
+  const notice=page.waitForResponse(response=>response.url().includes('/api/watch/currently_watching'));
+  const changed=page.waitForResponse(response=>response.url().includes('/api/profile/watchlist'));
+  await page.clock.runFor(15000);
+  await (await notice).finished();
+  await page.clock.runFor(1000);
+  await changed;
+  await page.waitForFunction(()=>!document.querySelector('#profile-hub-refresh').disabled);
+  assert.equal(reads().length,before);
+  await page.locator('[data-profile-tab="playback"]').click();
+  await page.waitForTimeout(250);
+  assert.equal(reads().length,before+1);
+  assert.notEqual(reads().at(-1).params.force_refresh,'true');
 });

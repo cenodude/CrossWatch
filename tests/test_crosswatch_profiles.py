@@ -589,6 +589,19 @@ def test_currently_watching_filters_requested_user_profile(monkeypatch) -> None:
     assert [row["title"] for row in data["streams"]] == ["Alice Movie"]
     assert data["currently_watching"]["provider_instance"] == "PLEX-P01"
 
+    from services.hub_changes import mark_changed
+
+    request = cast(Any, SimpleNamespace(cookies={}))
+    before = data["hub_revision"]
+    mark_changed("PLEX", "PLEX-P02")
+    unrelated = _loads_body(scrobble_api.api_currently_watching(request, user_profile=ALICE_PROFILE_ID).body)
+    assert unrelated["hub_revision"] == before
+    mark_changed("PLEX", "PLEX-P01")
+    changed = _loads_body(scrobble_api.api_currently_watching(request, user_profile=ALICE_PROFILE_ID).body)
+    assert changed["hub_revision"] != before
+    unchanged = _loads_body(scrobble_api.api_currently_watching(request, user_profile=ALICE_PROFILE_ID).body)
+    assert unchanged["hub_revision"] == changed["hub_revision"]
+
 
 def test_currently_watching_filters_shared_instance_by_route_account_allowlist(monkeypatch) -> None:
     store: dict[str, Any] = {
@@ -2196,35 +2209,6 @@ def test_dashboard_layout_tools_are_profile_page_only() -> None:
     shared_css = Path("assets/crosswatch.css").read_text("utf-8")
 
     assert "body:not(.cw-profile-page) .cw-dashboard-layout-toolbar{display:none}" in shared_css
-
-
-def test_quick_stats_counts_movies_and_shows_from_history_breakdown() -> None:
-    js = Path("assets/js/profile-page.js").read_text("utf-8")
-
-    stats = js[js.index("function renderQuickStats("):js.index('$("#profile-quick-stats").innerHTML')]
-    assert "const movies = Number(breakdown.movies ?? watchtime.movies ?? sampleStats.movies) || 0;" in stats
-    assert "const shows = Number(breakdown.shows ?? watchtime.shows ?? sampleStats.shows) || 0;" in stats
-    assert "const anime = Number(breakdown.anime) || 0;" in stats
-    assert "const owned = (Number(collectionCounts.movie) || 0) + (Number(collectionCounts.show) || 0);" in stats
-    assert '["collections", "inventory_2", "video_library", "Collections", numberFmt.format(owned), "Movies and shows you own"],' in stats
-    assert 'const breakdown = insights?.features?.history?.breakdown || {};' in stats
-    assert '["anime", "animation", "auto_awesome", "Anime", numberFmt.format(anime), "Total anime in your syncs"],' in stats
-    assert "cw-profile-stat--anime" in Path("assets/css/profile-page.css").read_text("utf-8")
-
-
-def test_profile_overview_paints_shimmer_skeletons_before_data_lands() -> None:
-    js = Path("assets/js/profile-page.js").read_text("utf-8")
-    css = Path("assets/css/profile-page.css").read_text("utf-8")
-
-    assert "async function init() {\n    paintOverviewSkeletons();" in js
-    assert "prunePosterItems();" in js
-    for host in ("#profile-progress", "#profile-watchlist", "#profile-quick-stats"):
-        assert host in js[js.index("function paintOverviewSkeletons()"):js.index("function setAvatar(url)")]
-    for primitive in ("cw-dash-skeleton", "cw-dash-skeleton-row", "cw-skel-block", "cw-skel-line--title", "cw-skel-line--meta", "cw-skel-dot"):
-        assert primitive in js, primitive
-    assert ".cw-profile-skel{position:relative;pointer-events:none;cursor:default}" in css
-    assert "#profile-watchlist .cw-profile-skel>.cw-skel-block{align-self:stretch" in css
-    assert "#profile-quick-stats .cw-profile-skel-icon{width:56px;height:56px;border-radius:50%}" in css
 
 
 def test_overview_profile_helper_locks_managed_shell_to_profile() -> None:

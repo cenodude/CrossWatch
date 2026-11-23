@@ -40,7 +40,7 @@ from .models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResu
 
 
 LOG = BASE_LOG.child("PLAYBACK")
-CACHE_TTL_SECONDS = 60.0
+CACHE_TTL_SECONDS = 300.0
 SNAPSHOT_RETENTION_SECONDS = 24 * 60 * 60
 MAX_WORKERS = 6
 DEFAULT_PROVIDER_TIMEOUT_SECONDS = 20.0
@@ -1009,6 +1009,10 @@ def _enrich_list_error(error: dict[str, Any], cap: PlaybackCapabilities | None) 
     return out
 
 
+class _PlaybackReadSuperseded(Exception):
+    pass
+
+
 class PlaybackProgressService:
     def __init__(self) -> None:
         self.adapters: dict[str, PlaybackProgressAdapter] = {
@@ -1032,6 +1036,7 @@ class PlaybackProgressService:
             "crosswatch": CrossWatchPlaybackAdapter(),
         }
         self._cache: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self._generations: dict[tuple[str, str], int] = {}
         self._lock = threading.RLock()
         self._inflight: dict[tuple[str, str, str], tuple[Future[PlaybackListResult], float]] = {}
         self._pool = ThreadPoolExecutor(max_workers=MAX_WORKERS * 2, thread_name_prefix="playback-list")
@@ -1103,6 +1108,7 @@ class PlaybackProgressService:
     def invalidate(self, provider: str, instance_id: str) -> None:
         with self._lock:
             prefix = (str(provider).lower(), normalize_instance_id(instance_id))
+            self._generations[prefix] = self._generations.get(prefix, 0) + 1
             for key in [key for key in self._cache if key[:2] == prefix]:
                 self._cache.pop(key, None)
             for key in [key for key in self._inflight if key[:2] == prefix]:
@@ -1126,6 +1132,17 @@ class PlaybackProgressService:
         entry[0].add_done_callback(_release)
         return entry
 
+    def mark_stale(self, provider: str, instance_id: str = "default") -> None:
+        prefix = (str(provider).lower(), normalize_instance_id(instance_id))
+        with self._lock:
+            self._generations[prefix] = self._generations.get(prefix, 0) + 1
+            for key, entry in self._cache.items():
+                if key[:2] == prefix:
+                    entry["stale"] = True
+        from services.hub_changes import mark_changed
+
+        mark_changed(provider, instance_id)
+
     def _activity_marker(self, adapter: PlaybackProgressAdapter, config_view: Mapping[str, Any], *, instance_id: str) -> str:
         marker_fn = getattr(adapter, "activity_marker", None)
         if callable(marker_fn):
@@ -1145,16 +1162,22 @@ class PlaybackProgressService:
         with self._lock:
             cached = self._cache.get(key) or {}
             result = cached.get("result")
-            if time.time() - float(cached.get("ts") or 0) < SNAPSHOT_RETENTION_SECONDS and isinstance(result, PlaybackListResult) and result.ok:
+            if not isinstance(result, PlaybackListResult) or not result.ok:
+                result = cached.get("last_good")
+            checked = float(cached.get("checked") or cached.get("ts") or 0)
+            if time.time() - checked < SNAPSHOT_RETENTION_SECONDS and isinstance(result, PlaybackListResult) and result.ok:
                 return result
         return None
 
     def _fresh_cached_result(self, spec: Mapping[str, str]) -> PlaybackListResult | None:
         key = self._cache_key(spec["provider"], spec["instance_id"], self._adapter(spec["provider"]))
         with self._lock:
+            running = self._inflight.get(key)
+            if running and not running[0].done():
+                return None
             cached = self._cache.get(key) or {}
             result = cached.get("result")
-            if time.time() - float(cached.get("ts") or 0) < CACHE_TTL_SECONDS and isinstance(result, PlaybackListResult):
+            if not cached.get("stale") and time.time() - float(cached.get("ts") or 0) < CACHE_TTL_SECONDS and isinstance(result, PlaybackListResult):
                 return result
         return None
 
@@ -1183,8 +1206,9 @@ class PlaybackProgressService:
         key = self._cache_key(provider, instance_id, adapter)
         now = time.time()
         with self._lock:
+            generation = self._generations.get(key[:2], 0)
             cached = self._cache.get(key)
-            if not force_refresh and cached and (now - float(cached.get("ts") or 0)) < CACHE_TTL_SECONDS:
+            if not force_refresh and cached and not cached.get("stale") and (now - float(cached.get("ts") or 0)) < CACHE_TTL_SECONDS:
                 result = cached.get("result")
                 if isinstance(result, PlaybackListResult):
                     LOG.debug(f"cache hit provider={provider} instance={instance_id}")
@@ -1196,11 +1220,13 @@ class PlaybackProgressService:
             if (
                 not force_refresh
                 and cached
+                and not cached.get("stale")
                 and marker
                 and marker == cached.get("activity_marker")
             ):
                 result = cached.get("result")
-                if isinstance(result, PlaybackListResult):
+                if isinstance(result, PlaybackListResult) and result.ok:
+                    cached["ts"] = cached["checked"] = time.time()
                     LOG.debug(f"activity unchanged provider={provider} instance={instance_id}")
                     return result
 
@@ -1216,11 +1242,15 @@ class PlaybackProgressService:
         elapsed_ms = int((time.monotonic() - started) * 1000)
         stored_at = time.time()
         with self._lock:
+            if generation != self._generations.get(key[:2], 0):
+                raise _PlaybackReadSuperseded
             if result.ok:
-                self._cache[key] = {"ts": stored_at, "result": result, "activity_marker": marker, "refreshed_at": result.refreshed_at}
+                self._cache[key] = {"ts": stored_at, "checked": stored_at, "result": result, "activity_marker": marker, "refreshed_at": result.refreshed_at}
                 LOG.debug(f"provider listed provider={provider} instance={instance_id} items={len(result.items)} elapsed_ms={elapsed_ms}")
             else:
-                self._cache[key] = {"ts": stored_at, "result": result, "activity_marker": marker, "error": result.to_error()}
+                snapshot = self._cached_result(spec)
+                checked = ((cached or {}).get("checked") or (cached or {}).get("ts")) if snapshot is not None else 0
+                self._cache[key] = {"ts": stored_at, "checked": checked, "last_good": snapshot, "result": result, "activity_marker": marker, "error": result.to_error()}
                 LOG.warn(f"provider list failed provider={provider} instance={instance_id} error={result.error_code or 'provider_error'} status={result.remote_status or ''} elapsed_ms={elapsed_ms}")
         return result
 
@@ -1276,25 +1306,27 @@ class PlaybackProgressService:
             snapshots = {(spec["provider"], spec["instance_id"]): self._cached_result(spec) for spec in readable_specs}
             fresh = {} if force_refresh else {(spec["provider"], spec["instance_id"]): self._fresh_cached_result(spec) for spec in readable_specs}
             timeout_s = _provider_timeout_seconds(cfg)
-            jobs = [(spec, *self._submit_list(cfg, spec, force_refresh)) for spec in readable_specs]
+            results.extend(result for result in fresh.values() if result is not None)
+            jobs = [(spec, *self._submit_list(cfg, spec, force_refresh)) for spec in readable_specs if fresh.get((spec["provider"], spec["instance_id"])) is None]
             now = time.monotonic()
-            budget = max(0.0, max(timeout_s - (now - started) for _spec, _future, started in jobs))
+            budget = max(0.0, max((timeout_s - (now - started) for _spec, _future, started in jobs), default=0.0))
             wait_budget = (0 if all(value is not None for value in snapshots.values()) else min(budget, FIRST_RESPONSE_SECONDS)) if progressive else budget
-            wait([future for _spec, future, _started in jobs], timeout=wait_budget)
+            if jobs:
+                wait([future for _spec, future, _started in jobs], timeout=wait_budget)
             now = time.monotonic()
             for spec, future, started in jobs:
+                superseded = False
                 if future.done():
                     try:
                         results.append(future.result())
+                    except _PlaybackReadSuperseded:
+                        superseded = True
                     except Exception:
                         results.append(PlaybackListResult(ok=False, provider=spec["provider"], instance_id=spec["instance_id"], error_code="provider_error", message="Provider request failed.", retryable=True))
-                    continue
-                fresh_result = fresh.get((spec["provider"], spec["instance_id"]))
-                if fresh_result is not None:
-                    results.append(fresh_result)
-                    continue
-                if progressive and now - started < timeout_s:
-                    snapshot = snapshots.get((spec["provider"], spec["instance_id"]))
+                    if not superseded:
+                        continue
+                if superseded or progressive and now - started < timeout_s:
+                    snapshot = self._cached_result(spec) if superseded else snapshots.get((spec["provider"], spec["instance_id"]))
                     if snapshot is not None:
                         results.append(snapshot)
                     cap = cap_by_key.get((spec["provider"], spec["instance_id"]))
@@ -1303,6 +1335,7 @@ class PlaybackProgressService:
                         "provider_label": cap.provider_label if cap else spec["provider"],
                         "instance_id": spec["instance_id"],
                         "instance_label": spec["instance_label"],
+                        "cached": snapshot is not None,
                     })
                     continue
                 LOG.warn(f"provider timeout provider={spec['provider']} instance={spec['instance_id']} timeout_s={timeout_s:g}")
@@ -1317,6 +1350,11 @@ class PlaybackProgressService:
                     )
                 )
 
+        for result in list(results):
+            if not result.ok:
+                snapshot = self._cached_result({"provider": result.provider, "instance_id": result.instance_id})
+                if snapshot is not None:
+                    results.append(snapshot)
         errors = skipped_errors + [
             _enrich_list_error(r.to_error(), cap_by_key.get((r.provider, r.instance_id)))
             for r in results
@@ -1369,6 +1407,9 @@ class PlaybackProgressService:
         start = (page - 1) * page_size
         end = start + page_size
         LOG.debug(f"list completed total={total} errors={len(errors)} loading={len(loading)} page={page} page_size={page_size}")
+        with self._lock:
+            entries = [self._cache.get(self._cache_key(spec["provider"], spec["instance_id"], self._adapter(spec["provider"]))) or {} for spec in readable_specs]
+            checked = [float(entry.get("checked") or (entry.get("ts") if isinstance(entry.get("result"), PlaybackListResult) and entry["result"].ok else 0) or 0) for entry in entries]
         return {
             "items": sorted_items[start:end],
             "page": page,
@@ -1381,6 +1422,7 @@ class PlaybackProgressService:
             "summary": summary,
             "partial": bool((errors or loading) and items),
             "refreshed_at": utc_now_iso(),
+            "checked_at": min(checked) if checked and all(checked) else None,
         }
 
     def settings(self, cfg: Mapping[str, Any] | None = None, user_filter: Mapping[str, Any] | None = None) -> dict[str, Any]:

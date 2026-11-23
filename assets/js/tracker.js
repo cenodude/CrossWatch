@@ -707,6 +707,21 @@
     });
   }
 
+  const overviewMarkup = new WeakMap();
+  const mainMarkup = new WeakMap();
+
+  function rememberOverviewMarkup(host, html) {
+    mainMarkup.set(host, {html, node:host.firstChild});
+    if (!host.querySelector(".trk-overview")) return;
+    const template = document.createElement("template");
+    template.innerHTML = html;
+    const selector = ".trk-overview-section,.trk-calendar-day";
+    const nodes = host.querySelectorAll(selector);
+    template.content.querySelectorAll(selector).forEach((node, index) => {
+      if (nodes[index]) overviewMarkup.set(nodes[index], node.outerHTML);
+    });
+  }
+
   function renderOverviewSlot(metadata = false) {
     if (state.view !== "overview") return;
     const airingCards = window.CW.AiringCard?.capture(state.root) || [];
@@ -720,6 +735,8 @@
       template.innerHTML = renderOverview(["continue", "airing"]);
       for (const next of template.content.querySelectorAll(".trk-overview-section")) {
         const current = state.root.querySelector(`[aria-labelledby="${next.getAttribute("aria-labelledby")}"]`);
+        if (current && overviewMarkup.get(current) === next.outerHTML) continue;
+        const dayMarkup = new Map([...next.querySelectorAll(".trk-calendar-day")].map(day => [day.dataset.calendarDate, day.outerHTML]));
         const missing = new Set([...current?.querySelectorAll("img[hidden]") || []].map(img => img.getAttribute("src")));
         next.querySelectorAll("img").forEach(img => { if (missing.has(img.getAttribute("src"))) img.hidden = true; });
         if (!current || current.isEqualNode(next)) continue;
@@ -732,11 +749,12 @@
             if (day.hasAttribute("style")) old.setAttribute("style", day.getAttribute("style"));
             else old.removeAttribute("style");
           }
-          if (old && !old.isEqualNode(day)) old.replaceWith(day.cloneNode(true));
+          if (old && overviewMarkup.get(old) !== dayMarkup.get(day.dataset.calendarDate) && !old.isEqualNode(day)) old.replaceWith(day.cloneNode(true));
         }
         current.querySelectorAll(":scope > .trk-overview-notice").forEach(el => el.remove());
         current.append(...next.querySelectorAll(":scope > .trk-overview-notice"));
       }
+      rememberOverviewMarkup(state.root.querySelector('[data-trk-slot="main"]'), renderMain());
     } else setSlot("main", renderMain());
     const calendar = state.root.querySelector(".trk-calendar");
     if (calendar) calendar.scrollLeft = calendarScroll;
@@ -2267,6 +2285,14 @@
       slot.innerHTML = html;
       slot.dataset.rendered = html;
       if (focused) slot.querySelector("summary")?.focus({preventScroll:true});
+    } else if (name === "main") {
+      const previous = mainMarkup.get(slot);
+      if (!previous || previous.html !== html || previous.node !== slot.firstChild) {
+        const airingCards = window.CW.AiringCard?.capture(slot) || [];
+        slot.innerHTML = html;
+        rememberOverviewMarkup(slot, html);
+        window.CW.AiringCard?.restore(slot, airingCards);
+      }
     } else if (slot.innerHTML !== html) slot.innerHTML = html;
     if (name === "controls") {
       fitNavigation();

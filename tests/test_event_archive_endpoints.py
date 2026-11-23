@@ -136,3 +136,63 @@ def test_unknown_event_hint_is_retained_without_raw_display():
     row = _with_reason_labels([{"reason_code": "write_failed", "detail": {"hint": "new_provider_code"}}])[0]
     assert row["hint"] == "new_provider_code"
     assert row["hint_message"] == ""
+
+
+@pytest.mark.parametrize("feature,errors,expected", [("history", 0, True), ("progress", 0, True), ("watchlist", 0, False), ("history", 1, False)])
+def test_successful_sync_marks_destination_progress_stale(monkeypatch, feature, errors, expected):
+    from types import SimpleNamespace
+    import services.playback_progress
+
+    calls = []
+    monkeypatch.setattr(services.playback_progress, "get_service", lambda: SimpleNamespace(mark_stale=lambda *args: calls.append(args)))
+    monkeypatch.setenv("CW_PAIR_SRC_INSTANCE", "default")
+    monkeypatch.setenv("CW_PAIR_DST_INSTANCE", "P01")
+    conn = connect(":memory:")
+    try:
+        recorder = RunRecorder(lambda *a, **kw: None, run_id="refresh", conn=conn)
+        recorder.emit("feature:start", src="PLEX", dst="TRAKT", feature=feature)
+        recorder.emit("apply:add:done", dst="TRAKT", attempted=1, added=1-errors, errors=errors)
+        assert calls == ([("TRAKT", "P01")] if expected else [])
+    finally:
+        conn.close()
+
+
+def test_dry_sync_does_not_mark_progress_stale(monkeypatch):
+    from types import SimpleNamespace
+    import services.playback_progress
+
+    calls = []
+    monkeypatch.setattr(services.playback_progress, "get_service", lambda: SimpleNamespace(mark_stale=lambda *args: calls.append(args)))
+    conn = connect(":memory:")
+    try:
+        recorder = RunRecorder(lambda *a, **kw: None, run_id="preview", conn=conn)
+        recorder.emit("feature:start", src="PLEX", dst="TRAKT", feature="history")
+        recorder.emit("apply:add:done", dst="TRAKT", attempted=1, added=1, errors=0, dry_run=True)
+        assert calls == []
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("feature", ["watchlist", "ratings", "collection"])
+def test_successful_library_sync_notifies_hub_without_reading_progress(monkeypatch, feature):
+    from services.hub_changes import revision
+    import services.playback_progress
+
+    def unexpected():
+        raise AssertionError("Library changes must not initialize playback providers")
+
+    monkeypatch.setattr(services.playback_progress, "get_service", unexpected)
+    monkeypatch.setenv("CW_PAIR_DST_INSTANCE", "P01")
+    scope = {"TRAKT": ["P01"]}
+    before = revision(scope)
+    conn = connect(":memory:")
+    try:
+        recorder = RunRecorder(lambda *a, **kw: None, run_id="hub-change", conn=conn)
+        recorder.emit("feature:start", src="PLEX", dst="TRAKT", feature=feature)
+        recorder.emit("apply:add:done", dst="TRAKT", attempted=1, added=1, errors=0)
+        after_write = revision(scope)
+        assert after_write != before
+        recorder.emit("run:done", pairs=1, added=1)
+        assert revision(scope) != after_write
+    finally:
+        conn.close()

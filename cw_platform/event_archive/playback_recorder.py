@@ -37,6 +37,14 @@ def archive_event(ev: Any) -> Any:
 
 def record_playback(ev: Any, cfg: dict[str, Any], *, delivery: str | None = None, reason: str | None = None) -> None:
     try:
+        if delivery == "succeeded" and str((ev.raw or {}).get("_cw_playback_action") or ev.action) in {"pause", "stop"}:
+            from services.playback_progress import get_service
+
+            watch = (cfg.get("scrobble") or {}).get("watch") or {}
+            for side in ("provider", "sink"):
+                provider = watch.get(f"route_{side}")
+                if provider:
+                    get_service().mark_stale(provider, watch.get(f"route_{side}_instance") or "default")
         _record(archive_event(ev), cfg, delivery=delivery, reason=reason)
     except Exception:
         _LOG.debug("playback archive update failed", exc_info=True)

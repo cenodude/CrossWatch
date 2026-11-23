@@ -38,7 +38,7 @@
     return parsed.pathname + parsed.search;
   };
 
-  async function read(url, fetcher, {signal, active = () => !document.hidden, watch = true, fresh = false, refresh = false, trackRevision = false} = {}) {
+  async function read(url, fetcher, {signal, active = () => !document.hidden, watch = true, fresh = false, refresh = false, trackRevision = false, interval = 30000} = {}) {
     const parsed = new URL(url, location.origin);
     parsed.searchParams.set("background", "1");
     parsed.searchParams.delete("known_version");
@@ -117,7 +117,7 @@
         schedule(Math.max(1, Number(meta.retry_after) || 30) * 1000);
       } else {
         if (meta.ready && (!fresh || !meta.refreshing)) {
-          schedule(meta.refreshing ? Math.max(1, Number(meta.retry_after) || 2) * 1000 : 30000);
+          schedule(meta.refreshing ? Math.max(1, Number(meta.retry_after) || 2) * 1000 : interval);
         } else {
           await new Promise(resolve => setTimeout(resolve, Math.max(1, Number(meta.retry_after) || 2) * 1000));
           return poll();
