@@ -8,7 +8,7 @@ import json
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from _logging import log as BASE_LOG
 from cw_platform.local_db import activity as sqlite_activity
@@ -209,7 +209,7 @@ def _event_ts(item: Mapping[str, Any]) -> int:
     return _as_int(item.get("captured_at")) or _as_int(item.get("watched_at")) or 0
 
 
-def _group_route_fanout(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+def _group_route_fanout(items: Iterable[Mapping[str, Any]], *, include_ids: bool = False) -> list[dict[str, Any]]:
     groups: list[dict[str, Any]] = []
     open_by_key: dict[tuple[Any, ...], dict[str, Any]] = {}
     seen_targets: dict[int, set[tuple[str, str]]] = {}
@@ -225,11 +225,15 @@ def _group_route_fanout(items: Iterable[Mapping[str, Any]]) -> list[dict[str, An
         if group is None or abs(ts - group_ts) > GROUP_WINDOW_SECONDS:
             target = _target_ref(item)
             item["targets"] = [target] if target["target"] else []
+            if include_ids:
+                item["event_ids"] = [str(item["id"])]
             groups.append(item)
             open_by_key[key] = item
             seen_targets[id(item)] = {_target_key(target)} if target["target"] else set()
             continue
 
+        if include_ids:
+            group["event_ids"].append(str(item["id"]))
         target = _target_ref(item)
         if target["target"]:
             target_key = _target_key(target)
@@ -422,6 +426,33 @@ def clear_events(*, kind: str | None = None) -> dict[str, Any]:
         except Exception as e:
             LOG.error(f"failed to clear activity log: {type(e).__name__}: {e}")
             return {"ok": False, "error": "clear_activity_failed"}
+
+
+def remove_scrobble_events(event_ids: list[str], *, allowed: Callable[[Mapping[str, Any]], bool]) -> dict[str, Any]:
+    wanted = set(event_ids)
+    with _LOCK:
+        items = [item for item in sqlite_activity.list_events(_activity_base_path(), status="ok")
+                 if item.get("kind") in {"scrobble", "history_sync"}]
+        by_id = {str(item["id"]): item for item in items}
+        selected: list[str] = []
+        groups = 0
+        for group in _group_route_fanout(items, include_ids=True):
+            if not wanted.intersection(group["event_ids"]):
+                continue
+            permitted = [key for key in group["event_ids"] if allowed(by_id[key])]
+            if not permitted:
+                raise PermissionError("profile_scope_denied")
+            selected.extend(permitted)
+            groups += 1
+        removed = sqlite_activity.remove_events(_activity_base_path(), selected)
+    if removed:
+        from services.hub_changes import mark_changed
+
+        for key in selected:
+            item = by_id[key]
+            for side in ("source", "target"):
+                mark_changed(str(item.get(side) or ""), str(item.get(f"{side}_instance") or "default"))
+    return {"ok": True, "removed": groups if removed else 0, "events_removed": removed}
 
 
 def clear_scrobble_events() -> dict[str, Any]:

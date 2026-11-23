@@ -83,7 +83,7 @@
   async function j(url, opt = {}, ms = 9000){
     const r = await f(url, opt, ms);
     if (r.status === 409 && opt.method === "DELETE" && String(url).startsWith("/api/pairs/")) {
-      window.alert("A sync or database maintenance task is running. Wait for it to finish, then delete the pair again.");
+      (window.CW?.MobileUI?.notice || window.alert)("A sync or database maintenance task is running. Wait for it to finish, then delete the pair again.");
     }
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
     const ct = r.headers.get('content-type') || '';

@@ -207,6 +207,7 @@
     node.addEventListener("keydown", onKey);
     host.appendChild(node);
     state.node = node;
+    window.CW?.DialogFocus?.activate(node, close);
     node.querySelector(".cw-mm-art-panel")?.focus({ preventScroll: true });
     void load("poster");
     return true;
@@ -214,6 +215,7 @@
 
   function close() {
     if (!state.node) return;
+    window.CW?.DialogFocus?.deactivate(state.node);
     state.node.remove();
     state.node = null;
     state.seq += 1;

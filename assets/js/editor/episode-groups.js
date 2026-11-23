@@ -146,13 +146,13 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
   $("[data-new]").onclick = $("[data-cancel-edit]").onclick = () => {
     reset(); $("[data-name]").focus();
   };
-  $("[data-groups]").onclick = event => {
+  $("[data-groups]").onclick = async event => {
     if (busy) return;
     const edit = event.target.closest("[data-edit]"), remove = event.target.closest("[data-delete]");
     if (edit) { reset(selectedPair().groups[Number(edit.dataset.edit)]); $("[data-name]").focus(); }
     if (remove) {
       const group = selectedPair().groups[Number(remove.dataset.delete)];
-      if (window.confirm(`Delete episode group “${group.name}”? These episodes will use ordinary matching again.`)) {
+      if ((await (window.CW?.MobileUI?.ask || window.confirm)(`Delete episode group “${group.name}”? These episodes will use ordinary matching again.`))) {
         mutate({pair_id:selectedPair().id, action:"delete", group_id:group.id});
       }
     }
@@ -170,7 +170,7 @@ export async function openEpisodeGroups(trigger, {pairId = "", groupId = "", ori
     document.removeEventListener("tab-changed", navigation);
     if (changed) onSaved?.();
   }, {once:true});
-  dialog.showModal();
+  window.CW?.MobileUI?.openDialog(dialog) || dialog.showModal();
   try {
     await load();
     if (groupId) reset(selectedPair()?.groups.find(group => group.id === groupId));

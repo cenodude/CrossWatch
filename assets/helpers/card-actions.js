@@ -55,6 +55,7 @@
       closed = true;
       anchor.setAttribute("aria-expanded", "false");
       for (const node of inert) node.inert = false;
+      anchor.focus({preventScroll:true});
       if (mobile && !locked) document.documentElement.classList.remove("cw-card-sheet-open");
       if (mobile && history.state?.cwCardActions === marker) {
         historyPending = true;

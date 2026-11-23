@@ -5,6 +5,18 @@
   const jobs = new Map();
   const retries = new Set();
   const sessions = new Map();
+  const snapshots = new Map();
+  let snapshotBytes = 0;
+  let snapshotGeneration = 0;
+  const discard = () => {
+    snapshotGeneration++;
+    snapshots.clear();
+    snapshotBytes = 0;
+  };
+  const dropSnapshot = key => {
+    snapshotBytes -= snapshots.get(key)?.body.length || 0;
+    snapshots.delete(key);
+  };
   let statuses = new WeakMap();
   const refreshHosts = new Map();
   const updateRefresh = () => {
@@ -38,12 +50,13 @@
     return parsed.pathname + parsed.search;
   };
 
-  async function read(url, fetcher, {signal, active = () => !document.hidden, watch = true, fresh = false, refresh = false, trackRevision = false, interval = 30000} = {}) {
+  async function read(url, fetcher, {signal, active = () => !document.hidden, watch = true, fresh = false, refresh = false, trackRevision = false, interval = 30000, maxAge = 0, cacheScope = ""} = {}) {
     const parsed = new URL(url, location.origin);
     parsed.searchParams.set("background", "1");
     parsed.searchParams.delete("known_version");
     parsed.searchParams.delete("t");
     const key = parsed.pathname + parsed.search;
+    const snapshotKey = JSON.stringify([cacheScope, retryKey(url)]);
     const group = parsed.pathname + (parsed.searchParams.has("summary_only") ? ":summary" : "") + (parsed.pathname === "/api/insights" ? `:${parsed.searchParams.get("include_events") || "1"}` : "") + (parsed.pathname === "/api/dashboard/widgets" ? `:${parsed.searchParams.get("view") || "overview"}` : "") + (watch ? "" : `:once:${parsed.search}`);
     const session = {url, signal, active, busy:false};
     sessions.get(group)?.dispose?.();
@@ -96,10 +109,21 @@
       if (!usable() || !active()) throw abort();
       session.busy = true;
       updateRefresh();
+      dropSnapshot(snapshotKey);
+      const snapshotVersion = snapshotGeneration;
       const data = await fetcher(key + (retry ? "&retry_view=1" : ""));
       retry = false;
       if (!usable()) throw abort();
       const meta = data?._view;
+      dropSnapshot(snapshotKey);
+      if (maxAge > 0 && snapshotVersion === snapshotGeneration && data?.ok !== false && !data?.not_modified && meta?.ready && !meta.refreshing && !meta.error) {
+        const body = JSON.stringify(data);
+        if (body.length <= 1024 * 1024) {
+          snapshots.set(snapshotKey, {body, time:Date.now(), url:retryKey(url)});
+          snapshotBytes += body.length;
+          while (snapshots.size > 32 || snapshotBytes > 4 * 1024 * 1024) dropSnapshot(snapshots.keys().next().value);
+        }
+      }
       session.busy = !!meta?.refreshing && !meta?.error;
       updateRefresh();
       announce("cw:view-status", url, meta || {});
@@ -127,7 +151,20 @@
       delivered = true;
       return data;
     };
-    try { return await poll(); }
+    try {
+      const saved = snapshots.get(snapshotKey);
+      const age = saved ? Date.now() - saved.time : Infinity;
+      if (maxAge > 0 && !fresh && !retry && usable() && active() && age < maxAge) {
+        const data = JSON.parse(saved.body);
+        ready = !!data._view?.ready;
+        previous = trackRevision ? `${data._view?.version}:${data._view?.revision || ""}` : data._view?.version;
+        delivered = true;
+        announce("cw:view-status", url, data._view || {});
+        schedule(Math.max(1, Math.min(interval, maxAge) - age));
+        return data;
+      }
+      return await poll();
+    }
     catch (error) { failed(error); throw error; }
     finally {
       if (!watch && sessions.get(group) === session) {
@@ -143,6 +180,7 @@
     for (const timer of jobs.values()) clearTimeout(timer);
     jobs.clear();
     retries.clear();
+    discard();
     for (const session of sessions.values()) { session.dispose?.(); session.cancel?.(); }
     sessions.clear();
     updateRefresh();
@@ -187,7 +225,11 @@
   }
 
   window.CW = window.CW || {};
-  window.CW.ViewCache = {read, supported, invalidate, status, bindRefresh, retry:url => retries.add(retryKey(url))};
+  window.CW.ViewCache = {read, supported, invalidate, discard, status, bindRefresh, retry:url => {
+    const key = retryKey(url);
+    retries.add(key);
+    for (const [savedKey, saved] of snapshots) if (saved.url === key) dropSnapshot(savedKey);
+  }};
   document.addEventListener("visibilitychange", updateRefresh);
   window.addEventListener("cw:sync-state-cleared", invalidate);
   window.addEventListener("cw:overview-profile-changed", invalidate);

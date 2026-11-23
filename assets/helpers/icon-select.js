@@ -7,10 +7,12 @@
 
   function closeAll(except) {
     if (OPEN && OPEN !== except) {
+      const current = OPEN;
       OPEN.menu.classList.add("hidden");
       OPEN.wrap.classList.remove("is-open");
       OPEN.btn.setAttribute("aria-expanded", "false");
       OPEN = null;
+      return current.layer?.dismiss();
     }
   }
 
@@ -237,9 +239,12 @@
       item.title = [data.label, data.note].filter(Boolean).join(" \u00b7 ");
       item.setAttribute("aria-selected", "false");
       item.appendChild(rowMain(data));
-      item.addEventListener("click", (ev) => {
+      item.addEventListener("click", async (ev) => {
         ev.preventDefault();
         if (item.disabled) return;
+        const dismissed = closeAll(null);
+        if (dismissed) await dismissed;
+        if (!select.isConnected) return;
         if (select.value !== data.value) {
           select.value = data.value;
           select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -247,7 +252,6 @@
         } else {
           sync(select, wrap, cfg);
         }
-        closeAll(null);
       });
       menu.appendChild(item);
     });
@@ -345,8 +349,18 @@
         menu.classList.toggle("hidden", !open);
         wrap.classList.toggle("is-open", open);
         btn.setAttribute("aria-expanded", String(open));
-        if (open) positionMenu(wrap, btn, menu);
+        if (open) {
+          (select.closest('dialog') || d.body).appendChild(menu);
+          positionMenu(wrap, btn, menu);
+        }
         OPEN = open ? { wrap, btn, menu } : null;
+        if (OPEN && window.CW?.MobileUI?.mobile() && select.closest('dialog,[aria-modal="true"],.cw-page-mobile-surface')) {
+          const current = OPEN;
+          current.layer = window.CW.MobileUI.layer(() => {
+            if (OPEN === current) closeAll(null);
+            if (btn.isConnected) btn.focus({preventScroll:true});
+          });
+        }
       });
       menu.addEventListener("mousedown", (ev) => ev.stopPropagation());
       menu.addEventListener("click", (ev) => ev.stopPropagation());

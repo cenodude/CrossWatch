@@ -12,7 +12,7 @@ from providers.sync.stremio._common import DEFAULT_STREMIO_PROFILE_ID
 from providers.scrobble._show_tmdb import fill_display_tmdb
 
 from ..models import PlaybackActionResult, PlaybackCapabilities, PlaybackListResult, PlaybackRecord, clean_mapping, utc_now_iso
-from .base import PlaybackProgressAdapter, enrich_parallel, public_failure, tmdb_metadata_provider
+from .base import PlaybackProgressAdapter, enrich_parallel, is_placeholder_title, public_failure, tmdb_metadata_provider
 
 
 def _mapping(value: Any) -> Mapping[str, Any]:
@@ -202,7 +202,15 @@ class StremioPlaybackAdapter(PlaybackProgressAdapter):
             fill_display_tmdb(config_view, media_type, ids, show_ids)
         title = str(mini.get("title") or item.get("title") or item.get("series_title") or "").strip()
         series_title = str(mini.get("series_title") or item.get("series_title") or "").strip()
-        resolved = _metadata_detail(metadata, media_type=media_type, ids=ids, show_ids=show_ids) if not title or (media_type == "episode" and not series_title) or not item.get("poster") else {}
+        if is_placeholder_title(title):
+            title = ""
+        if media_type == "episode" and is_placeholder_title(series_title):
+            series_title = ""
+        has_art = bool(str(item.get("poster") or item.get("poster_url") or "").strip()) and bool(
+            str(item.get("background") or item.get("backdrop") or item.get("backdrop_url") or "").strip()
+        )
+        needs_metadata = not title or (media_type == "episode" and not series_title) or not has_art
+        resolved = _metadata_detail(metadata, media_type=media_type, ids=ids, show_ids=show_ids) if needs_metadata else {}
         if resolved.get("title"):
             if media_type == "episode" and not series_title:
                 series_title = str(resolved["title"])

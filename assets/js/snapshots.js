@@ -816,7 +816,7 @@ function bundleKey(s) {
     if (!modal) return;
     state.captureReturnFocus = document.activeElement;
     modal.classList.remove("hidden", "is-error", "is-done");
-    window.CW?.DialogFocus?.activate(modal, () => {
+    window.CW?.DialogFocus?.activate(modal.querySelector('.ss-capture-dialog'), () => {
       if ($("#ss-capture-actions", page)?.classList.contains("show")) $("#ss-capture-ack", page)?.click();
     });
     modal.tabIndex = -1;
@@ -845,7 +845,7 @@ function bundleKey(s) {
     if (!page) return;
     window.setTimeout(() => {
       const modal = $("#ss-capture-modal", page);
-      window.CW?.DialogFocus?.deactivate(modal);
+      window.CW?.DialogFocus?.deactivate(modal?.querySelector('.ss-capture-dialog'));
       if (modal) modal.classList.add("hidden");
       if (state.captureReturnFocus?.isConnected) state.captureReturnFocus.focus?.({ preventScroll: true });
       state.captureReturnFocus = null;
@@ -2088,7 +2088,7 @@ function renderSelected() {
     const msg = paths.length === 1
       ? "Delete the selected capture? Bundle captures also remove their child captures."
       : `Delete ${paths.length} selected captures? Bundle captures also remove their child captures.`;
-    if (!confirm(msg)) return;
+    if (!(await (window.CW?.MobileUI?.ask || window.confirm)(msg))) return;
 
     setBusy(true);
     setRefreshSpinning(true);
@@ -2162,7 +2162,7 @@ function renderSelected() {
   }
 
   async function onCleanupOldCaptures() {
-    if (!confirm("Cleanup Captures removes all stored captures. Continue?")) return;
+    if (!(await (window.CW?.MobileUI?.ask || window.confirm)("Cleanup Captures removes all stored captures. Continue?"))) return;
     setProgress("#ss-tools-progress", true, "Cleaning up captures...", "danger");
     setBusy(true);
     try {

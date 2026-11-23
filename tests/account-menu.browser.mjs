@@ -42,9 +42,15 @@ async function fixture(t, {shell='main', role='admin', theme='flat-dark', width=
       node.dataset.cwAvatarUrl = avatar;
       node.classList.remove('material-symbols-rounded');
     }
+    const experience = doc.createElement('script');
+    experience.src = '/assets/helpers/mobile-experience.js';
+    doc.body.append(experience);
     const script = doc.createElement('script');
     script.src = '/assets/helpers/account-menu.js';
     doc.body.append(script);
+    const preferences = doc.createElement('script');
+    preferences.src = '/assets/helpers/mobile-settings.js';
+    doc.body.append(preferences);
     return '<!doctype html>' + doc.documentElement.outerHTML;
   }, {source:templates[role][shell], theme, avatar});
   await page.route('https://account-menu.test/**', async route => {
@@ -65,6 +71,84 @@ async function fixture(t, {shell='main', role='admin', theme='flat-dark', width=
   await page.evaluate(() => document.fonts.ready);
   return {page,writes};
 }
+
+test('Mobile Back unwinds settings and tools before closing More without leaving the page', async t => {
+  const {page} = await fixture(t,{width:390});
+  const panel = page.locator('#cw-mobile-navigation');
+  const start = page.url();
+  await page.locator('#cw-mobile-more').click();
+  await panel.locator('#tab-tools').click();
+  await panel.locator('#cw-mobile-widgets > summary').click();
+  await page.goBack();
+  await page.waitForFunction(() => document.querySelector('#cw-mobile-navigation').dataset.mobileView === 'tools');
+  await page.goBack();
+  await page.waitForFunction(() => document.querySelector('#cw-mobile-navigation').dataset.mobileView === 'main');
+  await page.goBack();
+  await page.waitForFunction(() => document.querySelector('#cw-mobile-more').getAttribute('aria-expanded') === 'false');
+  assert.equal(page.url(), start);
+  assert.equal(await page.evaluate(() => history.state?.cwMobileLayer), undefined);
+  await page.locator('#cw-mobile-more').click();
+  await panel.locator('#tab-tools').click();
+  await page.locator('#cw-mobile-bottom-nav [data-mobile-route="tracker"]').click();
+  await page.waitForURL('**/#tracker');
+  assert.equal(await page.evaluate(() => history.state?.cwMobileLayer), undefined);
+  await page.goBack();
+  assert.equal(page.url(), start);
+});
+
+for (const theme of ['original','flat-dark','flat-light']) for (const shell of ['main','hub','profile']) test(`${theme}: ${shell} keeps compact Mobile settings in every menu`,async t=>{
+  const {page} = await fixture(t,{theme,shell,width:390,height:844});
+  await page.locator('#cw-mobile-more').click();
+  const panel = page.locator('#cw-mobile-navigation');
+  const footer = panel.locator('#cw-mobile-widgets > summary');
+  assert.equal(await footer.isVisible(),true);
+  assert.ok((await footer.boundingBox()).height <= 48);
+  await panel.locator('.cw-mobile-sheet-close').click();
+  await page.setViewportSize({width:740,height:360});
+  await page.locator('#cw-mobile-more').click();
+  if (shell !== 'hub') await panel.locator('#tab-tools').click();
+  assert.equal(await footer.evaluate(node=>{
+    const box=node.getBoundingClientRect();
+    return box.y>=0 && box.bottom<=innerHeight && node.contains(document.elementFromPoint(box.x+box.width/2,box.y+box.height/2));
+  }),true);
+  await panel.locator('.cw-mobile-sheet-close').click();
+  await page.setViewportSize({width:390,height:844});
+  await page.locator('#cw-mobile-more').click();
+  if (shell !== 'hub') await panel.locator('#tab-tools').click();
+  await footer.click();
+  assert.equal(await panel.getAttribute('data-mobile-view'),'settings');
+  assert.equal(await panel.locator('.cw-mobile-sheet-heading strong').textContent(),'Mobile settings');
+  assert.equal(await panel.locator('[data-mobile-haptics]').isVisible(),true);
+  assert.equal(await panel.locator('#tab-tools').isVisible(),false);
+  const haptics = panel.locator('[data-mobile-haptics]');
+  if (await page.evaluate(()=>typeof navigator.vibrate === 'function')) {
+    await haptics.uncheck();
+    assert.equal(await page.evaluate(()=>localStorage.getItem('cw.mobile.haptics')),'0');
+  } else {
+    assert.equal(await haptics.isDisabled(),true);
+    assert.equal(await haptics.isChecked(),false);
+    assert.match(await haptics.locator('..').textContent(),/Not supported by this browser/);
+  }
+  await panel.locator('[data-mobile-shortcuts], .cw-mobile-shortcuts').waitFor();
+  await panel.locator('#cw-mobile-shortcut-0').selectOption('playlists');
+  assert.equal(await panel.getAttribute('data-mobile-view'),'settings');
+  assert.equal(await page.locator('#cw-mobile-profile').getAttribute('href'),'/profile#account');
+  if(process.env.CW_MENU_SCREENSHOTS) {
+    await mkdir(process.env.CW_MENU_SCREENSHOTS,{recursive:true});
+    await page.screenshot({path:`${process.env.CW_MENU_SCREENSHOTS}/${theme}-${shell}-mobile-settings.png`});
+  }
+  await panel.locator('.cw-mobile-sheet-back').click();
+  assert.equal(await panel.getAttribute('data-mobile-view'),shell==='hub'?'main':'tools');
+  assert.equal(await footer.isVisible(),true);
+  assert.equal(await footer.evaluate(node=>document.activeElement===node),true);
+  await panel.locator('.cw-mobile-sheet-close').click();
+  assert.equal(await page.locator('#cw-mobile-more').getAttribute('aria-expanded'),'false');
+  await page.locator('#cw-mobile-more').click();
+  assert.equal(await panel.getAttribute('data-mobile-view'),'main');
+  await page.setViewportSize({width:1440,height:900});
+  assert.equal(await panel.locator('.cw-mobile-sheet-heading').isVisible(),false);
+  assert.equal(await footer.isVisible(),false);
+});
 
 for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: mobile Profile keeps the account avatar and glass navigation`,async t=>{
   const avatar = 'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="#8063ff"/><circle cx="20" cy="15" r="9" fill="#fff"/><path d="M4 40a16 16 0 0132 0" fill="#fff"/></svg>');
@@ -96,7 +180,7 @@ for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: mobil
   await page.evaluate(()=>CW.AccountMenu.setAvatarUrl('/assets/missing-avatar.png'));
   await page.waitForFunction(()=>document.getElementById('cw-mobile-profile-avatar').textContent==='person');
   await page.setViewportSize({width:1440,height:900});
-  assert.equal(await page.locator('#cw-nav-profile-link').isVisible(),true);
+  await page.locator('#cw-nav-profile-link').waitFor({state:'visible'});
   assert.equal(await page.locator('#cw-mobile-bottom-nav').isVisible(),false);
 });
 
@@ -237,7 +321,7 @@ for (const shell of ['main','profile']) {
         return {border:s.borderTopWidth,radius:s.borderTopLeftRadius,color:s.color,fill:s.webkitTextFillColor};
       });
       assert.equal(style.border,'0px');
-      assert.equal(style.radius,'10px');
+      assert.equal(style.radius,'0px');
       assert.equal(style.color,style.fill);
     }
     await page.setViewportSize({width:1440,height:900});
@@ -250,12 +334,12 @@ for (const shell of ['main','profile']) {
     assert.deepEqual(await page.evaluate(() => window.navigationBuzzes), [30]);
     assert.equal(await menu.locator('#cw-tools-menu').isVisible(),false);
     assert.equal(await menu.locator('#tab-settings').isVisible(),false);
-    assert.deepEqual(await menu.locator('.cw-mobile-tool-destinations .tab').evaluateAll(nodes=>nodes.filter(node=>node.getClientRects().length).map(node=>node.dataset.mobileRoute || 'back')), ['back','events','logs','editor','analyzer','import_export','backups']);
+    assert.deepEqual(await menu.locator('.cw-mobile-tool-destinations .tab').evaluateAll(nodes=>nodes.filter(node=>node.getClientRects().length).map(node=>node.dataset.mobileRoute || 'back')), ['events','logs','editor','analyzer','import_export','backups']);
     const backups=menu.locator('[data-mobile-route="backups"]');
     assert.equal(await backups.innerText().then(value=>value.includes('Backup & Restore')),true);
     assert.equal(await backups.evaluate(node=>node.scrollWidth<=node.clientWidth),true);
     assert.equal(await backups.getAttribute('href'),shell==='profile'?'/#backups':'#backups');
-    await menu.locator('.cw-mobile-tools-back').click();
+    await menu.locator('.cw-mobile-sheet-back').click();
     assert.deepEqual(await page.evaluate(() => window.navigationBuzzes), [30,30]);
     assert.equal(await page.locator('#cw-mobile-nav-toggle').getAttribute('aria-expanded'),'true');
     assert.equal(await menu.locator('#tab-tools').isVisible(),true);
@@ -271,7 +355,7 @@ for (const shell of ['main','profile']) {
     await page.evaluate(() => { localStorage.setItem('cw.mobile.haptics','0'); });
     await page.locator('#cw-mobile-more').click();
     await menu.locator('#tab-tools').click();
-    await menu.locator('.cw-mobile-tools-back').click();
+    await menu.locator('.cw-mobile-sheet-back').click();
     assert.deepEqual(await page.evaluate(() => window.navigationBuzzes), [30,30,30,30]);
     await page.evaluate(() => { localStorage.setItem('cw.mobile.haptics','1'); });
     await page.setViewportSize({width:1440,height:900});

@@ -54,7 +54,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
     const bootstrap=doc.createElement('script');
     bootstrap.textContent='window.CW={AuthState:{read:()=>({isAdmin:true,permissions:{write:true}})},Meta:{peek:()=>null,get:async()=>({year:2026,runtime_minutes:58,genres:["Drama","Mystery"],detail:{number_of_seasons:2,status:"Returning Series"}})}};';
     doc.body.append(bootstrap);
-    for(const path of [...(activity?['helpers/provider-meta']:[]),'helpers/card-actions','helpers/airing-card','helpers/selection-bar','helpers/profile-datetime','helpers/month-bar','helpers/icon-select','helpers/account-menu',...(hero?['helpers/profile-select','js/overview-profile']:[]),'js/profile-page']) {
+    for(const path of [...(activity?['helpers/provider-meta']:[]),'helpers/mobile-experience','helpers/card-actions','helpers/airing-card','helpers/selection-bar','helpers/profile-datetime','helpers/month-bar','helpers/icon-select','helpers/account-menu','helpers/mobile-settings',...(hero?['helpers/profile-select','js/overview-profile']:[]),'js/profile-page']) {
       const script=doc.createElement('script');
       script.src=`/assets/${path}.js`;
       doc.body.append(script);
@@ -812,7 +812,7 @@ for (const width of [390,1440]) test(`Account menu opens dedicated Profile and r
   await page.locator('#profile-panel-history.active').waitFor();
 });
 
-test('My Media Hub shortcut returns to Overview and stays there on reload', async t => {
+test('My Media Hub shortcut stays selected and preserves the current section on reload', async t => {
   const {page} = await fixture(t,'flat-dark',390);
   await page.evaluate(()=>localStorage.setItem('cw.mobile.shortcuts.v1',JSON.stringify(['profile/overview','settings/sync'])));
   await page.reload();
@@ -821,13 +821,13 @@ test('My Media Hub shortcut returns to Overview and stays there on reload', asyn
   assert.equal(await hub.getAttribute('aria-current'), 'page');
   await page.locator('[data-profile-tab="history"]').click();
   await page.locator('#profile-panel-history.active').waitFor();
-  await page.waitForFunction(()=>!document.querySelector('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]').hasAttribute('aria-current'));
+  assert.equal(await hub.getAttribute('aria-current'), 'page');
   await hub.focus();
   await page.keyboard.press('Enter');
-  await page.locator('#profile-panel-overview.active').waitFor();
+  await page.locator('#profile-panel-history.active').waitFor();
   await page.waitForFunction(()=>document.querySelector('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]').getAttribute('aria-current')==='page');
   await page.reload();
-  await page.locator('#profile-panel-overview.active').waitFor();
+  await page.locator('#profile-panel-history.active').waitFor();
   assert.equal(await hub.getAttribute('aria-current'), 'page');
 });
 
@@ -1397,4 +1397,126 @@ test('Hub rechecks inactive Progress after a known change without fetching it in
   await page.waitForTimeout(250);
   assert.equal(reads().length,before+1);
   assert.notEqual(reads().at(-1).params.force_refresh,'true');
+});
+
+
+test('Hub tab returns keep fresh results without spinning or rechecking providers', async t => {
+  const {page,state}=await fixture(t,'flat-dark',1440,{hero:true,library:true});
+  await page.addScriptTag({path:'assets/helpers/view-cache.js'});
+  const reads=[];
+  await page.route(/\/api\/profile\/(watchlist|ratings)\?/, route=>{
+    const path=new URL(route.request().url()).pathname;
+    reads.push(path);
+    return route.fulfill({json:{ok:true,items,total:items.length,page:1,page_size:48,providers:[],counts:{all:items.length},_view:{ready:true,refreshing:false,version:path,checked_at:Date.now()/1000}}});
+  });
+  for(const tab of ['watchlist','ratings']) {
+    await page.locator('[data-profile-tab="'+tab+'"]').click();
+    await page.locator('#profile-panel-'+tab+' .cw-hist-card').first().waitFor();
+    await page.waitForFunction(()=>!document.querySelector('#profile-hub-refresh').classList.contains('is-spinning'));
+  }
+  await page.clock.runFor(2000);
+  await page.evaluate(()=>{
+    window.loadingSeen=false;
+    new MutationObserver(()=>{loadingSeen ||= document.querySelector('#profile-hub-refresh').classList.contains('is-spinning');}).observe(document.querySelector('#profile-hub-refresh'),{attributes:true});
+  });
+  await page.locator('[data-profile-tab="watchlist"]').click();
+  await page.clock.runFor(100);
+  assert.deepEqual(reads,['/api/profile/watchlist','/api/profile/ratings']);
+  assert.equal(await page.evaluate(()=>loadingSeen),false);
+  const progressReads=()=>state.queries.filter(query=>query.path==='/api/playback_progress/items').length;
+  const before=progressReads();
+  await page.locator('[data-profile-tab="overview"]').click();
+  await page.clock.runFor(100);
+  assert.equal(progressReads(),before);
+  assert.equal(await page.evaluate(()=>loadingSeen),false);
+  await page.locator('[data-profile-tab="watchlist"]').click();
+  await page.locator('#profile-hub-refresh').click();
+  await page.waitForFunction(()=>!document.querySelector('#profile-hub-refresh').disabled);
+  assert.equal(reads.length,3);
+});
+
+
+for (const width of [390,1440]) test(`Hub scrobble cleanup deletes only selected log entries at ${width}px`, async t => {
+  const {page,state}=await fixture(t,'flat-dark',width,{history:true});
+  await page.addScriptTag({path:'assets/helpers/view-cache.js'});
+  let records=items.map((item,index)=>({...item,id:`event-${index}`,key:`scrobble:event-${index}`,source:{provider:'PLEX',instance:'default'},targets:[{provider:'TRAKT',instance:'default'}],method:'watcher'}));
+  const deletes=[];
+  let fail=false;
+  await page.route('**/api/profile/history?**',route=>{
+    const params=new URL(route.request().url()).searchParams;
+    return route.fulfill({json:{ok:true,source:params.get('source'),items:records,total:records.length,page:1,page_size:48,counts:{all:records.length},stats:{plays:records.length},providers:[],months:[],selection:params.has('include_keys')?records:undefined,_view:{ready:true,refreshing:false,version:String(records.length)}}});
+  });
+  await page.route('**/api/profile/history/scrobbles/remove',route=>{
+    const payload=route.request().postDataJSON();
+    deletes.push(payload);
+    if(fail) return route.fulfill({status:500,json:{ok:false,error:'Could not delete scrobble log entries'}});
+    records=records.filter(item=>!payload.ids.includes(item.id));
+    return route.fulfill({json:{ok:true,removed:payload.ids.length}});
+  });
+  await page.locator('[data-profile-tab="history"]').click();
+  const panel=page.locator('#profile-panel-history');
+  await clickRecordControl(panel,'[data-timeline-source="scrobble"]');
+  await panel.locator('.cw-hist-card').first().waitFor();
+  const selectDelete=async()=>{
+    await panel.locator('[data-hub-route-actions]').first().click();
+    await page.getByRole('menuitem',{name:'Delete log entry',exact:true}).click();
+  };
+  const confirmNext = async (action, accept = true) => {
+    if (width > 760) page.once('dialog', dialog => accept ? dialog.accept() : dialog.dismiss());
+    await action();
+    if (width <= 760) {
+      const dialog = page.locator('.cw-page-confirm');
+      await dialog.waitFor();
+      assert.match(await dialog.textContent(),/Watch history.*stays unchanged/);
+      await dialog.getByRole('button',{name:accept ? 'Delete' : 'Cancel',exact:true}).click();
+      await dialog.waitFor({state:'detached'});
+    }
+  };
+  await confirmNext(selectDelete, false);
+  assert.equal(deletes.length,0);
+  fail=true;
+  await confirmNext(selectDelete);
+  await page.getByText('Could not delete scrobble log entries',{exact:true}).waitFor();
+  assert.equal(await panel.locator('.cw-hist-card').count(),3);
+  fail=false;
+  const removed=page.waitForResponse(response=>response.url().endsWith('/api/profile/history/scrobbles/remove'));
+  await confirmNext(selectDelete);
+  await removed;
+  await page.waitForFunction(()=>document.querySelectorAll('#profile-history-list .cw-hist-card').length===2);
+  assert.deepEqual(deletes.at(-1),{ids:['event-0']});
+  await panel.locator('.cw-tl-select').first().click();
+  await page.locator('#profile-history-bulk [data-timeline-select="all"]').click();
+  await page.waitForFunction(()=>document.querySelector('#profile-history-bulk [data-timeline-count]').textContent==='2');
+  await confirmNext(() => page.getByRole('button',{name:'Delete selected scrobble log entries',exact:true}).click());
+  await page.waitForFunction(()=>!document.querySelector('#profile-history-list .cw-hist-card'));
+  assert.deepEqual(new Set(deletes.at(-1).ids),new Set(['event-1','event-2']));
+  assert.equal(state.queries.some(query=>query.path.startsWith('/api/editor/')),false);
+  await page.locator('[data-profile-tab="ratings"]').click();
+  await page.locator('[data-profile-tab="history"]').click();
+  await page.waitForTimeout(100);
+  assert.equal(await panel.locator('.cw-hist-card').count(),0);
+});
+
+
+test('Mobile Hub restores tab scroll and search across section switches and reloads', async t => {
+  const {page,state} = await fixture(t,'flat-dark',390,{history:true,count:20});
+  await page.locator('[data-profile-tab="history"]').click();
+  const search = page.locator('#profile-history-search');
+  await search.fill('Movie');
+  await page.waitForResponse(response => response.url().includes('/api/profile/history?') && new URL(response.url()).searchParams.get('search') === 'Movie');
+  await page.locator('#profile-history-list .cw-hist-card').first().waitFor();
+  await page.evaluate(() => window.scrollTo(0,300));
+  await page.waitForFunction(() => Math.abs(scrollY-300)<3);
+  await page.locator('[data-profile-tab="ratings"]').evaluate(node => node.click());
+  await page.waitForFunction(() => document.body.dataset.profileView === 'ratings');
+  await page.locator('[data-profile-tab="history"]').evaluate(node => node.click());
+  await page.waitForFunction(() => document.body.dataset.profileView === 'history' && Math.abs(scrollY-300)<3);
+  assert.equal(await search.inputValue(),'Movie');
+  await page.reload();
+  await page.waitForFunction(() => document.body.dataset.profileView === 'history');
+  await page.waitForFunction(() => document.querySelector('#profile-history-search').value === 'Movie');
+  assert.equal(state.queries.filter(item => item.path === '/api/profile/history').at(-1).params.search,'Movie');
+  await page.waitForFunction(() => Math.abs(scrollY-300)<3);
+  await page.locator('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]').click();
+  assert.equal(await page.evaluate(() => document.body.dataset.profileView),'history');
 });

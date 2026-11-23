@@ -391,7 +391,7 @@
     if (!session || pending() || (pageLoading && ["selection", "apply", "mapping"].includes(name))) return;
     if (name === "apply" && session.dry_run) {
       const count = Number(session.counts?.selected || 0);
-      if (!count || !window.confirm(`Global dry run is on.\n\nApply ${count} selected change${count === 1 ? "" : "s"} now? This will write the selected changes to the destination providers.\n\nGlobal dry run will stay enabled for future syncs.`)) return;
+      if (!count || !(await (window.CW?.MobileUI?.ask || window.confirm)(`Global dry run is on.\n\nApply ${count} selected change${count === 1 ? "" : "s"} now? This will write the selected changes to the destination providers.\n\nGlobal dry run will stay enabled for future syncs.`))) return;
       body = { ...body, confirm_dry_run: true };
     }
     const current = generation, sid = session.id;

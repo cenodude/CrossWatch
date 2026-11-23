@@ -22,5 +22,5 @@ export const ModalRegistry = {
     const api = mod.default?.mount ? mod.default : mod;
     await host.mount(api, props);
   },
-  close() { host?.unmount(); }
+  close() { return host?.unmount(); }
 };

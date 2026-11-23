@@ -117,7 +117,7 @@
         if (typeof window.openPairModal === "function") return window.openPairModal(pair);
         if (typeof window.cxOpenModalFor === "function") return window.cxOpenModalFor(pair);
       }
-      alert("Edit is not available.");
+      (window.CW?.MobileUI?.notice || window.alert)("Edit is not available.");
     } catch (e) { console.warn("[cxPairsEditClick] failed", e); }
   };
 
@@ -229,7 +229,7 @@
     const el = board?.querySelector(`.pair-card[data-id="${id}"]`); if (!el) return;
     try {
       const res = await fetch(`/api/pairs/${id}`, { method: "DELETE" });
-      if (res.status === 409) window.alert("A sync or database maintenance task is running. Wait for it to finish, then delete the pair again.");
+      if (res.status === 409) (window.CW?.MobileUI?.notice || window.alert)("A sync or database maintenance task is running. Wait for it to finish, then delete the pair again.");
       let data = null;
       try { data = await res.json(); } catch {}
       if (!res.ok || data?.ok === false || Number(data?.deleted || 0) < 1) throw new Error(data?.error || "pair delete failed");
@@ -301,7 +301,7 @@
     const endpoint = side => `${providerLabel(pair[side])} (${providerMeta()?.instanceLabel?.(pair[side], pair[`${side}_instance`] || "default") || pair[`${side}_instance`] || "Default"})`;
     const label = `${endpoint("source")} → ${endpoint("target")}`;
     const message = `Give ${label} a fresh start?\n\nThis resets the sync memory for ${features.join(", ")} and clears retry and blocked items for this pair. Your pair settings stay as they are.\n\nThe next sync reads fresh provider data. Recent deletions won't carry across, and a two-way pair can add missing items back. Other pairs keep their sync state.\n\nReady to reset this pair?`;
-    if (!window.confirm(message)) return;
+    if (!(await (window.CW?.MobileUI?.ask || window.confirm)(message))) return;
     _resettingPairs.add(id);
     btn.disabled = true;
     btn.setAttribute("aria-busy", "true");
@@ -315,9 +315,9 @@
       if (response.status === 403) throw new Error("You don't have permission to reset this pair.");
       const data = await response.json();
       if (!response.ok || data?.ok !== true) throw new Error("The reset couldn't finish. Please try again.");
-      window.alert("Pair reset! Its next sync will start fresh.");
+      (window.CW?.MobileUI?.notice || window.alert)("Pair reset! Its next sync will start fresh.");
     } catch (error) {
-      window.alert(error.message || "The reset couldn't finish. Please try again.");
+      (window.CW?.MobileUI?.notice || window.alert)(error.message || "The reset couldn't finish. Please try again.");
     } finally {
       _resettingPairs.delete(id);
       document.querySelectorAll("[data-pair-reset]").forEach(button => {
@@ -602,7 +602,7 @@
     } catch {
       animatePairOrder(board, () => original.forEach(card => board.appendChild(card)));
       pairOrderNotice(host, "Couldn't save the order. Your previous order is restored.");
-      window.alert("Couldn't save the pair order. Your previous order is restored. Please try again.");
+      (window.CW?.MobileUI?.notice || window.alert)("Couldn't save the pair order. Your previous order is restored. Please try again.");
     } finally {
       board.inert = false;
       board.removeAttribute("aria-busy");

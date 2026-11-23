@@ -134,7 +134,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "selection-bar.js", "card-actions.js", "airing-card.js", "help-links.js", "touch-help.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "view-cache.js", "core.js", "details-log.js",
+    "mobile-experience.js", "selection-bar.js", "card-actions.js", "airing-card.js", "help-links.js", "touch-help.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "mobile-settings.js", "notifications.js", "api.js", "view-cache.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js", "month-bar.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
@@ -144,7 +144,7 @@ _APP_SCRIPTS = (
     "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js", "assistant-settings.js",
 )
 _USER_HELPER_SCRIPTS = (
-    "selection-bar.js", "card-actions.js", "airing-card.js", "help-links.js", "touch-help.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "view-cache.js", "core.js",
+    "mobile-experience.js", "selection-bar.js", "card-actions.js", "airing-card.js", "help-links.js", "touch-help.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "mobile-settings.js", "notifications.js", "api.js", "view-cache.js", "core.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js",
 )
 _USER_APP_SCRIPTS = (
@@ -3207,7 +3207,9 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
 <script src="/assets/helpers/icon-select.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/auth-state.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/pwa-install.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/mobile-experience.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/account-menu.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/mobile-settings.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/notifications.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/sync-reviews.js?v=__CW_VERSION__" defer></script>
 {shared_header_scripts}

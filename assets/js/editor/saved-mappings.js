@@ -25,7 +25,7 @@ export async function readMappingFile(file) {
 export async function navigateToMapping(mapping, ctx) {
   const state = ctx.state;
   if (state.loading || state.saving) throw new Error("Wait for the Editor to finish loading or saving, then try again.");
-  if (state.hasChanges && !window.confirm("Discard your unsaved Editor changes and open this mapping?")) return false;
+  if (state.hasChanges && !(await (window.CW?.MobileUI?.ask || window.confirm)("Discard your unsaved Editor changes and open this mapping?"))) return false;
   const previous = {...state, typeFilter:{...state.typeFilter}};
   try {
     state.source = "state";
@@ -294,7 +294,7 @@ export function open(trigger, editor) {
     await runAction(async () => {
       const data = await readMappingFile(file);
       if (!root.open) return "";
-      if (!window.confirm(`Import ${data.records.length} mapping/block records and ${data.episode_groups?.length || 0} episode groups into their saved scopes? Episode groups include their completed-scrobble setting and require matching pairs and provider instances. Existing ordinary mappings are kept; conflicting episode groups reject the entire import. Current filters do not limit import.`)) return "Import cancelled.";
+      if (!(await (window.CW?.MobileUI?.ask || window.confirm)(`Import ${data.records.length} mapping/block records and ${data.episode_groups?.length || 0} episode groups into their saved scopes? Episode groups include their completed-scrobble setting and require matching pairs and provider instances. Existing ordinary mappings are kept; conflicting episode groups reject the entire import. Current filters do not limit import.`))) return "Import cancelled.";
       const body = new FormData(); body.append("file", file);
       const response = await fetch("/api/editor/mappings/import", {method:"POST", credentials:"same-origin", body});
       const result = await response.json();
@@ -313,7 +313,7 @@ export function open(trigger, editor) {
     const remove = event.target.closest("[data-delete-mapping]");
     if (remove && !editing) {
       const rule = currentRows[Number(remove.dataset.deleteMapping)];
-      if (rule && window.confirm(`Delete this saved mapping for ${rule.scope_label || "All pairs"}? Its automatic original-item block will also be removed. Shared mappings may apply again.`)) {
+      if (rule && (await (window.CW?.MobileUI?.ask || window.confirm)(`Delete this saved mapping for ${rule.scope_label || "All pairs"}? Its automatic original-item block will also be removed. Shared mappings may apply again.`))) {
         await runAction(async () => {
           await postRule("mappings/delete", ruleIdentity(rule));
           return "Mapping deleted. Future syncs will use the remaining rules.";
@@ -358,6 +358,6 @@ export function open(trigger, editor) {
   for(const field of ["[data-source]","[data-feature]"]) $(field).onchange = () => {offset=0; load();};
   $("[data-prev]").onclick = () => {offset=Math.max(0,offset-50);load();};
   $("[data-next]").onclick = () => {offset+=50;load();};
-  root.showModal();
+  window.CW?.MobileUI?.openDialog(root) || root.showModal();
   load();
 }

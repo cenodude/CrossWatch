@@ -36,7 +36,7 @@ async function fixture(t, theme='', width=1100, empty=false) {
       return route.fulfill({json:{ok:true}});
     }
     const css=['themes/tokens','css/base','crosswatch','css/layout','css/components','css/pages','css/page-theme','ui-shell','themes/flat','themes/original-coverage','js/modals/core/styles','fonts/material-symbols-rounded'];
-    return route.fulfill({contentType:'text/html',body:`<!doctype html><html${theme?` data-cw-theme="${theme}"`:''}><head><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(f=>`<link rel="stylesheet" href="/assets/${f}.css">`).join('')}<style>#page-settings{padding:24px;max-width:1000px;margin:auto}.cw-page-maintenance{display:block!important}#page-maintenance[hidden]{display:none}</style></head><body><main id="page-settings">${pane}</main><main id="page-maintenance" hidden></main><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/profile-select.js"></script><script type="module">
+    return route.fulfill({contentType:'text/html',body:`<!doctype html><html${theme?` data-cw-theme="${theme}"`:''}><head><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(f=>`<link rel="stylesheet" href="/assets/${f}.css">`).join('')}<style>#page-settings{padding:24px;max-width:1000px;margin:auto}.cw-page-maintenance{display:block!important}#page-maintenance[hidden]{display:none}</style></head><body><main id="page-settings">${pane}</main><main id="page-maintenance" hidden></main><script src="/assets/helpers/mobile-experience.js"></script><script src="/assets/helpers/dialog-focus.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/profile-select.js"></script><script type="module">
       import {ModalHost} from '/assets/js/modals/core/host.js';
       import cleanup from '/assets/js/modals/provider-cleanup/index.js';
       import support from '/assets/js/modals/support/index.js';
@@ -101,7 +101,7 @@ for(const theme of ['', 'flat-dark','flat-light'])for(const width of [1100,390])
     if(await page.getByRole('dialog').count())assert.equal(await page.getByRole('dialog').evaluate(n=>{const r=n.getBoundingClientRect();return r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;}),true);
     await page.screenshot({path:new URL(`${name}-${theme||'original'}-${width}.png`,folder).pathname.replace(/^\/(?=[A-Za-z]:)/,'')});
   };
-  assert.equal(await page.locator('.mt-tool').count(),4);
+  assert.equal(await page.locator('.mt-tool').count(),3);
   await screenshot('landing');
   await page.getByRole('button',{name:/^Provider cleanup/}).click();
   await page.locator('#ccc-provider option[value="CROSSWATCH"]').waitFor({state:'attached'});

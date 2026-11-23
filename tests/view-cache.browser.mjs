@@ -130,7 +130,7 @@ for (const direct of [false, true]) test(`${direct ? "Direct Collection" : "Hub 
     retainedCollection.querySelector('img').dispatchEvent(new Event('error'));
   });
   const unchangedCollection = page.waitForResponse(response => new URL(response.url()).pathname === '/api/profile/collection');
-  await page.evaluate(() => window.dispatchEvent(new CustomEvent('cw:view-updated', {detail:{url:'/api/profile/collection'}})));
+  await page.evaluate(() => (CW.ViewCache.discard(), window.dispatchEvent(new CustomEvent('cw:view-updated', {detail:{url:'/api/profile/collection'}}))));
   await unchangedCollection;
   await page.waitForTimeout(100);
   assert.equal(await page.evaluate(() => retainedCollection === document.querySelector('#profile-collection-grid').firstElementChild), true);
@@ -164,7 +164,7 @@ test("Tracker refreshes all loaded timeline pages without mixing revisions or mo
   await page.addInitScript(() => {
     localStorage.setItem("cw.tracker.view.v3", JSON.stringify({view:"history", byDay:true, viewSelectedAt:Date.now(), layouts:{history:"list"}}));
     const original = window.setTimeout;
-    window.setTimeout = (fn, delay, ...args) => original(fn, delay === 30000 ? 200 : delay, ...args);
+    window.setTimeout = (fn, delay, ...args) => original(fn, delay >= 290000 && delay <= 300000 ? 200 : delay, ...args);
   });
   const records = Array.from({length:201}, (_, index) => ({key:`movie:${index}`, type:"movie", title:`Movie ${index}`, date:"2026-11-08T12:00:00Z"}));
   const added = {key:"new", type:"movie", title:"Newly watched movie", date:"2026-11-09T12:00:00Z"};
@@ -572,4 +572,65 @@ for (const initial of ["failed", "empty", "summary-failed"]) test(`Tracker timel
   assert.equal(await page.locator('[data-trk-slot="main"]').getByText("The tracker could not be loaded. Try again in a moment.", {exact:true}).count(), 0);
   if (initial === "failed") assert.ok(queries.some(query => query.retry_view === "1"));
   if (initial === "summary-failed") assert.ok(summaryQueries.some(query => query.retry_view === "1"));
+});
+
+
+test("Fresh view reads survive tab switches without another request or spinner", async t => {
+  const browser = await chromium.launch({headless:true});
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.route("https://reuse.test/**", route => route.fulfill({contentType:"text/html", body:'<section id="host"></section>'}));
+  await page.goto("https://reuse.test/");
+  await page.clock.install();
+  await page.addScriptTag({path:"assets/helpers/view-cache.js"});
+  await page.evaluate(async () => {
+    window.reads = [];
+    window.updates = [];
+    window.statuses = [];
+    window.version = "1";
+    window.activeTab = "history";
+    CW.ViewCache.bindRefresh(document.querySelector("#host"), () => true);
+    addEventListener("cw:view-updated", event => updates.push(event.detail.data));
+    addEventListener("cw:view-status", event => statuses.push(event.detail));
+    window.openTab = (tab, options = {}) => {
+      activeTab = tab;
+      return CW.ViewCache.read(`/api/tracker/items?feature=${tab}`, async url => {
+        reads.push(url);
+        return {items:[version], _view:{ready:true,refreshing:false,version,revision:version}};
+      }, {maxAge:300000, interval:300000, cacheScope:"alice", active:() => activeTab === tab, ...options});
+    };
+    await openTab("history");
+    await openTab("ratings");
+  });
+  await page.clock.runFor(2000);
+  await page.evaluate(async () => {
+    window.loadingSeen = false;
+    new MutationObserver(() => { loadingSeen ||= document.querySelector("#host").hasAttribute("data-view-loading"); }).observe(document.querySelector("#host"), {attributes:true});
+    const data = await openTab("history");
+    data.items[0] = "mutated";
+    window.restored = await openTab("history");
+  });
+  assert.equal(await page.evaluate(() => reads.length), 2);
+  assert.equal(await page.evaluate(() => loadingSeen), false);
+  assert.deepEqual(await page.evaluate(() => restored.items), ["1"]);
+  assert.deepEqual(await page.evaluate(() => statuses.at(-1)), {url:"/api/tracker/items?feature=history", data:{ready:true,refreshing:false,version:"1",revision:"1"}});
+  assert.equal(await page.evaluate(() => statuses.length), 4);
+  await page.clock.runFor(297000);
+  assert.equal(await page.evaluate(() => reads.length), 2);
+  await page.evaluate(() => { version = "2"; });
+  await page.clock.runFor(1000);
+  assert.equal(await page.evaluate(() => reads.length), 3);
+  assert.deepEqual(await page.evaluate(() => updates.map(data => data.items)), [["2"]]);
+  await page.evaluate(async () => {
+    CW.ViewCache.retry("/api/tracker/items?feature=history");
+    await openTab("history");
+  });
+  assert.equal(await page.evaluate(() => reads.length), 4);
+  assert.match(await page.evaluate(() => reads.at(-1)), /retry_view=1/);
+  await page.evaluate(async () => { await openTab("history", {cacheScope:"bob"}); });
+  assert.equal(await page.evaluate(() => reads.length), 5);
+  await page.evaluate(async () => { CW.ViewCache.invalidate(); await openTab("history"); });
+  assert.equal(await page.evaluate(() => reads.length), 6);
+  await page.evaluate(async () => { CW.ViewCache.discard(); await openTab("history"); });
+  assert.equal(await page.evaluate(() => reads.length), 7);
 });

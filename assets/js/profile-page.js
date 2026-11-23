@@ -285,7 +285,7 @@
     if (viewCache && !opt.method && window.CW?.ViewCache?.supported(scoped)) {
       const host = cachedViewHost(scoped);
       window.CW.ViewCache.bindRefresh(host, candidate => cachedViewHost(candidate) === host);
-      return window.CW.ViewCache.read(scoped, next => api(next, {...fetchOptions, viewCache:false}, ms), {signal:opt.signal, interval:HUB_REFRESH_MS, active:() => !document.hidden && !!cachedViewHost(scoped)});
+      return window.CW.ViewCache.read(scoped, next => api(next, {...fetchOptions, viewCache:false}, ms), {signal:opt.signal, interval:HUB_REFRESH_MS, maxAge:HUB_REFRESH_MS, cacheScope:profileCacheKey("views"), active:() => !document.hidden && !!cachedViewHost(scoped)});
     }
     const controller = typeof AbortController === "function" ? new AbortController() : null;
     const timer = controller ? window.setTimeout(() => controller.abort("timeout"), ms) : 0;
@@ -314,6 +314,21 @@
     const scope = JSON.stringify([auth?.user?.id || auth?.user?.username || shell?.dataset?.username, auth?.role || document.documentElement.dataset.cwRole, auth?.permissions, auth?.profileId || shell?.dataset?.profileId, viewAsState.id, window.CW?.OverviewProfile?.filter]);
     return `cw.profile.${scope}.${name}.v2`;
   };
+  const mobileStateScopes = new WeakMap();
+  function restoreMobileState(name, state, fields) {
+    const ui = window.CW?.MobileUI;
+    if (!ui?.mobile()) return false;
+    const key = profileCacheKey(`navigation.${name}`);
+    if (mobileStateScopes.get(state) === key) return false;
+    mobileStateScopes.set(state, key);
+    const saved = ui.recall(key);
+    if (!saved) return false;
+    for (const field of fields) if (typeof saved[field] === typeof state[field]) state[field] = saved[field];
+    return true;
+  }
+  function rememberMobileState(name, state, fields) {
+    if (window.CW?.MobileUI?.mobile()) window.CW.MobileUI.remember(profileCacheKey(`navigation.${name}`), Object.fromEntries(fields.map(field => [field, state[field]])));
+  }
   const readCache = (key, ttl = OVERVIEW_CACHE_TTL_MS) => {
     try {
       const entry = JSON.parse(localStorage.getItem(key) || "null");
@@ -327,6 +342,8 @@
     try { localStorage.setItem(key, JSON.stringify({ t: Date.now(), payload })); } catch {}
   };
   function invalidateLists() {
+    window.CW?.ViewCache?.discard();
+    overviewScope = "";
     try { sessionStorage.removeItem("cw.hub.lists.v1"); sessionStorage.removeItem("cw.tracker.lists.v1"); } catch {}
   }
   const listPaints = new WeakMap();
@@ -567,7 +584,7 @@
   const RECORD_SELECTION_MAX = 1000;
   const selectionFields = (item) => {
     const out = { key: String(item?.key || ""), aliases: Array.isArray(item?.aliases) ? item.aliases : [], present: Array.isArray(item?.present) ? item.present : [] };
-    for (const field of ["type", "title", "year", "season", "episode", "ids", "show_ids"]) {
+    for (const field of ["id", "type", "title", "year", "season", "episode", "ids", "show_ids"]) {
       const value = item?.[field];
       if (value != null && value !== "") out[field] = value;
     }
@@ -1425,6 +1442,8 @@
             const previous = hubRevisions.get(scope);
             hubRevisions.set(scope, revision);
             if (previous !== undefined && previous !== revision) {
+              window.CW?.ViewCache?.discard();
+              overviewScope = "";
               playbackPanel.invalidate();
               hubEventPending = true;
               setTimeout(checkHubFreshness, 500);
@@ -1576,6 +1595,7 @@
   let overviewLoadingTimer = null;
   let overviewProgressResume = null;
   let overviewStartedAt = 0;
+  let overviewScope = "";
   let overviewHeroSignature = "";
 
   function renderOverview(payload = {}) {
@@ -1604,13 +1624,16 @@
     if (payload.wall) renderOverviewCards($("#profile-watchlist"), watchlistItems.slice(0, 4), watchlistCard, "No watchlist items yet.");
   }
 
-  async function loadOverview({force = false} = {}) {
+  async function loadOverview({force = false, reuse = false} = {}) {
+    const cacheKey = profileCacheKey(mobilePaging.matches ? "overview.mobile" : "overview");
+    const sources = activeHubSources();
+    if (reuse && !force && overviewPayload && overviewScope === cacheKey && Date.now() - overviewStartedAt < HUB_REFRESH_MS && sources.length && sources.every(entry => entry.checked && !entry.errors.length && !entry.refreshing && !entry.pending)) return;
     void loadAiring();
     clearTimeout(overviewLoadingTimer);
     overviewStartedAt = Date.now();
     overviewProgressResume = null;
     const request = ++overviewRequest;
-    const cacheKey = profileCacheKey(mobilePaging.matches ? "overview.mobile" : "overview");
+    overviewScope = cacheKey;
     const cached = readCache(cacheKey, SNAPSHOT_RETENTION_MS);
     if (cached) renderOverview(cached);
     else paintOverviewSkeletons();
@@ -2587,7 +2610,16 @@
 
   async function loadCollection({ reset = false, month = "", quiet = false } = {}) {
     if (collectionState.loading) return;
+    const fields = ['type', 'provider', 'search', 'sort', 'shelf', 'shelfFilter', 'page'];
+    if (restoreMobileState('collection', collectionState, fields)) {
+      reset = false;
+      const search = $('#profile-collection-search');
+      if (search) search.value = collectionState.search;
+      const sort = $('#profile-collection-sort');
+      if (sort) sort.value = collectionState.sort;
+    }
     if (reset) collectionState.page = 1;
+    rememberMobileState('collection', collectionState, fields);
     const skeletonGrid = $("#profile-collection-grid");
     collectionState.loading = true;
     const params = new URLSearchParams({
@@ -2773,7 +2805,9 @@
       if (shelfViewOn()) paintCollectionItems();
     });
     window.addEventListener("cw:shelf-changed", (event) => {
-      if (event.detail?.loaded || !collectionState.loaded) return;
+      if (event.detail?.loaded) return;
+      invalidateLists();
+      if (!collectionState.loaded) return;
       collectionState.loaded = false;
       if ($("#profile-panel-collection")?.classList.contains("active")) void loadCollection({ quiet: true });
     });
@@ -3506,7 +3540,7 @@
       part("note-detail").textContent = note?.detail || "";
       part("error").textContent = "";
       part("result").innerHTML = "";
-      if (!dialog.open) dialog.showModal();
+      if (!dialog.open) if (!window.CW?.MobileUI?.openDialog(dialog)) dialog.showModal();
       Promise.resolve(providerInstanceLabels.load()).then(() => {
         if (!state.busy && dialog.open) render();
       }).catch(() => {});
@@ -3552,6 +3586,7 @@
       items: [],
       total: 0,
       selected: new Map(),
+      removingLog: false,
     };
     setupResponsivePaging(state, prefs);
     let scoresSignature = "";
@@ -3704,6 +3739,8 @@
       list?.classList.toggle("has-selection", state.selected.size > 0);
       const bar = q("bulk");
       if (!bar) return;
+      const remove = bar.querySelector("[data-timeline-remove]");
+      if (remove) remove.disabled = state.removingLog;
       if (!selectable()) {
         state.selected.clear();
         bar.hidden = true;
@@ -3743,8 +3780,34 @@
       syncSelection();
     }
 
+    async function removeScrobbleLog(entries) {
+      if (!selectable() || state.removingLog || state.source !== "scrobble") return;
+      const ids = [...new Set(entries.map(entry => entry.id).filter(Boolean))];
+      if (!ids.length) return;
+      const label = ids.length === 1 ? "this scrobble log entry" : `these ${count(ids.length)} scrobble log entries`;
+      const message = 'This only clears the local scrobble log. Watch history on your providers, including CW Tracker, stays unchanged.';
+      const confirmed = window.CW?.MobileUI?.mobile()
+        ? await window.CW.MobileUI.confirm({title:`Delete ${label}?`, message, confirmLabel:'Delete'})
+        : window.confirm(`Delete ${label}?\n\n${message}`);
+      if (!confirmed) return;
+      state.removingLog = true;
+      syncSelection();
+      try {
+        const result = await post("/api/profile/history/scrobbles/remove", {ids});
+        for (const [key, entry] of state.selected) if (ids.includes(entry.id)) state.selected.delete(key);
+        await load({quiet:true});
+        toast(result.removed ? `Deleted ${count(result.removed)} scrobble log ${result.removed === 1 ? "entry" : "entries"}` : "These log entries have already been removed");
+      } catch (error) {
+        toast(error.message || "Could not delete scrobble log entries", true);
+      } finally {
+        state.removingLog = false;
+        syncSelection();
+      }
+    }
+
     function removeSelected() {
       if (!selectable() || !state.selected.size) return;
+      if (state.source === "scrobble") return void removeScrobbleLog([...state.selected.values()]);
       const keys = new Set(state.selected.keys());
       recordRemoval.open({
         kind: meta().removeKind,
@@ -3944,6 +4007,11 @@
     function syncSourceUi() {
       const source = meta();
       const host = panel();
+      const remove = q("bulk")?.querySelector("[data-timeline-remove]");
+      if (remove) {
+        remove.lastChild.textContent = state.source === "scrobble" ? "Delete log" : "Remove";
+        remove.setAttribute("aria-label", state.source === "scrobble" ? "Delete selected scrobble log entries" : "Remove selected records");
+      }
       if (host) {
         host.dataset.source = state.source;
         host.dataset.coverage = source.coverage ? "on" : "off";
@@ -3998,6 +4066,7 @@
 
     async function load({ reset = false, month = "", scroll = false, quiet = false } = {}) {
       if (reset) state.page = 1;
+      rememberMobileState(cfg.key, state, ['source', 'type', 'provider', 'coverage', 'rating', 'search', 'page']);
       const seq = ++state.seq;
       const host = q("list");
       const params = baseParams();
@@ -4079,13 +4148,19 @@
 
     function open({ fromHash = false } = {}) {
       if (cfg.selectable) void providerInstanceLabels.load();
+      const restored = restoreMobileState(cfg.key, state, ['source', 'type', 'provider', 'coverage', 'rating', 'search', 'page']);
+      if (!sourceKeys.includes(state.source)) state.source = sourceKeys[0];
+      if (restored) {
+        if (q('search')) q('search').value = state.search;
+        if (q('coverage')) q('coverage').value = state.coverage;
+      }
       const wanted = fromHash ? sourceFromHash() : "";
-      if (wanted && (wanted !== state.source || !state.loaded)) {
+      if (wanted && wanted !== state.source) {
         setSource(wanted);
       } else {
         syncSourceUi();
         writeHash();
-        if (!state.loaded) void load({ reset: true });
+        if (!state.loaded) void load({ reset: !restored });
         else void load({quiet:true});
       }
     }
@@ -4105,9 +4180,11 @@
           event.preventDefault();
           event.stopPropagation();
           const card = routeActions.closest("[data-timeline-key]");
+          const item = state.items.find(row => selectionKey(row) === card?.dataset.timelineKey);
           openCardActions(routeActions, [
             { label: "View media details", icon: "info", run: () => card?.querySelector("[data-profile-poster-key]")?.click() },
             ...(routeActions.hasAttribute("data-hub-route-actions") ? [{ label: "Open synced history", icon: "history", run: () => setSource("synced") }] : []),
+            ...(state.source === "scrobble" && selectable() && item?.id ? [{ label: "Delete log entry", icon: "delete", danger: true, disabled:state.removingLog, run: () => void removeScrobbleLog([item]) }] : []),
           ]);
           return;
         }
@@ -4872,6 +4949,8 @@
     }
 
     async function load({ force = false, scroll = false, month = "", background = false } = {}) {
+      rememberMobileState('playback', state.filters, Object.keys(state.filters));
+      rememberMobileState('playback-page', state, ['page']);
       const revision = state.revision;
       clearTimeout(state.loadingTimer);
       const seq = ++state.seq;
@@ -5037,7 +5116,7 @@
         value.addEventListener("input", fromValue);
         form.addEventListener("submit", onSubmit);
         dialog.addEventListener("close", onClose);
-        dialog.showModal();
+        if (!window.CW?.MobileUI?.openDialog(dialog)) dialog.showModal();
         value.focus();
         value.select?.();
       });
@@ -5069,7 +5148,11 @@
         } else if (confirmFirst) {
           const skipped = items.flatMap(recordsOf).length - payloads.length;
           const note = skipped ? ` ${skipped} unsupported record${skipped === 1 ? "" : "s"} will be skipped.` : "";
-          if (!window.confirm(`${actionTitle(action)} for ${payloads.length} provider record${payloads.length === 1 ? "" : "s"}?${note}`)) return;
+          const title = `${actionTitle(action)} for ${payloads.length} provider record${payloads.length === 1 ? "" : "s"}?`;
+          const confirmed = window.CW?.MobileUI?.mobile()
+            ? await window.CW.MobileUI.confirm({title, message:note.trim(), confirmLabel:actionTitle(action), danger:action === 'remove_progress'})
+            : window.confirm(`${title}${note}`);
+          if (!confirmed) return;
         }
         state.pendingAction.sent = true;
         syncActionUI();
@@ -5160,7 +5243,7 @@
       submit.disabled = true;
       settingsProfiles = [];
       list.innerHTML = `<div class="cw-tl-dialog-note">Loading provider profiles...</div>`;
-      dialog.showModal();
+      if (!window.CW?.MobileUI?.openDialog(dialog)) dialog.showModal();
       const data = await request("/api/playback_progress/settings");
       if (!dialog.open) return;
       if (data.ok === false) {
@@ -5212,6 +5295,12 @@
     }
 
     function open() {
+      if (restoreMobileState('playback', state.filters, Object.keys(state.filters))) {
+        restoreMobileState('playback-page', state, ['page']);
+        for (const [key, control] of Object.entries({...selects(), search:q('search')})) if (control) control.value = state.filters[key];
+        enhanceSelects();
+        syncFilterChrome();
+      }
       renderSync();
       if (!state.busy && (!state.loaded || state.loadedRevision !== state.revision || state.loading.length || Date.now() - state.syncedAt >= HUB_REFRESH_MS)) void load({background:state.loaded});
       if (!state.clock) state.clock = window.setInterval(renderSync, 30000);
@@ -5410,6 +5499,17 @@
 
   function wireTabs() {
     const tabs = document.querySelector('.cw-profile-tabs');
+    const mobileUI = window.CW?.MobileUI;
+    let currentTab = '';
+    let restoring = false;
+    const positions = mobileUI?.recall(profileCacheKey('positions')) || {};
+    const rememberPosition = () => {
+      if (!currentTab || restoring || !mobileUI?.mobile()) return;
+      positions[currentTab] = window.scrollY;
+      mobileUI.remember(profileCacheKey('positions'), positions);
+    };
+    window.addEventListener('pagehide', rememberPosition);
+    window.addEventListener('scroll', rememberPosition, {passive:true});
     const header = document.querySelector('body > header');
     if (header) new ResizeObserver(() => document.body.style.setProperty('--cw-mobile-header-height', `${header.getBoundingClientRect().height}px`)).observe(header);
     const tabFromHash = () => {
@@ -5423,6 +5523,12 @@
       if (!btn) return false;
       const previous = document.querySelector(".cw-profile-panel.active");
       const next = document.querySelector(`#profile-panel-${key}`);
+      if (key !== currentTab && mobileUI?.mobile()) {
+        rememberPosition();
+        currentTab = key;
+        restoring = true;
+        mobileUI.restoreScroll(positions[key] || 0, () => currentTab === key, () => { if (currentTab === key) restoring = false; });
+      }
       if (previous && next && previous !== next) next.style.minHeight = `${Math.max(0, window.innerHeight - previous.getBoundingClientRect().top)}px`;
       document.querySelectorAll("[data-profile-tab]").forEach((tab) => tab.classList.toggle("active", tab === btn));
       document.querySelectorAll(".cw-profile-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `profile-panel-${key}`));
@@ -5431,9 +5537,9 @@
       if (mobilePaging.matches && tabs) tabs.scrollLeft = Math.max(0, btn.offsetLeft - tabs.offsetLeft - 12);
       if (key === "overview") {
         $("#profile-hero > [data-view-status]")?.remove();
-        if (!overviewPayload || overviewPagingDirty || Date.now() - overviewStartedAt >= 60000) void loadProfileActivity({preserve:true}).catch(() => {});
+        if (!overviewPayload || overviewPagingDirty || Date.now() - overviewStartedAt >= HUB_REFRESH_MS) void loadProfileActivity({preserve:true}).catch(() => {});
         overviewPagingDirty = false;
-        void loadOverview().catch(() => {});
+        void loadOverview({reuse:true}).catch(() => {});
       }
       if (key === "overview" && overviewProgressResume) { clearTimeout(overviewLoadingTimer); overviewProgressResume(); }
       if (key !== "overview") void loadHeroPreview().catch(() => {});
@@ -6138,7 +6244,7 @@
         }
         relocateMenus(dialog);
         sync();
-        dialog.showModal();
+        if (!window.CW?.MobileUI?.openDialog(dialog)) dialog.showModal();
         document.documentElement.classList.add("cw-hub-sheet-open");
       });
       dialog.querySelector("header button").addEventListener("click", close);

@@ -461,7 +461,7 @@ export default {
           .map((r) => `  ${form.match_provider.toUpperCase()} S${r.match_season} E${r.episode_from}-${r.episode_to}  ->  SIMKL ${r.target_id}  (${r.note})`)
           .join("\n");
         const skipped = (plan.skipped || []).length ? `\n\nSkipped ${plan.skipped.length} unaired entr${plan.skipped.length === 1 ? "y" : "ies"}.` : "";
-        if (!window.confirm(`Add ${planned.length} rules covering ${plan.total_episodes} episodes?\n\n${summary}${skipped}`)) {
+        if (!(await (window.CW?.MobileUI?.ask || window.confirm)(`Add ${planned.length} rules covering ${plan.total_episodes} episodes?\n\n${summary}${skipped}`))) {
           setFindStatus("Nothing added.");
           return;
         }
@@ -578,7 +578,7 @@ export default {
       const file = ev.target.files?.[0];
       if (!file) return;
       const mode = el("ao-import-mode").value;
-      if (mode === "replace" && rows.length && !window.confirm(`Replace all ${rows.length} existing rules with the contents of ${file.name}?`)) {
+      if (mode === "replace" && rows.length && !(await (window.CW?.MobileUI?.ask || window.confirm)(`Replace all ${rows.length} existing rules with the contents of ${file.name}?`))) {
         el("ao-file").value = "";
         return;
       }
@@ -624,7 +624,7 @@ export default {
       setBusy(true);
       try {
         if (btn.dataset.act === "delete") {
-          if (!window.confirm(`Delete the rule for ${row.title || row.match_id}?`)) return;
+          if (!(await (window.CW?.MobileUI?.ask || window.confirm)(`Delete the rule for ${row.title || row.match_id}?`))) return;
           await apiJson(`${API}/${encodeURIComponent(row.id)}`, { method: "DELETE" });
           if (editingId === row.id) resetForm();
           setStatus("Rule deleted.", "ok");

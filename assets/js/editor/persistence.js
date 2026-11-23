@@ -133,7 +133,7 @@
     try {
       const { items, payload } = buildSaveData(ctx);
 
-      if (!confirmPlaylistRemovals(ctx, items)) {
+      if (!await confirmPlaylistRemovals(ctx, items)) {
         state.saving = false;
         ctx.setTag?.("warn", "Unsaved changes");
         ctx.setStatus?.("Save cancelled");

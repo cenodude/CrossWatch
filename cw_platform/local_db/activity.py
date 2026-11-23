@@ -187,6 +187,20 @@ def list_events(
     return [_row_item(row, ids_by_event) for row in rows]
 
 
+def remove_events(base_path: str | Path | None, event_ids: list[str]) -> int:
+    conn = get_conn(base_path)
+    if conn is None or not event_ids:
+        return 0
+    removed = 0
+    with conn:
+        for start in range(0, len(event_ids), 400):
+            batch = event_ids[start:start + 400]
+            placeholders = ",".join("?" for _ in batch)
+            cur = conn.execute(f"DELETE FROM activity_events WHERE kind IN ('scrobble','history_sync') AND event_id IN ({placeholders})", batch)
+            removed += max(0, cur.rowcount)
+    return removed
+
+
 def clear_events(base_path: str | Path | None, *, kind: str | None = None) -> dict[str, int | bool]:
     conn = get_conn(base_path)
     if conn is None:

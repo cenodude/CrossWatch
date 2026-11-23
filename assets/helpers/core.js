@@ -852,7 +852,7 @@
 
   function flashCopy(btn, ok, msg) {
     if (!btn) {
-      if (!ok) alert(msg || "Copy failed");
+      if (!ok) (window.CW?.MobileUI?.notice || window.alert)(msg || "Copy failed");
       return;
     }
     const previous = btn.textContent;
@@ -1025,6 +1025,7 @@
       const writeAllowed = perms.write === true;
       if (!(tab === "main" && dashboardAllowed) && !(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export"].includes(tab) && writeAllowed) && !(["settings", "tracker"].includes(tab) && writeAllowed && byId(`page-${tab}`))) tab = allowedRouteTab(tab);
     }
+    if (state.currentTab !== tab && window.CW?.MobileUI?.mobile()) await window.CW.MobileUI.beforeNavigate();
     writeRouteHash(tab);
 
     if (state.currentTab === tab && !(tab === "editor" && byId("page-editor")?.querySelector("[data-editor-load-error]"))) {
@@ -2173,7 +2174,7 @@
       if (typeof API.Pairs?.delete === "function") await API.Pairs.delete(id);
       else {
         const res = await fetch(`/api/pairs/${encodeURIComponent(id)}`, { method: "DELETE" });
-        if (res.status === 409) window.alert("A sync or database maintenance task is running. Wait for it to finish, then delete the pair again.");
+        if (res.status === 409) (window.CW?.MobileUI?.notice || window.alert)("A sync or database maintenance task is running. Wait for it to finish, then delete the pair again.");
         if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
       }
       _invalidatePairsCache();

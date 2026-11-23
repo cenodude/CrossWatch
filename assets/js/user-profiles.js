@@ -1074,6 +1074,7 @@
       host.className = "cw-upw-host";
       d.body.appendChild(host);
       attach(host);
+      if (window.CW?.MobileUI?.mobile()) host.mobileLayer = window.CW.MobileUI.overlay(host, closeModal);
     }
     d.documentElement.classList.add("cw-upw-lock");
     return host;
@@ -1087,8 +1088,9 @@
   }
 
   async function openProfile(id) {
-    ensureFloatingHost();
+    const host = ensureFloatingHost();
     await load(true);
+    if (!host.isConnected) return;
     modalProfileId = txt(id);
     modalDraft = makeDraft(modalProfile());
     resetWizard();
@@ -1120,7 +1122,11 @@
     modalDraft = null;
     modalDone = null;
     shownPaneKey = "";
-    $(MODAL_HOST_ID)?.remove();
+    const host = $(MODAL_HOST_ID);
+    const layer = host?.mobileLayer;
+    if (host) host.mobileLayer = null;
+    void layer?.dismiss();
+    host?.remove();
     d.documentElement.classList.remove("cw-upw-lock");
     render();
   }

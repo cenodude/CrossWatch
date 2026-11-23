@@ -176,7 +176,7 @@
       const details=el('details',{'data-path':b.path,open:expanded.has(b.path)},[el('summary',{},[el('span',{text:`${bytes(b.size)} \u00b7 ${b.encrypted?'Encrypted':'ZIP'} \u00b7 Details`})]),el('div',{class:'br-backup-details'},[
         text(b.path),text(`${b.encrypted?'Encrypted archive':'ZIP archive'} \u00b7 ${job?.remote_status==='verified'?'Destination copy verified':'Local copy'} \u00b7 ${b.trigger==='scheduler'?'Automatic retention':'Kept until deleted'}`),actions([
           button('Download',()=>{window.location.href=`/api/backups/download?path=${encodeURIComponent(b.path)}`;},false,true),
-          button('Delete',()=>{if(window.confirm('Delete this local backup? Destination copies are kept separately.'))perform(async()=>{await api('delete',{path:b.path});await refreshList();});})])])]);
+          button('Delete',async ()=>{if((await (window.CW?.MobileUI?.ask || window.confirm)('Delete this local backup? Destination copies are kept separately.')))perform(async()=>{await api('delete',{path:b.path});await refreshList();});})])])]);
       const created=b.created_at||b.mtime,when=created?new Date(typeof created==='number'?created*1000:created):null;
       const labels=Array.isArray(b.components)?Object.keys(names).filter(key=>b.components.includes(key)).map(key=>shortNames[key]):[legacy[b.scope]||'Imported archive'];
       slot.append(el('article',{class:'br-history-row'},[el('div',{class:'br-history-main'},[

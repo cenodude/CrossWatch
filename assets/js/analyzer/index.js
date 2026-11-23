@@ -232,6 +232,10 @@ const Analyzer = {
     const lifetime = new AbortController();
     $("#an-mobile-filters").addEventListener("click", event => {
       const button = event.currentTarget;
+      if (window.CW?.MobileUI?.mobile()) {
+        window.CW.MobileUI.sheet($("#an-filter-options"), {trigger:button, title:'Filters and sorting'});
+        return;
+      }
       button.setAttribute("aria-expanded", String(button.getAttribute("aria-expanded") !== "true"));
     });
     let analysisController, systemController, pageController, detailController, searchTimer;
@@ -242,6 +246,19 @@ const Analyzer = {
     let analysisStarted = Date.now(), systemStarted = Date.now();
     let allTotal = null, selected = null;
     let listScroll = 0, detailIndex = 0;
+    let detailLayer = null;
+    const closeMobileDetail = () => {
+      detailController?.abort();
+      selected = null;
+      const layer = detailLayer;
+      detailLayer = null;
+      void layer?.dismiss();
+      renderList();
+      if (mobile()) {
+        window.scrollTo({top:listScroll, behavior:'instant'});
+        $(`.an-item-button[data-row="${detailIndex}"]`)?.focus({preventScroll:true});
+      }
+    };
     const mobile = () => window.matchMedia("(max-width:760px)").matches;
     let mappingWorkspace = null, mappingController = null, savedRow = null, releasing = false;
     let scopeSequence = 0;
@@ -251,6 +268,10 @@ const Analyzer = {
     let missingIndex = new Map(), blockedIndex = new Map();
     const detailCache = new Map();
     const cleanup = () => {
+      root.querySelector('dialog.cw-page-panel-sheet')?.close();
+      const layer = detailLayer;
+      detailLayer = null;
+      void layer?.dismiss();
       lifetime.abort();
       mappingController?.abort();
       mappingWorkspace?.destroy?.();
@@ -386,6 +407,11 @@ const Analyzer = {
       renderView();
       pagination();
       $("#an-detail").hidden = isDiagnostic() || !selected || !currentRows.length;
+      if ($("#an-detail").hidden && detailLayer) {
+        const layer = detailLayer;
+        detailLayer = null;
+        void layer.dismiss();
+      }
       $("#an-workspace").classList.toggle("has-detail", !$("#an-detail").hidden);
       if (pageLoading) {
         $("#an-list").innerHTML = emptyState("Loading items", "Reading the selected page of saved data…", "progress_activity");
@@ -693,7 +719,7 @@ const Analyzer = {
       if (!rule) return;
       const scope = rule.pair_id ? "this pair" : "all pairs using this source instance";
       const name = rule.corrected?.title || rule.key;
-      if (!window.confirm(`Remove the saved mapping for ${name} from ${scope}? Its automatic original-item block will also be removed. Other mappings may apply again. This does not undo synced media changes.`)) return;
+      if (!(await (window.CW?.MobileUI?.ask || window.confirm)(`Remove the saved mapping for ${name} from ${scope}? Its automatic original-item block will also be removed. Other mappings may apply again. This does not undo synced media changes.`))) return;
       const notice = $("#an-mapping-notice");
       releasing = true; button.disabled = true;
       try {
@@ -717,7 +743,7 @@ const Analyzer = {
       const notice = $("#an-mapping-notice");
       notice.hidden = false;
       if (!pairId) { notice.textContent = "Select a sync pair before releasing this item."; return; }
-      if (rule && row.block?.mapping_key && !confirm("Remove the saved mapping for this item?\n\nThis undoes the correction and lifts the block on the original item.")) { notice.hidden = true; return; }
+      if (rule && row.block?.mapping_key && !(await (window.CW?.MobileUI?.ask || window.confirm)("Remove the saved mapping for this item?\n\nThis undoes the correction and lifts the block on the original item."))) { notice.hidden = true; return; }
       releasing = true;
       button.disabled = true;
       notice.textContent = "Releasing…";
@@ -793,6 +819,7 @@ const Analyzer = {
         renderList();
         showDetail(selected);
         if (mobile()) {
+          detailLayer ||= window.CW?.MobileUI?.layer(closeMobileDetail);
           $("#an-detail").scrollIntoView({block:"start", behavior:"instant"});
           $("#an-detail").focus({preventScroll:true});
         }
@@ -805,11 +832,7 @@ const Analyzer = {
       else if (button.id === "an-run") { pairs.length ? analyzeItems() : loadScope(); analyzeSystem(true); }
       else if (button.id === "an-retry-detail" && selected) showDetail(selected);
       else if (button.id === "an-close-detail") {
-        detailController?.abort(); selected = null; renderList();
-        if (mobile()) {
-          window.scrollTo({top:listScroll, behavior:"instant"});
-          $(`.an-item-button[data-row="${detailIndex}"]`)?.focus({preventScroll:true});
-        }
+        closeMobileDetail();
       }
       else if (button.id === "an-clear") {
         $("#an-search").value = "";
