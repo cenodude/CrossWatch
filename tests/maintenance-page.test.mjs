@@ -47,8 +47,50 @@ test('saved history is bounded and validated, and account keys stay separate',()
   assert.equal(cleaned[0].at,105);
   assert.equal(cleaned[99].at,6);
   assert.equal(ctx.clean({}).length,0);
+  assert.equal(ctx.clean([{key:'cache',status:'success',at:1,jobId:'job-1'}])[0].jobId,'job-1');
+  assert.equal(ctx.clean([{key:'cache',status:'success',at:1,jobId:{}}])[0].jobId,undefined);
   assert.notEqual(ctx.key({user:{id:'a'}}),ctx.key({user:{id:'b'}}));
   assert.equal(ctx.key({user:{id:'a',username:'old'}}),ctx.key({user:{id:'a',username:'new'}}));
+});
+
+test('legacy job history gains an ID without merging distinct runs',()=>{
+  for (const delay of [0,850,5000]) {
+    const at=1795269602500;
+    const legacy={key:'database-health',status:'success',at:at+delay,batch:false};
+    const other=[
+      {...legacy,at:at-2000},
+      {...legacy,status:'issues'},
+      {...legacy,key:'playing'},
+      {...legacy,jobId:'another-job'},
+      {...legacy,batch:true},
+    ];
+    let saved=JSON.stringify([legacy,...other]);
+    const context={entries:[],results:new Map(),storageKey:'history',Date,
+      localStorage:{getItem:()=>saved,setItem:(_,value)=>{saved=value;}}};
+    vm.runInNewContext(catalog+source.slice(source.indexOf('    function saveResult('),source.indexOf('    function updateRows(')),context);
+    for(let visit=0;visit<2;visit++) {
+      context.saveResult('database-health','success',{jobId:'existing-job',at});
+      const entries=JSON.parse(saved);
+      assert.equal(entries.length,6);
+      assert.deepEqual(entries.find(entry=>entry.jobId==='existing-job'),{key:'database-health',status:'success',at,batch:false,jobId:'existing-job'});
+      for(const entry of other) assert.ok(entries.some(item=>JSON.stringify(item)===JSON.stringify(entry)));
+    }
+  }
+});
+
+test('legacy history is preserved when the job match is ambiguous or outside the completion window',()=>{
+  const at=1795269602500;
+  for(const times of [[at+200,at+800],[at-200],[at+5001]]) {
+    const original=times.map(time=>({key:'database-health',status:'success',at:time,batch:false}));
+    let saved=JSON.stringify(original);
+    const context={entries:[],results:new Map(),storageKey:'history',Date,
+      localStorage:{getItem:()=>saved,setItem:(_,value)=>{saved=value;}}};
+    vm.runInNewContext(catalog+source.slice(source.indexOf('    function saveResult('),source.indexOf('    function updateRows(')),context);
+    context.saveResult('database-health','success',{jobId:'new-job',at});
+    const entries=JSON.parse(saved);
+    assert.equal(entries.length,original.length+1);
+    assert.deepEqual(entries.filter(entry=>!entry.jobId).sort((a,b)=>a.at-b.at),original);
+  }
 });
 
 test('managed users cannot open Maintenance even with write permission',()=>{
@@ -119,7 +161,7 @@ test('unhealthy diagnostics show issues and failed requests release the operatio
 
 test('maintenance polling continues beyond the old request deadline',async()=>{
   let polls=0, elapsed=0;
-  const context={window:{setTimeout:fn=>{elapsed+=1000;fn();}},setStatus(){},
+  const context={window:{setTimeout:fn=>{elapsed+=1000;fn();}},setStatus(){},recordJobResult(){},
     fjson:async()=>({id:'job',action:'events-optimize',state:++polls>60?'completed':'running',result:{ok:true}})};
   vm.runInNewContext(source.slice(source.indexOf('    async function followJob('),source.indexOf('    async function runOp(')),context);
   const result=await context.followJob({id:'job',action:'events-optimize',state:'queued'});
@@ -129,17 +171,34 @@ test('maintenance polling continues beyond the old request deadline',async()=>{
 
 test('refresh reconnects to maintenance and restart reports interruption',async()=>{
   const messages=[],locks=[];
-  let state='running';
-  const context={window:{setTimeout:fn=>fn()},setStatus:message=>messages.push(message),
+  let state='running', outcome='completed';
+  const context={window:{setTimeout:fn=>fn()},setStatus:message=>messages.push(message),recordJobResult(){},
     setOperationBusy:value=>locks.push(value),eventsReceipt:()=>'Optimization completed',databaseReceipt:()=>null,
-    fjson:async()=>{const current=state;state='completed';return {id:'job',action:'events-optimize',state:current,result:{ok:current!=='interrupted',error:'server_restarted'}};}};
+    fjson:async()=>{const current=state;state=outcome;return {id:'job',action:'events-optimize',state:current,result:{ok:current!=='interrupted',error:'server_restarted'}};}};
   vm.runInNewContext(source.slice(source.indexOf('    async function followJob('),source.indexOf('    async function runOp(')),context);
   await context.resumeJob();
   assert.equal(messages.at(-1),'Optimization completed');
   assert.deepEqual(locks,[true,false]);
-  state='interrupted';
+  state='running';
+  outcome='interrupted';
   await context.resumeJob();
   assert.match(messages.at(-1),/server_restarted/);
+});
+
+test('opening maintenance does not replay completed jobs or announce a new result',async()=>{
+  for (const state of ['idle','completed']) {
+    const requests=[],messages=[],events=[],locks=[];
+    const context={window:{dispatchEvent:event=>events.push(event)},CustomEvent:class {},
+      setStatus:message=>messages.push(message),setOperationBusy:value=>locks.push(value),recordJobResult(){},
+      eventsReceipt:()=>null,databaseReceipt:()=>null,
+      fjson:async url=>{requests.push(url);return {id:'old-job',action:'state-file',state,started_at:1,result:{ok:state==='completed'}};}};
+    vm.runInNewContext(source.slice(source.indexOf('    async function followJob('),source.indexOf('    async function runOp(')),context);
+    await context.resumeJob();
+    assert.deepEqual(requests,['/api/maintenance/jobs/current']);
+    assert.deepEqual(messages,[],state);
+    assert.deepEqual(events,[],state);
+    assert.deepEqual(locks,[true,false]);
+  }
 });
 
 test('confirmation holds the operation lock against duplicate requests',async()=>{

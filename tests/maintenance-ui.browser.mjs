@@ -326,14 +326,144 @@ test('storage summary follows an automatically selected non-default Tracker inst
 });
 
 test('resumed health checks keep issues visible as an error result',async t=>{
+  let reads=0;
   const {page}=await fixture(t,'',390,false,async(route,url)=>{
     if(url.pathname!=='/api/maintenance/jobs/current')return false;
-    await route.fulfill({json:{id:'health-job',action:'database-health',state:'completed',result:{ok:true,healthy:false,integrity:'failed'}}});
+    await route.fulfill({json:{id:'health-job',action:'database-health',state:++reads===1?'running':'completed',result:{ok:true,healthy:false,integrity:'failed'}}});
     return true;
   });
   await page.evaluate(()=>window.openMaintenance());
   await page.locator('#cxm-status').getByText(/issues found/).waitFor();
   assert.equal(await page.locator('#cxm-status').evaluate(n=>n.classList.contains('err')),true);
+});
+
+test('opening maintenance shows dated history without replaying completed jobs or writing',async t=>{
+  const {page,requests}=await fixture(t,'',390,false,async(route,url)=>{
+    if(url.pathname!=='/api/maintenance/jobs/current')return false;
+    await route.fulfill({json:{id:'old-job',action:'database-health',state:'completed',started_at:1,result:{ok:true}}});
+    return true;
+  });
+  const at=Date.UTC(2026,10,21,14,8,3);
+  await page.evaluate(at=>{
+    localStorage.setItem('cw.maintenance.history.v1:admin',JSON.stringify([
+      {key:'playing',status:'success',at},
+      {key:'database-health',status:'success',at:at-1000},
+    ]));
+    window.openMaintenance();
+  },at);
+  await page.waitForFunction(()=>!document.querySelector('#cxm-cache-count').textContent.includes('not loaded'));
+  assert.equal(await page.locator('#cxm-status').isHidden(),true);
+  const date=await page.evaluate(at=>new Date(at).toLocaleString(),at);
+  assert.equal(await page.locator('[data-pane="quick"] [data-op="playing"] .task-status').textContent(),`Last run: Completed · ${date}`);
+  const checkDate=await page.evaluate(at=>new Date(at-1000).toLocaleString(),at);
+  assert.equal(await page.locator('[data-pane="quick"] [data-op="database-health"] .task-status').textContent(),`Last run: Completed · ${checkDate}`);
+  assert.equal(await page.locator('#cxm-last-maintenance').textContent(),`Last maintenance: ${date} · Completed`);
+  assert.equal(requests.filter(r=>r.url.pathname==='/api/maintenance/jobs/current').length,1);
+  assert.equal(requests.some(r=>r.method!=='GET'),false);
+  await page.locator('[data-pane="quick"] [data-op="database-health"]').click();
+  assert.equal(requests.some(r=>r.method!=='GET'),false);
+  assert.equal(await page.locator('#cxm-task-status').isHidden(),true);
+});
+
+for (const [state,result,label] of [
+  ['completed',{ok:true,healthy:true},'Completed'],
+  ['completed',{ok:true,healthy:false},'Issues found'],
+  ['failed',{ok:false,error:'check_failed'},'Failed'],
+  ['interrupted',{ok:false,error:'worker_interrupted'},'Failed'],
+]) test(`resumed ${state} ${label} is recorded once and survives reload`,async t=>{
+  let reads=0;
+  const started_at=1795269600,duration_ms=2500;
+  const {page,requests}=await fixture(t,'',390,false,async(route,url)=>{
+    if(url.pathname!=='/api/maintenance/jobs/current')return false;
+    await route.fulfill({json:{id:'resume-job',action:'database-health',state:++reads===1?'running':state,started_at,duration_ms,result}});
+    return true;
+  });
+  const open=async()=>{
+    await page.waitForFunction(()=>!!window.openMaintenance);
+    await page.evaluate(()=>window.openMaintenance());
+    await page.waitForFunction(()=>!document.querySelector('#cxm-cache-count').textContent.includes('not loaded'));
+  };
+  const verify=async()=>{
+    const entries=await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.maintenance.history.v1:admin')));
+    assert.equal(entries.length,1);
+    assert.equal(entries[0].jobId,'resume-job');
+    assert.equal(entries[0].at,started_at*1000+duration_ms);
+    assert.match(await page.locator('[data-pane="quick"] [data-op="database-health"] .task-status').textContent(),new RegExp(`Last run: ${label}`));
+    assert.match(await page.locator('#cxm-last-maintenance').textContent(),new RegExp(label));
+    await page.locator('#cxm-history-toggle').click();
+    assert.equal(await page.locator('#cxm-history-list li').count(),1);
+    assert.equal(await page.locator('#cxm-history-list .task-status').textContent(),label);
+  };
+  await open();
+  await verify();
+  for(let reload=0;reload<2;reload++) {
+    await page.reload();
+    await open();
+    if(label==='Completed') assert.equal(await page.locator('#cxm-status').isHidden(),true);
+    else assert.match(await page.locator('#cxm-status.err').textContent(),/^Previous maintenance/);
+    await verify();
+  }
+  assert.equal(requests.some(request=>request.method!=='GET'),false);
+});
+
+test('existing legacy job history is adopted once across page reloads',async t=>{
+  const job={id:'legacy-job',action:'database-health',state:'completed',started_at:1795269600,duration_ms:2500,result:{ok:true,healthy:true}};
+  const at=job.started_at*1000+job.duration_ms;
+  const {page,requests}=await fixture(t,'',390,false,async(route,url)=>{
+    if(url.pathname!=='/api/maintenance/jobs/current')return false;
+    await route.fulfill({json:job});
+    return true;
+  });
+  await page.evaluate(at=>localStorage.setItem('cw.maintenance.history.v1:admin',JSON.stringify([
+    {key:'database-health',status:'success',at:at+850,batch:false},
+    {key:'database-health',status:'success',at:at-2000,batch:false},
+    {key:'playing',status:'success',at:at+850,batch:false},
+  ])),at);
+  for(let visit=0;visit<3;visit++) {
+    if(visit) await page.reload();
+    await page.waitForFunction(()=>!!window.openMaintenance);
+    await page.evaluate(()=>window.openMaintenance());
+    await page.waitForFunction(()=>!document.querySelector('#cxm-cache-count').textContent.includes('not loaded'));
+    const entries=await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.maintenance.history.v1:admin')));
+    assert.equal(entries.length,3);
+    assert.equal(entries.filter(entry=>entry.jobId===job.id).length,1);
+    assert.equal(entries.find(entry=>entry.jobId===job.id).at,at);
+    assert.equal(entries.filter(entry=>entry.key==='database-health'&&!entry.jobId).length,1);
+    assert.equal(await page.locator('#cxm-status').isHidden(),true);
+    await page.locator('#cxm-history-toggle').click();
+    assert.equal(await page.locator('#cxm-history-list li').count(),3);
+  }
+  assert.equal(requests.some(request=>request.method!=='GET'),false);
+});
+
+test('a job run on this page keeps one dated history entry after reload',async t=>{
+  let started=false;
+  const job={id:'manual-job',action:'database-health',state:'completed',started_at:1795269600,duration_ms:1200,result:{ok:true,healthy:true}};
+  const {page,requests}=await fixture(t,'',390,false,async(route,url)=>{
+    if(url.pathname==='/api/maintenance/jobs') {
+      started=true;
+      await route.fulfill({json:job});
+      return true;
+    }
+    if(url.pathname!=='/api/maintenance/jobs/current')return false;
+    await route.fulfill({json:started?job:{state:'idle'}});
+    return true;
+  });
+  await page.evaluate(()=>window.openMaintenance());
+  await page.locator('[data-pane="quick"] [data-op="database-health"]').click();
+  await page.locator('#cxm-run-action').click();
+  await page.locator('#cxm-task-status.ok').waitFor();
+  const before=await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.maintenance.history.v1:admin')));
+  assert.equal(before.length,1);
+  assert.equal(before[0].jobId,job.id);
+  assert.equal(before[0].at,job.started_at*1000+job.duration_ms);
+  await page.reload();
+  await page.waitForFunction(()=>!!window.openMaintenance);
+  await page.evaluate(()=>window.openMaintenance());
+  await page.waitForFunction(()=>!document.querySelector('#cxm-cache-count').textContent.includes('not loaded'));
+  assert.equal(await page.locator('#cxm-status').isHidden(),true);
+  assert.deepEqual(await page.evaluate(()=>JSON.parse(localStorage.getItem('cw.maintenance.history.v1:admin'))),before);
+  assert.equal(requests.filter(request=>request.method==='POST').length,1);
 });
 
 test('invalid action responses cannot be recorded as successful maintenance',async t=>{

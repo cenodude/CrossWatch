@@ -2406,9 +2406,19 @@ class TrackerStore(TrackerAutomation):
             "snapshots": [],
             "counts": {"state_files": 0, "snapshots": 0},
         }
-        with self._db() as conn:
-            if conn is None:
-                return out
+        if not self.db_path.is_file():
+            files, snaps = self._legacy_files()
+            for kind, paths in (("state_files", files), ("snapshots", sorted(snaps.rglob("*.json")) if snaps else [])):
+                for path in paths:
+                    if path.is_file():
+                        stat = path.stat()
+                        out[kind].append({"name": path.name, "size": stat.st_size, "mtime": _iso(stat.st_mtime_ns)})
+            out["counts"] = {
+                "state_files": sum(path.name in {f"{feature}.json" for feature in FEATURES} for path in files),
+                "snapshots": len(out["snapshots"]),
+            }
+            return out
+        with closing(sqlite3.connect(self.db_path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
             state_files = [
                 {"name": _file_name(str(scope), str(feature)), "size": int(size or 0), "mtime": _iso(int(updated))}
                 for scope, feature, updated, size in conn.execute(

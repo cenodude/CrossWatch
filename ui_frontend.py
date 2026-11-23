@@ -32,8 +32,8 @@ DEFAULT_MANIFEST: str = r"""{
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui", "browser"],
   "orientation": "any",
-  "background_color": "#0b0b0f",
-  "theme_color": "#0b0b0f",
+  "background_color": "#090b10",
+  "theme_color": "#090b10",
   "icons": [
     { "src": "/assets/pwa/icon-192.png?v=__CW_VERSION__", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/assets/pwa/icon-512.png?v=__CW_VERSION__", "sizes": "512x512", "type": "image/png", "purpose": "any" },
@@ -841,7 +841,7 @@ def _get_index_html_static() -> str:
 })();
 </script>
 <link rel="icon" type="image/png" sizes="64x64" href="/assets/pwa/favicon-64.png?v=__CW_VERSION__"><link rel="alternate icon" href="/favicon.ico?v=__CW_VERSION__">
-<meta name="theme-color" content="#0b0b0f">
+<meta name="theme-color" content="#090b10">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" sizes="180x180" href="/assets/pwa/apple-touch-icon.png?v=__CW_VERSION__">
 <meta name="application-name" content="CrossWatch">
@@ -3042,7 +3042,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="icon" type="image/png" sizes="64x64" href="/assets/pwa/favicon-64.png?v=__CW_VERSION__">
-<meta name="theme-color" content="#0b0b0f">
+<meta name="theme-color" content="#090b10">
 <script>
 (() => {{
   try {{
