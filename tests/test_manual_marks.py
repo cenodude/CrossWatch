@@ -403,6 +403,50 @@ def test_plex_marks_pause_when_account_config_changes_on_a_live_connection():
     assert len(queries) == 2
 
 
+def test_plex_mark_polls_always_filter_by_view_date():
+    from urllib.parse import parse_qs, urlsplit
+
+    from providers.scrobble.plex import watch as plex_watch
+
+    queries: list[str] = []
+
+    class FakePlex:
+        machineIdentifier = "server-1"
+
+        def query(self, key: str) -> list[Any]:
+            queries.append(key)
+            return []
+
+    cfg = {
+        "plex": {"server_url": "http://plex.local", "account_token": "tok", "username": "owner", "account_id": 1},
+        "scrobble": {"enabled": True, "sources": {"watcher": True}, "watch": {}},
+    }
+    service = plex_watch.WatchService(dispatcher=cast(Any, FakeDispatcher()), cfg_provider=lambda: cfg, quiet_startup=True)
+    service._plex = FakePlex()  # type: ignore[assignment]
+    service._mark_conn = (service._mark_fingerprint(cfg), service._manual_mark_identity(cfg))
+
+    started = time.time()
+    service._poll_manual_marks()
+    service._marks._next_poll = 0.0
+    service._poll_manual_marks()
+
+    assert len(queries) == 4
+    for key in queries:
+        params = parse_qs(urlsplit(key).query)
+        assert params["X-Plex-Container-Size"] == ["100"]
+        assert int(params["lastViewedAt>>"][0]) >= started - interval_seconds(cfg) - 122
+
+
+def test_tracker_query_floor_never_drops_below_last_poll_window():
+    tracker = MarkTracker()
+    assert tracker.query_floor("u", BASE, 150) == BASE - 150
+    tracker.fresh("u", [], BASE, 150)
+    assert tracker.watermark("u") == 0.0
+    assert tracker.query_floor("u", BASE + 30, 150) == BASE - 150
+    tracker.fresh("u", [("1", {}, BASE + 20)], BASE + 30, 150)
+    assert tracker.query_floor("u", BASE + 60, 150) == BASE + 20
+
+
 def test_plex_reconnects_and_resumes_marks_after_account_change(monkeypatch):
     from providers.scrobble.plex import watch as plex_watch
 
@@ -465,9 +509,11 @@ def test_plex_reconnects_and_resumes_marks_after_account_change(monkeypatch):
 
     monkeypatch.setattr(service, "_poll_manual_marks", poll)
     monkeypatch.setattr(plex_watch.time, "sleep", tick)
+    service._item_cache[1] = ({"type": "movie"}, time.time())
     service._run()
 
     assert connections == ["tok-ownerA", "tok-ownerB"]
+    assert service._item_cache == {}
     assert polled_as[0] == "ownerA"
     assert polled_as[-1] == "ownerB"
 

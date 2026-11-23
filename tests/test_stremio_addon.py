@@ -180,6 +180,67 @@ def test_playback_flow_dispatches_start_pause_stop(isolated_state) -> None:
     assert addon.snapshot("default")["last_event"] == "stop"
 
 
+@pytest.mark.parametrize("action", ["stop", "pause"])
+@pytest.mark.parametrize("position", [49000, 100000])
+def test_ended_session_rejects_late_events(action: str, position: int, monkeypatch) -> None:
+    cfg = make_cfg([route()])
+    disp = FakeDispatcher()
+    service = make_service(cfg, disp)
+    app = make_app(service)
+    clock = [2000.0]
+    monkeypatch.setattr(stremio_watch.time, "time", lambda: clock[0])
+    addon.handle(app, cfg, "default", "movie", MOVIE, player("start", 10000, 100000))
+    addon.handle(app, cfg, "default", "movie", MOVIE, player("stop", 100000, 100000))
+    clock[0] += 209
+
+    assert addon.handle(app, cfg, "default", "movie", MOVIE, player(action, position, 100000)) == {"success": False, "ignored": "session_ended"}
+    assert [(e.action, round(e.progress)) for e in disp.events] == [("start", 10), ("stop", 100)]
+    assert service._sessions == {}
+
+
+def test_seek_back_and_resume_after_stop_are_allowed() -> None:
+    cfg = make_cfg([route()])
+    disp = FakeDispatcher()
+    app = make_app(make_service(cfg, disp))
+    sequence = [("start", 70000), ("pause", 30000), ("stop", 30000), ("start", 10000), ("stop", 15000)]
+    for action, position in sequence:
+        assert addon.handle(app, cfg, "default", "movie", MOVIE, player(action, position, 100000)) == {"success": True}
+    assert [(e.action, round(e.progress)) for e in disp.events] == [(action, position // 1000) for action, position in sequence]
+
+
+def test_failed_start_does_not_reopen_ended_session() -> None:
+    cfg = make_cfg([route()])
+    disp = FakeDispatcher()
+    app = make_app(make_service(cfg, disp))
+    addon.handle(app, cfg, "default", "movie", MOVIE, player("stop", 100000, 100000))
+    disp.accept = False
+    assert addon.handle(app, cfg, "default", "movie", MOVIE, player("start", 30000, 100000))["ignored"] == "no_matching_route"
+    disp.accept = True
+    assert addon.handle(app, cfg, "default", "movie", MOVIE, player("stop", 30000, 100000))["ignored"] == "session_ended"
+    assert addon.handle(app, cfg, "default", "movie", MOVIE, player("start", 30000, 100000)) == {"success": True}
+    assert addon.handle(app, cfg, "default", "movie", MOVIE, player("stop", 30000, 100000)) == {"success": True}
+
+
+def test_rejected_stop_can_be_retried() -> None:
+    cfg = make_cfg([route()])
+    disp = FakeDispatcher(accept=False)
+    app = make_app(make_service(cfg, disp))
+    assert addon.handle(app, cfg, "default", "movie", MOVIE, player("stop", 100000, 100000))["ignored"] == "no_matching_route"
+    disp.accept = True
+    assert addon.handle(app, cfg, "default", "movie", MOVIE, player("stop", 100000, 100000)) == {"success": True}
+    assert len(disp.events) == 1
+
+
+def test_ended_session_does_not_block_another_episode() -> None:
+    cfg = make_cfg([route()])
+    disp = FakeDispatcher()
+    app = make_app(make_service(cfg, disp))
+    assert addon.handle(app, cfg, "default", "series", EPISODE, player("stop", 100000, 100000)) == {"success": True}
+    assert addon.handle(app, cfg, "default", "series", "tt0903747:2:6", player("pause", 30000, 100000)) == {"success": True}
+    assert len(disp.events) == 2
+    assert disp.events[-1].number == 6
+
+
 def test_stop_without_times_uses_last_known_progress() -> None:
     cfg = make_cfg([route()])
     disp = FakeDispatcher()
@@ -287,6 +348,11 @@ def test_sweep_refreshes_card_then_times_out(isolated_state) -> None:
     service.sweep(now=1000.0 + 90.0 + stremio_watch.STALE_GRACE_SECONDS + 1)
     assert service._sessions == {}
     assert [(e.action, round(e.progress)) for e in disp.events] == [("start", 10), ("stop", 10)]
+
+    late, _ = addon.build_event("movie", MOVIE, player("stop", 5000, 100000), "default")
+    assert late is not None
+    assert service.ingest(late, now=3000.0) == (False, "session_ended")
+    assert len(disp.events) == 2
 
 
 def test_paused_session_times_out() -> None:

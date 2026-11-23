@@ -61,6 +61,7 @@ SESSION_CONTINUITY_SECONDS = 6 * 3600
 ACTIVE_PLAYBACK_SECONDS = 120.0
 VANISHED_SCAN_SECONDS = 30.0
 VANISHED_GRACE_SECONDS = 60.0
+CLOSED_SESSIONS_MAX = 256
 
 
 class _PlexAlertListener(AlertListener):
@@ -294,6 +295,71 @@ def _ids_from_guids_any(guids: Any) -> dict[str, Any]:
     return out
 
 
+_ITEM_CACHE_TTL = 600.0
+_ITEM_UNMATCHED_TTL = 60.0
+_ITEM_CACHE_MAX = 512
+
+
+def _no_reload(obj: Any) -> None:
+    try:
+        obj._autoReload = False
+    except Exception:
+        pass
+
+
+def _item_paths(it: Any) -> list[str]:
+    paths: list[str] = []
+    try:
+        parts = it.iterParts() if callable(getattr(it, "iterParts", None)) else []
+        for part in parts:
+            file_val = getattr(part, "file", None)
+            if file_val:
+                paths.append(str(file_val))
+    except Exception:
+        pass
+    if paths:
+        return paths
+    try:
+        for media in getattr(it, "media", []) or []:
+            for part in getattr(media, "parts", []) or []:
+                file_val = getattr(part, "file", None)
+                if file_val:
+                    paths.append(str(file_val))
+    except Exception:
+        pass
+    return paths
+
+
+def _item_edition(it: Any) -> str | None:
+    for attr in ("editionTitle", "edition", "versionTitle"):
+        try:
+            val = getattr(it, attr, None)
+            if val:
+                return str(val)
+        except Exception:
+            pass
+    return None
+
+
+def _item_section(it: Any) -> str | None:
+    for attr in ("librarySectionID", "sectionID", "librarySectionId", "sectionId"):
+        try:
+            v = getattr(it, attr, None)
+            if v is not None and str(v).strip():
+                return str(v).strip()
+        except Exception:
+            pass
+    try:
+        sec = getattr(it, "section", None)
+        if callable(sec):
+            key = getattr(sec(), "key", None)
+            if key is not None and str(key).strip():
+                return str(key).strip()
+    except Exception:
+        pass
+    return None
+
+
 
 def _as_set_str(v: Any) -> set[str]:
     if v is None:
@@ -428,6 +494,9 @@ class WatchService:
         self._last_probe: dict[str, float] = {}
         self._best_offset: dict[str, tuple[int, int, float]] = {}
         self._dur_cache: dict[int, tuple[int, float]] = {}
+        self._item_cache: dict[int, tuple[dict[str, Any], float]] = {}
+        self._item_lock = threading.Lock()
+        self._item_epoch = 0
         self._last_event: dict[str, ScrobbleEvent] = {}
         self._stop_sent: set[str] = set()
         self._vanished_closed: dict[str, ScrobbleEvent] = {}
@@ -600,20 +669,81 @@ class WatchService:
         if cached and (now - float(cached[1])) < 300.0:
             return int(cached[0])
         try:
-            it = self._plex.fetchItem(int(rating_key))
+            info = self._item_info(int(rating_key))
         except Exception:
-            it = None
-        if not it:
-            return None
-        try:
-            d = getattr(it, "duration", None)
-            d = int(d) if d is not None else None
-        except Exception:
-            d = None
+            info = None
+        d = _safe_int((info or {}).get("duration"))
         if d and d > 0:
             self._dur_cache[int(rating_key)] = (int(d), now)
             return int(d)
         return None
+
+    def _item_info(self, rating_key: int, *, fresh: bool = False) -> dict[str, Any] | None:
+        now = time.time()
+        with self._item_lock:
+            hit = None if fresh else self._item_cache.get(rating_key)
+        if hit:
+            matched = hit[0].get("ids") or hit[0].get("show_ids")
+            if now - hit[1] < (_ITEM_CACHE_TTL if matched else _ITEM_UNMATCHED_TTL):
+                return hit[0]
+        plex = self._plex
+        if not plex:
+            return None
+        with self._item_lock:
+            epoch = self._item_epoch
+        it = plex.fetchItem(rating_key)
+        if not it:
+            return None
+        _no_reload(it)
+        info: dict[str, Any] = {
+            "type": str(getattr(it, "type", "") or "").strip().lower(),
+            "title": getattr(it, "title", None),
+            "year": getattr(it, "year", None),
+            "ids": _ids_from_guids_any(getattr(it, "guids", [])),
+            "paths": _item_paths(it),
+            "edition": _item_edition(it),
+            "section": _item_section(it),
+            "duration": _safe_int(getattr(it, "duration", None)),
+            "parents": [key for key in (_safe_int(getattr(it, "parentRatingKey", None)), _safe_int(getattr(it, "grandparentRatingKey", None))) if key],
+        }
+        if info["type"] == "episode":
+            try:
+                show = it.show()
+            except Exception:
+                show = None
+            if show is not None:
+                _no_reload(show)
+            info["show_title"] = getattr(show, "title", None) if show else getattr(it, "grandparentTitle", None)
+            info["show_ids"] = _ids_from_guids_any(getattr(show, "guids", [])) if show else {}
+            try:
+                info["season"] = it.seasonNumber
+            except Exception:
+                pass
+            try:
+                info["number"] = it.index
+            except Exception:
+                pass
+        with self._item_lock:
+            if plex is not self._plex or self._item_epoch != epoch:
+                return info
+            if len(self._item_cache) >= _ITEM_CACHE_MAX:
+                for key, _ in sorted(self._item_cache.items(), key=lambda kv: kv[1][1])[: _ITEM_CACHE_MAX // 4]:
+                    self._item_cache.pop(key, None)
+            self._item_cache[rating_key] = (info, now)
+        return info
+
+    def _forget_changed_items(self, alert: dict[str, Any]) -> None:
+        keys = {
+            key for key in (_safe_int(entry.get("itemID")) for entry in (alert.get("TimelineEntry") or []) if isinstance(entry, dict))
+            if key
+        }
+        if not keys:
+            return
+        with self._item_lock:
+            self._item_epoch += 1
+            for key, (info, _ts) in list(self._item_cache.items()):
+                if key in keys or keys.intersection(info.get("parents") or ()):
+                    self._item_cache.pop(key, None)
 
     def _update_best_offset(self, session_key: str, off_ms: int, dur_ms: int) -> None:
         if not session_key or dur_ms <= 0:
@@ -788,6 +918,12 @@ class WatchService:
             for other, ev in list(self._last_event.items())
         )
 
+    def _remember_closed(self, sk: str, ev: ScrobbleEvent) -> None:
+        self._vanished_closed.pop(sk, None)
+        self._vanished_closed[sk] = ev
+        while len(self._vanished_closed) > CLOSED_SESSIONS_MAX:
+            self._vanished_closed.pop(next(iter(self._vanished_closed)))
+
     def _emit_closing_stop(
         self, sk: str, marker: str, reason: str, progress: int | None, expected: ScrobbleEvent | None = None,
         *, continued: bool = False,
@@ -802,7 +938,7 @@ class WatchService:
                 return False
             self._stop_sent.add(sk)
             if expected is not None:
-                self._vanished_closed[sk] = base
+                self._remember_closed(sk, base)
             seen = self._last_seen.get(sk, 0.0)
             changes: dict[str, Any] = {"action": "stop", "raw": {**(base.raw or {}), marker: True}}
             best = self._best_offset.get(sk)
@@ -1123,34 +1259,10 @@ class WatchService:
         if rk is None or not self._plex:
             return None
         try:
-            obj = self._plex.fetchItem(int(rk))
+            info = self._item_info(int(rk))
         except Exception:
-            obj = None
-        if not obj:
-            return None
-
-        for attr in ("librarySectionID", "sectionID", "librarySectionId", "sectionId"):
-            try:
-                v = getattr(obj, attr, None)
-                if v is not None:
-                    s = str(v).strip()
-                    if s:
-                        return s
-            except Exception:
-                pass
-
-        try:
-            sec = getattr(obj, "section", None)
-            if callable(sec):
-                s2 = sec()
-                key = getattr(s2, "key", None)
-                if key is not None:
-                    s = str(key).strip()
-                    if s:
-                        return s
-        except Exception:
-            pass
-        return None
+            info = None
+        return (info or {}).get("section")
 
     def _passes_filters(self, ev: ScrobbleEvent) -> bool:
         sk = str(ev.session_key) if ev.session_key is not None else None
@@ -1633,61 +1745,31 @@ class WatchService:
             if not rk:
                 return ev
 
-            it = self._plex.fetchItem(int(rk))
-            if not it:
+            info = self._item_info(int(rk), fresh=ev.action == "stop")
+            if not info:
                 return ev
 
-            media_type = str(getattr(it, "type", "") or ev.media_type).strip().lower()
+            media_type = str(info.get("type") or ev.media_type).strip().lower()
             if media_type not in _ALLOWED_WATCH_TYPES:
                 self._dbg(f"drop unsupported plex media type '{media_type}' rk={rk} sess={ev.session_key}")
                 return None
-            title = getattr(it, "title", None)
-            year = getattr(it, "year", None)
+            title = info.get("title")
+            year = info.get("year")
             ids_raw: dict[str, Any] = dict(ev.ids or {}, plex=int(rk))
-            ids_raw.update(_ids_from_guids_any(getattr(it, "guids", [])))
+            ids_raw.update(info.get("ids") or {})
             ids = _normalize_ids(ids_raw)
             raw = dict(ev.raw or {})
-            paths: list[str] = []
-            try:
-                parts = it.iterParts() if callable(getattr(it, "iterParts", None)) else []
-                for part in parts:
-                    file_val = getattr(part, "file", None)
-                    if file_val:
-                        paths.append(str(file_val))
-            except Exception:
-                pass
-            if not paths:
-                try:
-                    for media in getattr(it, "media", []) or []:
-                        for part in getattr(media, "parts", []) or []:
-                            file_val = getattr(part, "file", None)
-                            if file_val:
-                                paths.append(str(file_val))
-                except Exception:
-                    pass
-            if paths:
-                raw["_cw_file_paths"] = paths
-            for attr in ("editionTitle", "edition", "versionTitle"):
-                try:
-                    val = getattr(it, attr, None)
-                    if val:
-                        raw["_cw_edition_title"] = str(val)
-                        break
-                except Exception:
-                    pass
+            if info.get("paths"):
+                raw["_cw_file_paths"] = list(info["paths"])
+            if info.get("edition"):
+                raw["_cw_edition_title"] = info["edition"]
             season, number = ev.season, ev.number
             if media_type == "episode":
-                try:
-                    show = it.show()
-                except Exception:
-                    show = None
-                title = (getattr(show, "title", None) if show else getattr(it, "grandparentTitle", None)) or title
-                season = getattr(it, "seasonNumber", None) if hasattr(it, "seasonNumber") else season
-                number = getattr(it, "index", None) if hasattr(it, "index") else number
-                if show:
-                    show_ids_raw = _ids_from_guids_any(getattr(show, "guids", []))
-                    for k, v in show_ids_raw.items():
-                        ids.setdefault(f"{k}_show", str(v))
+                title = info.get("show_title") or title
+                season = info["season"] if "season" in info else season
+                number = info["number"] if "number" in info else number
+                for k, v in (info.get("show_ids") or {}).items():
+                    ids.setdefault(f"{k}_show", str(v))
                 if not ids.get("tmdb_show"):
                     known = {key: ids.get(f"{key}_show") for key in ("imdb", "tvdb")}
                     tmdb_show = show_tmdb_id(self._active_cfg(), known, ids)
@@ -1712,6 +1794,9 @@ class WatchService:
             return ev
 
     def _probe_session_progress(self, ev: ScrobbleEvent) -> int | None:
+        sid = str(ev.session_key or "").strip()
+        if not sid:
+            return None
         try:
             if not self._plex:
                 return None
@@ -1719,33 +1804,16 @@ class WatchService:
         except Exception:
             return None
 
-        sid = str(ev.session_key or "")
         rk = str((ev.ids or {}).get("plex") or "")
         tgt = None
 
-        # Prefer sessionKey
-        if sid:
-            for v in sessions:
-                try:
-                    if str(getattr(v, "sessionKey", "")) == sid:
-                        tgt = v
-                        break
-                except Exception:
-                    pass
-
-        # Fallback to ratingKey
-        if not tgt and rk:
-            matches = []
-            for v in sessions:
-                try:
-                    if str(getattr(v, "ratingKey", "")) == rk:
-                        matches.append(v)
-                except Exception:
-                    pass
-            if len(matches) == 1:
-                tgt = matches[0]
-            else:
-                return None
+        for v in sessions:
+            try:
+                if str(getattr(v, "sessionKey", "")) == sid and (not rk or str(getattr(v, "ratingKey", "")) == rk):
+                    tgt = v
+                    break
+            except Exception:
+                pass
 
         if not tgt:
             return None
@@ -1832,7 +1900,7 @@ class WatchService:
         current = self._mark_fingerprint(self._active_cfg())
         return any(current) and current != conn[0]
 
-    def _recent_views(self, mark: float | None) -> list[tuple[str, Any, float | None]]:
+    def _recent_views(self, since: float) -> list[tuple[str, Any, float | None]]:
         rows: list[tuple[str, Any, float | None]] = []
         plex = self._plex
         if plex is None:
@@ -1843,10 +1911,9 @@ class WatchService:
                 "sort": "lastViewedAt:desc",
                 "includeGuids": 1,
                 "X-Plex-Container-Start": 0,
-                "X-Plex-Container-Size": 1 if mark is None else 100,
+                "X-Plex-Container-Size": 100,
+                "lastViewedAt>>": int(since) - 1,
             }
-            if mark is not None:
-                params["lastViewedAt>>"] = int(mark) - 1
             container = plex.query(f"/library/all?{urlencode(params)}")
             for el in list(container if container is not None else []):
                 rows.append((str(el.attrib.get("ratingKey") or "").strip(), el, parse_epoch(el.attrib.get("lastViewedAt"))))
@@ -1905,12 +1972,13 @@ class WatchService:
             account = str(ident.get("user_id") or ident.get("account_id") or _norm_user(str(ident.get("name") or "")))
             ledger = f"{server_uuid or ''}:{account}"
             who = f"user={_mask_account(str(ident.get('name') or '')) or '-'}"
+            slack = interval_seconds(cfg) + CLOCK_SLACK_SECONDS
             try:
-                rows = self._recent_views(self._marks.watermark(ledger))
+                rows = self._recent_views(self._marks.query_floor(ledger, now, slack))
             except Exception as exc:
                 log_read_failure(self._marks, ledger, who, exc, self._log)
                 return
-            fresh = self._marks.fresh(ledger, rows, now, interval_seconds(cfg) + CLOCK_SLACK_SECONDS)
+            fresh = self._marks.fresh(ledger, rows, now, slack)
             log_read_health(self._marks, ledger, who, now, self._log)
             admitted = 0
             for el in fresh:
@@ -1948,6 +2016,8 @@ class WatchService:
         except Exception:
             return
         if t in ("timeline", "progress"):
+            if t == "timeline":
+                self._forget_changed_items(alert)
             try:
                 cfg = self._active_cfg()
                 if not source_enabled(cfg, "watcher"):
@@ -2160,7 +2230,7 @@ class WatchService:
 
             if best != want:
                 normalized_progress_debug = best
-                ev = ScrobbleEvent(**{**ev.__dict__, "progress": best})
+                ev = _with_progress(ev, best)
             if ev.action == "start" and ev.progress < 1:
                 ev = ScrobbleEvent(**{**ev.__dict__, "progress": 1})
             if sk:
@@ -2181,7 +2251,7 @@ class WatchService:
                 thr = _stop_pause_threshold(cfg)
                 maxp = self._max_seen.get(skd, ev.progress)
                 if ev.progress >= 98 and maxp < thr:
-                    ev = ScrobbleEvent(**{**ev.__dict__, "action": "pause", "progress": maxp, "raw": {**(ev.raw or {}), "_cw_playback_action": "stop"}})
+                    ev = _with_progress(ev, maxp, action="pause", raw={**(ev.raw or {}), "_cw_playback_action": "stop"})
                     self._dbg(f"demote stop/pause sess={skd} p={ev.progress} max_seen={maxp} thr={thr}")
                 else:
                     first = self._first_seen.get(skd)
@@ -2211,17 +2281,22 @@ class WatchService:
             self._log(f"ids resolved: {_media_name(ev)} -> {_ids_desc(ev.ids)} sess={ev.session_key}", "DEBUG")
             if self._stop.is_set():
                 return
-            if sk and (ev.action == "stop" or (ev.raw or {}).get("_cw_playback_action") == "stop"):
+            if sk and ev.action in ("pause", "stop"):
                 with self._stop_lock:
                     closed = self._vanished_closed.get(sk)
-                    if closed is not None and self._same_item(ev, closed):
+                    if closed is not None and self._same_item(ev, closed) and _same_account(ev, closed):
                         self._clear_currently_watching(ev)
-                        self._dbg(f"suppress stop after ended session sess={sk} p={ev.progress}")
+                        self._dbg(f"suppress {ev.action} after ended session sess={sk} p={ev.progress}")
                         return
-                    self._vanished_closed.pop(sk, None)
-                    self._stop_sent.add(sk)
+                    if ev.action == "stop" or (ev.raw or {}).get("_cw_playback_action") == "stop":
+                        self._remember_closed(sk, ev)
+                        self._stop_sent.add(sk)
             accepted = bool(self._dispatch.dispatch(ev))
             if not accepted:
+                if sk:
+                    with self._stop_lock:
+                        if self._vanished_closed.get(sk) is ev:
+                            self._vanished_closed.pop(sk, None)
                 self._throttled_route_filtered_log(ev, dispatched=True)
                 self._clear_currently_watching(ev)
                 return
@@ -2263,7 +2338,10 @@ class WatchService:
                     self._log("Missing plex.account_token or plex.token in config.json", "ERROR")
                     return
                 session = _build_session(token, _resolve_verify_from_cfg(cfg, base))
-                self._plex = PlexServer(base, token, session=session)
+                plex = PlexServer(base, token, session=session)
+                with self._item_lock:
+                    self._item_cache.clear()
+                    self._plex = plex
                 self._refresh_account_context()
                 self._mark_conn = (self._mark_fingerprint(cfg), self._manual_mark_identity(cfg))
                 if self._stop.is_set():
@@ -2394,6 +2472,17 @@ def _emit(logger: Callable[..., None] | None, msg: str, level: str = "INFO") -> 
             pass
 
 
+
+
+def _with_progress(ev: ScrobbleEvent, progress: int, **changes: Any) -> ScrobbleEvent:
+    duration = ev.duration_ms
+    position = round(duration * progress / 100) if duration and duration > 0 else None
+    return ScrobbleEvent(**{**ev.__dict__, **changes, "progress": progress, "position_ms": position})
+
+
+def _same_account(a: ScrobbleEvent, b: ScrobbleEvent) -> bool:
+    left, right = _norm_user(a.account or ""), _norm_user(b.account or "")
+    return not left or not right or left == right
 
 
 def _norm_user(s: str) -> str:

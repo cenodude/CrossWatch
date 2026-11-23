@@ -45,7 +45,7 @@ def _iso(value: Any) -> str | None:
 
 
 def _progress_percent(item: Mapping[str, Any]) -> float | None:
-    direct = _float(item.get("progress_percent") or item.get("progressPercent") or item.get("percent") or item.get("progress"))
+    direct = next((_float(item[key]) for key in ("progress_percent", "progressPercent", "percent", "progress") if item.get(key) not in (None, "")), None)
     if direct is not None:
         return round(max(0.0, min(100.0, direct)), 3)
     position = _float(item.get("progress_ms") or item.get("progressMs") or item.get("viewOffset") or item.get("position") or item.get("position_ms"))
@@ -62,10 +62,10 @@ def _duration_seconds(item: Mapping[str, Any]) -> int | None:
 
 def _remaining_seconds(item: Mapping[str, Any]) -> int | None:
     duration = _num(item.get("duration_ms") or item.get("durationMs") or item.get("duration"))
-    position = _num(item.get("progress_ms") or item.get("progressMs") or item.get("viewOffset") or item.get("position") or item.get("position_ms"))
-    if duration is None or position is None or duration <= 0:
+    progress = _progress_percent(item)
+    if duration is None or progress is None or duration <= 0:
         return None
-    return max(0, round((duration - position) / 1000))
+    return max(0, round(duration * (1.0 - progress / 100.0) / 1000))
 
 
 def _progress_item(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -101,8 +101,7 @@ def _progress_item_with_percent(record: Mapping[str, Any], progress_percent: flo
     if duration_ms and duration_ms > 0:
         item["duration_ms"] = int(duration_ms)
         item["progress_ms"] = max(1, min(int(duration_ms) - 1, round((float(progress_percent) / 100.0) * float(duration_ms))))
-    else:
-        item["progress_percent"] = round(max(0.0, min(100.0, float(progress_percent))), 3)
+    item["progress_percent"] = round(max(0.0, min(100.0, float(progress_percent))), 3)
     item["progress_at"] = utc_now_iso()
     return clean_mapping(item)
 

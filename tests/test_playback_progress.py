@@ -773,6 +773,48 @@ def test_playback_progress_uses_crosswatch_profiles(monkeypatch, tmp_path):
     assert cw_ops.added[1]["items"][0]["progress_ms"] == 150000
 
 
+def test_crosswatch_remaining_time_uses_the_displayed_progress(monkeypatch):
+    adapter = CrossWatchPlaybackAdapter()
+    monkeypatch.setattr(adapter, "ops", _FakeCrossWatchOps())
+    caps = adapter.capabilities({}, instance_id="default", instance_label="Default")
+    item = {
+        "type": "movie", "title": "Apocalypse Z: New World", "ids": {"tmdb": "1507696"},
+        "progress_ms": 5884781, "duration_ms": 5885440, "progress_percent": 49.0,
+    }
+    row = adapter._record("tmdb:1507696", item, "default", "Default", caps)
+    assert row is not None
+    assert row.progress_percent == 49
+    assert row.remaining_seconds == 3002
+
+    row = adapter._record("tmdb:1507696", {**item, "progress_percent": 0}, "default", "Default", caps)
+    assert row is not None
+    assert row.progress_percent == 0
+    assert row.remaining_seconds == 5885
+
+
+def test_crosswatch_progress_edit_updates_position_and_percentage(monkeypatch):
+    adapter = CrossWatchPlaybackAdapter()
+    ops = _FakeCrossWatchOps()
+    monkeypatch.setattr(adapter, "ops", ops)
+    caps = adapter.capabilities({}, instance_id="default", instance_label="Default")
+    item = {
+        "type": "movie", "title": "Example", "ids": {"tmdb": "123"},
+        "progress_ms": 2940000, "duration_ms": 6000000, "progress_percent": 49,
+    }
+    original = adapter._record("tmdb:123", item, "default", "Default", caps)
+    assert original is not None
+    result = adapter.update_progress({}, original.to_dict(), 25, instance_id="default", instance_label="Default")
+    assert result.ok
+    saved = ops.added[0]["items"][0]
+    assert saved["progress_ms"] == 1500000
+    assert saved["progress_percent"] == 25
+    reread = adapter._record("tmdb:123", saved, "default", "Default", caps)
+    assert reread is not None
+    assert reread.progress_percent == 25
+    assert reread.remaining_seconds == 4500
+    assert item["progress_percent"] == 49
+
+
 class _UnreadPlaybackAdapter(PlaybackProgressAdapter):
     provider = "trakt"
     provider_label = "Trakt"
