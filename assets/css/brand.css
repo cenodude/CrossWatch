@@ -1,0 +1,7 @@
+/* assets/css/brand.css */
+/* CrossWatch - Shared wordmark typography */
+/* Copyright (c) 2025-2026 CrossWatch / Cenodude (https://github.com/cenodude/CrossWatch) */
+
+@font-face{font-family:"CrossWatch Manrope";font-style:normal;font-weight:800;font-display:swap;src:url("../fonts/manrope-extrabold-wordmark.ttf")format("truetype")}
+.cw-wordmark{font-family:"CrossWatch Manrope",sans-serif;font-weight:800;letter-spacing:-0.04em;white-space:nowrap}
+.cw-wordmark .brand-dot{color:var(--cw-brand-dot)}

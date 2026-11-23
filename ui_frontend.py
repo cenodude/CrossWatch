@@ -990,7 +990,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
   <div class="brand" role="button" tabindex="0" title="Go to Main" onclick="showTab('main')" onkeypress="if(event.key==='Enter'||event.key===' ')showTab('main')">
     <img class="logo" src="/assets/img/CROSSWATCH.svg?v=__CW_VERSION__" alt="CrossWatch">
     <span class="brand-text">
-      <span class="name">CrossWatch</span>
+      <span class="name cw-wordmark">CrossWatch<span class="brand-dot" aria-hidden="true">.</span></span>
       <span class="version">__CW_CURRENT_VERSION__</span>
     </span>
   </div>
@@ -3091,7 +3091,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
   <div class="brand" role="button" tabindex="0" title="Go to Hub" onclick="location.href='/hub'" onkeypress="if(event.key==='Enter'||event.key===' ')location.href='/hub'">
     <img class="logo" src="/assets/img/CROSSWATCH.svg?v=__CW_VERSION__" alt="CrossWatch">
     <span class="brand-text">
-      <span class="name">CrossWatch</span>
+      <span class="name cw-wordmark">CrossWatch<span class="brand-dot" aria-hidden="true">.</span></span>
       <span class="version">__CW_CURRENT_VERSION__</span>
     </span>
   </div>

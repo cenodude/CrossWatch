@@ -370,7 +370,19 @@ kbd {
   min-height: 720px;
   padding-block: 72px 92px;
   position: relative;
+  isolation: isolate;
   gap: 24px;
+}
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: url("../../images/hero-background.png") center / cover no-repeat;
+  opacity: 0.12;
+  filter: saturate(0.55);
+  mask-image: radial-gradient(ellipse at center, #000 35%, transparent 75%);
 }
 
 .release-link {
@@ -1255,6 +1267,11 @@ dialog::backdrop {
     grid-template-columns: 1fr;
     padding-block: 60px 78px;
     gap: 40px;
+  }
+  .hero::before {
+    background-size: auto 640px;
+    background-position: center top;
+    opacity: 0.09;
   }
   .hero h1 {
     font-size: 64px;

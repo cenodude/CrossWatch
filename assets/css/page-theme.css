@@ -1,6 +1,8 @@
 /* Shared page surfaces and controls. Theme values live in tokens.css.
  * Page styles own layout, provider colours and media artwork.
  */
+@import url("./brand.css");
+.brand .name{background:none;color:var(--cw-theme-text);filter:none}
 .cw-view-status[data-state="error"]{font-size:13px;color:var(--cw-theme-muted);background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);border-radius:10px}
 #page-tracker .cw-page-loading{color:var(--cw-theme-muted)}
 body.cw-profile-page .cw-profile-hero{border:1px solid var(--cw-theme-border);border-radius:18px;background:var(--cw-theme-surface);box-shadow:none}
