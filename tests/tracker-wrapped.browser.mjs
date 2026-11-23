@@ -76,7 +76,7 @@ for(const theme of ["original","flat-dark","flat-light"]) test(`${theme}: eight 
   assert.equal(requests(),1);
   assert.equal(await page.locator('.wr-burst i').first().evaluate(el=>getComputedStyle(el).animationName),'none');
   assert.equal(await page.locator('[data-wr-effects]').count(),0);
-  assert.equal(await page.locator('.wr-wordmark').innerText(),'CrossWatch WRAPPED');
+  assert.equal(await page.locator('.wr-wordmark').innerText(),'CrossWatch. WRAPPED');
   setMode('empty');
   await page.locator('[data-wr-year]').fill('2024');await page.locator('[data-wr-year]').press('Tab');
   await page.getByText('Your 2024 awaits.',{exact:true}).waitFor();

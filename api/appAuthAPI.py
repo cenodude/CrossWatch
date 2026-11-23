@@ -1338,7 +1338,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.28;b
 .cw-mark{display:flex;align-items:center;margin-top:6px}
 .cw-mark{gap:14px}
 .cw-mark img{width:64px;height:64px;flex:0 0 auto;display:block;filter:drop-shadow(0 18px 30px rgba(0,0,0,.34))}
-.cw-mark span{font-size:clamp(34px,4.4vw,52px);font-weight:700;letter-spacing:-.02em;line-height:1;background:linear-gradient(90deg,#5eb1ff,#8c6dff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.cw-mark .cw-wordmark{font-size:clamp(34px,4.4vw,52px);line-height:1}
 .cw-hero h1{margin:28px 0 12px;max-width:12ch;font-size:clamp(34px,4.6vw,56px);line-height:.98;letter-spacing:-.04em;font-weight:900}
 .cw-hero p{margin:0;max-width:44ch;color:var(--cw-soft);font-size:15px;line-height:1.65}
 .cw-metrics{display:grid;gap:12px;max-width:320px;margin-top:auto;padding-top:32px}
@@ -1401,7 +1401,7 @@ body::before{content:"";position:fixed;inset:0;pointer-events:none;opacity:.28;b
   .cw-login-shell{width:min(100vw - 20px,1040px);border-radius:22px;margin:0 auto}
   .cw-hero,.cw-login{padding:18px}
   .cw-mark img{width:44px;height:44px}
-  .cw-mark span{font-size:clamp(26px,8vw,34px)}
+  .cw-mark .cw-wordmark{font-size:clamp(26px,8vw,34px)}
   .cw-hero h1{margin:16px 0 8px;font-size:clamp(26px,8vw,36px)}
   .cw-hero p{font-size:13px;line-height:1.5}
   .cw-metrics{gap:10px;margin-top:18px;max-width:none}
@@ -1458,11 +1458,13 @@ def _login_html(*, plex_sso_available: bool = False, oidc_available: bool = Fals
   <title>Sign in | CrossWatch</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/assets/crosswatch.css">
+  <link rel="stylesheet" href="/assets/themes/tokens.css">
+  <link rel="stylesheet" href="/assets/css/brand.css">
   <style>{_LOGIN_PAGE_CSS}</style>
 </head><body>
   <div class="cw-login-shell">
     <section class="cw-hero" aria-hidden="true">
-      <div class="cw-mark"><img src="/assets/img/CROSSWATCH.svg" alt=""><span>CrossWatch</span></div>
+      <div class="cw-mark"><img src="/assets/img/CROSSWATCH.svg" alt=""><span class="cw-wordmark">CrossWatch<span class="brand-dot" aria-hidden="true">.</span></span></div>
       <h1>Sign in to your sync hub</h1>
       <div class="cw-metrics">
         <a class="cw-help-link" href="https://wiki.crosswatch.app/" target="_blank" rel="noopener noreferrer">

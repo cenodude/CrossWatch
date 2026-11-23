@@ -52,8 +52,8 @@ const ABOUT_CSS = `
 .lede-card{display:grid;grid-template-columns:260px minmax(0,1fr);align-items:center;gap:28px;padding:24px}
 .lede-brand{display:grid;grid-template-columns:48px auto;grid-template-areas:"logo wordmark" "motto motto" "coffee coffee";align-items:center;gap:12px;min-width:0}
 .lede-logo{grid-area:logo;width:48px;height:48px;object-fit:contain}
-.lede-wordmark{grid-area:wordmark;font-size:28px;line-height:1;font-weight:800;white-space:nowrap}
-.lede-motto{grid-area:motto;margin:0 0 4px;color:var(--cw-about-motto,#b4acd3);font:italic 17px/1.5 "Segoe Print","Bradley Hand","Comic Sans MS",cursive}
+.lede-wordmark{grid-area:wordmark;font-size:28px;line-height:1}
+.lede-motto{grid-area:motto;margin:0 0 4px;color:var(--muted);font-size:16px;font-weight:500;line-height:1.55;letter-spacing:-0.01em}
 .coffee-link{grid-area:coffee;display:inline-flex;align-items:center;justify-content:center;gap:8px;width:max-content;min-height:38px;padding:8px 14px;border:1px solid #4db888;border-radius:11px;background:#1f6b50;color:#f0fff7;text-decoration:none;font-size:13px;font-weight:800}
 .coffee-link:hover{background:#277e5e;border-color:#68d7a4}
 .coffee-link .material-symbols-rounded{font-size:18px}
@@ -215,7 +215,7 @@ function view(info, mods, logo) {
               <section class="about-card lede-card">
                 <div class="lede-brand">
                   <img class="lede-logo" src="${escapeHtml(logo)}" alt="" />
-                  <div class="lede-wordmark">CrossWatch</div>
+                  <div class="lede-wordmark cw-wordmark">CrossWatch<span class="brand-dot" aria-hidden="true">.</span></div>
                   <p class="lede-motto">Your media. Your data.<br>On your terms.</p>
                   <a class="coffee-link" href="${SUPPORT_URL}" target="_blank" rel="noopener noreferrer"><span class="material-symbols-rounded" aria-hidden="true">local_cafe</span>Buy me a coffee ${externalIcon}</a>
                 </div>
@@ -320,7 +320,7 @@ export async function openAboutModal(props = {}) {
     closeAboutModal();
   };
 
-  shadow.innerHTML = `<style>${ABOUT_CSS}</style>${view(info, mods || {}, crossWatchLogo)}`;
+  shadow.innerHTML = `<link rel="stylesheet" href="${_cwVer("/assets/css/brand.css")}"><style>${ABOUT_CSS}</style>${view(info, mods || {}, crossWatchLogo)}`;
   shadow.addEventListener("click", (e) => {
     if (e.target?.closest?.("[data-close]")) closeAboutModal();
   });
