@@ -652,7 +652,7 @@
         const title = cardTitle(row), art = row.art;
         const url = art?.tmdb ? `/art/tmdb/tv/${encodeURIComponent(art.tmdb)}?fallback=2&av=${document.documentElement.dataset.cwArt || "t"}&size=w780&kind=${row.has_still ? `still&season=${encodeURIComponent(row.season)}&episode=${encodeURIComponent(row.episode)}` : "backdrop"}` : "";
         const label = offset === 0 ? "Today" : row.episode === 1 ? "Season premiere" : offset === 1 ? "Tomorrow" : `In ${offset} days`;
-        return `<button type="button" class="trk-calendar-release" data-trk-overview-open="airing:${index}" aria-label="${esc(`${dayText(iso)}: ${title}, ${episodeLabel(row)}`)}">${url ? `<img src="${esc(url)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-calendar-date">${day}<span class="trk-calendar-label">${esc(label)}</span></span><span class="trk-calendar-copy"><strong>${esc(title)}</strong><span>${esc([episodeLabel(row), row.episode_title].filter(Boolean).join(" · "))}</span></span></button>`;
+        return window.CW.AiringCard.render(row, {image:url, dateHtml:day, label, title, openAttributes:`data-trk-overview-open="airing:${index}"`, ariaLabel:`${dayText(iso)}: ${title}, ${episodeLabel(row)}`});
       }).join("");
       return `<div class="trk-calendar-day${releases.length ? " has-releases" : ""}${offset === 0 ? " is-today" : ""}" data-calendar-date="${iso}"${releases.length ? ` style="--calendar-releases:${density.releases};--calendar-empty-days:${density.empty}"` : ""}>${cards || `${day}${offset === 0 ? '<span class="trk-calendar-today">Today</span>' : ""}`}</div>`;
     }).join("");
@@ -709,6 +709,7 @@
 
   function renderOverviewSlot(metadata = false) {
     if (state.view !== "overview") return;
+    const airingCards = window.CW.AiringCard?.capture(state.root) || [];
     const calendarScroll = state.root.querySelector(".trk-calendar")?.scrollLeft || 0;
     const continueScroll = state.root.querySelector(".trk-overview-grid")?.scrollLeft || 0;
     const active = document.activeElement;
@@ -739,6 +740,7 @@
     } else setSlot("main", renderMain());
     const calendar = state.root.querySelector(".trk-calendar");
     if (calendar) calendar.scrollLeft = calendarScroll;
+    window.CW.AiringCard?.restore(state.root, airingCards);
     const continuing = state.root.querySelector(".trk-overview-grid");
     if (continuing) continuing.scrollLeft = continueScroll;
     animateOverviewCards();
@@ -1115,7 +1117,7 @@
   }
 
   function emptyState(text, symbolName = "table_rows") {
-    if (symbolName === "hourglass_empty") return `<div class="cw-empty cw-page-loading" role="status"><div class="cw-empty-text">${esc(text)}</div><div class="cw-page-progress" role="progressbar" aria-label="${esc(text)}"></div></div>`;
+    if (symbolName === "hourglass_empty") return `<div class="cw-empty cw-page-loading" role="status"><div class="cw-empty-text">${esc(text)}</div></div>`;
     return `<div class="cw-empty" role="status">${icon(symbolName)}<div class="cw-empty-text">${esc(text)}</div></div>`;
   }
 
@@ -5504,7 +5506,7 @@
     }, true);
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape' || !root.getClientRects().length || state.statusMenu) return;
-      if ([...document.querySelectorAll('[role="dialog"],[role="menu"],dialog[open],.cw-icon-select-menu')].some(node => node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden')) return;
+      if ([...document.querySelectorAll('[role="dialog"],[role="menu"],dialog[open],.cw-icon-select-menu')].some(node => !node.closest('details:not([open])') && node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden')) return;
       queueMicrotask(() => {
         if (event.defaultPrevented || event.cancelBubble) return;
         if (state.ref) clearSelectedTitle();
@@ -5611,6 +5613,7 @@
 
   async function mount(root) {
     if (!root) return;
+    window.CW?.ViewCache?.bindRefresh(root, url => new URL(url, location.origin).pathname.startsWith("/api/tracker/"));
     if (state.root !== root) {
       state.root = root;
       state.wired = false;

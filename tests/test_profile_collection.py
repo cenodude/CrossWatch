@@ -150,7 +150,7 @@ def test_profile_collection_ui_assets_are_registered() -> None:
 
     assert 'data-profile-tab="collection"' in html
     assert 'id="profile-panel-collection"' in html
-    assert "Your unified library across all providers" in html
+    assert "Your unified library across all providers" not in html
     assert 'data-collection-view="grid"' in html
     assert 'data-collection-view="list"' in html
     assert 'id="profile-collection-page-size"' in html

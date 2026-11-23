@@ -128,6 +128,81 @@ def test_remaining_time_requires_consistent_finite_playback_data(app, duration, 
     assert not meta.calls
 
 
+def test_progress_tab_filters_completed_before_paging_and_updates_counts(app):
+    client, store, _, _ = app
+    rows = {str(i): {"type": "movie", "title": f"Movie {i}", "ids": {"tmdb": str(i)}, "progress_percent": 49, "progress_at": "2026-10-09T12:00:00Z"} for i in range(1, 5)}
+    rows["3"]["progress_at"] = "2026-11-11T12:00:00Z"
+    rows["4"]["progress_at"] = "2026-11-09T12:00:00Z"
+    store.write_state("progress", rows)
+    before = client.get("/api/tracker/items?feature=progress&limit=1").json()
+    assert before["total"] == 4
+    store.write_state("history", {f"{i}@1": {**rows[str(i)], "watched_at": "2026-11-10T12:00:00Z"} for i in range(1, 4)})
+    first = client.get("/api/tracker/items?feature=progress&sort=title&limit=1").json()
+    second = client.get("/api/tracker/items?feature=progress&sort=title&limit=1&offset=1").json()
+    assert first["total"] == second["total"] == 2
+    assert [row["key"] for row in first["items"] + second["items"]] == ["3", "4"]
+    assert client.get("/api/tracker/months?feature=progress").json()["months"] == [{"month": "2026-11", "count": 2}]
+    summary = client.get("/api/tracker/summary").json()
+    assert summary["counts"]["progress"] == 2
+    assert summary["health"]["progress"] == {"ok": 0, "attention": 0, "unchecked": 2}
+    store.save_checks((feature, key, "no_tmdb", {}, raw) for feature, key, _, raw in store.iter_records() if feature == "progress")
+    summary = client.get("/api/tracker/summary").json()
+    assert summary["attention"]["progress"] == 2
+    assert summary["health"]["progress"] == {"ok": 0, "attention": 2, "unchecked": 0}
+    assert store.query("progress")[0] == 4
+
+
+def test_progress_completion_matches_movie_aliases_and_exact_episode(app):
+    client, store, _, _ = app
+    movie = {"type": "movie", "title": "Movie", "ids": {"tmdb": "1", "imdb": "tt1"}, "progress_percent": 49, "progress_at": "2026-11-10T13:00:00+01:00"}
+    progress = {
+        "movie": movie,
+        "seen": {**episode(number=1), "progress_at": "2026-11-09T12:00:00Z", "progress_percent": 40},
+        "next": {**episode(number=2), "progress_at": "2026-11-09T12:00:00Z", "progress_percent": 40},
+    }
+    store.write_state("progress", progress)
+    store.write_state("history", {
+        "imdb:tt1@1": {"type": "movie", "ids": {"imdb": "tt1"}, "watched_at": "2026-11-10T12:00:00Z"},
+        "episode": episode(number=1, day=10),
+    })
+    data = client.get("/api/tracker/items?feature=progress").json()
+    assert [row["key"] for row in data["items"]] == ["next"]
+    progress["movie"]["progress_at"] = "2026-11-10T14:00:00+01:00"
+    store.write_state("progress", progress)
+    assert client.get("/api/tracker/items?feature=progress").json()["total"] == 2
+    other = TrackerStore(store.root / "profiles" / "other")
+    other.write_state("progress", {"movie": {**movie, "progress_at": "2026-11-09T12:00:00Z"}})
+    assert other.query("progress", current_progress=True)[0] == 1
+
+
+def test_airing_cards_include_real_season_watch_status_without_extra_lookups():
+    class Season:
+        def __init__(self):
+            self.calls = []
+
+        def lookup(self, kind, tmdb, *, season=None, **kwargs):
+            self.calls.append(season)
+            if season is None:
+                return SimpleNamespace(fetched_at=time.time(), data={"name": "Show", "status": "Returning Series", "seasons": [{"season_number": 3, "episode_count": 8, "air_date": "2026-10-01"}]})
+            return SimpleNamespace(fetched_at=time.time(), data={"episodes": [{"episode_number": number, "name": f"Episode {number}", "air_date": "2026-11-09" if number <= 6 else "2026-11-12", "runtime": 58} for number in range(1, 9)]})
+
+    provider = Season()
+    data = show_overview({"key": "tmdb:1"}, {(3, ep) for ep in range(1, 5)}, provider, DAY)
+    status = data["airing"][0]["season_progress"]
+    assert status["complete"] is True
+    assert [ep["status"] for ep in status["episodes"]] == ["watched"] * 4 + ["unwatched"] * 2 + ["upcoming"] * 2
+    assert sum(ep["runtime"] for ep in status["episodes"] if ep["status"] == "unwatched") == 116
+    assert provider.calls == [None, 3]
+
+
+def test_airing_cards_do_not_claim_complete_counts_with_unknown_air_dates():
+    data = show_overview({"key": "tmdb:1"}, {(1, 1)}, Metadata(), DAY)
+    status = data["airing"][0]["season_progress"]
+    assert status["complete"] is False
+    assert status["episodes"][-1]["status"] == "unknown"
+    assert all(ep["runtime"] is None for ep in status["episodes"])
+
+
 def test_episode_badge_counts_only_known_aired_unwatched_episodes():
     meta = Metadata()
     show = {"key": "tmdb:1", "title": "Show", "last_watched": "2026-11-08"}

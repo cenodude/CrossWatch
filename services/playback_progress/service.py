@@ -14,6 +14,7 @@ from typing import Any, Mapping, cast
 
 from _logging import log as BASE_LOG
 from cw_platform.config_base import load_config, save_config
+from cw_platform.event_archive.query import latest_completed_watches
 from cw_platform.profile_preferences import display_timezone
 from cw_platform.id_map import canonical_key, minimal as id_minimal
 from cw_platform.orchestrator._progress_completion import progress_caps_from_ops, progress_write_completion_policy
@@ -138,6 +139,38 @@ def _record_show_id_aliases(item: Mapping[str, Any]) -> list[str]:
         if ident:
             aliases.append(f"{provider}:{ident}")
     return list(dict.fromkeys(aliases))
+
+
+def _without_completed_progress(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    aliases = [list(dict.fromkeys(_record_movie_id_aliases(item) + _record_show_id_aliases(item))) for item in items]
+    completed: dict[tuple[str, str, str, str, str, str], int] = {}
+    for row in latest_completed_watches([key for keys in aliases for key in keys]):
+        media_type = _group_text(row.get("media_type"))
+        if media_type == "anime_episode":
+            media_type = "episode"
+        key = (
+            _group_text(row.get("destination_provider")),
+            normalize_instance_id(row.get("destination_instance")),
+            str(row.get("item_key") or ""),
+            media_type,
+            _group_number(row.get("season")) if media_type == "episode" else "",
+            _group_number(row.get("episode")) if media_type == "episode" else "",
+        )
+        completed[key] = max(completed.get(key, 0), int(row["completed_at"]))
+    retained = []
+    for item, keys in zip(items, aliases):
+        media_type = _group_text(item.get("media_type"))
+        if media_type == "anime_episode":
+            media_type = "episode"
+        provider = _group_text(item.get("provider"))
+        instance = normalize_instance_id(item.get("instance_id"))
+        season = _group_number(item.get("season")) if media_type == "episode" else ""
+        episode = _group_number(item.get("episode")) if media_type == "episode" else ""
+        last_completed = max((completed.get((provider, instance, key, media_type, season, episode), 0) for key in keys), default=0)
+        updated = _record_time_value(item)
+        if not last_completed or not updated or int(updated) > last_completed:
+            retained.append(item)
+    return retained
 
 
 def _live_source_provider(value: Any) -> str:
@@ -1300,6 +1333,7 @@ class PlaybackProgressService:
         ]
         _share_artwork_metadata(items)
         _overlay_live_streams(items, cfg=cfg, user_filter=user_filter)
+        items = _without_completed_progress(items)
         summary_rows = [dict(item) for item in items]
         grouping = not provider_filter and _grouping_mode(cfg) == "automatic"
         scopes = _grouping_scopes(cfg, readable_specs, user_filter)

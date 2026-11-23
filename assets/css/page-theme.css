@@ -1,8 +1,6 @@
 /* Shared page surfaces and controls. Theme values live in tokens.css.
  * Page styles own layout, provider colours and media artwork.
  */
-.cw-page-progress{border-radius:999px;background:var(--cw-theme-border)}
-.cw-page-progress::after{border-radius:inherit;background:var(--profile-tab-accent,var(--cw-theme-accent))}
 .cw-view-status[data-state="error"]{font-size:13px;color:var(--cw-theme-muted);background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);border-radius:10px}
 #page-tracker .cw-page-loading{color:var(--cw-theme-muted)}
 body.cw-profile-page .cw-profile-hero{border:1px solid var(--cw-theme-border);border-radius:18px;background:var(--cw-theme-surface);box-shadow:none}
@@ -107,7 +105,6 @@ button.cw-hub-records-stat{cursor:pointer}
 .cw-hub-section-head h2{font-size:19px;font-weight:600;line-height:1.3}
 .cw-hub-section-head :is(a,button){border:0;background:transparent;color:var(--profile-accent);font:inherit;font-size:13px;font-weight:400;text-decoration:none;cursor:pointer}
 .cw-cw-card{border:1px solid var(--cw-theme-border);border-radius:14px;background:var(--cw-theme-surface);color:var(--profile-text);font:inherit}
-.cw-cw-card:hover{border-color:var(--profile-accent)}
 .cw-cw-art{background:var(--cw-theme-surface)}
 .cw-cw-art::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,transparent 25%,rgba(5,8,13,.94));pointer-events:none}
 .cw-cw-copy{z-index:1;color:#fff}
@@ -307,7 +304,7 @@ dialog.cw-page-panel {
   background: var(--cw-page-panel-bg);
 }
 #layout .cw-themed-page .cw-page-toolbar {
-  background: var(--cw-page-toolbar-bg);
+  background: var(--cw-page-panel-bg);
 }
 #page-tracker .trk-overview-log{background:transparent;border:0;box-shadow:none;color:var(--cw-theme-muted);font:inherit;font-size:13px}
 #page-tracker .trk-overview-log:hover,#page-tracker .trk-overview-log:focus-visible{color:var(--cw-theme-accent)}
@@ -328,8 +325,26 @@ dialog.cw-page-panel {
 :is(#page-tracker,#profile-airing) .trk-calendar-day{background:var(--cw-theme-surface);color:var(--cw-theme-muted);box-shadow:inset 0 0 0 1px var(--cw-theme-border)}
 :is(#page-tracker,#profile-airing) .trk-calendar-day.is-today{background:var(--cw-theme-surface-raised);color:var(--cw-theme-text)}
 :is(#page-tracker,#profile-airing) .trk-calendar-day.has-releases{background:transparent;box-shadow:none}
-:is(#page-tracker,#profile-airing) .trk-calendar-release{background:var(--cw-theme-surface-raised);color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.6)}
-:is(#page-tracker,#profile-airing) .trk-calendar-release::after{background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.06) 40%,rgba(0,0,0,.85))}
+:is(#page-tracker,#profile-airing) .cw-airing-face{background:#101317;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.6)}
+:is(#page-tracker,#profile-airing) .cw-airing-front::after{background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.06) 40%,rgba(0,0,0,.85))}
+:is(#page-tracker,#profile-airing) .cw-airing-back::after{background:linear-gradient(180deg,rgba(8,10,12,.4),rgba(8,10,12,.78) 48%,rgba(8,10,12,.96))}
+.cw-airing-return{background:transparent;color:#cbd0da}
+.cw-airing-hint{color:rgba(255,255,255,.75)}
+.cw-airing-return:hover{background:#ffffff14}
+.cw-airing-track{stroke:#ffffff19}
+.cw-airing-value{stroke:#a48aff}
+.cw-airing-ring>strong>span,.cw-airing-catchup>span{color:#cbd0da}
+.cw-airing-season{color:#bfc4ce}
+.cw-airing-episodes button{background:#ffffff09;border-color:#ffffff14;color:#c4c8d3}
+.cw-airing-episodes button[data-state="watched"]{background:#7651cf33;border-color:#ad8dff30;color:#d0c2f9}
+.cw-airing-episodes button[data-state="upcoming"]{border-style:dashed;color:#a5acb9;background:#0b0d1199}
+.cw-airing-episodes button[aria-pressed="true"]{background:#7750e8;border-color:#baa3ff;color:#fff}
+.cw-airing-episodes button:hover{border-color:#c5afff}
+.cw-airing-episodes button:disabled{opacity:.4;cursor:default}
+.cw-airing-next{background:transparent;border-color:#ffffff16;color:#fff}
+.cw-airing-next-state{color:#c8b8ff}
+.cw-airing-next:hover{color:#d0c2f9}
+.cw-airing-card button:focus-visible{outline:2px solid #c5afff;outline-offset:-2px}
 :is(#page-tracker,#profile-airing) .trk-calendar-copy>span,:is(#page-tracker,#profile-airing) .trk-calendar-label{color:rgba(255,255,255,.85)}
 :is(#page-tracker,#profile-airing) .trk-calendar:focus-visible,:is(#page-tracker,#profile-airing) .trk-calendar-release:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:-3px}
 #profile-airing .trk-calendar-actions .cw-btn{background:var(--cw-page-control-bg);border:1px solid var(--cw-theme-border-strong);border-radius:var(--cw-page-control-radius);color:var(--cw-theme-text);font-size:14px;font-weight:500;box-shadow:none;text-shadow:none}

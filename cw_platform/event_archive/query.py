@@ -18,6 +18,32 @@ _LOG = logging.getLogger("crosswatch.event_archive")
 _MAX_LIMIT = 500
 _DEFAULT_LIMIT = 50
 
+
+def latest_completed_watches(item_keys: list[str]) -> list[dict[str, Any]]:
+    keys = sorted(set(item_keys))
+    if not keys:
+        return []
+    try:
+        conn = get_conn()
+        if conn is None:
+            return []
+        rows: list[dict[str, Any]] = []
+        for start in range(0, len(keys), 250):
+            batch = keys[start:start + 250]
+            placeholders = ",".join("?" for _ in batch)
+            rows.extend(dict(row) for row in conn.execute(
+                "SELECT item_key, media_type, season, episode, destination_provider, destination_instance, "
+                "MAX(created_at) AS completed_at FROM events INDEXED BY idx_events_item_key "
+                f"WHERE item_key IN ({placeholders}) AND domain='scrobble' AND event_type='scrobble_completed' "
+                "GROUP BY item_key, media_type, season, episode, destination_provider, destination_instance",
+                batch,
+            ))
+        return rows
+    except sqlite3.Error:
+        _LOG.debug("Could not read completed watches for playback progress", exc_info=True)
+        return []
+
+
 _COLUMNS = (
     "id", "event_hash", "domain", "created_at", "run_id", "event_type", "severity",
     "feature", "operation", "pair_key", "direction",

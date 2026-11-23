@@ -84,6 +84,8 @@
     const {viewCache = true, ...fetchOptions} = opt;
     const scoped = scopeUrl(url);
     if (viewCache && !opt.method && window.CW?.ViewCache?.supported(scoped)) {
+      const host = cachedViewHost(scoped);
+      window.CW.ViewCache.bindRefresh(host, candidate => cachedViewHost(candidate) === host);
       return window.CW.ViewCache.read(scoped, next => api(next, {...fetchOptions, viewCache:false}, ms), {signal:opt.signal, active:() => !document.hidden && !!cachedViewHost(scoped)});
     }
     const controller = typeof AbortController === "function" ? new AbortController() : null;
@@ -932,7 +934,7 @@
     const live = Number(item?.live_remaining_seconds);
     const seconds = item?.live_remaining_seconds != null && Number.isFinite(live) ? live : Number(item?.remaining_seconds ?? (Number(item?.remaining_minutes) * 60));
     if (!Number.isFinite(seconds) || seconds <= 0) return "";
-    const minutes = Math.round(seconds / 60);
+    const minutes = Math.max(1, Math.round(seconds / 60));
     return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m left` : `${minutes}m left`;
   };
   const liveState = (item) => String(item?.live_state || "").toLowerCase();
@@ -1340,6 +1342,7 @@
     const signature = JSON.stringify([profileCacheKey("airing"), day, data]);
     if (signature === airingSignature) return;
     airingSignature = signature;
+    const airingCards = window.CW.AiringCard?.capture(host) || [];
     const scroll = host.scrollLeft;
     const focused = host.contains(document.activeElement) ? document.activeElement.dataset.airingKey : null;
     for (const node of host.querySelectorAll('[data-profile-poster-key]')) posterItems.delete(node.dataset.profilePosterKey);
@@ -1365,11 +1368,12 @@
         const episode = `S${String(row.season).padStart(2, "0")} · E${String(row.episode).padStart(2, "0")}`;
         const label = offset === 0 ? "Today" : row.episode === 1 ? "Season premiere" : offset === 1 ? "Tomorrow" : `In ${offset} days`;
         const key = storePosterItem({...row, type:"show", tmdb, ids:{tmdb}, episode_label:episode});
-        return `<button type="button" class="trk-calendar-release" data-profile-poster-key="${esc(key)}" data-airing-key="${esc(row.key)}" aria-label="${esc(`${date.toLocaleDateString()}: ${row.title}, ${episode}`)}">${image ? `<img src="${esc(image)}" alt="" loading="lazy" decoding="async">` : ""}<span class="trk-calendar-date">${time}<span class="trk-calendar-label">${esc(label)}</span></span><span class="trk-calendar-copy"><strong>${esc(row.title)}</strong><span>${esc([episode, row.episode_title].filter(Boolean).join(" · "))}</span></span></button>`;
+        return window.CW.AiringCard.render(row, {image, dateHtml:time, label, openAttributes:`data-profile-poster-key="${esc(key)}"`, ariaLabel:`${date.toLocaleDateString()}: ${row.title}, ${episode}`});
       }).join("");
       return `<div class="trk-calendar-day${rows.length ? " has-releases" : ""}${offset === 0 ? " is-today" : ""}" data-calendar-date="${iso}" style="--calendar-releases:${Math.max(1, counts.reduce((sum, n) => sum + n, 0))};--calendar-empty-days:${counts.filter(n => !n).length}">${cards || time + (offset === 0 ? '<span class="trk-calendar-today">Today</span>' : "")}</div>`;
     }).join("");
     host.scrollLeft = scroll;
+    window.CW.AiringCard?.restore(host, airingCards);
     if (focused) [...host.querySelectorAll('[data-airing-key]')].find(node => node.dataset.airingKey === focused)?.focus({preventScroll:true});
     const notice = $("#profile-airing-notice");
     notice.textContent = data.metadata_available === false ? "Add a TMDB API key in Settings to see upcoming episodes." : data.unavailable ? "Episode dates are unavailable for some shows." : Array.isArray(data.airing) && !data.airing.length ? "No episodes scheduled in the next 30 days." : "";
@@ -3776,6 +3780,7 @@
       };
       setText("title", cfg.title || source.title);
       setText("lede", source.lede);
+      q("lede")?.toggleAttribute("hidden", !source.lede);
       const search = q("search");
       if (search) search.placeholder = source.search;
       host?.querySelectorAll("[data-timeline-source]").forEach((btn) => {
@@ -3909,7 +3914,6 @@
         if (!state.loaded) void load({ reset: true });
         else void load({quiet:true});
       }
-      if (fromHash) $(".cw-profile-tabs")?.scrollIntoView({ block: "start", behavior: "smooth" });
     }
 
     function wire() {
@@ -4067,7 +4071,7 @@
         coverage: true,
         scores: false,
         title: "Synced history",
-        lede: "Plays read back from every provider after sync.",
+        lede: "",
         noun: "play",
         search: "Search synced history...",
         empty: "No synced plays match this view.",
@@ -4112,7 +4116,7 @@
         coverage: true,
         scores: true,
         title: "Ratings",
-        lede: "Your scores read back from every provider after sync.",
+        lede: "",
         noun: "rating",
         search: "Search ratings...",
         empty: "No ratings match this view.",
@@ -4144,7 +4148,7 @@
         coverage: true,
         scores: false,
         title: "Watchlist",
-        lede: "Everything on your watchlists.",
+        lede: "",
         noun: "title",
         search: "Filter by title, id or provider...",
         empty: "No watchlist titles match this view.",
@@ -5023,11 +5027,10 @@
       await load({ force: true });
     }
 
-    function open({ fromHash = false } = {}) {
+    function open() {
       renderSync();
       if (!state.loaded && !state.busy) void load();
       if (!state.clock) state.clock = window.setInterval(renderSync, 30000);
-      if (fromHash) $(".cw-profile-tabs")?.scrollIntoView({ block: "start", behavior: "smooth" });
     }
 
     function wire() {
@@ -5233,6 +5236,9 @@
       if (key === "account" && viewingAs()) return false;
       const btn = document.querySelector(`[data-profile-tab="${key}"]`);
       if (!btn) return false;
+      const previous = document.querySelector(".cw-profile-panel.active");
+      const next = document.querySelector(`#profile-panel-${key}`);
+      if (previous && next && previous !== next) next.style.minHeight = `${Math.max(0, window.innerHeight - previous.getBoundingClientRect().top)}px`;
       document.querySelectorAll("[data-profile-tab]").forEach((tab) => tab.classList.toggle("active", tab === btn));
       document.querySelectorAll(".cw-profile-panel").forEach((panel) => panel.classList.toggle("active", panel.id === `profile-panel-${key}`));
       document.body.dataset.profileView = key;

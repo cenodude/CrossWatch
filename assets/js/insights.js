@@ -44,7 +44,10 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   const pendingReads = new Map();
   const fetchJSON = (url, background = true) => {
     if (authSetupPending()) throw new Error("auth setup pending");
-    if (background && w.CW?.ViewCache?.supported(url)) return w.CW.ViewCache.read(url, next => fetchJSON(next, false), {active:() => !d.hidden && !!$("#stat-providers")?.getClientRects().length});
+    if (background && w.CW?.ViewCache?.supported(url)) {
+      w.CW.ViewCache.bindRefresh($("#stats-card"), candidate => new URL(candidate, location.origin).pathname === "/api/insights");
+      return w.CW.ViewCache.read(url, next => fetchJSON(next, false), {active:() => !d.hidden && !!$("#stat-providers")?.getClientRects().length});
+    }
     const key = `${_scopeRevision}:${url}`;
     if (pendingReads.has(key)) return pendingReads.get(key);
     const pending = fetch(tickUrl(url), { credentials: "same-origin", cache: "no-store" }).then(res => {

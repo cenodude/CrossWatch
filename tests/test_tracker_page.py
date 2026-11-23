@@ -184,11 +184,11 @@ def test_unreadable_tracker_reports_an_error_instead_of_an_empty_list(tmp_path, 
     assert res.json()["error"] == "tracker_unreadable"
 
 
-def test_tracker_tab_sits_between_playlists_and_editor():
+def test_tracker_tab_sits_between_main_and_hub():
     from ui_frontend import get_index_html
 
     html = get_index_html()
-    assert html.index('id="tab-playlists"') < html.index('id="tab-tracker"') < html.index('id="tab-editor"')
+    assert html.index('id="tab-main"') < html.index('id="tab-tracker"') < html.index('id="tab-profile"')
     assert 'id="page-tracker"' in html
     core = (REPO / "assets" / "helpers" / "core.js").read_text("utf-8")
     assert '"/assets/js/tracker.js"' in core
@@ -258,7 +258,8 @@ def test_tracker_views_are_tabs_and_paging_sits_under_the_table():
     pager = tracker[tracker.index("  function pager()"):tracker.index("  function emptyState(")]
     assert 'renderNavigation()' in controls and '<nav class="trk-tabs" role="tablist"' in navigation and 'role="tab" class="trk-tab' in tracker
     assert 'data-trk-input="size"' not in controls and 'data-trk-input="size"' in pager
-    assert 'class="cw-btn cw-icon-only trk-icon-btn" data-trk-action="changes"' in controls
+    assert "['changes','manage_history','Changes']" in controls
+    assert 'class="cw-btn trk-icon-btn" data-trk-action="${action}"' in controls
     assert '{ id: "show", label: "TV", icon: "tv" }' in tracker
     assert "#page-tracker .trk-toolbar{display:grid;" in pages
 
@@ -280,7 +281,7 @@ def test_title_panel_sets_a_status_in_one_click():
     assert 'data-trk-detail="status-menu" aria-haspopup="menu"' in tracker and 'role="menuitemradio"' in tracker
     assert "data-trk-set-status" in tracker and "async function quickStatus(status)" in tracker
     assert "if (sheet.mode === \"title\" && handlePanelClick(event)) {\n      event.stopPropagation();" in tracker
-    assert ":is(#page-tracker :is(.trk-status,.trk-status-btn,.trk-status-item),.cw-mm-trk-status)[data-status=\"dropped\"]" in theme
+    assert ":is(:is(#page-tracker,.cw-mm-trk) :is(.trk-status,.trk-status-btn,.trk-status-item),.cw-mm-trk-status)[data-status=\"dropped\"]" in theme
 
 
 def test_tracker_has_my_titles_and_personal_notes():
@@ -292,7 +293,8 @@ def test_tracker_has_my_titles_and_personal_notes():
     assert '{ id: "titles", label: "My titles", icon: "bookmarks" }' in tracker
     assert "/api/tracker/notes?" in tracker and '"/api/tracker/note"' in tracker and '"/api/tracker/note-fields"' in tracker
     assert "notes: renderNotes, fields: renderFields" in tracker and 'data-trk-detail="complete"' in tracker
-    assert 'data-mm-trk="notes"' not in modal and 'button("notes", "edit_note"' in modal
+    assert 'data-mm-trk="notes">${icon("add")}<span>Add notes</span>' in modal
+    assert 'data-mm-trk="notes" title="Edit notes" aria-label="Edit notes"' in modal
     assert "#page-tracker .trk-label{display:inline-flex" in pages and "#page-tracker .trk-label{border:" in theme
     assert '[data-status="dropped"]{--trk-status:var(--cw-theme-danger)}' in theme
 

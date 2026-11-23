@@ -28,7 +28,7 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
       const boot = doc.createElement("script");
       boot.textContent = 'window.CW={AuthState:{read:()=>({isAdmin:true,permissions:{write:true}})},ProfileMediaModal:{canOpen:()=>true,open:item=>window.opened=item}};';
       doc.body.append(boot);
-      for (const path of ["helpers/view-cache", "helpers/card-actions", "helpers/selection-bar", "helpers/profile-datetime", "helpers/month-bar", "helpers/icon-select", "js/profile-page"]) {
+      for (const path of ["helpers/view-cache", "helpers/card-actions", "helpers/airing-card", "helpers/selection-bar", "helpers/profile-datetime", "helpers/month-bar", "helpers/icon-select", "js/profile-page"]) {
         const script = doc.createElement("script");
         script.src = `/assets/${path}.js`;
         doc.body.append(script);
@@ -48,6 +48,7 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
       if (url.pathname.startsWith("/api/")) {
         let json = {ok:true};
         if (url.pathname === "/api/profile") json.user = {is_admin:true, username:"preview", permissions:{write:true}, preferences:{}, sessions:[]};
+        if (url.pathname === "/api/playback_progress/items") json = {items:[{provider:"crosswatch", instance_id:"default", canonical_key:"tmdb:42", media_type:"movie", title:"Almost finished", ids:{tmdb:"42"}, progress_percent:99, remaining_seconds:24}], total:1};
         if (url.pathname === "/api/profile/airing") {
           reads++;
           assert.equal(url.searchParams.get("background"), "1");
@@ -60,19 +61,23 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
     });
     await page.goto("https://hub-airing.test/hub");
     const section = page.locator("#profile-airing"), calendar = page.locator("#profile-airing-days");
-    await section.getByRole("progressbar").waitFor();
+    await page.locator(".cw-hub-continue").getByText("1m left", {exact:true}).waitFor();
+    assert.equal(await page.locator(".cw-hub-continue").getByText("0m left", {exact:true}).count(), 0);
+    await page.locator("#profile-airing[data-view-loading]").waitFor();
+    assert.equal(await section.getByRole("progressbar").count(), 0);
     assert.equal(await section.evaluate(node => node.previousElementSibling.classList.contains("cw-hub-continue")), true);
     assert.equal(await calendar.locator("[data-calendar-date]").count(), 30);
     const sectionTop = await section.evaluate(node => node.getBoundingClientRect().top);
     phase = "cached";
-    await calendar.getByText("The Institute", {exact:true}).waitFor();
+    await calendar.locator('.cw-airing-front').getByText("The Institute", {exact:true}).waitFor();
     assert.equal(await section.locator('[data-view-status]').isHidden(), true);
     assert.equal(await section.locator('[data-view-status]').textContent(), "");
     assert.equal(await calendar.locator('.trk-calendar-release').count(), 3);
     assert.equal(await calendar.locator('.trk-calendar-label').first().evaluate(node => getComputedStyle(node).color), "rgba(255, 255, 255, 0.85)");
     assert.equal(await calendar.locator('[data-calendar-date="2026-11-25"] .trk-calendar-release').count(), 2);
     assert.equal(await section.evaluate(node => node.getBoundingClientRect().top), sectionTop);
-    await calendar.getByText("The Institute", {exact:true}).click();
+    await calendar.locator('.cw-airing-front').getByText("The Institute", {exact:true}).click();
+    await calendar.locator('.cw-airing-next').first().click();
     assert.equal(await page.evaluate(() => window.opened.tmdb), "12");
     await section.getByRole("button", {name:"Next days", exact:true}).click();
     assert.ok(await calendar.evaluate(node => node.scrollLeft > 0));

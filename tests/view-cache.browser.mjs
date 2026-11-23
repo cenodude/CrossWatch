@@ -7,6 +7,51 @@ import {mkdir, readFile} from "node:fs/promises";
 import {execFileSync} from "node:child_process";
 import {chromium} from "playwright";
 
+test("Refresh icons follow concurrent requests, failures and cancellation", async t => {
+  const browser = await chromium.launch({headless:true});
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.route("https://refresh.test/**", route => route.fulfill({contentType:"text/html", body:'<section id="host"><button data-trk-action="refresh"><span class="material-symbols-rounded">refresh</span></button></section>'}));
+  await page.goto("https://refresh.test/");
+  await page.addScriptTag({path:"assets/helpers/view-cache.js"});
+  await page.addStyleTag({path:"assets/css/pages.css"});
+  await page.evaluate(() => {
+    const host = document.querySelector("#host");
+    CW.ViewCache.bindRefresh(host, url => url.startsWith("/api/tracker/"));
+    window.finish = {};
+    window.requests = ["summary", "items"].map(name => CW.ViewCache.read(`/api/tracker/${name}`, () => new Promise(resolve => { finish[name] = resolve; })));
+  });
+  const spinning = () => page.locator("#host span").evaluate(node => getComputedStyle(node).animationName);
+  assert.equal(await spinning(), "cwRefreshSpin");
+  await page.evaluate(async () => { finish.summary({ok:true}); await requests[0]; });
+  assert.equal(await spinning(), "cwRefreshSpin");
+  await page.evaluate(async () => { finish.items({ok:true}); await requests[1]; });
+  assert.equal(await spinning(), "none");
+  await page.evaluate(async () => {
+    window.controller = new AbortController();
+    await CW.ViewCache.read("/api/tracker/items", async () => ({_view:{ready:true, refreshing:true, version:"1"}}), {signal:controller.signal});
+  });
+  assert.equal(await spinning(), "cwRefreshSpin");
+  await page.evaluate(() => controller.abort());
+  assert.equal(await spinning(), "none");
+  await page.evaluate(async () => {
+    await CW.ViewCache.read("/api/tracker/items", async () => { throw new Error("Offline"); }).catch(() => {});
+  });
+  assert.equal(await spinning(), "none");
+  await page.evaluate(async () => {
+    await CW.ViewCache.read("/api/tracker/items", async () => ({_view:{ready:true, refreshing:true, version:"1"}}));
+    document.querySelector("#host").innerHTML = '<button data-trk-action="refresh"><span class="material-symbols-rounded">refresh</span></button>';
+  });
+  assert.equal(await spinning(), "cwRefreshSpin");
+  await page.emulateMedia({reducedMotion:"reduce"});
+  assert.equal(await spinning(), "none");
+  await page.emulateMedia({reducedMotion:"no-preference"});
+  assert.equal(await spinning(), "cwRefreshSpin");
+  await page.evaluate(() => CW.ViewCache.invalidate());
+  assert.equal(await spinning(), "none");
+  assert.equal(await page.getByRole("progressbar").count(), 0);
+});
+
 for (const direct of [false, true]) test(`${direct ? "Direct Collection" : "Hub to Collection"} prepares cached results and refreshes the shared hero`, async t => {
   const browser = await chromium.launch({headless:true});
   t.after(() => browser.close());
@@ -19,7 +64,7 @@ for (const direct of [false, true]) test(`${direct ? "Direct Collection" : "Hub 
     const boot = doc.createElement("script");
     boot.textContent = 'window.CW={AuthState:{read:()=>({isAdmin:true,permissions:{write:true}})},ItemActions:{openMenu:options=>options.onChanged()}};';
     doc.body.append(boot);
-    for (const path of ["helpers/view-cache", "helpers/card-actions", "helpers/selection-bar", "helpers/profile-datetime", "helpers/month-bar", "helpers/icon-select", "js/profile-page"]) {
+    for (const path of ["helpers/view-cache", "helpers/card-actions", "helpers/airing-card", "helpers/selection-bar", "helpers/profile-datetime", "helpers/month-bar", "helpers/icon-select", "js/profile-page"]) {
       const script = doc.createElement("script");
       script.src = `/assets/${path}.js`;
       doc.body.append(script);
@@ -68,7 +113,9 @@ for (const direct of [false, true]) test(`${direct ? "Direct Collection" : "Hub 
   await page.locator("#profile-hero-media strong").getByText("Fresh hero movie", {exact:true}).waitFor();
   assert.ok(heroQueries.length >= 2);
   assert.ok(heroQueries.every(query => query.background === "1"));
-  await page.locator('#profile-panel-collection [data-view-status]').getByRole("progressbar", {name:"Loading items…"}).waitFor();
+  await page.locator("#profile-panel-collection[data-view-loading]").waitFor();
+  assert.equal(await page.locator(".cw-page-progress").count(), 0);
+  assert.equal(await page.locator("#profile-collection-refresh .material-symbols-rounded").evaluate(node => getComputedStyle(node).animationName), "cwRefreshSpin");
   assert.equal(await page.getByText("Collections could not be loaded.", {exact:true}).count(), 0);
   phase = "cached";
   await page.getByText("Cached collection movie", {exact:true}).first().waitFor();
@@ -142,7 +189,7 @@ test("Tracker refreshes all loaded timeline pages without mixing revisions or mo
       }
       return route.fulfill({json});
     }
-    return route.fulfill({contentType:"text/html", body:`<html><body><section id="page-tracker"></section><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
+    return route.fulfill({contentType:"text/html", body:`<html><body><section id="page-tracker"></section><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/helpers/airing-card.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
   });
   await page.goto("https://timeline-range.test/");
   await page.locator('[data-trk-action="more"]').click();
@@ -201,11 +248,17 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
       }
       const attrs = theme === "original" ? 'class="cw-theme-original"' : `data-cw-theme="${theme}"`;
       const css = ["fonts/material-symbols-rounded", "themes/tokens", "css/base", "crosswatch", "css/layout", "css/components", "css/pages", "css/page-theme", "ui-shell", theme === "original" ? "themes/original-coverage" : "themes/flat"];
-      return route.fulfill({contentType:"text/html", body:`<!doctype html><html ${attrs} data-tab="tracker"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(file => `<link rel="stylesheet" href="/assets/${file}.css">`).join("")}</head><body><main id="layout" class="full"><section id="page-tracker" class="card tab-page cw-themed-page"></section></main><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
+      return route.fulfill({contentType:"text/html", body:`<!doctype html><html ${attrs} data-tab="tracker"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">${css.map(file => `<link rel="stylesheet" href="/assets/${file}.css">`).join("")}</head><body><main id="layout" class="full"><section id="page-tracker" class="card tab-page cw-themed-page"></section></main><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/helpers/airing-card.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
     });
     await page.goto("https://view-cache.test/");
     const loading = page.locator('[data-trk-slot="main"] .cw-page-loading');
-    await loading.getByRole("progressbar").waitFor();
+    await loading.waitFor();
+    await page.locator("#page-tracker[data-view-loading]").waitFor();
+    assert.equal(await page.locator(".cw-page-progress").count(), 0);
+    await page.emulateMedia({reducedMotion:"no-preference"});
+    assert.equal(await page.locator('[data-trk-action="refresh"] span').evaluate(node => getComputedStyle(node).animationName), "cwRefreshSpin");
+    await page.emulateMedia({reducedMotion:"reduce"});
+    assert.equal(await page.locator('[data-trk-action="refresh"] span').evaluate(node => getComputedStyle(node).animationName), "none");
     assert.equal(await page.locator('.cw-main > [data-view-status]').isVisible(), false);
     const initialHeroTop = await page.locator('.cw-media-hero').evaluate(node => node.getBoundingClientRect().top);
     await mkdir('.tmp/view-loading', {recursive:true});
@@ -230,6 +283,7 @@ for (const theme of ["original", "flat-dark", "flat-light"]) for (const width of
     assert.equal(await page.locator("[data-view-status]").isHidden(), true);
     assert.equal(await page.locator('.cw-media-hero').evaluate(node => node.getBoundingClientRect().top), heroTop);
     assert.equal(await page.locator('[data-trk-slot="controls"]').evaluate(node => node.getBoundingClientRect().top), controlsTop);
+    assert.equal(await page.locator("#page-tracker").getAttribute("data-view-loading"), null);
     assert.ok(reads >= 2);
     assert.deepEqual(errors, []);
   });
@@ -256,7 +310,7 @@ test("Tracker metadata lookups preserve polling and saved watches restart it", a
     if (url.pathname === "/api/metadata/resolve") { resolves++; json = {ok:true, result:{ids:{tmdb:"2"}}}; }
     if (url.pathname === "/api/tracker/add") { writes++; version = 3; json = {ok:true, count:1}; }
     if (url.pathname.startsWith("/api/")) return route.fulfill({json});
-    return route.fulfill({contentType:"text/html", body:'<section id="page-tracker"></section><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector("#page-tracker"));</script>'});
+    return route.fulfill({contentType:"text/html", body:'<section id="page-tracker"></section><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/helpers/airing-card.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector("#page-tracker"));</script>'});
   });
   await page.goto("https://tracker-metadata.test/");
   const main = page.locator('[data-trk-slot="main"]');
@@ -311,7 +365,7 @@ for (const stop of [false, true]) test(`Tracker keeps refreshing after ${stop ? 
       json.review = {state:job, titles:1};
     }
     if (url.pathname.startsWith("/api/")) return route.fulfill({json});
-    return route.fulfill({contentType:"text/html", body:'<section id="page-tracker"></section><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector("#page-tracker"));</script>'});
+    return route.fulfill({contentType:"text/html", body:'<section id="page-tracker"></section><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/helpers/airing-card.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector("#page-tracker"));</script>'});
   });
   await page.goto("https://tracker-automation.test/");
   const main = page.locator('[data-trk-slot="main"]');
@@ -489,7 +543,7 @@ for (const initial of ["failed", "empty", "summary-failed"]) test(`Tracker timel
       }
       return route.fulfill({json});
     }
-    return route.fulfill({contentType:"text/html", body:`<html><body><section id="page-tracker"></section><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
+    return route.fulfill({contentType:"text/html", body:`<html><body><section id="page-tracker"></section><script>window.CW={AuthState:{read:()=>({isAdmin:true})}};</script><script src="/assets/helpers/view-cache.js"></script><script src="/assets/helpers/icon-select.js"></script><script src="/assets/helpers/selection-bar.js"></script><script src="/assets/helpers/airing-card.js"></script><script src="/assets/js/tracker.js"></script><script>TrackerPage.mount(document.querySelector('#page-tracker'));</script></body></html>`});
   });
   await page.goto("https://timeline.test/");
   const status = page.locator("[data-view-status]");
