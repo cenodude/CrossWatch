@@ -149,6 +149,11 @@ class MarkTracker:
     def watermark(self, user: str) -> float | None:
         return self._watermarks.get(user)
 
+    def query_floor(self, user: str, now: float, slack: float) -> float:
+        last_poll = self._last_poll.get(user)
+        floor = (now if last_poll is None else last_poll) - slack
+        return max(self._watermarks.get(user) or 0.0, floor)
+
     def fresh(self, user: str, rows: Iterable[tuple[str, Any, float | None]], now: float, slack: float) -> list[Any]:
         ceiling = now + CLOCK_SLACK_SECONDS
         listed = [(key, item, ts) for key, item, ts in rows if key and ts is not None]

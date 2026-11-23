@@ -30,6 +30,7 @@ from providers.sync.stremio._common import metahub_poster_url
 CINEMETA_BASE = "https://v3-cinemeta.strem.io"
 META_TIMEOUT_SECONDS = 4.0
 META_CACHE_LIMIT = 512
+CLOSED_SESSION_LIMIT = 512
 TICK_SECONDS = 30.0
 CARD_REFRESH_SECONDS = 120.0
 STALE_GRACE_SECONDS = 900.0
@@ -121,6 +122,7 @@ class StremioWatchService:
         self._bg: threading.Thread | None = None
         self._lock = threading.RLock()
         self._sessions: dict[str, dict[str, Any]] = {}
+        self._closed_sessions: dict[str, None] = {}
         self._quiet_startup = bool(quiet_startup)
 
     @property
@@ -207,6 +209,14 @@ class StremioWatchService:
         accepted = bool(self._dispatch.dispatch(event))
         session["matched"] = accepted
         if accepted:
+            key = str(session["session_key"])
+            if action == "stop":
+                self._closed_sessions.pop(key, None)
+                self._closed_sessions[key] = None
+                if len(self._closed_sessions) > CLOSED_SESSION_LIMIT:
+                    self._closed_sessions.pop(next(iter(self._closed_sessions)))
+            elif action == "start":
+                self._closed_sessions.pop(key, None)
             try:
                 _cw_update("stremio", event, duration_ms=event.duration_ms, cover=session.get("cover"), provider_instance=self._instance_id)
             except Exception:
@@ -242,9 +252,13 @@ class StremioWatchService:
     def ingest(self, item: PlayerEvent, *, now: float | None = None) -> tuple[bool, str]:
         current = float(now if now is not None else time.time())
         with self._lock:
+            if item.action != "start" and item.session_key in self._closed_sessions:
+                return False, "session_ended"
             known = item.session_key in self._sessions
         fresh = None if known else self._new_session(item)
         with self._lock:
+            if item.action != "start" and item.session_key in self._closed_sessions:
+                return False, "session_ended"
             session = self._sessions.get(item.session_key)
             if session is None:
                 session = fresh or self._new_session(item)

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -421,3 +422,132 @@ def test_real_stop_is_not_repeated(monkeypatch: pytest.MonkeyPatch) -> None:
     service._close_vanished_sessions()
 
     assert len(_stops(sink)) == 1
+
+
+@pytest.mark.parametrize("state", ["stopped", "paused"])
+@pytest.mark.parametrize("older_offset", [False, True])
+def test_completed_session_rejects_late_lower_progress(monkeypatch: pytest.MonkeyPatch, state: str, older_offset: bool) -> None:
+    service, sink, clock, _ = _service(monkeypatch)
+    _skip_credits(service, clock)
+    clock[0] += 5
+    service._handle_alert(_psn("28", "stopped", DURATION))
+    assert _stops(sink)[0].progress == 100
+    emitted = list(sink.events)
+
+    clock[0] += 209
+    monkeypatch.setattr(service, "_probe_session_progress", lambda ev: 49)
+    offset = round(DURATION * 0.49) if older_offset else DURATION
+    service._handle_alert(_psn("28", state, offset))
+
+    assert sink.events == emitted
+
+
+def test_completed_session_allows_verified_rewatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, sink, clock, plex = _service(monkeypatch)
+    _skip_credits(service, clock)
+    clock[0] += 5
+    service._handle_alert(_psn("28", "stopped", DURATION))
+    plex.listing = '<MediaContainer size="1"><Video sessionKey="28" ratingKey="49156"><User title="owner" /><Player machineIdentifier="web" /></Video></MediaContainer>'
+
+    for delay, alert in (
+        (209, _psn("28", "playing", 60_000)),
+        (30, _psn("28", "paused", 90_000)),
+        (10, _psn("28", "stopped", 90_000)),
+    ):
+        clock[0] += delay
+        service._handle_alert(alert)
+
+    assert [event.action for event in sink.events][-3:] == ["start", "pause", "stop"]
+    assert len(_stops(sink)) == 2
+    assert _stops(sink)[-1].progress < 100
+
+
+def _session(session_key: str, offset: int, rating_key: str = "49156") -> SimpleNamespace:
+    return SimpleNamespace(sessionKey=session_key, ratingKey=rating_key, duration=DURATION, viewOffset=offset)
+
+
+def test_stop_ignores_another_session_of_the_same_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, sink, clock, plex = _service(monkeypatch)
+    plex.fetchItem = lambda rating_key: SimpleNamespace(type="movie", title="Resident Evil", year=2026, guids=[], duration=DURATION)
+    _skip_credits(service, clock)
+    plex.sessions = lambda: [_session("31", round(DURATION * 0.49))]
+    clock[0] += 5
+    service._handle_alert(_psn("28", "stopped", DURATION))
+
+    stop = _stops(sink)[0]
+    assert stop.progress == 100
+    assert stop.position_ms == DURATION
+
+
+def test_probed_progress_moves_the_position_with_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    service, sink, clock, plex = _service(monkeypatch)
+    service._handle_alert(_psn("28", "playing", 3_000_000))
+    plex.sessions = lambda: [_session("28", 4_200_000)]
+    clock[0] += 5
+    service._handle_alert(_psn("28", "stopped", 3_000_000))
+
+    stop = _stops(sink)[0]
+    assert stop.progress == 70
+    assert stop.position_ms == 4_200_000
+    assert stop.duration_ms == DURATION
+
+
+def test_closed_sessions_are_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    service, _, _, _ = _service(monkeypatch)
+    event = SimpleNamespace()
+    for index in range(watch.CLOSED_SESSIONS_MAX + 10):
+        service._remember_closed(str(index), event)
+    service._remember_closed("5", event)
+
+    keys = list(service._vanished_closed)
+    assert len(keys) == watch.CLOSED_SESSIONS_MAX
+    assert keys[-1] == "5"
+    assert "0" not in keys
+    assert str(watch.CLOSED_SESSIONS_MAX + 9) in keys
+
+
+def test_closed_session_account_match_allows_unresolved_account() -> None:
+    from providers.scrobble.plex import watch
+    from providers.scrobble.scrobble import ScrobbleEvent
+
+    def event(account: str) -> ScrobbleEvent:
+        return ScrobbleEvent(action="stop", media_type="movie", ids={"plex": 1}, title=None, year=None, season=None,
+                             number=None, progress=49, account=account, server_uuid="server-1", session_key="28", raw={})
+
+    assert watch._same_account(event("Owner"), event("owner"))
+    assert watch._same_account(event(""), event("owner"))
+    assert not watch._same_account(event("guest"), event("owner"))
+
+
+@pytest.mark.parametrize("session_key", ["8", None])
+def test_progress_probe_does_not_borrow_another_users_movie(monkeypatch: pytest.MonkeyPatch, session_key: str | None) -> None:
+    from providers.scrobble.scrobble import ScrobbleEvent
+
+    service, _, _, plex = _service(monkeypatch)
+    other = SimpleNamespace(sessionKey="9", ratingKey="49269", duration=5885440, viewOffset=2883866)
+    monkeypatch.setattr(plex, "sessions", lambda: [other])
+    event = ScrobbleEvent(
+        action="stop", media_type="movie", ids={"plex": "49269"}, title="Movie", year=2026,
+        season=None, number=None, progress=100, account="owner", server_uuid="server-1", session_key=session_key, raw={},
+    )
+
+    assert service._probe_session_progress(event) is None
+
+
+def test_progress_probe_uses_only_matching_session_and_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.scrobble import ScrobbleEvent
+
+    service, _, _, plex = _service(monkeypatch)
+    other = SimpleNamespace(sessionKey="9", ratingKey="49269", duration=100000, viewOffset=49000)
+    own = SimpleNamespace(sessionKey="8", ratingKey="49269", duration=100000, viewOffset=30000)
+    monkeypatch.setattr(plex, "sessions", lambda: [other, own])
+    event = ScrobbleEvent(
+        action="pause", media_type="movie", ids={"plex": "49269"}, title="Movie", year=2026,
+        season=None, number=None, progress=70, account="owner", server_uuid="server-1", session_key="8", raw={},
+    )
+
+    assert service._probe_session_progress(event) == 30
+    own.ratingKey = "99999"
+    assert service._probe_session_progress(event) is None

@@ -646,15 +646,20 @@ def test_listener_created_during_stop_is_closed(monkeypatch: pytest.MonkeyPatch)
     closed = []
 
     class Listener:
+        def __init__(self, *args, **kwargs):
+            service.stop()
+
+        def start(self):
+            pass
+
+        def is_alive(self):
+            return True
+
         def stop(self):
             closed.append(True)
 
-    class Server:
-        def startAlertListener(self, **kwargs):
-            service.stop()
-            return Listener()
-
-    monkeypatch.setattr(watch, "PlexServer", lambda *args: Server())
+    monkeypatch.setattr(watch, "PlexServer", lambda *args, **kwargs: FakePlex([]))
+    monkeypatch.setattr(watch, "_PlexAlertListener", Listener)
     monkeypatch.setattr(service, "_refresh_account_context", lambda: None)
     service.start()
     assert closed == [True]
@@ -818,6 +823,248 @@ def test_user_gate_still_enriches_allowed_user(monkeypatch: pytest.MonkeyPatch) 
 
     assert plex.fetches == [1234]
     assert len(sink.events) == 1
+
+
+class _Guid:
+    def __init__(self, gid: str) -> None:
+        self.id = gid
+
+
+class _Part:
+    def __init__(self, path: str) -> None:
+        self.file = path
+
+
+class _Item:
+    def __init__(self, rating_key: int, kind: str, show: "_Item | None" = None) -> None:
+        self.ratingKey = rating_key
+        self.type = kind
+        self.title = "Pilot" if kind == "episode" else ("Show" if kind == "show" else "Movie")
+        self.year = 2020
+        self.duration = 1_000_000
+        self.librarySectionID = 7
+        self.editionTitle = None
+        self.grandparentTitle = "Show"
+        self.seasonNumber = 1
+        self.index = 2
+        self.guids = [_Guid(f"tmdb://{rating_key}")]
+        self._show = show
+        self._autoReload = True
+
+    def iterParts(self) -> list[_Part]:
+        return [_Part(f"/media/{self.ratingKey}.mkv")]
+
+    def show(self) -> "_Item | None":
+        return self._show
+
+
+class ItemPlex(FakePlex):
+    def __init__(self, sessions: list[str | Exception], items: dict[int, _Item]) -> None:
+        super().__init__(sessions)
+        self.items = items
+        self.fetches: list[int] = []
+
+    def fetchItem(self, rating_key: int) -> _Item | None:
+        self.fetches.append(int(rating_key))
+        return self.items.get(int(rating_key))
+
+
+def _progress_alert(session_key: str, rating_key: int, offset: int, *, media_type: str = "movie") -> dict[str, Any]:
+    alert = _alert(session_key, media_type=media_type)
+    alert["PlaySessionStateNotification"][0].update(ratingKey=rating_key, viewOffset=offset)
+    return alert
+
+
+def test_repeated_playing_alerts_fetch_item_metadata_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(None)
+    plex = ItemPlex(["<MediaContainer />"], {1234: _Item(1234, "movie")})
+    service, sink = _service(monkeypatch, cfg, plex)
+
+    for offset in (100_000, 200_000, 300_000, 400_000):
+        service._handle_alert(_progress_alert("31", 1234, offset))
+
+    assert plex.fetches == [1234]
+    assert sink.events
+    ev = sink.events[-1]
+    assert ev.ids["tmdb"] == "1234"
+    assert ev.raw["_cw_file_paths"] == ["/media/1234.mkv"]
+    assert plex.items[1234]._autoReload is False
+
+
+def test_episode_metadata_and_show_ids_come_from_the_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(None)
+    show = _Item(500, "show")
+    plex = ItemPlex(["<MediaContainer />"], {1234: _Item(1234, "episode", show=show)})
+    service, sink = _service(monkeypatch, cfg, plex)
+    monkeypatch.setattr(service, "_active_cfg", lambda: cfg)
+
+    for offset in (100_000, 200_000, 300_000):
+        service._handle_alert(_progress_alert("31", 1234, offset, media_type="episode"))
+
+    assert plex.fetches == [1234]
+    ev = sink.events[-1]
+    assert (ev.title, ev.season, ev.number) == ("Show", 1, 2)
+    assert ev.ids["tmdb_show"] == "500"
+    assert show._autoReload is False
+
+
+def test_missing_item_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(None)
+    plex = CountingPlex(["<MediaContainer />"])
+    service, _ = _service(monkeypatch, cfg, plex)
+
+    service._handle_alert(_progress_alert("31", 1234, 100_000))
+    service._handle_alert(_progress_alert("31", 1234, 200_000))
+
+    assert plex.fetches == [1234, 1234]
+
+
+def test_item_cache_expires(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    cfg = _cfg(None)
+    plex = ItemPlex(["<MediaContainer />"], {1234: _Item(1234, "movie")})
+    service, _ = _service(monkeypatch, cfg, plex)
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(watch.time, "time", lambda: clock["now"])
+
+    service._item_info(1234)
+    clock["now"] += watch._ITEM_CACHE_TTL - 1
+    service._item_info(1234)
+    clock["now"] += 2
+    service._item_info(1234)
+
+    assert plex.fetches == [1234, 1234]
+
+
+def test_stop_reads_fresh_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(None)
+    item = _Item(1234, "movie")
+    item.guids = []
+    plex = ItemPlex(["<MediaContainer />"], {1234: item})
+    service, sink = _service(monkeypatch, cfg, plex)
+
+    service._handle_alert(_progress_alert("31", 1234, 100_000))
+    service._handle_alert(_progress_alert("31", 1234, 200_000))
+    item.guids = [_Guid("tmdb://987")]
+    stop = _progress_alert("31", 1234, 900_000)
+    stop["PlaySessionStateNotification"][0]["state"] = "stopped"
+    service._handle_alert(stop)
+
+    assert plex.fetches == [1234, 1234]
+    assert sink.events[-1].action == "stop"
+    assert sink.events[-1].ids["tmdb"] == "987"
+
+
+def test_unmatched_item_is_cached_briefly(monkeypatch: pytest.MonkeyPatch) -> None:
+    from providers.scrobble.plex import watch
+
+    cfg = _cfg(None)
+    item = _Item(1234, "movie")
+    item.guids = []
+    plex = ItemPlex(["<MediaContainer />"], {1234: item})
+    service, _ = _service(monkeypatch, cfg, plex)
+    clock = {"now": 1_000.0}
+    monkeypatch.setattr(watch.time, "time", lambda: clock["now"])
+
+    service._item_info(1234)
+    clock["now"] += watch._ITEM_UNMATCHED_TTL - 1
+    service._item_info(1234)
+    clock["now"] += 2
+    service._item_info(1234)
+
+    assert plex.fetches == [1234, 1234]
+
+
+def test_item_from_a_replaced_server_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(None)
+    plex = ItemPlex(["<MediaContainer />"], {1234: _Item(1234, "movie")})
+    other = ItemPlex(["<MediaContainer />"], {})
+    service, _ = _service(monkeypatch, cfg, plex)
+    fetch = plex.fetchItem
+
+    def swap(rating_key: int) -> _Item | None:
+        item = fetch(rating_key)
+        service._plex = other
+        return item
+
+    plex.fetchItem = swap  # type: ignore[method-assign]
+
+    assert service._item_info(1234) is not None
+    assert 1234 not in service._item_cache
+
+
+def _library_change(*rating_keys: int) -> dict[str, Any]:
+    return {
+        "type": "timeline",
+        "size": len(rating_keys),
+        "TimelineEntry": [
+            {"identifier": "com.plexapp.plugins.library", "sectionID": "7", "itemID": str(key), "type": 1, "state": 5}
+            for key in rating_keys
+        ],
+    }
+
+
+def test_library_change_refreshes_the_cached_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(None)
+    item = _Item(1234, "movie")
+    plex = ItemPlex(["<MediaContainer />"], {1234: item, 77: _Item(77, "movie")})
+    service, sink = _service(monkeypatch, cfg, plex)
+
+    service._item_info(77)
+    service._handle_alert(_progress_alert("31", 1234, 100_000))
+    item.guids = [_Guid("tmdb://987")]
+    service._handle_alert(_library_change(1234))
+    service._handle_alert(_progress_alert("31", 1234, 200_000))
+
+    assert plex.fetches == [77, 1234, 1234]
+    assert sink.events[-1].ids["tmdb"] == "987"
+    assert 77 in service._item_cache
+
+
+def test_show_change_clears_its_cached_episodes(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(None)
+    episode = _Item(1234, "episode", show=_Item(500, "show"))
+    episode.parentRatingKey = 501
+    episode.grandparentRatingKey = 500
+    plex = ItemPlex(["<MediaContainer />"], {1234: episode, 77: _Item(77, "movie")})
+    service, _ = _service(monkeypatch, cfg, plex)
+
+    service._item_info(1234)
+    service._item_info(77)
+    service._handle_alert(_library_change(500))
+
+    assert set(service._item_cache) == {77}
+
+
+def test_item_changed_during_fetch_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(None)
+    plex = ItemPlex(["<MediaContainer />"], {1234: _Item(1234, "movie")})
+    service, _ = _service(monkeypatch, cfg, plex)
+    fetch = plex.fetchItem
+
+    def changed_while_fetching(rating_key: int) -> _Item | None:
+        item = fetch(rating_key)
+        service._handle_alert(_library_change(rating_key))
+        return item
+
+    plex.fetchItem = changed_while_fetching  # type: ignore[method-assign]
+
+    assert service._item_info(1234) is not None
+    assert 1234 not in service._item_cache
+
+
+def test_section_whitelist_uses_the_cached_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(None)
+    cfg["plex"]["scrobble"] = {"libraries": ["7"]}
+    plex = ItemPlex(["<MediaContainer />"], {1234: _Item(1234, "movie")})
+    service, sink = _service(monkeypatch, cfg, plex)
+
+    service._handle_alert(_progress_alert("31", 1234, 100_000))
+    service._handle_alert(_progress_alert("31", 1234, 200_000))
+
+    assert plex.fetches == [1234]
+    assert sink.events
 
 
 def test_user_gate_is_a_noop_without_a_whitelist(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1544,6 +1791,10 @@ def test_overnight_stop_requires_live_identity_after_expiry(monkeypatch: pytest.
     assert len(plex.queries) == (1 if hours < 6 else 2)
 
 
+def _as_emitted(event: Any) -> Any:
+    return replace(event, raw={key: value for key, value in (event.raw or {}).items() if key != "_cw_archive_item"})
+
+
 def test_itemless_stop_without_client_preserves_cleanup(monkeypatch: pytest.MonkeyPatch) -> None:
     service, sink = _service(monkeypatch, _cfg(["owner"]), CountingPlex([_session_xml("8", user_name="owner")]))
     service._handle_alert(_alert_with_rating_key("8", 101))
@@ -1552,8 +1803,8 @@ def test_itemless_stop_without_client_preserves_cleanup(monkeypatch: pytest.Monk
 
     service._handle_alert({"type": "playing", "PlaySessionStateNotification": [{"sessionKey": "8", "state": "stopped"}]})
 
-    assert cleared == [sink.events[0]]
-    assert service._last_event["8"] == sink.events[0]
+    assert cleared == [_as_emitted(sink.events[0])]
+    assert service._last_event["8"] == _as_emitted(sink.events[0])
 
 
 @pytest.mark.parametrize("hours", [0.01, 3])
@@ -1787,7 +2038,7 @@ def test_itemless_stop_after_resume_miss_still_cleans_up(monkeypatch: pytest.Mon
     monkeypatch.setattr(service, "_clear_currently_watching", cleared.append)
     service._handle_alert({"type": "playing", "PlaySessionStateNotification": [{"sessionKey": "8", "state": "stopped"}]})
 
-    assert cleared == [sink.events[0]]
+    assert cleared == [_as_emitted(sink.events[0])]
 
 
 @pytest.mark.parametrize("resume_user", ["owner", "shared"])
