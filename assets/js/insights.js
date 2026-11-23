@@ -46,7 +46,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
     if (authSetupPending()) throw new Error("auth setup pending");
     if (background && w.CW?.ViewCache?.supported(url)) {
       w.CW.ViewCache.bindRefresh($("#stats-card"), candidate => new URL(candidate, location.origin).pathname === "/api/insights");
-      return w.CW.ViewCache.read(url, next => fetchJSON(next, false), {active:() => !d.hidden && !!$("#stat-providers")?.getClientRects().length});
+      return w.CW.ViewCache.read(url, next => fetchJSON(next, false), {active:() => !d.hidden && !!$("#stats-card")?.getClientRects().length});
     }
     const key = `${_scopeRevision}:${url}`;
     if (pendingReads.has(key)) return pendingReads.get(key);
@@ -694,6 +694,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       if (revision === _scopeRevision) _lastFullInsightsAt = Date.now();
     }
     catch (e) {
+      if (e?.name === "AbortError") return;
       if (String(e?.message || e || "").includes("auth setup pending")) return;
       console.error("[Insights] Failed to load /api/insights", e);
     }
@@ -713,6 +714,7 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
       await renderFromData(data, true, force);
     }
     catch (e) {
+      if (e?.name === "AbortError") return;
       if (String(e?.message || e || "").includes("auth setup pending")) return;
       console.error("[Insights] Failed to load /api/insights (stats)", e);
     }
@@ -732,11 +734,11 @@ const FEAT_ICON = { watchlist:"movie", ratings:"star", history:"play_arrow", pro
   w.addEventListener("cw:view-updated", event => {
     const parsed = new URL(event.detail.url, location.origin);
     if (parsed.pathname !== "/api/insights" || (parsed.searchParams.get("user_profile") || "") !== (overviewProfileId() || "")) return;
-    if (!$("#stat-providers")?.getClientRects().length) return;
+    if (!$("#stats-card")?.getClientRects().length) return;
     void renderFromData(event.detail.data, parsed.searchParams.get("include_events") === "0", false);
   });
   w.addEventListener("cw:view-status", event => {
-    if (!event.detail.url.startsWith("/api/insights") || !$("#stat-providers")?.getClientRects().length) return;
+    if (!event.detail.url.startsWith("/api/insights") || !$("#stats-card")?.getClientRects().length) return;
     w.CW.ViewCache.status($("#stat-providers")?.parentElement, event.detail.data, "statistics", () => { w.CW.ViewCache.retry(event.detail.url); refreshInsightsFastThenFull(true); });
   });
 

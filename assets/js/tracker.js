@@ -603,7 +603,9 @@
       state.root.querySelector(".cw-media-hero").after(navigation);
     }
     const source = state.root?.querySelector('[data-trk-slot="source"]');
-    if (source && navigation && source.parentNode !== navigation) navigation.append(source);
+    const sourceHost = mobile() ? state.root?.querySelector('.trk-hero-topbar .cw-media-hero-brand') : navigation;
+    if (source && sourceHost && source.parentNode !== sourceHost) sourceHost.append(source);
+    source?.querySelector('summary')?.setAttribute('aria-haspopup', mobile() ? 'dialog' : 'menu');
     const tools = state.root?.querySelector('.trk-secondary-actions');
     if (tools) {
       if (mobile()) navigation?.querySelector('.trk-others-menu')?.append(tools);
@@ -613,10 +615,16 @@
     if (!list?.clientWidth) return;
     const tabs = [...list.querySelectorAll("[data-trk-view]")];
     const focused = document.activeElement;
-    tabs.forEach(tab => { tab.hidden = false; });
+    tabs.forEach(tab => {
+      tab.hidden = false;
+      tab.tabIndex = tab.getAttribute('aria-selected') === 'true' || state.view === 'cleanup' && tab.dataset.trkView === 'overview' ? 0 : -1;
+    });
     if (mobile()) {
+      tabs.forEach(tab => { tab.hidden = tab.dataset.trkView === 'titles'; });
       navigation.querySelector(".trk-overflow").hidden = true;
-      const active = list.querySelector('[aria-selected="true"]');
+      navigation.querySelector('.trk-others').open = false;
+      const active = tabs.find(tab => !tab.hidden && tab.getAttribute('aria-selected') === 'true');
+      if (!active) tabs[0].tabIndex = 0;
       if (active) list.scrollLeft = Math.max(0, active.offsetLeft - list.offsetLeft - 12);
       return;
     }
@@ -1704,6 +1712,14 @@
     const instances = state.instances.map((i) => `<option value="${esc(i.id)}"${i.id === state.instance ? " selected" : ""}>${esc(i.label)}</option>`).join("");
     const choices = state.instances.map(i => `<button type="button" class="cw-btn" role="menuitemradio" aria-checked="${i.id === state.instance}" data-trk-instance="${esc(i.id)}">${symbol("badge", "trk-source-badge")}<span>${esc(i.label)}</span>${i.id === state.instance ? symbol("check", "trk-source-check") : ""}</button>`).join("");
     return `<select id="trk-instance" aria-label="Tracker" data-trk-input="instance" hidden>${instances}</select><details class="trk-source trk-nav-menu"><summary class="trk-tab" aria-label="Tracker: ${esc(selected.label)}" aria-haspopup="menu" title="${esc(selected.label)}">${symbol("badge", "trk-source-badge")}<span class="trk-source-label">${esc(selected.label)}</span>${symbol("expand_more")}</summary><div class="trk-source-options trk-others-menu cw-page-panel" role="menu" aria-label="Choose tracker">${choices}</div></details>`;
+  }
+
+  function selectInstance(value) {
+    const select = state.root?.querySelector('#trk-instance');
+    if (select && select.value !== value && state.instances.some(instance => instance.id === value)) {
+      select.value = value;
+      select.dispatchEvent(new Event('change', {bubbles:true}));
+    }
   }
 
   function heroContext() {
@@ -3962,6 +3978,7 @@
       ? Array.from(dialog.querySelectorAll("[data-trk-edit], [data-trk-id]"), input => [input.hasAttribute("data-trk-edit") ? "data-trk-edit" : "data-trk-id", input.dataset.trkEdit || input.dataset.trkId, input.value])
       : [];
     const renderers = {
+      instances: () => `${sheetHead('badge', 'Choose tracker', '')}<div class="trk-form trk-source-choices">${state.instances.map(instance => `<button type="button" class="cw-btn" data-trk-sheet-instance="${esc(instance.id)}" aria-pressed="${instance.id === state.instance}">${symbol('badge')}<span>${esc(instance.label)}</span>${instance.id === state.instance ? symbol('check', 'trk-source-check') : ''}</button>`).join('')}</div>`,
       filters: () => `${sheetHead('filter_list', 'Filters', '')}<div class="trk-form">${renderExtraFilters()}<footer class="trk-sheet-foot"><button type="button" class="cw-btn primary" data-trk-sheet="close">Done</button></footer></div>`,
       edit: renderEdit, delete: renderDelete, rate: renderRate, log: renderLog, title: renderTitleSheet,
       views: renderSavedViews, "title-remove": renderTitleRemoval, automation: renderAutomation,
@@ -4811,6 +4828,12 @@
   }
 
   function onSheetClick(event) {
+    const instance = event.target.closest('[data-trk-sheet-instance]');
+    if (instance) {
+      const value = instance.dataset.trkSheetInstance;
+      Promise.resolve(closeSheet(false)).then(() => selectInstance(value));
+      return;
+    }
     const saved = sheet.mode === "views" ? event.target.closest("[data-trk-saved-view]") : null;
     if (saved) {
       const index = Number(saved.dataset.trkSavedView);
@@ -5212,16 +5235,17 @@
     });
     root.addEventListener("click", (event) => {
       if (sheet.el?.contains(event.target) && sheet.mode !== 'filters') return;
+      if (mobile() && event.target.closest('.trk-source > summary')) {
+        event.preventDefault();
+        openSheet('instances');
+        return;
+      }
       const instance = event.target.closest("[data-trk-instance]");
       if (instance) {
         const menu = instance.closest("details");
         menu.open = false;
         menu.querySelector("summary").focus({preventScroll:true});
-        const select = root.querySelector("#trk-instance");
-        if (select.value !== instance.dataset.trkInstance) {
-          select.value = instance.dataset.trkInstance;
-          select.dispatchEvent(new Event("change", {bubbles:true}));
-        }
+        selectInstance(instance.dataset.trkInstance);
         return;
       }
       const wrappedDismiss = event.target.closest("[data-trk-wrapped-dismiss]");
@@ -5454,6 +5478,11 @@
         return;
       }
       const others = event.target.closest?.(".trk-nav-menu");
+      if (mobile() && others?.classList.contains('trk-source') && ['ArrowDown', 'ArrowUp'].includes(event.key)) {
+        event.preventDefault();
+        openSheet('instances');
+        return;
+      }
       if (others && event.key === "Escape") {
         event.preventDefault();
         others.removeAttribute("open");

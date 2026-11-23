@@ -17,7 +17,9 @@ for (const background of [false,true]) for (const width of [390,320,1440]) test(
   const page=await browser.newPage({viewport:{width,height:1000},hasTouch:width<760});
   page.setDefaultTimeout(6000);
   const errors=[];
+  const insightErrors=[];
   page.on('pageerror',e=>errors.push(e.message));
+  page.on('console',message=>{if(message.type()==='error' && message.text().includes('[Insights] Failed to load /api/insights')) insightErrors.push(message.text());});
   const body=await page.evaluate(source=>{
     const doc=new DOMParser().parseFromString(source,'text/html');
     doc.querySelectorAll('script').forEach(el=>el.remove());
@@ -40,6 +42,8 @@ for (const background of [false,true]) for (const width of [390,320,1440]) test(
   let empty=false;
   let statsRefreshing=false;
   let statsValue=5;
+  let insightRequests=0;
+  let insightFailure=false;
   const artRequests=[];
   const providers=['crosswatch','PLEX','MDBLIST','SIMKL','TRAKT'];
   const recent=Array.from({length:3},(_,i)=>({title:['Marvel’s VisionQuest','A very long show title that still needs to fit on a small phone','South Park'][i],ids:i===2?{}:{tmdb:100+i},show_ids:i===2?{}:{tmdb:100+i},media_type:'episode',season:1,episode:i+1,source:'PLEX',source_instance:'default',targets:[{target:'CROSSWATCH'},{target:'TRAKT'},{target:'SIMKL'}],method:i===1?'webhook':'watcher',status:i===1?'failed':'ok',progress:91,captured_at:Date.now()/1000-3600*(i+1)}));
@@ -55,6 +59,10 @@ for (const background of [false,true]) for (const width of [390,320,1440]) test(
       catch{return route.fulfill({status:404,body:''});}
     }
     if(url.pathname.startsWith('/api/')) {
+      if(url.pathname==='/api/insights') {
+        insightRequests++;
+        if(insightFailure) return route.fulfill({status:503,json:{error:'unavailable'}});
+      }
       let json={ok:true};
       if(url.pathname==='/api/config') json={ui:{show_recent_activity:true},pairs:[]};
       if(url.pathname==='/api/activity/recent'||url.pathname==='/api/activity/history') json={ok:true,items:empty?[]:recent,total:empty?0:recent.length};
@@ -89,6 +97,25 @@ for (const background of [false,true]) for (const width of [390,320,1440]) test(
 
   if(background) {
     await page.evaluate(async()=>{
+      Insights.clearState();
+      await Promise.all([refreshStats(true),refreshInsights(true)]);
+    });
+    await page.locator('#stat-providers .tile').first().waitFor();
+    assert.deepEqual(insightErrors,[]);
+    const beforeHidden=insightRequests;
+    await page.evaluate(async()=>{
+      document.querySelector('#stats-card').style.display='none';
+      Insights.clearState();
+      await Promise.all([refreshStats(true),refreshInsights(true)]);
+    });
+    assert.equal(insightRequests,beforeHidden);
+    assert.deepEqual(insightErrors,[]);
+    await page.evaluate(async()=>{
+      document.querySelector('#stats-card').style.display='';
+      await refreshInsights(true);
+    });
+    await page.locator('#stat-providers .tile').first().waitFor();
+    await page.evaluate(async()=>{
       await document.fonts.ready;
       const anchor=document.createElement('section');
       anchor.id='below-statistics';
@@ -116,6 +143,11 @@ for (const background of [false,true]) for (const width of [390,320,1440]) test(
       assert.equal(await page.evaluate(()=>window.providerTile===document.querySelector('#stat-providers .tile')),true);
     }
     assert.deepEqual(errors,[]);
+    assert.deepEqual(insightErrors,[]);
+    insightFailure=true;
+    await page.evaluate(()=>refreshInsights(true));
+    assert.equal(insightErrors.length,1);
+    assert.match(insightErrors[0],/HTTP 503/);
     return;
   }
 

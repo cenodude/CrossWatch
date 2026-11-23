@@ -52,8 +52,8 @@ const LogsPage = {
       <div class="logs-navigation"><div class="logs-tabs logs-channels" aria-label="Log source">${Object.entries(channels).map(([key,[label,symbol]])=>`<button type="button" data-channel="${key}" aria-pressed="${channel===key}" hidden>${icon(symbol)}${label}</button>`).join('')}</div><div class="logs-tabs logs-modes" aria-label="Log mode"><button type="button" data-mode="saved">${icon('inventory_2')}Saved logs</button><button type="button" data-mode="live">${icon('podcasts')}Live</button></div></div>
       <p class="logs-notice" data-notice role="status" hidden></p>
       <div class="logs-workspace cw-page-panel"><aside class="logs-sidebar" aria-label="Log sessions"><div class="logs-list-controls"><strong data-list-count>Saved logs</strong><input data-session-query type="search" placeholder="Find a session…" aria-label="Find a session"><select data-session-filter aria-label="Session filter"><option value="">All sessions</option><option value="issues">With issues</option><option value="pinned">Pinned</option></select><div class="logs-pair-controls" data-pair-controls><select data-pair aria-label="Sync pair"><option value="">All pairs</option></select><button type="button" data-latest>Latest run</button></div><button type="button" data-all-runs hidden>All sessions</button></div><div class="logs-sessions" data-sessions></div><div class="logs-list-pages"><button type="button" data-list-prev aria-label="Previous sessions">${icon('chevron_left')}</button><small data-list-page></small><button type="button" data-list-next aria-label="Next sessions">${icon('chevron_right')}</button></div></aside>
-      <section class="logs-reader" aria-label="Raw log reader"><div class="logs-reader-heading"><div class="logs-reader-identity"><h2 data-title>Choose a session</h2><small data-meta></small></div><span data-status class="logs-status"></span><div class="logs-actions"><button type="button" data-copy-full class="logs-primary">${icon('copy_all')}Copy full log</button><button type="button" data-download-full>${icon('download')}Download .log</button><button type="button" data-copy hidden>${icon('content_copy')}Copy filtered log</button><button type="button" data-pin>${icon('push_pin')}<span>Pin</span></button><button type="button" data-follow hidden>${icon('pause')}<span>Pause display</span></button><button type="button" data-ai-analyze data-ai-logs hidden>${icon('auto_awesome')}Analyze</button><details class="logs-options"><summary aria-label="More log actions">${icon('more_horiz')}</summary><div><button type="button" data-download>Download filtered log</button><button type="button" data-delete>Delete session</button></div></details></div></div>
-      <div class="logs-filters"><input data-query maxlength="200" type="search" placeholder="Filter log text…" aria-label="Filter log text"><select data-level aria-label="Log level"><option value="">All levels</option><option value="ERROR">Errors</option><option value="WARN">Warnings</option><option value="INFO">Info</option><option value="DEBUG">Debug</option></select><input type="text" maxlength="80" data-provider placeholder="Provider" aria-label="Filter by provider" list="log-providers"><datalist id="log-providers"></datalist><label><input data-wrap type="checkbox" checked>Wrap</label><button type="button" data-prev-match aria-label="Previous matching record">${icon('keyboard_arrow_up')}</button><button type="button" data-next-match aria-label="Next matching record">${icon('keyboard_arrow_down')}</button></div>
+      <section class="logs-reader" aria-label="Raw log reader"><div class="logs-mobile-bar"><button type="button" data-mobile-sessions aria-haspopup="dialog">${icon('folder_open')}<span>Sessions</span><small data-mobile-session-count></small></button><button type="button" data-mobile-actions aria-label="Log actions" aria-haspopup="dialog">${icon('more_horiz')}</button></div><div class="logs-reader-heading"><div class="logs-reader-identity"><h2 data-title>Choose a session</h2><small data-meta></small></div><span data-status class="logs-status"></span><div class="logs-actions"><button type="button" data-copy-full class="logs-primary">${icon('copy_all')}Copy full log</button><button type="button" data-download-full>${icon('download')}Download .log</button><button type="button" data-copy hidden>${icon('content_copy')}Copy filtered log</button><button type="button" data-pin>${icon('push_pin')}<span>Pin</span></button><button type="button" data-follow hidden>${icon('pause')}<span>Pause display</span></button><button type="button" data-ai-analyze data-ai-logs hidden>${icon('auto_awesome')}Analyze</button><details class="logs-options"><summary aria-label="More log actions">${icon('more_horiz')}</summary><div><button type="button" data-download>Download filtered log</button><button type="button" data-delete>Delete session</button></div></details></div></div>
+      <div class="logs-filters"><input data-query maxlength="200" type="search" placeholder="Filter log text…" aria-label="Filter log text"><div class="logs-filter-options"><select data-level aria-label="Log level"><option value="">All levels</option><option value="ERROR">Errors</option><option value="WARN">Warnings</option><option value="INFO">Info</option><option value="DEBUG">Debug</option></select><input type="text" maxlength="80" data-provider placeholder="Provider" aria-label="Filter by provider" list="log-providers"><datalist id="log-providers"></datalist><label><input data-wrap type="checkbox" checked>Wrap</label></div><button type="button" class="logs-mobile-filter" data-mobile-filters aria-label="Log filters" aria-haspopup="dialog">${icon('tune')}</button><button type="button" data-prev-match aria-label="Previous matching record">${icon('keyboard_arrow_up')}</button><button type="button" data-next-match aria-label="Next matching record">${icon('keyboard_arrow_down')}</button></div>
       <div class="logs-content" tabindex="0" aria-label="Raw log text"><div data-output></div></div>
       <div class="logs-reader-footer"><span data-count></span><label><input data-report-header type="checkbox" checked>Include report header</label><div class="logs-pagination"><button type="button" data-previous aria-label="Previous log records">${icon('chevron_left')}</button><span data-page></span><button type="button" data-next aria-label="Next log records">${icon('chevron_right')}</button></div></div><div class="logs-reader-footer"><span data-copy-status role="status">Select text to copy an excerpt.</span><span data-connection role="status"></span></div></section></div>
       <section class="logs-storage" aria-label="Log storage"><div class="logs-storage-summary"><span data-storage-size></span><span data-retention></span><button type="button" data-storage-toggle aria-expanded="false" aria-controls="logs-storage-panel">Storage &amp; retention${icon('expand_more')}</button></div><div id="logs-storage-panel" class="logs-storage-panel cw-page-panel" hidden>
@@ -61,7 +61,24 @@ const LogsPage = {
         <p id="logs-storage-help">Applies to all log sources on this server. Choose 10–10,240 MB. Lowering the limit removes the oldest finished, unpinned logs first.</p><p data-storage-admin hidden>Storage settings are managed by your server administrator.</p><p>Unpinned sessions expire after <span data-retention-days>7</span> days, or sooner when storage fills. Pinned and active sessions are kept.</p><p data-storage-over-limit hidden>Pinned or active sessions exceed this limit. New records may be skipped until space is freed or the limit is increased.</p><div class="logs-storage-cleanup"><span>Remove finished, unpinned logs from this source.</span><button type="button" data-clear>Delete finished, unpinned logs</button></div>
       </div></section></div>`;
     const $ = selector => host.querySelector(selector), content = $('.logs-content');
+    host.querySelectorAll('.logs-list-controls select, [data-level]').forEach(select => { select.dataset.cwNativeSelect = 'true'; });
     $('[data-level]').value=level;
+    const mobile = window.matchMedia('(max-width:760px)');
+    let mobileDialog = null;
+    const openMobileSheet = (panel, title, trigger) => {
+      if (!window.CW?.MobileUI?.sheet) return;
+      const options = $('.logs-options');
+      const actions = panel === $('.logs-actions');
+      const report = $('[data-report-header]').parentElement;
+      const anchor = document.createComment('');
+      if (actions) { options.open = true; report.before(anchor); panel.append(report); }
+      mobileDialog = window.CW.MobileUI.sheet(panel, {title, trigger, onClose:() => {
+        if (actions) { options.open = false; anchor.replaceWith(report); }
+        mobileDialog = null;
+      }});
+    };
+    const resize = () => { if (!mobile.matches) mobileDialog?.close(); };
+    mobile.addEventListener('change', resize);
     const scope = () => ({pair_id:pairId,run_id:runId});
     const filtered = () => Boolean(query||level||provider||pairId||runId);
     const url = (path,values={}) => '/api/logs/archive'+path+'?'+new URLSearchParams({...values,user_profile:profile});
@@ -85,13 +102,14 @@ const LogsPage = {
       const params=new URLSearchParams({channel,mode});
       if(pairId)params.set('pairId',pairId);if(runId)params.set('runId',runId);if(sid)params.set('sessionId',sid);
       if(route.has('returnTo'))params.set('returnTo',route.get('returnTo'));
-      window.history.replaceState(null,'','#logs?'+params);
+      window.history.replaceState(window.history.state,'','#logs?'+params);
     }
     function renderSessions() {
       const list=listing();listPage=Math.min(listPage,Math.max(0,Math.ceil(list.length/20)-1));
       const html=savedLogList(list.slice(listPage*20,listPage*20+20),sid)||empty('No sessions',listQuery||listFilter?'Adjust the session filters.':'Logs appear when new activity is recorded.');
       if($('[data-sessions]').innerHTML!==html)$('[data-sessions]').innerHTML=html;
       $('[data-list-count]').textContent=`${list.length} sessions`;
+      $('[data-mobile-session-count]').textContent=String(list.length);
       $('[data-list-page]').textContent=`${listPage+1} / ${Math.max(1,Math.ceil(list.length/20))}`;
       $('[data-list-prev]').disabled=listPage===0;$('[data-list-next]').disabled=(listPage+1)*20>=list.length;
     }
@@ -99,7 +117,7 @@ const LogsPage = {
       host.querySelectorAll('[data-channel]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.channel===channel)));
       host.querySelectorAll('[data-mode]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.mode===mode)));
       $('[data-title]').textContent=current?.label||'Choose a session';
-      $('[data-meta]').textContent=current?`${stamp(current.started)} · ${current.ended==null?'Active':Math.max(0,Math.round(current.ended-current.started))+'s'} · ${current.id}`:'';
+      $('[data-meta]').innerHTML=current?`${esc(stamp(current.started))} · ${current.ended==null?'Active':Math.max(0,Math.round(current.ended-current.started))+'s'}<span class="logs-session-id"> · ${esc(current.id)}</span>`:'';
       const [label,tone]=current&&Object.hasOwn(statuses,current.status)?statuses[current.status]:['','neutral'];
       $('[data-status]').textContent=label;$('[data-status]').className=`logs-status logs-status-${tone}`;
       for(const selector of ['[data-copy-full]','[data-copy]','[data-download-full]','[data-download]','[data-pin]'])$(selector).disabled=!current;
@@ -118,6 +136,9 @@ const LogsPage = {
       $('.logs-storage-cleanup').hidden=Boolean(pairId||runId);
       $('[data-ai-logs]').hidden=!current;
       $('[data-ai-logs]').dataset.aiQuestion=current?`Analyze the ${channel} log session ${current.id} (${current.label}, started ${stamp(current.started)}). Explain any errors.`:'';
+      $('[data-mobile-filters]').setAttribute('aria-label', `Log filters${level||provider ? ' (active)' : ''}`);
+      $('[data-mobile-filters]').setAttribute('aria-pressed', String(Boolean(level||provider)));
+      $('.logs-filters').classList.toggle('logs-searching', Boolean(query));
       renderSessions();
     }
     function lineMarkup(row,context=false) {
@@ -170,6 +191,15 @@ const LogsPage = {
     async function onClick(event) {
       const button=event.target.closest('button');if(!button)return;
       try {
+        if(button.hasAttribute('data-mobile-sessions')) { openMobileSheet($('.logs-sidebar'), 'Sessions', button); return; }
+        if(button.hasAttribute('data-mobile-actions')) { openMobileSheet($('.logs-actions'), 'Log actions', button); return; }
+        if(button.hasAttribute('data-mobile-filters')) { openMobileSheet($('.logs-filter-options'), 'Log filters', button); return; }
+        if(button.hasAttribute('data-ai-analyze')) mobileDialog?.close();
+        if(button.dataset.session && mobileDialog) {
+          mobileDialog.close();
+          await window.CW.MobileUI.beforeNavigate();
+          if (!alive) return;
+        }
         if(button.hasAttribute('data-storage-toggle')){const open=button.getAttribute('aria-expanded')!=='true';button.setAttribute('aria-expanded',String(open));button.querySelector('.material-symbols-rounded').textContent=open?'expand_less':'expand_more';$('#logs-storage-panel').hidden=!open;if(open)$('#logs-storage-panel').scrollIntoView({block:'nearest'});}
         else if(button.dataset.channel){channel=button.dataset.channel;pairId=runId='';latestRequested=false;listQuery=listFilter='';$('[data-session-query]').value=$('[data-session-filter]').value='';reset();}
         else if(button.dataset.mode){mode=button.dataset.mode;follow=mode==='live';reset(false);}
@@ -214,7 +244,7 @@ const LogsPage = {
     content.addEventListener('wheel',event=>{if(event.deltaY<0&&follow){follow=false;paint();}},{passive:true});
     content.addEventListener('scroll',()=>{if(follow&&content.scrollHeight-content.scrollTop-content.clientHeight>50){follow=false;paint();}},{passive:true});
     timer=setInterval(()=>{if(!busy&&!document.hidden)refresh();},2000);
-    dispose=()=>{alive=false;generation++;controller?.abort();clearInterval(timer);clearTimeout(searchTimer);for(const id of feedbackTimers)clearTimeout(id);host.removeEventListener('click',onClick);};
+    dispose=()=>{alive=false;mobile.removeEventListener('change',resize);mobileDialog?.close();generation++;controller?.abort();clearInterval(timer);clearTimeout(searchTimer);for(const id of feedbackTimers)clearTimeout(id);host.removeEventListener('click',onClick);};
     paint();await refresh();
   },
   hide(){dispose?.();dispose=null;},

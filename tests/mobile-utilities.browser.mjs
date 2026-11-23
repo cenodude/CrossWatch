@@ -53,7 +53,7 @@ async function fits(page) {
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
 }
 
-for(const width of [320,390,1440]) test(`Import/export preserves selection and fits at ${width}px`,async t=>{
+for(const width of [320,360,390,1440]) test(`Import/export preserves selection and fits at ${width}px`,async t=>{
   const {page,errors,requests}=await fixture(t,width,'import');
   await page.addScriptTag({url:'/assets/helpers/icon-select.js'});
   await page.evaluate(async()=>{const {default: view}=await import('/assets/js/import-export/index.js');await view.mount(document.querySelector('#page-import_export'));});
@@ -72,6 +72,11 @@ for(const width of [320,390,1440]) test(`Import/export preserves selection and f
   await page.locator('#ie-file').setInputFiles({name:'history.csv',mimeType:'text/csv',buffer:Buffer.from('title,year\nExample,2026')});
   await page.locator('#ie-rows tr').nth(1).waitFor();
   await page.waitForFunction(()=>!document.querySelector('#ie-controls').disabled);
+  const pager=page.locator('#ie-pagination');
+  const controls=await pager.locator('button:visible').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return {y:r.y,width:r.width,height:r.height};}));
+  assert.equal(controls.length,mobile?2:4);
+  assert.ok(controls.every(control=>Math.abs(control.y-controls[0].y)<1));
+  assert.equal(await pager.evaluate(node=>node.scrollWidth>node.clientWidth),false);
   assert.equal(await page.locator('#ie-rows input').nth(1).isDisabled(),true);
   if(mobile) await page.locator('#ie-selection-options').click();
   await page.locator('#ie-existing').check();
@@ -97,6 +102,7 @@ for(const width of [320,390,1440]) test(`Import/export preserves selection and f
     await page.setViewportSize({width,height:844});
     await page.locator('#ie-mobile-mode').selectOption('recovery');
     await page.locator('#pr-start').waitFor();
+    for(const id of ['#pr-prev','#pr-next'])assert.equal(await page.locator(id).evaluate(node=>{const style=getComputedStyle(node);return style.display!=='none'&&parseFloat(style.fontSize)>=14;}),true);
     await fits(page);
   }
   assert.deepEqual(errors,[]);

@@ -86,12 +86,18 @@ for (const theme of ["original","flat-dark","flat-light"]) {
     await page.locator('[data-action="toggle-notices"]').click();
     assert.equal(await page.locator("#is-notices p").count(), 1);
     await mkdir("test-results/interactive-sync-selection", {recursive:true});
-    for (const width of [1280,390]) {
+    for (const width of [1280,320,360,390]) {
       await page.setViewportSize({width,height:1000});
       await page.locator(".is-list-actions").scrollIntoViewIfNeeded();
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1));
       const button = await page.locator('[data-action="select"]').boundingBox();
       assert.ok(button.x >= 0 && button.x + button.width <= width + 1);
+      const paging = page.locator('.is-pagination');
+      const controls = await paging.locator('button:visible').evaluateAll(nodes => nodes.map(node => {const r=node.getBoundingClientRect();return {y:r.y,width:r.width,height:r.height};}));
+      assert.equal(controls.length,width<=760?2:4);
+      assert.ok(controls.every(control=>Math.abs(control.y+control.height/2-controls[0].y-controls[0].height/2)<1),JSON.stringify({width,controls}));
+      if(width<=760)assert.ok(controls.every(control=>control.width>=44&&control.height>=44));
+      assert.equal(await paging.evaluate(node=>node.scrollWidth>node.clientWidth),false);
       await page.screenshot({path:`test-results/interactive-sync-selection/${theme}-${width}.png`});
     }
     await page.locator('[data-filter="query"]').fill("no matching title");

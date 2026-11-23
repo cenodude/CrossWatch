@@ -261,7 +261,7 @@
       const root = onHub ? document.querySelector('.cw-profile-tabs') : onTracker ? document.querySelector('#page-tracker .trk-navigation') : null;
       const attributes = onHub ? ['data-profile-tab'] : ['data-trk-view', 'data-trk-month-open', 'data-trk-wrapped-open', 'data-trk-action'];
       const seen = new Set();
-      const items = [...(root?.querySelectorAll(onHub ? '[data-profile-tab]' : '.trk-tabs [data-trk-view], .trk-others-menu > button') || [])].map(source => {
+      const items = [...(root?.querySelectorAll(onHub ? '[data-profile-tab]' : '.trk-tabs [data-trk-view], .trk-others-menu > button, .trk-secondary-actions > button') || [])].map(source => {
         const attribute = attributes.find(name => source.hasAttribute(name));
         if (!attribute) return null;
         const value = source.getAttribute(attribute);
@@ -283,7 +283,7 @@
           if ($('cw-mobile-more').getAttribute('aria-expanded') === 'true') $('cw-mobile-nav-toggle').click();
           target.click();
         });
-        return {node, secondary:onTracker && !source.closest('.trk-tabs')};
+        return {node, secondary:onTracker && (!source.closest('.trk-tabs') || value === 'titles')};
       }).filter(Boolean);
       const mainItems = items.filter(item => !item.secondary).map(item => item.node);
       const moreItems = items.filter(item => item.secondary).map(item => item.node);

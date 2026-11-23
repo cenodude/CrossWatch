@@ -2574,7 +2574,7 @@ html[data-cw-theme=flat-light] #page-events.cw-page-events{--ev-color-scheme:lig
 .cw-page-logs input::placeholder{color:var(--cw-theme-muted);opacity:1}
 .cw-page-logs .logs-channels button{background:transparent;border:0;border-bottom:3px solid transparent;border-radius:0;color:var(--cw-theme-muted)}
 .cw-page-logs .logs-channels button[aria-pressed=true]{border-bottom-color:var(--cw-theme-accent);color:var(--cw-theme-text)}
-.cw-page-logs .logs-modes button[aria-pressed=true],.cw-page-logs .logs-primary,.cw-page-logs [data-pin][aria-pressed=true]{background:color-mix(in srgb,var(--cw-theme-accent) 15%,var(--cw-theme-surface));border-color:color-mix(in srgb,var(--cw-theme-accent) 50%,var(--cw-theme-border));color:var(--cw-theme-text)}
+.cw-page-logs .logs-modes button[aria-pressed=true],.cw-page-logs .logs-primary,.cw-page-logs [data-pin][aria-pressed=true],.cw-page-logs [data-mobile-filters][aria-pressed=true]{background:color-mix(in srgb,var(--cw-theme-accent) 15%,var(--cw-theme-surface));border-color:color-mix(in srgb,var(--cw-theme-accent) 50%,var(--cw-theme-border));color:var(--cw-theme-text)}
 .cw-page-logs .logs-workspace{border:1px solid var(--cw-theme-border);border-radius:14px;background:var(--cw-theme-surface)}
 .cw-page-logs .logs-sidebar{border-right:1px solid var(--cw-theme-border)}
 .cw-page-logs :is(.logs-list-controls,.logs-reader-heading,.logs-filters){border-bottom:1px solid var(--cw-theme-border)}
@@ -2605,7 +2605,7 @@ html[data-cw-theme=flat-light] #page-events.cw-page-events{--ev-color-scheme:lig
 .cw-page-logs .logs-empty h2{font-size:16px;font-weight:500;color:var(--cw-theme-text)}
 .cw-page-logs .logs-notice{border:1px solid color-mix(in srgb,var(--cw-theme-warning) 40%,var(--cw-theme-border));border-radius:8px;color:var(--cw-theme-warning);background:var(--cw-theme-surface)}
 .cw-page-logs .logs-copied{color:var(--cw-theme-good);border-color:var(--cw-theme-good)}
-@media(max-width:760px){.cw-page-logs .logs-sidebar{border-right:0;border-bottom:1px solid var(--cw-theme-border)}}
+@media(max-width:760px){.cw-page-logs .logs-sidebar{border-right:0;border-bottom:1px solid var(--cw-theme-border)}.cw-page-logs .logs-message{font-size:13px}}
 
 .cw-account-header{background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);border-radius:16px}
 .cw-account-avatar{background:var(--cw-theme-surface-raised);color:var(--cw-theme-muted);border:1px solid var(--cw-theme-border)}

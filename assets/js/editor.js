@@ -356,6 +356,7 @@
   quickAddBtn.id = "cw-editor-quick-add";
   quickAddBtn.className = "cw-btn primary";
   quickAddBtn.type = "button";
+  quickAddBtn.setAttribute('aria-label', 'Quick add');
   quickAddBtn.title = "Mark watched, add to a watchlist or rate a title";
   quickAddBtn.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">add_circle</span><span>Quick add</span>`;
   (bulkWrap || addBtn)?.insertAdjacentElement(bulkWrap ? "afterend" : "beforebegin", quickAddBtn);
@@ -433,6 +434,7 @@
     },
   });
   stateBackupCard?.classList.add("cw-advanced-only");
+  editorChrome.prepareMobileTools(host);
   const typeAllBtn = document.createElement("button");
   typeAllBtn.id = "cw-type-all";
   typeAllBtn.type = "button";
@@ -1475,6 +1477,7 @@
   function openPopup(anchor, builder, opts = {}) {
     closePopup();
     const isMobile = window.CW?.MobileUI?.mobile();
+    if (isMobile && !anchor.getClientRects().length) anchor = host.querySelector('.cw-editor-tools-toggle') || anchor;
     const pop = document.createElement(isMobile ? "dialog" : "div");
     pop.className = "cw-pop";
     document.body.appendChild(pop);

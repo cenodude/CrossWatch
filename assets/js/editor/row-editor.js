@@ -118,6 +118,7 @@
       episode: false,
       _origin: ctx.isPolicySource() ? "manual" : "playlist",
     });
+    if (window.CW?.MobileUI?.mobile()) (state.mobileExpandedRows ||= new Set()).add(state.rows[0]._rid);
     state.page = 0;
     ctx.markChanged();
     ctx.renderRows();

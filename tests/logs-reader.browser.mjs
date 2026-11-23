@@ -58,6 +58,7 @@ async function open(t,theme='original',hash='') {
   await page.evaluate(async()=>{
     window.CW={OverviewProfile:{id:''}};
     window.cwCopyTextFrom=async text=>{window.copied=await text;return true;};
+    await import('/assets/helpers/mobile-experience.js');
     const view=(await import('/assets/js/logs.js')).default;
     await view.mount(document.querySelector('#page-logs'));
   });
@@ -139,7 +140,7 @@ for(const theme of ['original','flat-dark','flat-light'])test(`logs layout and s
     await page.setViewportSize({width,height:1000});
     const overflow=await page.evaluate(()=>({width:innerWidth,scroll:document.documentElement.scrollWidth}));
     assert.ok(overflow.scroll<=width+1,JSON.stringify(overflow));
-    if(width<=760)assert.ok((await page.locator('.logs-sessions').boundingBox()).height>=100);
+    if(width<=760){assert.equal(await page.locator('.logs-sidebar').isVisible(),false);assert.equal(await page.locator('[data-mobile-sessions]').isVisible(),true);}
     if(process.env.CW_LOG_SCREENSHOTS&&width===390){await mkdir(process.env.CW_LOG_SCREENSHOTS,{recursive:true});await page.screenshot({path:`${process.env.CW_LOG_SCREENSHOTS}/logs-${theme}-mobile.png`,fullPage:true});}
   }
   await page.setViewportSize({width:1440,height:1000});
@@ -166,4 +167,64 @@ for(const theme of ['original','flat-dark','flat-light'])test(`logs layout and s
   assert.equal(await page.locator('[data-session]').count(),0);
   assert.equal(await page.locator('[data-copy-full]').isDisabled(),true);
   if(process.env.CW_LOG_SCREENSHOTS)await page.screenshot({path:`${process.env.CW_LOG_SCREENSHOTS}/logs-${theme}-empty.png`,fullPage:true});
+});
+
+for(const theme of ['original','flat-dark','flat-light'])test(`mobile Logs reads one session with optional sheets: ${theme}`,async t=>{
+  const {page,state}=await open(t,theme);
+  await page.setViewportSize({width:390,height:844});
+  await page.addScriptTag({url:'/assets/helpers/icon-select.js'});
+  assert.equal(await page.locator('.logs-sidebar').isVisible(),false);
+  assert.equal(await page.locator('.logs-actions').isVisible(),false);
+  assert.equal(await page.locator('[data-level]').isVisible(),false);
+  const heading=await page.locator('.logs-reader-heading').boundingBox();
+  const output=await page.locator('.logs-content').boundingBox();
+  assert.ok(output.y-heading.y<200);
+  await page.locator('[data-mobile-sessions]').click();
+  const sessions=page.getByRole('dialog',{name:'Sessions',exact:true});
+  await sessions.waitFor();
+  assert.equal(await sessions.getByLabel('Session filter').isVisible(),true);
+  if(process.env.CW_LOG_SCREENSHOTS){await mkdir(process.env.CW_LOG_SCREENSHOTS,{recursive:true});await sessions.screenshot({path:`${process.env.CW_LOG_SCREENSHOTS}/logs-${theme}-sessions.png`});}
+  await page.waitForResponse(response=>new URL(response.url()).pathname==='/api/logs/archive');
+  assert.ok(await page.evaluate(()=>Boolean(history.state?.cwMobileLayer)));
+  await page.goBack();
+  await sessions.waitFor({state:'hidden'});
+  assert.equal(await page.locator('.logs-content').isVisible(),true);
+  await page.locator('[data-mobile-sessions]').click();
+  await sessions.locator('[data-session="b"]').click();
+  await sessions.waitFor({state:'hidden'});
+  await page.waitForFunction(()=>document.querySelector('[data-title]').textContent.includes('SIMKL'));
+  await page.locator('[data-mobile-filters]').click();
+  const filters=page.getByRole('dialog',{name:'Log filters',exact:true});
+  if(process.env.CW_LOG_SCREENSHOTS)await filters.screenshot({path:`${process.env.CW_LOG_SCREENSHOTS}/logs-${theme}-filters.png`});
+  await filters.getByLabel('Log level').selectOption('ERROR');
+  await filters.getByRole('button',{name:'Done',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('[data-count]').textContent.startsWith('1 matching'));
+  assert.equal(await page.locator('[data-mobile-filters]').getAttribute('aria-pressed'),'true');
+  await page.locator('[data-mobile-actions]').click();
+  const actions=page.getByRole('dialog',{name:'Log actions',exact:true});
+  if(process.env.CW_LOG_SCREENSHOTS)await actions.screenshot({path:`${process.env.CW_LOG_SCREENSHOTS}/logs-${theme}-actions.png`});
+  await actions.getByRole('button',{name:'Copy full log',exact:true}).click();
+  await page.waitForFunction(()=>window.copied?.includes('original first line'));
+  assert.equal(state.exports.at(-1).level,undefined);
+  await actions.getByLabel('Include report header').uncheck();
+  await actions.getByRole('button',{name:'Copy filtered log',exact:true}).click();
+  await page.waitForFunction(()=>window.copied==='[ERROR] original failure\n');
+  assert.equal(state.exports.at(-1).level,'ERROR');
+  assert.equal(state.exports.at(-1).header,'false');
+  await actions.getByRole('button',{name:'Done',exact:true}).click();
+  await page.evaluate(()=>{document.documentElement.dataset.cwAssistant='on';});
+  await page.locator('[data-mobile-actions]').click();
+  await actions.getByRole('button',{name:'Analyze',exact:true}).click();
+  await actions.waitFor({state:'hidden'});
+  for(const width of [320,390,740]){
+    await page.setViewportSize({width,height:844});
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
+  }
+  if(process.env.CW_LOG_SCREENSHOTS){await mkdir(process.env.CW_LOG_SCREENSHOTS,{recursive:true});await page.setViewportSize({width:390,height:844});await page.screenshot({path:`${process.env.CW_LOG_SCREENSHOTS}/logs-${theme}-compact.png`,fullPage:true});}
+  await page.locator('[data-mobile-filters]').click();
+  await page.setViewportSize({width:1440,height:1000});
+  await filters.waitFor({state:'hidden'});
+  assert.equal(await page.locator('.logs-sidebar').isVisible(),true);
+  assert.equal(await page.locator('[data-level]').isVisible(),true);
+  assert.equal(await page.locator('[data-copy-full]').isVisible(),true);
 });
