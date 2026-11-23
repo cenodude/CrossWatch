@@ -951,7 +951,9 @@ def test_profile_avatar_is_seeded_in_main_and_profile_html() -> None:
 
     assert 'id="cw-nav-profile-avatar" class="cw-nav-profile-avatar" aria-hidden="true" data-cw-avatar-url="/api/profile/avatar?ts=1785066084"><img src="/api/profile/avatar?ts=1785066084" alt=""></span>' in main
     assert 'id="cw-nav-profile-avatar" class="cw-nav-profile-avatar" aria-hidden="true" data-cw-avatar-url="/api/profile/avatar?ts=1785066084"><img src="/api/profile/avatar?ts=1785066084" alt=""></span>' in profile
-    assert 'id="profile-hero-avatar" class="cw-media-hero-avatar" href="/profile#account" aria-label="Open user settings" title="User settings"><img src="/api/profile/avatar?ts=1785066084" alt=""></a>' in profile
+    assert 'id="profile-settings-avatar" class="cw-account-avatar" aria-hidden="true"><img src="/api/profile/avatar?ts=1785066084" alt=""></span>' in profile
+    hub = ui_frontend.get_hub_html(user=user)
+    assert 'id="profile-hero-avatar" class="cw-media-hero-avatar" href="/profile"' in hub
 
 
 def test_account_menu_preserves_existing_avatar_node_for_same_url() -> None:
@@ -1936,15 +1938,15 @@ def test_non_admin_shell_uses_initial_permissions() -> None:
 def test_profile_nav_keeps_read_only_managed_links() -> None:
     import ui_frontend
 
-    html = ui_frontend.get_profile_html(
+    html = ui_frontend.get_hub_html(
         user={"is_admin": False, "profile_id": ALICE_PROFILE_ID, "username": "pascal", "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": False}},
     )
 
-    assert """<button id="tab-profile" class="tab active" type="button" onclick="location.href='/profile#overview'">Hub</button>""" in html
-    assert """location.href='/profile#watchlist'">Watchlist</button>""" not in html
-    assert """location.href='/profile#playback'">Playback</button>""" not in html
-    assert 'href="/profile#watchlist">View all</a>' in html
-    assert 'href="/profile#playback">View all</a>' in html
+    assert """<button id="tab-profile" class="tab active" type="button" onclick="location.href='/hub'">Hub</button>""" in html
+    assert """location.href='/hub#watchlist'">Watchlist</button>""" not in html
+    assert """location.href='/hub#playback'">Playback</button>""" not in html
+    assert 'href="/hub#watchlist">View all</a>' in html
+    assert 'href="/hub#playback">View all</a>' in html
     assert 'id="cw-profile-logout"' not in html
     assert 'data-cw-profile-menu-action="logout"' in html
     assert "location.href='/?main=1#main'" not in html
@@ -1954,13 +1956,13 @@ def test_profile_nav_keeps_read_only_managed_links() -> None:
 def test_profile_nav_uses_full_user_links_for_write_managed_user() -> None:
     import ui_frontend
 
-    html = ui_frontend.get_profile_html(
+    html = ui_frontend.get_hub_html(
         user={"is_admin": False, "profile_id": ALICE_PROFILE_ID, "username": "pascal", "permissions": {"dashboard": True, "watchlist": True, "playback": True, "write": True}},
     )
 
     assert """<button id="tab-main" class="tab" type="button" onclick="location.href='/?main=1#main'">Main</button>""" in html
-    assert """location.href='/profile#watchlist'">Watchlist</button>""" not in html
-    assert """location.href='/profile#playback'">Playback</button>""" not in html
+    assert """location.href='/hub#watchlist'">Watchlist</button>""" not in html
+    assert """location.href='/hub#playback'">Playback</button>""" not in html
     assert """<button id="tab-snapshots" class="tab" type="button" onclick="location.href='/?main=1#snapshots'">Captures</button>""" in html
     assert """<button id="tab-playlists" class="tab" type="button" onclick="location.href='/?main=1#playlists'">Playlists</button>""" in html
     assert 'id="tab-tools" class="tab"' in html
@@ -1968,8 +1970,8 @@ def test_profile_nav_uses_full_user_links_for_write_managed_user() -> None:
     assert "window.cwToolsMenuSelect('editor')" in html
     assert 'id="tab-maintenance"' not in html
     assert 'id="tab-backups"' not in html
-    assert 'href="/profile#watchlist">View all</a>' in html
-    assert 'href="/profile#playback">View all</a>' in html
+    assert 'href="/hub#watchlist">View all</a>' in html
+    assert 'href="/hub#playback">View all</a>' in html
     assert 'href="/?main=1#settings">Settings</a>' not in html
     assert 'id="cw-profile-logout"' not in html
     assert 'data-cw-profile-menu-action="logout"' in html
@@ -2016,7 +2018,7 @@ def test_tools_menu_groups_tool_pages_per_role() -> None:
 def test_profile_page_supports_admin_account() -> None:
     import ui_frontend
 
-    html = ui_frontend.get_profile_html(
+    html = ui_frontend.get_hub_html(
         user={"is_admin": True, "username": "admin", "display_name": "Administrator"},
     )
 
@@ -2024,8 +2026,8 @@ def test_profile_page_supports_admin_account() -> None:
     assert 'data-cw-profile-id=""' in html
     assert 'id="profile-role" class="cw-profile-role" hidden>Administrator</span>' in html
     assert """<button id="tab-main" class="tab" type="button" onclick="location.href='/'">Main</button>""" in html
-    assert """location.href='/profile#watchlist'">Watchlist</button>""" not in html
-    assert """location.href='/profile#playback'">Playback</button>""" not in html
+    assert """location.href='/hub#watchlist'">Watchlist</button>""" not in html
+    assert """location.href='/hub#playback'">Playback</button>""" not in html
     assert """<button id="tab-snapshots" class="tab" type="button" onclick="location.href='/#snapshots'">Captures</button>""" in html
     assert """<button id="tab-playlists" class="tab" type="button" onclick="location.href='/#playlists'">Playlists</button>""" in html
     assert 'id="tab-tools" class="tab"' in html

@@ -18,7 +18,7 @@ export function pageBackLink(returnTo, currentHref, source = 'logs') {
       ['settings/sync', 'Sync pairs'], ['settings/pairs', 'Sync pairs'], ['settings/scrobbler', 'Scrobbler'],
       ['settings/scheduling', 'Scheduling'], ['settings/app', 'UI and Security'], ['settings/maintenance', 'Maintenance'],
     ]);
-    const label = target.pathname === '/profile' ? 'Profile' : target.pathname === '/' ? labels.get(path) : null;
+    const label = target.pathname === '/hub' ? 'Hub' : target.pathname === '/profile' ? 'Profile' : target.pathname === '/' ? labels.get(path) : null;
     if (!label) return fallback;
     // Keep untrusted URL fields behind literal internal prefixes at every navigation sink.
     const fragment = target.hash.slice(1);
@@ -26,6 +26,8 @@ export function pageBackLink(returnTo, currentHref, source = 'logs') {
     let href;
     if (target.pathname === current.pathname && target.search === current.search) {
       href = fragment ? '#' + fragment : '#main';
+    } else if (target.pathname === '/hub') {
+      href = '/hub' + (target.search ? '?' + target.search.slice(1) : '') + hash;
     } else if (target.pathname === '/profile') {
       href = '/profile' + (target.search ? '?' + target.search.slice(1) : '') + hash;
     } else {

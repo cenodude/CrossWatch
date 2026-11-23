@@ -83,6 +83,25 @@ def test_hits_and_misses_are_cached_but_failures_are_not(monkeypatch: pytest.Mon
     assert calls == [("75897", "tvdb_id"), ("404404", "tvdb_id"), ("5", "tvdb_id"), ("5", "tvdb_id")]
 
 
+@pytest.mark.parametrize("failure", [requests.Timeout(), ResponseStub(429), ResponseStub(503)])
+def test_strict_identity_lookup_propagates_failures_and_can_recover(monkeypatch, failure):
+    responses = {("50444", "tvdb_id"): failure}
+    calls = _install(monkeypatch, responses)
+    with pytest.raises(requests.RequestException):
+        _show_tmdb.show_tmdb_id(CFG, {"tvdb": 50444}, {}, strict=True)
+    responses[("50444", "tvdb_id")] = {"tv_results": [{"id": 12}]}
+    assert _show_tmdb.show_tmdb_id(CFG, {"tvdb": 50444}, {}, strict=True) == 12
+    assert calls == [("50444", "tvdb_id"), ("50444", "tvdb_id")]
+
+
+@pytest.mark.parametrize("response", [ResponseStub(404), {"tv_results": []}])
+def test_strict_identity_lookup_keeps_confirmed_misses_nonfatal(monkeypatch, response):
+    calls = _install(monkeypatch, {("40455", "tvdb_id"): response})
+    assert _show_tmdb.show_tmdb_id(CFG, {"tvdb": 40455}, {}, strict=True) is None
+    assert _show_tmdb.show_tmdb_id(CFG, {"tvdb": 40455}, {}, strict=True) is None
+    assert calls == [("40455", "tvdb_id")]
+
+
 def test_emby_watch_fills_tmdb_show_from_tvdb_only_series(monkeypatch: pytest.MonkeyPatch) -> None:
     _install(monkeypatch, {("7974291", "tvdb_id"): {"tv_episode_results": [{"id": 3959040, "show_id": 113988}]}})
     monkeypatch.setattr(emby_watch, "_cfg", lambda: CFG)

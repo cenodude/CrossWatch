@@ -183,6 +183,7 @@ def _env_truthy(name: str) -> bool:
 _WEBUI_PATHS = {
     "/",
     "/profile",
+    "/hub",
     "/login",
     "/logout",
     "/favicon.ico",
@@ -723,8 +724,8 @@ async def app_auth_gate(request: Request, call_next):
             if not _managed_api_allowed(cfg, user, request, path):
                 if path.startswith("/api/"):
                     return JSONResponse({"ok": False, "error": "Administrator access required"}, status_code=403, headers={"Cache-Control": "no-store"})
-                if path != "/profile":
-                    return RedirectResponse(url="/profile", status_code=302)
+                if path not in {"/profile", "/hub"}:
+                    return RedirectResponse(url="/hub", status_code=302)
                 return PlainTextResponse("Forbidden", status_code=403, headers={"Cache-Control": "no-store"})
         response = await call_next(request)
         _audit_api_action(request, response, user)
@@ -1035,8 +1036,9 @@ def _get_orchestrator() -> Orchestrator:
 # Startup sequence
 @asynccontextmanager
 async def _lifespan(app: Any) -> AsyncIterator[None]:
-    from services.view_cache import CACHE as view_cache
-    view_cache.start()
+    from services.view_cache import CACHES
+    for view_cache in CACHES:
+        view_cache.start()
     app.state.watch_groups = {}
     app.state.watch_manager = None
     _apply_debug_env_from_config()
@@ -1184,8 +1186,9 @@ async def _lifespan(app: Any) -> AsyncIterator[None]:
         yield
     finally:
         backup_manager.stop()
-        from services.view_cache import CACHE as view_cache
-        view_cache.stop()
+        from services.view_cache import CACHES
+        for view_cache in CACHES:
+            view_cache.stop()
         try:
             from services.notification_push import stop as _stop_notification_push
 
@@ -1242,11 +1245,12 @@ async def cache_headers_for_api(request: Request, call_next):
     resp = await call_next(request)
     path = request.url.path
     if request.method in {"POST", "PUT", "PATCH", "DELETE"} and resp.status_code < 400 and not path.endswith("/preview") and path.startswith(("/api/tracker/", "/api/manual/", "/api/profile/shelf", "/api/maintenance/", "/api/backups/restore", "/api/editor", "/api/watchlist/")):
-        from services.view_cache import CACHE as view_cache
-        if path.startswith(("/api/maintenance/", "/api/backups/restore")):
-            view_cache.invalidate(CONFIG_DIR)
-        else:
-            view_cache.mark_stale()
+        from services.view_cache import CACHES
+        for view_cache in CACHES:
+            if path.startswith(("/api/maintenance/", "/api/backups/restore")):
+                view_cache.invalidate(CONFIG_DIR)
+            else:
+                view_cache.mark_stale()
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "same-origin")

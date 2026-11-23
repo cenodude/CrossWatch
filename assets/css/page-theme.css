@@ -1,6 +1,10 @@
 /* Shared page surfaces and controls. Theme values live in tokens.css.
  * Page styles own layout, provider colours and media artwork.
  */
+.cw-page-progress{border-radius:999px;background:var(--cw-theme-border)}
+.cw-page-progress::after{border-radius:inherit;background:var(--profile-tab-accent,var(--cw-theme-accent))}
+.cw-view-status[data-state="error"]{font-size:13px;color:var(--cw-theme-muted);background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);border-radius:10px}
+#page-tracker .cw-page-loading{color:var(--cw-theme-muted)}
 body.cw-profile-page .cw-profile-hero{border:1px solid var(--cw-theme-border);border-radius:18px;background:var(--cw-theme-surface);box-shadow:none}
 .cw-hub-refresh-status{font-size:12px;font-weight:400;line-height:1.4;color:var(--cw-theme-text);background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);border-radius:8px}
 .cw-media-hero .cw-media-hero-kicker{margin:0;font-size:12px;font-weight:700;line-height:1.1;letter-spacing:.16em;text-transform:uppercase;color:var(--cw-theme-muted)}
@@ -12,7 +16,7 @@ body.cw-profile-page .cw-profile-chips::before{content:"\00b7";color:var(--cw-th
 a.cw-media-hero-avatar{text-decoration:none;cursor:pointer}
 a.cw-media-hero-avatar:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .cw-media-hero-context:focus-visible{outline:2px solid var(--profile-accent);outline-offset:6px;border-radius:4px}
-body.cw-profile-page :is(#profile-display-name,.cw-profile-username,.cw-profile-chip){font-size:13px;font-weight:400;color:var(--profile-muted)}
+body.cw-profile-page .cw-media-hero :is(#profile-display-name,.cw-profile-username,.cw-profile-chip){font-size:13px;font-weight:400;color:var(--profile-muted)}
 body.cw-profile-page .cw-profile-chip :is(strong,small){font-size:12px;font-weight:400}
 body.cw-profile-page :is(.cw-profile-last,.cw-profile-now){border:0;border-radius:0;background:transparent;box-shadow:none;backdrop-filter:none;color:var(--profile-text)}
 body.cw-profile-page .cw-profile-last{cursor:pointer}
@@ -321,13 +325,16 @@ dialog.cw-page-panel {
 #page-tracker .trk-overview-open:hover .trk-overview-arrow{background:rgba(255,255,255,.16);border-color:#fff}
 #page-tracker .trk-overview-empty{background:var(--cw-theme-surface);color:var(--cw-theme-muted);box-shadow:var(--cw-flat-panel-shadow,none)}
 #page-tracker :is(.trk-overview-section-head p,.trk-overview-notice){color:var(--cw-theme-muted)}
-#page-tracker .trk-calendar-day{background:var(--cw-theme-surface);color:var(--cw-theme-muted);box-shadow:inset 0 0 0 1px var(--cw-theme-border)}
-#page-tracker .trk-calendar-day.is-today{background:var(--cw-theme-surface-raised);color:var(--cw-theme-text)}
-#page-tracker .trk-calendar-day.has-releases{background:transparent;box-shadow:none}
-#page-tracker .trk-calendar-release{background:var(--cw-theme-surface-raised);color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.6)}
-#page-tracker .trk-calendar-release::after{background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.06) 40%,rgba(0,0,0,.85))}
-#page-tracker .trk-calendar-copy>span,#page-tracker .trk-calendar-date small{color:rgba(255,255,255,.85)}
-#page-tracker .trk-calendar:focus-visible,#page-tracker .trk-calendar-release:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:-3px}
+:is(#page-tracker,#profile-airing) .trk-calendar-day{background:var(--cw-theme-surface);color:var(--cw-theme-muted);box-shadow:inset 0 0 0 1px var(--cw-theme-border)}
+:is(#page-tracker,#profile-airing) .trk-calendar-day.is-today{background:var(--cw-theme-surface-raised);color:var(--cw-theme-text)}
+:is(#page-tracker,#profile-airing) .trk-calendar-day.has-releases{background:transparent;box-shadow:none}
+:is(#page-tracker,#profile-airing) .trk-calendar-release{background:var(--cw-theme-surface-raised);color:#fff;text-shadow:0 1px 4px rgba(0,0,0,.6)}
+:is(#page-tracker,#profile-airing) .trk-calendar-release::after{background:linear-gradient(180deg,rgba(0,0,0,.55),rgba(0,0,0,.06) 40%,rgba(0,0,0,.85))}
+:is(#page-tracker,#profile-airing) .trk-calendar-copy>span,:is(#page-tracker,#profile-airing) .trk-calendar-label{color:rgba(255,255,255,.85)}
+:is(#page-tracker,#profile-airing) .trk-calendar:focus-visible,:is(#page-tracker,#profile-airing) .trk-calendar-release:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:-3px}
+#profile-airing .trk-calendar-actions .cw-btn{background:var(--cw-page-control-bg);border:1px solid var(--cw-theme-border-strong);border-radius:var(--cw-page-control-radius);color:var(--cw-theme-text);font-size:14px;font-weight:500;box-shadow:none;text-shadow:none}
+#profile-airing .trk-calendar-actions .cw-btn:hover:not(:disabled){background:var(--cw-page-hover-bg)}
+#profile-airing-notice{color:var(--cw-theme-muted);font-size:13px}
 #page-tracker .trk-overview-progress{background:rgba(255,255,255,.22)}
 #page-tracker .trk-overview-progress i{background:var(--accent)}
 #page-tracker .trk-overview-open:focus-visible,#page-tracker .trk-nav-menu>summary:focus-visible{outline:2px solid var(--accent);outline-offset:4px;border-radius:8px}
@@ -2555,3 +2562,14 @@ html[data-cw-theme=flat-light] #page-events.cw-page-events{--ev-color-scheme:lig
 .cw-page-logs .logs-notice{border:1px solid color-mix(in srgb,var(--cw-theme-warning) 40%,var(--cw-theme-border));border-radius:8px;color:var(--cw-theme-warning);background:var(--cw-theme-surface)}
 .cw-page-logs .logs-copied{color:var(--cw-theme-good);border-color:var(--cw-theme-good)}
 @media(max-width:760px){.cw-page-logs .logs-sidebar{border-right:0;border-bottom:1px solid var(--cw-theme-border)}}
+
+.cw-account-header{background:var(--cw-theme-surface);border:1px solid var(--cw-theme-border);border-radius:16px}
+.cw-account-avatar{background:var(--cw-theme-surface-raised);color:var(--cw-theme-muted);border:1px solid var(--cw-theme-border)}
+.cw-account-camera{background:var(--cw-theme-surface-raised);border:1px solid var(--cw-theme-border);color:var(--cw-theme-text)}
+.cw-account-camera:hover{color:var(--cw-theme-accent)}
+.cw-account-camera:focus-visible,.cw-account-remove:focus-visible{outline:2px solid var(--cw-theme-accent);outline-offset:3px}
+.cw-account-meta{color:var(--cw-theme-muted)}
+.cw-account-remove{background:none;border:0;color:var(--cw-theme-muted)}
+.cw-account-remove:hover{color:var(--cw-theme-text)}
+
+.cw-account-identity h1{color:var(--cw-theme-text);font-weight:650}

@@ -42,7 +42,7 @@ def _positive_int(value: Any) -> int | None:
     return number if number > 0 else None
 
 
-def _find(api_key: str, source: str, external_id: str, bucket: str, field: str) -> int | None:
+def _find(api_key: str, source: str, external_id: str, bucket: str, field: str, *, strict: bool = False) -> int | None:
     key = (bucket, source, external_id)
     with _LOCK:
         hit = _CACHE.get(key)
@@ -58,9 +58,13 @@ def _find(api_key: str, source: str, external_id: str, bucket: str, field: str) 
                                      quiet_404=True, timeout=10, max_retries=0, copy=False).data
     except requests.exceptions.RequestException as exc:
         if getattr(getattr(exc, "response", None), "status_code", None) != 404:
+            if strict:
+                raise
             return None
         data = {}
     except Exception:
+        if strict:
+            raise
         return None
     rows = data.get(bucket) if isinstance(data, Mapping) else None
     for row in rows if isinstance(rows, list) else []:
@@ -79,6 +83,7 @@ def show_tmdb_id(
     cfg: Mapping[str, Any],
     show_ids: Mapping[str, Any] | None,
     episode_ids: Mapping[str, Any] | None,
+    *, strict: bool = False,
 ) -> int | None:
     api_key = _api_key(cfg or {})
     if not api_key:
@@ -89,7 +94,7 @@ def show_tmdb_id(
             external_id = _clean(namespace, candidates[kind].get(namespace))
             if not external_id:
                 continue
-            found = _find(api_key, source, external_id, bucket, field)
+            found = _find(api_key, source, external_id, bucket, field, strict=strict)
             if found:
                 return found
     return None

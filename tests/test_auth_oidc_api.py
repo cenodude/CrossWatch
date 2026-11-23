@@ -417,7 +417,7 @@ def test_oidc_callback_signs_in_linked_managed_user(monkeypatch) -> None:
     resp = oidc_api.api_oidc_callback(req, state="ok", code="code", error="")
 
     assert resp.status_code == 302
-    assert resp.headers["location"] == "/profile"
+    assert resp.headers["location"] == "/hub"
     assert cfg["app_auth"]["sessions"][0]["user_id"] == "u1"
     assert "cw_auth=" in _all_set_cookie_headers(resp)
 
@@ -683,7 +683,7 @@ def test_oidc_provisioning_creates_login_profile_and_link(monkeypatch) -> None:
     resp = _callback(oidc_api)
 
     assert resp.status_code == 302
-    assert resp.headers["location"] == "/profile"
+    assert resp.headers["location"] == "/hub"
     [(uid, raw)] = cfg["app_auth"]["users"].items()
     assert raw["username"] == "pascal"
     assert raw["role"] == "user"

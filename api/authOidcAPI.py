@@ -114,6 +114,12 @@ def _safe_next(value: Any) -> str:
     return raw
 
 
+def _login_destination(value: Any, user: dict[str, Any]) -> str:
+    destination = _safe_next(value)
+    path = destination.split("?", 1)[0].split("#", 1)[0]
+    return destination if user.get("is_admin") or path in {"/hub", "/profile"} else "/hub"
+
+
 def _unauthorized() -> JSONResponse:
     return JSONResponse({"ok": False, "error": "Unauthorized"}, status_code=401, headers={"Cache-Control": "no-store"})
 
@@ -478,7 +484,7 @@ def api_oidc_callback(request: Request, state: str = Query(""), code: str = Quer
     if bound or created:
         _audit_bound_link(request, login_user, identity)
     app_auth._audit(request, "login", actor=login_user, message=f"{login_user.get('username') or 'User'} logged in with OIDC", target_type="user", target_id=login_user.get("id"), fields={"oidc_username": identity.get("username"), "remember_me": bool(res.get("remember_me"))})
-    dest = _safe_next(res.get("next_url")) if login_user.get("is_admin") else "/profile"
+    dest = _login_destination(res.get("next_url"), login_user)
     resp = RedirectResponse(url=dest, status_code=302)
     _del_flow_cookie(resp, request)
     app_auth._set_cookie(resp, token, exp, request, persistent=bool(res.get("remember_me")))
@@ -563,7 +569,7 @@ def api_oidc_2fa(request: Request, payload: dict[str, Any] = Body(default_factor
     if recovery_used:
         app_auth._audit(request, "2fa_recovery_code_used", actor=login_user, message=f"{login_user.get('username') or 'User'} used a recovery code", target_type="user", target_id=login_user.get("id"))
     app_auth._audit(request, "login", actor=login_user, message=f"{login_user.get('username') or 'User'} logged in with OIDC", target_type="user", target_id=login_user.get("id"), fields={"oidc_username": identity.get("username"), "remember_me": bool(rec.get("remember_me"))})
-    dest = _safe_next(rec.get("next_url")) if login_user.get("is_admin") else "/profile"
+    dest = _login_destination(rec.get("next_url"), login_user)
     resp = JSONResponse({"ok": True, "next": dest}, headers={"Cache-Control": "no-store"})
     _del_flow_cookie(resp, request)
     _del_2fa_cookie(resp, request)

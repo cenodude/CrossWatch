@@ -105,16 +105,17 @@ def register_ui_root(app: FastAPI) -> None:
             perms = _managed_user_permissions(user)
             view = str(request.query_params.get("view") or "").strip().lower()
             if view == "playback_progress":
-                return RedirectResponse(url="/profile#playback", status_code=302)
+                return RedirectResponse(url="/hub#playback", status_code=302)
             if view == "watchlist":
-                return RedirectResponse(url="/profile#watchlist", status_code=302)
+                return RedirectResponse(url="/hub#watchlist", status_code=302)
             if not perms.get("write"):
-                return RedirectResponse(url="/profile", status_code=302)
+                return RedirectResponse(url="/hub", status_code=302)
             if perms.get("write") and request.query_params.get("main") != "1":
-                return RedirectResponse(url="/profile", status_code=302)
+                return RedirectResponse(url="/hub", status_code=302)
         include_admin = not (isinstance(user, dict) and user.get("is_admin") is False)
         return HTMLResponse(get_index_html(include_admin=include_admin, user=user), headers={"Cache-Control": "no-store"})
 
+    @app.get("/hub", include_in_schema=False, tags=["ui"])
     @app.get("/profile", include_in_schema=False, tags=["ui"])
     def ui_profile(request: Request) -> Response:
         user = getattr(getattr(request, "state", None), "cw_user", None)
@@ -129,7 +130,7 @@ def register_ui_root(app: FastAPI) -> None:
                 user = None
         if not isinstance(user, dict):
             return RedirectResponse(url="/login", status_code=302)
-        return HTMLResponse(get_profile_html(user=user), headers={"Cache-Control": "no-store"})
+        return HTMLResponse(get_hub_html(user=user) if request.url.path == "/hub" else get_profile_html(user=user), headers={"Cache-Control": "no-store"})
 
 
 _HELPER_SCRIPTS = (
@@ -654,7 +655,7 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
         tabs = [
             '    <button id="tab-main" class="tab active" type="button" onclick="showTab(\'main\')">Main</button>',
             *(['    <button id="tab-tracker" class="tab" type="button" onclick="showTab(\'tracker\')">Tracker</button>'] if tracker else []),
-            _profile_nav_tab("Hub", "/profile#overview"),
+            _profile_nav_tab("Hub", "/hub"),
             '    <button id="tab-snapshots" class="tab" type="button" onclick="showTab(\'snapshots\')">Captures</button>',
             '    <button id="tab-playlists" class="tab" type="button" onclick="showTab(\'playlists\')">Playlists</button>',
             "    " + _tools_menu(maintenance=False),
@@ -668,11 +669,11 @@ def _managed_user_shell(html: str, user: dict | None = None) -> str:
             '  <nav class="tabs" aria-label="Primary navigation">\n' + "\n".join(tabs) + "\n",
         )
     else:
-        tabs = [_profile_nav_tab("Hub", "/profile#overview")]
+        tabs = [_profile_nav_tab("Hub", "/hub")]
         tabs.append(_nav_profile_link(user))
         html = html.replace(
             '<div class="brand" role="button" tabindex="0" title="Go to Main" onclick="showTab(\'main\')" onkeypress="if(event.key===\'Enter\'||event.key===\' \')showTab(\'main\')">',
-            '<div class="brand" role="button" tabindex="0" title="Go to Profile" onclick="location.href=\'/profile\'" onkeypress="if(event.key===\'Enter\'||event.key===\' \')location.href=\'/profile\'">',
+            '<div class="brand" role="button" tabindex="0" title="Go to Hub" onclick="location.href=\'/hub\'" onkeypress="if(event.key===\'Enter\'||event.key===\' \')location.href=\'/hub\'">',
         )
         html = _replace_html_range(
             html,
@@ -893,11 +894,11 @@ def _get_index_html_static() -> str:
     const parts = path.split("/").filter(Boolean);
     const route = segment(parts[0]);
     if (route === "playback_progress") {
-      window.location.replace("/profile#playback");
+      window.location.replace("/hub#playback");
       return;
     }
     if (route === "watchlist") {
-      window.location.replace("/profile#watchlist");
+      window.location.replace("/hub#watchlist");
       return;
     }
     const tabs = new Set(["snapshots", "capture_compare", "playlists", "editor", "analyzer", "events", "logs", "import_export", "interactive_sync", "maintenance", "backups", "settings"]);
@@ -996,7 +997,7 @@ html[data-cw-initial-tab="settings"] #page-settings{display:block!important}
   <nav class="tabs" aria-label="Primary navigation">
     <button id="tab-main" class="tab active" type="button" onclick="showTab('main')">Main</button>
     <button id="tab-tracker" class="tab" type="button" onclick="showTab('tracker')">Tracker</button>
-    <button id="tab-profile" class="tab" type="button" onclick="location.href='/profile#overview'">Hub</button>
+    <button id="tab-profile" class="tab" type="button" onclick="location.href='/hub'">Hub</button>
     <button id="tab-snapshots" class="tab" type="button" onclick="showTab('snapshots')">Captures</button>
     <button id="tab-playlists" class="tab" type="button" onclick="showTab('playlists')">Playlists</button>
     __CW_TOOLS_MENU__
@@ -1175,7 +1176,7 @@ __CW_NAV_PROFILE_MENU__
           </div>
         </div>
         <span id="watchlist-count-chip" class="cw-widget-count-chip hidden" aria-live="polite"></span>
-        <button class="cw-watchlist-see-all" type="button" onclick="location.href='/profile#watchlist'" title="View all" aria-label="Open Watchlist page"><span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
+        <button class="cw-watchlist-see-all" type="button" onclick="location.href='/hub#watchlist'" title="View all" aria-label="Open Watchlist page"><span class="material-symbols-rounded" aria-hidden="true">arrow_forward</span></button>
       </div>
       <div id="wall-msg" class="wall-msg">Loading...</div>
       <div class="wall-wrap">
@@ -2542,6 +2543,14 @@ def get_index_html(include_admin: bool = True, user: dict | None = None) -> str:
 
 
 def get_profile_html(user: dict | None = None) -> str:
+    return _get_user_page_html(user, hub=False)
+
+
+def get_hub_html(user: dict | None = None) -> str:
+    return _get_user_page_html(user, hub=True)
+
+
+def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
     is_admin = bool(isinstance(user, dict) and user.get("is_admin"))
     shared_header_scripts = ""
     if is_admin:
@@ -2567,23 +2576,11 @@ def get_profile_html(user: dict | None = None) -> str:
             <input id="profile-pref-quick-add" type="checkbox" checked role="switch"><span class="cw-set-switch" aria-hidden="true"></span>
           </label>
 """ if preferences_allowed else ""
-    settings_interface = f"""        <section id="settings-interface" class="cw-set-card" data-settings-section="interface">
-          <header class="cw-set-head"><div><h2>Display</h2><p>Choose how your profile pages look.</p></div></header>
+    settings_interface = f"""        <section id="settings-interface" class="cw-set-card" data-settings-section="interface" hidden>
+          <header class="cw-set-head"><div><h2>Display</h2><p>Choose how media is displayed.</p></div></header>
 {settings_interface_controls}          <div class="cw-set-row">
-            <label class="cw-set-copy" for="profile-media-card"><strong>Media details</strong><small>Choose the full or compact card on Main and your profile.</small></label>
+            <label class="cw-set-copy" for="profile-media-card"><strong>Media details</strong><small>Choose the full or compact card on Main and Hub.</small></label>
             <span class="cw-set-inline"><select id="profile-media-card" class="cw-set-input" data-cw-media-card><option value="full">Full media card</option><option value="compact">Compact media card</option></select></span>
-          </div>
-          <div class="cw-set-row">
-            <label class="cw-set-copy" for="profile-pref-timezone"><strong>Timezone</strong><small>Used for dates and day/month grouping on your profile pages.</small></label>
-            <div class="cw-set-inline cw-set-field">
-              <input id="profile-timezone-search" class="cw-set-input" type="search" placeholder="Search timezones" aria-label="Search timezones" aria-controls="profile-pref-timezone" autocomplete="off">
-              <select id="profile-pref-timezone" class="cw-set-input" data-cw-native-select="true"><option value="auto">Auto (browser settings)</option><option value="UTC">UTC</option></select>
-              <small id="profile-timezone-results" role="status" hidden></small>
-            </div>
-          </div>
-          <div class="cw-set-row">
-            <label class="cw-set-copy" for="profile-pref-time-format"><strong>Time format</strong><small>Choose a 12-hour or 24-hour clock on your profile pages.</small></label>
-            <span class="cw-set-inline"><select id="profile-pref-time-format" class="cw-set-input"><option value="auto">Auto (browser settings)</option><option value="12h">12-hour (6:30 PM)</option><option value="24h">24-hour (18:30)</option></select></span>
           </div>
         </section>"""
     dashboard = "on" if perms.get("dashboard") else "off"
@@ -2591,8 +2588,8 @@ def get_profile_html(user: dict | None = None) -> str:
     playback = "on" if perms.get("playback") else "off"
     write_nav = is_admin or bool(perms.get("write"))
     app_href_prefix = "/" if is_admin else "/?main=1"
-    watchlist_href = "/profile#watchlist"
-    playback_href = "/profile#playback"
+    watchlist_href = "/hub#watchlist"
+    playback_href = "/hub#playback"
     profile_avatar_inner = _profile_avatar_inner(user)
     settings_nav = (
         '<div class="cw-tabmenu" id="tab-settings-menu">'
@@ -2613,7 +2610,7 @@ def get_profile_html(user: dict | None = None) -> str:
         nav_items.extend([
             _profile_nav_tab("Main", "/"),
             _profile_nav_tab("Tracker", "/#tracker"),
-            _profile_nav_tab("Hub", "/profile#overview", active=True),
+            _profile_nav_tab("Hub", "/hub", active=hub),
             _profile_nav_tab("Captures", "/#snapshots"),
             _profile_nav_tab("Playlists", "/#playlists"),
             _tools_menu(href_prefix="/"),
@@ -2623,13 +2620,13 @@ def get_profile_html(user: dict | None = None) -> str:
         nav_items.extend([
             _profile_nav_tab("Main", "/?main=1#main"),
             *([_profile_nav_tab("Tracker", "/?main=1#tracker")] if _managed_tracker_allowed(user) else []),
-            _profile_nav_tab("Hub", "/profile#overview", active=True),
+            _profile_nav_tab("Hub", "/hub", active=hub),
             _profile_nav_tab("Captures", "/?main=1#snapshots"),
             _profile_nav_tab("Playlists", "/?main=1#playlists"),
             _tools_menu(maintenance=False, href_prefix="/?main=1"),
         ])
     else:
-        nav_items.append(_profile_nav_tab("Hub", "/profile#overview", active=True))
+        nav_items.append(_profile_nav_tab("Hub", "/hub", active=hub))
     nav_items.append(_nav_profile_link(user).strip())
     profile_nav = "\n    ".join(nav_items)
     history_panel = _profile_timeline_panel(
@@ -2676,79 +2673,7 @@ def get_profile_html(user: dict | None = None) -> str:
     <span class="cw-profile-viewas-copy">Viewing <strong id="profile-view-as-name"></strong> as read-only</span>
     <button id="profile-view-as-exit" class="cw-profile-viewas-exit" type="button">Back to my profile</button>
   </div>""" if is_admin else ""
-    html = f"""<!DOCTYPE html>
-<html lang="en" data-cw-role="{role}" data-cw-page="profile" data-cw-perm-dashboard="{dashboard}" data-cw-perm-watchlist="{watchlist}" data-cw-perm-playback="{playback}" data-cw-perm-write="{write}" data-cw-profile-id="{profile_id}">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="dark light">
-<title>Profile | CrossWatch</title>
-<link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" sizes="180x180" href="/assets/pwa/apple-touch-icon.png?v=__CW_VERSION__">
-<meta name="application-name" content="CrossWatch">
-<meta name="apple-mobile-web-app-title" content="CrossWatch">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<link rel="icon" type="image/png" sizes="64x64" href="/assets/pwa/favicon-64.png?v=__CW_VERSION__">
-<meta name="theme-color" content="#0b0b0f">
-<script>
-(() => {{
-  try {{
-    const raw = localStorage.getItem("cw.ui.theme") || "flat-dark";
-    const theme = raw === "flat-light" ? "flat-light" : raw === "original" ? "original" : "flat-dark";
-    if (theme === "original") delete document.documentElement.dataset.cwTheme;
-    else document.documentElement.dataset.cwTheme = theme;
-    document.documentElement.classList.toggle("cw-theme-light", theme === "flat-light");
-    document.documentElement.classList.toggle("cw-theme-dark", theme === "flat-dark");
-    document.documentElement.classList.toggle("cw-theme-original", theme === "original");
-  }} catch {{
-    document.documentElement.dataset.cwTheme = "flat-dark";
-  }}
-}})();
-</script>
-<link rel="stylesheet" href="/assets/themes/tokens.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/css/base.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/css/providers.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/crosswatch.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/css/layout.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/css/components.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/css/pages.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/css/page-theme.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
-<link id="cw-notifications-css" rel="stylesheet" href="/assets/css/notifications.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/css/profile-page.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/css/ai-settings.css?v=__CW_VERSION__">
-<link rel="preload" href="/assets/fonts/material-symbols-rounded-full-v355.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/assets/fonts/material-symbols-rounded.css?v=__CW_VERSION__">
-<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">
-<link id="cw-theme-flat-css" rel="stylesheet" href="/assets/themes/flat.css?v=__CW_VERSION__">
-<link id="cw-theme-original-css" rel="stylesheet" href="/assets/themes/original-coverage.css?v=__CW_VERSION__">
-<script>
-(() => {{
-  const original = document.documentElement.classList.contains("cw-theme-original");
-  const flatLink = document.getElementById("cw-theme-flat-css");
-  const originalLink = document.getElementById("cw-theme-original-css");
-  if (flatLink) {{ flatLink.disabled = original; flatLink.media = original ? "not all" : "all"; }}
-  if (originalLink) {{ originalLink.disabled = !original; originalLink.media = original ? "all" : "not all"; }}
-}})();
-</script>
-</head>
-<body class="cw-profile-page">
-<header>
-  <div class="brand" role="button" tabindex="0" title="Go to Profile" onclick="location.href='/profile'" onkeypress="if(event.key==='Enter'||event.key===' ')location.href='/profile'">
-    <img class="logo" src="/assets/img/CROSSWATCH.svg?v=__CW_VERSION__" alt="CrossWatch">
-    <span class="brand-text">
-      <span class="name">CrossWatch</span>
-      <span class="version">__CW_CURRENT_VERSION__</span>
-    </span>
-  </div>
-  <nav class="tabs" aria-label="Primary navigation">
-    {profile_nav}
-  </nav>
-</header>
-<main class="cw-profile-shell" data-profile-id="{profile_id}" data-username="{username}" data-display-name="{display_name}">
-  <section class="cw-profile-hero cw-media-hero" id="profile-hero">
+    page_content = f"""  <section class="cw-profile-hero cw-media-hero" id="profile-hero">
     <div class="cw-profile-hero-art" id="profile-hero-art"></div>
     <div class="cw-profile-hero-now" id="profile-hero-now"></div>
     <div class="cw-profile-hero-shade"></div>
@@ -2756,7 +2681,7 @@ def get_profile_html(user: dict | None = None) -> str:
       <div class="cw-media-hero-brand">
         <h1 class="cw-media-hero-kicker">My Media Hub</h1>
         <div class="cw-profile-identity cw-media-hero-identity">
-          <a id="profile-hero-avatar" class="cw-media-hero-avatar" href="/profile#account" aria-label="Open user settings" title="User settings">{profile_avatar_inner}</a>
+          <a id="profile-hero-avatar" class="cw-media-hero-avatar" href="/profile" aria-label="Open user settings" title="User settings">{profile_avatar_inner}</a>
           <div class="cw-profile-nameblock">
             <span id="profile-role" class="cw-profile-role" hidden>{role_label}</span>
             <div id="profile-display-name">{display_name}</div>
@@ -2803,12 +2728,20 @@ def get_profile_html(user: dict | None = None) -> str:
     <button id="profile-tab-ratings" type="button" data-profile-tab="ratings"><span class="material-symbols-rounded" aria-hidden="true">star</span><span data-tab-label>Ratings</span></button>
 {playback_tab}
     <button id="profile-tab-collection" type="button" data-profile-tab="collection"><span class="material-symbols-rounded" aria-hidden="true">video_library</span><span data-tab-label>Collection</span></button>
-    <button id="profile-tab-account" class="cw-profile-tab-settings" type="button" data-profile-tab="account"><span class="material-symbols-rounded" aria-hidden="true">settings</span><span>Settings</span></button>
   </div>
   <section id="profile-panel-overview" class="cw-profile-panel active">
     <article class="cw-hub-section cw-hub-continue">
       <div class="cw-hub-section-head"><h2>Continue watching</h2><a href="{playback_href}">View all</a></div>
       <div id="profile-progress"></div>
+    </article>
+    <article id="profile-airing" class="cw-hub-section" aria-labelledby="profile-airing-title">
+      <div class="cw-hub-section-head"><h2 id="profile-airing-title">Airing soon</h2><div class="trk-calendar-actions">
+        <button type="button" class="cw-btn" data-hub-calendar="today">Today</button>
+        <button type="button" class="cw-btn" data-hub-calendar="previous" aria-label="Previous days"><span class="material-symbols-rounded" aria-hidden="true">chevron_left</span></button>
+        <button type="button" class="cw-btn" data-hub-calendar="next" aria-label="Next days"><span class="material-symbols-rounded" aria-hidden="true">chevron_right</span></button>
+      </div></div>
+      <div id="profile-airing-days" class="trk-calendar" role="region" aria-label="Upcoming episodes over the next 30 days" tabindex="0"></div>
+      <p id="profile-airing-notice" role="status" hidden></p>
     </article>
     <div class="cw-hub-secondary">
       <article class="cw-hub-section">
@@ -2958,7 +2891,23 @@ def get_profile_html(user: dict | None = None) -> str:
 {playback_panel}
 {watchlist_panel}
 {remove_dialog}
-  <section id="profile-panel-account" class="cw-profile-panel">
+""" if hub else f"""  <section class="cw-account-header cw-page-account-header" aria-label="Your profile">
+    <div class="cw-account-picture">
+      <span id="profile-settings-avatar" class="cw-account-avatar" aria-hidden="true">{profile_avatar_inner}</span>
+      <button id="profile-avatar-replace" class="cw-account-camera" type="button" aria-label="Change profile picture" title="Change profile picture"><span class="material-symbols-rounded" aria-hidden="true">photo_camera</span></button>
+      <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+    </div>
+    <div class="cw-account-identity">
+      <h1 id="profile-display-name">{display_name}</h1>
+      <div class="cw-account-meta"><span id="profile-username">@{username}</span><span id="profile-role" class="cw-set-tag">{role_label}</span></div>
+      <button id="profile-avatar-remove" class="cw-account-remove cw-danger-confirm" type="button">Remove picture</button>
+    </div>
+  </section>
+          <div id="profile-avatar-upload-status" class="cw-profile-upload hidden" role="status" aria-live="polite">
+            <div class="cw-profile-upload-head"><span id="profile-avatar-upload-label">Uploading picture</span><strong id="profile-avatar-upload-percent">0%</strong></div>
+            <div class="cw-profile-upload-bar"><span id="profile-avatar-upload-bar"></span></div>
+          </div>
+  <section id="profile-panel-account" class="cw-profile-panel active">
     <div class="cw-set">
       <nav class="cw-set-nav" aria-label="Settings sections">
         <button type="button" class="active" data-settings-nav="profile"><span class="material-symbols-rounded" aria-hidden="true">person</span><span>Profile</span></button>
@@ -2970,30 +2919,32 @@ def get_profile_html(user: dict | None = None) -> str:
       <div class="cw-set-main">
         <div class="cw-set-col">
         <section id="settings-profile" class="cw-set-card" data-settings-section="profile">
-          <header class="cw-set-head"><div><h2>Profile</h2><p>How you appear in CrossWatch.</p></div></header>
-          <div class="cw-set-row">
-            <span id="profile-settings-avatar" class="cw-set-avatar" aria-hidden="true">{profile_avatar_inner}</span>
-            <input id="profile-avatar-input" type="file" accept="image/png,image/jpeg,image/webp" hidden>
-            <span class="cw-set-copy"><strong>Profile picture</strong><small>Shown on your profile and in the menu.</small></span>
-            <span class="cw-set-actions">
-              <button id="profile-avatar-replace" class="cw-set-btn" type="button">Change</button>
-              <button id="profile-avatar-remove" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button">Remove</button>
-            </span>
-          </div>
-          <div id="profile-avatar-upload-status" class="cw-profile-upload hidden" role="status" aria-live="polite">
-            <div class="cw-profile-upload-head"><span id="profile-avatar-upload-label">Uploading picture</span><strong id="profile-avatar-upload-percent">0%</strong></div>
-            <div class="cw-profile-upload-bar"><span id="profile-avatar-upload-bar"></span></div>
-          </div>
+          <header class="cw-set-head"><div><h2>Personal details</h2></div></header>
           <form id="profile-name-form" class="cw-set-row">
             <label class="cw-set-copy" for="profile-display-input"><strong>Display name</strong><small>The name other people see.</small></label>
             <span class="cw-set-inline"><input id="profile-display-input" class="cw-set-input" maxlength="64" autocomplete="name"><button class="cw-set-btn cw-set-btn--primary" type="submit">Save</button></span>
           </form>
           <div class="cw-set-row">
-            <span class="cw-set-copy"><strong>Username</strong><small>@{username}</small></span>
-            <span class="cw-set-tag">{role_label}</span>
+            <label class="cw-set-copy" for="profile-username-input"><strong>Username</strong></label>
+            <span class="cw-set-inline"><input id="profile-username-input" class="cw-set-input" value="@{username}" readonly aria-readonly="true"></span>
           </div>
         </section>
-        <section id="settings-security" class="cw-set-card" data-settings-section="security">
+        <section id="settings-datetime" class="cw-set-card" data-settings-section="profile">
+          <header class="cw-set-head"><div><h2>Date &amp; time</h2></div></header>
+          <div class="cw-set-row">
+            <label class="cw-set-copy" for="profile-pref-timezone"><strong>Timezone</strong><small>Used for dates and day/month grouping.</small></label>
+            <div class="cw-set-inline cw-set-field">
+              <input id="profile-timezone-search" class="cw-set-input" type="search" placeholder="Search timezones" aria-label="Search timezones" aria-controls="profile-pref-timezone" autocomplete="off">
+              <select id="profile-pref-timezone" class="cw-set-input" data-cw-native-select="true"><option value="auto">Auto (browser settings)</option><option value="UTC">UTC</option></select>
+              <small id="profile-timezone-results" role="status" hidden></small>
+            </div>
+          </div>
+          <div class="cw-set-row">
+            <label class="cw-set-copy" for="profile-pref-time-format"><strong>Time format</strong><small>Choose a 12-hour or 24-hour clock.</small></label>
+            <span class="cw-set-inline"><select id="profile-pref-time-format" class="cw-set-input"><option value="auto">Auto (browser settings)</option><option value="12h">12-hour (6:30 PM)</option><option value="24h">24-hour (18:30)</option></select></span>
+          </div>
+        </section>
+        <section id="settings-security" class="cw-set-card" data-settings-section="security" hidden>
           <header class="cw-set-head"><div><h2>Security</h2><p>Keep your account safe.</p></div></header>
           <div class="cw-set-row">
             <span class="cw-set-copy"><strong>Password</strong><small>Change the password you use to sign in.</small></span>
@@ -3020,7 +2971,7 @@ def get_profile_html(user: dict | None = None) -> str:
           </div>
           <div id="profile-2fa-setup" class="cw-profile-2fa"></div>
         </section>
-        <section id="settings-linked" class="cw-set-card" data-settings-section="linked">
+        <section id="settings-linked" class="cw-set-card" data-settings-section="linked" hidden>
           <header class="cw-set-head"><div><h2>Linked accounts</h2><p>Sign in with another account. Your password keeps working.</p></div></header>
           <div class="cw-set-row">
             <span class="cw-set-logo"><img id="profile-plex-logo" alt="" hidden><span class="material-symbols-rounded" aria-hidden="true">play_circle</span></span>
@@ -3044,7 +2995,7 @@ def get_profile_html(user: dict | None = None) -> str:
         </div>
         <div class="cw-set-col">
 {settings_interface}
-        <section id="settings-sessions" class="cw-set-card" data-settings-section="sessions">
+        <section id="settings-sessions" class="cw-set-card" data-settings-section="sessions" hidden>
           <header class="cw-set-head"><div><h2>Devices</h2><p>Where you are signed in right now.</p></div><button id="profile-revoke-sessions" class="cw-set-btn cw-set-btn--danger cw-danger-confirm" type="button" hidden>Sign out everywhere else</button></header>
           <div id="profile-sessions" class="cw-set-sessions"></div>
         </section>
@@ -3052,6 +3003,96 @@ def get_profile_html(user: dict | None = None) -> str:
       </div>
     </div>
   </section>
+"""
+    page_name = "hub" if hub else "profile"
+    page_title = "Hub" if hub else "Profile"
+    media_scripts = """<script src="/assets/helpers/selection-bar.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/card-actions.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/profile-select.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/overview-profile.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/view-cache.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/media-meta.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/trailer.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/playing-card.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/watchlist-preview.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/dashboard-widgets.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/activity.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/item-actions.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/js/profile-media-modal.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/month-bar.js?v=__CW_VERSION__" defer></script>""" if hub else ""
+    html = f"""<!DOCTYPE html>
+<html lang="en" data-cw-role="{role}" data-cw-page="{page_name}" data-cw-perm-dashboard="{dashboard}" data-cw-perm-watchlist="{watchlist}" data-cw-perm-playback="{playback}" data-cw-perm-write="{write}" data-cw-profile-id="{profile_id}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<title>{page_title} | CrossWatch</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/pwa/apple-touch-icon.png?v=__CW_VERSION__">
+<meta name="application-name" content="CrossWatch">
+<meta name="apple-mobile-web-app-title" content="CrossWatch">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" type="image/png" sizes="64x64" href="/assets/pwa/favicon-64.png?v=__CW_VERSION__">
+<meta name="theme-color" content="#0b0b0f">
+<script>
+(() => {{
+  try {{
+    const raw = localStorage.getItem("cw.ui.theme") || "flat-dark";
+    const theme = raw === "flat-light" ? "flat-light" : raw === "original" ? "original" : "flat-dark";
+    if (theme === "original") delete document.documentElement.dataset.cwTheme;
+    else document.documentElement.dataset.cwTheme = theme;
+    document.documentElement.classList.toggle("cw-theme-light", theme === "flat-light");
+    document.documentElement.classList.toggle("cw-theme-dark", theme === "flat-dark");
+    document.documentElement.classList.toggle("cw-theme-original", theme === "original");
+  }} catch {{
+    document.documentElement.dataset.cwTheme = "flat-dark";
+  }}
+}})();
+</script>
+<link rel="stylesheet" href="/assets/themes/tokens.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/base.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/providers.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/crosswatch.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/layout.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/components.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/pages.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/page-theme.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/ui-shell.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/account-menu.css?v=__CW_VERSION__">
+<link id="cw-notifications-css" rel="stylesheet" href="/assets/css/notifications.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/profile-page.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/css/ai-settings.css?v=__CW_VERSION__">
+<link rel="preload" href="/assets/fonts/material-symbols-rounded-full-v355.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/assets/fonts/material-symbols-rounded.css?v=__CW_VERSION__">
+<link rel="stylesheet" href="/assets/js/modals/core/styles.css?v=__CW_VERSION__">
+<link id="cw-theme-flat-css" rel="stylesheet" href="/assets/themes/flat.css?v=__CW_VERSION__">
+<link id="cw-theme-original-css" rel="stylesheet" href="/assets/themes/original-coverage.css?v=__CW_VERSION__">
+<script>
+(() => {{
+  const original = document.documentElement.classList.contains("cw-theme-original");
+  const flatLink = document.getElementById("cw-theme-flat-css");
+  const originalLink = document.getElementById("cw-theme-original-css");
+  if (flatLink) {{ flatLink.disabled = original; flatLink.media = original ? "not all" : "all"; }}
+  if (originalLink) {{ originalLink.disabled = !original; originalLink.media = original ? "all" : "not all"; }}
+}})();
+</script>
+</head>
+<body class="cw-profile-page{' cw-account-page' if not hub else ''}">
+<header>
+  <div class="brand" role="button" tabindex="0" title="Go to Hub" onclick="location.href='/hub'" onkeypress="if(event.key==='Enter'||event.key===' ')location.href='/hub'">
+    <img class="logo" src="/assets/img/CROSSWATCH.svg?v=__CW_VERSION__" alt="CrossWatch">
+    <span class="brand-text">
+      <span class="name">CrossWatch</span>
+      <span class="version">__CW_CURRENT_VERSION__</span>
+    </span>
+  </div>
+  <nav class="tabs" aria-label="Primary navigation">
+    {profile_nav}
+  </nav>
+</header>
+<main class="cw-profile-shell" data-profile-id="{profile_id}" data-username="{username}" data-display-name="{display_name}">
+{page_content}
 </main>
 <div id="profile-toast" class="cw-profile-toast hidden" role="status" aria-live="polite"></div>
 <div id="cw-help-overlay" class="hidden" aria-hidden="true">
@@ -3153,33 +3194,20 @@ def get_profile_html(user: dict | None = None) -> str:
 }})();
 </script>
 <script type="module" src="/assets/js/modals.js?v=__CW_VERSION__"></script>
-<script src="/assets/helpers/clipboard.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/helpers/selection-bar.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/helpers/card-actions.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/provider-meta.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/clipboard.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/icon-select.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/helpers/profile-select.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/auth-state.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/pwa-install.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/account-menu.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/notifications.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/overview-profile.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/sync-reviews.js?v=__CW_VERSION__" defer></script>
 {shared_header_scripts}
 <script src="/assets/helpers/api.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/helpers/view-cache.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/notification-feed.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/helpers/media-meta.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/helpers/trailer.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/helpers/playing-card.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/helpers/watchlist-preview.js?v=__CW_VERSION__" defer></script>
 <script>window.cwIsAuthSetupPending = window.cwIsAuthSetupPending || (() => window.__cwAuthSetupPending === true);</script>
-<script src="/assets/js/dashboard-widgets.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/activity.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/profile-datetime.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/item-actions.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/js/profile-media-modal.js?v=__CW_VERSION__" defer></script>
-<script src="/assets/helpers/month-bar.js?v=__CW_VERSION__" defer></script>
+{media_scripts}
 <script src="/assets/js/profile-page.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/theme-flat-runtime.js?v=__CW_VERSION__" defer></script>
 </body>

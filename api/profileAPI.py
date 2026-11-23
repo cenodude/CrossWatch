@@ -17,7 +17,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Query, Request
@@ -1455,6 +1455,28 @@ def _fill_history_tmdb(cfg: dict[str, Any], rows: Any) -> None:
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         list(pool.map(fill, rows))
+
+
+@router.get("/airing")
+@background_view
+def api_profile_airing(request: Request, day: str = Query("", max_length=10), user_profile: str = Query("")) -> JSONResponse:
+    from providers.metadata._meta_TMDB import TmdbProvider
+    from services.hub_airing import airing_payload
+
+    ctx = _profile_context(request)
+    if isinstance(ctx, JSONResponse):
+        return ctx
+    cfg, _a, _uid, _raw, _user, token = ctx
+    try:
+        today = date.fromisoformat(day) if day else datetime.now(timezone.utc).date()
+    except ValueError:
+        return _json_error("Invalid date", 400)
+    if not _tmdb_api_key(cfg):
+        return JSONResponse({"ok": True, "day": today.isoformat(), "airing": [], "metadata_available": False})
+    profile_id = str(effective_user_profile_id(cfg, token, user_profile) or "").strip()
+    indices = [_profile_history_index(cfg, profile_id, source)[0] for source in ("synced", "scrobble")]
+    provider = TmdbProvider(lambda: cfg, lambda _: None)
+    return JSONResponse(airing_payload(indices, cfg, provider, today), headers={"Cache-Control": "no-store"})
 
 
 @router.get("/history")

@@ -13,12 +13,13 @@ const assets = new Map();
 const rows = Array.from({length:20},(_,index) => ({key:`movie:${index}`,ref:{feature:"progress",key:`movie:${index}`},type:"movie",title:index === 1 ? 'A title with <script>window.injected=true</script>' : `Movie ${index + 1}`,year:2026,art:{kind:"movie",tmdb:String(index + 1)},ids:{tmdb:String(index + 1)},date:"2026-11-09T12:00:00Z",progress_percent:40,remaining_minutes:22}));
 const episodes = Array.from({length:12},(_,index) => ({key:`episode:${index}`,ref:{show:`tmdb:${index + 100}`},type:"episode",title:`Show ${index + 1}`,art:{kind:"tv",tmdb:String(index + 100)},show_ids:{tmdb:String(index + 100)},season:2,episode:index ? 3 : 1,episode_title:"The next chapter",air_date:new Date(Date.UTC(2026,10,10 + [1,5,5,10,12,14,16,18,20,22,25,29][index])).toISOString().slice(0,10),date:"2026-11-08T12:00:00Z"}));
 
-async function fixture(t, theme, {realMedia = false, playback = false, touch = true, width = 1440, motion = "reduce", profiles = null, managed = false, airing = episodes, continuing = rows, next = episodes.slice(0,2), wrapped = {}, trackerOptions = {}} = {}) {
+async function fixture(t, theme, {realMedia = false, playback = false, touch = true, width = 1440, motion = "reduce", profiles = null, managed = false, airing = episodes, continuing = rows, next = episodes.slice(0,2), wrapped = {}, trackerOptions = {}, clock = false} = {}) {
   const browser = await ({chromium,webkit})[process.env.CW_AUDIT_BROWSER || "chromium"].launch({headless:true});
   t.after(() => browser.close());
   const context = await browser.newContext({viewport:{width,height:900},hasTouch:touch,reducedMotion:motion});
   const page = await context.newPage();
-  await page.clock.setFixedTime(new Date("2026-11-10T12:00:00Z"));
+  if (clock) await page.clock.install({time:new Date("2026-11-10T12:00:00Z")});
+  else await page.clock.setFixedTime(new Date("2026-11-10T12:00:00Z"));
   page.setDefaultTimeout(7000);
   const errors = [], writes = [], requests = [], drops = [], scopedReads = [];
   let empty = false, fail = false, metadata = true, release, reviewMonth = "2026-10";
@@ -70,7 +71,7 @@ async function fixture(t, theme, {realMedia = false, playback = false, touch = t
       if (pending && instance === "default") await pending;
       if (fail) return route.fulfill({status:503,json:{error:"unavailable"}});
       json = {continue:empty ? [] : next,airing:empty ? [] : airing.map(row=>({...row,title:instance === "other" ? "Other tracker show" : row.title})),total:4,checked:4,done:true,unavailable:0,metadata_available:metadata};
-      return route.fulfill({contentType:"application/x-ndjson",body:JSON.stringify(json)+"\n"});
+      return route.fulfill({json});
     }
     if (path === "/api/tracker/title") {
       const row = episodes.find(row => row.ref.show === url.searchParams.get('show')) || rows.find(row => row.key === url.searchParams.get('key')) || rows[0];
@@ -97,7 +98,7 @@ async function fixture(t, theme, {realMedia = false, playback = false, touch = t
       await page.addScriptTag({url:'/assets/js/profile-media-modal.js'});
     }
     if (playback) for (const file of ['helpers/playing-card','js/playingcard']) await page.addScriptTag({url:`/assets/${file}.js`});
-    for (const file of ["helpers/account-menu","helpers/icon-select","helpers/selection-bar","helpers/card-actions","js/tracker"]) await page.addScriptTag({url:`/assets/${file}.js`});
+    for (const file of ["helpers/view-cache","helpers/account-menu","helpers/icon-select","helpers/selection-bar","helpers/card-actions","js/tracker"]) await page.addScriptTag({url:`/assets/${file}.js`});
     if (profiles !== null) for (const file of ['helpers/api','helpers/profile-select','js/overview-profile']) await page.addScriptTag({url:`/assets/${file}.js`});
     if (!wait) { await page.evaluate(() => { void TrackerPage.mount(document.querySelector("#page-tracker")); }); return; }
     await page.evaluate(() => TrackerPage.mount(document.querySelector("#page-tracker")));
@@ -109,7 +110,7 @@ async function fixture(t, theme, {realMedia = false, playback = false, touch = t
 }
 
 async function choose(page, selector, value) {
-  if (selector === '#trk-instance') {
+  if (selector === '#trk-instance' || selector === '[data-trk-input="instance"]') {
     await page.locator('.trk-source > summary').click();
     await page.locator(`[data-trk-instance="${value}"]`).click();
     return;
@@ -574,7 +575,7 @@ for (const theme of ["original","flat-dark","flat-light"]) test(`${theme}: overv
   const app = await fixture(t,theme), {page,writes} = app;
   assert.equal(await page.locator('.trk-tabs [role="tab"]').first().textContent(),"space_dashboardOverview");
   assert.equal(await page.locator('.trk-tabs [data-trk-view="cleanup"]').count(),0);
-  assert.equal(await page.locator("[data-trk-slot=filters]").isVisible(),true);
+  assert.equal(await page.locator("[data-trk-slot=filters]").isVisible(),false);
   assert.equal(await page.locator('[data-trk-overview-open^="continue:"]').count(),4);
   assert.equal(await page.locator('[data-trk-overview-open^="recent:"]').count(),10);
   assert.equal(await page.evaluate(() => window.injected),undefined);
@@ -778,44 +779,33 @@ test("airing cards share available width according to release density", async t 
   assert.equal(await page.locator('.trk-calendar-day').count(),30);
 });
 
-test("streaming overview preserves existing cards, batches rendering and aborts on navigation", async t => {
-  const {page} = await fixture(t,"flat-dark");
-  await page.evaluate(() => {
-    const fetch = window.fetch;
-    window.streamRequests = 0;
-    window.streamAborts = 0;
-    window.fetch = (url, init) => {
-      if (!String(url).includes("/overview/shows?")) return fetch(url, init);
-      window.streamRequests++;
-      const body = new ReadableStream({start(controller) {
-        window.overviewStream = controller;
-        init.signal.addEventListener("abort", () => { window.streamAborts++; controller.error(new DOMException("Aborted", "AbortError")); }, {once:true});
-      }});
-      return Promise.resolve(new Response(body, {headers:{"Content-Type":"application/x-ndjson"}}));
-    };
+test("background episode refresh preserves cards and scroll, retries and resumes after navigation", async t => {
+  const {page, boot} = await fixture(t,"flat-dark",{touch:false});
+  let phase = "cached", reads = 0, retry = false;
+  const cached = {continue:episodes.slice(0,2), airing:episodes, total:12, checked:12, done:true};
+  await page.route('**/api/tracker/overview/shows?**', route => {
+    const url = new URL(route.request().url());
+    assert.equal(url.searchParams.get('background'), '1');
+    reads++;
+    retry ||= url.searchParams.has('retry_view');
+    return route.fulfill({json:phase === "cold" ? {ok:true,_view:{ready:false,refreshing:true,retry_after:1}} : {
+      ...cached, airing:phase === "fresh" ? episodes.map((row,index)=>index === 1 ? {...row,title:"Updated show"} : row) : episodes,
+      _view:{ready:true,refreshing:phase === "cached",version:phase,error:phase === "failed" ? "refresh_failed" : null,retry_after:1},
+    }});
   });
   await page.locator('[data-trk-action="refresh"]').click();
-  await page.waitForFunction(() => window.streamRequests === 1);
-  await page.locator('[data-trk-overview-open="recent:0"]').waitFor();
+  await page.waitForFunction(() => document.querySelector('[data-trk-overview-open="airing:0"]'));
+  await page.waitForTimeout(150);
   await page.evaluate(() => {
     window.recentCard = document.querySelector('[data-trk-overview-open="recent:0"]');
     window.continueCard = document.querySelector('[data-trk-overview-open="continue:0"]');
     window.calendarNode = document.querySelector('.trk-calendar');
-  });
-  const send = async event => page.evaluate(event => {
-    const bytes = new TextEncoder().encode(JSON.stringify(event)+"\n");
-    window.overviewStream.enqueue(bytes.slice(0,17));
-    window.overviewStream.enqueue(bytes.slice(17));
-  },event);
-  await send({airing:[{...episodes[0],title:"Première"}],checked:4,total:500,done:false});
-  await page.waitForTimeout(150);
-  assert.equal(await page.locator('.trk-calendar-release').count(),12);
-  await page.evaluate(() => {
     window.firstRelease = document.querySelector('[data-trk-overview-open="airing:0"]');
     window.calendarNode.scrollLeft = 60;
   });
-  await send({airing:[episodes[1]],checked:8,total:500,done:false});
-  await page.locator('.trk-calendar-copy strong').filter({hasText:"Show 2"}).waitFor();
+  assert.equal(await page.locator('[data-view-status]:visible').count(),0);
+  phase = "fresh";
+  await page.locator('.trk-calendar-copy strong').filter({hasText:"Updated show"}).waitFor();
   assert.deepEqual(await page.evaluate(() => ({
     recent:window.recentCard === document.querySelector('[data-trk-overview-open="recent:0"]'),
     continuing:window.continueCard === document.querySelector('[data-trk-overview-open="continue:0"]'),
@@ -823,39 +813,51 @@ test("streaming overview preserves existing cards, batches rendering and aborts 
     release:window.firstRelease === document.querySelector('[data-trk-overview-open="airing:0"]'),
     scroll:window.calendarNode.scrollLeft,
   })),{recent:true,continuing:true,calendar:true,release:true,scroll:60});
-  await page.evaluate(() => {
-    window.overviewPaints = 0;
-    window.overviewObserver = new MutationObserver(() => window.overviewPaints++);
-    window.overviewObserver.observe(document.querySelector('.trk-overview'),{childList:true,subtree:true});
-  });
-  await page.evaluate(base => {
-    const encoder = new TextEncoder();
-    for (let i=8;i<500;i+=4) window.overviewStream.enqueue(encoder.encode(JSON.stringify({
-      airing:Array.from({length:4},(_,j)=>({...base,key:`scale:${i+j}`,title:`Show ${i+j}`,air_date:"2026-12-09"})),
-      checked:i+4,total:500,done:false,
-    })+"\n"));
-  },episodes[2]);
-  await page.waitForTimeout(150);
+  phase = "failed";
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('cw:view-status',{detail:{url:'/api/tracker/overview/shows?provider_instance=default',data:{ready:true,error:'refresh_failed'}}})));
+  await page.getByRole('button',{name:'Retry',exact:true}).click();
+  await page.getByText('Refresh failed. Showing saved results.',{exact:true}).waitFor();
   assert.equal(await page.locator('.trk-calendar-release').count(),12);
-  await send({checked:500,total:500,done:true});
-  await page.waitForFunction(() => document.querySelectorAll('.trk-calendar-release').length === 494);
-  assert.ok(await page.evaluate(() => window.overviewPaints <= 3));
-  assert.equal(await page.evaluate(() => window.streamRequests),1);
-  assert.equal(await page.evaluate(() => window.recentCard.isConnected),true);
-  await page.evaluate(() => document.querySelector('#page-tracker').classList.add('hidden'));
-  await page.waitForFunction(() => window.streamAborts === 1);
-  await page.evaluate(async () => {
-    document.querySelector('#page-tracker').classList.remove('hidden');
-    await TrackerPage.mount(document.querySelector('#page-tracker'));
-  });
-  await page.waitForFunction(() => window.streamRequests === 2);
+  phase = "fresh";
+  await page.getByRole('button',{name:'Retry',exact:true}).click();
+  await page.locator('.trk-calendar-copy strong').filter({hasText:"Updated show"}).waitFor();
+  assert.equal(retry,true);
+  phase = "cold";
+  await page.evaluate(() => sessionStorage.clear());
+  await page.reload();
+  await boot({wait:false});
+  await page.getByRole('progressbar',{name:/Loading upcoming episodes/}).waitFor();
   await page.locator('.trk-tabs [data-trk-view="history"]').click();
-  await page.waitForFunction(() => window.streamAborts === 2);
-  assert.equal(await page.locator('.trk-overview').count(),0);
+  const before = reads;
+  phase = "fresh";
+  await page.waitForTimeout(1200);
+  assert.equal(reads,before);
+  await page.locator('.trk-tabs [data-trk-view="overview"]').click();
+  await page.locator('.trk-calendar-copy strong').filter({hasText:"Updated show"}).waitFor();
+  assert.equal(await page.locator('[data-view-status]:visible').count(),0);
 });
 
 
-test("cached overview skips show rebuilding and shares the compact History cards", async t => {
+test("Tracker episode errors recover automatically even when cached results are unchanged", async t => {
+  const {page} = await fixture(t, "flat-dark", {clock:true});
+  let failed = true;
+  await page.route('**/api/tracker/overview/shows?**', route => route.fulfill({json:{
+    continue:episodes.slice(0,2), airing:episodes, total:12, checked:12, done:true,
+    _view:{ready:true, refreshing:false, version:"same", error:failed ? "refresh_failed" : null, retry_after:30},
+  }}));
+  await page.locator('[data-trk-action="refresh"]').click();
+  await page.getByText("Some shows couldn't be checked. Refresh to try again.", {exact:true}).waitFor();
+  assert.equal(await page.locator('.trk-calendar-release').count(),12);
+  await page.evaluate(() => { document.querySelector('.trk-calendar').scrollLeft = 60; });
+  failed = false;
+  await page.clock.runFor(30001);
+  await page.getByText("Some shows couldn't be checked. Refresh to try again.", {exact:true}).waitFor({state:"hidden"});
+  assert.equal(await page.locator('[data-view-status]:visible').count(),0);
+  assert.equal(await page.locator('.trk-calendar-release').count(),12);
+  assert.equal(await page.locator('.trk-calendar').evaluate(node => node.scrollLeft),60);
+});
+
+test("cached overview rechecks episode snapshots and shares the compact History cards", async t => {
   const {page, requests, drops} = await fixture(t,"flat-dark",{touch:false});
   assert.equal(await page.locator('[data-trk-slot="controls"] [data-trk-action="log"]').count(),0);
   const logWatch = page.locator('.trk-overview-section[aria-labelledby="trk-overview-recent"] [data-trk-action="log"]');
@@ -864,7 +866,7 @@ test("cached overview skips show rebuilding and shares the compact History cards
   await page.keyboard.press('Escape');
   const cached = {continue:episodes.slice(0,2),airing:episodes,total:4,checked:4,done:true,unavailable:0};
   await page.route("**/api/tracker/overview?**", route => route.fulfill({json:{revision:"warm",metadata_available:true,hero:episodes[0],continue:rows,recent:rows.map(row=>({...row,progress_percent:null,ref:{feature:"history",key:row.key}})),shows:cached}}));
-  const streamCount = requests.filter(path => path === "/api/tracker/overview/shows").length;
+  const episodeReads = requests.filter(path => path === "/api/tracker/overview/shows").length;
   await page.locator('[data-trk-action="refresh"]').click();
   await page.locator('.trk-hero-heading strong').filter({hasText:"Show 1"}).waitFor({state:'attached'});
   assert.equal(await page.locator('.trk-hero-logo').getAttribute('alt'),"Show 1");
@@ -898,7 +900,7 @@ test("cached overview skips show rebuilding and shares the compact History cards
   await page.getByRole('menuitem',{name:'Edit watch',exact:true}).click();
   await page.locator('.trk-sheet:visible').waitFor();
   await page.keyboard.press('Escape');
-  assert.equal(requests.filter(path => path === "/api/tracker/overview/shows").length,streamCount);
+  assert.ok(requests.filter(path => path === "/api/tracker/overview/shows").length > episodeReads);
   const positions = await page.evaluate(() => {
     const controls = document.querySelector('.trk-navigation').getBoundingClientRect();
     const source = document.querySelector('[data-trk-slot="source"]').getBoundingClientRect();

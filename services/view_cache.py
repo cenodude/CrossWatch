@@ -34,7 +34,8 @@ class ViewSuperseded(Exception):
 
 
 class ViewCache:
-    def __init__(self) -> None:
+    def __init__(self, *, workers: int = 1) -> None:
+        self.workers = workers
         self.lock = threading.RLock()
         self.publication = threading.Lock()
         self.entries: OrderedDict[str, dict[str, Any]] = OrderedDict()
@@ -82,7 +83,7 @@ class ViewCache:
             needs_check = entry is None or now - entry.get("checked", 0) >= 5
             if needs_check and key not in self.pending and not failed and not self.stopped and len(self.pending) < _MAX_PENDING:
                 if self.pool is None:
-                    self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="view-refresh")
+                    self.pool = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="view-refresh")
                 self.pending[key] = self.generation
                 self.pool.submit(self._refresh, key, path, revision, build, self.generation)
             pending = key in self.pending or (needs_check and not failed and not self.stopped)
@@ -207,3 +208,5 @@ class ViewCache:
 
 
 CACHE = ViewCache()
+AIRING_CACHE = ViewCache(workers=2)
+CACHES = (CACHE, AIRING_CACHE)

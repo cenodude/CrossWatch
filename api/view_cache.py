@@ -11,7 +11,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from services.view_cache import CACHE, ViewSuperseded, digest
+from services.view_cache import AIRING_CACHE, CACHE, ViewSuperseded, digest
 
 
 def _stamp(path: Path) -> tuple[int, int]:
@@ -63,7 +63,9 @@ def _context(request: Request, arguments: dict[str, Any]) -> Any:
         from api.dashboardAPI import _dashboard_widgets_version
         from cw_platform.local_db import state as sqlite_state
 
-        if path == "/api/profile/collection":
+        if path == "/api/profile/airing":
+            source = lambda: (profileAPI.history_cache_version(cfg, "synced", profile), profileAPI.history_cache_version(cfg, "scrobble", profile))
+        elif path == "/api/profile/collection":
             source = lambda: (profileAPI.collection_cache_fingerprint(), shelf(),
                               profileAPI.history_cache_version(cfg, "synced", profile) if arguments.get("shelf") == "unwatched" else None)
         elif path in {"/api/profile/history", "/api/profile/ratings", "/api/profile/watchlist"}:
@@ -104,7 +106,8 @@ def background_view(function):
         build_kwargs = dict(kwargs)
         if "known_version" in build_kwargs:
             build_kwargs["known_version"] = ""
-        return CACHE.get(base, scope, query, revision, lambda: function(*args, **build_kwargs), retry=request.query_params.get("retry_view") == "1")
+        cache = AIRING_CACHE if request.url.path in {"/api/profile/airing", "/api/tracker/overview/shows"} else CACHE
+        return cache.get(base, scope, query, revision, lambda: function(*args, **build_kwargs), retry=request.query_params.get("retry_view") == "1")
 
     setattr(wrapped, "__signature__", signature)
     return wrapped
