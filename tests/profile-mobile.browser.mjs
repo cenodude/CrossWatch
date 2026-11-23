@@ -8,6 +8,7 @@ import {readFile, mkdir} from "node:fs/promises";
 import {chromium, webkit} from "playwright";
 
 const template = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_hub_html({'is_admin':True,'username':'mobile','display_name':'Mobile preview'}))"], {encoding:"utf8",maxBuffer:1024*1024});
+const profileTemplate = execFileSync("python", ["-c", "import ui_frontend; print(ui_frontend.get_profile_html({'is_admin':True,'username':'mobile','display_name':'Mobile preview'}))"], {encoding:"utf8",maxBuffer:1024*1024});
 const items = ["The Grand Budapest Hotel", "A long episode title with plenty of words", "Arrival"].map((title,index)=>({key:`movie:tmdb:${index+1}`,type:"movie",title,year:2014,ids:{tmdb:String(index+1)},tmdb:String(index+1),sort_epoch:1793989800,watched_at:"2026-11-06T18:30:00Z",last_collected_at:1793989800,rating:8.5,watch_count:3,watch_epochs:[1793989800],providers:["PLEX","TRAKT"],sources_by_provider:{PLEX:["default"],TRAKT:["default"]},progress:45,can_update_progress:true,can_mark_watched:true,can_remove_progress:true,provider:"PLEX",provider_instance:"default",duration:120,remaining_minutes:66,media:{resolution:"4k",hdr:"dolby_vision",audio:"truehd"}}));
 
 async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=false,playback=false,library=false,liveRoutes=false}={}) {
@@ -21,7 +22,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
   const state={empty:false,queries:[],playing:null,watchGate:null,gates:new Map(),username:'mobile'};
   if(hero) await page.clock.install();
   const fixtureItems = count ? Array.from({length:count},(_,index)=>({...items[index % items.length],key:`movie:tmdb:${index+1}`,title:`Movie ${index+1}`,tmdb:String(index+1),ids:{tmdb:String(index+1)}})) : items;
-  const html=await page.evaluate(({source,theme,hero,activity})=>{
+  const render=source=>page.evaluate(({source,theme,hero,activity})=>{
     const doc=new DOMParser().parseFromString(source,'text/html');
     doc.querySelectorAll('script').forEach(script=>script.remove());
     doc.documentElement.className=theme==='original'?'cw-theme-original':`cw-theme-${theme==='flat-light'?'light':'dark'}`;
@@ -30,13 +31,14 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
     const bootstrap=doc.createElement('script');
     bootstrap.textContent='window.CW={AuthState:{read:()=>({isAdmin:true,permissions:{write:true}})},Meta:{peek:()=>null,get:async()=>({year:2026,runtime_minutes:58,genres:["Drama","Mystery"],detail:{number_of_seasons:2,status:"Returning Series"}})}};';
     doc.body.append(bootstrap);
-    for(const path of [...(activity?['helpers/provider-meta']:[]),'helpers/card-actions','helpers/selection-bar','helpers/profile-datetime','helpers/month-bar','helpers/icon-select','helpers/account-menu',...(hero?['helpers/profile-select','js/overview-profile']:[]),'js/profile-page']) {
+    for(const path of [...(activity?['helpers/provider-meta']:[]),'helpers/card-actions','helpers/airing-card','helpers/selection-bar','helpers/profile-datetime','helpers/month-bar','helpers/icon-select','helpers/account-menu',...(hero?['helpers/profile-select','js/overview-profile']:[]),'js/profile-page']) {
       const script=doc.createElement('script');
       script.src=`/assets/${path}.js`;
       doc.body.append(script);
     }
     return '<!doctype html>'+doc.documentElement.outerHTML;
-  },{source:template,theme,hero,activity});
+  },{source,theme,hero,activity});
+  const html=await render(template), profileHtml=await render(profileTemplate);
   await page.route('https://profile-mobile.test/**',async route=>{
     const url=new URL(route.request().url()),path=url.pathname;
     if(path.startsWith('/assets/')) {
@@ -97,7 +99,7 @@ async function fixture(t,theme,width,{count=0,activity=false,history=false,hero=
       if(state.providerRefs && path==='/api/profile/history') json.items=json.items.map(item=>({...item,present:state.providerRefs,missing:[]}));
       return route.fulfill({json});
     }
-    return route.fulfill({contentType:'text/html',body:html.replace('data-username="mobile"',`data-username="${state.username}"`)});
+    return route.fulfill({contentType:'text/html',body:(path==='/profile'?profileHtml:html).replace('data-username="mobile"',`data-username="${state.username}"`)});
   });
   await page.goto('https://profile-mobile.test/hub');
   await page.locator('.cw-profile-tabs').waitFor({state:'attached'});
@@ -114,7 +116,6 @@ async function snapshot(page,name) {
 for(const width of [390,1440]) test(`Hub list cache restores pages and keeps unchanged artwork at ${width}px`,async t=>{
   const {page,state}=await fixture(t,'flat-dark',width,{history:true,library:true,playback:true});
   for(const tab of ['history','watchlist','ratings','collection','playback']) {
-    await page.evaluate(tab=>{history.replaceState(null,'',`#${tab}`);},tab);
     await page.locator(`[data-profile-tab="${tab}"]`).click();
     const card=page.locator(`#profile-panel-${tab} .cw-hist-card, #profile-panel-${tab} .cw-collection-card, #profile-panel-${tab} .cw-play-card`).first();
     await card.waitFor();
@@ -143,10 +144,11 @@ for(const theme of ['original','flat-dark','flat-light']) test(`Hub feature navi
   const {page}=await fixture(t,theme,390);
   for(const [tab,feature] of [['watchlist','watchlist'],['history','history'],['ratings','ratings'],['playback','progress'],['collection','collection']]) {
     await page.locator(`[data-profile-tab="${tab}"]`).click();
-    assert.equal(await page.locator(`[data-profile-tab="${tab}"]`).evaluate((el,feature)=>{
+    await page.waitForFunction(({tab,feature})=>{
+      const el=document.querySelector(`[data-profile-tab="${tab}"]`);
       const probe=document.createElement('span');probe.style.color=`rgb(var(--cw-feature-${feature}-rgb))`;document.body.append(probe);
       const expected=getComputedStyle(probe).color;probe.remove();return getComputedStyle(el).borderBottomColor===expected;
-    },feature),true,tab);
+    },{tab,feature});
   }
   assert.equal(await page.locator('[data-cw-profile-menu-action="preferences"]').count(),0);
 });
@@ -270,6 +272,10 @@ async function openRecordTools(panel) {
 async function clickRecordControl(panel,selector) {
   const mobile=await panel.evaluate(el=>el.classList.contains('has-mobile-tools'));
   const sheet=panel.locator('.cw-hub-mobile-sheet');
+  if(!mobile && selector.includes('filters-toggle')) {
+    await panel.locator('.cw-hub-mobile-filter').click();
+    return;
+  }
   if(mobile && selector.includes('filters-toggle')) {
     if(await sheet.evaluate(el=>el.open)) await sheet.getByRole('button',{name:'Done',exact:true}).click();
     else await openRecordTools(panel);
@@ -279,6 +285,7 @@ async function clickRecordControl(panel,selector) {
     await panel.getByRole('combobox',{name:'History source'}).selectOption('scrobble');
     return;
   }
+  if(!mobile && await panel.locator(selector).evaluate(el=>!!el.closest('.cw-hub-filterpop[hidden]'))) await panel.locator('.cw-hub-mobile-filter').click();
   await openRecordTools(panel);
   await panel.locator(selector).click();
   if(mobile && await sheet.evaluate(el=>el.open)) await sheet.getByRole('button',{name:'Done',exact:true}).click();
@@ -339,8 +346,8 @@ test('Hub mobile tools keep filters accessible without crowding the media lists'
   await page.waitForFunction(()=>!document.querySelector('#profile-panel-collection').classList.contains('has-mobile-tools'));
   assert.equal(await panel.locator('.cw-hub-mobile-sheet').evaluate(el=>el.open),false);
   assert.equal(await panel.locator('.cw-hub-records-head').isVisible(),true);
-  assert.equal(await panel.locator('.cw-hub-records-controls').isVisible(),true);
-  assert.equal(await panel.locator('.cw-hub-mobile-filter').isVisible(),false);
+  assert.equal(await panel.locator('.cw-hub-records-tail').isVisible(),true);
+  assert.equal(await panel.locator('.cw-hub-mobile-filter').isVisible(),true);
   assert.equal(await panel.locator('#profile-collection-provider').count(),1);
   await page.setViewportSize({width:390,height:844});
   await panel.locator('.cw-hub-mobile-filter').click();
@@ -362,7 +369,7 @@ for(const width of [390,1440]) test(`Hub header follows playback and falls back 
   assert.equal(await page.locator('.cw-profile-last').isVisible(),true);
   assert.match(await page.locator('#profile-last-meta').innerText(),/ago/);
   const bounds=await page.locator('#profile-hero').boundingBox();
-  assert.ok(bounds.height>=220);
+  assert.ok(bounds.height>=(width<=760?140:220));
   assert.equal(await page.locator('#profile-hero').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
   state.playing={type:'episode',title:'The Institute',series_title:'The Institute',ids:{tmdb_show:'99'},season:2,episode:1,state:'playing',progress:65,duration:58,source:{provider:'PLEX'},targets:[{provider:'TRAKT'}]};
   await page.clock.runFor(15000);
@@ -499,6 +506,7 @@ for(const width of [390,980,1440]) test(`Hub Progress keeps provider actions, fi
   await page.locator('#profile-playback-edit[open]').waitFor();
   assert.match(await page.locator('#profile-playback-edit-sub').innerText(),/1 provider record/);
   await page.locator('#profile-playback-edit [data-playback-dialog-cancel]').click();
+  await panel.locator('[data-playback-select]:enabled').first().waitFor();
   await panel.locator('[data-playback-select]').first().check({force:true});
   assert.equal(await page.locator('#profile-playback-bulk').isVisible(),true);
   await panel.locator('[data-playback-select]').first().uncheck({force:true});
@@ -730,41 +738,32 @@ for (const width of [390,1440]) test(`Hub shared navigation order and icons at $
   await page.locator('.cw-profile-tabs').screenshot({path:`.tmp/shared-navigation/hub-${width}.png`});
 });
 
-for (const width of [390,1440]) test(`Account menu opens profile Settings and preserves media tabs at ${width}px`, async t => {
+for (const width of [390,1440]) test(`Account menu opens dedicated Profile and returns to Hub at ${width}px`, async t => {
   const {page} = await fixture(t,'flat-dark',width);
   await page.locator('#cw-nav-profile-link').click();
   await page.locator('[data-cw-profile-menu-action="account"]').click();
   await page.locator('#profile-panel-account.active').waitFor();
-  assert.equal(new URL(page.url()).hash, '#account');
+  assert.equal(new URL(page.url()).pathname, '/profile');
+  assert.equal(await page.locator('.cw-profile-tabs').count(),0);
   await page.locator('#cw-nav-profile-link').click();
   assert.equal(await page.locator('[data-cw-profile-menu-action="account"]').getAttribute('aria-current'), 'page');
   await page.keyboard.press('Escape');
-  await page.locator('[data-profile-tab="ratings"]').click();
-  await page.locator('#profile-panel-ratings.active').waitFor();
-  if (width <= 760) await page.locator('[data-profile-tab="history"]').click();
-  else await page.locator('[data-profile-tab="history"]').click();
-  await page.locator('#cw-nav-profile-link').click();
-  assert.equal(await page.locator('#cw-profile-menu [aria-current="page"]').count(), 0);
-  await page.keyboard.press('Escape');
-  if (width <= 760) await page.locator('[data-mobile-route="profile/overview"]').click();
-  else await page.locator('#tab-profile').click();
+  await page.locator(width<=760?'[data-mobile-route="profile/overview"]':'#tab-profile').click();
   await page.locator('#profile-panel-overview.active').waitFor();
-  assert.equal(new URL(page.url()).hash, '#overview');
+  assert.equal(new URL(page.url()).pathname, '/hub');
+  await page.locator('[data-profile-tab="history"]').click();
+  await page.locator('#profile-panel-history.active').waitFor();
 });
 
-test('My Media Hub shortcut returns to Overview when the profile tab changed without a hash change', async t => {
+test('My Media Hub shortcut returns to Overview and stays there on reload', async t => {
   const {page} = await fixture(t,'flat-dark',390);
-  await page.evaluate(()=>{
-    localStorage.setItem('cw.mobile.shortcuts.v1',JSON.stringify(['profile/overview','settings/sync']));
-    history.replaceState(null,'','/profile#overview');
-  });
+  await page.evaluate(()=>localStorage.setItem('cw.mobile.shortcuts.v1',JSON.stringify(['profile/overview','settings/sync'])));
   await page.reload();
   const hub = page.locator('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]');
   await page.locator('#profile-panel-overview.active').waitFor();
   assert.equal(await hub.getAttribute('aria-current'), 'page');
   await page.locator('[data-profile-tab="history"]').click();
   await page.locator('#profile-panel-history.active').waitFor();
-  assert.equal(new URL(page.url()).hash, '#overview');
   await page.waitForFunction(()=>!document.querySelector('#cw-mobile-bottom-nav [data-mobile-route="profile/overview"]').hasAttribute('aria-current'));
   await hub.focus();
   await page.keyboard.press('Enter');
@@ -780,7 +779,7 @@ for(const theme of ['original','flat-dark','flat-light']) {
     test(`${theme}: profile covers and controls at ${width}x${height}`,async t=>{
       const {page,state}=await fixture(t,theme,width);
       await page.setViewportSize({width, height});
-      for(const section of ['overview','collection','history','ratings','watchlist','playback','account']) {
+      for(const section of ['overview','collection','history','ratings','watchlist','playback']) {
         if(width<=760) await page.locator(`[data-profile-tab="${section}"]`).click();
         else await page.locator(`[data-profile-tab="${section}"]`).click();
         const panel=page.locator(`#profile-panel-${section}`);
@@ -893,16 +892,16 @@ for (const width of [390,1440,2250]) test(`Hub Overview keeps provider actions a
   assert.equal(await page.locator('.cw-cw-title').first().evaluate(el=>getComputedStyle(el).fontWeight),'500');
   assert.equal(await page.locator('.cw-profile-activity-row strong').first().evaluate(el=>getComputedStyle(el).fontWeight),'500');
   const avatar=page.getByRole('link',{name:'Open user settings'});
-  assert.equal(await avatar.getAttribute('href'),'/profile#account');
+  assert.equal(await avatar.getAttribute('href'),'/profile');
   await avatar.click();
   await page.locator('#profile-panel-account.active').waitFor();
-  if(width<=760) await page.locator('[data-profile-tab="overview"]').click();
-  else await page.locator('[data-profile-tab="overview"]').click();
+  await page.goBack();
+  await page.locator('#profile-panel-overview.active').waitFor();
   await avatar.focus();
   await page.keyboard.press('Enter');
   await page.locator('#profile-panel-account.active').waitFor();
-  if(width<=760) await page.locator('[data-profile-tab="overview"]').click();
-  else await page.locator('[data-profile-tab="overview"]').click();
+  await page.goBack();
+  await page.locator('#profile-panel-overview.active').waitFor();
   if(process.env.CW_PROFILE_SCREENSHOTS) {
     await mkdir(process.env.CW_PROFILE_SCREENSHOTS,{recursive:true});
     await page.locator('#profile-panel-overview img').evaluateAll(images=>Promise.all(images.map(img=>{img.loading='eager';return img.decode().catch(()=>{});})));
@@ -922,7 +921,7 @@ for (const width of [390,1440,2250]) test(`Hub Overview keeps provider actions a
 test("Media Hub uses compact mobile previews and independent paged lists", async t => {
   const {page,state} = await fixture(t,'flat-dark',390,{count:55});
   await page.waitForFunction(()=>document.querySelectorAll('#profile-progress .cw-cw-card').length===3);
-  assert.equal(await page.locator('#profile-progress').evaluate(el=>el.scrollWidth>el.clientWidth),false);
+  assert.equal(await page.locator('#profile-progress').evaluate(el=>el.scrollWidth>el.clientWidth),true);
   const sections = [['history','/api/profile/history',48],['ratings','/api/profile/ratings',48],['watchlist','/api/profile/watchlist',48],['collection','/api/profile/collection',24],['playback','/api/playback_progress/items',48]];
   for (const [section,path,desktopSize] of sections) {
     const requested = page.waitForResponse(response=>new URL(response.url()).pathname===path && new URL(response.url()).searchParams.get('page_size')==='20');
@@ -1099,6 +1098,26 @@ test('Hub shows observed live destinations without inventing resume actions', as
   assert.match(await page.locator('#profile-playback-edit-sub').innerText(),/1 provider record/);
 });
 
+
+for(const width of [390,1440]) test(`Hub tab changes preserve vertical scroll at ${width}px`,async t=>{
+  const {page}=await fixture(t,'flat-dark',width,{history:true,library:true,playback:true});
+  await page.locator('#profile-progress [data-profile-poster-key]').first().waitFor();
+  await page.evaluate(width=>{document.documentElement.style.scrollBehavior='auto';window.scrollTo(0,width<=760?0:40);},width);
+  const top=await page.evaluate(()=>window.scrollY);
+  for(const tab of ['history','watchlist','ratings','playback','collection','overview']) {
+    await page.locator(`[data-profile-tab="${tab}"]`).click();
+    await page.locator(`#profile-panel-${tab}.active`).waitFor();
+    await page.waitForTimeout(250);
+    const actual=await page.evaluate(()=>window.scrollY);
+    assert.ok(Math.abs(actual-top)<=1,`${tab} moved the page from ${top} to ${actual}`);
+  }
+  await page.goBack();
+  await page.locator('#profile-panel-collection.active').waitFor();
+  assert.ok(Math.abs(await page.evaluate(()=>window.scrollY)-top)<=1);
+  await page.goForward();
+  await page.locator('#profile-panel-overview.active').waitFor();
+  assert.ok(Math.abs(await page.evaluate(()=>window.scrollY)-top)<=1);
+});
 
 test('Hub direct history navigation loads only the selected list and hero preview',async t=>{
   const {page,state}=await fixture(t,'flat-dark',390,{history:true});

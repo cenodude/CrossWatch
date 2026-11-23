@@ -304,6 +304,23 @@ def _number(value: Any) -> Any:
     return value if isinstance(value, (int, float, str)) and not isinstance(value, bool) else None
 
 
+def _current_progress_clause(alias: str = "items") -> str:
+    newer = (
+        f"h.scope={alias}.scope AND h.feature='history' AND h.kind={alias}.kind "
+        f"AND julianday(h.when_at) >= coalesce(julianday(json_extract({alias}.data, '$.progress_at')), 0)"
+    )
+    base = f"CASE WHEN instr({alias}.item_key, '@') > 0 THEN substr({alias}.item_key, 1, instr({alias}.item_key, '@') - 1) ELSE {alias}.item_key END"
+    movie_matches = [(f"h.{ident}={alias}.{ident}", f" INDEXED BY items_{ident}") for ident in ("tmdb", "imdb")]
+    movie_matches.append((f"h.item_key=({base})", ""))
+    movie_matches.append((f"h.item_key >= ({base}) || '@' AND h.item_key < ({base}) || 'A'", ""))
+    movie = " AND ".join(f"NOT EXISTS (SELECT 1 FROM items h{index} WHERE {match} AND {newer})" for match, index in movie_matches)
+    episode = (
+        "NOT EXISTS (SELECT 1 FROM items h INDEXED BY items_show WHERE "
+        f"h.show_key={alias}.show_key AND h.season={alias}.season AND h.episode={alias}.episode AND {newer})"
+    )
+    return f"(coalesce({alias}.kind, '') != 'movie' OR ({movie})) AND (coalesce({alias}.kind, '') != 'episode' OR {episode})"
+
+
 def _columns(key: str, data: Any) -> tuple[Any, ...]:
     item = _map_of(data)
     ids = _map_of(item.get("ids"))
@@ -1330,7 +1347,7 @@ class TrackerStore(TrackerAutomation):
                 out.append((feature, row[1] if row else 0, int(count)))
             return out
 
-    def counts(self) -> dict[str, int]:
+    def counts(self, *, current_progress: bool = False) -> dict[str, int]:
         out = {feature: 0 for feature in FEATURES}
         with self._db() as conn:
             if conn is not None:
@@ -1339,6 +1356,8 @@ class TrackerStore(TrackerAutomation):
                 ).fetchall())):
                     if feature in out:
                         out[str(feature)] = int(count)
+                if current_progress:
+                    out["progress"] = self.query("progress", current_progress=True, limit=1)[0]
         return out
 
     def query(
@@ -1357,8 +1376,11 @@ class TrackerStore(TrackerAutomation):
         tag: str = "",
         duplicates: bool = False,
         shelf: Iterable[str] | None = None,
+        current_progress: bool = False,
     ) -> tuple[int, list[tuple[str, Any]]]:
         where, args = self._filters(feature, text=text, media=media, attention=attention, health=health, duplicates=duplicates)
+        if feature == "progress" and current_progress:
+            where.append(_current_progress_clause())
         note_where, note_args = self._note_filters(status=status, tag=tag)
         where.extend(note_where)
         args.extend(note_args)
@@ -1437,8 +1459,10 @@ class TrackerStore(TrackerAutomation):
         except Exception:
             raise TrackerUnreadable("history", [DB_NAME])
 
-    def months(self, feature: str, *, text: str = "", media: str = "", status: str = "", tag: str = "", duplicates: bool = False) -> list[dict[str, Any]]:
+    def months(self, feature: str, *, text: str = "", media: str = "", status: str = "", tag: str = "", duplicates: bool = False, current_progress: bool = False) -> list[dict[str, Any]]:
         where, args = self._filters(feature, text=text, media=media, duplicates=duplicates)
+        if feature == "progress" and current_progress:
+            where.append(_current_progress_clause())
         note_where, note_args = self._note_filters(status=status, tag=tag)
         where.extend(note_where)
         args.extend(note_args)
@@ -1600,17 +1624,18 @@ class TrackerStore(TrackerAutomation):
                     out[str(key)] = (str(code), parsed if isinstance(parsed, dict) else {}, int(checked_ns))
         return out
 
-    def health_counts(self) -> dict[str, dict[str, int]]:
+    def health_counts(self, *, current_progress: bool = False) -> dict[str, dict[str, int]]:
         out = {feature: {"ok": 0, "attention": 0, "unchecked": 0} for feature in FEATURES}
         marks = ", ".join("?" for _ in ATTENTION_CODES)
+        progress_filter = f" AND (i.feature != 'progress' OR ({_current_progress_clause('i')}))" if current_progress else ""
         with self._db() as conn:
             if conn is None:
                 return out
-            rows = self._cached(conn, "health", (), lambda: tuple(conn.execute(
+            rows = self._cached(conn, "health", (current_progress,), lambda: tuple(conn.execute(
                 "SELECT i.feature, CASE WHEN c.code IS NULL THEN 'unchecked'"
                 f" WHEN c.code IN ({marks}) THEN 'attention' ELSE 'ok' END AS bucket, COUNT(*)"
                 " FROM items i LEFT JOIN checks c ON c.scope=i.scope AND c.feature=i.feature AND c.item_key=i.item_key"
-                " WHERE i.scope='' GROUP BY i.feature, bucket",
+                f" WHERE i.scope='' {progress_filter} GROUP BY i.feature, bucket",
                 ATTENTION_CODES,
             ).fetchall()))
         for feature, bucket, count in rows:
@@ -1618,14 +1643,15 @@ class TrackerStore(TrackerAutomation):
                 out[str(feature)][str(bucket)] = int(count)
         return out
 
-    def attention_counts(self) -> dict[str, int]:
+    def attention_counts(self, *, current_progress: bool = False) -> dict[str, int]:
         out = {feature: 0 for feature in FEATURES}
+        progress_filter = f" AND (i.feature != 'progress' OR ({_current_progress_clause('i')}))" if current_progress else ""
         with self._db() as conn:
             if conn is not None:
-                for feature, count in self._cached(conn, "attention", (), lambda: tuple(conn.execute(
+                for feature, count in self._cached(conn, "attention", (current_progress,), lambda: tuple(conn.execute(
                     "SELECT c.feature, COUNT(*) FROM checks c JOIN items i ON i.scope=c.scope AND i.feature=c.feature"
                     " AND i.item_key=c.item_key WHERE c.scope='' AND c.code IN ("
-                    + ", ".join("?" for _ in ATTENTION_CODES) + ") GROUP BY c.feature",
+                    + ", ".join("?" for _ in ATTENTION_CODES) + f") {progress_filter} GROUP BY c.feature",
                     ATTENTION_CODES,
                 ).fetchall())):
                     if feature in out:

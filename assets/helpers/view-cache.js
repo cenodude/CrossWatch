@@ -6,6 +6,18 @@
   const retries = new Set();
   const sessions = new Map();
   let statuses = new WeakMap();
+  const refreshHosts = new Map();
+  const updateRefresh = () => {
+    for (const [host, matches] of refreshHosts) {
+      if (!host.isConnected) { refreshHosts.delete(host); continue; }
+      host.toggleAttribute("data-view-loading", [...sessions.values()].some(session => session.busy && !session.signal?.aborted && session.active() && matches(session.url)));
+    }
+  };
+  const bindRefresh = (host, matches) => {
+    if (!host) return;
+    refreshHosts.set(host, matches);
+    updateRefresh();
+  };
   let generation = 0;
   const paths = new Set([
     "/api/profile/collection", "/api/profile/history", "/api/profile/ratings", "/api/profile/watchlist", "/api/profile/airing",
@@ -33,9 +45,14 @@
     parsed.searchParams.delete("t");
     const key = parsed.pathname + parsed.search;
     const group = parsed.pathname + (parsed.searchParams.has("summary_only") ? ":summary" : "") + (parsed.pathname === "/api/insights" ? `:${parsed.searchParams.get("include_events") || "1"}` : "") + (parsed.pathname === "/api/dashboard/widgets" ? `:${parsed.searchParams.get("view") || "overview"}` : "") + (watch ? "" : `:once:${parsed.search}`);
-    const session = {};
+    const session = {url, signal, active, busy:false};
+    sessions.get(group)?.dispose?.();
     sessions.get(group)?.cancel?.();
     sessions.set(group, session);
+    const cancelRefresh = () => { session.busy = false; updateRefresh(); };
+    signal?.addEventListener("abort", cancelRefresh, {once:true});
+    session.dispose = () => signal?.removeEventListener("abort", cancelRefresh);
+    updateRefresh();
     if (watch) clearTimeout(jobs.get(key));
     let retry = retries.delete(retryKey(parsed)) || refresh;
     const scope = generation;
@@ -53,6 +70,7 @@
       }, delay));
     };
     const failed = error => {
+      cancelRefresh();
       if (error.name === "AbortError" || !usable()) return;
       delivered = true;
       recovering = true;
@@ -76,10 +94,14 @@
         signal?.addEventListener("abort", cancel, {once:true});
       });
       if (!usable() || !active()) throw abort();
+      session.busy = true;
+      updateRefresh();
       const data = await fetcher(key + (retry ? "&retry_view=1" : ""));
       retry = false;
       if (!usable()) throw abort();
       const meta = data?._view;
+      session.busy = !!meta?.refreshing && !meta?.error;
+      updateRefresh();
       announce("cw:view-status", url, meta || {});
       if (!meta) return data;
       ready = !!meta.ready;
@@ -107,7 +129,13 @@
     };
     try { return await poll(); }
     catch (error) { failed(error); throw error; }
-    finally { if (!watch && sessions.get(group) === session) sessions.delete(group); }
+    finally {
+      if (!watch && sessions.get(group) === session) {
+        session.dispose();
+        sessions.delete(group);
+        updateRefresh();
+      }
+    }
   }
 
   function invalidate() {
@@ -115,8 +143,9 @@
     for (const timer of jobs.values()) clearTimeout(timer);
     jobs.clear();
     retries.clear();
-    for (const session of sessions.values()) session.cancel?.();
+    for (const session of sessions.values()) { session.dispose?.(); session.cancel?.(); }
     sessions.clear();
+    updateRefresh();
     statuses = new WeakMap();
     document.querySelectorAll("[data-view-status]").forEach(node => node.remove());
   }
@@ -126,7 +155,7 @@
     let current = statuses.get(host);
     if (!current) { current = new Map(); statuses.set(host, current); }
     current.set(source, {meta, retry});
-    const selected = [...current.values()].find(value => value.meta.error) || [...current.values()].find(value => value.meta.refreshing && !value.meta.ready);
+    const selected = [...current.values()].find(value => value.meta.error);
     meta = selected?.meta || {};
     retry = selected?.retry;
     host.classList.add("cw-view-host");
@@ -141,19 +170,12 @@
     node.hidden = !selected;
     node.replaceChildren();
     if (!selected) return;
-    node.dataset.state = meta.error ? "error" : "loading";
-    const message = meta.error ? meta.ready ? "Refresh failed. Showing saved results." : `Could not load ${label}.` : `Loading ${label}…`;
+    node.dataset.state = "error";
+    const message = meta.ready ? "Refresh failed. Showing saved results." : `Could not load ${label}.`;
     const text = document.createElement("span");
     text.className = "cw-view-status-label";
     text.textContent = message;
     node.append(text);
-    if (meta.refreshing && !meta.error) {
-      const progress = document.createElement("div");
-      progress.className = "cw-page-progress";
-      progress.setAttribute("role", "progressbar");
-      progress.setAttribute("aria-label", message);
-      node.append(progress);
-    }
     if (meta.error && retry) {
       const button = document.createElement("button");
       button.type = "button";
@@ -165,7 +187,8 @@
   }
 
   window.CW = window.CW || {};
-  window.CW.ViewCache = {read, supported, invalidate, status, retry:url => retries.add(retryKey(url))};
+  window.CW.ViewCache = {read, supported, invalidate, status, bindRefresh, retry:url => retries.add(retryKey(url))};
+  document.addEventListener("visibilitychange", updateRefresh);
   window.addEventListener("cw:sync-state-cleared", invalidate);
   window.addEventListener("cw:overview-profile-changed", invalidate);
 })();

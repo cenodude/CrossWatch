@@ -134,7 +134,7 @@ def register_ui_root(app: FastAPI) -> None:
 
 
 _HELPER_SCRIPTS = (
-    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "view-cache.js", "core.js", "details-log.js",
+    "selection-bar.js", "card-actions.js", "airing-card.js", "help-links.js", "touch-help.js", "provider-meta.js", "feature-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "view-cache.js", "core.js", "details-log.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js", "month-bar.js", "providers-ui.js", "settings-ui.js", "settings-save.js", "maintenance.js", "backups.js",
     "restart_apply.js",
 )
@@ -144,7 +144,7 @@ _APP_SCRIPTS = (
     "scrobbler.js", "user-profiles.js", "app-users.js", "mcp-access.js", "assistant-settings.js",
 )
 _USER_HELPER_SCRIPTS = (
-    "selection-bar.js", "card-actions.js", "help-links.js", "touch-help.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "view-cache.js", "core.js",
+    "selection-bar.js", "card-actions.js", "airing-card.js", "help-links.js", "touch-help.js", "provider-meta.js", "icon-select.js", "profile-select.js", "page-loader.js", "dom.js", "events.js", "auth-state.js", "pwa-install.js", "account-menu.js", "notifications.js", "api.js", "view-cache.js", "core.js",
     "media-meta.js", "trailer.js", "playing-card.js", "watchlist-preview.js", "profile-datetime.js",
 )
 _USER_APP_SCRIPTS = (
@@ -394,6 +394,7 @@ def _profile_timeline_panel(
         if timeline else ""
     )
     source_block = ""
+    lede_text = f'<p id="profile-{key}-lede"{" hidden" if not lede else ""}>{lede}</p>'
     if len(sources) > 1:
         buttons = "\n".join(
             f'      <button class="{"active" if index == 0 else ""}" type="button" role="tab" aria-selected="{"true" if index == 0 else "false"}" data-timeline-source="{value}">\n'
@@ -401,12 +402,12 @@ def _profile_timeline_panel(
             "      </button>"
             for index, (value, label) in enumerate(sources)
         )
-        source_block = f'    <div class="cw-hub-source-line"><div class="cw-hub-sources" role="tablist" aria-label="{title} source">\n{buttons}\n    </div><p id="profile-{key}-lede">{lede}</p></div>\n'
+        source_block = f'    <div class="cw-hub-source-line"><div class="cw-hub-sources" role="tablist" aria-label="{title} source">\n{buttons}\n    </div>{lede_text}</div>\n'
     scores_block = f'    <div id="profile-{key}-scores" class="cw-hist-scores" aria-label="Filter by score"></div>\n' if scores else ""
     options = "\n".join(f'          <option value="{value}">{label}</option>' for value, label in coverage)
     bulk_block = _profile_bulk_bar(f"profile-{key}-bulk", "timeline") if bulk else ""
     default_source = sources[0][0] if sources else ""
-    lede_block = "" if source_block else f'<p id="profile-{key}-lede">{lede}</p>'
+    lede_block = "" if source_block else lede_text
     timeline_block = f'<div id="profile-{key}-timeline" class="cw-hist-timeline" aria-label="{title} per month" hidden></div>'
     coverage_select = f'<select id="profile-{key}-coverage" class="cw-hist-coverage-select" aria-label="Sync coverage filter">{options}</select>'
     filter_button = f'<button type="button" class="cw-hub-filter-toggle" data-timeline-filters-toggle aria-controls="profile-{key}-filters" aria-expanded="false">Filters</button>'
@@ -459,7 +460,7 @@ def _profile_playback_panel() -> str:
       <h2>Progress</h2>
       <div class="cw-hub-records-tiles" id="profile-playback-metrics"></div>
     </div>
-    <div class="cw-hub-progress-summary"><span>Across your connected providers</span>
+    <div class="cw-hub-progress-summary">
       <span id="profile-playback-sync" class="cw-play-sync" data-state="ready" aria-live="polite"><span class="cw-play-sync-dot" aria-hidden="true"></span><span>Updated <strong>not yet</strong></span></span>
     </div>
     <div id="profile-playback-status" class="cw-play-status">
@@ -2632,7 +2633,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
     history_panel = _profile_timeline_panel(
         "history",
         title="History",
-        lede="Plays read back from every provider after sync.",
+        lede="",
         search="Search synced history...",
         sources=(
             ("synced", "Synced history"),
@@ -2644,7 +2645,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
     ratings_panel = _profile_timeline_panel(
         "ratings",
         title="Ratings",
-        lede="Your scores read back from every provider after sync.",
+        lede="",
         search="Search ratings...",
         sources=(("ratings", "Ratings"),),
         coverage=(("all", "Any coverage"), ("partial", "Missing somewhere"), ("full", "On every provider"), ("mismatch", "Scores differ")),
@@ -2659,7 +2660,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
     watchlist_panel = _profile_timeline_panel(
         "watchlist",
         title="Watchlist",
-        lede="Everything on your watchlists.",
+        lede="",
         search="Filter by title, id or provider...",
         sources=(("watchlist", "Watchlist"),),
         coverage=(("all", "Any coverage"), ("partial", "Missing somewhere"), ("full", "On every provider")),
@@ -2830,7 +2831,6 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
     <div class="cw-hub-records-head">
       <div class="cw-hub-records-headline">
         <h2>Collections</h2>
-        <p>Your unified library across all providers</p>
       </div>
       <div class="cw-hub-records-tiles" id="profile-collection-metrics"></div>
     </div>
@@ -3008,6 +3008,7 @@ def _get_user_page_html(user: dict | None, *, hub: bool) -> str:
     page_title = "Hub" if hub else "Profile"
     media_scripts = """<script src="/assets/helpers/selection-bar.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/card-actions.js?v=__CW_VERSION__" defer></script>
+<script src="/assets/helpers/airing-card.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/profile-select.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/js/overview-profile.js?v=__CW_VERSION__" defer></script>
 <script src="/assets/helpers/view-cache.js?v=__CW_VERSION__" defer></script>

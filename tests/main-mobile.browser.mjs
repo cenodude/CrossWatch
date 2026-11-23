@@ -42,7 +42,7 @@ for (const background of [false,true]) for (const width of [390,320,1440]) test(
   let statsValue=5;
   const artRequests=[];
   const providers=['crosswatch','PLEX','MDBLIST','SIMKL','TRAKT'];
-  const recent=Array.from({length:3},(_,i)=>({title:['Marvel’s VisionQuest','A very long show title that still needs to fit on a small phone','South Park'][i],ids:i===2?{}:{tmdb:100+i},media_type:'episode',season:1,episode:i+1,source:'PLEX',source_instance:'default',targets:[{target:'CROSSWATCH'},{target:'TRAKT'},{target:'SIMKL'}],method:i===1?'webhook':'watcher',status:i===1?'failed':'ok',progress:91,captured_at:Date.now()/1000-3600*(i+1)}));
+  const recent=Array.from({length:3},(_,i)=>({title:['Marvel’s VisionQuest','A very long show title that still needs to fit on a small phone','South Park'][i],ids:i===2?{}:{tmdb:100+i},show_ids:i===2?{}:{tmdb:100+i},media_type:'episode',season:1,episode:i+1,source:'PLEX',source_instance:'default',targets:[{target:'CROSSWATCH'},{target:'TRAKT'},{target:'SIMKL'}],method:i===1?'webhook':'watcher',status:i===1?'failed':'ok',progress:91,captured_at:Date.now()/1000-3600*(i+1)}));
   await page.route('http://main-mobile.test/**',async route=>{
     const url=new URL(route.request().url());
     if(url.pathname.startsWith('/art/')) {

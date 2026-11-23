@@ -712,9 +712,9 @@ def tracker_summary(request: Request, provider_instance: str | None = Query("def
     cfg, inst, store = _store(provider_instance, request, fallback=True)
     with store.session():
         try:
-            counts = store.counts()
-            attention = store.attention_counts()
-            health = store.health_counts()
+            counts = store.counts(current_progress=True)
+            attention = store.attention_counts(current_progress=True)
+            health = store.health_counts(current_progress=True)
             notes = store.note_summary(personal_only=True)
             fields = store.note_fields()
         except TrackerUnreadable:
@@ -784,6 +784,7 @@ def tracker_items(
                 health=health if health in ("ok", "attention", "unchecked") else "",
                 until=_month_end(month),
                 shelf=shelf_keys,
+                current_progress=True,
             )
             checks = store.checks_for(feature, [key for key, _ in rows])
             note_keys = {key: _title_key(_identity_of(item, key)) for key, item in rows}
@@ -878,7 +879,7 @@ def tracker_months(
         return _error("unknown_feature", 400)
     _, inst, store = _store(provider_instance, request)
     try:
-        months = store.months(feature, duplicates=duplicates, text=q, status=status, tag=tag, media=media if media in ("movie", "show") else "")
+        months = store.months(feature, duplicates=duplicates, text=q, status=status, tag=tag, media=media if media in ("movie", "show") else "", current_progress=True)
     except TrackerUnreadable:
         return _unreadable()
     return {"ok": True, "provider_instance": inst, "feature": feature, "months": months}
@@ -1652,7 +1653,7 @@ def tracker_overview(request: Request, provider_instance: str | None = Query("de
     try:
         with store.session():
             history_total, history = store.query("history", limit=200)
-            progress_total, progress = store.query("progress", limit=200)
+            progress_total, progress = store.query("progress", limit=200, current_progress=True)
             identities = {key: _identity_of(item, key) for key, item in progress}
             notes = store.notes_for(_title_key(ident) for ident in identities.values())
             history_notes = store.notes_for(_title_key(_identity_of(item, key)) for key, item in history)
@@ -1673,9 +1674,6 @@ def tracker_overview(request: Request, provider_instance: str | None = Query("de
                 if type(percent) not in (int, float) or not 0 < percent < 100 or group in seen:
                     continue
                 if (notes.get(group) or {}).get("status") in {"dropped", "completed"}:
-                    continue
-                matches = store.related(**ident, feature="history")
-                if any((data.get("season"), data.get("episode")) == (item.get("season"), item.get("episode")) and str(data.get("watched_at") or "") >= str(item.get("progress_at") or "") for _, _, data in matches):
                     continue
                 seen.add(group)
                 row = {**_row(key, item, "progress"), "ref": {"feature": "progress", "key": key}}
