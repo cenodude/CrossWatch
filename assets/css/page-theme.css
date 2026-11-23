@@ -160,7 +160,7 @@ body.cw-profile-page #dashboard-widgets-card .cw-dash-widget{--dash-text:var(--p
 body.cw-profile-page #dashboard-widgets-card .cw-dash-title-row h3{font-size:18px;font-weight:500;color:var(--profile-text)}
 body.cw-profile-page #dashboard-widgets-card .cw-dash-widget-head{border:0}
 .cw-hub-widget-row{border:0;border-bottom:1px solid var(--cw-theme-border);border-radius:0;background:transparent;color:var(--profile-text);font:inherit;box-shadow:none}
-.cw-hub-widget-row:hover{background:var(--cw-page-hover-bg)}
+button.cw-hub-widget-row:hover .cw-hub-widget-title strong{color:var(--profile-accent)}
 .cw-hub-widget-art{border-radius:6px;background:var(--cw-theme-surface)}
 .cw-hub-widget-title strong{font-size:14px;font-weight:500;line-height:1.4}
 .cw-hub-widget-rating{font-size:14px;font-weight:500;color:var(--profile-text)}

@@ -150,6 +150,7 @@ for (const scenario of [
   {name: "CrossWatch source", src: "CROSSWATCH", dst: "TRAKT", expected: true},
   {name: "SIMKL target", src: "PLEX", dst: "SIMKL", expected: true},
   {name: "AniList target", src: "PLEX", dst: "ANILIST", expected: true},
+  {name: "WeTrakr target", src: "TRAKT", dst: "WETRAKR", expected: true},
   {name: "no anime provider", src: "PLEX", dst: "TRAKT", expected: false},
   {name: "global mapping disabled", src: "PLEX", dst: "CROSSWATCH", global: false, expected: false},
 ]) {

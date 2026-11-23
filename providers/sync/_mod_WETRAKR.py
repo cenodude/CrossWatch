@@ -23,7 +23,7 @@ _UNKNOWN_DATES = {
     "multiple": {"read": False, "write": False},
 }
 
-__VERSION__ = "1.1"
+__VERSION__ = "1.2"
 _MANUAL_RATING_SCALE = {"step": 0.5}
 __all__ = ["get_manifest", "WETRAKRModule", "OPS"]
 _FEATURES = {"watchlist": True, "history": True, "ratings": True, "progress": True, "playlists": True, "collection": True}
@@ -84,7 +84,8 @@ def _current_instance_id(cfg: Mapping[str, Any]) -> str:
 
 def get_manifest() -> Mapping[str, Any]:
     shared = {"read": True, "write": True, "upsert": True, "remove": True, "observed_deletes": True,
-              "accepted_ids": ["tmdb", "imdb", "tvdb", "wetrakr"], "provides_ids": ["tmdb", "imdb", "tvdb", "wetrakr"],
+              "accepted_ids": ["tmdb", "imdb", "tvdb", "wetrakr", "mal", "anilist", "kitsu", "anidb"],
+              "provides_ids": ["tmdb", "imdb", "tvdb", "wetrakr", "mal", "anilist", "kitsu", "anidb"],
               "batch_size": WRITE_BATCH_SIZE, "verify_after_write": True}
     return {"name": "WETRAKR", "label": "WeTrakr", "version": __VERSION__, "type": "sync",
             "bidirectional": True, "experimental": True, "features": dict(_FEATURES), "requires": ["requests"],

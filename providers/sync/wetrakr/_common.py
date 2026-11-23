@@ -39,6 +39,7 @@ READ_PAGE_SIZE = 500
 DELTA_PAGE_SIZE = 100
 TRACKLOG_BATCH_SIZE = 100
 EPISODE_ID_SOURCES = ("tmdb", "imdb", "tvdb")
+ANIME_ID_SOURCES = (("mal", "myanimelist"), ("anilist", "anilist"), ("kitsu", "kitsu"), ("anidb", "anidb"))
 ALREADY_ADDED = "Already added!"
 DAILY_QUOTA_CODES = {
     "QUOTA_EXCEEDED": ("daily_quota_exceeded", "x-quota"),
@@ -568,7 +569,7 @@ def commit_snapshot(adapter: Any) -> None:
         _save(*pending)
 
 
-def media_ids(row: Mapping[str, Any]) -> dict[str, str]:
+def media_ids(row: Mapping[str, Any], *, anime: bool = True) -> dict[str, str]:
     raw = row.get("ids")
     raw = raw if isinstance(raw, Mapping) else {}
     out: dict[str, str] = {}
@@ -578,6 +579,10 @@ def media_ids(row: Mapping[str, Any]) -> dict[str, str]:
             value = value.get("id")
         if value is not None and str(value).strip():
             out[source] = str(value).strip()
+    for source, native in ANIME_ID_SOURCES if anime else ():
+        value = int_value(raw.get(native, raw.get(source)))
+        if value > 0:
+            out[source] = str(value)
     if int_value(row.get("id")) > 0:
         out["wetrakr"] = str(row["id"])
     return out
@@ -586,7 +591,7 @@ def media_ids(row: Mapping[str, Any]) -> dict[str, str]:
 def media_item(row: Mapping[str, Any], kind: str) -> dict[str, Any]:
     if row.get("type") != kind:
         raise WeTrakrSyncError("invalid_media_type")
-    item: dict[str, Any] = {"type": kind, "ids": media_ids(row), "title": row.get("title")}
+    item: dict[str, Any] = {"type": kind, "ids": media_ids(row, anime=kind in ("movie", "show")), "title": row.get("title")}
     date = str(row.get("release_date") or row.get("first_air_date") or "")
     if int_value(date[:4]) > 0:
         item["year"] = int(date[:4])
@@ -594,7 +599,7 @@ def media_item(row: Mapping[str, Any], kind: str) -> dict[str, Any]:
         show = row.get("show")
         if not isinstance(show, Mapping):
             raise WeTrakrSyncError("missing_episode_show")
-        item.update(show_ids=media_ids(show), series_title=show.get("title"),
+        item.update(show_ids=media_ids(show, anime=False), series_title=show.get("title"),
                     season=int_value(row.get("number") if kind == "season" else row.get("season_number")))
         if kind == "episode":
             item["episode"] = int_value(row.get("number"))
@@ -655,6 +660,18 @@ def identity_tokens(item: Mapping[str, Any]) -> set[str]:
     return {f"{kind}:{source}:{value}{suffix}" for source, value in ids.items() if source in ("tmdb", "imdb", "tvdb", "wetrakr") and value}
 
 
+def anime_tokens(item: Mapping[str, Any]) -> set[str]:
+    kind = str(item.get("type") or "")
+    ids = item.get("ids")
+    if kind not in ("movie", "show") or not isinstance(ids, Mapping):
+        return set()
+    return {f"{kind}:{source}:{int_value(ids.get(source))}" for source, _ in ANIME_ID_SOURCES if int_value(ids.get(source)) > 0}
+
+
+def match_tokens(item: Mapping[str, Any]) -> set[str]:
+    return identity_tokens(item) or anime_tokens(item)
+
+
 def _native_media(item: Mapping[str, Any]) -> str:
     ids = item.get("ids")
     value = int_value(ids.get("wetrakr")) if isinstance(ids, Mapping) else -1
@@ -685,7 +702,7 @@ class HistoryIdentity:
         self.media[key] = media
         self.rows[id(row)] = (row, media)
         self.ids.setdefault(media, episode_ids(row))
-        for token in identity_tokens(row) | episode_tokens(row):
+        for token in identity_tokens(row) | anime_tokens(row) | episode_tokens(row):
             self.lookup.setdefault(token, set()).add(media)
 
     def __call__(self, item: Mapping[str, Any]) -> set[str]:
@@ -707,7 +724,7 @@ class HistoryIdentity:
             if len(found) > 1 or any(str(target.get(name, value)) != str(value) for name, value in own.items()):
                 raise WeTrakrSyncError("ambiguous_media_identity")
             return set(found)
-        found = set().union(*(self.lookup.get(token, set()) for token in identity_tokens(item)))
+        found = set().union(*(self.lookup.get(token, set()) for token in match_tokens(item)))
         if len(found) > 1:
             raise WeTrakrSyncError("ambiguous_media_identity")
         return found
@@ -747,11 +764,11 @@ def matching(adapter: Any, feature: str, source: Mapping[str, Any], dest: Mappin
         return matches
     lookup: dict[str, set[str]] = {}
     for key, item in dest.items():
-        for token in identity_tokens(item):
+        for token in identity_tokens(item) | anime_tokens(item):
             lookup.setdefault(token, set()).add(key)
     matches = {}
     for key, item in source.items():
-        peers = set().union(*(lookup.get(token, set()) for token in identity_tokens(item)))
+        peers = set().union(*(lookup.get(token, set()) for token in match_tokens(item)))
         if len(peers) > 1:
             raise WeTrakrSyncError("ambiguous_media_identity")
         if peers:
@@ -759,7 +776,7 @@ def matching(adapter: Any, feature: str, source: Mapping[str, Any], dest: Mappin
     return matches
 
 
-def identifier(ids: Any) -> dict[str, Any]:
+def identifier(ids: Any, *, anime: bool = False) -> dict[str, Any]:
     if not isinstance(ids, Mapping):
         raise WeTrakrSyncError("missing_supported_id")
     for source in ("wetrakr", "tmdb", "imdb", "tvdb"):
@@ -768,6 +785,9 @@ def identifier(ids: Any) -> dict[str, Any]:
             return {"ids": {source: value}}
         if source != "imdb" and int_value(value) > 0:
             return {"id": int_value(value)} if source == "wetrakr" else {"ids": {source: int_value(value)}}
+    for source, native in ANIME_ID_SOURCES if anime else ():
+        if int_value(ids.get(source)) > 0:
+            return {"ids": {native: int_value(ids.get(source))}}
     raise WeTrakrSyncError("missing_supported_id")
 
 
@@ -790,7 +810,7 @@ def payload_item(item: Mapping[str, Any], feature: str, *, include_date: bool = 
             if int_value(item.get("season")) < 0 or (kind == "episode" and int_value(item.get("episode")) < 1):
                 raise WeTrakrSyncError("invalid_episode_coordinates")
             identifier(item.get("show_ids"))
-        row = identifier(item.get("ids")) if kind not in ("season", "episode") or item.get("ids") else {}
+        row = identifier(item.get("ids"), anime=kind in ("movie", "show")) if kind not in ("season", "episode") or item.get("ids") else {}
         if include_date:
             rating = rating_value(item.get("rating"))
             row["rating"] = rating
@@ -814,7 +834,7 @@ def payload_item(item: Mapping[str, Any], feature: str, *, include_date: bool = 
         if own:
             return "episodes", {"ids": own, **fields}
         return "shows", {**show, "seasons": [{"number": season, "episodes": [{"number": episode, **fields}]}]}
-    return f"{kind}s", {**identifier(item.get("ids")), **fields}
+    return f"{kind}s", {**identifier(item.get("ids"), anime=True), **fields}
 
 
 def resolve_child(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any]:
@@ -851,6 +871,24 @@ def resolve_child(adapter: Any, item: Mapping[str, Any]) -> dict[str, Any]:
             or int_value(row.get("media_id")) != int_value(show_id)):
         raise WeTrakrSyncError("child_not_resolved")
     return {**item, "ids": {**(ids if isinstance(ids, Mapping) else {}), "wetrakr": str(row["id"])}}
+
+
+def _ambiguous_keys(selected: Mapping[str, Mapping[str, Any]], before: Mapping[str, Mapping[str, Any]],
+                    resolve: HistoryIdentity | None) -> list[str]:
+    if resolve is not None:
+        out = []
+        for key, item in selected.items():
+            try:
+                resolve(item)
+            except WeTrakrSyncError:
+                out.append(key)
+        return out
+    lookup: dict[str, set[str]] = {}
+    for key, row in before.items():
+        for token in anime_tokens(row):
+            lookup.setdefault(token, set()).add(key)
+    return [key for key, item in selected.items() if not identity_tokens(item)
+            and len(set().union(*(lookup.get(token, set()) for token in anime_tokens(item)))) > 1]
 
 
 def write_matches(feature: str, item: Mapping[str, Any], target: Mapping[str, Any]) -> bool:
@@ -942,14 +980,10 @@ def write_items(adapter: Any, feature: str, items: Iterable[Mapping[str, Any]], 
                 _activities(adapter, fresh=True)
             before = adapter.build_index(feature)
             resolve = HistoryIdentity(before) if feature == "history" else None
-            if resolve is not None:
-                for key in list(selected):
-                    try:
-                        resolve(selected[key])
-                    except WeTrakrSyncError as exc:
-                        selected.pop(key)
-                        unresolved.append({"key": key, "reason": exc.reason})
-                        log("WETRAKR", feature, "warn", "item_unresolved_before_write", key=key, reason=exc.reason)
+            for key in _ambiguous_keys(selected, before, resolve):
+                selected.pop(key)
+                unresolved.append({"key": key, "reason": "ambiguous_media_identity"})
+                log("WETRAKR", feature, "warn", "item_unresolved_before_write", key=key, reason="ambiguous_media_identity")
             matches = matching(adapter, feature, selected, before)
         except WeTrakrSyncError as exc:
             return build_op_result(ok=False, unresolved_keys=list(selected) + [r["key"] for r in unresolved], unresolved=unresolved,
