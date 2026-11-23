@@ -104,6 +104,8 @@ for(const theme of ['', 'flat-dark','flat-light'])for(const width of [1100,390,3
     await page.screenshot({path:new URL(`${name}-${theme||'original'}-${width}.png`,folder).pathname.replace(/^\/(?=[A-Za-z]:)/,'')});
   };
   assert.equal(await page.locator('.mt-tool').count(),3);
+  assert.equal(await page.locator('.mt-page-head').evaluate(n=>getComputedStyle(n).position),'static');
+  assert.equal(await page.locator('.mt-page-head').evaluate(n=>getComputedStyle(n).backgroundColor),'rgba(0, 0, 0, 0)');
   await screenshot('landing');
   await page.getByRole('button',{name:/^Provider cleanup/}).click();
   await page.locator('#ccc-provider option[value="CROSSWATCH"]').waitFor({state:'attached'});
@@ -139,6 +141,27 @@ for(const theme of ['', 'flat-dark','flat-light'])for(const width of [1100,390,3
   await page.locator('[data-section="advanced"]').click();
   await page.locator('[data-group="danger"]>summary').click();
   await screenshot('advanced');
+});
+
+for(const theme of ['', 'flat-dark','flat-light'])test(`maintenance heading stays below the settings menu ${theme||'original'}`,async t=>{
+  const {page}=await fixture(t,theme);
+  const source=await readFile(new URL('../ui_frontend.py',import.meta.url),'utf8');
+  const start=source.indexOf('\n<header>');
+  const header=source.slice(start,source.indexOf('</header>',start)+9).replace(/__CW_[A-Z_]+__/g,'');
+  await page.evaluate(markup=>{
+    document.body.insertAdjacentHTML('afterbegin',markup);
+    document.body.insertAdjacentHTML('beforeend','<div style="height:1200px"></div>');
+    document.querySelector('#cw-settings-menu').classList.remove('hidden');
+    document.querySelector('#tab-settings').setAttribute('aria-expanded','true');
+  },header);
+  const headingTop=await page.locator('.mt-page-head').evaluate(n=>n.getBoundingClientRect().top);
+  await page.evaluate(()=>window.scrollTo(0,100));
+  await page.evaluate(()=>new Promise(requestAnimationFrame));
+  assert.equal(await page.locator('.mt-page-head').evaluate(n=>n.getBoundingClientRect().top+scrollY),headingTop);
+  assert.equal(await page.locator('#cw-settings-menu').evaluate(menu=>[...menu.querySelectorAll('button')].every(button=>{
+    const r=button.getBoundingClientRect();
+    return button.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));
+  })),true);
 });
 
 for(const theme of ['', 'flat-dark','flat-light'])test(`empty maintenance dialogs ${theme||'original'}`,async t=>{
