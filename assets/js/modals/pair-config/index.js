@@ -143,7 +143,7 @@ function droppedPairMode(state){
 }
 function anilistCanReceive(state){return isAniList(state?.dst)||(hasAniList(state)&&isTwoWayMode(state))}
 function globalAnimeMappingEnabled(state){return !!state?.cfgRaw?.anime_mapping?.enabled}
-function hasAnimeProvider(state){return same(state?.src,"myanimelist")||same(state?.dst,"myanimelist")||hasAniList(state)||same(state?.src,"kitsu")||same(state?.dst,"kitsu")||isSimkl(state?.src)||isSimkl(state?.dst)||isCrossWatch(state?.src)||isCrossWatch(state?.dst)}
+function hasAnimeProvider(state){return same(state?.src,"myanimelist")||same(state?.dst,"myanimelist")||hasAniList(state)||same(state?.src,"kitsu")||same(state?.dst,"kitsu")||isSimkl(state?.src)||isSimkl(state?.dst)||isCrossWatch(state?.src)||isCrossWatch(state?.dst)||same(state?.src,"wetrakr")||same(state?.dst,"wetrakr")}
 function tmdbMetadataReady(state){return !!String(state?.cfgRaw?.tmdb?.api_key||state?.cfgRaw?.metadata?.tmdb_api_key||"").trim()}
 function collectionRouteSupported(state){
   return featureAllowedForPair(state,"collection");

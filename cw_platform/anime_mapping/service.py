@@ -14,7 +14,7 @@ from .descriptors import descriptor_candidates_for_id, parse_descriptor
 from .overrides import EpisodeOverride, find_episode_overrides, find_identity_overrides
 from .storage import index_ready, query_edges, query_identity_natives, query_native_identity
 
-ANIME_NATIVE_PROVIDERS = {"kitsu", "myanimelist", "anilist", "simkl", "crosswatch"}
+ANIME_NATIVE_PROVIDERS = {"kitsu", "myanimelist", "anilist", "simkl", "crosswatch", "wetrakr"}
 DEFAULT_FEATURES = {"watchlist", "ratings"}
 OPT_IN_FEATURES = {"history", "progress"}
 ANY_PAIR = "*"
