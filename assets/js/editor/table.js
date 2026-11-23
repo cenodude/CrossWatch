@@ -463,7 +463,7 @@
       const expanded = expandedRows.has(row._rid);
       tr.classList.toggle("cw-mobile-fields-open", expanded);
       fieldsToggle.setAttribute("aria-expanded", String(expanded));
-      fieldsToggle.textContent = expanded ? "Less" : "Fields";
+      fieldsToggle.innerHTML = `<span class="material-symbol" aria-hidden="true">${expanded ? 'check' : 'edit'}</span>`;
       fieldsToggle.setAttribute("aria-label", `${expanded ? "Hide" : "Show"} fields for ${row.title || row.key || "row"}`);
     };
     fieldsToggle.onclick = () => {

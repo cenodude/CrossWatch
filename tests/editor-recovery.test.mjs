@@ -46,5 +46,5 @@ test("Editor handoff never selects matching keys from a substituted profile",asy
   const {sandbox,state,messages}=fixture({fallback:true});
   await sandbox.openRecoveredHistory();
   assert.equal(state.selected.size,0);
-  assert.match(messages.at(-1),/profile is unavailable/);
+  assert.match(messages.at(-1),/tracker instance is unavailable/);
 });

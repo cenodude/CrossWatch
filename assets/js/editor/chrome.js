@@ -260,6 +260,53 @@
     }
   }
 
+  function prepareMobileTools(root) {
+    const toolbar = root.querySelector('.cw-controls');
+    if (!toolbar || toolbar.querySelector('.cw-editor-tools-toggle')) return;
+    const trigger = document.createElement('button');
+    trigger.type = 'button';
+    trigger.className = 'cw-btn cw-editor-tools-toggle';
+    trigger.setAttribute('aria-label', 'More editor options');
+    trigger.setAttribute('aria-haspopup', 'dialog');
+    trigger.innerHTML = '<span class="material-symbols-rounded" aria-hidden="true">more_horiz</span>';
+    const panel = document.createElement('div');
+    panel.className = 'cw-editor-tools-panel';
+    panel.hidden = true;
+    toolbar.append(trigger, panel);
+    trigger.addEventListener('click', () => {
+      panel.replaceChildren();
+      const pageSize = root.querySelector('#cw-page-size');
+      const label = document.createElement('label');
+      label.textContent = 'Rows per page';
+      const select = document.createElement('select');
+      select.className = 'cw-select';
+      select.dataset.cwNativeSelect = 'true';
+      select.replaceChildren(...Array.from(pageSize.options, option => new Option(option.text, option.value)));
+      select.value = pageSize.value;
+      select.addEventListener('change', () => {
+        pageSize.value = select.value;
+        pageSize.dispatchEvent(new Event('change', {bubbles:true}));
+      });
+      label.append(select);
+      panel.append(label);
+      let action;
+      for (const [id, title, glyph] of [['cw-advanced-toggle', root.classList.contains('cw-editor-simple') ? 'Advanced view' : 'Simple view', 'tune'], ['cw-columns-btn', 'Columns', 'view_column'], ['cw-saved-mappings', 'Saved mappings', 'compare_arrows'], ['cw-add', 'Add row', 'add']]) {
+        const original = root.querySelector(`#${id}`);
+        if (!original || original.classList.contains('cw-advanced-only') && root.classList.contains('cw-editor-simple')) continue;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'cw-btn';
+        button.disabled = original.disabled;
+        button.innerHTML = `<span class="material-symbols-rounded" aria-hidden="true">${glyph}</span><span>${title}</span>`;
+        button.addEventListener('click', () => { action = original; panel.closest('dialog')?.close(); });
+        panel.append(button);
+      }
+      window.CW.MobileUI.sheet(panel, {title:'Editor options', trigger, onClose:() => {
+        if (action) window.CW.MobileUI.beforeNavigate().then(() => { if (action.isConnected && !action.disabled) action.click(); });
+      }});
+    });
+  }
+
   function prepareMobileFilters(root) {
     const side = root.querySelector('.cw-side');
     if (!side || side.parentElement.classList.contains('cw-editor-filters')) return;
@@ -289,6 +336,7 @@
   }
 
   Editor.Chrome = {
+    prepareMobileTools,
     prepareMobileFilters,
     wireStaticLabels,
     prepareSourceOptions,

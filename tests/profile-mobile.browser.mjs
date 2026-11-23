@@ -1063,6 +1063,62 @@ for(const width of [390,1440]) test(`Hub card actions and provider overflow rema
   assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
 });
 
+test('Mobile Hub cover long press opens existing actions without activating the title',async t=>{
+  const {page}=await fixture(t,'flat-dark',390,{playback:true,history:true});
+  await page.evaluate(()=>{
+    window.__buzz=[];
+    Object.defineProperty(navigator,'vibrate',{configurable:true,value:value=>{window.__buzz.push(value);return true;}});
+    window.CW.ProfileMediaModal={canOpen:()=>true,open:item=>{window.__openedMedia=item;}};
+  });
+  await page.locator('[data-profile-tab="playback"]').click();
+  const cover=page.locator('#profile-panel-playback .cw-hist-art').first();
+  await cover.scrollIntoViewIfNeeded();
+  const bounds=await cover.boundingBox();
+  const point={x:bounds.x+bounds.width/2,y:bounds.y+bounds.height/2};
+  const cdp=await page.context().newCDPSession(page);
+  const sheet=page.locator('.cw-card-action-menu:popover-open');
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});
+  await page.waitForTimeout(200);
+  assert.equal(await sheet.count(),0);
+  await sheet.waitFor();
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  assert.equal(await sheet.isVisible(),true);
+  assert.equal(await page.evaluate(()=>window.__openedMedia),undefined);
+  assert.deepEqual(await page.evaluate(()=>window.__buzz),[20]);
+  assert.equal(await sheet.getByRole('menuitem',{name:'Edit progress',exact:true}).count(),1);
+  await page.touchscreen.tap(point.x,Math.min(point.y,100));
+  await sheet.waitFor({state:'hidden'});
+  await page.waitForFunction(()=>!history.state?.cwCardActions);
+  assert.equal(await page.evaluate(()=>window.__openedMedia),undefined);
+  await cover.tap();
+  assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
+  await page.evaluate(()=>{window.__openedMedia=null;localStorage.setItem('cw.mobile.haptics','0');});
+  await cover.dispatchEvent('pointerdown',{pointerId:22,pointerType:'touch',isPrimary:true,button:0,clientX:100,clientY:100});
+  await cover.dispatchEvent('pointermove',{pointerId:22,pointerType:'touch',isPrimary:true,clientX:100,clientY:125});
+  await page.waitForTimeout(450);
+  assert.equal(await sheet.count(),0);
+  await cover.dispatchEvent('pointerup',{pointerId:22,pointerType:'touch',isPrimary:true});
+  await cover.dispatchEvent('pointerdown',{pointerId:23,pointerType:'touch',isPrimary:true,button:0});
+  await cover.dispatchEvent('pointercancel',{pointerId:23,pointerType:'touch',isPrimary:true});
+  await page.waitForTimeout(450);
+  assert.equal(await sheet.count(),0);
+  await cover.dispatchEvent('pointerdown',{pointerId:24,pointerType:'touch',isPrimary:true,button:0});
+  await sheet.waitFor();
+  await cover.dispatchEvent('pointerup',{pointerId:24,pointerType:'touch',isPrimary:true});
+  assert.deepEqual(await page.evaluate(()=>window.__buzz),[20]);
+  await page.goBack();
+  await sheet.waitFor({state:'hidden'});
+  await page.waitForFunction(()=>!history.state?.cwCardActions);
+  await page.evaluate(()=>{document.documentElement.dataset.cwRole='user';document.documentElement.dataset.cwPermWrite='off';});
+  await cover.dispatchEvent('pointerdown',{pointerId:25,pointerType:'touch',isPrimary:true,button:0});
+  await sheet.waitFor();
+  assert.equal(await sheet.getByRole('menuitem',{name:'Edit progress',exact:true}).count(),0);
+  await cover.dispatchEvent('pointerup',{pointerId:25,pointerType:'touch',isPrimary:true});
+  await sheet.getByRole('menuitem',{name:'View media details',exact:true}).click();
+  await page.waitForFunction(()=>window.__openedMedia?.title);
+  assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
+});
+
 test('Mobile card action sheets dismiss without navigating or changing playback',async t=>{
   const {page}=await fixture(t,'flat-dark',390,{playback:true});
   await page.locator('[data-profile-tab="playback"]').click();
@@ -1127,7 +1183,7 @@ test('Mobile Hub uses compact shelves, sticky tabs and two-column progress', asy
   const cards = await page.locator('#profile-panel-playback .cw-hist-card').evaluateAll(els => els.slice(0,2).map(el => {const r=el.getBoundingClientRect();return {x:r.x,y:r.y,width:r.width};}));
   assert.ok(Math.abs(cards[0].y - cards[1].y) < 2);
   assert.ok(cards[0].width < 190 && cards[0].width > 140);
-  await page.evaluate(()=>window.scrollTo(0,200));
+  await page.evaluate(()=>window.scrollTo(0,document.querySelector('.cw-profile-tabs').getBoundingClientRect().top+window.scrollY));
   const nav = await page.locator('.cw-profile-tabs').boundingBox();
   const header = await page.locator('body > header').boundingBox();
   assert.ok(Math.abs(nav.y - header.height) < 2, JSON.stringify({nav,header}));
@@ -1307,13 +1363,19 @@ test('Hub summary checks visible Progress every five minutes and supports immedi
 });
 
 
-for(const theme of ['original','flat-dark','flat-light']) test(`${theme}: Mobile Hub hides summary and refreshes by pulling down`,async t=>{
+for(const theme of ['original','flat-dark','flat-light']) test(`${theme}: Mobile Hub keeps its header across tabs, hides summary and refreshes by pulling down`,async t=>{
   const {page,state}=await fixture(t,theme,390,{hero:true});
   await page.locator('#profile-progress [data-profile-poster-key]').first().waitFor();
   assert.equal(await page.locator('#profile-hub-summary').isVisible(),false);
+  for(const tab of ['watchlist','history','ratings','collection','overview']) {
+    await page.locator(`[data-profile-tab="${tab}"]`).click();
+    await page.locator(`#profile-panel-${tab}.active`).waitFor();
+    assert.equal(await page.locator('#profile-hero').isVisible(),true,tab);
+    assert.equal(await page.locator('#profile-hub-summary').isVisible(),false,tab);
+  }
   await page.locator('[data-profile-tab="playback"]').click();
   await page.locator('#profile-panel-playback.active .cw-play-card').first().waitFor();
-  assert.equal(await page.locator('#profile-hero').isVisible(),false);
+  assert.equal(await page.locator('#profile-hero').isVisible(),true);
   const before=state.queries.filter(query=>query.path==='/api/playback_progress/items').length;
   await pullHub(page,{dy:35});
   await pullHub(page,{dx:30,dy:20});

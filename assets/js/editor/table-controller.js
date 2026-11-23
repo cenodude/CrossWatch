@@ -118,6 +118,7 @@
       label.textContent = "Sort by";
       const select = document.createElement("select");
       select.className = "cw-select";
+      select.dataset.cwNativeSelect = "true";
       select.setAttribute("aria-label", "Sort by");
       select.onchange = () => ctx.host.querySelector(`th[data-sort="${select.value}"]`)?.click();
       label.appendChild(select);
@@ -131,7 +132,7 @@
     const controls = table?.querySelector(".cw-mobile-sort");
     if (controls) {
       const select = controls.querySelector("select");
-      select.replaceChildren(...ctx.sortHeaders.map(th => new Option(th.textContent.trim(), th.dataset.sort)));
+      select.replaceChildren(...ctx.sortHeaders.map(th => new Option(ctx.columnLabel?.(th.dataset.column || th.dataset.sort) || th.querySelector('.cw-th-label')?.textContent || th.textContent.trim(), th.dataset.sort)));
       select.value = state.sortKey;
       const direction = controls.querySelector("button");
       direction.innerHTML = `<span class="material-symbol" aria-hidden="true">${state.sortDir === "desc" ? "arrow_downward" : "arrow_upward"}</span>`;

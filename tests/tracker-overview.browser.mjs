@@ -143,7 +143,7 @@ for(const theme of ['original','flat-dark','flat-light']) test(`${theme}: Tracke
   await main.getByRole('button',{name:'More',exact:true}).click();
   assert.equal(await panel.getAttribute('data-mobile-view'),'more');
   assert.equal(await main.getByRole('button',{name:'Watchlist',exact:true}).isVisible(),false);
-  for(const name of ['Month in review','CrossWatch Wrapped','Automatic statuses','Clean up']) assert.equal(await secondary.getByRole('button',{name,exact:true}).isVisible(),true);
+  for(const name of ['My titles','Month in review','CrossWatch Wrapped','Automatic statuses','Clean up']) assert.equal(await secondary.getByRole('button',{name,exact:true}).isVisible(),true);
   if(process.env.CW_MENU_SCREENSHOTS) await page.screenshot({path:`${process.env.CW_MENU_SCREENSHOTS}/${theme}-tracker-more-sheet.png`});
   await panel.locator('#cw-mobile-widgets > summary').click();
   assert.equal(await panel.locator('[data-mobile-haptics]').isVisible(),true);
@@ -278,7 +278,7 @@ async function fixture(t, theme, {realMedia = false, playback = false, touch = t
 async function choose(page, selector, value) {
   if (selector === '#trk-instance' || selector === '[data-trk-input="instance"]') {
     await page.locator('.trk-source > summary').click();
-    await page.locator(`[data-trk-instance="${value}"]`).click();
+    await page.locator(`[data-trk-instance="${value}"]:visible, [data-trk-sheet-instance="${value}"]:visible`).click();
     return;
   }
   if (selector === '#trk-mobile-view') {
@@ -288,6 +288,10 @@ async function choose(page, selector, value) {
       await choose(page,'[data-trk-input="history-group"]','title');
       await page.locator('[data-trk-history-media="show"]').click();
       await page.keyboard.press('Escape');
+    } else if (['month-review','wrapped','cleanup','titles'].includes(value) && page.viewportSize().width <= 760) {
+      await page.locator('#cw-mobile-more').click();
+      await page.locator('.cw-mobile-context-more').click();
+      await page.locator('.cw-mobile-secondary-destinations').getByRole('button',{name:{'month-review':'Month in review',wrapped:'CrossWatch Wrapped',cleanup:'Clean up',titles:'My titles'}[value],exact:true}).click();
     } else if (['month-review','wrapped','cleanup'].includes(value)) {
       await page.locator('.trk-others summary').click();
       await page.locator(value === 'cleanup' ? '.trk-others [data-trk-view="cleanup"]' : value === 'wrapped' ? '[data-trk-wrapped-open]' : '[data-trk-month-open]').click();
@@ -614,7 +618,7 @@ test("Tracker navigation and badge selector share one flat row in every theme",a
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1));
     await source.click();
     await page.screenshot({path:`.tmp/tracker-navigation/${theme}-mobile-menu.png`});
-    const menu = await page.locator('.trk-source-options').boundingBox();
+    const menu = await page.locator('.trk-sheet:visible').boundingBox();
     assert.ok(menu.x>=0 && menu.x+menu.width<=390);
   }
 });
@@ -1431,6 +1435,39 @@ test('Wrapped dismissal storage events update only the matching profile and trac
   assert.equal(requests.length,before);
 });
 
+test('Tracker cover long press opens overview and grid actions while mouse holds stay unchanged',async t=>{
+  const {page}=await fixture(t,'flat-dark',{width:390,touch:true});
+  const sheet=page.locator('.cw-card-action-menu:popover-open');
+  const overview=page.locator('.trk-overview-card:has([data-trk-overview-menu]) .trk-overview-art').first();
+  await overview.scrollIntoViewIfNeeded();
+  await overview.dispatchEvent('pointerdown',{pointerType:'mouse',pointerId:1,isPrimary:true,button:0});
+  await page.waitForTimeout(450);
+  assert.equal(await sheet.count(),0);
+  await overview.dispatchEvent('pointerup',{pointerType:'mouse',pointerId:1,isPrimary:true});
+  const bounds=await overview.boundingBox();
+  const cdp=await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:bounds.x+bounds.width/2,y:bounds.y+bounds.height/2}]});
+  await sheet.waitFor();
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  assert.equal(await sheet.isVisible(),true);
+  assert.equal(await sheet.getByRole('menuitem',{name:'Drop title',exact:true}).count(),1);
+  await page.goBack();
+  await sheet.waitFor({state:'hidden'});
+  await page.waitForFunction(()=>!history.state?.cwCardActions);
+  await choose(page,'#trk-mobile-view','watchlist');
+  await page.locator('[data-trk-layout="grid"]').click();
+  const card=page.locator('.trk-grid-card').first();
+  const art=card.locator('.trk-grid-art');
+  await art.scrollIntoViewIfNeeded();
+  await card.locator('input[type=checkbox]').dispatchEvent('pointerdown',{pointerType:'touch',pointerId:10,isPrimary:true,button:0});
+  await page.waitForTimeout(450);
+  assert.equal(await sheet.count(),0);
+  await art.dispatchEvent('pointerdown',{pointerType:'touch',pointerId:11,isPrimary:true,button:0});
+  await sheet.waitFor();
+  assert.equal(await sheet.getByRole('menuitem',{name:'Edit item',exact:true}).count(),1);
+  await art.dispatchEvent('pointerup',{pointerType:'touch',pointerId:11,isPrimary:true});
+});
+
 for (const width of [1440,390]) test(`Tracker grid action menus preserve editing and artwork navigation at ${width}px`, async t => {
   const {page} = await fixture(t,"flat-dark",{width,touch:width < 760});
   await page.route("**/api/tracker/shows?**", route => route.fulfill({json:{shows:[{...rows[0],key:"show:1",watched:2,total:10}],total:1}}));
@@ -1735,26 +1772,56 @@ test('Mobile Tracker uses a sticky view bar, compact shelves and two-column card
   await page.screenshot({path:'.tmp/mobile-implementation/tracker-overview.png'});
 });
 
-test('Tracker keeps its badge dropdown in the navigation across view and viewport changes', async t => {
+for (const theme of ['original','flat-dark','flat-light']) test(`${theme}: Mobile Tracker has six full-width tabs and a hero tracker sheet`, async t => {
+  const {page,scopedReads} = await fixture(t,theme,{width:320});
+  await page.evaluate(() => { window.CW.AuthState = {read:() => ({user:{display_name:'Pascal van den Berg'}})}; });
+  await page.locator('.trk-tabs [data-trk-view="history"]').click();
+  assert.deepEqual(await page.locator('.trk-tabs [role="tab"]:visible').evaluateAll(nodes => nodes.map(node => node.dataset.trkView)),['overview','watchlist','history','ratings','progress','collection']);
+  assert.equal(await page.locator('.trk-others').isVisible(),false);
+  assert.equal(await page.locator('.cw-media-hero-identity').isVisible(),true);
+  const row = await page.locator('.trk-navigation').boundingBox();
+  const tabs = await page.locator('.trk-tabs').boundingBox();
+  assert.ok(Math.abs(row.width-tabs.width)<2);
+  await page.locator('.trk-tabs [data-trk-view="collection"]').click();
+  const active = await page.locator('.trk-tabs [aria-selected="true"]').boundingBox();
+  assert.ok(active.x >= tabs.x && active.x+active.width <= tabs.x+tabs.width+1);
+  await page.evaluate(() => window.scrollTo(0,0));
+  await page.locator('.trk-source > summary').click();
+  await page.locator('.trk-sheet:visible').getByRole('heading',{name:'Choose tracker'}).waitFor();
+  const before = scopedReads.length;
+  await page.goBack();
+  await page.locator('.trk-sheet:visible').waitFor({state:'hidden'});
+  assert.equal(await page.locator('#trk-instance').inputValue(),'default');
+  assert.equal(scopedReads.length,before);
+  await choose(page,'#trk-mobile-view','titles');
+  assert.equal(await page.locator('.trk-tabs [data-trk-view="titles"]').getAttribute('aria-selected'),'true');
+  assert.equal(await page.locator('.trk-tabs [data-trk-view="overview"]').getAttribute('tabindex'),'0');
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+  await page.locator('.trk-tabs [data-trk-view="overview"]').click();
+  await page.evaluate(() => window.scrollTo(0,0));
+  await mkdir('.tmp/tracker-navigation',{recursive:true});
+  await page.screenshot({path:`.tmp/tracker-navigation/${theme}-mobile-tabs.png`});
+});
+
+test('Tracker keeps its mobile hero selector across view and viewport changes', async t => {
   const {page,scopedReads} = await fixture(t,'flat-dark',{width:390});
   assert.equal(await page.locator('#trk-instance').count(),1);
   assert.equal(await page.locator('[data-trk-slot="filters"]').isVisible(),false);
-  await page.locator('.trk-others summary').click();
-  assert.equal(await page.locator('.trk-source > summary').isVisible(),true);
+  assert.equal(await page.locator('.trk-others summary').isVisible(),false);
+  assert.equal(await page.locator('.cw-media-hero .trk-source > summary').isVisible(),true);
   await choose(page,'#trk-instance','other');
   await page.waitForFunction(()=>document.querySelector('#trk-instance')?.value === 'other');
   await page.waitForFunction(()=>document.querySelector('.trk-overview'));
   assert.ok(scopedReads.some(row=>row.instance === 'other' && row.path === '/api/tracker/summary'));
   await page.locator('.trk-tabs [data-trk-view="history"]').click();
   assert.equal(await page.locator('#trk-instance').count(),1);
-  await page.locator('.trk-others summary').click();
-  assert.equal(await page.locator('.trk-navigation > [data-trk-slot="source"] #trk-instance').inputValue(),'other');
+  assert.equal(await page.locator('.cw-media-hero [data-trk-slot="source"] #trk-instance').inputValue(),'other');
   await page.setViewportSize({width:1440,height:900});
   await page.locator('.trk-source > summary').waitFor({state:'visible'});
   assert.equal(await page.locator('#trk-instance').count(),1);
   assert.equal(await page.locator('#trk-instance').inputValue(),'other');
   await page.setViewportSize({width:390,height:844});
-  await page.waitForFunction(()=>document.querySelector('.trk-navigation > [data-trk-slot="source"] #trk-instance'));
+  await page.waitForFunction(()=>document.querySelector('.cw-media-hero [data-trk-slot="source"] #trk-instance'));
   assert.equal(await page.locator('#trk-instance').count(),1);
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth > innerWidth),false);
 });
@@ -1773,9 +1840,10 @@ for (const width of [390,320]) test(`Mobile Tracker toolbar stays in two rows at
   await page.locator('[data-trk-action="filters"]').click();
   await page.locator('#trk-extra-filters').waitFor({state:'visible'});
   await page.locator('.trk-sheet').getByRole('button',{name:'Done',exact:true}).click();
-  await page.locator('.trk-others summary').click();
-  for (const action of ['views','changes','import']) assert.equal(await page.locator(`.trk-others-menu [data-trk-action="${action}"]`).isVisible(),true);
-  await page.locator('.trk-others-menu [data-trk-action="views"]').click();
+  await page.locator('#cw-mobile-more').click();
+  await page.locator('.cw-mobile-context-more').click();
+  for (const name of ['Saved views','Changes','Import']) assert.equal(await page.locator('.cw-mobile-secondary-destinations').getByRole('button',{name,exact:true}).isVisible(),true);
+  await page.locator('.cw-mobile-secondary-destinations').getByRole('button',{name:'Saved views',exact:true}).click();
   await page.locator('.trk-sheet:visible').waitFor();
   assert.equal(await page.locator('.trk-others').getAttribute('open'),null);
   await page.keyboard.press('Escape');
