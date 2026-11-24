@@ -249,7 +249,8 @@ const historyKey = auth => `cw.maintenance.history.v1:${encodeURIComponent(Strin
 function cleanHistory(value) {
   return (Array.isArray(value) ? value : []).filter(entry => entry && Object.hasOwn(OPS_BY_KEY, entry.key)
     && ["success", "issues", "error"].includes(entry.status) && Number.isFinite(entry.at) && entry.at > 0 && Number.isFinite(new Date(entry.at).getTime()))
-    .map(({key, status, at, batch}) => ({key, status, at, batch:batch === true}))
+    .map(({key, status, at, batch, jobId}) => ({key, status, at, batch:batch === true,
+      ...(typeof jobId === "string" && jobId.length > 0 && jobId.length <= 128 ? {jobId} : {})}))
     .sort((a,b) => b.at - a.at).slice(0,100);
 }
 const icon = name => `<span class="material-symbols-rounded" aria-hidden="true">${name}</span>`;
@@ -314,9 +315,20 @@ const MaintenancePage = {
     let pairList = [];
     let pairRequestId = 0;
     const selectedPair = () => pairList.find(pair => pair.id === $("#cxm-pair-select", root).value);
-    function saveResult(key, status) {
-      entries = cleanHistory([{key, status, at:Date.now(), batch:false}, ...entries]);
+    function saveResult(key, status, {jobId, at} = {}) {
+      try { entries = cleanHistory(JSON.parse(localStorage.getItem(storageKey) || "[]")); } catch {}
+      let previous = jobId && entries.find(entry => entry.jobId === jobId);
+      if (jobId && !previous && Number.isFinite(at)) {
+        const legacy = entries.filter(item => !item.jobId && !item.batch && item.key === key && item.status === status
+          && item.at >= Math.floor(at) && item.at <= at + 5000);
+        if (legacy.length === 1) previous = legacy[0];
+      }
+      const entry = {key, status, at:at ?? previous?.at ?? Date.now(), batch:false, ...(jobId ? {jobId} : {})};
+      entries = cleanHistory([entry, ...entries.filter(item => item !== previous && (!jobId || item.jobId !== jobId))]);
       try { localStorage.setItem(storageKey, JSON.stringify(entries)); } catch {}
+      const latest = entries.find(item => item.key === key);
+      if (latest) results.set(OPS_BY_KEY[key].kind, latest);
+      return entry;
     }
     function updateRows() {
       for (const row of rows) {
@@ -324,7 +336,8 @@ const MaintenancePage = {
         const status = row.querySelector(".task-status");
         status.hidden = !result;
         status.dataset.status = result?.status || "idle";
-        status.textContent = ({running:"Running…",success:"Completed",issues:"Issues found",error:"Failed"})[result?.status] || "";
+        const label = ({success:"Completed",issues:"Issues found",error:"Failed"})[result?.status];
+        status.textContent = result?.status === "running" ? "Running…" : label ? `Last run: ${label} · ${new Date(result.at).toLocaleString()}` : "";
         row.disabled = operationBusy;
       }
       const last = entries[0];
@@ -852,7 +865,7 @@ const MaintenancePage = {
       if (kind) { results.set(kind, {status:"running",at:Date.now(),previous:results.get(kind)}); updateRows(); }
     }
 
-    function finishActionFeedback(btn, result) {
+    function finishActionFeedback(btn, result, jobId) {
       if (!btn) return;
       const row = actionRow(btn);
       row?.classList.remove("is-running");
@@ -865,12 +878,23 @@ const MaintenancePage = {
         return;
       }
 
-      if (row) { results.set(row.dataset.kind, {status:result,at:Date.now()}); saveResult(row.dataset.op, result); updateRows(); }
+      if (row) { saveResult(row.dataset.op, result, {jobId}); updateRows(); }
       const ok = result === "success";
       row?.classList.add(ok ? "run-success" : "run-error");
       btn.classList.add(ok ? "result-success" : "result-error");
       btn.textContent = ok ? "Done" : result === "issues" ? "Issues" : "Failed";
       btn._cwResultTimer = window.setTimeout(() => resetActionFeedback(btn), 1400);
+    }
+
+    function recordJobResult(job) {
+      const op = OPS.find(item => item.kind === job.action);
+      if (!op || typeof job.id !== "string" || !job.id || !["completed", "failed", "interrupted"].includes(job.state)) return null;
+      const status = job.state !== "completed" || job.result?.ok !== true ? "error" : job.result?.healthy === false ? "issues" : "success";
+      const ended = Number(job.started_at) * 1000 + Math.max(0, Number(job.duration_ms) || 0);
+      const at = Number.isFinite(ended) && ended > 0 && Number.isFinite(new Date(ended).getTime()) ? ended : undefined;
+      const entry = saveResult(op.key, status, {jobId:job.id, at});
+      updateRows();
+      return entry;
     }
 
     async function followJob(initial) {
@@ -882,6 +906,7 @@ const MaintenancePage = {
         if (next.id !== initial.id) throw new Error("Maintenance status changed. Check the latest job before retrying.");
         job = next;
       }
+      recordJobResult(job);
       window.dispatchEvent?.(new CustomEvent("cw:maintenance-job-changed"));
       return job.result || { ok: false, error: job.state || "missing_job_result" };
     }
@@ -891,6 +916,14 @@ const MaintenancePage = {
       try {
         const job = await fjson("/api/maintenance/jobs/current");
         if (!job.id || job.state === "idle") return;
+        if (!["queued", "running"].includes(job.state)) {
+          const entry = recordJobResult(job);
+          if (entry && entry.status !== "success") {
+            const outcome = job.state === "interrupted" ? "was interrupted" : entry.status === "issues" ? "found issues" : "failed";
+            setStatus(`Previous maintenance ${outcome}: ${OPS_BY_KEY[entry.key].title} · ${new Date(entry.at).toLocaleString()}${job.result?.error ? ` (${job.result.error})` : ""}`, "err");
+          }
+          return;
+        }
         const result = await followJob(job);
         setStatus(result.ok ? (eventsReceipt(job.action, result) || databaseReceipt(job.action, result) || "Maintenance completed.") : `Maintenance stopped: ${result.error}`, result.ok && result.healthy !== false ? "ok" : "err");
       } catch (error) {
@@ -904,6 +937,7 @@ const MaintenancePage = {
       if (operationBusy) return false;
 
       if (kind === "tracker" && (!trackerProfilesLoaded || $("#cxm-cleanup-review", root).hidden)) return false;
+      let jobId;
       setOperationBusy(true);
       try {
         if (kind === "state" && !(await (window.CW?.MobileUI?.ask || window.confirm)("Reset all sync baselines, including obsolete pair scopes?\n\nThe next sync starts fresh. Previous deletions will not propagate, and two-way pairs can add missing items back. Create a backup first."))) {
@@ -956,6 +990,7 @@ const MaintenancePage = {
           } : (kind === "events-rebuild" || kind === "events-purge" || kind === "database-rebuild" || kind === "state") ? { confirm: true } : undefined;
           if (JOB_ACTIONS.has(kind)) {
             const job = await post("/api/maintenance/jobs", { action: kind, ...(body || {}) });
+            jobId = job.id;
             window.dispatchEvent?.(new CustomEvent("cw:maintenance-job-changed"));
             res = job.ok === false ? job : await followJob(job);
           } else {
@@ -1028,7 +1063,7 @@ const MaintenancePage = {
 
         if (res?.ok === false) {
           setStatus(`Failed: ${res.error || "Unknown error"}`, "err");
-          finishActionFeedback(btn, "error");
+          finishActionFeedback(btn, "error", jobId);
           return false;
         }
 
@@ -1066,11 +1101,11 @@ const MaintenancePage = {
         const statePrune = kind === "state-file-prune" ? statePruneReceipt(res) : null;
         const rebuildReceipt = kind === "database-rebuild" ? `Rebuild local database completed · ${res?.backup ? `backup ${res.backup}` : "no previous files"}.` : null;
         setStatus(evReceipt || dbReceipt || stateReceipt || statePrune || rebuildReceipt || completionReceipt(label, res), res?.healthy === false ? "err" : "ok");
-        finishActionFeedback(btn, res?.healthy === false ? "issues" : "success");
+        finishActionFeedback(btn, res?.healthy === false ? "issues" : "success", jobId);
         return res || { ok: true };
       } catch (e) {
         setStatus(`Error: ${e.message || String(e)}`, "err");
-        finishActionFeedback(btn, "error");
+        finishActionFeedback(btn, "error", jobId);
         return false;
       } finally {
         setOperationBusy(false);

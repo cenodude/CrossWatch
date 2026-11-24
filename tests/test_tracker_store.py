@@ -269,6 +269,43 @@ def _legacy(root, name, payload, mtime):
     return path
 
 
+def test_maintenance_inventory_does_not_create_or_migrate_tracker_storage(tmp_path, monkeypatch):
+    root = tmp_path / ".cw_provider"
+    monkeypatch.setattr(maintenanceAPI, "_cw", lambda: (tmp_path / "cache", tmp_path, tmp_path / ".cw_state", None, None, None))
+    empty = maintenanceAPI.crosswatch_tracker_status(provider_instance="default")
+    assert empty["counts"] == {"state_files": 0, "snapshots": 0}
+    assert not root.exists()
+
+    state = _legacy(root, "history.json", {"items": {"tmdb:1": ITEM}}, 1_700_000_100)
+    snapshot = _legacy(root, "snapshots/20260101T000000Z-history.json", {"items": {}}, 1_700_000_000)
+    before = {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()}
+    inventory = maintenanceAPI.crosswatch_tracker_status(provider_instance="default")
+    assert inventory["counts"] == {"state_files": 1, "snapshots": 1}
+    assert inventory["state_files"][0]["name"] == state.name
+    assert inventory["snapshots"][0]["name"] == snapshot.name
+    assert {p.relative_to(root): p.read_bytes() for p in root.rglob("*") if p.is_file()} == before
+    assert not TrackerStore(root).db_path.exists()
+
+
+def test_inventory_reads_old_schema_without_upgrading_or_importing(tmp_path):
+    store = TrackerStore(tmp_path)
+    store.write_state("history", {"tmdb:1": ITEM}, ts=7)
+    store.add_restore_point("history", {"tmdb:1": ITEM})
+    expected = store.inventory()
+    _legacy(tmp_path, "watchlist.json", {"items": {"tmdb:2": ITEM}}, 1_700_000_100)
+    with sqlite3.connect(store.db_path) as conn:
+        conn.execute("PRAGMA user_version=1")
+    tracker_store._READY.discard(str(store.db_path))
+    before = store.db_path.read_bytes()
+
+    assert store.inventory() == expected
+    assert store.db_path.read_bytes() == before
+    assert (tmp_path / "watchlist.json").exists()
+    with sqlite3.connect(store.db_path) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM states WHERE feature='watchlist'").fetchone()[0] == 0
+
+
 def test_first_open_imports_json_files_and_moves_them_to_a_backup(tmp_path):
     _legacy(tmp_path, "history.json", {"ts": 7, "items": {"tmdb:1": ITEM}}, 1_700_000_100)
     _legacy(tmp_path, "watchlist.pair-a.json", {"ts": 8, "items": {"tmdb:2": ITEM}}, 1_700_000_200)
