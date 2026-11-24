@@ -1976,7 +1976,7 @@ body.cw-profile-page .cw-profile-tabs button{display:inline-flex;align-items:cen
 .cw-hub-secondary :is(#profile-watchlist,#profile-activity){flex:1}
 .cw-profile-activity-icon{vertical-align:middle;margin-right:8px}
 #profile-progress{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
-.cw-cw-card{display:flex;flex-direction:column;min-width:0;padding:0;overflow:hidden;text-align:left;cursor:pointer}
+.cw-cw-card{display:flex;flex-direction:column;min-width:0;padding:0;overflow:hidden;text-align:left;cursor:pointer;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
 .cw-cw-art{position:relative;display:block;width:100%;aspect-ratio:16/9;overflow:hidden}
 .cw-cw-art img{display:block;width:100%;height:100%;object-fit:cover}
 .cw-cw-copy{position:absolute;inset:auto 16px 16px;display:grid;gap:5px}

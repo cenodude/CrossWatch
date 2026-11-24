@@ -1156,12 +1156,12 @@ __CW_NAV_PROFILE_MENU__
     <div class="stat-tiles" id="stat-providers"></div>
 
     <div class="stat-block cw-recent-feed" id="recent-activity-block">
-      <div class="stat-block-header"><span class="pill plain">Recent Scrobble</span><button id="activity-view-all" class="ghost refresh-insights" type="button">View all</button></div>
+      <div class="stat-block-header"><span class="pill plain">Recent Scrobble</span><button id="activity-view-all" class="cw-page-feed-action refresh-insights" type="button">View all</button></div>
       <div id="recent-activity" class="history-list"></div>
     </div>
 
     <div class="stat-block cw-recent-feed">
-      <div class="stat-block-header"><span class="pill plain">Recent syncs</span><button class="ghost refresh-insights material-symbols-rounded" onclick="refreshInsights()" title="Refresh" aria-label="Refresh recent syncs">refresh</button></div>
+      <div class="stat-block-header"><span class="pill plain">Recent syncs</span><button class="cw-page-feed-action refresh-insights material-symbols-rounded" onclick="refreshInsights()" title="Refresh" aria-label="Refresh recent syncs">refresh</button></div>
       <div id="sync-history" class="history-list"></div>
     </div>
   </section>

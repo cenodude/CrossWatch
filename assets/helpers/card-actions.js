@@ -12,7 +12,7 @@
     if (!(target instanceof Element) || !target.closest('#page-tracker,.cw-profile-shell')) return null;
     if (target.closest('input,select,textarea,label,.cw-card-actions,[data-provider-overflow]')) return null;
     const overview = target.closest('#profile-progress .cw-cw-card');
-    if (overview && target.closest('.cw-cw-art')) {
+    if (overview) {
       return {card:overview,button:overview,open:() => overview.dispatchEvent(new CustomEvent('cw:card-hold', {bubbles:true}))};
     }
     const cover = target.closest('.trk-grid-art,.trk-overview-art,.cw-hist-art,.cw-collection-poster');
@@ -23,9 +23,9 @@
   document.addEventListener('pointerdown', event => {
     cancelPress();
     held = null;
-    if (!touchLayout.matches || !event.isPrimary || !['touch','pen'].includes(event.pointerType) || event.button !== 0) return;
+    if (!event.isPrimary || !['touch','pen'].includes(event.pointerType) || event.button !== 0) return;
     const action = coverAction(event.target);
-    if (!action) return;
+    if (!action || !touchLayout.matches && !action.card.matches('#profile-progress .cw-cw-card')) return;
     const gesture = {...action, id:event.pointerId, x:event.clientX, y:event.clientY};
     press = gesture;
     gesture.timer = setTimeout(() => {
