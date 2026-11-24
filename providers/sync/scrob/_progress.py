@@ -12,6 +12,7 @@ from ._common import (
     MEDIA_TYPE_EPISODE,
     PATH_CONTINUE_WATCHING,
     PATH_WEBHOOK_KODI,
+    WATCH_SOURCE,
     as_int,
     error_of,
     ids_for_scrob,
@@ -225,6 +226,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             "position_seconds": position_seconds,
             "total_seconds": total_seconds,
             "session_id": f"crosswatch-progress-{key}",
+            "source": WATCH_SOURCE,
         }
 
         planned += 1

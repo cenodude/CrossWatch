@@ -9,6 +9,7 @@ from cw_platform.id_map import canonical_key, minimal as id_minimal
 
 from ._common import (
     HISTORY_PAGE_MAX,
+    WATCH_SOURCE,
     MEDIA_TYPE_EPISODE,
     PATH_HISTORY,
     PATH_HISTORY_EVENT,
@@ -193,7 +194,7 @@ def add(adapter: Any, items: Iterable[Mapping[str, Any]], *, dry_run: bool = Fal
             confirmed.append(key)
             continue
 
-        resp = scrob_request(adapter, "POST", PATH_HISTORY, json=payload)
+        resp = scrob_request(adapter, "POST", PATH_HISTORY, json={**payload, "source": WATCH_SOURCE})
         if ok_status(resp):
             confirmed.append(key)
             continue

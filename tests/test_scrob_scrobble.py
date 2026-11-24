@@ -96,6 +96,7 @@ def test_sink_maps_the_session_lifecycle_to_kodi_events(posts: list[dict[str, An
     events = [p["payload"].get("event") or p["payload"].get("method") for p in posts]
     assert events == ["playback_started", "playback_seeked", "playback_paused", "playback_resumed", "Player.OnStop"]
     assert all(p["path"] == "webhooks/kodi" for p in posts)
+    assert all(p["payload"]["source"] == "crosswatch" for p in posts)
 
 
 def test_sink_flags_a_completed_stop_as_watched(posts: list[dict[str, Any]]):

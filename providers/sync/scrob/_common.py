@@ -52,6 +52,8 @@ MEDIA_TYPE_MOVIE = "movie"
 MEDIA_TYPE_EPISODE = "episode"
 MEDIA_TYPE_SERIES = "series"
 
+WATCH_SOURCE = "crosswatch"
+
 _LIMITERS: dict[str, SimpleRateLimiter] = {}
 _SHOW_TVDB: dict[tuple[str, int], tuple[int | None, float]] = {}
 
@@ -505,6 +507,7 @@ __all__ = [
     "PATH_WEBHOOK_JELLYFIN",
     "PATH_SHOW",
     "HISTORY_PAGE_MAX",
+    "WATCH_SOURCE",
     "as_imdb",
     "as_int",
     "base_url",
