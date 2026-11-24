@@ -382,7 +382,7 @@
       "featureAttention": "{{feature}} vraagt aandacht",
       "featureSynced": "{{feature}} gesynchroniseerd",
       "syncFailed": "Synchronisatie mislukt",
-      "noRunsHours_one": "Geen rondes in het afgelopen uur",
+      "noRunsHours_one": "Geen synchronisaties in het afgelopen {{count}} uur",
       "noRunsHours_other": "Geen rondes in de afgelopen {{count}} uur",
       "noRuns": "Geen rondes voor deze functie",
       "thisWeek": "{{diff}} deze week",
@@ -422,7 +422,7 @@
       "allStatuses": "Alle statussen",
       "scrobbled": "Gescrobbeld",
       "noMatches": "Geen activiteit voor deze weergave.",
-      "noneInHours_one": "Geen recente scrobble in het afgelopen uur.",
+      "noneInHours_one": "Geen recente scrobble in het afgelopen {{count}} uur.",
       "noneInHours_other": "Geen recente scrobble in de afgelopen {{count}} uur.",
       "noneYet": "Nog geen recente scrobble."
     },
