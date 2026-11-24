@@ -80,12 +80,12 @@ test("a one-off add names the feature in the sync pair note", () => {
   assert.match(context.oneOffNote(["history"]), /sync pair for history\./);
 });
 
-async function mountQuickAdd(props, providers, remembered = []) {
+async function mountQuickAdd(props, providers, remembered = [], memory = null) {
   const root = { innerHTML: "", style: { setProperty() {}, removeProperty() {} }, closest: () => null, addEventListener(name, handler) { this[name] = handler; }, querySelector: () => null, querySelectorAll: () => [] };
   const page = {
     window: { CW: {}, addEventListener() {}, removeEventListener() {}, setTimeout, clearTimeout },
     document: { getElementById: () => ({}), documentElement: { dataset: {}, clientHeight: 800 }, addEventListener() {}, removeEventListener() {} },
-    localStorage: { getItem: () => JSON.stringify(remembered), setItem() {} },
+    localStorage: { getItem: (key) => key === "cw.manualWatched.actions" ? (memory ? JSON.stringify(memory) : null) : JSON.stringify(remembered), setItem() {} },
     URLSearchParams,
     AbortSignal,
     fetch: async (url) => ({ ok: true, json: async () => (url.includes("/api/manual/providers") ? { providers } : {}) }),
@@ -218,4 +218,38 @@ test("no stored data means no note", () => {
 
 test("several actions give one note each", () => {
   assert.equal(heldNotes(held, ["history", "rating"], [trakt]).length, 2);
+});
+
+const michael = { tmdb: "1", type: "movie", title: "Michael" };
+const watchedAndRated = { actions: { history: true, rating: true }, date_mode: "release" };
+
+test("Quick add opens on the actions saved last time without picking a score", async () => {
+  const root = await mountQuickAdd({ item: michael }, [both], ["MDBLIST:default"], watchedAndRated);
+  assert.match(root.innerHTML, /cw-mw-chip active" data-action="history"/);
+  assert.match(root.innerHTML, /cw-mw-chip active" data-action="rating"/);
+  assert.match(root.innerHTML, /cw-mw-chip active" data-date-mode="release"/);
+  assert.doesNotMatch(root.innerHTML, /is-lit/);
+  assert.match(root.innerHTML, /data-role="send" disabled/);
+  const star = { getAttribute: () => "7", closest: selector => selector.includes("[data-rating]") ? star : null };
+  root.click({ target: star, preventDefault() {}, stopPropagation() {} });
+  assert.match(root.innerHTML, /data-rating="7" aria-pressed="true"/);
+  assert.doesNotMatch(root.innerHTML, /data-role="send" disabled/);
+});
+
+test("Quick add keeps saved actions when they include the requested one", async () => {
+  const root = await mountQuickAdd({ action: "rating", item: michael }, [both], ["MDBLIST:default"], watchedAndRated);
+  assert.match(root.innerHTML, /cw-mw-chip active" data-action="history"/);
+  assert.match(root.innerHTML, /cw-mw-chip active" data-action="rating"/);
+});
+
+test("Quick add opens on the requested action alone when saved actions leave it out", async () => {
+  const root = await mountQuickAdd({ action: "watchlist", item: michael }, [both], ["MDBLIST:default"], watchedAndRated);
+  assert.match(root.innerHTML, /cw-mw-chip active" data-action="watchlist"/);
+  assert.doesNotMatch(root.innerHTML, /cw-mw-chip active" data-action="(history|rating)"/);
+});
+
+test("a locked Quick add ignores saved actions", async () => {
+  const root = await mountQuickAdd(locked("watchlist"), [both], [], watchedAndRated);
+  assert.ok(root.innerHTML.includes("Not in a sync pair for watchlist."));
+  assert.doesNotMatch(root.innerHTML, /cw-mw-stars/);
 });
