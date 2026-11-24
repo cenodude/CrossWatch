@@ -297,11 +297,24 @@ def test_sync_setup_for_the_only_viewer_adds_one_two_way_pair(monkeypatch: pytes
     pair = pairs[0]
     assert (pair["source"], pair["source_instance"], pair["target"], pair["target_instance"], pair["mode"], pair["enabled"]) == (
         "KODI", "default", "TRAKT", "default", "two-way", True)
-    assert pair["features"]["history"]["enable"] is True and pair["features"]["history"]["remove"] is False
+    assert pair["features"]["history"]["enable"] is True and pair["features"]["history"]["remove"] is True
     assert pair["features"]["ratings"]["enable"] is True and "watchlist" not in pair["features"]
     assert pair["features"]["ratings"]["types"] == ["movies", "shows", "seasons", "episodes"]
-    assert pair["features"]["ratings"]["mode"] == "all" and pair["features"]["ratings"]["remove"] is False
+    assert pair["features"]["ratings"]["mode"] == "all" and pair["features"]["ratings"]["remove"] is True
+    assert pair["features"]["progress"]["enable"] is True and pair["features"]["progress"]["remove"] is False
+    assert pair["features"]["progress"]["max_percent"] == 95
     assert triggered == ["default"]
+
+
+def test_sync_setup_leaves_progress_out_for_a_service_without_it(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(addon_sync, "trigger_pair_runs", lambda cfg, inst: [])
+    cfg = {**make_cfg(), "anilist": {"access_token": "a" * 32}}
+    ping(cfg)
+    http = _setup_client(cfg)
+    assert http.post("/api/kodi/addon/sync-setup", json={"viewer_id": "kv-1", "target": "ANILIST"}).json()["ok"] is True
+    pair = _saved()["pairs"][0]
+    assert pair["target"] == "ANILIST" and pair["features"]["history"]["enable"] is True
+    assert "progress" not in pair["features"]
 
 
 def test_sync_setup_gives_a_second_viewer_its_own_sync_user(monkeypatch: pytest.MonkeyPatch):

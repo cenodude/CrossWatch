@@ -29,7 +29,7 @@
   dialog.cw-page-mobile-sheet :is(button,.cw-btn){min-height:44px}
   @media(prefers-reduced-motion:no-preference){
     :is(dialog.cw-page-mobile-sheet[open],.cw-ia-sheet-wrap:not([hidden]) .cw-ia-sheet,header.cw-nav-open #cw-mobile-navigation,.cw-page-mobile-surface){animation:cw-mobile-sheet-enter .18s ease-out}
-    :is(#cw-mobile-bottom-nav,#cw-mobile-navigation,.cw-profile-shell,#page-tracker,.cw-page-mobile-sheet,.cw-page-item-actions) :is(button,a.cw-btn):not(:disabled):active,#cw-mobile-bottom-nav a:active,#cw-mobile-navigation a:active{transform:scale(.97)}
+    :is(#cw-mobile-bottom-nav,#cw-mobile-navigation,.cw-profile-shell,#page-tracker,.cw-page-mobile-sheet,.cw-page-item-actions) :is(button,a.cw-btn):not(:disabled,.cw-cw-open):active,#cw-mobile-bottom-nav a:active,#cw-mobile-navigation a:active{transform:scale(.97)}
     @keyframes cw-mobile-sheet-enter{from{transform:translateY(24px);opacity:0}to{transform:translateY(0);opacity:1}}
   }
 }
@@ -40,9 +40,9 @@
 .cw-view-status[data-state="error"][hidden]{display:none}
 .cw-view-status .cw-btn{margin-left:auto;min-height:32px;padding:4px 12px}
 #page-tracker .cw-page-loading{align-content:center;gap:18px;min-height:160px}
-[data-view-loading] :is([data-trk-action="refresh"],[data-timeline-refresh],[data-collection-refresh])>.material-symbols-rounded,[data-view-loading] .refresh-insights.material-symbols-rounded{animation:cwRefreshSpin .9s linear infinite}
+[data-view-loading] :is([data-trk-action="refresh"],[data-timeline-refresh],[data-collection-refresh])>.material-symbols-rounded,[data-view-loading] .refresh-insights>.material-symbols-rounded{animation:cwRefreshSpin .9s linear infinite}
 @keyframes cwRefreshSpin{to{transform:rotate(360deg)}}
-@media(prefers-reduced-motion:reduce){[data-view-loading] :is([data-trk-action="refresh"],[data-timeline-refresh],[data-collection-refresh])>.material-symbols-rounded,[data-view-loading] .refresh-insights.material-symbols-rounded{animation:none}}
+@media(prefers-reduced-motion:reduce){[data-view-loading] :is([data-trk-action="refresh"],[data-timeline-refresh],[data-collection-refresh])>.material-symbols-rounded,[data-view-loading] .refresh-insights>.material-symbols-rounded{animation:none}}
 html:not([data-tab="main"])#placeholder-card{display:none !important}:is(#page-settings .cw-conn-hero-summary){align-self:end;justify-self:end;display:inline-flex;align-items:stretch;min-height:58px;border-radius:14px;border:1px solid rgba(218,227,245,0.13);background:rgba(29,35,54,0.84);box-shadow:none;overflow:hidden;position:relative;z-index:1;isolation:isolate}
 :is(#page-settings .cw-conn-hero-summary):before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background:linear-gradient(180deg,rgba(40,47,74,0.94),rgba(31,37,56,0.92))}:is(#page-settings .cw-conn-hero-summary)>*{position:relative;z-index:1}html[data-cw-theme="flat-light"]:is(#page-settings .cw-conn-hero-summary){background:rgba(255,255,255,0.82);border-color:rgba(78,96,180,0.2);color:#475467}
 html[data-cw-theme="flat-light"]:is(#page-settings .cw-conn-hero-summary):before{background:linear-gradient(180deg,rgba(255,255,255,0.94),rgba(246,248,255,0.9))}
@@ -1976,7 +1976,8 @@ body.cw-profile-page .cw-profile-tabs button{display:inline-flex;align-items:cen
 .cw-hub-secondary :is(#profile-watchlist,#profile-activity){flex:1}
 .cw-profile-activity-icon{vertical-align:middle;margin-right:8px}
 #profile-progress{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
-.cw-cw-card{display:flex;flex-direction:column;min-width:0;padding:0;overflow:hidden;text-align:left;cursor:pointer;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.cw-cw-card{position:relative;display:flex;flex-direction:column;min-width:0;padding:0;overflow:hidden;text-align:left;cursor:pointer;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+.cw-cw-open{display:flex;flex-direction:column;flex:1;width:100%;min-width:0;min-height:0;padding:0;text-align:left;cursor:pointer}
 .cw-cw-art{position:relative;display:block;width:100%;aspect-ratio:16/9;overflow:hidden}
 .cw-cw-art img{display:block;width:100%;height:100%;object-fit:cover}
 .cw-cw-copy{position:absolute;inset:auto 16px 16px;display:grid;gap:5px}
@@ -2160,6 +2161,7 @@ body.cw-profile-page #dashboard-widgets-card .cw-hub-widget-providers{position:r
   #stats-card .cw-recent-feed .stat-block-header{margin-bottom:4px}
   #stats-card .cw-recent-feed .stat-block-header .pill{padding:0;font-size:20px;line-height:1.3}
   #stats-card .cw-recent-feed .stat-block-header .refresh-insights{font-size:14px;padding:8px 0 8px 12px}
+  #stats-card .cw-recent-feed .stat-block-header .refresh-insights:has(>.material-symbols-rounded){display:inline-flex;align-items:center;justify-content:center;padding:0}
   #stats-card .cw-recent-feed .stat-block-header .material-symbols-rounded{font-size:22px}
   #stats-card #recent-activity,#stats-card #sync-history .list{gap:0}
   #stats-card #recent-activity .activity-item,#stats-card #sync-history .history-feed-row{display:block;padding:18px 0;margin:0;min-width:0}
@@ -2722,12 +2724,12 @@ html.cw-ia-sheet-open,html.cw-ia-sheet-open body{overflow:hidden}
 #page-tracker .trk-overview-art img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 #page-tracker .trk-overview-art img[hidden]{display:none}
 @keyframes trk-card-reveal{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
-@media(prefers-reduced-motion:no-preference){#page-tracker .trk-overview-card.is-revealing{animation:trk-card-reveal .5s cubic-bezier(.2,.7,.2,1)}#page-tracker .trk-overview-art img,.cw-cw-art img{transition:transform .65s cubic-bezier(.2,.7,.2,1)}#page-tracker .trk-overview-open:focus-visible .trk-overview-art img,.cw-cw-card:focus-visible .cw-cw-art img{transform:scale(1.035)}}
+@media(prefers-reduced-motion:no-preference){#page-tracker .trk-overview-card.is-revealing{animation:trk-card-reveal .5s cubic-bezier(.2,.7,.2,1)}#page-tracker .trk-overview-art img,.cw-cw-art img{transition:transform .65s cubic-bezier(.2,.7,.2,1)}#page-tracker .trk-overview-open:focus-visible .trk-overview-art img,.cw-cw-open:focus-visible .cw-cw-art img{transform:scale(1.035)}}
 @media(hover:hover) and (prefers-reduced-motion:no-preference){#page-tracker .trk-overview-open:hover .trk-overview-art img,.cw-cw-card:hover .cw-cw-art img{transform:scale(1.035)}}
 #page-tracker .trk-overview-meta{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
-#page-tracker .trk-overview-menu{position:absolute;top:8px;left:8px;z-index:2;width:36px;height:36px;margin:0;border:0;border-radius:8px}
-#page-tracker .trk-overview-menu .material-symbols-rounded{font-size:24px}
-@media(pointer:coarse){#page-tracker .trk-overview-menu{width:44px;height:44px}}
+#page-tracker .trk-overview-menu,#profile-progress .cw-card-actions{position:absolute;top:8px;left:8px;z-index:2;width:36px;height:36px;margin:0;border:0;border-radius:8px}
+#page-tracker .trk-overview-menu .material-symbols-rounded,#profile-progress .cw-card-actions .material-symbols-rounded{font-size:24px}
+@media(pointer:coarse){#page-tracker .trk-overview-menu,#profile-progress .cw-card-actions{width:44px;height:44px}}
 :is(#page-tracker,#profile-airing) .trk-calendar-actions{display:flex;align-items:center;gap:6px}
 :is(#page-tracker,#profile-airing) .trk-calendar-actions .cw-btn{display:inline-flex;align-items:center;justify-content:center;min-width:44px;min-height:44px;padding:0 10px;cursor:pointer}
 :is(#page-tracker,#profile-airing) .trk-calendar{container-type:inline-size;display:flex;gap:10px;min-width:0;max-width:100%;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;overscroll-behavior-x:contain;border-radius:14px}
