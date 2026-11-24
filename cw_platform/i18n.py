@@ -19,8 +19,8 @@ PLURAL_CATEGORIES = ("zero", "one", "two", "few", "many", "other")
 _LOG = logging.getLogger("crosswatch.i18n")
 _CODE_RE = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$")
 _NAMESPACE_RE = re.compile(r"^[a-z][a-z0-9_-]*$")
-_TOKEN_RE = re.compile(r"\[\[t:([A-Za-z0-9_.-]+)((?:\|[A-Za-z0-9_]+[@=][^|\]]*)*)\]\]")
-_TOKEN_ARG_RE = re.compile(r"\|([A-Za-z0-9_]+)([@=])([^|\]]*)")
+_TOKEN_RE = re.compile(r"\[\[t:([A-Za-z0-9_.-]+)((?:\|[A-Za-z0-9_]+[@=][^|\[\]]*)*)\]\]")
+_TOKEN_ARG_RE = re.compile(r"\|([A-Za-z0-9_]+)([@=])([^|\[\]]*)")
 _VAR_RE = re.compile(r"\{\{\s*([A-Za-z0-9_]+)\s*\}\}")
 _LOCK = threading.Lock()
 _CACHE: dict[str, tuple[Any, Any]] = {}
@@ -109,7 +109,7 @@ def languages() -> dict[str, str]:
 
 def language_or_none(value: Any) -> str | None:
     code = str(value or "").strip().lower()
-    return code if code in languages() else None
+    return next((known for known in languages() if known == code), None)
 
 
 def clean_language(value: Any) -> str:
