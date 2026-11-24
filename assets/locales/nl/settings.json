@@ -231,7 +231,7 @@
         "creating": "Aanmaken...",
         "created": "2FA-geheim aangemaakt",
         "setupFailed": "2FA instellen mislukt",
-        "enterCode": "Voer de zescijferige code in",
+        "enterCode": "Voer de 6-cijferige code in",
         "verifyFailed": "2FA controleren mislukt",
         "disableFailed": "2FA uitschakelen mislukt"
       },
@@ -719,7 +719,7 @@
       "invalidApiKey": "Ongeldige API-sleutel van {{provider}}",
       "invalidApiToken": "Ongeldig API-token van {{provider}}",
       "invalidCredentials": "Ongeldige gebruikersnaam of wachtwoord voor {{provider}}",
-      "totpRequired": "Voer de zescijferige code uit je authenticator-app in",
+      "totpRequired": "Voer de 6-cijferige code uit je authenticator-app in",
       "invalidTotp": "Die tweestapscode is niet geaccepteerd",
       "credentialsMismatch": "Die API-sleutel hoort bij een ander {{provider}}-account dan deze login",
       "passwordLoginDisabled": "Inloggen met wachtwoord is uitgeschakeld op deze {{provider}}-server",
