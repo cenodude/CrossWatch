@@ -11,12 +11,8 @@
   const coverAction = target => {
     if (!(target instanceof Element) || !target.closest('#page-tracker,.cw-profile-shell')) return null;
     if (target.closest('input,select,textarea,label,.cw-card-actions,[data-provider-overflow]')) return null;
-    const overview = target.closest('#profile-progress .cw-cw-card');
-    if (overview) {
-      return {card:overview,button:overview,open:() => overview.dispatchEvent(new CustomEvent('cw:card-hold', {bubbles:true}))};
-    }
-    const cover = target.closest('.trk-grid-art,.trk-overview-art,.cw-hist-art,.cw-collection-poster');
-    const card = cover?.closest('.trk-grid-card,.trk-overview-card,.cw-hist-card,.cw-collection-card');
+    const cover = target.closest('.trk-grid-art,.trk-overview-art,.cw-hist-art,.cw-collection-poster,.cw-cw-open');
+    const card = cover?.closest('.trk-grid-card,.trk-overview-card,.cw-hist-card,.cw-collection-card,.cw-cw-card');
     const button = card?.querySelector('button.cw-card-actions');
     return button && !button.disabled && button.checkVisibility() ? {card,button,open:() => button.click()} : null;
   };
@@ -71,7 +67,7 @@
     activeCardMenu?.hidePopover();
     const menu = document.createElement("div");
     const mobile = matchMedia("(max-width:760px), (pointer:coarse) and (max-height:600px)").matches;
-    const card = anchor.closest(".trk-grid-card,.trk-overview-card,[data-playback-key],[data-timeline-key],[data-collection-key]");
+    const card = anchor.closest(".trk-grid-card,.trk-overview-card,.cw-cw-card,[data-playback-key],[data-timeline-key],[data-collection-key]");
     const title = options.title || card?.querySelector("strong,h3,.cw-collection-name")?.textContent || "Actions";
     menu.className = `cw-card-action-menu${mobile ? " is-sheet" : ""}`;
     const holdMenu = openingFromHold;

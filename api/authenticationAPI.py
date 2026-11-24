@@ -1459,9 +1459,12 @@ def register_auth(app, *, log_fn: Optional[Callable[[str, str], None]] = None, p
         return {"libraries": kodi_fetch_libraries_from_cfg(cfg, instance_id=inst), "instance": inst}
 
     _KODI_SETUP_FEATURES = {
-        "history": {"enable": True, "add": True, "remove": False, "rewatches": False, "include_specials": True},
-        "ratings": {"enable": True, "add": True, "remove": False, "types": ["movies", "shows", "seasons", "episodes"],
+        "history": {"enable": True, "add": True, "remove": True, "rewatches": False, "include_specials": True},
+        "ratings": {"enable": True, "add": True, "remove": True, "types": ["movies", "shows", "seasons", "episodes"],
                     "mode": "all", "from_date": "", "include_specials": True},
+        "progress": {"enable": True, "add": True, "remove": False, "min_seconds": 60, "delta_seconds": 30, "max_percent": 95,
+                     "replay_enabled": False, "timestamp_tolerance_seconds": 30, "propagate_timestamp_updates": False,
+                     "include_specials": True},
     }
 
     def _kodi_pair_other(pair: Any, kodi_inst: str) -> tuple[str, str] | None:

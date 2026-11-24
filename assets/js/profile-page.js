@@ -848,6 +848,7 @@
   let profile = null;
   let posterSeq = 0;
   const posterItems = new Map();
+  const overviewCardItems = new WeakMap();
   const numberFmt = new Intl.NumberFormat();
 
   function setAvatar(url) {
@@ -1217,14 +1218,14 @@
       title: routes.filter((ref) => ref.provider === provider).map((ref) => ref.title).join("\n"),
     })).filter(Boolean).join("");
     const providerStrip = providerIcons ? `<span class="cw-cw-providers">${providerIcons}</span>` : "";
-    return `<button class="cw-cw-card" type="button" data-profile-poster-key="${esc(key)}" aria-label="Show details for ${esc(titleOf(item))}">
+    return `<article class="cw-cw-card" data-profile-poster-key="${esc(key)}"><button class="cw-cw-open" type="button" aria-label="Show details for ${esc(titleOf(item))}">
       <span class="cw-cw-art"><img src="${esc(art)}" alt="" draggable="false" loading="lazy" onerror="this.onerror=null;this.src='/assets/img/placeholder_poster.svg?v=2'">
         ${remainingLabel ? `<span class="cw-cw-remaining">${esc(remainingLabel)}</span>` : ""}
         <span class="cw-cw-copy"><span class="cw-cw-title">${esc(titleOf(item))}</span><span class="cw-cw-sub">${esc(sub)}</span></span>
       </span>
       <span class="cw-cw-foot">${providerStrip}<span>${esc(pausedLabel(item))}</span></span>
       <span class="cw-cw-track" role="progressbar" aria-label="Watch progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><i style="width:${pct}%"></i></span>
-    </button>`;
+    </button>${cardActionsButton("data-overview-progress-menu")}</article>`;
   }
 
   function mediaKindLabel(item) {
@@ -1508,6 +1509,7 @@
         patchOverviewNode(current, next);
       }
       const node = current || next;
+      overviewCardItems.set(node, item);
       keep.add(node);
       if (host.children[index] !== node) host.insertBefore(node, host.children[index] || null);
     }
@@ -5331,10 +5333,13 @@
     function wire() {
       const host = panel();
       if (!host) return;
-      $("#profile-progress")?.addEventListener("cw:card-hold", (event) => {
-        const card = event.target?.closest?.(".cw-cw-card");
-        const item = posterItems.get(card?.dataset.profilePosterKey);
-        if (card && item) openActions(card, item, () => card.click());
+      $("#profile-progress")?.addEventListener("click", (event) => {
+        const button = event.target?.closest?.("[data-overview-progress-menu]");
+        if (!button) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const card = button.closest(".cw-cw-card");
+        openActions(button, overviewCardItems.get(card), () => card.querySelector(".cw-cw-open")?.click());
       });
       let searchTimer = null;
       q("settings")?.toggleAttribute("hidden", !canConfigure());
@@ -5969,7 +5974,7 @@
 
   function wirePosterOverlay() {
     const openFromTarget = (target, event) => {
-      if (target?.closest?.("[data-collection-resize],[data-provider-overflow],[data-collection-actions]")) return false;
+      if (target?.closest?.(".cw-card-actions,[data-collection-resize],[data-provider-overflow],[data-collection-actions]")) return false;
       const btn = target?.closest?.("[data-profile-poster-key]");
       if (!btn) return false;
       const item = posterItems.get(btn.dataset.profilePosterKey || "");
@@ -5990,7 +5995,7 @@
       openFromTarget(event.target, event);
     });
     shell?.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
+      if (event.key !== "Enter" && event.key !== " " || event.target?.closest?.(".cw-card-actions")) return;
       const btn = event.target?.closest?.("[data-profile-poster-key]");
       if (!btn) return;
       openFromTarget(btn, event);

@@ -1161,7 +1161,7 @@ __CW_NAV_PROFILE_MENU__
     </div>
 
     <div class="stat-block cw-recent-feed">
-      <div class="stat-block-header"><span class="pill plain">Recent syncs</span><button class="cw-page-feed-action refresh-insights material-symbols-rounded" onclick="refreshInsights()" title="Refresh" aria-label="Refresh recent syncs">refresh</button></div>
+      <div class="stat-block-header"><span class="pill plain">Recent syncs</span><button class="cw-page-feed-action refresh-insights" type="button" onclick="refreshInsights()" title="Refresh" aria-label="Refresh recent syncs"><span class="material-symbols-rounded" aria-hidden="true">refresh</span></button></div>
       <div id="sync-history" class="history-list"></div>
     </div>
   </section>
