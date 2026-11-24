@@ -217,6 +217,19 @@ def test_scrobble_history_keeps_route_and_hours(monkeypatch) -> None:
     assert payload["stats"]["hours"] == pytest.approx(2.8)
 
 
+def test_synced_history_shows_the_user_rating_for_movies_and_shows() -> None:
+    show_rating = {"type": "show", "title": "Ted Lasso", "year": 2020, "ids": {"tmdb": 97546}, "rating": 9, "rated_at": "2026-09-01T10:00:00Z"}
+    movie_rating = {"type": "movie", "title": "Turning Point", "year": 2026, "ids": {"tmdb": 10}, "rating": 6, "rated_at": "2026-09-14T10:00:00Z"}
+    state = {"providers": {"TRAKT": _ratings({"tmdb:97546": show_rating, "tmdb:10": movie_rating})}}
+    ratings = profile_history.build_history_index("ratings", state=state, tracker_items={}, user_filter={})
+    payload = profile_history.build_history_payload(_synced_index(), resolve_art=False)
+
+    profile_history.attach_user_ratings(payload["items"], ratings)
+
+    by_title = {item["title"]: item.get("user_rating") for item in payload["items"]}
+    assert by_title == {"Turning Point": 6, "Ted Lasso": 9, "Kusama: Infinity": None}
+
+
 def test_ratings_keep_each_provider_score_and_flag_conflicts() -> None:
     payload = profile_history.build_history_payload(_ratings_index(), resolve_art=False)
 

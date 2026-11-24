@@ -1424,6 +1424,9 @@ def build_profile_history_payload(
         include_keys=include_keys,
     )
     _fill_history_tmdb(cfg, payload.get("items"))
+    if wanted == "synced":
+        ratings_index, _ = _profile_history_index(cfg, profile_id, "ratings")
+        profile_history.attach_user_ratings(payload.get("items"), ratings_index)
     payload["version"] = version
     return payload
 
