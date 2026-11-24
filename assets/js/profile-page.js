@@ -602,14 +602,14 @@
   const skeleton = (kind, count) => Array.from({ length: count }, () => skelShapes[kind]).join("");
 
   function paintOverviewSkeletons() {
-    const hosts = [["#profile-progress", "progress", mobilePaging.matches ? 3 : 4], ["#profile-watchlist", "watchlist", 4], ["#profile-activity", "activity", 4]];
+    const hosts = [["#profile-progress", "progress", mobilePaging.matches ? 3 : 4], ["#profile-watchlist", "watchlist", 4], ["#profile-activity", "activity", 3]];
     for (const [sel, kind, count] of hosts) {
       const host = $(sel);
       if (host) host.innerHTML = skeleton(kind, count);
     }
   }
 
-  const ACTIVITY_LIMIT = 4;
+  const ACTIVITY_LIMIT = 3;
   const activityLabel = (row) => {
     const kind = String(row?.kind || "").toLowerCase();
     if (kind === "scheduler") return "Scheduler";
@@ -800,12 +800,12 @@
     const cached = readCache(cacheKey);
     const render = payload => {
       const rows = (payload.items || []).slice().sort((a, b) => Number(b?.created_at || 0) - Number(a?.created_at || 0));
-      const html = (rows.length ? rows.slice(0, mobilePaging.matches ? 3 : ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty("No recent activity yet.")) + (schedulerActivityHtml(payload.scheduler) || "");
+      const html = (rows.length ? rows.slice(0, ACTIVITY_LIMIT).map(profileActivityRow).join("") : empty("No recent activity yet.")) + (schedulerActivityHtml(payload.scheduler) || "");
       if (host.innerHTML !== html) host.innerHTML = html;
     };
     if (cached) render(cached);
     else if (!preserve || !host.children.length) host.innerHTML = skeleton("activity", 4);
-    const params = new URLSearchParams({ limit: String(mobilePaging.matches ? 3 : ACTIVITY_LIMIT), visibility: "all" });
+    const params = new URLSearchParams({ limit: String(ACTIVITY_LIMIT), visibility: "all" });
     const userProfile = String(window.CW?.OverviewProfile?.id || "").trim();
     if (userProfile) params.set("user_profile", userProfile);
 
@@ -5087,6 +5087,13 @@
       if (error) error.textContent = "";
       return new Promise((resolve) => {
         let result = null;
+        const parent = dialog.parentNode;
+        const next = dialog.nextSibling;
+        const relocate = activeHubTab() === "overview";
+        if (relocate) $(".cw-profile-shell").append(dialog);
+        const onCancel = (event) => {
+          if (event.target?.closest?.("[data-playback-dialog-cancel]")) dialog.close();
+        };
         const fromRange = () => {
           value.value = range.value;
           if (error) error.textContent = "";
@@ -5110,12 +5117,15 @@
           value.removeEventListener("input", fromValue);
           form.removeEventListener("submit", onSubmit);
           dialog.removeEventListener("close", onClose);
+          dialog.removeEventListener("click", onCancel);
+          if (relocate) parent.insertBefore(dialog, next);
           resolve(result);
         };
         range.addEventListener("input", fromRange);
         value.addEventListener("input", fromValue);
         form.addEventListener("submit", onSubmit);
         dialog.addEventListener("close", onClose);
+        dialog.addEventListener("click", onCancel);
         if (!window.CW?.MobileUI?.openDialog(dialog)) dialog.showModal();
         value.focus();
         value.select?.();
@@ -5183,6 +5193,7 @@
         await new Promise((resolve) => setTimeout(resolve, 750));
         items.forEach((item) => state.selected.delete(keyOf(item)));
         await load({ background: true });
+        if (activeHubTab() === "overview") await loadOverview({force:true});
       } catch (error) {
         if (!state.actionFeedback) showActionResult(action, items, payloads, [], confirmFirst);
         toast(error?.message || "Could not complete the action. Refresh to check its result.", true);
@@ -5306,9 +5317,25 @@
       if (!state.clock) state.clock = window.setInterval(renderSync, 30000);
     }
 
+    function openActions(anchor, item, openDetails) {
+      if (!item || state.pendingAction) return;
+      const entries = [{ label: "View media details", icon: "info", run: openDetails }];
+      if (canAct()) {
+        for (const [action, icon, label] of [["update_progress", "edit", "Edit progress"], ["mark_watched", "check_circle", "Mark as watched"], ["remove_progress", "delete", "Remove resume point"]]) {
+          if (item[CAPABILITY[action]]) entries.push({ label, icon, danger: action === "remove_progress", attrs: ` data-playback-action="${action}"`, run: () => runAction(action, [item]) });
+        }
+      }
+      openCardActions(anchor, entries, {title:titleFor(item),subtitle:item.season != null && item.episode != null ? `S${String(item.season).padStart(2,"0")} · E${String(item.episode).padStart(2,"0")}` : ""});
+    }
+
     function wire() {
       const host = panel();
       if (!host) return;
+      $("#profile-progress")?.addEventListener("cw:card-hold", (event) => {
+        const card = event.target?.closest?.(".cw-cw-card");
+        const item = posterItems.get(card?.dataset.profilePosterKey);
+        if (card && item) openActions(card, item, () => card.click());
+      });
       let searchTimer = null;
       q("settings")?.toggleAttribute("hidden", !canConfigure());
       enhanceSelects();
@@ -5333,14 +5360,7 @@
         if (menuButton) {
           event.preventDefault();
           const item = state.items.find((entry) => keyOf(entry) === menuButton.dataset.playbackMenu);
-          if (!item || state.pendingAction) return;
-          const entries = [{ label: "View media details", icon: "info", run: () => menuButton.closest("[data-playback-key]")?.querySelector("[data-profile-poster-key]")?.click() }];
-          if (canAct()) {
-            for (const [action, icon, label] of [["update_progress", "edit", "Edit progress"], ["mark_watched", "check_circle", "Mark as watched"], ["remove_progress", "delete", "Remove resume point"]]) {
-              if (item[CAPABILITY[action]]) entries.push({ label, icon, danger: action === "remove_progress", attrs: ` data-playback-action="${action}"`, run: () => runAction(action, [item]) });
-            }
-          }
-          openCardActions(menuButton, entries, {title:titleFor(item),subtitle:item.season != null && item.episode != null ? `S${String(item.season).padStart(2,"0")} · E${String(item.episode).padStart(2,"0")}` : ""});
+          openActions(menuButton, item, () => menuButton.closest("[data-playback-key]")?.querySelector("[data-profile-poster-key]")?.click());
           return;
         }
         const chip = target?.closest?.("[data-ia-chip]");

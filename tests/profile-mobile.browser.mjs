@@ -904,7 +904,7 @@ for (const width of [390,1440,2250]) test(`Hub Overview keeps provider actions a
   const {page,state} = await fixture(t,'flat-dark',width,{count:12,activity:true});
   await page.waitForFunction(()=>document.querySelectorAll('#profile-watchlist .cw-hub-poster').length===4);
   await page.waitForFunction(expected=>document.querySelectorAll('#profile-progress .cw-cw-card').length===expected,width<=760?3:4);
-  assert.equal(await page.locator('#profile-activity .cw-profile-activity-row').count(),width<=760?3:4);
+  assert.equal(await page.locator('#profile-activity .cw-profile-activity-row').count(),3);
   assert.equal(await page.locator('#profile-activity .cw-profile-activity-row>.material-symbols-rounded').count(),0);
   assert.equal(await page.locator('#profile-activity .cw-profile-activity-row strong').first().innerText(),'Watchlist sync');
   assert.match(await page.locator('#profile-activity .cw-profile-activity-row').nth(1).innerText(),/History sync.*Needs attention/s);
@@ -1060,6 +1060,74 @@ for(const width of [390,1440]) test(`Hub card actions and provider overflow rema
   await progress.click();
   assert.equal(await page.getByRole('menuitem',{name:'Edit progress'}).count(),0);
   await page.getByRole('menuitem',{name:'View media details'}).click();
+  assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
+});
+
+for(const theme of ['original','flat-dark','flat-light']) test(`${theme}: Hub Continue Watching long press opens playback actions and refreshes after changes`,async t=>{
+  const {page,state}=await fixture(t,theme,390,{playback:true});
+  await page.evaluate(()=>{
+    window.CW.ProfileMediaModal={canOpen:()=>true,open:item=>{window.__openedMedia=item;}};
+  });
+  const cover=page.locator('#profile-progress .cw-cw-art').first();
+  await cover.scrollIntoViewIfNeeded();
+  const bounds=await cover.boundingBox();
+  const point={x:bounds.x+bounds.width/2,y:bounds.y+bounds.height/2};
+  const cdp=await page.context().newCDPSession(page);
+  const sheet=page.locator('.cw-card-action-menu:popover-open');
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});
+  await sheet.waitFor();
+  await cdp.send('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+  assert.equal(await sheet.getAttribute('role'),'dialog');
+  assert.equal(await sheet.locator('h2').innerText(),items[0].title);
+  assert.equal(await page.evaluate(()=>window.__openedMedia),undefined);
+  assert.equal(await sheet.getByRole('menuitem',{name:'Remove resume point',exact:true}).count(),1);
+  await sheet.getByRole('menuitem',{name:'Edit progress',exact:true}).click();
+  const edit=page.locator('#profile-playback-edit');
+  await edit.waitFor({state:'visible'});
+  await edit.getByRole('button',{name:'Cancel',exact:true}).click();
+  await edit.waitFor({state:'hidden'});
+  await cover.dispatchEvent('pointerdown',{pointerId:42,pointerType:'touch',isPrimary:true,button:0});
+  await sheet.waitFor();
+  await cover.dispatchEvent('pointerup',{pointerId:42,pointerType:'touch',isPrimary:true});
+  let sent;
+  await page.route('**/api/playback_progress/actions/mark_watched',route=>{
+    sent=route.request().postDataJSON();
+    state.empty=true;
+    return route.fulfill({json:{ok:true}});
+  });
+  await sheet.getByRole('menuitem',{name:'Mark as watched',exact:true}).click();
+  await page.locator('#profile-progress .cw-cw-card').first().waitFor({state:'hidden'});
+  assert.equal(sent.provider,'PLEX');
+  assert.equal(sent.record.remote_id,'play-0');
+  assert.equal(await page.locator('[data-profile-tab="overview"]').evaluate(el=>el.classList.contains('active')),true);
+});
+
+test('Hub Continue Watching keeps taps and swipes and limits read-only long presses to details',async t=>{
+  const {page}=await fixture(t,'flat-dark',390,{playback:true});
+  await page.evaluate(()=>{
+    window.CW.ProfileMediaModal={canOpen:()=>true,open:item=>{window.__openedMedia=item;}};
+  });
+  const cover=page.locator('#profile-progress .cw-cw-art').first();
+  await cover.scrollIntoViewIfNeeded();
+  await cover.dispatchEvent('pointerdown',{pointerId:43,pointerType:'touch',isPrimary:true,button:0,clientX:100,clientY:100});
+  await cover.dispatchEvent('pointermove',{pointerId:43,pointerType:'touch',isPrimary:true,clientX:125,clientY:100});
+  await page.waitForTimeout(450);
+  assert.equal(await page.locator('.cw-card-action-menu:popover-open').count(),0);
+  await cover.dispatchEvent('pointerup',{pointerId:43,pointerType:'touch',isPrimary:true});
+  await cover.tap();
+  assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
+  await page.evaluate(()=>{
+    window.__openedMedia=null;
+    document.documentElement.dataset.cwRole='user';
+    document.documentElement.dataset.cwPermWrite='off';
+  });
+  await cover.dispatchEvent('pointerdown',{pointerId:44,pointerType:'touch',isPrimary:true,button:0});
+  const sheet=page.locator('.cw-card-action-menu:popover-open');
+  await sheet.waitFor();
+  await cover.dispatchEvent('pointerup',{pointerId:44,pointerType:'touch',isPrimary:true});
+  assert.deepEqual(await sheet.getByRole('menuitem').allTextContents(),['infoView media details']);
+  await sheet.getByRole('menuitem',{name:'View media details',exact:true}).click();
+  await page.waitForFunction(()=>window.__openedMedia?.title);
   assert.equal(await page.evaluate(()=>window.__openedMedia.title),items[0].title);
 });
 
