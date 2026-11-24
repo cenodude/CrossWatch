@@ -103,7 +103,9 @@ html[data-cw-theme] .cw-mw .cw-mw-btn.primary { background:var(--mw-accent)!impo
 .cw-mw.cw-mw-compact .cw-mw-badge { font-weight:500; letter-spacing:0; }
 .cw-mw.cw-mw-compact .cw-mw-label { font-weight:600!important; letter-spacing:.08em!important; }
 .cw-mw.cw-mw-compact .cw-mw-link { font-weight:500; }
-.cw-mw.cw-mw-compact .cw-mw-where { display:grid; gap:8px; min-width:0; }
+.cw-mw.cw-mw-compact .cw-mw-where, .cw-mw.cw-mw-compact .cw-mw-when { display:grid; gap:8px; min-width:0; }
+.cw-mw.cw-mw-compact .cw-mw-when > p { margin:0; }
+.cw-mw.cw-mw-compact .cw-mw-range-part { display:inline-flex; align-items:center; gap:8px; }
 .cw-mw.cw-mw-compact .cw-mw-provider-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:8px; }
 .cw-mw.cw-mw-compact .cw-mw-provider-chip { justify-content:flex-start!important; min-width:0!important; width:100%; overflow:hidden; }
 .cw-mw.cw-mw-compact .cw-mw-provider-chip > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

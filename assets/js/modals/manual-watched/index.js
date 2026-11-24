@@ -190,6 +190,7 @@ export default {
       titleLoading: !!props?.item?.tmdb,
       dateMode: "today",
       watchedOn: todayLocal(),
+      watchedUntil: todayLocal(),
       actions: { history: true, watchlist: false, rating: false, collection: false },
       rating: 8,
       ratingUnset: false,
@@ -322,6 +323,7 @@ export default {
     const episodeChoice = () => isShow() && !!state.actions.history;
     const dated = () => !!(state.actions.history || state.actions.collection);
     const pickingEpisodes = () => episodeChoice() && state.scope === "episodes";
+    const dateModeNow = () => state.dateMode === "range" && !pickingEpisodes() ? "custom" : state.dateMode;
     const listSources = () => [
       { key: "tmdb", label: "TMDB" },
       ...selectedTargets().filter((p) => p.episode_list).map((p) => ({ key: providerKey(p), label: p.display || p.label || p.provider })),
@@ -349,7 +351,9 @@ export default {
       if (state.titleLoading) return T("library.quickAdd.checking");
       if (!selectedActionKeys().length) return T("library.quickAdd.selectAction");
       if (!selectedCompatibleTargets().length) return T("library.quickAdd.selectProvider");
-      if (dated() && state.dateMode === "custom" && !state.watchedOn) return T("library.quickAdd.chooseDate");
+      if (dated() && ["custom", "range"].includes(dateModeNow()) && !state.watchedOn) return T("library.quickAdd.chooseDate");
+      if (dated() && dateModeNow() === "range" && !state.watchedUntil) return T("library.quickAdd.chooseDate");
+      if (dated() && dateModeNow() === "range" && state.watchedUntil < state.watchedOn) return T("library.quickAdd.rangeOrder");
       if (pickingEpisodes() && !state.picked.size) return T("library.quickAdd.pickEpisode");
       if (pickingEpisodes() && state.listSource !== "tmdb") {
         const targets = selectedCompatibleTargets();
@@ -550,12 +554,16 @@ export default {
         ${selectedItemHtml()}
         ${state.only ? `<p class="cw-mw-muted">${esc(oneOffNote(selectedActionKeys()))}</p>` : `<div class="cw-mw-field"><span class="cw-mw-label">${TH("library.quickAdd.what")}</span><div class="cw-mw-chips">${actionChips()}</div></div>`}
         <div class="cw-mw-field"><span class="cw-mw-label">${TH("library.quickAdd.where")}</span><div class="cw-mw-where">${providerChips()}<div class="cw-mw-held">${heldHtml()}</div></div></div>
-        ${dated() ? `<div class="cw-mw-field"><span class="cw-mw-label">${TH("library.quickAdd.when")}</span><div class="cw-mw-chips">
-          <button type="button" class="cw-mw-chip ${state.dateMode === "today" ? "active" : ""}" data-date-mode="today">${TH("library.quickAdd.today")}</button>
-          <button type="button" class="cw-mw-chip ${state.dateMode === "release" ? "active" : ""}" data-date-mode="release">${TH("library.quickAdd.releaseDate")}</button>
-          <button type="button" class="cw-mw-chip ${state.dateMode === "custom" ? "active" : ""}" data-date-mode="custom">${TH("library.quickAdd.chooseDateBtn")}</button>
-          ${state.dateMode === "custom" ? `<input type="date" class="cw-mw-date" data-role="custom-date" value="${esc(state.watchedOn || "")}">` : ""}
-        </div></div>` : ""}
+        ${dated() ? `<div class="cw-mw-field"><span class="cw-mw-label">${TH("library.quickAdd.when")}</span><div class="cw-mw-when"><div class="cw-mw-chips">
+          <button type="button" class="cw-mw-chip ${dateModeNow() === "today" ? "active" : ""}" data-date-mode="today">${TH("library.quickAdd.today")}</button>
+          <button type="button" class="cw-mw-chip ${dateModeNow() === "release" ? "active" : ""}" data-date-mode="release">${TH("library.quickAdd.releaseDate")}</button>
+          <button type="button" class="cw-mw-chip ${dateModeNow() === "custom" ? "active" : ""}" data-date-mode="custom">${TH("library.quickAdd.chooseDateBtn")}</button>
+          ${pickingEpisodes() ? `<button type="button" class="cw-mw-chip ${dateModeNow() === "range" ? "active" : ""}" data-date-mode="range">${TH("library.quickAdd.dateRange")}</button>` : ""}
+          ${dateModeNow() === "custom" ? `<input type="date" class="cw-mw-date" data-role="custom-date" value="${esc(state.watchedOn || "")}">` : ""}
+        </div>${dateModeNow() === "range" ? `<div class="cw-mw-chips">
+          <label class="cw-mw-range-part"><span class="cw-mw-muted">${TH("library.quickAdd.rangeFrom")}</span><input type="date" class="cw-mw-date" data-role="custom-date" value="${esc(state.watchedOn || "")}"></label>
+          <label class="cw-mw-range-part"><span class="cw-mw-muted">${TH("library.quickAdd.rangeTo")}</span><input type="date" class="cw-mw-date" data-role="range-end" value="${esc(state.watchedUntil || "")}"></label>
+        </div><p class="cw-mw-muted">${TH("library.quickAdd.rangeNote")}</p>` : ""}</div></div>` : ""}
         ${state.actions.rating ? `<div class="cw-mw-field"><span class="cw-mw-label">${TH("library.quickAdd.rating")}</span>${ratingChoices()}</div>` : ""}
         ${episodeChoice() ? episodesCard() : ""}
       </div>
@@ -615,6 +623,15 @@ export default {
       if (status) {
         status.className = `cw-mw-status ${state.statusTone}`.trim();
         status.textContent = state.status || (state.selectedItem ? validation() : "");
+      }
+    };
+
+    const syncDates = () => {
+      syncFooter();
+      const send = root.querySelector("[data-role=send]");
+      if (send) {
+        send.disabled = !!(validation() || state.saving);
+        send.textContent = sendLabel();
       }
     };
 
@@ -790,8 +807,9 @@ export default {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             item: state.selectedItem,
-            date_mode: dated() ? state.dateMode : "today",
-            watched_on: dated() && state.dateMode === "custom" ? state.watchedOn : null,
+            date_mode: dated() ? dateModeNow() : "today",
+            watched_on: dated() && ["custom", "range"].includes(dateModeNow()) ? state.watchedOn : null,
+            watched_until: dated() && dateModeNow() === "range" ? state.watchedUntil : undefined,
             actions: {
               history: !!state.actions.history,
               watchlist: !!state.actions.watchlist,
@@ -824,7 +842,10 @@ export default {
         queueSearch();
       } else if (e.target.matches("[data-role=custom-date]")) {
         state.watchedOn = e.target.value || "";
-        render();
+        syncDates();
+      } else if (e.target.matches("[data-role=range-end]")) {
+        state.watchedUntil = e.target.value || "";
+        syncDates();
       } else if (e.target.matches("[data-role=extra-season]")) {
         state.extraSeason = e.target.value || "";
       } else if (e.target.matches("[data-role=extra-episode]")) {

@@ -253,3 +253,46 @@ test("a locked Quick add ignores saved actions", async () => {
   assert.ok(root.innerHTML.includes("Not in a sync pair for watchlist."));
   assert.doesNotMatch(root.innerHTML, /cw-mw-stars/);
 });
+
+const tap = (root, attr, value) => {
+  const target = { getAttribute: () => value, closest: selector => selector.includes(`[${attr}]`) ? target : null };
+  root.click({ target, preventDefault() {}, stopPropagation() {} });
+};
+const typeDate = (root, role, value) => root.input({ target: { matches: selector => selector === `[data-role=${role}]`, value } });
+const footer = (root) => {
+  const status = { className: "", textContent: "" };
+  const send = { disabled: false, textContent: "" };
+  root.querySelector = selector => selector === ".cw-mw-status" ? status : selector === "[data-role=send]" ? send : null;
+  return { status, send };
+};
+const trekShow = { tmdb: "655", type: "show", title: "Star Trek" };
+
+test("Quick add offers a date range only while picking episodes", async () => {
+  const movie = await mountQuickAdd({ item: michael }, [both], ["MDBLIST:default"]);
+  assert.doesNotMatch(movie.innerHTML, /data-date-mode="range"/);
+  const root = await mountQuickAdd({ item: trekShow }, [both], ["MDBLIST:default"]);
+  assert.doesNotMatch(root.innerHTML, /data-date-mode="range"/);
+  tap(root, "data-scope", "episodes");
+  assert.match(root.innerHTML, /data-date-mode="range"/);
+  tap(root, "data-date-mode", "range");
+  assert.match(root.innerHTML, /data-role="range-end"/);
+  assert.match(root.innerHTML, /Episodes are spread evenly over these days\./);
+  tap(root, "data-scope", "show");
+  assert.doesNotMatch(root.innerHTML, /data-role="range-end"/);
+  assert.match(root.innerHTML, /cw-mw-chip active" data-date-mode="custom"/);
+});
+
+test("Quick add refuses a date range that ends before it starts", async () => {
+  const root = await mountQuickAdd({ item: trekShow }, [both], ["MDBLIST:default"]);
+  tap(root, "data-scope", "episodes");
+  tap(root, "data-date-mode", "range");
+  const html = root.innerHTML;
+  const { status, send } = footer(root);
+  typeDate(root, "custom-date", "2024-03-05");
+  typeDate(root, "range-end", "2024-03-01");
+  assert.equal(root.innerHTML, html);
+  assert.equal(status.textContent, "The end date is before the start date.");
+  assert.equal(send.disabled, true);
+  typeDate(root, "range-end", "2024-03-09");
+  assert.notEqual(status.textContent, "The end date is before the start date.");
+});
